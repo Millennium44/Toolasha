@@ -745,6 +745,74 @@ describe('official alchemy rules', () => {
         expect(alchemyProfitCalculator.calculateTransmuteProfit('/items/milk').successRateBreakdown.base).toBe(0.5);
     });
 
+    test('keeps a captured self-return recipe priced at its base level', () => {
+        mocks.initClientData.itemDetailMap['/items/celestial_alembic'] = {
+            hrid: '/items/celestial_alembic',
+            name: 'Celestial Alembic',
+            sellPrice: 5_000_000,
+            itemLevel: 90,
+            alchemyDetail: {
+                bulkMultiplier: 1,
+                isCoinifiable: true,
+                decomposeItems: [
+                    { itemHrid: '/items/butter_of_proficiency', count: 10 },
+                    { itemHrid: '/items/branch_of_insight', count: 10 },
+                    { itemHrid: '/items/sunstone', count: 5 },
+                    { itemHrid: '/items/moonstone', count: 25 },
+                    { itemHrid: '/items/star_fragment', count: 100 },
+                    { itemHrid: '/items/alchemy_essence', count: 180_000 },
+                    { itemHrid: '/items/holy_alembic', count: 1 },
+                ],
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [
+                    { itemHrid: '/items/celestial_alembic', dropRate: 0.88, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/philosophers_stone', dropRate: 0.12, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+        mocks.sidePrices['/items/celestial_alembic|buy'] = 5_000_000;
+
+        const result = alchemyProfitCalculator.calculateTransmuteProfit('/items/celestial_alembic');
+
+        expect(result.requirementCosts[0]).toMatchObject({
+            itemHrid: '/items/celestial_alembic',
+            enhancementLevel: 0,
+            price: 5_000_000,
+        });
+        expect(result.enhancementLevel).toBe(0);
+    });
+
+    test('does not quote enhanced transmute inputs with a same-HRID return before return level is known', () => {
+        mocks.initClientData.itemDetailMap['/items/celestial_alembic'] = {
+            hrid: '/items/celestial_alembic',
+            name: 'Celestial Alembic',
+            sellPrice: 5_000_000,
+            itemLevel: 90,
+            alchemyDetail: {
+                bulkMultiplier: 1,
+                isCoinifiable: true,
+                decomposeItems: [
+                    { itemHrid: '/items/butter_of_proficiency', count: 10 },
+                    { itemHrid: '/items/branch_of_insight', count: 10 },
+                    { itemHrid: '/items/sunstone', count: 5 },
+                    { itemHrid: '/items/moonstone', count: 25 },
+                    { itemHrid: '/items/star_fragment', count: 100 },
+                    { itemHrid: '/items/alchemy_essence', count: 180_000 },
+                    { itemHrid: '/items/holy_alembic', count: 1 },
+                ],
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [
+                    { itemHrid: '/items/celestial_alembic', dropRate: 0.88, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/philosophers_stone', dropRate: 0.12, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+
+        expect(
+            alchemyProfitCalculator.calculateTransmuteProfit('/items/celestial_alembic', false, 0, 'none', null, 10)
+        ).toBeNull();
+    });
+
     test('coinify pays 5× the item sell price, at bulk scale, and is charged no coin fee', () => {
         const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
         const coins = result.dropRevenues.find((d) => d.itemHrid === '/items/coin');

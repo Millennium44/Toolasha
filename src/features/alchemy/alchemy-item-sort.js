@@ -573,7 +573,16 @@ class AlchemyItemSort {
 
         try {
             if (action === 'transmute') {
-                return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid) || null;
+                return (
+                    alchemyProfitCalculator.calculateTransmuteProfit(
+                        itemHrid,
+                        false,
+                        null,
+                        null,
+                        null,
+                        tileEnhancementLevel(tile)
+                    ) || null
+                );
             }
             const method = CALCULATOR_METHOD[action];
             if (!method) return null;

@@ -223,13 +223,62 @@ describe('updateDisplay routes to the right calculator', () => {
         expect(created.mock.calls[0][2]).toBe('decompose');
     });
 
-    test('transmute takes no enhancement level', async () => {
+    test('transmute passes the selected input enhancement level to pricing', async () => {
         selectTab('Transmute');
+        panel.requirements = [{ itemHrid: '/items/celestial_alembic', enhancementLevel: 10 }];
 
         await display.updateDisplay(document.createElement('div'));
 
-        expect(calculator.transmute).toHaveBeenCalledWith('/items/cheese', true);
+        expect(calculator.transmute).toHaveBeenCalledWith('/items/celestial_alembic', true, null, null, null, 10);
         expect(created.mock.calls[0][2]).toBe('transmute');
+    });
+
+    test('an enhanced self-return transmute explains why its profit quote is unavailable', async () => {
+        selectTab('Transmute');
+        panel.requirements = [{ itemHrid: '/items/celestial_alembic', enhancementLevel: 10 }];
+        game.initClientData = {
+            itemDetailMap: {
+                '/items/celestial_alembic': {
+                    alchemyDetail: {
+                        transmuteDropTable: [
+                            { itemHrid: '/items/celestial_alembic', dropRate: 0.88, minCount: 1, maxCount: 1 },
+                            { itemHrid: '/items/philosophers_stone', dropRate: 0.12, minCount: 1, maxCount: 1 },
+                        ],
+                    },
+                },
+            },
+        };
+        calculator.transmute.mockReturnValue(null);
+        const infoContainer = document.createElement('div');
+        const oldQuote = document.createElement('div');
+        oldQuote.textContent = 'Profit: -400.26M/hr';
+        infoContainer.appendChild(oldQuote);
+        display.displayElement = oldQuote;
+        display.removeDisplay.mockRestore();
+
+        await display.updateDisplay(infoContainer);
+
+        expect(infoContainer.textContent).not.toContain('Profit: -400.26M/hr');
+        expect(infoContainer.textContent).toContain(
+            'Profit unavailable: the enhancement level of returned items is unknown.'
+        );
+        expect(infoContainer.querySelector('.mwi-alchemy-profit-unavailable')).not.toBeNull();
+        expect(created).not.toHaveBeenCalled();
+
+        panel.requirements[0].enhancementLevel = 0;
+        calculator.transmute.mockReturnValue(someProfit());
+        created.mockImplementation((container) => {
+            display.removeDisplay();
+            const normalQuote = document.createElement('div');
+            normalQuote.className = 'normal-profit-quote';
+            container.appendChild(normalQuote);
+            display.displayElement = normalQuote;
+        });
+
+        await display.updateDisplay(infoContainer);
+
+        expect(infoContainer.querySelector('.mwi-alchemy-profit-unavailable')).toBeNull();
+        expect(infoContainer.querySelector('.normal-profit-quote')).not.toBeNull();
     });
 
     test('the Unrefine tab prices an unrefine, not a decompose of the refined item', async () => {
@@ -270,7 +319,7 @@ describe('updateDisplay routes to the right calculator', () => {
 
         await display.updateDisplay(document.createElement('div'));
 
-        expect(calculator.transmute).toHaveBeenCalledWith('/items/cheese', true);
+        expect(calculator.transmute).toHaveBeenCalledWith('/items/cheese', true, null, null, null, 0);
     });
 
     test('the tab overrides a running action of a different type', async () => {

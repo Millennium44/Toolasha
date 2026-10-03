@@ -5595,7 +5595,14 @@ class ActionTimeDisplay {
                 catalystChoice
             );
         } else if (actionHrid === '/actions/alchemy/transmute') {
-            return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true, null, catalystChoice);
+            return alchemyProfitCalculator.calculateTransmuteProfit(
+                itemHrid,
+                true,
+                null,
+                catalystChoice,
+                null,
+                enhancementLevel || 0
+            );
         } else if (actionHrid === '/actions/alchemy/decompose') {
             return alchemyProfitCalculator.calculateDecomposeProfit(
                 itemHrid,

@@ -61,7 +61,9 @@ const calculatorMock = vi.hoisted(() => ({
     calculateUnrefineProfit: vi.fn((itemHrid, enhancementLevel) =>
         profitAnswers.get(`unrefine:${itemHrid}:${enhancementLevel ?? 0}`)
     ),
-    calculateTransmuteProfit: vi.fn((itemHrid) => profitAnswers.get(`transmute:${itemHrid}:0`)),
+    calculateTransmuteProfit: vi.fn((itemHrid, _live, _tea, _catalyst, _context, enhancementLevel = 0) =>
+        profitAnswers.get(`transmute:${itemHrid}:${enhancementLevel}`)
+    ),
 }));
 
 const pinsMock = vi.hoisted(() => ({ pinnedFor: vi.fn(() => []) }));
@@ -152,6 +154,22 @@ describe('alchemy item sort', () => {
         alchemyItemSort.disable();
         document.body.innerHTML = '';
         await alchemyItemSort.initialize();
+    });
+
+    test('transmute pricing passes the selected enhancement level', () => {
+        const tile = buildTile('/items/celestial_alembic', 10).querySelector('.Item_itemContainer_x');
+        const expected = { profitPerHour: 123 };
+        profitAnswers.set('transmute:/items/celestial_alembic:10', expected);
+
+        expect(alchemyItemSort.computePriceData('transmute', tile)).toBe(expected);
+        expect(calculatorMock.calculateTransmuteProfit).toHaveBeenCalledWith(
+            '/items/celestial_alembic',
+            false,
+            null,
+            null,
+            null,
+            10
+        );
     });
 
     test('the toggle renders in the picker, defaulting to Game', () => {

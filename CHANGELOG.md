@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhanced Transmute estimates preserve the selected level
+
+- Transmute pricing now receives the selected item's enhancement level in action previews, queued prices, item sorting and tea planning. Enhanced recipes that can return the same item show why profit is unavailable instead of quoting an unenhanced copy; their returned enhancement level is not yet known.
+
 ### Gourmet scroll estimates match the game
 
 - Gourmet scroll simulation now adds the game's 10% bonus, and its selector shows +10%. Cooking and Brewing estimates no longer assume an extra six percentage points of Gourmet.

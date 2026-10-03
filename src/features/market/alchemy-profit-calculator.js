@@ -1443,6 +1443,8 @@ class AlchemyProfitCalculator {
      * @param {number|null} [teaBonusOverride]
      * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice] - Force a specific catalyst
      *   instead of searching for the best one or reading the live panel.
+     * @param {Object|null} [actionContext]
+     * @param {number} [enhancementLevel=0] - Enhancement level of the input item
      * @returns {Object|null} Profit data or null if not transmutable
      */
     calculateTransmuteProfit(
@@ -1450,7 +1452,8 @@ class AlchemyProfitCalculator {
         useLiveSetup = false,
         teaBonusOverride = null,
         catalystChoice = null,
-        actionContext = null
+        actionContext = null,
+        enhancementLevel = 0
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -1469,6 +1472,16 @@ class AlchemyProfitCalculator {
             const baseSuccessRate = itemDetails.alchemyDetail.transmuteSuccessRate || 0;
             if (baseSuccessRate === 0) {
                 return null; // Cannot transmute
+            }
+
+            // Transmute drop rows don't carry an enhancement level. Until the server's
+            // returned-item level is known, an enhanced input with a same-HRID outcome
+            // can't be valued safely as either a self-return or a base-level sale.
+            if (
+                enhancementLevel > 0 &&
+                itemDetails.alchemyDetail.transmuteDropTable.some((drop) => drop.itemHrid === itemHrid)
+            ) {
+                return null;
             }
 
             const itemLevel = itemDetails.itemLevel || 1;
@@ -1524,7 +1537,11 @@ class AlchemyProfitCalculator {
             });
 
             // Get input cost (market price of the item being transmuted)
-            const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
+            const inputPrice = getItemPrice(itemHrid, {
+                context: 'profit',
+                side: 'buy',
+                enhancementLevel,
+            });
             if (inputPrice === null) {
                 return null; // No market data
             }
@@ -1710,7 +1727,7 @@ class AlchemyProfitCalculator {
                     price: inputPrice,
                     costPerAction: netMaterialCost, // Net cost after self-return
                     costPerHour: netMaterialCost * actionsPerHourWithEfficiency,
-                    enhancementLevel: 0,
+                    enhancementLevel,
                     selfReturnRate: selfReturnRate > 0 ? selfReturnRate : undefined,
                     selfReturnValue: selfReturnValue > 0 ? selfReturnValue : undefined,
                 },
@@ -1768,7 +1785,7 @@ class AlchemyProfitCalculator {
                 // Basic info
                 actionType: 'transmute',
                 itemHrid,
-                enhancementLevel: 0, // Transmute doesn't care about enhancement
+                enhancementLevel,
                 /** Output hrids left out of the revenue for want of a price */
                 unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,

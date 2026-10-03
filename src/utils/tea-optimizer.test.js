@@ -773,6 +773,38 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(result.goldPerHour).toBe(555);
     });
 
+    test('the gold score passes a selected Transmute input enhancement level', () => {
+        state.gameData.itemDetailMap['/items/celestial_alembic'] = {
+            itemLevel: 90,
+            alchemyDetail: {
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [
+                    { itemHrid: '/items/celestial_alembic', dropRate: 0.88, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/philosophers_stone', dropRate: 0.12, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/transmute'] = {
+            type: '/action_types/alchemy',
+            name: 'Transmute',
+            baseTimeCost: 20e9,
+            levelRequirement: { level: 1 },
+        };
+        let calculatorArgs;
+        alchemyCalc.transmute = (...args) => {
+            calculatorArgs = args;
+            return { profitPerHour: 555 };
+        };
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 90, null, {
+            alchemyContext: { actionType: 'transmute', itemHrid: '/items/celestial_alembic', enhancementLevel: 10 },
+        });
+
+        expect(result.goldPerHour).toBe(555);
+        expect(calculatorArgs[0]).toBe('/items/celestial_alembic');
+        expect(calculatorArgs[5]).toBe(10);
+    });
+
     test('an Alchemy result with unpriced outputs keeps the missing-price warning', () => {
         alchemyCalc.decompose = () => ({
             profitPerHour: 555,
