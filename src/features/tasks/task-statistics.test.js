@@ -17,6 +17,9 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     quests: [],
+    characterInfo: null,
+    forecastInput: null,
+    forecastResult: {},
     valuation: { tokenValue: 2000, giftPerTask: 10000, error: null },
     /** Per action hrid: what calculateTaskProfit hands back as `action` */
     actionProfits: {},
@@ -50,7 +53,9 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterQuests() {
             return game.quests;
         },
-        characterData: {},
+        get characterData() {
+            return { characterInfo: game.characterInfo };
+        },
         on: () => {},
         off: () => {},
         getInitClientData: () => ({
@@ -117,7 +122,13 @@ vi.mock('./task-reroll-tracker.js', () => ({
     },
 }));
 
-vi.mock('./task-slot-forecast.js', () => ({ forecastTaskSlots: () => ({}) }));
+vi.mock('./task-slot-forecast.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    forecastTaskSlots: (input) => {
+        game.forecastInput = input;
+        return game.forecastResult;
+    },
+}));
 
 const { default: taskStatistics } = await import('./task-statistics.js');
 
@@ -145,12 +156,38 @@ function task({ coins = 0, tokens = 0, actionHrid = null, ...rest } = {}) {
 
 beforeEach(() => {
     game.quests = [];
+    game.characterInfo = null;
+    game.forecastInput = null;
+    game.forecastResult = {};
     game.valuation = { tokenValue: 2000, giftPerTask: 10000, error: null };
     game.actionProfits = {};
     game.completions = null;
     game.rerollHistory = [];
     game.claimLog = [];
     game.itemPrices = {};
+});
+
+describe('task slot occupancy', () => {
+    test('a completed unclaimed task occupies a slot but is not an unfinished task', () => {
+        game.characterInfo = { unreadTaskCount: 0, taskSlotCap: 48 };
+        game.quests = Array.from({ length: 47 }, (_, id) => task({ id }));
+        game.quests.push(task({ id: 48, status: '/quest_status/completed', currentCount: 73, goalCount: 73 }));
+
+        expect(taskStatistics.getActiveTasks()).toHaveLength(47);
+        expect(taskStatistics.calculateSlotStatus()).toEqual({ used: 48, total: 48, unread: 0, active: 48 });
+
+        game.forecastResult = {
+            ok: true,
+            wastesAt: 1,
+            msUntilWaste: 1,
+            slotCap: 48,
+            cooldownHours: 8,
+            usedSlots: 48,
+            freeSlots: 0,
+        };
+        taskStatistics.calculateOverflowTime();
+        expect(game.forecastInput.activeTaskCount).toBe(48);
+    });
 });
 
 describe("Purple's Gift across a week of claims", () => {

@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Transmute, Coinify and Decompose history now share one Alchemy History tab with a switcher that remembers your last pick; every viewer feature works as before.
 - Actions and skills are recognized by their icon and the game's own data before their English name, so action-panel profit and speed, quick inputs, task icons, remaining XP and the XP tracker work with the game set to Chinese.
 
+### Completed tasks still occupy slots
+
+- Task slot totals, forecasts, and alerts now include completed tasks until their rewards are claimed. A full board no longer appears to have spare slots or delays its warning by an extra task cooldown.
+
 ### Combat damage after monster replacement
 
 - The damage tracker now recognizes a monster replacement when the damage counter resets, even if the new monster has the same maximum health. This prevents a sparse combat update from counting the replacement's already-missing health as new damage.
