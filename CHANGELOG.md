@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chest risk estimates preserve net drop values
+
+- Dungeon chest risk estimates no longer charge market tax again on nested chest and dungeon-token values. Payouts and worst-case losses now use the same tax rules as the chest value breakdown.
+
 ### XP carries across level boundaries
 
 - Level Progress and planner estimates now keep experience earned beyond each level threshold, so high-XP actions no longer add unnecessary queue completions. Action-count previews also retain that surplus instead of stopping at the first level reached.

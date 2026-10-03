@@ -6,6 +6,7 @@ const itemDetails = {};
 const marketPrices = {};
 let keyPricingMode = 'ask';
 const dropPrices = {};
+const dropNeedsTax = {};
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -23,7 +24,13 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 vi.mock('../../features/market/expected-value-calculator.js', () => ({
-    default: { getDropPrice: (itemHrid) => (itemHrid in dropPrices ? dropPrices[itemHrid] : null) },
+    default: {
+        getDropPrice: (itemHrid) => (itemHrid in dropPrices ? dropPrices[itemHrid] : null),
+        resolveSellSideValue: (itemHrid) =>
+            itemHrid in dropPrices
+                ? { value: dropPrices[itemHrid], needsTax: dropNeedsTax[itemHrid] ?? itemHrid !== COIN_HRID }
+                : null,
+    },
 }));
 
 vi.mock('../../features/combat-sim/combat-sim-adapter.js', () => ({
@@ -49,6 +56,7 @@ beforeEach(() => {
     for (const key of Object.keys(itemDetails)) delete itemDetails[key];
     for (const key of Object.keys(marketPrices)) delete marketPrices[key];
     for (const key of Object.keys(dropPrices)) delete dropPrices[key];
+    for (const key of Object.keys(dropNeedsTax)) delete dropNeedsTax[key];
     keyPricingMode = 'ask';
 });
 
@@ -148,6 +156,60 @@ describe('drawChestPayout', () => {
         dropPrices['/items/soulbound_thing'] = 50;
 
         expect(drawChestPayout('/items/test_chest', fixedRng(0))).toBe(150);
+    });
+
+    test('uses the resolver tax flag for real nested chest and dungeon token drops', () => {
+        const tokenHrid = '/items/chimerical_token';
+        const nestedChestHrid = '/items/large_treasure_chest';
+        const essenceHrid = '/items/chimerical_essence';
+        initData.openableLootDropMap['/items/chimerical_chest'] = [
+            { itemHrid: essenceHrid, dropRate: 1, minCount: 400, maxCount: 800 },
+            { itemHrid: tokenHrid, dropRate: 1, minCount: 250, maxCount: 500 },
+            { itemHrid: nestedChestHrid, dropRate: 0.3, minCount: 1, maxCount: 5 },
+            { itemHrid: tokenHrid, dropRate: 0.05, minCount: 1500, maxCount: 3000 },
+        ];
+        itemDetails[essenceHrid] = { isTradable: true };
+        itemDetails[tokenHrid] = { isTradable: null };
+        itemDetails[nestedChestHrid] = { isTradable: null };
+        dropPrices[essenceHrid] = 200;
+        dropPrices[tokenHrid] = 4200;
+        dropPrices[nestedChestHrid] = 10_000;
+        dropNeedsTax[tokenHrid] = false;
+        dropNeedsTax[nestedChestHrid] = false;
+
+        // These are the actual Chimerical Chest rows: essence and token are
+        // guaranteed, the large treasure chest drops at 30%, and the extra
+        // token row drops at 5%. A zero RNG roll realizes each row at minimum.
+        expect(drawChestPayout('/items/chimerical_chest', fixedRng(0))).toBeCloseTo(
+            400 * 200 * (1 - MARKET_TAX) + 250 * 4200 + 10_000 + 1500 * 4200,
+            6
+        );
+        expect(getMinimumGuaranteedPayout('/items/chimerical_chest')).toBeCloseTo(
+            400 * 200 * (1 - MARKET_TAX) + 250 * 4200,
+            6
+        );
+    });
+
+    test('keeps ordinary refinement-shard sales taxed exactly once', () => {
+        const shardHrid = '/items/chimerical_refinement_shard';
+        initData.openableLootDropMap['/items/chimerical_refinement_chest'] = [
+            { itemHrid: shardHrid, dropRate: 1, minCount: 1, maxCount: 2 },
+            { itemHrid: shardHrid, dropRate: 0.05, minCount: 5, maxCount: 10 },
+        ];
+        itemDetails[shardHrid] = { isTradable: true };
+        dropPrices[shardHrid] = 200_000;
+        dropNeedsTax[shardHrid] = true;
+
+        // Both rows and ranges match the live refinement chest. The rare row
+        // fires at its minimum with this RNG, so six shards are realized.
+        expect(drawChestPayout('/items/chimerical_refinement_chest', fixedRng(0))).toBeCloseTo(
+            6 * 200_000 * (1 - MARKET_TAX),
+            6
+        );
+        expect(getMinimumGuaranteedPayout('/items/chimerical_refinement_chest')).toBeCloseTo(
+            1 * 200_000 * (1 - MARKET_TAX),
+            6
+        );
     });
 
     test('contributes nothing when the roll misses the drop rate', () => {
