@@ -281,9 +281,10 @@ class ExpectedValueCalculator {
             const maxCount = drop.maxCount || 0;
             if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) continue;
 
-            const price = priceMap[drop.itemHrid]?.price ?? null;
+            const priceData = priceMap[drop.itemHrid];
+            const price = priceData?.price ?? null;
             if (price === null) missing++;
-            else missing += this.containerMissingCounts.get(drop.itemHrid) || 0;
+            else missing += priceData?.missingCount ?? this.containerMissingCounts.get(drop.itemHrid) ?? 0;
         }
         return missing;
     }
@@ -318,6 +319,11 @@ class ExpectedValueCalculator {
                 priceMap[itemHrid] = {
                     price,
                     canBeSold,
+                    // Keep nested partiality beside the recursively resolved
+                    // value. A cycle-truncated container deliberately has no
+                    // cache entry, so its missing count may not be available in
+                    // containerMissingCounts when the worker batch is recorded.
+                    missingCount: resolved?.missingCount || 0,
                 };
             }
         }
