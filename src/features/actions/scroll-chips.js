@@ -98,6 +98,31 @@ function watchSelection(row, redraw) {
 }
 
 /**
+ * Redraw a profit section that drew no chip row (the simulation was off, or no scroll applies) when
+ * the scroll selection or the simulation switch changes, so turning simulation on brings the chips
+ * into an already-open panel. Held weakly, like the chip rows. One redraw per burst.
+ * @param {HTMLElement} element - The profit section's content
+ * @param {() => (void|Promise<void>)} redraw - Re-runs the panel's display
+ * @returns {() => void} Stop watching
+ */
+export function watchForScrollChanges(element, redraw) {
+    let queued = false;
+    return watchSelection(element, () => {
+        if (queued) return;
+        queued = true;
+        queueMicrotask(async () => {
+            queued = false;
+            if (!element.isConnected) return;
+            try {
+                await redraw();
+            } catch (error) {
+                console.error('[ScrollChips] Redraw after a scroll change failed:', error);
+            }
+        });
+    });
+}
+
+/**
  * Build the chip row for an action type.
  * @param {Object} options
  * @param {string} options.actionTypeHrid - The panel's action type

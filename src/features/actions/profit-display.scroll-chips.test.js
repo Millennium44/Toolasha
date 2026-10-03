@@ -161,6 +161,35 @@ describe('scroll chips in the gathering profit section', () => {
         expect(panel.querySelector('#mwi-foraging-profit')).toBeTruthy();
     });
 
+    test('switching simulation on brings the chips into a panel that is already open', async () => {
+        game.values.simulateScrollEffects = false;
+        const panel = makePanel();
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+        expect(panel.querySelector('.mwi-scroll-chips')).toBeNull();
+
+        // What the setting's change handler sends
+        game.values.simulateScrollEffects = true;
+        document.dispatchEvent(
+            new CustomEvent('toolasha:scroll-selection-changed', { detail: { key: null, setting: true } })
+        );
+
+        await vi.waitFor(() => expect(panel.querySelector('.mwi-scroll-chips')).toBeTruthy());
+        expect(panel.querySelectorAll('#mwi-foraging-profit')).toHaveLength(1);
+    });
+
+    test('switching simulation off takes the chips out of an open panel', async () => {
+        const panel = makePanel();
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+        expect(panel.querySelector('.mwi-scroll-chips')).toBeTruthy();
+
+        game.values.simulateScrollEffects = false;
+        document.dispatchEvent(
+            new CustomEvent('toolasha:scroll-selection-changed', { detail: { key: null, setting: true } })
+        );
+
+        await vi.waitFor(() => expect(panel.querySelector('.mwi-scroll-chips')).toBeNull());
+    });
+
     test('no chips when the profit section is hidden', async () => {
         game.values.actionPanel_showProfitDetail = false;
         const panel = makePanel();

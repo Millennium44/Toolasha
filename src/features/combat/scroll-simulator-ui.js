@@ -405,6 +405,9 @@ function initialize() {
             document.getElementById(BUTTON_ID)?.remove();
             popup.close();
         }
+        // The simulated set changes with the switch (it reads as empty while off), so whatever is
+        // drawn from it redraws: the action panels' figures and chip rows, and quick-input lines
+        document.dispatchEvent(new CustomEvent(SELECTION_CHANGED_EVENT, { detail: { key: null, setting: true } }));
     });
 }
 
