@@ -80,6 +80,35 @@ describe('presenceTick', () => {
         const result = presenceTick({ pMap: { 0: {} }, mMap: { 0: { cHP: 5 } } }, state);
         expect(result.damage).toBe(0);
     });
+
+    it('does not credit a replacement monster whose splat counter reset in the same slot', () => {
+        const state = newPresenceState();
+        presenceNewBattle(state, newBattle().payload);
+        presenceTick({ pMap: { 0: { cMP: 500 } }, mMap: { 0: { cHP: 9900, mHP: 10000, dmgCounter: 4 } } }, state);
+
+        const replacement = presenceTick(
+            { pMap: { 0: { cMP: 500 } }, mMap: { 0: { cHP: 9700, mHP: 10000, dmgCounter: 0 } } },
+            state
+        );
+        expect(replacement).toEqual({ damage: 0, credited: {}, mode: 'none' });
+
+        const next = presenceTick(
+            { pMap: { 0: { cMP: 500 } }, mMap: { 0: { cHP: 9600, mHP: 10000, dmgCounter: 1 } } },
+            state
+        );
+        expect(next.damage).toBe(100);
+    });
+
+    it('counts health loss after a missing counter before comparing the restored counter', () => {
+        const state = newPresenceState();
+        presenceNewBattle(state, newBattle().payload);
+        presenceTick({ pMap: { 0: { cMP: 500 } }, mMap: { 0: { cHP: 9900, dmgCounter: 4 } } }, state);
+        const missing = presenceTick({ pMap: { 0: { cMP: 500 } }, mMap: { 0: { cHP: 9800 } } }, state);
+        const restored = presenceTick({ pMap: { 0: { cMP: 500 } }, mMap: { 0: { cHP: 9700, dmgCounter: 2 } } }, state);
+
+        expect(missing.damage).toBe(100);
+        expect(restored).toEqual({ damage: 100, credited: { 0: 100 }, mode: 'solo' });
+    });
 });
 
 describe('compareRecording', () => {
@@ -193,6 +222,34 @@ describe('compareRecording', () => {
         expect(report.monsterHpLost).toBe(600);
         expect(report.players['0'].ours).toBe(600);
         expect(report.players['0'].presence).toBe(600);
+    });
+
+    it('does not count a same-maximum slot replacement in the referee or presence totals', () => {
+        const report = compareRecording([
+            newBattle(),
+            warmup(),
+            tick({ 0: { cMP: 500, atkCounter: 1 } }, { 0: { cHP: 9900, mHP: 10000, dmgCounter: 4 } }),
+            tick({ 0: { cMP: 500, atkCounter: 1 } }, { 0: { cHP: 9700, mHP: 10000, dmgCounter: 0 } }),
+            tick({ 0: { cMP: 500, atkCounter: 2 } }, { 0: { cHP: 9600, mHP: 10000, dmgCounter: 1 } }),
+        ]);
+
+        expect(report.monsterHpLost).toBe(200);
+        expect(report.players['0'].ours).toBe(200);
+        expect(report.players['0'].presence).toBe(200);
+    });
+
+    it('keeps the referee and presence baselines unknown across a counterless tick', () => {
+        const report = compareRecording([
+            newBattle(),
+            warmup(),
+            tick({ 0: { cMP: 500, atkCounter: 1 } }, { 0: { cHP: 9900, dmgCounter: 4 } }),
+            tick({ 0: { cMP: 500, atkCounter: 1 } }, { 0: { cHP: 9800 } }),
+            tick({ 0: { cMP: 500, atkCounter: 2 } }, { 0: { cHP: 9700, dmgCounter: 2 } }),
+        ]);
+
+        expect(report.monsterHpLost).toBe(300);
+        expect(report.players['0'].ours).toBe(300);
+        expect(report.players['0'].presence).toBe(300);
     });
 
     it('counts a miss without inventing damage on either side', () => {

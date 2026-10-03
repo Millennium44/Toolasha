@@ -11,6 +11,32 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Transmute, Coinify and Decompose history now share one Alchemy History tab with a switcher that remembers your last pick; every viewer feature works as before.
 - Actions and skills are recognized by their icon and the game's own data before their English name, so action-panel profit and speed, quick inputs, task icons, remaining XP and the XP tracker work with the game set to Chinese.
 
+### Combat damage after monster replacement
+
+- The damage tracker now recognizes a monster replacement when the damage counter resets, even if the new monster has the same maximum health. This prevents a sparse combat update from counting the replacement's already-missing health as new damage.
+- Replay and attribution comparisons now start a new health segment at that reset, and guild-trial debuff badges clear the replaced monster's effects. Their displayed totals and timers follow the same replacement rule as the damage tracker.
+- Combat updates that omit the damage counter still count actual health loss; an absent counter no longer looks like a monster replacement.
+- After a counterless combat update, the next cumulative counter now establishes a fresh baseline. Old hits are no longer replayed as new hits when counter data returns.
+- Replay attribution comparisons now also discard their damage-counter baseline when an update omits the counter, so a lower restored value does not hide real health loss.
+
+### Dungeon restarts and key estimates
+
+- Starting another action during a dungeon now ends that tracked attempt, so a stale queued wave cannot carry its time and progress into a later run. Dungeon profit estimates also charge entry keys only for regular completion chests; refinement-only and chest-free rewards no longer incur a phantom entry key.
+- A party clear waiting for its late key-count message now stays available even if another action starts, so the completed run is still recorded. If the dungeon reward table cannot be read, the ROI board shows unknown revenue and key cost instead of treating it as a free chestless run.
+- If the party key-count message never arrives, the finished tracker releases its run after ten seconds. A message inside that window still records the clear, and a later dungeon can start without inheriting the old run.
+- A delayed key-count message from an expired run no longer starts or completes the next dungeon. The tracker compares its server timestamp with the expired run's boundary before accepting it.
+
+### Enhancement runs and cost comparisons
+
+- Repeating the same enhancement setup as a new queue action now starts a separate tracker session, so the two runs keep their attempts and experience separate. The tracker also hides its cost versus expected comparison when a consumed material or protection has no known price, avoiding an incomplete cost estimate.
+- Session tracking now keeps the queue action identity through reload recovery and remembers any unpriced input even if later inputs gain a price. This keeps repeated runs distinct and prevents partial cost comparisons after prices change mid-run.
+- Reload recovery now checks a completed run's action ID and target before extending it. A new queue action below the prior target starts its own session, while a deliberate higher-target continuation can still extend the old one.
+- Mid-run tracker pickup now uses the action ID on its first recorded attempt. A new same-settings queue action starts a separate session, while a refresh of the current action keeps the session open.
+
+### Production drink cost per action
+
+- Production profit breakdowns now spread hourly drink costs over all completed actions, including efficiency repeats. Per-action drink and net-profit figures now agree with the hourly calculation when efficiency is active.
+
 ### Iron Bell: bells you can afford
 
 - Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.

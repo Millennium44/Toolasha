@@ -128,17 +128,19 @@ export function noteBossDebuffTick(debuffs, { pMap, mMap, attribution, now, abil
         const health = Number(unit?.cHP);
         const max = Number(unit?.mHP);
         const heldMax = attribution?.monstersMaxHP?.[slot];
+        const damageCount = Number(unit?.dmgCounter);
+        const before = attribution?.dmgCounter?.[slot];
         // A corpse, or a different monster in the slot, carries nothing over
         if (
             (Number.isFinite(health) && health <= 0) ||
-            (Number.isFinite(max) && heldMax !== undefined && max !== heldMax)
+            (Number.isFinite(max) && heldMax !== undefined && max !== heldMax) ||
+            (Number.isFinite(damageCount) && before !== undefined && damageCount < before)
         ) {
             delete monsters[slot];
             continue;
         }
         alive.add(slot);
-        const before = attribution?.dmgCounter?.[slot];
-        if (before !== undefined && Number(unit?.dmgCounter) > before) hit.push(slot);
+        if (before !== undefined && damageCount > before) hit.push(slot);
     }
 
     const landed = [];

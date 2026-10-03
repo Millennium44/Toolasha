@@ -535,6 +535,22 @@ describe('the endpoint reconciliation', () => {
         expect(fight.unattributedDealt).toBe(0);
     });
 
+    test('a same-maximum replacement resets the endpoint without inventing damage', () => {
+        const replacement = {
+            at: 2_000,
+            type: 'battle_updated',
+            payload: {
+                pMap: { 0: { atkCounter: 1, isAutoAtk: true } },
+                mMap: { 0: { cHP: 70, mHP: 100, dmgCounter: 0, critCounter: 0 } },
+            },
+        };
+        const [fight] = replayFights([battle(), hit(1_000, 1, 80), replacement, hit(3_000, 2, 60), close(4_000)]);
+
+        expect(fight.players['0'].damage).toBe(30);
+        expect(fight.endpointDealt).toBe(30);
+        expect(fight.unattributedDealt).toBe(0);
+    });
+
     test('the real recording reconciles: residual present and non-negative', () => {
         const fights = replayFights(recording.ticks);
         for (const fight of fights) {

@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { costVsExpected, valueVsCost, MARKET_SELL_TAX } from './enhancement-profit.js';
+import { addMaterialCost, addProtectionCost, createSession } from './enhancement-session.js';
 
 /** A session with 20 attempts costing 100 each in materials, no protection. */
 function session(overrides = {}) {
@@ -61,6 +62,44 @@ describe('costVsExpected', () => {
         );
         // 100/attempt × 14 expected = 1400 vs actual 1000 → +400 below.
         expect(c.diff).toBe(400);
+    });
+
+    test('does not quote a partial cost when a consumed material has no price', () => {
+        const run = session({
+            materialCosts: {
+                '/items/prime_catalyst': { count: 20, totalCost: 2000 },
+                '/items/unpriced': { count: 20, totalCost: 0 },
+            },
+        });
+        expect(costVsExpected(run)).toBeNull();
+    });
+
+    test('does not quote a partial cost when consumed protection has no price', () => {
+        const run = session({
+            protectionCount: 2,
+            protectionCost: 0,
+            predictions: { expectedAttempts: 14, expectedProtections: 2 },
+        });
+        expect(costVsExpected(run)).toBeNull();
+    });
+
+    test('remembers unpriced material units after later attempts have a price', () => {
+        const run = createSession('/items/test_sword', 'Test Sword', 0, 2, 0);
+        addMaterialCost(run, '/items/prime_catalyst', 1, 0);
+        addMaterialCost(run, '/items/prime_catalyst', 1, 100);
+        run.totalAttempts = 2;
+        run.predictions = { expectedAttempts: 2, expectedProtections: 0 };
+        expect(costVsExpected(run)).toBeNull();
+    });
+
+    test('remembers an unpriced protection after later protections have a price', () => {
+        const run = createSession('/items/test_sword', 'Test Sword', 0, 2, 2);
+        addMaterialCost(run, '/items/prime_catalyst', 2, 100);
+        addProtectionCost(run, '/items/mirror_of_protection', 0);
+        addProtectionCost(run, '/items/mirror_of_protection', 100);
+        run.totalAttempts = 2;
+        run.predictions = { expectedAttempts: 2, expectedProtections: 2 };
+        expect(costVsExpected(run)).toBeNull();
     });
 });
 

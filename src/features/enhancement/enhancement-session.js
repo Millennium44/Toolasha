@@ -54,6 +54,7 @@ export function createSession(itemHrid, itemName, startLevel, targetLevel, prote
 
         // Cost tracking
         materialCosts: {}, // Format: { itemHrid: { count: 10, totalCost: 50000 } }
+        hasUnpricedInput: false,
         coinCost: 0,
         coinCount: 0, // Track number of times coins were spent
         protectionCost: 0,
@@ -215,6 +216,7 @@ export function recordFailure(session, previousLevel, newLevel) {
  * @param {number} unitCost - Cost per item (from market)
  */
 export function addMaterialCost(session, itemHrid, count, unitCost) {
+    if (count > 0 && !(unitCost > 0)) session.hasUnpricedInput = true;
     if (!session.materialCosts[itemHrid]) {
         session.materialCosts[itemHrid] = {
             count: 0,
@@ -247,6 +249,7 @@ export function addCoinCost(session, amount) {
  * @param {number} cost - Protection item cost
  */
 export function addProtectionCost(session, protectionItemHrid, cost) {
+    if (!(cost > 0)) session.hasUnpricedInput = true;
     session.protectionCost += cost;
     session.protectionCount += 1;
 
@@ -379,14 +382,28 @@ export function sessionMatches(session, itemHrid, currentLevel, targetLevel, pro
  * @param {Object} session - Session object
  * @param {string} itemHrid - Item HRID
  * @param {number} currentLevel - Current enhancement level
+ * @param {Object|null} [action] - Queue action now running, when known
  * @returns {boolean} True if session can be extended
  */
-export function canExtendSession(session, itemHrid, currentLevel) {
+export function canExtendSession(session, itemHrid, currentLevel, action = null) {
     // Must be same item
     if (session.itemHrid !== itemHrid) return false;
 
     // Must be completed
     if (session.state !== SessionState.COMPLETED) return false;
+
+    if (action) {
+        const lastActionId = session.lastAttempt?.actionId;
+        const sameAction = lastActionId != null && action.id != null && lastActionId === action.id;
+        if (!sameAction) {
+            // A different queue action can extend a completed climb only when
+            // the old target was reached and the new target is higher. A run
+            // canceled below target is its own attempt, even at the same level.
+            if (!(session.currentLevel >= session.targetLevel && action.enhancingMaxLevel > session.targetLevel)) {
+                return false;
+            }
+        }
+    }
 
     // Current level should match where session ended (or close)
     const levelDiff = Math.abs(session.currentLevel - currentLevel);
@@ -479,6 +496,7 @@ export function mergeSessions(sessions) {
         predictions: null,
         attemptsPerLevel: {},
         materialCosts: {},
+        hasUnpricedInput: false,
         expectedAttempts: 0,
         expectedProtections: 0,
     };
@@ -504,6 +522,7 @@ export function mergeSessions(sessions) {
         agg.coinCount += session.coinCount || 0;
         agg.protectionCost += session.protectionCost || 0;
         agg.totalCost += session.totalCost || 0;
+        agg.hasUnpricedInput ||= session.hasUnpricedInput === true;
         agg.durationSeconds += getSessionDuration(session);
         if (!agg.protectionItemHrid && session.protectionItemHrid) {
             agg.protectionItemHrid = session.protectionItemHrid;

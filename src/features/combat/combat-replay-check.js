@@ -874,6 +874,7 @@ export function replayFights(ticks) {
 
     let current = null;
     let monsters = {};
+    let closedSegments = 0;
     // The running experience and loot totals as they stood at the battle that
     // opened the fight in progress. A fight's gains are the difference between
     // these and the same totals on the battle that closes it.
@@ -901,7 +902,7 @@ export function replayFights(ticks) {
                 const credited = Object.values(current.players).reduce((total, p) => total + (p.damage || 0), 0);
                 const startIndices = Object.keys(current.startHP || {});
                 if (startIndices.length) {
-                    let endpointDealt = current.healedUp;
+                    let endpointDealt = closedSegments + current.healedUp;
                     for (const index of startIndices) {
                         const last = attribution.monstersHP[index];
                         endpointDealt +=
@@ -916,6 +917,7 @@ export function replayFights(ticks) {
                 fights.push(current);
             }
             openedWith = totals;
+            closedSegments = 0;
 
             // Monster indices are reused every battle and mean a different
             // monster each time, so the counters they are diffed against are
@@ -974,6 +976,19 @@ export function replayFights(ticks) {
             if (!Number.isFinite(health)) continue;
             const before = attribution.monstersHP[index];
             if (before === undefined) {
+                current.startHP[index] = health;
+                continue;
+            }
+            const damageCount = Number(monster?.dmgCounter);
+            const beforeDamage = attribution.dmgCounter[index];
+            const reset = Number.isFinite(damageCount) && beforeDamage !== undefined && damageCount < beforeDamage;
+            const maxHealth = Number(monster?.maxHitpoints ?? monster?.mHP);
+            const beforeMax = attribution.monstersMaxHP[index];
+            const changedMax = Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax;
+            if (reset || changedMax) {
+                // Bank the outgoing monster's endpoint and start a new segment.
+                // The replacement's first HP is a baseline, even when its max is unchanged.
+                closedSegments += current.startHP[index] - before;
                 current.startHP[index] = health;
             } else if (health > before) {
                 current.healedUp += health - before;

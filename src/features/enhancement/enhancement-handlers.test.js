@@ -5,6 +5,7 @@
  */
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { canExtendSession } from './enhancement-session.js';
 
 const state = vi.hoisted(() => ({
     handlers: {},
@@ -252,6 +253,51 @@ describe('the run ending in the queue', () => {
         expect(state.calls).toContainEqual(['finalize']);
         expect(state.calls).toContainEqual(['pendingStart']);
     });
+
+    test('a new queue action with the same item and settings starts a separate session', async () => {
+        state.actions = [enhanceRow({ id: 'a1', isDone: false, ordinal: 0 })];
+        await state.handlers.actions_updated({ endCharacterActions: [enhanceRow({ id: 'a1', isDone: false })] });
+        state.current = { id: 's1', itemHrid: '/items/enchanted_cloak_refined', targetLevel: 15, protectFrom: 2 };
+        state.calls = [];
+
+        state.actions = [enhanceRow({ id: 'a2', isDone: false, ordinal: 1 })];
+        await state.handlers.actions_updated({
+            endCharacterActions: [enhanceRow({ id: 'a1', isDone: true }), enhanceRow({ id: 'a2', isDone: false })],
+        });
+
+        expect(state.calls).toContainEqual(['finalize']);
+        expect(state.calls).toContainEqual(['pendingStart']);
+    });
+
+    test('a mid-run pickup recognizes a same-settings a2 replacing its first observed a1', async () => {
+        const first = { ...attempt(5, 78).endCharacterAction, id: 'a1', isDone: false, ordinal: 0 };
+        await state.handlers.action_completed({ endCharacterAction: first });
+        expect(state.current.lastAttempt.actionId).toBe('a1');
+        state.calls = [];
+
+        const second = { ...first, id: 'a2', currentCount: 0, ordinal: 1 };
+        state.actions = [second];
+        await state.handlers.actions_updated({ endCharacterActions: [{ ...first, isDone: true }, second] });
+
+        expect(state.calls).toContainEqual(['finalize']);
+        expect(state.calls).toContainEqual(['pendingStart']);
+        await state.handlers.action_completed({
+            endCharacterAction: { ...attempt(6, 1).endCharacterAction, id: 'a2', ordinal: 1 },
+        });
+        expect(state.calls.map(([kind]) => kind)).toEqual(['pendingStart', 'finalize', 'start', 'success']);
+    });
+
+    test('a queue refresh for the first observed action does not force a new session', async () => {
+        const first = { ...attempt(5, 78).endCharacterAction, id: 'a1', isDone: false, ordinal: 0 };
+        await state.handlers.action_completed({ endCharacterAction: first });
+        state.calls = [];
+
+        state.actions = [first];
+        await state.handlers.actions_updated({ endCharacterActions: [first] });
+
+        expect(state.calls).not.toContainEqual(['pendingStart']);
+        expect(state.calls).not.toContainEqual(['finalize']);
+    });
 });
 
 describe('two attempts landing before the first has finished writing', () => {
@@ -351,7 +397,11 @@ describe('TLA-043: bootstrap from an already-cached current action', () => {
 
         setupEnhancementHandlers();
 
-        expect(trackerMock.findExtendableSession).toHaveBeenCalledWith('/items/enchanted_cloak_refined', 5);
+        expect(trackerMock.findExtendableSession).toHaveBeenCalledWith(
+            '/items/enchanted_cloak_refined',
+            5,
+            state.actions[1]
+        );
         expect(state.calls).not.toContainEqual(['pendingStart']);
         trackerMock.findExtendableSession = () => null;
     });
@@ -415,6 +465,63 @@ describe('TLA-043: bootstrap from an already-cached current action', () => {
         expect(state.calls).toContainEqual(['extend', 'old_session', 15]);
         expect(state.calls.map((call) => call[0])).not.toContain('start');
         expect(state.current).toBeTruthy();
+        trackerMock.findExtendableSession = () => null;
+    });
+
+    test('a cached extendable run survives a same-action queue update before its next completion', async () => {
+        trackerMock.findExtendableSession = vi.fn(() => 'old_session');
+        const row = cachedEnhanceAction({ id: 'a1' });
+        state.actions = [row];
+        setupEnhancementHandlers();
+
+        await state.handlers.actions_updated({ endCharacterActions: [row] });
+        await state.handlers.action_completed(attempt(6, 2071));
+
+        expect(state.calls).toContainEqual(['extend', 'old_session', 15]);
+        expect(state.calls.map(([kind]) => kind)).not.toContain('start');
+        trackerMock.findExtendableSession = () => null;
+    });
+
+    test('bootstrap does not extend a canceled a1 into the already-running a2', async () => {
+        const completed = {
+            state: 'completed',
+            itemHrid: '/items/enchanted_cloak_refined',
+            currentLevel: 5,
+            targetLevel: 15,
+            lastAttempt: { actionId: 'a1', level: 5, currentCount: 10 },
+        };
+        trackerMock.findExtendableSession = vi.fn((item, level, action) =>
+            canExtendSession(completed, item, level, action) ? 'old_session' : null
+        );
+        state.actions = [cachedEnhanceAction({ id: 'a2', currentCount: 20 })];
+        setupEnhancementHandlers();
+        await state.handlers.action_completed({
+            endCharacterAction: { ...attempt(6, 21).endCharacterAction, id: 'a2' },
+        });
+
+        expect(state.calls.map(([kind]) => kind)).not.toContain('extend');
+        expect(state.calls).toContainEqual(['start', '/items/enchanted_cloak_refined', 5, 15, 2]);
+        trackerMock.findExtendableSession = () => null;
+    });
+
+    test('a completion without bootstrap does not extend a canceled a1 into a2', async () => {
+        const completed = {
+            state: 'completed',
+            itemHrid: '/items/enchanted_cloak_refined',
+            currentLevel: 5,
+            targetLevel: 15,
+            lastAttempt: { actionId: 'a1', level: 5, currentCount: 10 },
+        };
+        trackerMock.findExtendableSession = vi.fn((item, level, action) =>
+            canExtendSession(completed, item, level, action) ? 'old_session' : null
+        );
+
+        await state.handlers.action_completed({
+            endCharacterAction: { ...attempt(5, 21).endCharacterAction, id: 'a2' },
+        });
+
+        expect(state.calls.map(([kind]) => kind)).not.toContain('extend');
+        expect(state.calls.map(([kind]) => kind)).toContain('start');
         trackerMock.findExtendableSession = () => null;
     });
 

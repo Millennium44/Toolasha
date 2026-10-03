@@ -872,25 +872,34 @@ export function attributeTick(tick, state, options) {
         const beforeCrits = state.critCounter[index];
         const beforeAttacks = monsterAttacks[index];
 
-        const damageCount = Number(monster?.dmgCounter) || 0;
-        const critCount = Number(monster?.critCounter) || 0;
+        const hasDamageCounter = monster?.dmgCounter != null && Number.isFinite(Number(monster.dmgCounter));
+        const damageCount = hasDamageCounter ? Number(monster.dmgCounter) : 0;
+        const hasCritCounter = monster?.critCounter != null && Number.isFinite(Number(monster.critCounter));
+        const critCount = hasCritCounter ? Number(monster.critCounter) : 0;
         const attacks = Number(monster?.atkCounter);
 
         state.monstersHP[index] = health;
-        state.dmgCounter[index] = damageCount;
-        state.critCounter[index] = critCount;
+        // An omitted counter cannot baseline the next cumulative reading. The HP loss still counts
+        // below, but the next counter-bearing tick must seed afresh rather than replay old splats.
+        state.dmgCounter[index] = hasDamageCounter ? damageCount : undefined;
+        state.critCounter[index] = hasCritCounter ? critCount : undefined;
         if (Number.isFinite(maxHealth)) state.monstersMaxHP[index] = maxHealth;
         if (Number.isFinite(attacks)) monsterAttacks[index] = attacks;
 
         // First sighting of a monster is not a hit for its entire health bar
         if (beforeHealth === undefined) continue;
 
-        // A different maximum in the same slot is a different monster in it.
+        // A different maximum or a reset splat counter marks a different monster in the slot.
         // The trial stream only restates its roster once or twice an hour, so
         // a respawn between those has nothing else to announce it — and the
         // slot's previous corpse read against the newcomer's full bar is
-        // either a phantom heal or, with residual health, phantom damage.
-        if (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) continue;
+        // either a phantom heal or, with residual health, phantom damage. A
+        // replacement can also have the same maximum as its predecessor.
+        if (
+            (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) ||
+            (hasDamageCounter && beforeDamage !== undefined && damageCount < beforeDamage)
+        )
+            continue;
 
         // A death is its own event, separate from the hit that caused it.
         // Merging the two would lose every kill landed by a bleed, and a kill
