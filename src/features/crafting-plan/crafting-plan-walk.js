@@ -40,6 +40,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { normalizePlannedSurplus } from './crafting-plan-surplus.js';
 
 const STRIP_ID = 'mwi-crafting-walk-strip';
 const CURRENT_CLASS = 'mwi-crafting-walk-current';
@@ -83,15 +84,16 @@ const IDLE_TIMEOUT_MS = 15 * 60_000;
  *
  * @param {Object} node - A `CraftingPlanNode`
  * @returns {{key: string, kind: 'craft'|'buy', itemHrid: string, itemName: string,
- *   actionHrid: string|null, count: number, actions: number}|null} The step, or null
+ *   actionHrid: string|null, count: number, actions: number, outputCount: number}|null} The step, or null
  */
 export function walkStepFor(node) {
     if (!node) return null;
     if (node.itemHrid === '/items/coin') return null;
-    const count = Math.ceil(node.quantity);
+    const count = Math.ceil(node.stepCount ?? node.quantity);
     if (!(count > 0)) return null;
     const isCraft = node.strategy === 'craft';
     if (isCraft && !node.actionHrid) return null;
+    if (isCraft && !(node.actionsNeeded > 0)) return null;
 
     return {
         key: isCraft ? `craft:${node.actionHrid}` : `buy:${node.itemHrid}`,
@@ -101,29 +103,44 @@ export function walkStepFor(node) {
         actionHrid: isCraft ? node.actionHrid : null,
         count,
         actions: isCraft ? node.actionsNeeded || 0 : 0,
+        outputCount: isCraft ? node.outputCount || 1 : 1,
     };
 }
 
 /**
  * Flatten a computed plan into the steps a walk performs, leaves first.
  *
- * Post-order: a node's children are emitted before the node itself, so nothing
- * is ever offered before the materials it consumes. An item reached down two
- * branches is emitted once, at its first (deepest) position, with the counts
- * summed — its own subtree is identical either way and was already emitted
- * before that first position, so merging forward cannot put a step ahead of
- * something it needs.
+ * Nodes are collected in post-order and repeated action rows are merged. A
+ * stable dependency ordering then accounts for material and planned-surplus
+ * prerequisites found on later occurrences of a merged action.
  *
  * Coins are not a step (they are not bought on the marketplace), and neither is
  * a leg the plan sized at nothing.
  *
  * @param {Object} plan - Root `CraftingPlanNode` from `computeBestCraftingPlan`
+ * @param {Object} [options]
+ * @param {boolean} [options.surplusNormalized=false] - Whether planned output has already been reconciled
+ * @param {Array<Object>} [options.inventory] - Effective unenhanced bag inventory available to the walk
  * @returns {Array<{key: string, kind: 'craft'|'buy', itemHrid: string, itemName: string,
- *   actionHrid: string|null, count: number, actions: number}>} Steps in dependency order
+ *   actionHrid: string|null, count: number, actions: number, outputCount: number}>} Steps in dependency order
  */
-export function buildWalkSteps(plan) {
+export function buildWalkSteps(plan, { surplusNormalized = false, inventory = [] } = {}) {
     const steps = [];
     const byKey = new Map();
+    const executionPlan = surplusNormalized ? plan : normalizePlannedSurplus(plan, { inventory });
+    const craftDemandByKey = new Map();
+
+    (function collectCraftDemand(node) {
+        if (!node) return;
+        if (node.strategy === 'craft' && node.actionHrid) {
+            const count = Math.ceil(node.stepCount ?? node.quantity);
+            if (count > 0) {
+                const key = `craft:${node.actionHrid}`;
+                craftDemandByKey.set(key, (craftDemandByKey.get(key) || 0) + count);
+            }
+        }
+        for (const child of node.children || []) collectCraftDemand(child);
+    })(executionPlan);
 
     const emit = (node) => {
         const step = walkStepFor(node);
@@ -132,6 +149,8 @@ export function buildWalkSteps(plan) {
         const existing = byKey.get(step.key);
         if (existing) {
             existing.count += step.count;
+            // Each node was normalized in traversal order, so its action count
+            // already reflects surplus consumed by prior branches.
             existing.actions += step.actions;
             return;
         }
@@ -144,9 +163,48 @@ export function buildWalkSteps(plan) {
         if (!node) return;
         for (const child of node.children || []) walk(child);
         emit(node);
-    })(plan);
+    })(executionPlan);
 
-    return steps;
+    const walkIndex = new Map(steps.map((step, index) => [step.key, index]));
+    const before = new Map(steps.map((step) => [step.key, new Set()]));
+    const after = new Map(steps.map((step) => [step.key, new Set()]));
+    const addDependency = (producer, consumer) => {
+        if (!producer || !consumer || producer === consumer || !before.has(producer) || !before.has(consumer)) return;
+        before.get(consumer).add(producer);
+        after.get(producer).add(consumer);
+    };
+
+    (function collectDependencies(node, consumerKey) {
+        if (!node) return;
+        const key = walkStepFor(node)?.key || null;
+        for (const dependency of node.plannedDependencies || []) addDependency(dependency, consumerKey);
+        for (const child of node.children || []) collectDependencies(child, key || consumerKey);
+        addDependency(key, consumerKey);
+    })(executionPlan, null);
+
+    const remainingBefore = new Map([...before].map(([key, dependencies]) => [key, dependencies.size]));
+    const ready = [...before.keys()].filter((key) => remainingBefore.get(key) === 0);
+    const ordered = [];
+    while (ready.length > 0) {
+        ready.sort((left, right) => walkIndex.get(left) - walkIndex.get(right));
+        const key = ready.shift();
+        ordered.push(byKey.get(key));
+        for (const consumer of after.get(key)) {
+            const remaining = remainingBefore.get(consumer) - 1;
+            remainingBefore.set(consumer, remaining);
+            if (remaining === 0) ready.push(consumer);
+        }
+    }
+
+    // Surplus reconciliation can reduce a later repeated node to zero actions.
+    // Its demand still belongs in the step label, even though its actions have
+    // already been covered by an earlier craft (or by owned inventory).
+    const orderedSteps = ordered.length === steps.length ? ordered : steps;
+    for (const step of orderedSteps) {
+        if (step.kind === 'craft') step.count = craftDemandByKey.get(step.key) || step.count;
+    }
+
+    return orderedSteps;
 }
 
 /**
