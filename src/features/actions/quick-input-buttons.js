@@ -670,7 +670,7 @@ class QuickInputButtons {
                     const simSprite = dataManager.isBuffBeingSimulated(actionDetails.type, '/buff_types/efficiency')
                         ? scrollSpriteHtml('/buff_types/efficiency')
                         : '';
-                    speedLines.push(`  - ${simSprite}Seal: +${efficiencyBreakdown.personalEfficiency.toFixed(2)}%`);
+                    speedLines.push(`  - ${simSprite}Scroll: +${efficiencyBreakdown.personalEfficiency.toFixed(2)}%`);
                 }
                 if (efficiencyBreakdown.guildEfficiency > 0) {
                     speedLines.push(`  - Guild Shrine: +${efficiencyBreakdown.guildEfficiency.toFixed(2)}%`);

@@ -2936,7 +2936,7 @@ class TaskProfitDisplay {
             );
         }
         if (eb.personalEfficiency > 0) {
-            lines.push(`<div style="margin-left: 10px;">- Seal: +${eb.personalEfficiency.toFixed(2)}%</div>`);
+            lines.push(`<div style="margin-left: 10px;">- Scroll: +${eb.personalEfficiency.toFixed(2)}%</div>`);
         }
 
         // Total time
