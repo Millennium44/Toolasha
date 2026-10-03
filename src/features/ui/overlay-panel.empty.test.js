@@ -318,6 +318,7 @@ describe('a tile with nothing to show', () => {
 
         const quiet = tiles().get('experiencePerHour');
         expect(quiet.style.display).not.toBe('none');
+        expect(quiet.style.minHeight).toBe('0px');
         expect(quiet._content.textContent).toBe('Experience/hr');
         // It keeps its place in the order, so nothing beside it moves
         const drawn = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
@@ -345,6 +346,7 @@ describe('a tile with nothing to show', () => {
         const dps = row('dps', { name: 'DPS', empty: 'No damage tracked yet' });
         await open([dps, row('coins', { text: '1,024' })]);
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(tiles().get('dps').style.minHeight).toBe('0px');
 
         // The fight starts
         dps.render = (el) => (el.textContent = '412 dps');
@@ -352,6 +354,7 @@ describe('a tile with nothing to show', () => {
 
         expect(shown()).toEqual(['coins', 'dps']);
         expect(tiles().get('dps')._content.textContent).toContain('412 dps');
+        expect(tiles().get('dps').style.minHeight).toBe('40px');
         expect(text()).toContain('412 dps');
     });
 
@@ -360,6 +363,7 @@ describe('a tile with nothing to show', () => {
 
         const tile = tiles().get('netWorth');
         expect(tile.style.display).not.toBe('none');
+        expect(tile.style.minHeight).toBe('0px');
         expect(tile._content.textContent).toBe('Net Worth');
         expect(text()).not.toContain('No net worth yet');
     });
@@ -500,6 +504,7 @@ describe('the empty-tiles setting', () => {
 
         expect(shown()).toEqual(['dps', 'netWorth']);
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(tiles().get('dps').style.minHeight).toBe('0px');
     });
 
     test('full is the old behaviour: the row says its own line, at full size', async () => {
@@ -507,6 +512,7 @@ describe('the empty-tiles setting', () => {
 
         expect(shown()).toEqual(['dps', 'netWorth']);
         expect(tiles().get('dps')._content.textContent).toBe('No damage tracked yet');
+        expect(tiles().get('dps').style.minHeight).toBe('40px');
     });
 
     test('is offered in the gear popover, and changing it redraws', async () => {

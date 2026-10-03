@@ -2898,8 +2898,6 @@ class OverlayPanel {
         let drawn = 0;
         for (const row of full) {
             const tile = this._tileFor(row);
-            this._styleTile(tile, row);
-
             const blank = this._drawRow(tile, row);
             // It has been seen working, which is all a switched-on tile was
             // ever owed — see `_emptyPolicy`
@@ -2908,6 +2906,12 @@ class OverlayPanel {
             const policy = blank ? this._emptyPolicy(row) : null;
             if (policy === EMPTY_POLICY.COMPACT) this._drawCompact(tile, row);
             else if (policy === EMPTY_POLICY.FULL) this._drawPlaceholder(tile, row);
+
+            // A compact name is the row's small waiting state, not a full-size
+            // card with one line in it. Let its content set the height until
+            // data arrives; `_styleTile` restores the row's declared floor on
+            // the same draw that makes it full again.
+            this._styleTile(tile, row, policy === EMPTY_POLICY.COMPACT);
 
             // A hidden tile leaves the flow and everything after it closes up.
             // Kept rather than destroyed: it is one refresh away from having
@@ -2964,8 +2968,9 @@ class OverlayPanel {
      * Put a tile where the layout says, at the size and text scale it says.
      * @param {HTMLElement} tile - The tile
      * @param {Object} row - Its laid-out row
+     * @param {boolean} compact - Whether only the tile's waiting title is drawn
      */
-    _styleTile(tile, row) {
+    _styleTile(tile, row, compact = false) {
         if (!tile) return;
         // Written property by property, and only where the value differs. Every
         // assignment to `style` invalidates the element whether or not it changed
@@ -2980,7 +2985,7 @@ class OverlayPanel {
             // declared, which keeps a tile whose content changes every second
             // from resizing the grid under the reader.
             gridColumn: `span ${row.span}`,
-            minHeight: `${row.minHeight}px`,
+            minHeight: compact ? '0px' : `${row.minHeight}px`,
             fontSize: `${row.zoom}%`,
             cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
             // While unlocked a finger drag must not become a scroll; locked

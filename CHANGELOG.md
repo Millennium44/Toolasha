@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Compact overlay tiles reclaim empty space
+
+- Empty overlay tiles now shrink to their title instead of reserving the full card height. Tiles regain their usual size as soon as there is data to show.
+
 ### Newly archived chat names open profiles immediately
 
 - Usernames in extended chat history now open the player profile as soon as a message leaves the game's history. You no longer need to switch chat channels and back first.
