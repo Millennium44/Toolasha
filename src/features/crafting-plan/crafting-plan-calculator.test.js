@@ -1040,6 +1040,58 @@ describe('thin-market re-route', () => {
         expect(p.children).toEqual([]);
     });
 
+    test('captured Super Tea tasks can choose craft, buy, then craft for Crushed Amber', () => {
+        // Captured game recipe metadata: these three actions each consume one
+        // Crushed Amber per action, and Crushed Amber crafts one Amber into 15.
+        // Different task quantities can straddle the same six-unit best ask.
+        const recipes = [
+            ['/items/super_cooking_tea', '/items/cooking_tea', '/items/peach', '/items/cooking_essence'],
+            ['/items/super_brewing_tea', '/items/brewing_tea', '/items/dragon_fruit', '/items/brewing_essence'],
+            ['/items/super_alchemy_tea', '/items/alchemy_tea', '/items/star_fruit', '/items/alchemy_essence'],
+        ];
+        const redTeaLeaf = '/items/red_tea_leaf';
+        const crushedAmber = '/items/crushed_amber';
+        const amber = '/items/amber';
+        for (const itemHrid of [redTeaLeaf, crushedAmber, amber, ...recipes.flat()]) {
+            game.itemDetails[itemHrid] = { name: itemHrid.split('/').pop(), isTradable: true };
+            market.prices[itemHrid] = 10;
+        }
+        market.prices[crushedAmber] = 5;
+        market.prices[amber] = 200;
+        for (const [tea, baseTea, fruit, essence] of recipes) {
+            game.initClientData.actionDetailMap[`/actions/brewing/${tea.split('/').pop()}`] = {
+                type: '/action_types/brewing',
+                category: '/action_categories/brewing/tea',
+                inputItems: [
+                    { itemHrid: redTeaLeaf, count: 1 },
+                    { itemHrid: fruit, count: 1 },
+                    { itemHrid: essence, count: 2 },
+                    { itemHrid: crushedAmber, count: 1 },
+                ],
+                upgradeItemHrid: baseTea,
+                outputItems: [{ itemHrid: tea, count: 1 }],
+            };
+        }
+        game.initClientData.actionDetailMap['/actions/crafting/crushed_amber'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/special',
+            inputItems: [{ itemHrid: amber, count: 1 }],
+            outputItems: [{ itemHrid: crushedAmber, count: 15 }],
+        };
+
+        const forTask = (teaHrid, quantity) => plan(teaHrid, quantity, { [crushedAmber]: 6 }, { forceRootCraft: true });
+        const legs = [
+            forTask('/items/super_cooking_tea', 7).children.find((child) => child.itemHrid === crushedAmber),
+            forTask('/items/super_brewing_tea', 6).children.find((child) => child.itemHrid === crushedAmber),
+            forTask('/items/super_alchemy_tea', 7).children.find((child) => child.itemHrid === crushedAmber),
+        ];
+
+        expect(legs.map((leg) => leg.strategy)).toEqual(['craft', 'buy', 'craft']);
+        expect(legs.map((leg) => leg.quantity)).toEqual([7, 6, 7]);
+        expect(legs[0]).toMatchObject({ outputCount: 15, actionsNeeded: 1, thinMarketRerouted: true });
+        expect(legs[2]).toMatchObject({ outputCount: 15, actionsNeeded: 1, thinMarketRerouted: true });
+    });
+
     test('the same intermediate re-routes on a thin leg and stays buy on a fat one', () => {
         // A diamond: SET needs one BOOTS (6 leather) and one GLOVES (2 leather).
         // With 4 resting at the ask, the 6-need leg is thin and the 2-need leg is

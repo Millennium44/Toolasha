@@ -227,6 +227,36 @@ describe('mergeWalkSteps', () => {
         ]);
     });
 
+    test('task order preserves both Crushed Amber crafts after the middle buy uses surplus', () => {
+        // These are three actual captured brewing recipes: Super Cooking Tea,
+        // Super Brewing Tea, and Super Alchemy Tea each use one Crushed Amber
+        // per action. At a 6-unit best ask, task counts 7, 6, and 7 produce
+        // craft, buy, craft child plans respectively. The Crushed Amber action
+        // yields 15 from one Amber in the captured game data.
+        const taskPlans = [
+            craft('/items/super_cooking_tea', 7, '/actions/brewing/super_cooking_tea', 7, [
+                craft('/items/crushed_amber', 7, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+            craft('/items/super_brewing_tea', 6, '/actions/brewing/super_brewing_tea', 6, [
+                buy('/items/crushed_amber', 6),
+            ]),
+            craft('/items/super_alchemy_tea', 7, '/actions/brewing/super_alchemy_tea', 7, [
+                craft('/items/crushed_amber', 7, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+        ];
+
+        const merged = mergeWalkSteps(taskPlans);
+
+        expect(merged).not.toBeNull();
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
+            count: 14,
+            actions: 2,
+            outputCount: 15,
+        });
+        expect(stepFor(merged.steps, 'buy:/items/crushed_amber')).toBeUndefined();
+        expect(mergedMissingLines(taskPlans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 2 }]);
+    });
+
     test('two tasks sharing an intermediate merge into one list with summed counts', () => {
         const merged = mergeWalkSteps([hatPlan(), bootsPlan()]);
 

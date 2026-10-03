@@ -141,7 +141,7 @@ export function mergeWalkSteps(plans) {
         const existing = merged.get(step.key);
         if (existing) {
             existing.count += step.count;
-            existing.actions = step.kind === 'craft' ? Math.ceil(existing.count / existing.outputCount) : 0;
+            existing.actions += step.actions;
             continue;
         }
         merged.set(step.key, { ...step });

@@ -280,7 +280,10 @@ function collectCraftSteps(node, craftSteps, byKey = new Map()) {
         const existing = byKey.get(key);
         if (existing) {
             existing.quantity += Math.ceil(node.quantity);
-            existing.actionsNeeded = Math.ceil(existing.quantity / existing.outputCount);
+            // The normalized nodes already account for any earlier surplus
+            // consumed by intervening buy or craft legs. Their action counts
+            // cannot be reconstructed from the combined requested quantity.
+            existing.actionsNeeded += node.actionsNeeded || 0;
         } else {
             const step = {
                 itemName: node.itemName,

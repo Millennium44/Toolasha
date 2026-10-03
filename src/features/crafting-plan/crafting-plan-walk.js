@@ -137,7 +137,9 @@ export function buildWalkSteps(plan, { surplusNormalized = false } = {}) {
         const existing = byKey.get(step.key);
         if (existing) {
             existing.count += step.count;
-            existing.actions = step.kind === 'craft' ? Math.ceil(existing.count / existing.outputCount) : 0;
+            // Each node was normalized in traversal order, so its action count
+            // already reflects surplus consumed by prior branches.
+            existing.actions += step.actions;
             return;
         }
 

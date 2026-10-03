@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Crafting walks retain every required action
+
+- Merged crafting walks now retain a later crafting action when an intervening recipe has used the earlier surplus. Guided steps, time and XP totals, and reserved ingredients keep the actions required by the recipe sequence.
+
 ### Crafting purchases follow the recipe sequence
 
 - A later crafting step no longer reduces an earlier material purchase or reservation. Buy Missing Materials now agrees with the shopping list and guided walk when a plan both buys and crafts the same intermediate.

@@ -185,6 +185,30 @@ describe('buildWalkSteps', () => {
         expect(amberStep.count).toBe(3);
     });
 
+    test('a buy leg consumes earlier output before a later craft needs another action', () => {
+        // This is the captured 15-output Crushed Amber action. The task planner
+        // tests below establish the real Super Tea craft → buy → craft legs.
+        const plan = craft('/items/group', 'Group', 1, '/actions/group', 1, [
+            craft('/items/crushed_amber', 'Crushed Amber', 7, '/actions/crafting/crushed_amber', 1, [
+                buy('/items/amber', 'Amber', 1),
+            ]),
+            buy('/items/crushed_amber', 'Crushed Amber', 6),
+            craft('/items/crushed_amber', 'Crushed Amber', 7, '/actions/crafting/crushed_amber', 1, [
+                buy('/items/amber', 'Amber', 1),
+            ]),
+        ]);
+        plan.children[0].outputCount = 15;
+        plan.children[2].outputCount = 15;
+
+        const steps = buildWalkSteps(plan);
+        const crushed = steps.find((entry) => entry.itemHrid === '/items/crushed_amber');
+        const amber = steps.find((entry) => entry.itemHrid === '/items/amber');
+
+        expect(crushed).toMatchObject({ kind: 'craft', count: 14, actions: 2, outputCount: 15 });
+        expect(steps.some((entry) => entry.key === 'buy:/items/crushed_amber')).toBe(false);
+        expect(amber).toMatchObject({ kind: 'buy', count: 2 });
+    });
+
     test('an Advanced Tea Crate walk buys enough gems for its ten captured recipe branches', () => {
         const gemRecipes = [
             ['/items/super_milking_tea', '/items/crushed_pearl', '/items/pearl'],

@@ -45,6 +45,10 @@ vi.mock('../../core/data-manager.js', () => ({
                     type: '/action_types/brewing',
                     outputItems: [{ itemHrid: '/items/advanced_tea_crate', count: 1 }],
                 },
+                '/actions/brewing/super_cooking_tea': {
+                    type: '/action_types/brewing',
+                    outputItems: [{ itemHrid: '/items/super_cooking_tea', count: 1 }],
+                },
             },
             itemDetailMap: {},
         }),
@@ -219,6 +223,7 @@ vi.mock('./crafting-plan-walk.js', async () => {
 });
 
 const { buildPlanUI, default: craftingPlanDisplay } = await import('./crafting-plan-display.js');
+const { mergedMissingRoot } = await import('./task-crafting-train.js');
 
 // Reset the shared doubles that are new to this file (the count-listener and
 // hrid-resolution seams) before every test, root-level so it runs ahead of
@@ -547,6 +552,91 @@ describe('the panel is sized to the run, not one unit', () => {
         expect(rows.some((row) => row.startsWith('Crushed Amber x0'))).toBe(false);
         expect(rows).toContain('Total craft time18s');
         expect(rows).toContain('Total XP6');
+    });
+
+    test('craft-step collector preserves normalized actions on a grouped recipe tree', () => {
+        // This unit test injects the real mergedMissingRoot(taskPlans) tree at
+        // the mocked calculator seam to exercise the generic craft-step
+        // collector math. Its zero-quantity task roots leave their dependency
+        // trees intact. The three captured Super Tea task recipes each use one
+        // Crushed Amber; needs 7/6/7 at ask depth 6 yield craft/buy/craft.
+        // mergedMissingRoot is a reservation input, not a normal
+        // buildPlanUI calculator result; this does not assert a reachable
+        // selected-recipe display case.
+        const buy = (itemHrid, itemName, quantity) => ({
+            strategy: 'buy',
+            itemHrid,
+            itemName,
+            quantity,
+            children: [],
+        });
+        const crushedAmber = (strategy, quantity) =>
+            strategy === 'buy'
+                ? buy('/items/crushed_amber', 'Crushed Amber', quantity)
+                : {
+                      strategy: 'craft',
+                      itemHrid: '/items/crushed_amber',
+                      itemName: 'Crushed Amber',
+                      quantity,
+                      actionHrid: '/actions/crafting/crushed_amber',
+                      actionsNeeded: 1,
+                      outputCount: 15,
+                      children: [buy('/items/amber', 'Amber', 1)],
+                  };
+        const superTea = (itemHrid, baseHrid, fruitHrid, essenceHrid, quantity, crushedStrategy) => ({
+            strategy: 'craft',
+            itemHrid,
+            itemName: itemHrid.split('/').pop(),
+            quantity,
+            actionHrid: `/actions/brewing/${itemHrid.split('/').pop()}`,
+            actionsNeeded: quantity,
+            outputCount: 1,
+            children: [
+                buy(baseHrid, baseHrid.split('/').pop(), quantity),
+                buy('/items/red_tea_leaf', 'Red Tea Leaf', quantity),
+                buy(fruitHrid, fruitHrid.split('/').pop(), quantity),
+                buy(essenceHrid, essenceHrid.split('/').pop(), quantity * 2),
+                crushedAmber(crushedStrategy, quantity),
+            ],
+        });
+        const taskPlans = [
+            superTea(
+                '/items/super_cooking_tea',
+                '/items/cooking_tea',
+                '/items/peach',
+                '/items/cooking_essence',
+                7,
+                'craft'
+            ),
+            superTea(
+                '/items/super_brewing_tea',
+                '/items/brewing_tea',
+                '/items/dragon_fruit',
+                '/items/brewing_essence',
+                6,
+                'buy'
+            ),
+            superTea(
+                '/items/super_alchemy_tea',
+                '/items/alchemy_tea',
+                '/items/star_fruit',
+                '/items/alchemy_essence',
+                7,
+                'craft'
+            ),
+        ];
+        state.plan = mergedMissingRoot(taskPlans);
+        state.planFor = undefined;
+
+        const section = buildPlanUI('/actions/brewing/super_cooking_tea');
+        const rows = [...section.querySelectorAll('div')].map((element) => element.textContent.trim());
+
+        expect(
+            rows.some((row) => row.startsWith('1. Crushed Amber') && row.includes('x14') && row.includes('12s'))
+        ).toBe(true);
+        expect(rows.some((row) => row.startsWith('Amber x2'))).toBe(true);
+        expect(rows).toContain('Total craft time12s');
+        expect(rows).toContain('Total XP4');
     });
 
     test('an unreadable count is not treated as a request for that many units', () => {
