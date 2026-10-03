@@ -256,25 +256,31 @@ async function handleActionsUpdated(data) {
         dataManager.getCurrentActions(),
         (action) => action.actionHrid === ENHANCE_ACTION_HRID
     );
+    // A mid-run pickup may first see action_completed, with no queue update or
+    // login snapshot to initialize the module-local id. That attempt still
+    // records the running id on the session before the next queue update.
+    const currentSession = enhancementTracker.getCurrentSession();
+    const observedActionId = trackedEnhanceActionId ?? currentSession?.lastAttempt?.actionId ?? null;
 
     // Nothing about enhancing changed — unless an enhance queued behind something else has just
     // come to the front. The delta then carries only the row that finished ahead of it, and
     // this is the one message that says the run has started (and at what level).
     const deltaHasEnhance = actions.some((a) => a?.actionHrid === ENHANCE_ACTION_HRID);
-    if (!deltaHasEnhance && (!enhancingAction || enhancingAction.id === trackedEnhanceActionId)) return;
+    if (!deltaHasEnhance && (!enhancingAction || enhancingAction.id === observedActionId)) return;
 
-    if (enhancingAction && enhancingAction.id === trackedEnhanceActionId) {
+    if (enhancingAction && enhancingAction.id === observedActionId) {
         // Same run still executing (e.g. a differently-targeted enhance queued behind it) —
         // nothing to react to.
+        trackedEnhanceActionId = observedActionId;
         return;
     }
-    const previousActionId = trackedEnhanceActionId;
+    const previousActionId = observedActionId;
     trackedEnhanceActionId = enhancingAction?.id ?? null;
     pendingBaseline = enhancingAction ? baselineFrom(enhancingAction) : null;
 
     if (!enhancingAction) {
         // No enhance action is running anymore — a real stop.
-        if (enhancementTracker.getCurrentSession()) {
+        if (currentSession) {
             await enhancementTracker.finalizeCurrentSession();
         }
         return;
@@ -284,7 +290,6 @@ async function handleActionsUpdated(data) {
 
     // If the target level or protection level changed, finalize the current session so the
     // next action_completed starts a fresh one instead of continuing the old one.
-    const currentSession = enhancementTracker.getCurrentSession();
     if (currentSession) {
         // A new queue id is a new run even when the player queues the same item with
         // the same target and protection settings again. Keep its attempts and XP separate.
