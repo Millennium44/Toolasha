@@ -88,7 +88,8 @@ function itemFromHash(hash) {
  * @returns {{stages: Array<{actionHrid: string, label: string, count: number, coinDelta: number,
  *   earned: number}>, stoppedAt: string|null}|null} Rows in run order; `stoppedAt` names the
  *   unbounded row that ended the walk. Null when the engine is unavailable, a row's action is
- *   unknown, or a gold-paying row sits behind a counted fight whose loot it could run on — no
+ *   unknown, or a gold-paying row sits behind a counted fight or an unrefine whose output it could
+ *   run on — no
  *   reserve is better than a low one.
  */
 export function walkQueueCoins(engine, actions, inventory) {
@@ -105,9 +106,10 @@ export function walkQueueCoins(engine, actions, inventory) {
 
     const stages = [];
     let stoppedAt = null;
-    // A counted fight's loot is not modelled, and a row behind it limited only by its materials can
-    // run on that loot and pay more fees than the walk can see
-    let afterFight = false;
+    // Some rows produce what the walk does not credit — a counted fight's loot, unrefine's returned
+    // base item (the engine credits no unrefine output) — and a paid row behind one can run on it
+    // and pay more fees than the walk can see
+    let afterUncredited = false;
     for (const action of queue) {
         const details = dataManager.getActionDetails(action.actionHrid);
         if (!details) return null;
@@ -123,7 +125,7 @@ export function walkQueueCoins(engine, actions, inventory) {
         if (timing?.isTrulyInfinite && action.hasMaxCount && action.actionHrid?.includes('/combat/')) {
             const count = Math.max(0, (action.maxCount || 0) - (action.currentCount || 0));
             stages.push({ actionHrid: action.actionHrid, label, count, coinDelta: 0, earned: 0 });
-            afterFight = true;
+            afterUncredited = true;
             continue;
         }
         if (timing?.isTrulyInfinite) {
@@ -131,12 +133,13 @@ export function walkQueueCoins(engine, actions, inventory) {
             break;
         }
 
-        // A gold-paying row behind a fight, counted or not, could run on loot the walk never credited
-        // (a counted one is capped by the materials held now, an uncounted one by them entirely): no
-        // reserve, rather than one short of what the queue will spend
-        if (afterFight && canPayGold(action.actionHrid)) {
+        // A gold-paying row behind such a row, counted or not, could run on output the walk never
+        // credited (a counted one is capped by the materials held now, an uncounted one by them
+        // entirely): no reserve, rather than one short of what the queue will spend
+        if (afterUncredited && canPayGold(action.actionHrid)) {
             return null;
         }
+        if (getAlchemyTypeFromActionHrid(action.actionHrid) === 'unrefine') afterUncredited = true;
 
         const before = ledger.byHrid[COIN] || 0;
         const count = engine.deductQueueActionMaterials(ledger, details, action, timing) || 0;

@@ -319,6 +319,17 @@ describe('walking the queue for its coin flow', () => {
         expect(walkQueueCoins(engineStub).stages[0].estimated).toBe(false);
     });
 
+    test('a paid row behind an unrefine, whose returned item the walk does not credit, makes it unreadable', () => {
+        const UNREFINE = '/actions/alchemy/unrefine';
+        game.actionDetails[UNREFINE] = { hrid: UNREFINE, name: 'Unrefine', type: '/action_types/alchemy' };
+        game.currentActions = [
+            queued(1, UNREFINE, { item: STAR_FRUIT, maxCount: 1 }),
+            queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 500 }),
+        ];
+
+        expect(walkQueueCoins(engine)).toBeNull();
+    });
+
     test('a queued action the game data does not know makes the walk unreadable, not free', () => {
         game.currentActions = [
             queued(1, '/actions/alchemy/unknown'),
