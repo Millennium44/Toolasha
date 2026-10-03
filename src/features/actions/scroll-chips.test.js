@@ -184,6 +184,45 @@ describe('scroll chips', () => {
         expect(heard.mock.calls[0][0].detail).toEqual({ key: 'Brew Set' });
     });
 
+    test('a change made in a popup redraws a mounted panel, so its totals follow the new selection', async () => {
+        const onChange = vi.fn();
+        const { element, dispose } = buildScrollChips({ actionTypeHrid: BREWING, onChange });
+        document.body.appendChild(element);
+
+        await scrollSimulator.saveScrollsForLoadout(null, ['/buff_types/gourmet']);
+        await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+
+        dispose();
+        element.remove();
+    });
+
+    test("a chip's own click redraws once, not again for its own save", async () => {
+        const onChange = vi.fn();
+        const { element, dispose } = buildScrollChips({ actionTypeHrid: BREWING, onChange });
+        document.body.appendChild(element);
+
+        chip(element, '/buff_types/gourmet').click();
+        await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(onChange).toHaveBeenCalledTimes(1);
+        dispose();
+        element.remove();
+    });
+
+    test('a disposed row no longer redraws on a selection change', async () => {
+        const onChange = vi.fn();
+        const { element, dispose } = buildScrollChips({ actionTypeHrid: BREWING, onChange });
+        document.body.appendChild(element);
+        dispose();
+
+        await scrollSimulator.saveScrollsForLoadout(null, ['/buff_types/wisdom']);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(onChange).not.toHaveBeenCalled();
+        element.remove();
+    });
+
     test('dispose removes the click listener, and rows do not share one', () => {
         const rows = [1, 2, 3].map(() => buildScrollChips({ actionTypeHrid: BREWING, onChange: () => {} }));
         const spies = rows.map((r) => vi.spyOn(r.element, 'removeEventListener'));

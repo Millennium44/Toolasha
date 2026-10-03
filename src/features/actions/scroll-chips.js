@@ -12,7 +12,12 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
-import { SCROLL_BUFF_ITEMS, SCROLL_BUFF_LABELS, SCROLL_BUFF_ORDER } from '../../utils/scroll-buff-values.js';
+import {
+    SCROLL_BUFF_ITEMS,
+    SCROLL_BUFF_LABELS,
+    SCROLL_BUFF_ORDER,
+    SELECTION_CHANGED_EVENT,
+} from '../../utils/scroll-buff-values.js';
 
 export const SCROLL_CHIPS_CLASS = 'mwi-scroll-chips';
 
@@ -97,6 +102,25 @@ export function buildScrollChips({ actionTypeHrid, onChange, spriteUrl = '' }) {
     }
 
     let busy = false;
+    // A change made somewhere else (the Loadouts or defaults popup) redraws this panel too, so its
+    // totals and chips never sit on the old selection. One redraw per burst; a chip's own save is
+    // skipped here because the click redraws after it.
+    let redrawQueued = false;
+    const onSelectionChanged = () => {
+        if (busy || redrawQueued || !row.isConnected) return;
+        redrawQueued = true;
+        queueMicrotask(async () => {
+            redrawQueued = false;
+            if (!row.isConnected) return;
+            try {
+                await onChange();
+            } catch (error) {
+                console.error('[ScrollChips] Redraw after a selection change failed:', error);
+            }
+        });
+    };
+    document.addEventListener(SELECTION_CHANGED_EVENT, onSelectionChanged);
+
     // One delegated listener on the row, which goes away with the row
     const onClick = async (event) => {
         const chip = event.target?.closest?.('button[data-buff]');
@@ -118,5 +142,11 @@ export function buildScrollChips({ actionTypeHrid, onChange, spriteUrl = '' }) {
     };
     row.addEventListener('click', onClick);
 
-    return { element: row, dispose: () => row.removeEventListener('click', onClick) };
+    return {
+        element: row,
+        dispose: () => {
+            row.removeEventListener('click', onClick);
+            document.removeEventListener(SELECTION_CHANGED_EVENT, onSelectionChanged);
+        },
+    };
 }
