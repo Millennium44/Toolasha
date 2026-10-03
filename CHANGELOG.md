@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Newly archived chat names open profiles immediately
+
+- Usernames in extended chat history now open the player profile as soon as a message leaves the game's history. You no longer need to switch chat channels and back first.
+
 ### Labyrinth entry alerts ignore an unset timestamp
 
 - Labyrinth entry alerts no longer treat the game's unset regeneration timestamp as an overdue entry. A confirmed increase in your entry stock still produces the usual notification.
