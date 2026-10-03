@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
     inventory: [],
     plan: null,
     missing: [],
+    useActualMissing: false,
     openMaterialsList: vi.fn(async () => true),
     openBillOwner: null,
     settings: {},
@@ -69,13 +70,17 @@ vi.mock('../../core/config.js', () => ({
         },
     },
 }));
-vi.mock('./crafting-plan-calculator.js', () => ({
-    // `planFor`, when a test sets it, builds a plan from the quantity the
-    // display actually asked for — the seam the count-scaling tests need.
-    // Every other test leaves it unset and gets the fixed `state.plan`, as before.
-    computeBestCraftingPlan: (itemHrid, quantity) => (state.planFor ? state.planFor(quantity) : state.plan),
-    collectMissingMaterials: () => state.missing,
-}));
+vi.mock('./crafting-plan-calculator.js', async () => {
+    const actual = await vi.importActual('./crafting-plan-calculator.js');
+    return {
+        // `planFor`, when a test sets it, builds a plan from the quantity the
+        // display actually asked for — the seam the count-scaling tests need.
+        // Every other test leaves it unset and gets the fixed `state.plan`, as before.
+        computeBestCraftingPlan: (itemHrid, quantity) => (state.planFor ? state.planFor(quantity) : state.plan),
+        collectMissingMaterials: (...args) =>
+            state.useActualMissing ? actual.collectMissingMaterials(...args) : state.missing,
+    };
+});
 vi.mock('../actions/missing-materials-button.js', () => ({
     openMaterialsList: (...args) => state.openMaterialsList(...args),
     openBillOwner: () => state.openBillOwner,
@@ -224,6 +229,7 @@ beforeEach(() => {
     panels.resolvedActionHrid = null;
     panels.attachCalls = [];
     state.planFor = undefined;
+    state.useActualMissing = false;
 });
 
 /** A craft-strategy plan whose one leaf is a market buy, so the shopping list
@@ -674,12 +680,90 @@ describe('starting the guided walk and the reservation ledger', () => {
         expect(walk.instance.start).toHaveBeenCalledWith(walk.steps);
     });
 
-    test('a partial planned surplus keeps the guided walk buy count aligned with the shopping list', async () => {
+    test('later production does not shrink the display, walk, or reservation buy count', async () => {
         // This hand-built plan fragment uses the captured Crushed Amber action
-        // (one Amber → 15 Crushed Amber). Distinct thin-market legs can make
-        // this shape: the 10-unit leg reroutes to craft while the 6-unit leg
-        // stays buy at ask depth 7. The two legs stand in for different parents.
+        // (one Amber → 15 Crushed Amber). The earlier 6-unit buy leg and later
+        // 10-unit craft leg represent distinct parents with per-leg thin-market
+        // choices; a later craft cannot satisfy a buy that is already planned.
         walk.useActualBuilder = true;
+        ledger.enabled = true;
+        state.useActualMissing = true;
+        state.plan = {
+            strategy: 'craft',
+            itemHrid: '/items/advanced_tea_crate',
+            itemName: 'Advanced Tea Crate',
+            quantity: 1,
+            actionHrid: '/actions/brewing/advanced_tea_crate',
+            actionsNeeded: 1,
+            outputCount: 1,
+            children: [
+                {
+                    strategy: 'buy',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 6,
+                    unitCost: 2,
+                    totalCost: 12,
+                    children: [],
+                },
+                {
+                    strategy: 'craft',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 10,
+                    actionHrid: '/actions/crafting/crushed_amber',
+                    actionsNeeded: 1,
+                    outputCount: 15,
+                    children: [
+                        {
+                            strategy: 'buy',
+                            itemHrid: '/items/amber',
+                            itemName: 'Amber',
+                            quantity: 1,
+                            unitCost: 5,
+                            totalCost: 5,
+                            children: [],
+                        },
+                    ],
+                },
+            ],
+        };
+        const section = buildPlanUI('/actions/brewing/advanced_tea_crate');
+        expect([...section.querySelectorAll('div')].some((row) => row.textContent.includes('Crushed Amber x6'))).toBe(
+            true
+        );
+
+        findBuyButton(section).click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(state.openMaterialsList).toHaveBeenCalledWith(
+            [
+                { itemHrid: '/items/crushed_amber', count: 6 },
+                { itemHrid: '/items/amber', count: 1 },
+            ],
+            { ownerId: 'craftingPlan:/items/advanced_tea_crate' }
+        );
+        expect(ledger.reserveCalls[0].lines).toEqual([
+            { itemHrid: '/items/crushed_amber', count: 6 },
+            { itemHrid: '/items/amber', count: 1 },
+        ]);
+
+        findWalkButton(section).click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const steps = walk.instance.start.mock.calls.at(-1)[0];
+        expect(steps.find((step) => step.itemHrid === '/items/crushed_amber' && step.kind === 'buy').count).toBe(6);
+        expect(ledger.reserveCalls.at(-1).lines).toEqual([
+            { itemHrid: '/items/crushed_amber', count: 6 },
+            { itemHrid: '/items/amber', count: 1 },
+        ]);
+    });
+
+    test('an earlier craft surplus is applied once to the later buy leg', async () => {
+        walk.useActualBuilder = true;
+        ledger.enabled = true;
+        state.useActualMissing = true;
         state.plan = {
             strategy: 'craft',
             itemHrid: '/items/advanced_tea_crate',
@@ -726,12 +810,30 @@ describe('starting the guided walk and the reservation ledger', () => {
             true
         );
 
+        findBuyButton(section).click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(state.openMaterialsList).toHaveBeenCalledWith(
+            [
+                { itemHrid: '/items/amber', count: 1 },
+                { itemHrid: '/items/crushed_amber', count: 1 },
+            ],
+            { ownerId: 'craftingPlan:/items/advanced_tea_crate' }
+        );
+        expect(ledger.reserveCalls[0].lines).toEqual([
+            { itemHrid: '/items/amber', count: 1 },
+            { itemHrid: '/items/crushed_amber', count: 1 },
+        ]);
+
         findWalkButton(section).click();
         await Promise.resolve();
         await Promise.resolve();
-
         const steps = walk.instance.start.mock.calls.at(-1)[0];
         expect(steps.find((step) => step.itemHrid === '/items/crushed_amber' && step.kind === 'buy').count).toBe(1);
+        expect(ledger.reserveCalls.at(-1).lines).toEqual([
+            { itemHrid: '/items/amber', count: 1 },
+            { itemHrid: '/items/crushed_amber', count: 1 },
+        ]);
     });
 
     test('with the setting off, starting the walk reserves nothing', async () => {

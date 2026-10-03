@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Crafting purchases follow the recipe sequence
+
+- A later crafting step no longer reduces an earlier material purchase or reservation. Buy Missing Materials now agrees with the shopping list and guided walk when a plan both buys and crafts the same intermediate.
+
 ### Guided crafting buys only the remaining shortfall
 
 - Guided crafting and merged task walks now apply shared recipe surplus once. A partially covered material still gets its remaining buy step, matching the shopping list.

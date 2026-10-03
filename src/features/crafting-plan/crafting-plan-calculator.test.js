@@ -776,6 +776,38 @@ describe('collectMissingMaterials', () => {
 });
 
 describe('collectMissingMaterials — owned intermediates', () => {
+    test('later crushed amber production does not retroactively reduce an earlier buy leg', () => {
+        const plan = {
+            strategy: 'craft',
+            quantity: 1,
+            children: [
+                {
+                    strategy: 'buy',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 6,
+                    children: [],
+                },
+                {
+                    strategy: 'craft',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 10,
+                    actionsNeeded: 1,
+                    outputCount: 15,
+                    children: [
+                        { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                    ],
+                },
+            ],
+        };
+
+        expect(collectMissingMaterials(plan, [])).toEqual([
+            { itemHrid: '/items/crushed_amber', itemName: 'Crushed Amber', missing: 6, required: 6, isTradeable: true },
+            { itemHrid: '/items/amber', itemName: 'Amber', missing: 1, required: 1, isTradeable: true },
+        ]);
+    });
+
     test('planned multi-output surplus offsets a buy leg without replacing owned-inventory addback', () => {
         const plan = {
             strategy: 'craft',

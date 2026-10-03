@@ -608,9 +608,19 @@ export function collectMissingMaterials(plan, inventory) {
 
         if (node.strategy === 'buy') {
             if (node.itemHrid === '/items/coin' || !(quantity > 0)) return;
+            // Only surplus produced by an earlier craft can satisfy this buy
+            // leg. Later crafts must not retroactively shrink an earlier buy.
+            const surplus = plannedSurplus.get(node.itemHrid) || 0;
+            const used = Math.min(surplus, quantity);
+            if (used > 0) {
+                plannedSurplus.set(node.itemHrid, surplus - used);
+                stock.set(node.itemHrid, Math.max(0, (stock.get(node.itemHrid) || 0) - used));
+            }
+            const remaining = quantity - used;
+            if (!(remaining > 0)) return;
             const line = needed.get(node.itemHrid);
-            if (line) line.quantity += quantity;
-            else needed.set(node.itemHrid, { itemName: node.itemName, quantity });
+            if (line) line.quantity += remaining;
+            else needed.set(node.itemHrid, { itemName: node.itemName, quantity: remaining });
             return;
         }
 
@@ -697,8 +707,7 @@ export function collectMissingMaterials(plan, inventory) {
     for (const [itemHrid, line] of needed) {
         const required = Math.ceil(line.quantity);
         const owned = ownedStock.get(itemHrid) || 0;
-        const generated = plannedSurplus.get(itemHrid) || 0;
-        const short = Math.max(0, required - owned - generated);
+        const short = Math.max(0, required - owned);
         if (short <= 0) continue;
         const isTradeable = dataManager.getItemDetails(itemHrid)?.isTradable !== false;
         // The caller re-subtracts the player's real inventory from `required`.
