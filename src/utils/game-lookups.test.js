@@ -217,16 +217,24 @@ describe('icon sprite lookups (locale-independent)', () => {
         expect(getActionHridFromIconHref(`${ACTIONS}#cow_two`)).toBe('/actions/milking/cow_two');
     });
 
+    /** A `<use>` carrying the given attributes, as the DOM reports them */
+    const use = (attrs) => ({ getAttribute: (name) => attrs[name] ?? null });
+
     test('getIconHref reads the first icon in the named sheet', () => {
         const container = {
-            querySelector: (selector) => {
-                expect(selector).toBe('svg use[href*="skills_sprite"]');
-                return { getAttribute: () => `${SKILLS}#milking` };
-            },
+            querySelectorAll: () => [
+                use({ href: '/static/media/items_sprite.x.svg#milk' }),
+                use({ href: `${SKILLS}#milking` }),
+            ],
         };
         expect(getIconHref(container, 'skills_sprite')).toBe(`${SKILLS}#milking`);
         expect(getIconHref(null, 'skills_sprite')).toBeNull();
-        expect(getIconHref({ querySelector: () => null }, 'skills_sprite')).toBeNull();
+        expect(getIconHref({ querySelectorAll: () => [] }, 'skills_sprite')).toBeNull();
+    });
+
+    test('getIconHref reads an icon that carries its sprite on xlink:href alone', () => {
+        const container = { querySelectorAll: () => [use({ 'xlink:href': `${SKILLS}#milking` })] };
+        expect(getIconHref(container, 'skills_sprite')).toBe(`${SKILLS}#milking`);
     });
 });
 

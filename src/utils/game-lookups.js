@@ -181,7 +181,13 @@ export function getItemHridFromIconHref(href) {
  * @returns {string|null}
  */
 export function getIconHref(container, sheet) {
-    return container?.querySelector?.(`svg use[href*="${sheet}"]`)?.getAttribute('href') ?? null;
+    // Item icons often carry the sprite id on `xlink:href` alone (see alchemy-profit-calculator.js),
+    // which a plain `[href]` selector does not match, so both attributes are read
+    for (const use of container?.querySelectorAll?.('svg use') ?? []) {
+        const href = use.getAttribute('href') || use.getAttribute('xlink:href');
+        if (href?.includes(sheet)) return href;
+    }
+    return null;
 }
 
 /**
