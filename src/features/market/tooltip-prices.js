@@ -853,8 +853,10 @@ class TooltipPrices {
         const actionNameEl = actionPanel.querySelector('[class*="SkillActionDetail_name"]');
         if (!actionNameEl) return null;
 
+        // Name first: an exact English match costs nothing, and the fiber lookup walks the whole React
+        // tree, which this path runs on every ingredient hovered. The fiber resolves a translated name.
         const actionHrid =
-            getActionHridFromFiber(actionPanel) || getActionHridFromName(actionNameEl.textContent.trim());
+            getActionHridFromName(actionNameEl.textContent.trim()) || getActionHridFromFiber(actionPanel);
         if (!actionHrid) return null;
 
         const actionDetails = dataManager.getActionDetails(actionHrid);

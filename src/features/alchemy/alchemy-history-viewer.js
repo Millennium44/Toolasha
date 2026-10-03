@@ -62,6 +62,10 @@ class AlchemyHistoryViewer {
         // Bumped by every showType() and by teardown; a load that finishes under
         // a newer token was superseded and must not take over the window
         this.showToken = 0;
+        /** @type {string|null} the type a switch is still loading */
+        this.pendingType = null;
+        /** @type {{el: HTMLElement, overflowX: string, flexWrap: string}|null} the tablist's own styles */
+        this.tablistStyled = null;
     }
 
     /**
@@ -121,11 +125,18 @@ class AlchemyHistoryViewer {
             this.alchemyTab.remove();
         }
         this.alchemyTab = null;
+        if (this.tablistStyled) {
+            const { el, overflowX, flexWrap } = this.tablistStyled;
+            el.style.overflowX = overflowX;
+            el.style.flexWrap = flexWrap;
+            this.tablistStyled = null;
+        }
         if (this.modal) {
             this.modal.remove();
             this.modal = null;
         }
         this.activeType = null;
+        this.pendingType = null;
     }
 
     // ─── Tab Injection ───────────────────────────────────────────────────────
@@ -176,6 +187,14 @@ class AlchemyHistoryViewer {
             });
 
             tablist.appendChild(tab);
+            // The game's own tablist: what it had is kept so teardown can put it back
+            if (this.tablistStyled?.el !== tablist) {
+                this.tablistStyled = {
+                    el: tablist,
+                    overflowX: tablist.style.overflowX,
+                    flexWrap: tablist.style.flexWrap,
+                };
+            }
             tablist.style.overflowX = 'auto';
             tablist.style.flexWrap = 'nowrap';
             this.alchemyTab = tab;
@@ -266,11 +285,14 @@ class AlchemyHistoryViewer {
         const viewer = this.viewers.get(type);
         if (!viewer) return false;
         const token = ++this.showToken;
+        // The type a switch is loading, so a click back to the shown type is not taken as a no-op
+        this.pendingType = type;
 
         await viewer.openModal();
 
         // Superseded by a later switch, or torn down while loading
         if (token !== this.showToken || this.viewers.get(type) !== viewer || !viewer.modal) return false;
+        this.pendingType = null;
 
         const previous = this.activeType;
         if (previous && previous !== type) {
@@ -443,10 +465,12 @@ class AlchemyHistoryViewer {
             btn.style.cssText = active
                 ? 'padding: 6px 14px; background: #4a90e2; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;'
                 : 'padding: 6px 14px; background: #3a3a3a; color: #ccc; border: none; border-radius: 4px; cursor: pointer;';
-            btn.addEventListener('click', () => {
-                if (type === this.activeType) return;
-                this.saveLastType(type);
-                this.showType(type);
+            btn.addEventListener('click', async () => {
+                // Clicking the shown type is a no-op, unless another type is still loading: then it is
+                // the way back, and must supersede that load
+                if (type === this.activeType && !this.pendingType) return;
+                // Remembered only once the switch has taken: a superseded or failed one is not the pick
+                if (await this.showType(type)) this.saveLastType(type);
             });
             switcher.appendChild(btn);
         }

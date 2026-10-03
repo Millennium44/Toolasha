@@ -367,7 +367,9 @@ async function handleActionPanel(panel) {
     const actionName = getOriginalText(actionNameElement);
     // The detail modal draws no hrid-keyed icon of its own; its component props name the action
     // whatever the game language, so the translated text is only the fallback.
-    const actionHrid = getActionHridFromFiber(panel) || getActionHridFromName(actionName);
+    // Name first: an exact English match costs nothing, and the fiber lookup walks the whole React
+    // tree, which this path runs on every action panel opened. The fiber resolves a translated name.
+    const actionHrid = getActionHridFromName(actionName) || getActionHridFromFiber(panel);
 
     if (!actionHrid) {
         return;

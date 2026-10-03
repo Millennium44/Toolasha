@@ -235,7 +235,9 @@ class InventoryCountDisplay {
         if (!nameEl) return;
 
         const actionName = nameEl.textContent.trim();
-        const actionHrid = getActionHridFromFiber(panel) || getActionHridFromName(actionName);
+        // Name first: an exact English match costs nothing, and the fiber lookup walks the whole React
+        // tree, which this path runs on every detail panel mounted. The fiber resolves a translated name.
+        const actionHrid = getActionHridFromName(actionName) || getActionHridFromFiber(panel);
         if (!actionHrid) return;
 
         const actionDetails = dataManager.getActionDetails(actionHrid);

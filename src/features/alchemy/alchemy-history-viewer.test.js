@@ -237,6 +237,17 @@ describe('Alchemy History tab', () => {
         expect(alchemyHistoryViewer.tabWatcher).toBeNull();
     });
 
+    test("the game's tablist gets its own styles back when the last type goes", () => {
+        tablist.style.overflowX = 'hidden';
+        initializeAll();
+        expect(tablist.style.overflowX).toBe('auto');
+        expect(tablist.style.flexWrap).toBe('nowrap');
+
+        disableAll();
+        expect(tablist.style.overflowX).toBe('hidden');
+        expect(tablist.style.flexWrap).toBe('');
+    });
+
     test('no tab when every type is off', () => {
         mocks.settings = {
             alchemy_transmuteHistory: false,
@@ -355,6 +366,30 @@ describe('Alchemy History switcher', () => {
 
         expect(alchemyHistoryViewer.activeType).toBe('decompose');
         expect(visiblePanes()).toEqual(['decompose']);
+    });
+
+    test('clicking back to the shown type while another loads goes back, and only that is remembered', async () => {
+        initializeAll();
+        await alchemyHistoryViewer.openModal();
+        expect(alchemyHistoryViewer.activeType).toBe('transmute');
+
+        let releaseCoinify;
+        mocks.loaders.coinify = () =>
+            new Promise((resolve) => {
+                releaseCoinify = () => resolve(mocks.sessions.coinify);
+            });
+        const switchButton = (type) =>
+            alchemyHistoryViewer.modal.querySelector(`[data-mwi-alchemy-history-switch="${type}"]`);
+        switchButton('coinify').click();
+        await Promise.resolve();
+        switchButton('transmute').click();
+        await vi.waitFor(() => expect(alchemyHistoryViewer.pendingType).toBeNull());
+        releaseCoinify();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(alchemyHistoryViewer.activeType).toBe('transmute');
+        expect(visiblePanes()).toEqual(['transmute']);
+        await vi.waitFor(() => expect(mocks.store.get(`settings:${LAST_TYPE_STORAGE_KEY}`)).toBe('transmute'));
     });
 
     test('turning off the type showing moves an open window to another type', async () => {
