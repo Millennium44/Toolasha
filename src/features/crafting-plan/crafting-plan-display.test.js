@@ -40,6 +40,10 @@ vi.mock('../../core/data-manager.js', () => ({
                     actionTime: 6,
                     outputItems: [{ itemHrid: '/items/crushed_amber', count: 15 }],
                 },
+                '/actions/brewing/advanced_tea_crate': {
+                    type: '/action_types/brewing',
+                    outputItems: [{ itemHrid: '/items/advanced_tea_crate', count: 1 }],
+                },
             },
             itemDetailMap: {},
         }),
@@ -195,12 +199,19 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
 const walk = vi.hoisted(() => ({
     instance: { start: vi.fn(() => true), stop: vi.fn(), onStepAboutToRun: null, active: false },
     steps: [],
+    useActualBuilder: false,
 }));
-vi.mock('./crafting-plan-walk.js', () => ({
-    default: walk.instance,
-    buildWalkSteps: () => walk.steps,
-    WALK_KEY_ATTRIBUTE: 'data-mwi-walk-key',
-}));
+vi.mock('./crafting-plan-walk.js', async () => {
+    const actual = await vi.importActual('./crafting-plan-walk.js');
+    return {
+        ...actual,
+        default: walk.instance,
+        buildWalkSteps: (plan, options) => {
+            if (walk.useActualBuilder) return actual.buildWalkSteps(plan, options);
+            return walk.steps;
+        },
+    };
+});
 
 const { buildPlanUI, default: craftingPlanDisplay } = await import('./crafting-plan-display.js');
 
@@ -621,6 +632,7 @@ describe('starting the guided walk and the reservation ledger', () => {
         ledger.simulateGating = false;
         walk.instance.start.mockClear();
         walk.instance.stop.mockClear();
+        walk.useActualBuilder = false;
         walk.instance.onStepAboutToRun = null;
         walk.steps = [
             {
@@ -660,6 +672,66 @@ describe('starting the guided walk and the reservation ledger', () => {
         expect(ledger.reserveCalls[0].ownerId).toBe('craftingPlan:/items/wooden_bow');
         expect(ledger.reserveCalls[0].lines).toEqual([{ itemHrid: '/items/wood', count: 200 }]);
         expect(walk.instance.start).toHaveBeenCalledWith(walk.steps);
+    });
+
+    test('a partial planned surplus keeps the guided walk buy count aligned with the shopping list', async () => {
+        // This hand-built plan fragment uses the captured Crushed Amber action
+        // (one Amber → 15 Crushed Amber). Distinct thin-market legs can make
+        // this shape: the 10-unit leg reroutes to craft while the 6-unit leg
+        // stays buy at ask depth 7. The two legs stand in for different parents.
+        walk.useActualBuilder = true;
+        state.plan = {
+            strategy: 'craft',
+            itemHrid: '/items/advanced_tea_crate',
+            itemName: 'Advanced Tea Crate',
+            quantity: 1,
+            actionHrid: '/actions/brewing/advanced_tea_crate',
+            actionsNeeded: 1,
+            outputCount: 1,
+            children: [
+                {
+                    strategy: 'craft',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 10,
+                    actionHrid: '/actions/crafting/crushed_amber',
+                    actionsNeeded: 1,
+                    outputCount: 15,
+                    children: [
+                        {
+                            strategy: 'buy',
+                            itemHrid: '/items/amber',
+                            itemName: 'Amber',
+                            quantity: 1,
+                            unitCost: 5,
+                            totalCost: 5,
+                            children: [],
+                        },
+                    ],
+                },
+                {
+                    strategy: 'buy',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 6,
+                    unitCost: 2,
+                    totalCost: 12,
+                    children: [],
+                },
+            ],
+        };
+
+        const section = buildPlanUI('/actions/brewing/advanced_tea_crate');
+        expect([...section.querySelectorAll('div')].some((row) => row.textContent.includes('Crushed Amber x1'))).toBe(
+            true
+        );
+
+        findWalkButton(section).click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const steps = walk.instance.start.mock.calls.at(-1)[0];
+        expect(steps.find((step) => step.itemHrid === '/items/crushed_amber' && step.kind === 'buy').count).toBe(1);
     });
 
     test('with the setting off, starting the walk reserves nothing', async () => {

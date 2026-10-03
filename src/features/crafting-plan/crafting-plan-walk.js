@@ -120,13 +120,15 @@ export function walkStepFor(node) {
  * a leg the plan sized at nothing.
  *
  * @param {Object} plan - Root `CraftingPlanNode` from `computeBestCraftingPlan`
+ * @param {Object} [options]
+ * @param {boolean} [options.surplusNormalized=false] - Whether planned output has already been reconciled
  * @returns {Array<{key: string, kind: 'craft'|'buy', itemHrid: string, itemName: string,
  *   actionHrid: string|null, count: number, actions: number, outputCount: number}>} Steps in dependency order
  */
-export function buildWalkSteps(plan) {
+export function buildWalkSteps(plan, { surplusNormalized = false } = {}) {
     const steps = [];
     const byKey = new Map();
-    const executionPlan = normalizePlannedSurplus(plan);
+    const executionPlan = surplusNormalized ? plan : normalizePlannedSurplus(plan);
 
     const emit = (node) => {
         const step = walkStepFor(node);

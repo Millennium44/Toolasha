@@ -790,7 +790,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             walkButton.addEventListener('click', async () => {
                 // The walk steps the same plan the section above is showing —
                 // already sized to the run — not a separate re-plan.
-                const steps = buildWalkSteps(executionPlan);
+                const steps = buildWalkSteps(plan);
                 if (steps.length === 0) return;
 
                 // Starting the walk is at least as much a commitment to the

@@ -191,6 +191,21 @@ describe('mergeWalkSteps', () => {
         expect(stepFor(merged.steps, 'buy:/items/amber').count).toBe(3);
     });
 
+    test('a partial shared output keeps the merged walk available with the remaining buy count', () => {
+        // Hand-built per-leg choices: a 10-unit thin-market leg crafts at the
+        // captured 15-unit yield, while a 6-unit leg remains buyable at depth 7.
+        const plan = craft('/items/advanced_tea_crate', 1, '/actions/brewing/advanced_tea_crate', 1, [
+            craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            buy('/items/crushed_amber', 6),
+        ]);
+
+        const merged = mergeWalkSteps([plan]);
+
+        expect(merged).not.toBeNull();
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({ count: 10, actions: 1 });
+        expect(stepFor(merged.steps, 'buy:/items/crushed_amber').count).toBe(1);
+    });
+
     test('two tasks sharing an intermediate merge into one list with summed counts', () => {
         const merged = mergeWalkSteps([hatPlan(), bootsPlan()]);
 

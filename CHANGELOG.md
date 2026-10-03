@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guided crafting buys only the remaining shortfall
+
+- Guided crafting and merged task walks now apply shared recipe surplus once. A partially covered material still gets its remaining buy step, matching the shopping list.
+
 ### Crafting plans reuse surplus between recipes
 
 - Crafting plans now reuse leftover output across recipes, reducing raw material purchases and repeated crafting. Shopping lists, crafting time, guided walks, and merged task reservations agree on the shared amounts.

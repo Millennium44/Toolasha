@@ -137,7 +137,7 @@ export function mergeWalkSteps(plans) {
     const combinedPlan = normalizePlannedSurplus({ strategy: 'group', children: validPlans });
     for (const plan of validPlans) separateStepCount += buildWalkSteps(plan).length;
 
-    for (const step of buildWalkSteps(combinedPlan)) {
+    for (const step of buildWalkSteps(combinedPlan, { surplusNormalized: true })) {
         const existing = merged.get(step.key);
         if (existing) {
             existing.count += step.count;
