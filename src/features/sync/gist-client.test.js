@@ -12,6 +12,7 @@ import {
     resetTransportForTests,
     writeSyncGist,
 } from './gist-client.js';
+import { getGmTrafficSnapshot, resetGmTraffic } from '../../utils/gm-traffic.js';
 
 /**
  * Requests either fake transport saw, newest last, in the GM details shape
@@ -33,7 +34,8 @@ beforeEach(() => {
     resetTransportForTests?.();
     globalThis.GM_xmlhttpRequest = (options) => {
         calls.push({ ...options, transport: 'gm' });
-        const next = responses.shift();
+        const queued = responses.shift();
+        const next = typeof queued === 'function' ? queued(options) : queued;
         if (!next) throw new Error(`Unexpected request to ${options.url}`);
         if (next.networkError) {
             options.onerror();
@@ -49,7 +51,8 @@ beforeEach(() => {
     };
     vi.stubGlobal('fetch', async (url, init = {}) => {
         calls.push({ ...init, url, data: init.body, transport: 'fetch' });
-        const next = responses.shift();
+        const queued = responses.shift();
+        const next = typeof queued === 'function' ? queued({ ...init, url }) : queued;
         if (!next) throw new Error(`Unexpected request to ${url}`);
         if (next.hang) {
             return new Promise((_resolve, reject) => {
@@ -624,5 +627,156 @@ describe('chunkIndexFromName', () => {
         expect(chunkIndexFromName('toolasha-data-notes.json')).toBeNull();
         expect(chunkIndexFromName('notes.md')).toBeNull();
         expect(chunkIndexFromName(undefined)).toBeNull();
+    });
+});
+
+/**
+ * What a push and a silent pull cost, in requests and bytes, at the size that
+ * leaked: a full-scope backup of five ~900 KB chunks.
+ */
+describe('conditional reads and the cost of a sync', () => {
+    const CHUNK = 900_000;
+    const ETAG = 'W/"v1"';
+    const manifestText = JSON.stringify({ toolashaSync: 1, chunks: 5, exportedAt: 'T' });
+    const chunkTexts = [0, 1, 2, 3, 4].map((index) => String(index).repeat(CHUNK));
+    const gistFiles = {
+        [MANIFEST_FILE]: { size: manifestText.length, content: manifestText },
+        ...Object.fromEntries(
+            chunkTexts.map((text, index) => [chunkFileName(index), { size: text.length, content: text }])
+        ),
+    };
+    const sizes = Object.fromEntries(Object.entries(gistFiles).map(([name, file]) => [name, file.size]));
+
+    /** The gist as GitHub serves it: 304 to a matching If-None-Match, the whole gist otherwise */
+    const gistAt =
+        (etag, files = gistFiles) =>
+        (request) =>
+            request.headers?.['If-None-Match'] === etag
+                ? { status: 304, body: '', headers: { ETag: etag } }
+                : { status: 200, headers: { ETag: etag }, body: { id: 'abc', files } };
+
+    /** Page-fetch traffic for one operation */
+    async function measure(operation) {
+        resetGmTraffic();
+        const before = calls.length;
+        const result = await operation();
+        const { totals } = getGmTrafficSnapshot();
+        return {
+            result,
+            requests: calls.length - before,
+            sent: totals.pageRequestBytes,
+            received: totals.pageResponseBytes,
+        };
+    }
+
+    test('a silent pull of a version this device has downloads nothing', async () => {
+        responses.push(gistAt(ETAG));
+        const full = await measure(() => readSyncGist('tok', 'abc'));
+        expect(full.result.etag).toBe(ETAG);
+        expect(full.result.files).toEqual(sizes);
+
+        responses.push(gistAt(ETAG));
+        const conditional = await measure(() => readSyncGist('tok', 'abc', { etag: ETAG }));
+
+        expect(calls.at(-1).headers['If-None-Match']).toBe(ETAG);
+        expect(conditional.result).toEqual({ notModified: true, etag: ETAG });
+        expect(full).toMatchObject({ requests: 1 });
+        expect(full.received).toBeGreaterThan(5 * CHUNK);
+        expect(conditional).toMatchObject({ requests: 1, received: 0 });
+    });
+
+    test('a changed gist is downloaded whole, ETag or not', async () => {
+        responses.push(gistAt('W/"v2"'));
+        const { payload, etag } = await readSyncGist('tok', 'abc', { etag: ETAG });
+        expect(payload).toBe(chunkTexts.join(''));
+        expect(etag).toBe('W/"v2"');
+    });
+
+    test('a push with a remembered listing revalidates it instead of downloading the gist', async () => {
+        const written = { id: 'abc', updated_at: 'T2', files: { [MANIFEST_FILE]: { size: 10 } } };
+        const pushOnce = (known) => {
+            responses.push(gistAt(ETAG));
+            responses.push({ status: 200, headers: { ETag: 'W/"v2"' }, body: written });
+            return measure(() => writeSyncGist('tok', 'abc', { chunks: 1 }, ['new'], 5, known));
+        };
+
+        const before = await pushOnce(null);
+        const after = await pushOnce({ gistId: 'abc', etag: ETAG, files: sizes });
+
+        expect(before.requests).toBe(2);
+        expect(after.requests).toBe(2);
+        expect(before.received).toBeGreaterThan(5 * CHUNK);
+        expect(after.received).toBeLessThan(1000);
+        // The write reports the version it produced, for the next push to revalidate
+        expect(after.result).toMatchObject({ id: 'abc', etag: 'W/"v2"', files: { [MANIFEST_FILE]: 10 } });
+    });
+
+    test('a 304 listing still deletes every orphaned chunk the gist holds', async () => {
+        responses.push(gistAt(ETAG));
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        // The local hint says one chunk; the remembered listing says five
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['new'], 1, { gistId: 'abc', etag: ETAG, files: sizes });
+
+        expect(calls[0].headers['If-None-Match']).toBe(ETAG);
+        const { files } = JSON.parse(calls[1].data);
+        expect(files[chunkFileName(0)]).toEqual({ content: 'new' });
+        for (const index of [1, 2, 3, 4]) expect(files[chunkFileName(index)]).toBeNull();
+    });
+
+    test('a listing remembered for another gist is not used for this one', async () => {
+        responses.push(gistAt(ETAG));
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['new'], 0, { gistId: 'zzz', etag: ETAG, files: {} });
+
+        expect(calls[0].headers['If-None-Match']).toBeUndefined();
+        const { files } = JSON.parse(calls[1].data);
+        for (const index of [1, 2, 3, 4]) expect(files[chunkFileName(index)]).toBeNull();
+    });
+
+    test('a conflict retry with an unchanged listing reuses the serialized body', async () => {
+        vi.useFakeTimers();
+        const stringify = vi.spyOn(JSON, 'stringify');
+        try {
+            responses.push(gistAt(ETAG));
+            responses.push({ status: 409, body: { message: 'Conflict' } });
+            responses.push(gistAt(ETAG));
+            responses.push({ status: 200, body: { id: 'abc' } });
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, chunkTexts, 5, {
+                gistId: 'abc',
+                etag: ETAG,
+                files: sizes,
+            });
+            await vi.advanceTimersByTimeAsync(3000);
+            await pending;
+
+            const bodies = stringify.mock.calls.filter(([value]) => value?.files && value?.description);
+            expect(bodies).toHaveLength(1);
+            expect(calls[1].data).toBe(calls[3].data);
+        } finally {
+            stringify.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('a conflict retry whose listing changed rebuilds the body with the new orphans', async () => {
+        vi.useFakeTimers();
+        try {
+            responses.push(gistAt(ETAG, { [MANIFEST_FILE]: { size: 1 } }));
+            responses.push({ status: 409, body: { message: 'Conflict' } });
+            responses.push(gistAt('W/"v3"'));
+            responses.push({ status: 200, body: { id: 'abc' } });
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, ['new']);
+            await vi.advanceTimersByTimeAsync(3000);
+            await pending;
+
+            expect(JSON.parse(calls[1].data).files[chunkFileName(4)]).toBeUndefined();
+            expect(JSON.parse(calls[3].data).files[chunkFileName(4)]).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

@@ -466,6 +466,28 @@ function classify(response) {
  * @returns {Promise<Object>} Parsed response body
  */
 async function apiCall(token, method, path, payload) {
+    const exchange = await apiExchange(token, method, path, {
+        body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    return exchange.data;
+}
+
+/**
+ * An authenticated API call, with what the response said about itself.
+ *
+ * With `ifNoneMatch`, a 304 is an answer rather than a failure: the resource
+ * still has that ETag, and GitHub sends no body (and, for an authenticated
+ * request, does not count it against the rate limit).
+ *
+ * @param {string} token - GitHub personal access token
+ * @param {string} method - HTTP method
+ * @param {string} path - Path under the API root
+ * @param {Object} [options] - Options
+ * @param {string} [options.body] - Body, already serialized
+ * @param {string|null} [options.ifNoneMatch] - ETag for a conditional request
+ * @returns {Promise<{notModified: boolean, etag: string|null, data: Object|null}>} Outcome
+ */
+async function apiExchange(token, method, path, { body, ifNoneMatch = null } = {}) {
     if (!token) {
         throw new GistError('auth', 'No GitHub token is set. Add one in Settings → Cross-Device Sync.');
     }
@@ -479,19 +501,36 @@ async function apiCall(token, method, path, payload) {
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
             'Content-Type': 'application/json',
+            ...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}),
         },
-        body: payload === undefined ? undefined : JSON.stringify(payload),
+        body,
     });
+    const etag = response.headers?.etag || null;
+
+    if (ifNoneMatch && response.status === 304) return { notModified: true, etag: etag || ifNoneMatch, data: null };
 
     if (response.status < 200 || response.status >= 300) {
         throw classify(response);
     }
 
     try {
-        return JSON.parse(response.text || '{}');
+        return { notModified: false, etag, data: JSON.parse(response.text || '{}') };
     } catch {
         throw new GistError('parse', 'GitHub sent a response this script could not read.');
     }
+}
+
+/**
+ * A gist's file names and sizes, without contents — what a remembered listing
+ * keeps, since that is all the orphan cleanup and the size guard read.
+ * @param {Record<string, Object>|undefined} files - The `files` of a gist response
+ * @returns {Record<string, number>|null} Size by file name, or null when there is no listing
+ */
+function fileSizes(files) {
+    if (!files || typeof files !== 'object') return null;
+    const sizes = {};
+    for (const [name, file] of Object.entries(files)) sizes[name] = Number(file?.size) || 0;
+    return sizes;
 }
 
 /**
@@ -570,12 +609,23 @@ export async function findSyncGist(token) {
  * can produce one, and losing half a backup silently is much worse than one
  * extra request.
  *
+ * With `etag`, the read is conditional: a gist that still has that ETag comes
+ * back as `{notModified: true}` with nothing downloaded. Every gist response
+ * carries every file's content, so this is the difference between a few hundred
+ * bytes and the whole backup.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
- * @returns {Promise<{manifest: Object, payload: string, updatedAt: string}>} Reassembled contents
+ * @param {Object} [options] - Options
+ * @param {string|null} [options.etag] - ETag of a version this device already has
+ * @returns {Promise<{notModified?: boolean, manifest?: Object, payload?: string, updatedAt?: string,
+ *   etag: string|null, files?: Record<string, number>}>} Reassembled contents, the response's ETag, and the
+ *   gist's file sizes by name
  */
-export async function readSyncGist(token, gistId) {
-    const gist = await apiCall(token, 'GET', `/gists/${encodeURIComponent(gistId)}`);
+export async function readSyncGist(token, gistId, { etag = null } = {}) {
+    const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch: etag });
+    if (exchange.notModified) return { notModified: true, etag: exchange.etag };
+    const gist = exchange.data;
     const files = gist?.files || {};
 
     const manifestFile = files[MANIFEST_FILE];
@@ -621,7 +671,13 @@ export async function readSyncGist(token, gistId) {
         parts.push(await readFileContent(token, file));
     }
 
-    return { manifest, payload: parts.join(''), updatedAt: gist?.updated_at ?? null };
+    return {
+        manifest,
+        payload: parts.join(''),
+        updatedAt: gist?.updated_at ?? null,
+        etag: exchange.etag,
+        files: fileSizes(files),
+    };
 }
 
 /**
@@ -659,64 +715,102 @@ async function readFileContent(token, file) {
  * being written. The count survives as a fallback for a gist that cannot be
  * listed.
  *
+ * The listing is a conditional request when `known` holds a listing of this
+ * gist: a 304 means the gist still has exactly that ETag, so its file set is
+ * exactly the remembered one, and the orphan cleanup reads that instead of
+ * downloading every file's content to learn their names.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string|null} gistId - Existing gist id, or null to create one
  * @param {Object} manifest - Manifest object, stored as pretty JSON
  * @param {Array<string>} chunks - Payload chunks in order
  * @param {number} [previousChunkCount=0] - How many chunks this device last wrote, as a hint
- * @returns {Promise<{id: string, updatedAt: string}>} The gist that was written
+ * @param {{gistId: string, etag: string, files: Record<string, number>}|null} [known] - A remembered
+ *   listing: the gist's ETag and the file sizes it had at that ETag
+ * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null}>}
+ *   The gist that was written, with the ETag and file sizes of the version the write produced
  */
-export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0) {
+export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0, known = null) {
+    let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
+
+    // Everything but the orphan list is the same on every attempt, so the body
+    // is serialized again only when a retry's listing names different orphans.
+    // A full-scope body is megabytes; stringifying it once per 409 was waste.
+    const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
+    chunks.forEach((chunk, index) => {
+        // A gist file may not be empty; a single space keeps an empty payload legal
+        files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
+    });
+    const payloadBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    let serialized = null;
+
     const attempt = async () => {
         // Listed before the size guard, because what survives the write counts
         // towards the ceiling as much as what is being written. Inside the
         // attempt so a conflict retry sees the file set that just beat it.
-        const existingFiles = gistId ? await listGistFiles(token, gistId) : null;
+        if (gistId) listing = await listGistFiles(token, gistId, listing);
+        const existingFiles = listing?.files ?? null;
 
-        const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
-        chunks.forEach((chunk, index) => {
-            // A gist file may not be empty; a single space keeps an empty payload legal
-            files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
-        });
-
+        const orphans = [];
         let survivingBytes = 0;
         if (existingFiles) {
-            for (const [name, file] of Object.entries(existingFiles)) {
+            for (const [name, size] of Object.entries(existingFiles)) {
                 if (Object.hasOwn(files, name)) continue; // being overwritten
-                const index = chunkIndexFromName(name);
-                if (index !== null) {
+                if (chunkIndexFromName(name) !== null) {
                     // A chunk this payload does not reach is an orphan, whoever wrote it
-                    files[name] = null;
+                    orphans.push(name);
                     continue;
                 }
                 // Something else lives in this gist. Not ours to delete, but its
                 // bytes are just as real to the API's ceiling.
-                survivingBytes += Number(file?.size) || 0;
+                survivingBytes += Number(size) || 0;
             }
         } else {
             for (let index = chunks.length; index < previousChunkCount; index += 1) {
-                files[chunkFileName(index)] = null;
+                orphans.push(chunkFileName(index));
             }
         }
+        orphans.sort();
 
-        const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0) + survivingBytes;
-        if (totalBytes > MAX_GIST_BYTES) {
+        if (payloadBytes + survivingBytes > MAX_GIST_BYTES) {
             throw new GistError(
                 'too-large',
                 'This backup is too big for a single gist. Switch Sync scope to "Settings only".'
             );
         }
 
-        const body = { description: 'Toolasha cross-device sync (do not edit by hand)', files };
-
-        if (gistId) {
-            const updated = await apiCall(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, body);
-            return { id: updated.id ?? gistId, updatedAt: updated.updated_at ?? null };
+        const orphanKey = orphans.join('\n');
+        if (serialized?.orphanKey !== orphanKey) {
+            const withOrphans = { ...files };
+            for (const name of orphans) withOrphans[name] = null;
+            const body = {
+                description: 'Toolasha cross-device sync (do not edit by hand)',
+                files: withOrphans,
+                ...(gistId ? {} : { public: false }),
+            };
+            serialized = { orphanKey, text: JSON.stringify(body) };
         }
 
-        const created = await apiCall(token, 'POST', '/gists', { ...body, public: false });
-        if (!created?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
-        return { id: created.id, updatedAt: created.updated_at ?? null };
+        if (gistId) {
+            const updated = await apiExchange(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, {
+                body: serialized.text,
+            });
+            return {
+                id: updated.data?.id ?? gistId,
+                updatedAt: updated.data?.updated_at ?? null,
+                etag: updated.etag,
+                files: fileSizes(updated.data?.files),
+            };
+        }
+
+        const created = await apiExchange(token, 'POST', '/gists', { body: serialized.text });
+        if (!created.data?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
+        return {
+            id: created.data.id,
+            updatedAt: created.data.updated_at ?? null,
+            etag: created.etag,
+            files: fileSizes(created.data.files),
+        };
     };
 
     // A 409 is two pushes landing on the same gist at the same moment — two
@@ -746,15 +840,22 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
  * that would fail the push anyway will fail it a moment later on the PATCH,
  * with its own classification intact.
  *
+ * With a previous listing, the request is conditional and a 304 returns that
+ * listing unchanged. The pair is only ever stored together — an ETag and the
+ * file sizes of the response that carried it — so a match proves the file set.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
- * @returns {Promise<Record<string, Object>|null>} File entries by name
+ * @param {{etag: string, files: Record<string, number>}|null} previous - Listing to revalidate
+ * @returns {Promise<{gistId: string, etag: string|null, files: Record<string, number>}|null>} The listing
  */
-async function listGistFiles(token, gistId) {
+async function listGistFiles(token, gistId, previous) {
     try {
-        const gist = await apiCall(token, 'GET', `/gists/${encodeURIComponent(gistId)}`);
-        const files = gist?.files;
-        return files && typeof files === 'object' ? files : null;
+        const ifNoneMatch = previous?.etag && previous.files ? previous.etag : null;
+        const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch });
+        if (exchange.notModified) return { gistId, etag: exchange.etag, files: previous.files };
+        const files = fileSizes(exchange.data?.files);
+        return files ? { gistId, etag: exchange.etag, files } : null;
     } catch (error) {
         console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
         return null;

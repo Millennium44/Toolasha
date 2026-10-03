@@ -102,6 +102,11 @@ const gist = vi.hoisted(() => ({
     writeWait: null,
     writeAttempts: 0,
     writes: [],
+    readOptions: [],
+    remoteEtag: null,
+    remoteFiles: null,
+    writeEtag: undefined,
+    writeFiles: undefined,
 }));
 
 class FakeGistError extends Error {
@@ -115,18 +120,21 @@ vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
     findSyncGist: async () => gist.found,
-    readSyncGist: async () => {
+    readSyncGist: async (_token, _id, options) => {
         gist.readCalls += 1;
+        gist.readOptions.push(options);
         if (gist.readWait) await gist.readWait;
         if (gist.readError) throw gist.readError;
-        return gist.read;
+        // GitHub's answer to a conditional read of an unchanged gist
+        if (options?.etag && options.etag === gist.remoteEtag) return { notModified: true, etag: options.etag };
+        return gist.remoteEtag ? { ...gist.read, etag: gist.remoteEtag, files: gist.remoteFiles } : gist.read;
     },
-    writeSyncGist: async (_token, id, manifest, chunks, previous) => {
+    writeSyncGist: async (_token, id, manifest, chunks, previous, known) => {
         gist.writeAttempts += 1;
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
-        gist.writes.push({ id, manifest, chunks, previous });
-        return { id: id ?? 'created-id', updatedAt: 'now' };
+        gist.writes.push({ id, manifest, chunks, previous, known });
+        return { id: id ?? 'created-id', updatedAt: 'now', etag: gist.writeEtag, files: gist.writeFiles };
     },
 }));
 
@@ -169,6 +177,11 @@ beforeEach(() => {
     gist.writeWait = null;
     gist.writeAttempts = 0;
     gist.writes = [];
+    gist.readOptions = [];
+    gist.remoteEtag = null;
+    gist.remoteFiles = null;
+    gist.writeEtag = undefined;
+    gist.writeFiles = undefined;
     panelOpens.length = 0;
     clearPullSummary();
     syncManager.busy = false;
@@ -1360,6 +1373,121 @@ describe('the held-back marker outlives a push that was already under way', () =
 
         expect(await pushing).toMatchObject({ ok: true });
         expect(stored.map.toolasha_sync_mergeHeld).toEqual(held);
+    });
+});
+
+describe('the remembered gist version', () => {
+    const FILES = { 'toolasha-sync.json': 120, 'toolasha-data-000.json': 900000 };
+    const remote = (exportedAt, body = '{"remote":1}') => ({
+        manifest: { exportedAt, chunks: 1, hash: `h:${body}`, bytes: body.length },
+        payload: body,
+    });
+
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-02-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        gist.remoteEtag = 'W/"e1"';
+        gist.remoteFiles = FILES;
+    });
+
+    test('a silent pull that finds nothing new remembers the version; the next one is a 304', async () => {
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-newer' });
+        expect(gist.readOptions[0]).toBeUndefined();
+        expect(stored.map.toolasha_sync_gistVersion).toEqual({
+            gistId: 'abc',
+            etag: 'W/"e1"',
+            files: FILES,
+            current: true,
+        });
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true, reason: 'not-modified' });
+        expect(gist.readOptions[1]).toEqual({ etag: 'W/"e1"' });
+        expect(payload.applyCalls).toBe(0);
+    });
+
+    test('a gist that moved since is downloaded and applied, and its new version remembered', async () => {
+        await syncManager.pull({ silent: true });
+        gist.remoteEtag = 'W/"e2"';
+        gist.read = remote('2026-03-01T00:00:00.000Z');
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true });
+        expect(gist.readOptions[1]).toEqual({ etag: 'W/"e1"' });
+        expect(payload.applyCalls).toBe(1);
+        expect(stored.map.toolasha_sync_gistVersion).toMatchObject({ etag: 'W/"e2"', current: true });
+    });
+
+    test('a manual pull always downloads', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        await syncManager.pull();
+        expect(gist.readOptions[0]).toBeUndefined();
+    });
+
+    test('held-back records make a silent pull download the version it already has', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        stored.map.toolasha_sync_mergeHeld = { exportedAt: '2026-02-01T00:00:00.000Z', hash: 'h:{"remote":1}' };
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[0]).toBeUndefined();
+    });
+
+    test('a silent pull that stood down on a conflict is not current, so the next one downloads again', async () => {
+        gist.read = remote('2026-03-01T00:00:00.000Z');
+        payload.text = '{"local":2}';
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'conflict' });
+        expect(stored.map.toolasha_sync_gistVersion).toMatchObject({ etag: 'W/"e1"', current: false });
+
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[1]).toBeUndefined();
+    });
+
+    test('a pull that did not apply cleanly claims no version', async () => {
+        gist.read = remote('2026-03-01T00:00:00.000Z');
+        payload.complete = false;
+        payload.failed = [{ store: 'xpHistory', expected: 1, written: 0 }];
+
+        await syncManager.pull({ silent: true });
+        expect(stored.map.toolasha_sync_gistVersion).toBeUndefined();
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[1]).toBeUndefined();
+    });
+
+    test('a version remembered for another gist is not sent', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'other', etag: 'W/"e1"', files: FILES, current: true };
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[0]).toBeUndefined();
+    });
+
+    test('a push hands the remembered listing to the write and remembers the version it produced', async () => {
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: false };
+        stored.map.toolasha_sync_gistVersion = known;
+        payload.text = '{"local":2}';
+        gist.writeEtag = 'W/"e9"';
+        gist.writeFiles = { 'toolasha-sync.json': 130, 'toolasha-data-000.json': 11 };
+
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(gist.writes[0].known).toEqual(known);
+        expect(stored.map.toolasha_sync_gistVersion).toEqual({
+            gistId: 'abc',
+            etag: 'W/"e9"',
+            files: gist.writeFiles,
+            current: true,
+        });
+    });
+
+    test('a write that reports no ETag leaves no version behind', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        payload.text = '{"local":2}';
+
+        await syncManager.push();
+        expect(stored.map.toolasha_sync_gistVersion).toBeNull();
+    });
+
+    test('forgetting the gist forgets its version', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        await syncManager.forgetGist();
+        expect(stored.map.toolasha_sync_gistVersion).toBeNull();
     });
 });
 

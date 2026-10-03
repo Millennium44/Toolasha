@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Cross-device sync no longer fills Tampermonkey's memory
+
+- Sync uploads went through Tampermonkey, which kept every one: hundreds of multi-megabyte copies, gigabytes over a day or two in Firefox. Sync now talks to GitHub directly from the page, only one game tab runs the automatic schedule, and unchanged gists are no longer downloaded in full.
+
 ### Empty idle loadouts keep their picker
 
 - Choosing a saved loadout with no food or drinks now shows an empty message while keeping the loadout picker available. You can switch back to another setup directly from the Consumables panel.
