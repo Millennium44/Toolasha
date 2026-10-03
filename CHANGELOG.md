@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild Trial pace retains current progress
+
+- Guild Trial pace and payout forecasts now include work already completed in the current tier when time runs out before its clear. A partly completed tier no longer appears to have only the progress forecast from now onward.
+
 ### Transmute XP remains available when profit is unknown
 
 - Enhanced Transmute keeps its queued XP estimates and XP sorting even when the returned item's enhancement level makes profit unavailable. The XP fallback uses the current tea and catalyst setup without assigning a guessed value to the returned item.

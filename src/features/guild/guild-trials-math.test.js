@@ -60,7 +60,7 @@ import {
     TRIAL_SPAN_SLACK_MS,
 } from './guild-trials-math.js';
 import { NOTICE_BOARD_NAME } from './guild-notice-board.fixture.js';
-import { CURRENT_TRIALS_DATA_SKILLING } from './guild-trial-messages.fixture.js';
+import { CURRENT_TRIALS_DATA_SKILLING, GUILD_SKILLING_TICKS } from './guild-trial-messages.fixture.js';
 
 describe('trialFightSpan: how long the whole combat fight ran', () => {
     // The 2026-09-07 trace: tier 1 opened 5.9 s past 22:00 UTC
@@ -915,7 +915,23 @@ describe('pace', () => {
         expect(pace.clears).toEqual([]);
         expect(pace.finalTier).toBeNull();
         expect(pace.tiersCleared).toBe(0);
-        expect(pace.partialFraction).toBeCloseTo(0.4, 9);
+        // Tier 3 needs 400 total; 300 was already done, then 40 more fits.
+        expect(pace.partialFraction).toBeCloseTo(0.85, 9);
+    });
+
+    test('the real Crafting pool keeps progress already made when its hour expires', () => {
+        const update = GUILD_SKILLING_TICKS[0];
+        const total = update.targetWorkValue;
+        const remaining = total - update.currentWorkValue;
+        const pace = projectPace({
+            currentTier: update.tier,
+            remainingInTier: remaining,
+            rate: 1,
+            timeLeftMs: 0,
+            totalForTier: (tier) => (tier === update.tier ? total : null),
+        });
+
+        expect(pace.partialFraction).toBeCloseTo(update.currentWorkValue / total, 12);
     });
 
     test('stops at the top of the ladder rather than climbing past it', () => {

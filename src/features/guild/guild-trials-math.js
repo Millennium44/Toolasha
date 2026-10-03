@@ -1659,8 +1659,7 @@ export function combatDamageRate(
  * work first and each later tier's projected total after it, and stops at the
  * first tier that does not fit in the time left. A tier only counts as cleared
  * when it fits whole — the partial progress into the tier that did not is
- * reported separately as `partialFraction`, because a tier 90% cleared is worth
- * exactly as much as one not started.
+ * reported separately as `partialFraction` for the partial-tier payout estimate.
  *
  * @param {Object} input - Inputs
  * @param {number} input.currentTier - Tier now in progress
@@ -1695,7 +1694,15 @@ export function projectPace({
         const takesMs = need / rate;
         if (spentMs + takesMs > timeLeftMs) {
             const affordable = (timeLeftMs - spentMs) * rate;
-            partialFraction = need > 0 ? Math.min(1, Math.max(0, affordable / need)) : 0;
+            const total = tier === currentTier && typeof totalForTier === 'function' ? totalForTier(tier) : need;
+            if (Number.isFinite(total) && total > 0) {
+                const alreadyDone = Math.max(0, total - need);
+                partialFraction = Math.min(1, Math.max(0, (alreadyDone + affordable) / total));
+            } else {
+                // Without the tier's total, only the share of its remaining
+                // work that fits is knowable.
+                partialFraction = need > 0 ? Math.min(1, Math.max(0, affordable / need)) : 0;
+            }
             break;
         }
 
