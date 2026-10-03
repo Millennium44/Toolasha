@@ -420,10 +420,10 @@ describe('nested containers', () => {
         mocks.itemDetails[INNER].isTradable = true;
         const priceMap = expectedValueCalculator.buildPriceMap([OUTER, INNER, CHEST_HRID], mocks.initData);
 
-        expect(priceMap[INNER]).toEqual({ price: 1000 * (1 - MARKET_TAX), canBeSold: false });
-        expect(priceMap[GEM_HRID]).toEqual({ price: 1000, canBeSold: true });
-        expect(priceMap[JUNK_HRID]).toEqual({ price: 50, canBeSold: false });
-        expect(priceMap['/items/coin']).toEqual({ price: 1, canBeSold: false });
+        expect(priceMap[INNER]).toEqual({ price: 1000 * (1 - MARKET_TAX), canBeSold: false, missingCount: 0 });
+        expect(priceMap[GEM_HRID]).toEqual({ price: 1000, canBeSold: true, missingCount: 0 });
+        expect(priceMap[JUNK_HRID]).toEqual({ price: 50, canBeSold: false, missingCount: 0 });
+        expect(priceMap['/items/coin']).toEqual({ price: 1, canBeSold: false, missingCount: 0 });
     });
 
     test('a container that contains itself terminates instead of recursing forever', () => {
@@ -637,6 +637,43 @@ describe('a nested container nothing in it can be priced', () => {
 
         expect(mainPath).toBe(1);
         expect(workerPath).toBe(mainPath);
+    });
+});
+
+describe('a self-dropping openable in the worker price map', () => {
+    const PURPLES_GIFT = '/items/purples_gift';
+
+    test('the worker cache keeps the unpriced self-drop partial like the fallback', async () => {
+        mocks.itemDetails[PURPLES_GIFT] = { name: "Purple's Gift", isOpenable: true, isTradable: true };
+        mocks.itemDetails['/items/coin'] = { name: 'Gold', isTradable: false };
+        // These are rows from the live Purple's Gift drop table: its two coin
+        // entries and the 2% chance to drop the gift itself.
+        mocks.initData.openableLootDropMap = {
+            [PURPLES_GIFT]: [
+                { itemHrid: '/items/coin', dropRate: 1, minCount: 30000, maxCount: 60000 },
+                { itemHrid: '/items/coin', dropRate: 0.1, minCount: 150000, maxCount: 300000 },
+                { itemHrid: PURPLES_GIFT, dropRate: 0.02, minCount: 1, maxCount: 1 },
+            ],
+        };
+        delete mocks.prices[PURPLES_GIFT];
+
+        const mainPath = expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData).missingCount;
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockReset();
+        calculateEVBatch.mockImplementation(async (containers) =>
+            containers.map(({ containerHrid }) => ({ containerHrid, ev: 100_000 }))
+        );
+        await expectedValueCalculator.calculateNestedContainers(expectedValueCalculator.generation);
+
+        expect(mainPath).toBe(1);
+        expect(expectedValueCalculator.containerMissingCounts.get(PURPLES_GIFT)).toBe(mainPath);
+
+        expectedValueCalculator.isInitialized = true;
+        try {
+            expect(expectedValueCalculator.calculateExpectedValue(PURPLES_GIFT).isPartial).toBe(true);
+        } finally {
+            expectedValueCalculator.isInitialized = false;
+        }
     });
 });
 

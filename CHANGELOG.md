@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Partial values for self-dropping gifts
+
+- Chest values now keep their partial-value warning when a gift can drop itself and that self-drop has no known price. Background calculations no longer present an incomplete value as fully priced.
+
 ### Completed tasks still occupy slots
 
 - Task slot totals, forecasts, and alerts now include completed tasks until their rewards are claimed. A full board no longer appears to have spare slots or delays its warning by an extra task cooldown.
