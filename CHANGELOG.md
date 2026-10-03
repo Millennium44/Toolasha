@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A fuller dashboard for new overlay layouts
+
+- New overlay layouts start with a docked Dashboard covering wealth, skill progress, queue time, combat results, consumables, and notices. Saved layouts keep their settings, and Dashboard is available as a preset when you want it.
+
 ### Compact overlay tiles reclaim empty space
 
 - Empty overlay tiles now shrink to their title instead of reserving the full card height. Tiles regain their usual size as soon as there is data to show.

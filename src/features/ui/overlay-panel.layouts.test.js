@@ -308,6 +308,7 @@ describe('saving and switching named layouts', () => {
             'Combat · preset',
             'Skilling · preset',
             'Labyrinth · preset',
+            'Dashboard · preset',
             'Default · preset',
         ]);
     });
@@ -365,6 +366,7 @@ describe('saving and switching named layouts', () => {
             'Skilling · preset',
             'Labyrinth · preset',
             'Market · preset',
+            'Dashboard · preset',
             'Default · preset',
         ]);
     });

@@ -371,6 +371,26 @@ function defaultSettings() {
 }
 
 /**
+ * A dashboard for a character with no saved overlay settings.
+ *
+ * The existing default remains the fallback for saved records that predate
+ * this layout, so adding tiles here cannot change anyone's existing overlay.
+ * @returns {Object} Fresh dashboard settings
+ */
+function freshDashboardSettings() {
+    const settings = defaultSettings();
+    const dashboard = PRESET_LAYOUTS.Dashboard;
+
+    settings.order = [...dashboard.order];
+    settings.span = { ...dashboard.span };
+    settings.docked = true;
+    settings.visible = Object.fromEntries(registeredRows().map(({ key }) => [key, false]));
+    for (const key of dashboard.order) settings.visible[key] = true;
+
+    return settings;
+}
+
+/**
  * What the character is doing, as far as a layout is concerned.
  *
  * Read from the action queue rather than from any feature, so it does not
@@ -519,14 +539,14 @@ class OverlayPanel {
             'settings'
         );
         const saved = await this._readSettings(state);
-        this.settings =
-            saved && typeof saved === 'object'
-                ? // Never spread in from the defaults: a saved layout that predates
-                  // the curated set has no opinion on the flag, and taking the
-                  // default's `true` would quietly switch off every row that
-                  // player had on and never explicitly ticked
-                  { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
-                : defaultSettings();
+        const freshDashboard = !saved || typeof saved !== 'object';
+        this.settings = !freshDashboard
+            ? // Never spread in from the defaults: a saved layout that predates
+              // the curated set has no opinion on the flag, and taking the
+              // default's `true` would quietly switch off every row that
+              // player had on and never explicitly ticked
+              { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
+            : freshDashboardSettings();
 
         // The order names every row the registry knows about, once, here.
         //
@@ -537,7 +557,18 @@ class OverlayPanel {
         // the same job correctly — saved order first, then anything it has never
         // heard of — and a row whose feature registers after this still gets
         // appended at draw time, in registration order, deterministically.
-        this.settings.order = resolveRows(registeredRows(), this.settings).map((row) => row.key);
+        const availableRows = registeredRows();
+        this.settings.order = resolveRows(availableRows, this.settings).map((row) => row.key);
+        if (freshDashboard) {
+            // Some rows, such as Account View, register during their feature's
+            // initialize call. Keep their designed dashboard position until
+            // they arrive, rather than dropping an unavailable key at startup.
+            const dashboardOrder = PRESET_LAYOUTS.Dashboard.order;
+            this.settings.order = [
+                ...dashboardOrder,
+                ...this.settings.order.filter((key) => !dashboardOrder.includes(key)),
+            ];
+        }
 
         // Before the panel is drawn, so the first render of the popover already
         // has the Update button and the "Showing:" line on it

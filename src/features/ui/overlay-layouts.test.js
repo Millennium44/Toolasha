@@ -238,8 +238,8 @@ describe('the round trip', () => {
 });
 
 describe('presets', () => {
-    test('all five ship, each with an order and an activity', () => {
-        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Default']);
+    test('all six ship, each with an order and an activity', () => {
+        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Dashboard', 'Default']);
 
         for (const name of presetNames()) {
             expect(PRESET_LAYOUTS[name].order.length).toBeGreaterThan(0);
@@ -252,6 +252,36 @@ describe('presets', () => {
             const { order } = PRESET_LAYOUTS[name];
             expect(new Set(order).size).toBe(order.length);
         }
+    });
+
+    test('Dashboard is fuller while keeping current-skill progress to one TTL tile', () => {
+        expect(PRESET_LAYOUTS.Dashboard).toEqual({
+            activity: ACTIVITY.NONE,
+            order: [
+                'netWorth',
+                'coins',
+                'accountView',
+                'buildScore',
+                'combatLevel',
+                'skillLevel',
+                'timeToLevel',
+                'queueTimeLeft',
+                'combatStatus',
+                'experiencePerHour',
+                'dps',
+                'deathsPerHour',
+                'manaPerFight',
+                'luck',
+                'totalProfit',
+                'consumables',
+                'noticeLog',
+            ],
+            span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2 },
+        });
+        expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('inventoryValue');
+        expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('skillTimeToLevel');
+        expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('combatSession');
+        expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('battleTimer');
     });
 
     test('every span is a whole number of columns a panel can actually offer', () => {
@@ -279,9 +309,11 @@ describe('presets', () => {
         }
     });
 
-    test('every preset claims a different activity, so none of them is unreachable', () => {
+    test('activity presets claim different activities, with dashboard choices mapped to none', () => {
         const activities = presetNames().map((name) => PRESET_LAYOUTS[name].activity);
-        expect(new Set(activities).size).toBe(activities.length);
+        const active = activities.filter((activity) => activity !== ACTIVITY.NONE);
+        expect(new Set(active).size).toBe(active.length);
+        expect(activities.filter((activity) => activity === ACTIVITY.NONE)).toHaveLength(2);
     });
 
     test('a preset is a layout file of exactly the shape a saved one has', () => {
