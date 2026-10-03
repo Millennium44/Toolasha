@@ -105,6 +105,8 @@ export function walkQueueCoins(engine, actions, inventory) {
         if (delta > 0) {
             ledger.byHrid[COIN] = before;
             ledger.byEnhancedKey[`${COIN}::0`] = before;
+            // and so is their provenance: discarded proceeds must not mark a later spender as estimated
+            ledger.estimatedHrids?.delete(COIN);
         }
         stages.push({
             actionHrid: action.actionHrid,

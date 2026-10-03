@@ -234,6 +234,19 @@ describe('walking the queue for its coin flow', () => {
         }
     });
 
+    test('discarded coinify proceeds leave no estimate mark on the decompose after them', () => {
+        game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 1000), stack(ESSENCE, 2000)];
+        game.currentActions = [
+            queued(1, COINIFY, { item: ESSENCE, maxCount: 200 }),
+            queued(2, DECOMPOSE, { item: STAR_FRUIT }),
+        ];
+
+        const walked = walkQueueCoins(engine);
+
+        expect(walked.stages[0].earned).toBeGreaterThan(0);
+        expect(coinReserve(walked.stages)).toMatchObject({ reserve: 450_000, estimated: false });
+    });
+
     test('a queued action the game data does not know makes the walk unreadable, not free', () => {
         game.currentActions = [
             queued(1, '/actions/alchemy/unknown'),
