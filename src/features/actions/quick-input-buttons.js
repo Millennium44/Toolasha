@@ -37,7 +37,7 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { scrollSimulator } from '../../utils/bundle-bridge.js';
-import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
+import { SCROLL_BUFF_ITEMS, SELECTION_CHANGED_EVENT } from '../../utils/scroll-buff-values.js';
 import { estimateUnlimitedAction, formatUnlimitedTimeText } from './unlimited-action-estimate.js';
 
 /**
@@ -322,11 +322,42 @@ class QuickInputButtons {
             }
         });
 
+        // The speed and XP figures are drawn once per panel from the scroll selection, so a
+        // changed selection (the action panel's scroll chips, the Loadouts popup) redraws them
+        const onSelectionChanged = () => this._onScrollSelectionChanged();
+        document.addEventListener(SELECTION_CHANGED_EVENT, onSelectionChanged);
+        this.cleanupRegistry.registerCleanup(() => {
+            document.removeEventListener(SELECTION_CHANGED_EVENT, onSelectionChanged);
+        });
+
         // Check for existing action panels that may already be open
         const existingPanels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
         existingPanels.forEach((panel) => {
             this.injectButtons(panel);
         });
+    }
+
+    /**
+     * Draw the open panels' figures again after the scroll selection changed. The profit
+     * section belongs to the profit display, which redraws itself, so it is set aside while
+     * this feature's own sections are rebuilt and put back after them.
+     * @private
+     */
+    _onScrollSelectionChanged() {
+        for (const panel of [...this._panelReleases.keys()]) {
+            if (!panel.isConnected) continue;
+            const profitSections = [...panel.querySelectorAll('[data-mwi-profit-display]')];
+            profitSections.forEach((section) => section.remove());
+            delete panel.dataset.mwiInjectedAction;
+            this.injectButtons(panel);
+            if (profitSections.length === 0) continue;
+            const sections = panel.querySelectorAll('.mwi-collapsible-section');
+            const anchor = sections[sections.length - 1];
+            for (const section of profitSections) {
+                if (anchor) anchor.insertAdjacentElement('afterend', section);
+                else panel.appendChild(section);
+            }
+        }
     }
 
     /**

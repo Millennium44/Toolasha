@@ -34,3 +34,21 @@ export const SCROLL_BUFF_LABELS = {
     '/buff_types/processing': 'Scroll of Processing (+20%)',
     '/buff_types/gourmet': 'Scroll of Gourmet (+10%)',
 };
+
+/** Display order of the scroll buff types, shared by the popup and the action-panel chips */
+export const SCROLL_BUFF_ORDER = [
+    '/buff_types/efficiency',
+    '/buff_types/gathering',
+    '/buff_types/wisdom',
+    '/buff_types/action_speed',
+    '/buff_types/rare_find',
+    '/buff_types/processing',
+    '/buff_types/gourmet',
+];
+
+/**
+ * Fired on `document` after a scroll selection is saved, so every reader that drew one
+ * (an open popup, the quick-input speed/XP figures) can redraw. `detail.key` is the
+ * selection that changed (a loadout name or `__default__`).
+ */
+export const SELECTION_CHANGED_EVENT = 'toolasha:scroll-selection-changed';

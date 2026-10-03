@@ -9,24 +9,18 @@
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import scrollSimulator from './scroll-simulator.js';
+import scrollSimulator, { DEFAULT_KEY } from './scroll-simulator.js';
 import loadoutSnapshot from './loadout-snapshot.js';
-import { SCROLL_BUFF_ITEMS, SCROLL_BUFF_LABELS } from '../../utils/scroll-buff-values.js';
+import {
+    SCROLL_BUFF_ITEMS,
+    SCROLL_BUFF_LABELS,
+    SCROLL_BUFF_ORDER,
+    SELECTION_CHANGED_EVENT,
+} from '../../utils/scroll-buff-values.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const BUTTON_ID = 'toolasha-scroll-sim-btn';
 const POPUP_ID = 'toolasha-scroll-sim-popup';
-
-// Ordered list of scroll buff types to display in the popup
-const SCROLL_BUFF_ORDER = [
-    '/buff_types/efficiency',
-    '/buff_types/gathering',
-    '/buff_types/wisdom',
-    '/buff_types/action_speed',
-    '/buff_types/rare_find',
-    '/buff_types/processing',
-    '/buff_types/gourmet',
-];
 
 // ─── Loadout name lookup ────────────────────────────────────────
 
@@ -94,6 +88,7 @@ class ScrollSimPopup {
         this.dragMoveHandler = null;
         this.dragUpHandler = null;
         this.clickOutsideHandler = null;
+        this.selectionChangedHandler = null;
     }
 
     /**
@@ -182,6 +177,25 @@ class ScrollSimPopup {
         this._renderBody(body);
         this._setupDragging(header);
         this._setupClickOutside();
+        this._setupSelectionListener();
+    }
+
+    /**
+     * The selection can also change from an action panel's scroll chips while this
+     * popup is open; tick the boxes to match instead of showing a stale choice.
+     * @private
+     */
+    _setupSelectionListener() {
+        this.selectionChangedHandler = (event) => {
+            if (event?.detail?.key !== (this.loadoutName ?? DEFAULT_KEY)) return;
+            const body = this.container?.querySelector('#toolasha-scroll-sim-body');
+            if (!body) return;
+            const current = scrollSimulator.getScrollsForLoadout(this.loadoutName);
+            body.querySelectorAll('input[type="checkbox"]').forEach((cb, i) => {
+                cb.checked = current.has(SCROLL_BUFF_ORDER[i]);
+            });
+        };
+        document.addEventListener(SELECTION_CHANGED_EVENT, this.selectionChangedHandler);
     }
 
     _refreshBody() {
@@ -315,6 +329,10 @@ class ScrollSimPopup {
         if (this.clickOutsideHandler) {
             document.removeEventListener('mousedown', this.clickOutsideHandler);
             this.clickOutsideHandler = null;
+        }
+        if (this.selectionChangedHandler) {
+            document.removeEventListener(SELECTION_CHANGED_EVENT, this.selectionChangedHandler);
+            this.selectionChangedHandler = null;
         }
         if (this.container) {
             unregisterFloatingPanel(this.container);

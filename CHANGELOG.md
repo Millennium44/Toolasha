@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Toggle simulated scrolls on the action panel
+
+- With scroll simulation on, an action panel's profit section shows a chip for each scroll that applies to that skill; clicking one adds or removes it and redraws profit, XP and time at once, editing the same loadout or default selection as the Scroll Simulation popups.
+
 ### Crafting reservations follow execution order
 
 - Material collection now allocates bag stock to buy steps in plan order, and walks preserve dependencies on output produced by earlier craft steps.
