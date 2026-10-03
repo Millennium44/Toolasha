@@ -957,6 +957,32 @@ describe('the away block', () => {
 });
 
 describe('the overlay tile', () => {
+    test('repeated refreshes keep one all-clear line', () => {
+        const row = rows.registered.find((entry) => entry.key === 'sessionBriefing');
+        const container = document.createElement('div');
+        for (let index = 0; index < 5; index += 1) row.render(container);
+
+        expect(container.children).toHaveLength(1);
+        expect(container.textContent).toBe('All clear');
+    });
+
+    test('a refresh replaces the previous attention count', () => {
+        const row = rows.registered.find((entry) => entry.key === 'sessionBriefing');
+        const container = document.createElement('div');
+        row.render(container);
+
+        game.queue = { queued: 0, seconds: 0 };
+        row.render(container);
+        row.render(container);
+        expect(container.textContent).toBe('1 needs you');
+        expect(container.children).toHaveLength(1);
+
+        game.queue = null;
+        row.render(container);
+        expect(container.textContent).toBe('All clear');
+        expect(container.children).toHaveLength(1);
+    });
+
     test('counts the same lines, and has no panel to offer', () => {
         const row = rows.registered.find((entry) => entry.key === 'sessionBriefing');
         expect(row).toBeTruthy();

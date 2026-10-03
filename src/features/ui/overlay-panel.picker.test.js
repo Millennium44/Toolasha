@@ -234,6 +234,13 @@ function chipState() {
     return state;
 }
 
+/** @returns {string[]} The registered picker rows in their displayed order */
+function chipOrder() {
+    return [...overlayPanel.pickerEl.querySelectorAll('[data-overlay-row-chip]')].map(
+        (chip) => chip.dataset.overlayRowChip
+    );
+}
+
 beforeEach(() => {
     store.data.clear();
     dialog.answer = null;
@@ -437,6 +444,34 @@ describe('getting out of the gear popover', () => {
 
         overlayPanel.show();
         expect(overlayPanel.isOpen).toBe(true);
+    });
+});
+
+describe('reordering registered rows around saved keys without providers', () => {
+    test('the row arrows move visibly adjacent rows and keep the unknown key in its slot', () => {
+        overlayPanel.settings.order = ['dps', 'removed-provider', 'luck'];
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+
+        const dps = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="dps"]');
+        dps.querySelector('button[title="Later in the layout order"]').click();
+
+        expect(overlayPanel.settings.order).toEqual(['luck', 'removed-provider', 'dps']);
+        expect(chipOrder()).toEqual(['luck', 'dps']);
+    });
+
+    test('the row arrows keep a newly registered row missing from saved order', () => {
+        overlayPanel.settings.order = ['dps'];
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+
+        const dps = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="dps"]');
+        dps.querySelector('button[title="Later in the layout order"]').click();
+
+        expect(overlayPanel.settings.order).toEqual(['luck', 'dps']);
+        expect(chipOrder()).toEqual(['luck', 'dps']);
     });
 });
 

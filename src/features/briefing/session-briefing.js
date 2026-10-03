@@ -947,7 +947,7 @@ registerRow({
         const line = document.createElement('div');
         line.textContent = count === 0 ? 'All clear' : `${count} need${count === 1 ? 's' : ''} you`;
         line.style.color = count === 0 ? ROW_COLORS.good : ROW_COLORS.gold;
-        container.appendChild(line);
+        container.replaceChildren(line);
     },
 });
 

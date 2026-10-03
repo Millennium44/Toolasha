@@ -113,6 +113,7 @@ function makeWidgetDraggable(element, { positionKey, position, onMove }) {
  * @param {number} [options.zIndex] - Stacking order; defaults to the floating-panel layer
  * @param {string|null} [options.positionKey] - Settings key remembering the drag position
  * @param {{left: number, top: number}|null} [options.position] - Position read back from that key
+ * @param {Function|null} [options.onMove] - Called with the new position once a drag ends
  * @param {string} [options.mainClass] - Extra class on the main button, for tests and styling
  * @param {string} [options.closeClass] - Extra class on the ✕
  * @param {string[]|null} [options.mainLabels] - Every label the main button will ever show. Given
@@ -134,6 +135,7 @@ export function createFloatingWidget({
     zIndex,
     positionKey = null,
     position = null,
+    onMove = null,
     mainClass = '',
     closeClass = '',
     mainLabels = null,
@@ -241,7 +243,7 @@ export function createFloatingWidget({
     row.append(status, extras, main, gear, close);
     element.append(row, settings);
 
-    makeWidgetDraggable(element, { positionKey, position, onMove: null });
+    makeWidgetDraggable(element, { positionKey, position, onMove });
 
     const widget = {
         element,

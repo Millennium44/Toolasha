@@ -141,6 +141,7 @@ beforeEach(async () => {
     };
     overlayPanel.savedLayouts = null;
     overlayPanel.undoState = null;
+    overlayPanel.appliedLayout = null;
     overlayPanel.show();
 });
 
@@ -268,6 +269,76 @@ describe('saving and switching named layouts', () => {
         expect(worn().order).toEqual(['luck', 'dps']);
     });
 
+    test('undoing a named-layout switch restores the previously active layout name', async () => {
+        wear(dungeonLayout());
+        await overlayPanel.saveNamedLayout('Dungeon');
+        wear(marketLayout());
+        await overlayPanel.saveNamedLayout('Market');
+
+        await overlayPanel.applyNamedLayout('Dungeon');
+        await overlayPanel.applyNamedLayout('Market');
+        expect(overlayPanel.appliedLayout).toBe('Market');
+
+        overlayPanel._undo();
+        expect(overlayPanel.appliedLayout).toBe('Dungeon');
+
+        overlayPanel.openPicker();
+        await overlayPanel._refreshLayoutNames();
+        expect(overlayPanel.pickerEl.querySelector('[data-overlay-active-layout]').textContent).toBe(
+            'Showing: Dungeon'
+        );
+        expect(
+            [...overlayPanel.pickerEl.querySelectorAll('button')].some(
+                (button) => button.textContent === 'Update "Dungeon"'
+            )
+        ).toBe(true);
+    });
+
+    test('undoing a preset switch restores the absence of an active layout', async () => {
+        wear(marketLayout());
+
+        await overlayPanel.applyNamedLayout('Dashboard');
+        expect(overlayPanel.appliedLayout).toBe('Dashboard');
+
+        overlayPanel._undo();
+        expect(overlayPanel.appliedLayout).toBeNull();
+
+        overlayPanel.openPicker();
+        await overlayPanel._refreshLayoutNames();
+        expect(overlayPanel.pickerEl.querySelector('[data-overlay-active-layout]')).toBeNull();
+        expect(
+            [...overlayPanel.pickerEl.querySelectorAll('button')].some((button) =>
+                button.textContent.startsWith('Update')
+            )
+        ).toBe(false);
+    });
+
+    test('undoing an import retains the active layout metadata captured before the import', async () => {
+        wear(dungeonLayout());
+        await overlayPanel.saveNamedLayout('Dungeon');
+        await overlayPanel.applyNamedLayout('Dungeon');
+
+        await overlayPanel._applyLayout({ settings: marketLayout(), geometry: null }, 'Import');
+
+        expect(overlayPanel.appliedLayout).toBe('Dungeon');
+        overlayPanel._undo();
+        expect(overlayPanel.appliedLayout).toBe('Dungeon');
+        expect(worn().order).toEqual(['dps', 'luck']);
+    });
+
+    test('undoing Reset restores the active layout metadata captured before Reset', async () => {
+        wear(dungeonLayout());
+        await overlayPanel.saveNamedLayout('Dungeon');
+        await overlayPanel.applyNamedLayout('Dungeon');
+        dialog.answer = 'reset';
+
+        await overlayPanel._resetLayout();
+
+        expect(overlayPanel.appliedLayout).toBeNull();
+        overlayPanel._undo();
+        expect(overlayPanel.appliedLayout).toBe('Dungeon');
+    });
+
     test('taking a switch back puts the column count and its pin back too', async () => {
         // The restored spans were written for the old grid; left on the new
         // layout's count they are a two-column arrangement drawn on ten columns
@@ -308,6 +379,7 @@ describe('saving and switching named layouts', () => {
             'Combat · preset',
             'Skilling · preset',
             'Labyrinth · preset',
+            'Dashboard · preset',
             'Default · preset',
         ]);
     });
@@ -365,6 +437,7 @@ describe('saving and switching named layouts', () => {
             'Skilling · preset',
             'Labyrinth · preset',
             'Market · preset',
+            'Dashboard · preset',
             'Default · preset',
         ]);
     });
