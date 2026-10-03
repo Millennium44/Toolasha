@@ -37,6 +37,21 @@ describe('forecastLabyrinthEntries', () => {
         expect(f.msUntilNext).toBeLessThan(0);
     });
 
+    test('treats the game’s year-one timestamp sentinel as no regeneration timestamp', () => {
+        const characterInfo = {
+            labyrinthEntries: 1,
+            labyrinthCooldownHours: 48,
+            lastLabyrinthTimestamp: '0001-01-01T00:00:00Z',
+        };
+
+        const f = forecastLabyrinthEntries({ characterInfo, now: NOW });
+
+        expect(f.ok).toBe(true);
+        expect(f.lastEntryAt).toBeNull();
+        expect(f.nextEntryAt).toBeNull();
+        expect(f.available).toBe(false);
+    });
+
     test('reports not-ok without character info or cooldown', () => {
         expect(forecastLabyrinthEntries({ characterInfo: null }).ok).toBe(false);
         expect(forecastLabyrinthEntries({ characterInfo: { labyrinthEntries: 1 } }).ok).toBe(false);

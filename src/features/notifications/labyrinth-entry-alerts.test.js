@@ -59,12 +59,12 @@ const { default: labyrinthEntryAlerts, MASTER_SETTING } = await import('./labyri
 const HOUR = 3_600_000;
 const NOW = Date.parse('2026-08-13T04:18:00.000Z');
 
-function stock({ entries = 1, cooldownHours = 48, lastHoursAgo = 0 } = {}) {
+function stock({ entries = 1, cooldownHours = 48, lastHoursAgo = 0, lastTimestamp } = {}) {
     game.characterData = {
         characterInfo: {
             labyrinthEntries: entries,
             labyrinthCooldownHours: cooldownHours,
-            lastLabyrinthTimestamp: new Date(NOW - lastHoursAgo * HOUR).toISOString(),
+            lastLabyrinthTimestamp: lastTimestamp ?? new Date(NOW - lastHoursAgo * HOUR).toISOString(),
         },
     };
 }
@@ -110,6 +110,20 @@ describe('labyrinth entry alerts', () => {
         labyrinthEntryAlerts.check({ seed: true });
         const result = labyrinthEntryAlerts.check();
         expect(result?.fired).toBe(true);
+    });
+
+    test('does not project a ready entry from the game’s no-timestamp sentinel', () => {
+        stock({ entries: 1, lastTimestamp: '0001-01-01T00:00:00Z' });
+        labyrinthEntryAlerts.check({ seed: true });
+
+        expect(labyrinthEntryAlerts.check()).toBeNull();
+        expect(game.notified).toEqual([]);
+
+        // A server count increase remains the authoritative signal even when it
+        // has not supplied a usable timestamp.
+        stock({ entries: 2, lastTimestamp: '0001-01-01T00:00:00Z' });
+        expect(labyrinthEntryAlerts.check()?.fired).toBe(true);
+        expect(game.notified.at(-1).message).toContain('2/5');
     });
 
     test('does not repeat the same regeneration instant', () => {
