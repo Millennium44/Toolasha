@@ -490,6 +490,103 @@ class AlchemyProfitCalculator {
     }
 
     /**
+     * Calculate only the nonmonetary Transmute metrics used by XP displays.
+     * Enhanced self-returns have unknown output value, but that does not make
+     * the item's success rate or action speed unknown.
+     * @param {string} itemHrid - Item HRID
+     * @param {boolean} [useLiveSetup=false] - Use the queued/live catalyst and drinks
+     * @param {number|null} [teaBonusOverride=null]
+     * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice=null]
+     * @param {Object|null} [actionContext=null]
+     * @returns {{successRate:number,actionsPerHour:number}|null}
+     */
+    calculateTransmuteMetrics(
+        itemHrid,
+        useLiveSetup = false,
+        teaBonusOverride = null,
+        catalystChoice = null,
+        actionContext = null
+    ) {
+        try {
+            const gameData = dataManager.getInitClientData();
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            const actionDetails = gameData?.actionDetailMap?.['/actions/alchemy/transmute'];
+            const baseSuccessRate = itemDetails?.alchemyDetail?.transmuteSuccessRate || 0;
+            if (!gameData || !itemDetails || !actionDetails || baseSuccessRate <= 0) return null;
+
+            const itemLevel = itemDetails.itemLevel || 1;
+            const resolvedContext = actionContext ?? resolveActionContext('/action_types/alchemy');
+            const skills = actionContext?.skills ?? dataManager.getSkills();
+            const equipment = resolvedContext.equipment ?? dataManager.getEquipment();
+            const drinkSlots = resolvedContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            const levelPenalty = this.getUnderLevelPenalty(itemLevel, skills, {
+                drinkSlots,
+                itemDetailMap: gameData.itemDetailMap,
+                equipment,
+            });
+            const actionStats = calculateActionStats(actionDetails, {
+                skills,
+                equipment,
+                actionContext: resolvedContext,
+                itemDetailMap: gameData.itemDetailMap,
+                includeCommunityBuff: true,
+                includeBreakdown: true,
+                levelRequirementOverride: itemDetails.itemLevel || 1,
+            });
+            if (!actionStats) return null;
+
+            const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            const speedStats = buildActionSpeedStats(actionDetails, {
+                equipment,
+                itemDetailMap: gameData.itemDetailMap,
+                drinkSlots,
+                drinkConcentration,
+                actionTime: actionStats.actionTime,
+            });
+            const actionsPerHour =
+                calculateActionsPerHour(speedStats.actionTime) * (1 + actionStats.totalEfficiency / 100);
+
+            if (useLiveSetup || catalystChoice !== null) {
+                let catalystBonus = 0;
+                if (catalystChoice === 'typeSpecific') catalystBonus = CATALYST_BONUSES.typeSpecific;
+                else if (catalystChoice === 'prime') catalystBonus = CATALYST_BONUSES.prime;
+                else if (useLiveSetup && catalystChoice === null) {
+                    const catalystUse = document.querySelector(
+                        '[class*="SkillActionDetail_catalystItemInputContainer"] [class*="Item_itemContainer"] svg use'
+                    );
+                    const href = catalystUse?.getAttribute('href') || catalystUse?.getAttribute('xlink:href') || '';
+                    const liveHrid = href.match(/#(.+)$/)?.[1];
+                    if (liveHrid === 'prime_catalyst') catalystBonus = CATALYST_BONUSES.prime;
+                    else if (liveHrid && Object.values(CATALYST_HRIDS).some((hrid) => hrid.endsWith(`/${liveHrid}`))) {
+                        catalystBonus = CATALYST_BONUSES.typeSpecific;
+                    }
+                }
+                const successRate = this.calculateSuccessRateBreakdown(
+                    baseSuccessRate,
+                    catalystBonus,
+                    teaBonusOverride,
+                    levelPenalty
+                ).total;
+                return Number.isFinite(actionsPerHour) ? { successRate, actionsPerHour } : null;
+            }
+
+            // The XP picker has no trustworthy profit basis for choosing a
+            // different tea/catalyst combination here. Report the current
+            // setup's XP metrics rather than inventing a monetary optimum.
+            const successRate = this.calculateSuccessRateBreakdown(
+                baseSuccessRate,
+                0,
+                teaBonusOverride,
+                levelPenalty
+            ).total;
+            return Number.isFinite(actionsPerHour) ? { successRate, actionsPerHour } : null;
+        } catch (error) {
+            console.error('[AlchemyProfitCalculator] Failed to calculate transmute metrics:', error);
+            return null;
+        }
+    }
+
+    /**
      * Find the best catalyst+tea combination for an alchemy action.
      * Evaluates 6 combinations (no/type/prime catalyst × no/live tea) and returns
      * the combo that yields the highest profitPerHour.

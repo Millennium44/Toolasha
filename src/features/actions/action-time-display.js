@@ -1434,15 +1434,25 @@ class ActionTimeDisplay {
         const { itemHrid } = this.parseItemHash(actionObj.primaryItemHash);
         const alchemyType = getAlchemyTypeFromActionHrid(actionObj.actionHrid);
         const profitData = this.calculateAlchemyProfitForAction(actionObj);
-        if (!itemHrid || !alchemyType || !profitData) return none;
-        if (!Number.isFinite(profitData.successRate) || !Number.isFinite(profitData.actionsPerHour)) return none;
+        const metrics =
+            !profitData && actionObj.actionHrid === '/actions/alchemy/transmute'
+                ? alchemyProfitCalculator.calculateTransmuteMetrics?.(
+                      itemHrid,
+                      true,
+                      null,
+                      this.queuedCatalystChoice(actionObj),
+                      null
+                  )
+                : profitData;
+        if (!itemHrid || !alchemyType || !metrics) return none;
+        if (!Number.isFinite(metrics.successRate) || !Number.isFinite(metrics.actionsPerHour)) return none;
 
         const itemLevel = dataManager.getItemDetails(itemHrid)?.itemLevel || 0;
-        const xpPerAction = calcXpPerAction(alchemyType, itemLevel, profitData.successRate);
+        const xpPerAction = calcXpPerAction(alchemyType, itemLevel, metrics.successRate);
         if (!(xpPerAction > 0)) return none;
         const attempts = Number.isFinite(count) ? count : 0;
         return {
-            perHour: xpPerAction * profitData.actionsPerHour,
+            perHour: xpPerAction * metrics.actionsPerHour,
             total: attempts > 0 ? xpPerAction * attempts : null,
         };
     }

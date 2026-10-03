@@ -751,6 +751,11 @@ describe('official alchemy rules', () => {
             name: 'Celestial Alembic',
             sellPrice: 5_000_000,
             itemLevel: 90,
+            enhancementCosts: [
+                { itemHrid: '/items/alchemy_essence', count: 100 },
+                { itemHrid: '/items/holy_cheese', count: 15 },
+                { itemHrid: '/items/coin', count: 3115 },
+            ],
             alchemyDetail: {
                 bulkMultiplier: 1,
                 isCoinifiable: true,
@@ -783,11 +788,17 @@ describe('official alchemy rules', () => {
     });
 
     test('does not quote enhanced transmute inputs with a same-HRID return before return level is known', () => {
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 90 }];
         mocks.initClientData.itemDetailMap['/items/celestial_alembic'] = {
             hrid: '/items/celestial_alembic',
             name: 'Celestial Alembic',
             sellPrice: 5_000_000,
             itemLevel: 90,
+            enhancementCosts: [
+                { itemHrid: '/items/alchemy_essence', count: 100 },
+                { itemHrid: '/items/holy_cheese', count: 15 },
+                { itemHrid: '/items/coin', count: 3115 },
+            ],
             alchemyDetail: {
                 bulkMultiplier: 1,
                 isCoinifiable: true,
@@ -811,6 +822,12 @@ describe('official alchemy rules', () => {
         expect(
             alchemyProfitCalculator.calculateTransmuteProfit('/items/celestial_alembic', false, 0, 'none', null, 10)
         ).toBeNull();
+        expect(alchemyProfitCalculator.calculateTransmuteMetrics('/items/celestial_alembic', false, 0, 'none')).toEqual(
+            {
+                successRate: 0.5,
+                actionsPerHour: 180,
+            }
+        );
     });
 
     test('coinify pays 5× the item sell price, at bulk scale, and is charged no coin fee', () => {

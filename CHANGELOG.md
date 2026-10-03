@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Transmute XP remains available when profit is unknown
+
+- Enhanced Transmute keeps its queued XP estimates and XP sorting even when the returned item's enhancement level makes profit unavailable. The XP fallback uses the current tea and catalyst setup without assigning a guessed value to the returned item.
+
 ### Enhanced Transmute estimates preserve the selected level
 
 - Transmute pricing now receives the selected item's enhancement level in action previews, queued prices, item sorting and tea planning. Enhanced recipes that can return the same item show why profit is unavailable instead of quoting an unenhanced copy; their returned enhancement level is not yet known.
