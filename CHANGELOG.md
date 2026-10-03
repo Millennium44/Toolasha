@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bestiary points target alert
+
+- A new notification (off by default) fires when your Bestiary points reach a target you set in settings or from the Bestiary planner; between the counts the game sends, it estimates from the kills it sees, so it sends no extra requests.
+
 ### Toggle simulated scrolls on the action panel
 
 - With scroll simulation on, an action panel's profit section shows a chip for each scroll that applies to that skill; clicking one adds or removes it and redraws profit, XP and time at once, editing the same loadout or default selection as the Scroll Simulation popups.
