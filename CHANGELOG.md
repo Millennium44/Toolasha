@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Completed tasks still occupy slots
+
+- Task slot totals, forecasts, and alerts now include completed tasks until their rewards are claimed. A full board no longer appears to have spare slots or delays its warning by an extra task cooldown.
+
 ### Combat damage after monster replacement
 
 - The damage tracker now recognizes a monster replacement when the damage counter resets, even if the new monster has the same maximum health. This prevents a sparse combat update from counting the replacement's already-missing health as new damage.
