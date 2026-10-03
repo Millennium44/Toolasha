@@ -7,8 +7,31 @@ import {
     gmRequestAvailable,
     getGmTrafficSnapshot,
     getGmTrafficSummary,
+    recordPageRequest,
     resetGmTraffic,
 } from './gm-traffic.js';
+
+describe('request bodies and page fetches', () => {
+    test('a GM request counts the body handed to the manager', () => {
+        vi.stubGlobal('GM_xmlhttpRequest', () => {});
+        gmRequest({ method: 'PATCH', url: 'https://api.github.com/gists/x', data: 'z'.repeat(500) });
+        expect(getGmTrafficSnapshot().totals).toMatchObject({ requestCalls: 1, requestBytes: 500 });
+    });
+
+    test('a page fetch is counted apart from GM requests', () => {
+        recordPageRequest('https://api.github.com/gists/x', 300, 1200, false);
+        recordPageRequest('https://api.github.com/gists/x', 0, 0, true);
+        const snap = getGmTrafficSnapshot();
+        expect(snap.totals).toMatchObject({
+            requestCalls: 0,
+            pageRequestCalls: 2,
+            pageRequestBytes: 300,
+            pageResponseBytes: 1200,
+        });
+        expect(snap.pageRequestsByHost[0]).toMatchObject({ name: 'api.github.com', calls: 2, bytes: 1200, errors: 1 });
+        expect(snap.perHour.pageRequestCalls).toBeGreaterThan(0);
+    });
+});
 
 beforeEach(() => {
     vi.useFakeTimers();

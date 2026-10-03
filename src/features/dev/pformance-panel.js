@@ -667,9 +667,14 @@ class PFormancePanel {
             `Reads: ${snap.totals.readCalls} calls, ${formatBytes(snap.totals.readBytes)} returned — ` +
                 `${hourly.readCalls}/h`,
             ...snap.readsByKey.slice(0, 3).map(keyLine),
-            `Requests: ${snap.totals.requestCalls} calls, ${formatBytes(snap.totals.responseBytes)} received — ` +
-                `${hourly.requestCalls}/h`,
+            `Requests: ${snap.totals.requestCalls} calls, ${formatBytes(snap.totals.requestBytes)} sent, ` +
+                `${formatBytes(snap.totals.responseBytes)} received — ${hourly.requestCalls}/h, ` +
+                `${formatBytes(hourly.requestBytes)}/h sent`,
             ...snap.requestsByHost.map((row) => keyLine(row) + (row.errors ? `, ${row.errors} failed` : '')),
+            `Page fetches (bypass Tampermonkey): ${snap.totals.pageRequestCalls} calls, ` +
+                `${formatBytes(snap.totals.pageRequestBytes)} sent, ${formatBytes(snap.totals.pageResponseBytes)} ` +
+                `received — ${hourly.pageRequestCalls}/h`,
+            ...snap.pageRequestsByHost.map((row) => keyLine(row) + (row.errors ? `, ${row.errors} failed` : '')),
             `Since this page loaded (${formatSpan(snap.uptimeMs)}); /h extrapolates the last ` +
                 `${formatSpan(snap.rateWindowMs)}. Counts Toolasha's own calls only.`,
         ];

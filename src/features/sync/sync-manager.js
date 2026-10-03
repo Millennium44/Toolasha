@@ -391,10 +391,9 @@ class SyncManager {
 
         // Last check before the write that actually reaches GitHub. Nothing
         // between the top of this method and here normally takes long enough
-        // for a takeover to happen without the dialog above, but a `fetch`
-        // fallback (no GM manager) has no timeout of its own and can hang
-        // indefinitely — the same "wedged" shape, just without a dialog to
-        // point at.
+        // for a takeover to happen without the dialog above, but a stalled
+        // storage read or a gist resolution waiting out its request timeout
+        // is the same "wedged" shape, just without a dialog to point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
         // Another tab's pull may have held records back while this payload was
@@ -563,9 +562,9 @@ class SyncManager {
         }
 
         // Last check before the write that actually lands in IndexedDB. On the
-        // no-dialog path this only catches a `fetch` fallback (no GM manager,
-        // no timeout of its own) hanging long enough for a takeover — the same
-        // "wedged" shape as the dialog above, just without a dialog to point at.
+        // no-dialog path this catches a slow download or fingerprint taking
+        // long enough for a takeover — the same "wedged" shape as the dialog
+        // above, just without a dialog to point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload);

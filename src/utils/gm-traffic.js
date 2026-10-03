@@ -33,6 +33,11 @@ const MAX_KEYS = 64;
 const MAX_HOSTS = 32;
 const OVERFLOW = '(other)';
 
+/**
+ * `request*` / `responseBytes` count GM requests only — the ones whose bodies
+ * the manager holds. `page*` counts requests a caller sent with the page's own
+ * `fetch` instead, kept apart so the GM figures still bound the manager's share.
+ */
 const COUNTER_FIELDS = [
     'writeCalls',
     'writeBytes',
@@ -40,7 +45,11 @@ const COUNTER_FIELDS = [
     'readCalls',
     'readBytes',
     'requestCalls',
+    'requestBytes',
     'responseBytes',
+    'pageRequestCalls',
+    'pageRequestBytes',
+    'pageResponseBytes',
 ];
 
 /** @returns {Object<string, number>} A zeroed counter set */
@@ -60,6 +69,8 @@ let writesByKey = new Map();
 let readsByKey = new Map();
 /** @type {Map<string, {calls: number, bytes: number, errors: number}>} */
 let requestsByHost = new Map();
+/** @type {Map<string, {calls: number, bytes: number, errors: number}>} */
+let pageRequestsByHost = new Map();
 /** @type {Array<{minute: number, counters: Object<string, number>}|null>} */
 let buckets = new Array(BUCKET_COUNT).fill(null);
 
@@ -234,6 +245,9 @@ export function gmRequest(details) {
     const row = rowFor(requestsByHost, hostOf(details?.url), MAX_HOSTS, () => ({ calls: 0, bytes: 0, errors: 0 }));
     row.calls += 1;
     bump('requestCalls', 1);
+    // The body is what the manager's background page keeps after completion
+    const sent = sizeOf(details?.data);
+    if (sent > 0) bump('requestBytes', sent);
 
     const { onload, onerror, ontimeout } = details || {};
     const counted = {
@@ -256,6 +270,26 @@ export function gmRequest(details) {
         },
     };
     return send(counted);
+}
+
+/**
+ * Count a request a caller sent with the page's own `fetch`, which never
+ * reaches the manager. Kept in its own fields and rows (see COUNTER_FIELDS).
+ * @param {string} url - Request URL
+ * @param {number} sentBytes - Request body length
+ * @param {number} receivedBytes - Response body length
+ * @param {boolean} failed - The fetch threw
+ */
+export function recordPageRequest(url, sentBytes, receivedBytes, failed) {
+    const row = rowFor(pageRequestsByHost, hostOf(url), MAX_HOSTS, () => ({ calls: 0, bytes: 0, errors: 0 }));
+    row.calls += 1;
+    bump('pageRequestCalls', 1);
+    if (sentBytes > 0) bump('pageRequestBytes', sentBytes);
+    if (receivedBytes > 0) {
+        row.bytes += receivedBytes;
+        bump('pageResponseBytes', receivedBytes);
+    }
+    if (failed) row.errors += 1;
 }
 
 /**
@@ -290,7 +324,8 @@ function sortedRows(map) {
  * Everything counted so far, as plain data.
  * @returns {{startedAt: number, uptimeMs: number, totals: Object<string, number>, writeErrors: number,
  *   unsizedWrites: number, writesByKey: Array<Object>, readsByKey: Array<Object>,
- *   requestsByHost: Array<Object>, perHour: Object<string, number>, rateWindowMs: number}}
+ *   requestsByHost: Array<Object>, pageRequestsByHost: Array<Object>, perHour: Object<string, number>,
+ *   rateWindowMs: number}}
  *   `perHour` extrapolates the observed window (at most the last hour) to an hour
  */
 export function getGmTrafficSnapshot() {
@@ -307,6 +342,7 @@ export function getGmTrafficSnapshot() {
         writesByKey: sortedRows(writesByKey),
         readsByKey: sortedRows(readsByKey),
         requestsByHost: sortedRows(requestsByHost),
+        pageRequestsByHost: sortedRows(pageRequestsByHost),
         perHour,
         rateWindowMs: windowMs,
     };
@@ -340,5 +376,6 @@ export function resetGmTraffic() {
     writesByKey = new Map();
     readsByKey = new Map();
     requestsByHost = new Map();
+    pageRequestsByHost = new Map();
     buckets = new Array(BUCKET_COUNT).fill(null);
 }

@@ -6,15 +6,17 @@
  *
  * Two things drive the shape of this file.
  *
- * The first is that api.github.com is cross-origin. `api/marketplace.js` uses
- * plain `fetch`, but it only ever asks milkywayidle.com for its own JSON, so no
- * preflight and no CORS. GitHub's API does send permissive CORS headers, yet a
- * request carrying `Authorization` is still at the mercy of whatever CSP the
- * game page ships, and a userscript has no say in that. `GM_xmlhttpRequest`
- * bypasses both, and the script already grants it in the header — so that is
- * the primary path, with `GM.xmlHttpRequest` and finally `fetch` behind it so
- * the module is still testable and still works under a manager that only
- * exposes the promise-shaped API.
+ * The first is the transport. api.github.com is cross-origin, but GitHub
+ * answers with `Access-Control-Allow-Origin: *` and exposes the headers this
+ * file reads (ETag, Retry-After, X-RateLimit-*), and the game page ships no
+ * Content-Security-Policy — so a page `fetch` reaches it. That is the primary
+ * path for api.github.com, and it has to be: `GM_xmlhttpRequest` hands every
+ * request body to the userscript manager's background page, and Tampermonkey
+ * keeps it after the request completes. A sync push body is the whole backup,
+ * several megabytes, and Firefox was measured holding hundreds of them. The GM
+ * path remains the fallback when the page fetch throws (CORS, or a CSP the game
+ * might add later), and the only path for every other host, whose CORS nobody
+ * has checked.
  *
  * The second is that a gist file over 1 MB comes back from the API with its
  * `content` truncated and only a `raw_url` to show for it, and a gist over
@@ -27,7 +29,7 @@
  * it out of the thing being uploaded.
  */
 
-import { gmRequest, gmRequestAvailable } from '../../utils/gm-traffic.js';
+import { gmRequest, gmRequestAvailable, recordPageRequest } from '../../utils/gm-traffic.js';
 
 /** Manifest file name; also how an existing sync gist is recognised */
 export const MANIFEST_FILE = 'toolasha-sync.json';
@@ -90,6 +92,26 @@ function parseHeaders(raw) {
 }
 
 /**
+ * Hosts reached with a page `fetch` before the userscript manager is tried.
+ *
+ * Only hosts whose CORS answer has been measured belong here; a host that
+ * refuses the preflight would cost a failed fetch before every GM request.
+ */
+const PAGE_FETCH_HOSTS = new Set(['api.github.com']);
+
+/**
+ * Set once a page fetch failed where the GM path then succeeded — CORS or a CSP,
+ * not the network — so later requests stop paying for a doomed fetch first.
+ * Module state: it lasts for the page.
+ */
+let pageFetchUnusable = false;
+
+/** Tests only: forget a previous fallback. */
+export function resetTransportForTests() {
+    pageFetchUnusable = false;
+}
+
+/**
  * The cross-origin request function this environment actually has.
  * @returns {Function|null} A GM request function, or null to fall back to fetch
  */
@@ -98,11 +120,90 @@ function getGMRequest() {
 }
 
 /**
+ * Whether this URL goes to a host that is reached with a page fetch first.
+ * @param {string} url - Absolute URL
+ * @returns {boolean} True when the page fetch is tried before GM
+ */
+function prefersPageFetch(url) {
+    if (pageFetchUnusable || typeof fetch !== 'function') return false;
+    try {
+        return PAGE_FETCH_HOSTS.has(new URL(url).host);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * One request through the page's own `fetch`.
+ *
+ * A thrown fetch is either the network or the browser refusing the request
+ * (CORS, CSP); the two look the same from here, so the error carries
+ * `transportFailure` and `httpRequest` tells them apart by asking the GM path.
+ * A timeout carries no flag: the server was reached and did not answer, and the
+ * GM path would wait just as long.
+ *
+ * @param {Object} request - As for `httpRequest`
+ * @param {boolean} githubHost - Omit credentials and bypass the HTTP cache
+ * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
+ */
+async function pageFetch({ method, url, headers, body, anonymous }, githubHost) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timedOut = false;
+    const timer = controller
+        ? setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+          }, REQUEST_TIMEOUT_MS)
+        : null;
+    const sentBytes = typeof body === 'string' ? body.length : 0;
+    try {
+        const response = await fetch(url, {
+            method,
+            headers,
+            body,
+            // Authorization travels in its header only. github.com cookies are
+            // never wanted, and a `*` CORS answer refuses credentialed requests.
+            ...(anonymous || githubHost ? { credentials: 'omit' } : {}),
+            // GitHub marks gist responses cacheable for 60 s. A listing served
+            // from the browser cache can miss a chunk another device wrote a
+            // moment ago, and the orphan cleanup depends on that listing.
+            ...(githubHost ? { cache: 'no-store' } : {}),
+            ...(controller ? { signal: controller.signal } : {}),
+        });
+        const text = await response.text();
+        const collected = {};
+        response.headers?.forEach?.((value, name) => {
+            collected[String(name).toLowerCase()] = value;
+        });
+        recordPageRequest(url, sentBytes, text.length, false);
+        return { status: response.status, text, headers: collected };
+    } catch {
+        recordPageRequest(url, sentBytes, 0, true);
+        // The original error is not forwarded: a fetch failure message can
+        // contain the request URL, and the URL is the one place a caller could
+        // accidentally have put a token
+        if (timedOut) throw new GistError('offline', 'GitHub did not answer in time. Try again.');
+        throw new GistError('offline', 'Could not reach GitHub. Check your connection and try again.', {
+            transportFailure: true,
+        });
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+/**
  * One HTTP request, whichever transport is available.
  *
  * Resolves for any status the server returned — including 401 and 403 — because
  * classifying those is `classify()`'s job and it needs the body. Rejects only
  * when nothing came back at all, which is what offline looks like from here.
+ *
+ * For api.github.com the page fetch goes first and the GM path is tried only
+ * when the fetch throws. An HTTP error status is an answer, never a reason to
+ * fall back: repeating a 409 through GM would double the request and put its
+ * body in the manager's memory, which is what the page fetch is there to stop.
+ * The fallback is remembered for the session only once GM succeeds where the
+ * fetch failed; a dead network fails both and leaves the page fetch in place.
  *
  * @param {Object} options - Request
  * @param {string} options.method - HTTP method
@@ -113,27 +214,31 @@ function getGMRequest() {
  * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
  */
 export async function httpRequest({ method, url, headers = {}, body, anonymous = false }) {
-    const gmRequest = getGMRequest();
+    const request = { method, url, headers, body, anonymous };
+    const send = getGMRequest();
 
-    if (!gmRequest) {
-        // No userscript manager (tests, or a bare page). `fetch` is subject to
-        // the page's CSP, so this path can fail where the GM one would not.
-        try {
-            const response = await fetch(url, { method, headers, body, ...(anonymous ? { credentials: 'omit' } : {}) });
-            const text = await response.text();
-            const collected = {};
-            response.headers?.forEach?.((value, name) => {
-                collected[String(name).toLowerCase()] = value;
-            });
-            return { status: response.status, text, headers: collected };
-        } catch {
-            // Deliberately not forwarding the original error: a fetch failure
-            // message can contain the request URL, and the URL is the one place
-            // a caller could accidentally have put a token
-            throw new GistError('offline', 'Could not reach GitHub. Check your connection and try again.');
-        }
+    // No userscript manager (tests, or a bare page): fetch is all there is
+    if (!send) return pageFetch(request, prefersPageFetch(url));
+    if (!prefersPageFetch(url)) return managerRequest(send, request);
+
+    try {
+        return await pageFetch(request, true);
+    } catch (error) {
+        if (!error?.transportFailure) throw error;
+        const response = await managerRequest(send, request);
+        pageFetchUnusable = true;
+        console.warn('[GistClient] Page fetch to GitHub failed where the userscript manager did not; using it.');
+        return response;
     }
+}
 
+/**
+ * One request through the userscript manager.
+ * @param {Function} send - The GM request function
+ * @param {Object} request - As for `httpRequest`
+ * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
+ */
+function managerRequest(send, { method, url, headers, body, anonymous }) {
     return new Promise((resolve, reject) => {
         let settled = false;
         const finish = (fn, value) => {
@@ -142,7 +247,7 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
             fn(value);
         };
 
-        gmRequest({
+        send({
             method,
             url,
             headers,

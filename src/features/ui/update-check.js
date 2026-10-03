@@ -9,8 +9,8 @@
  * with the last answer cached — so a refresh inside the window costs no
  * request, only a cache read, and still surfaces a known-newer version. The
  * release feed is the fork's own GitHub releases endpoint, reached through the
- * same transport the sync feature already uses (GM_xmlhttpRequest, with a
- * fetch fallback outside the sandbox).
+ * same transport the sync feature already uses (a page fetch for
+ * api.github.com, with GM_xmlhttpRequest behind it).
  *
  * Never notifies a dev build: the dev loader pins its version far above any
  * release, so the comparison keeps it silent by construction.

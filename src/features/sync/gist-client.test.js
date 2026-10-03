@@ -9,19 +9,30 @@ import {
     findSyncGist,
     httpRequest,
     readSyncGist,
+    resetTransportForTests,
     writeSyncGist,
 } from './gist-client.js';
 
-/** Requests the fake transport saw, newest last */
+/**
+ * Requests either fake transport saw, newest last, in the GM details shape
+ * (`data` is the body) with `transport` saying which one carried it.
+ */
 let calls;
-/** Queued responses, consumed in order */
+/**
+ * Queued responses, consumed in order by whichever transport asks next.
+ * `networkError` fails either transport; `fetchThrows` fails only a page fetch,
+ * the way a CORS or CSP refusal does.
+ */
 let responses;
+
+const bodyText = (next) => (typeof next.body === 'string' ? next.body : JSON.stringify(next.body ?? {}));
 
 beforeEach(() => {
     calls = [];
     responses = [];
+    resetTransportForTests?.();
     globalThis.GM_xmlhttpRequest = (options) => {
-        calls.push(options);
+        calls.push({ ...options, transport: 'gm' });
         const next = responses.shift();
         if (!next) throw new Error(`Unexpected request to ${options.url}`);
         if (next.networkError) {
@@ -30,16 +41,110 @@ beforeEach(() => {
         }
         options.onload({
             status: next.status ?? 200,
-            responseText: typeof next.body === 'string' ? next.body : JSON.stringify(next.body ?? {}),
+            responseText: bodyText(next),
             responseHeaders: Object.entries(next.headers || {})
                 .map(([name, value]) => `${name}: ${value}`)
                 .join('\r\n'),
         });
     };
+    vi.stubGlobal('fetch', async (url, init = {}) => {
+        calls.push({ ...init, url, data: init.body, transport: 'fetch' });
+        const next = responses.shift();
+        if (!next) throw new Error(`Unexpected request to ${url}`);
+        if (next.hang) {
+            return new Promise((_resolve, reject) => {
+                init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+            });
+        }
+        if (next.networkError || next.fetchThrows) throw new TypeError('NetworkError when attempting to fetch');
+        const status = next.status ?? 200;
+        return {
+            status,
+            text: async () => (status === 304 ? '' : bodyText(next)),
+            headers: new Headers(next.headers || {}),
+        };
+    });
 });
 
 afterEach(() => {
     delete globalThis.GM_xmlhttpRequest;
+    vi.unstubAllGlobals();
+});
+
+describe('transport', () => {
+    test('api.github.com goes through the page fetch, never the userscript manager', async () => {
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls).toHaveLength(1);
+        expect(calls[0].transport).toBe('fetch');
+        expect(calls[0].credentials).toBe('omit');
+        expect(calls[0].cache).toBe('no-store');
+        expect(calls[0].headers.Authorization).toBe('Bearer tok');
+    });
+
+    test('an HTTP error is an answer: a 401 and a 409 never reach the userscript manager', async () => {
+        responses.push({ status: 401, body: { message: 'Bad credentials' } });
+        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'auth' });
+
+        vi.useFakeTimers();
+        try {
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                responses.push({ status: 200, body: { files: {} } });
+                responses.push({ status: 409, body: { message: 'Conflict' } });
+            }
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']).catch((caught) => caught);
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect((await pending).kind).toBe('conflict');
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(calls.length).toBeGreaterThan(1);
+        expect(calls.every((call) => call.transport === 'fetch')).toBe(true);
+    });
+
+    test('a thrown page fetch falls back to the manager once, and stays there for the session', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm']);
+
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm']);
+        warn.mockRestore();
+    });
+
+    test('a dead network fails both transports without giving up on the page fetch', async () => {
+        responses.push({ networkError: true }, { networkError: true });
+        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'offline' });
+
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'fetch']);
+    });
+
+    test('a page fetch that never answers is aborted at the timeout, with no second attempt', async () => {
+        vi.useFakeTimers();
+        try {
+            responses.push({ hang: true });
+            const pending = findSyncGist('tok').catch((caught) => caught);
+            await vi.advanceTimersByTimeAsync(30_000);
+            const error = await pending;
+            expect(error.kind).toBe('offline');
+            expect(error.message).toContain('in time');
+            expect(calls[0].signal.aborted).toBe(true);
+            expect(calls.map((call) => call.transport)).toEqual(['fetch']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('other hosts still go through the userscript manager', async () => {
+        responses.push({ status: 200, body: 'ok' });
+        await httpRequest({ method: 'GET', url: 'https://example.test/a' });
+        expect(calls[0].transport).toBe('gm');
+    });
 });
 
 describe('httpRequest anonymous', () => {
@@ -234,7 +339,8 @@ describe('error classification', () => {
     });
 
     test('a dead network is offline, not an HTTP failure', async () => {
-        responses.push({ networkError: true });
+        // Once for the page fetch, once for the manager it falls back to
+        responses.push({ networkError: true }, { networkError: true });
         await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'offline' });
     });
 
