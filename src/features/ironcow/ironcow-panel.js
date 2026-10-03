@@ -991,7 +991,8 @@ class IronCowFarmPanel {
                     label,
                     '—',
                     COLORS.textDim,
-                    'The action queue could not be read, so the gold it still needs is unknown.'
+                    'The action queue could not be read in full (an unknown action, or a row that may run on ' +
+                        'loot from a fight ahead of it), so the gold it still needs is unknown.'
                 ),
             ];
         }

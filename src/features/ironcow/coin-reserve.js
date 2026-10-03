@@ -59,8 +59,9 @@ function itemFromHash(hash) {
  * @param {Array<Object>} [inventory] - Defaults to `dataManager.getInventory()`
  * @returns {{stages: Array<{actionHrid: string, label: string, count: number, coinDelta: number,
  *   earned: number}>, stoppedAt: string|null}|null} Rows in run order; `stoppedAt` names the
- *   unbounded row that ended the walk. Null when the engine is unavailable or a row's action is
- *   unknown — an unread row may spend, or never hand on, so no reserve is better than a low one.
+ *   unbounded row that ended the walk. Null when the engine is unavailable, a row's action is
+ *   unknown, or an uncounted spender sits behind a counted fight whose loot it could run on — no
+ *   reserve is better than a low one.
  */
 export function walkQueueCoins(engine, actions, inventory) {
     if (!engine?.buildInventoryLookup || !engine.calculateSingleQueueActionTime || !engine.deductQueueActionMaterials) {
@@ -76,6 +77,9 @@ export function walkQueueCoins(engine, actions, inventory) {
 
     const stages = [];
     let stoppedAt = null;
+    // A counted fight's loot is not modelled, and a row behind it limited only by its materials can
+    // run on that loot and pay more fees than the walk can see
+    let afterFight = false;
     for (const action of queue) {
         const details = dataManager.getActionDetails(action.actionHrid);
         if (!details) return null;
@@ -91,6 +95,7 @@ export function walkQueueCoins(engine, actions, inventory) {
         if (timing?.isTrulyInfinite && action.hasMaxCount && action.actionHrid?.includes('/combat/')) {
             const count = Math.max(0, (action.maxCount || 0) - (action.currentCount || 0));
             stages.push({ actionHrid: action.actionHrid, label, count, coinDelta: 0, earned: 0 });
+            afterFight = true;
             continue;
         }
         if (timing?.isTrulyInfinite) {
@@ -101,6 +106,9 @@ export function walkQueueCoins(engine, actions, inventory) {
         const before = ledger.byHrid[COIN] || 0;
         const count = engine.deductQueueActionMaterials(ledger, details, action, timing) || 0;
         const delta = (ledger.byHrid[COIN] || 0) - before;
+        // An uncounted spender behind a fight could run on loot the walk never credited: no reserve,
+        // rather than one short of what the queue will spend
+        if (afterFight && delta < 0 && !action.hasMaxCount) return null;
         // Earnings are not counted on (see above): the ledger keeps its spend-only balance
         if (delta > 0) {
             ledger.byHrid[COIN] = before;

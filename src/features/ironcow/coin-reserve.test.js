@@ -247,6 +247,20 @@ describe('walking the queue for its coin flow', () => {
         expect(coinReserve(walked.stages)).toMatchObject({ reserve: 450_000, estimated: false });
     });
 
+    test('an uncounted spender behind a counted fight, which could run on its loot, makes the walk unreadable', () => {
+        game.actionDetails['/actions/combat/fly'] = {
+            hrid: '/actions/combat/fly',
+            name: 'Fly',
+            type: '/action_types/combat',
+        };
+        game.currentActions = [
+            queued(1, '/actions/combat/fly', { maxCount: 50 }),
+            queued(2, DECOMPOSE, { item: STAR_FRUIT }),
+        ];
+
+        expect(walkQueueCoins(engine)).toBeNull();
+    });
+
     test('a queued action the game data does not know makes the walk unreadable, not free', () => {
         game.currentActions = [
             queued(1, '/actions/alchemy/unknown'),
