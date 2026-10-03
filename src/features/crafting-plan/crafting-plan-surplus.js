@@ -23,7 +23,38 @@ export function normalizePlannedSurplus(plan, { inventory = [] } = {}) {
         ownedStock.set(row.itemHrid, (ownedStock.get(row.itemHrid) || 0) + (row.count || 0));
     }
     const plannedStock = new Map();
+    const plannedSources = new Map();
     const artisanMode = getArtisanMaterialMode();
+
+    function addPlannedStock(itemHrid, quantity, stepKey) {
+        if (!(quantity > 0)) return;
+        plannedStock.set(itemHrid, (plannedStock.get(itemHrid) || 0) + quantity);
+        if (!stepKey) return;
+        const sources = plannedSources.get(itemHrid) || [];
+        sources.push({ quantity, stepKey });
+        plannedSources.set(itemHrid, sources);
+    }
+
+    function usePlannedStock(itemHrid, quantity) {
+        const sources = plannedSources.get(itemHrid) || [];
+        let remaining = Math.min(plannedStock.get(itemHrid) || 0, quantity);
+        const used = remaining;
+        const dependencies = new Set();
+        for (const source of sources) {
+            if (!(remaining > 0)) break;
+            const fromSource = Math.min(source.quantity, remaining);
+            source.quantity -= fromSource;
+            remaining -= fromSource;
+            if (fromSource > 0) dependencies.add(source.stepKey);
+        }
+        const left = Math.max(0, (plannedStock.get(itemHrid) || 0) - used);
+        if (left > 0) plannedStock.set(itemHrid, left);
+        else plannedStock.delete(itemHrid);
+        const availableSources = sources.filter((source) => source.quantity > 0);
+        if (availableSources.length > 0) plannedSources.set(itemHrid, availableSources);
+        else plannedSources.delete(itemHrid);
+        return { used, dependencies: [...dependencies] };
+    }
 
     function normalize(node, isRoot = false, quantityOverride, skipOwnedCredit = false) {
         if (!node) return null;
@@ -35,37 +66,43 @@ export function normalizePlannedSurplus(plan, { inventory = [] } = {}) {
             const usedOwned = Math.min(owned, quantity);
             if (usedOwned > 0) ownedStock.set(node.itemHrid, owned - usedOwned);
             const afterOwned = quantity - usedOwned;
-            const planned = plannedStock.get(node.itemHrid) || 0;
-            const usedPlanned = Math.min(planned, afterOwned);
-            if (usedPlanned > 0) plannedStock.set(node.itemHrid, planned - usedPlanned);
+            const { used: usedPlanned, dependencies } = usePlannedStock(node.itemHrid, afterOwned);
             const remaining = afterOwned - usedPlanned;
             return {
                 ...node,
                 quantity: remaining,
                 totalCost: Number.isFinite(node.unitCost) ? node.unitCost * remaining : node.totalCost,
+                ...(dependencies.length > 0 ? { plannedDependencies: dependencies } : {}),
                 children: [],
             };
         }
 
         let remaining = quantity;
         let actionsForRemainder = null;
+        let plannedDependencies = [];
         if (!isRoot && quantity > 0) {
             const owned = skipOwnedCredit ? 0 : ownedStock.get(node.itemHrid) || 0;
             const usedOwned = Math.min(owned, quantity);
             if (usedOwned > 0) ownedStock.set(node.itemHrid, owned - usedOwned);
             const afterOwned = quantity - usedOwned;
-            const planned = plannedStock.get(node.itemHrid) || 0;
-            const usedPlanned = Math.min(planned, afterOwned);
-            if (usedPlanned > 0) plannedStock.set(node.itemHrid, planned - usedPlanned);
+            const { used: usedPlanned, dependencies } = usePlannedStock(node.itemHrid, afterOwned);
+            plannedDependencies = dependencies;
             remaining = afterOwned - usedPlanned;
             if (!(remaining > 0)) {
-                return { ...node, quantity, actionsNeeded: 0, stepCount: quantity, children: [] };
+                return {
+                    ...node,
+                    quantity,
+                    actionsNeeded: 0,
+                    stepCount: quantity,
+                    ...(plannedDependencies.length > 0 ? { plannedDependencies } : {}),
+                    children: [],
+                };
             }
 
             if (node.outputCount > 0) {
                 actionsForRemainder = Math.ceil(remaining / node.outputCount);
                 const surplus = actionsForRemainder * node.outputCount - remaining;
-                if (surplus > 0) plannedStock.set(node.itemHrid, (plannedStock.get(node.itemHrid) || 0) + surplus);
+                if (surplus > 0) addPlannedStock(node.itemHrid, surplus, node.actionHrid && `craft:${node.actionHrid}`);
             } else if (node.actionsNeeded > 0) {
                 actionsForRemainder = Math.ceil(node.actionsNeeded * (remaining / quantity));
             }
@@ -95,6 +132,7 @@ export function normalizePlannedSurplus(plan, { inventory = [] } = {}) {
             quantity,
             ...(actionsForRemainder !== null ? { actionsNeeded: actionsForRemainder } : {}),
             ...(!isRoot && quantity > 0 ? { stepCount: quantity } : {}),
+            ...(plannedDependencies.length > 0 ? { plannedDependencies } : {}),
             children,
         };
     }

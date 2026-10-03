@@ -155,6 +155,7 @@ export function mergeWalkSteps(plans) {
     (function collectEdges(node, consumerKey) {
         if (!node) return;
         const key = walkStepFor(node)?.key || null;
+        for (const dependency of node.plannedDependencies || []) addEdge(dependency, consumerKey);
         for (const child of node.children || []) collectEdges(child, key || consumerKey);
         addEdge(key, consumerKey);
     })(combinedPlan, null);

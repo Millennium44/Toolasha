@@ -93,7 +93,7 @@ vi.mock('./crafting-plan-walk.js', async () => {
     };
 });
 
-import craftingPlanWalk from './crafting-plan-walk.js';
+import craftingPlanWalk, { buildWalkSteps } from './crafting-plan-walk.js';
 
 const {
     default: taskCraftingTrain,
@@ -275,8 +275,17 @@ describe('mergeWalkSteps', () => {
                 craft('/items/crushed_amber', 7, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
             ]),
         ];
+        mocks.inventory = [
+            {
+                itemHrid: '/items/amber',
+                count: 1,
+                enhancementLevel: 0,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
 
         const merged = mergeWalkSteps(taskPlans);
+        const plain = buildWalkSteps({ strategy: 'group', children: taskPlans }, { inventory: mocks.inventory });
 
         expect(merged).not.toBeNull();
         expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
@@ -285,6 +294,15 @@ describe('mergeWalkSteps', () => {
             outputCount: 15,
         });
         expect(stepFor(merged.steps, 'buy:/items/crushed_amber')).toBeUndefined();
+        expect(keys(merged.steps).indexOf('buy:/items/amber')).toBeLessThan(
+            keys(merged.steps).indexOf('craft:/actions/crafting/crushed_amber')
+        );
+        expect(keys(merged.steps).indexOf('craft:/actions/crafting/crushed_amber')).toBeLessThan(
+            keys(merged.steps).indexOf('craft:/actions/brewing/super_brewing_tea')
+        );
+        expect(keys(plain).indexOf('buy:/items/amber')).toBeLessThan(
+            keys(plain).indexOf('craft:/actions/crafting/crushed_amber')
+        );
         expect(mergedMissingLines(taskPlans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 2 }]);
     });
 

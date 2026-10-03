@@ -110,12 +110,9 @@ export function walkStepFor(node) {
 /**
  * Flatten a computed plan into the steps a walk performs, leaves first.
  *
- * Post-order: a node's children are emitted before the node itself, so nothing
- * is ever offered before the materials it consumes. An item reached down two
- * branches is emitted once, at its first (deepest) position, with the counts
- * summed — its own subtree is identical either way and was already emitted
- * before that first position, so merging forward cannot put a step ahead of
- * something it needs.
+ * Nodes are collected in post-order and repeated action rows are merged. A
+ * stable dependency ordering then accounts for material and planned-surplus
+ * prerequisites found on later occurrences of a merged action.
  *
  * Coins are not a step (they are not bought on the marketplace), and neither is
  * a leg the plan sized at nothing.
@@ -168,14 +165,46 @@ export function buildWalkSteps(plan, { surplusNormalized = false, inventory = []
         emit(node);
     })(executionPlan);
 
+    const walkIndex = new Map(steps.map((step, index) => [step.key, index]));
+    const before = new Map(steps.map((step) => [step.key, new Set()]));
+    const after = new Map(steps.map((step) => [step.key, new Set()]));
+    const addDependency = (producer, consumer) => {
+        if (!producer || !consumer || producer === consumer || !before.has(producer) || !before.has(consumer)) return;
+        before.get(consumer).add(producer);
+        after.get(producer).add(consumer);
+    };
+
+    (function collectDependencies(node, consumerKey) {
+        if (!node) return;
+        const key = walkStepFor(node)?.key || null;
+        for (const dependency of node.plannedDependencies || []) addDependency(dependency, consumerKey);
+        for (const child of node.children || []) collectDependencies(child, key || consumerKey);
+        addDependency(key, consumerKey);
+    })(executionPlan, null);
+
+    const remainingBefore = new Map([...before].map(([key, dependencies]) => [key, dependencies.size]));
+    const ready = [...before.keys()].filter((key) => remainingBefore.get(key) === 0);
+    const ordered = [];
+    while (ready.length > 0) {
+        ready.sort((left, right) => walkIndex.get(left) - walkIndex.get(right));
+        const key = ready.shift();
+        ordered.push(byKey.get(key));
+        for (const consumer of after.get(key)) {
+            const remaining = remainingBefore.get(consumer) - 1;
+            remainingBefore.set(consumer, remaining);
+            if (remaining === 0) ready.push(consumer);
+        }
+    }
+
     // Surplus reconciliation can reduce a later repeated node to zero actions.
     // Its demand still belongs in the step label, even though its actions have
     // already been covered by an earlier craft (or by owned inventory).
-    for (const step of steps) {
+    const orderedSteps = ordered.length === steps.length ? ordered : steps;
+    for (const step of orderedSteps) {
         if (step.kind === 'craft') step.count = craftDemandByKey.get(step.key) || step.count;
     }
 
-    return steps;
+    return orderedSteps;
 }
 
 /**
