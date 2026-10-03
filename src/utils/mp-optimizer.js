@@ -32,13 +32,13 @@
  *
  * The game allows one consumable per restore type in a slot group — the same
  * rule `sim-editor.js` enforces in its picker: `hp_instant`, `hp_over_time`,
- * `mp_instant`, `mp_over_time`, and one buff family per drink. A combat
- * character has three food slots and three drink slots. So each candidate
- * belongs to one slot type and the search picks at most one per type, capped
- * by the slot count of its group.
+ * `mp_instant`, `mp_over_time`, and one buff family per drink. A maxed pouch
+ * has three food slots and three drink slots; characters can have fewer. So
+ * each candidate belongs to one slot type and the search picks at most one per
+ * type, capped by the slot count of its group.
  */
 
-/** Combat food and drink slots, as the simulator adapter reads them */
+/** Maximum pouch capacity; callers should pass actual slots when they know them */
 export const DEFAULT_MAX_SLOTS = { food: 3, drink: 3 };
 
 const NS_PER_SECOND = 1e9;
