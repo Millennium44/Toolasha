@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Sync uploads went through Tampermonkey, which kept every one: hundreds of multi-megabyte copies, gigabytes over a day or two in Firefox. Sync now talks to GitHub directly from the page, only one game tab runs the automatic schedule, and unchanged gists are no longer downloaded in full.
 
+### Newly archived chat names open profiles immediately
+
+- Usernames in extended chat history now open the player profile as soon as a message leaves the game's history. You no longer need to switch chat channels and back first.
+
 ### Labyrinth entry alerts ignore an unset timestamp
 
 - Labyrinth entry alerts no longer treat the game's unset regeneration timestamp as an overdue entry. A confirmed increase in your entry stock still produces the usual notification.
