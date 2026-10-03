@@ -137,7 +137,7 @@ vi.mock('./pull-summary-panel.js', () => ({
 }));
 
 const { lastPullSummary, clearPullSummary } = await import('./pull-summary.js');
-const { default: syncManager, isNewer } = await import('./sync-manager.js');
+const { default: syncManager, isNewer, SyncManager } = await import('./sync-manager.js');
 
 beforeEach(() => {
     settings.values = { sync_enabled: true, sync_token: 'ghp_secret', sync_scope: 'settings', sync_auto: false };
@@ -1360,5 +1360,190 @@ describe('the held-back marker outlives a push that was already under way', () =
 
         expect(await pushing).toMatchObject({ ok: true });
         expect(stored.map.toolasha_sync_mergeHeld).toEqual(held);
+    });
+});
+
+describe('one tab runs the automatic schedule', () => {
+    /**
+     * A Web Locks stand-in shared by several simulated tabs: queued requests,
+     * `ifAvailable`, abort while queued, and `kill(tab)` for a tab that closes
+     * with a lock held — which the browser releases without the callback ever
+     * settling.
+     */
+    function createLockBroker() {
+        const held = new Map(); // name -> { tab, release }
+        const queues = new Map(); // name -> [{ tab, grant }]
+        const queueOf = (name) => {
+            if (!queues.has(name)) queues.set(name, []);
+            return queues.get(name);
+        };
+        const handOn = (name) => {
+            held.delete(name);
+            queueOf(name).shift()?.grant();
+        };
+        const viewFor = (tab) => ({
+            async request(name, options, callback) {
+                if (typeof options === 'function') {
+                    callback = options;
+                    options = {};
+                }
+                if (held.has(name)) {
+                    if (options?.ifAvailable) return callback(null);
+                    await new Promise((resolve, reject) => {
+                        const entry = { tab, grant: resolve };
+                        queueOf(name).push(entry);
+                        options?.signal?.addEventListener('abort', () => {
+                            const queue = queueOf(name);
+                            const index = queue.indexOf(entry);
+                            if (index !== -1) queue.splice(index, 1);
+                            reject(new DOMException('Aborted', 'AbortError'));
+                        });
+                    });
+                }
+                let released = false;
+                const release = () => {
+                    if (released) return;
+                    released = true;
+                    handOn(name);
+                };
+                held.set(name, { tab, release });
+                try {
+                    return await callback({ name });
+                } finally {
+                    release();
+                }
+            },
+        });
+        return {
+            viewFor,
+            holder: (name) => held.get(name)?.tab ?? null,
+            kill(tab) {
+                for (const queue of queues.values()) {
+                    for (let index = queue.length - 1; index >= 0; index -= 1) {
+                        if (queue[index].tab === tab) queue.splice(index, 1);
+                    }
+                }
+                for (const entry of [...held.values()]) if (entry.tab === tab) entry.release();
+            },
+        };
+    }
+
+    let broker;
+    let tabs;
+
+    /**
+     * A tab with its own manager; push and pull are counted, not run.
+     * @param {string} name - Tab name, for the broker
+     * @param {Object|null} [locks] - Its `navigator.locks`, or null for none
+     * @returns {Promise<Object>} The tab's manager
+     */
+    async function openTab(name, locks = broker.viewFor(name)) {
+        vi.stubGlobal('navigator', locks ? { locks } : {});
+        const manager = new SyncManager();
+        manager.push = vi.fn(async () => ({ ok: true }));
+        manager.pull = vi.fn(async () => ({ ok: true }));
+        await manager.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+        tabs.push(manager);
+        return manager;
+    }
+
+    const HOUR = 60 * 60 * 1000;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        settings.values.sync_auto = true;
+        broker = createLockBroker();
+        tabs = [];
+    });
+
+    afterEach(() => {
+        for (const tab of tabs) tab.cleanup();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    test('only the leader schedules pushes and pulls', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(first.isLeader).toBe(true);
+        expect(second.isLeader).toBe(false);
+        expect(first.push).toHaveBeenCalledTimes(4);
+        expect(first.pull.mock.calls.length).toBeGreaterThan(0);
+        expect(second.push).not.toHaveBeenCalled();
+        expect(second.pull).not.toHaveBeenCalled();
+    });
+
+    test('cleanup releases leadership, and a queued tab takes the schedule over', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+        expect(broker.holder('toolasha-sync-leader')).toBe('A');
+
+        first.cleanup();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(first.isLeader).toBe(false);
+        expect(broker.holder('toolasha-sync-leader')).toBe('B');
+        expect(second.isLeader).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+        expect(first.push).not.toHaveBeenCalled();
+        expect(second.push).toHaveBeenCalledTimes(4);
+    });
+
+    test('a cleaned-up tab that was still queued never becomes leader', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+        second.cleanup();
+        first.cleanup();
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(broker.holder('toolasha-sync-leader')).toBeNull();
+        expect(second.isLeader).toBe(false);
+        expect(second.push).not.toHaveBeenCalled();
+    });
+
+    test('a waiting tab takes over when the leader tab dies', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+
+        // The tab closes: its timers die with it and the browser frees its lock
+        first.timers.clearAll();
+        broker.kill('A');
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(second.isLeader).toBe(true);
+        await vi.advanceTimersByTimeAsync(HOUR);
+        expect(second.push).toHaveBeenCalledTimes(4);
+    });
+
+    test('without Web Locks every tab schedules, as before', async () => {
+        const first = await openTab('A', null);
+        const second = await openTab('B', null);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(first.push).toHaveBeenCalledTimes(4);
+        expect(second.push).toHaveBeenCalledTimes(4);
+    });
+
+    test('four tabs make as many automatic pushes and pulls per hour as one', async () => {
+        const solo = await openTab('solo');
+        await vi.advanceTimersByTimeAsync(HOUR);
+        const oneTab = { push: solo.push.mock.calls.length, pull: solo.pull.mock.calls.length };
+        solo.cleanup();
+        tabs = [];
+        broker = createLockBroker();
+
+        for (const name of ['A', 'B', 'C', 'D']) await openTab(name);
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        const total = (field) => tabs.reduce((sum, tab) => sum + tab[field].mock.calls.length, 0);
+        expect(oneTab).toEqual({ push: 4, pull: 7 });
+        expect(total('push')).toBe(oneTab.push);
+        expect(total('pull')).toBe(oneTab.pull);
     });
 });

@@ -138,6 +138,12 @@ const AUTO_PULL_OFFSET_MS = Math.floor(AUTO_PUSH_INTERVAL_MS / 2);
  */
 let lastCharacterId = null;
 
+/**
+ * Web Lock held by the one tab that runs the automatic schedule. Separate from
+ * the `toolasha-sync` operation lock, which every push and pull takes briefly.
+ */
+const LEADER_LOCK = 'toolasha-sync-leader';
+
 /** A sync busy longer than this is wedged, and a new one may take over. */
 const BUSY_STUCK_MS = 5 * 60 * 1000;
 
@@ -147,6 +153,10 @@ class SyncManager {
         this.busy = false;
         this.isInitialized = false;
         this.settingListeners = [];
+        /** This tab's claim on {@link LEADER_LOCK}, held or queued; null when none */
+        this.leadership = null;
+        /** Whether this tab currently runs the automatic schedule under the leader lock */
+        this.isLeader = false;
     }
 
     /**
@@ -160,6 +170,7 @@ class SyncManager {
 
         const restart = () => {
             this.timers.clearAll();
+            this._releaseLeadership();
             this.handoffUnregister?.();
             this.handoffUnregister = null;
             this._startAuto();
@@ -234,7 +245,10 @@ class SyncManager {
         this.handoffUnregister?.();
         this.handoffUnregister = null;
         this.handoffPushed = false;
+        // Timers first: a waiting tab takes the schedule over as soon as the
+        // leader lock goes, and this tab's intervals must already be dead
         this.timers.clearAll();
+        this._releaseLeadership();
         for (const [key, callback] of this.settingListeners) config.offSettingChange(key, callback);
         this.settingListeners = [];
         this.isInitialized = false;
@@ -757,11 +771,80 @@ class SyncManager {
 
     /**
      * Start (or decline to start) the automatic schedule.
+     *
+     * One tab per browser runs it. Every tab used to run its own, so four
+     * characters open meant four quarter-hourly pushes and four silent pulls of
+     * one and the same device-wide database — the operation lock only stopped
+     * them overlapping. The leader is whichever tab holds the
+     * {@link LEADER_LOCK} Web Lock; the others queue on it, and the browser
+     * hands it to one of them when the leader's tab closes or its feature is
+     * cleaned up. Without Web Locks every tab schedules, as before.
      * @private
      */
     _startAuto() {
         if (!config.getSetting('sync_auto', false) || !this.isConfigured()) return;
 
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+        if (typeof locks?.request !== 'function') {
+            this._scheduleAuto();
+            return;
+        }
+        this._requestLeadership(locks);
+    }
+
+    /**
+     * Queue for the leader lock, and run the automatic schedule while holding it.
+     *
+     * The lock is held by a promise that only `_releaseLeadership` settles, so
+     * leadership lasts until cleanup, a restart, or the tab going away. A
+     * request still queued at release is aborted, so a torn-down instance never
+     * becomes leader afterwards.
+     * @param {LockManager} locks - `navigator.locks`
+     * @private
+     */
+    _requestLeadership(locks) {
+        this._releaseLeadership();
+        const ticket = {};
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        this.leadership = { ticket, release, controller };
+
+        const options = controller ? { signal: controller.signal } : {};
+        Promise.resolve(
+            locks.request(LEADER_LOCK, options, async () => {
+                if (this.leadership?.ticket !== ticket) return;
+                this.isLeader = true;
+                this._scheduleAuto();
+                await held;
+            })
+        ).catch(() => {
+            // Aborted while queued: released before it was ever granted
+        });
+    }
+
+    /**
+     * Give up leadership, or stop queueing for it. Timers are the caller's to
+     * clear; this only lets the lock go.
+     * @private
+     */
+    _releaseLeadership() {
+        const current = this.leadership;
+        this.leadership = null;
+        this.isLeader = false;
+        if (!current) return;
+        current.release();
+        current.controller?.abort();
+    }
+
+    /**
+     * The automatic schedule itself: staggered startup pulls, the push
+     * interval, and the silent-pull interval offset between pushes.
+     * @private
+     */
+    _scheduleAuto() {
         for (const delay of STARTUP_PULL_DELAYS_MS) {
             this.timers.scheduleTimeout(() => {
                 this.pull({ silent: true });
@@ -886,8 +969,9 @@ class SyncManager {
     /**
      * Run a sync under a browser-wide lock, so tabs queue instead of racing.
      *
-     * Four characters open is four tabs on the same interval pushing the same
-     * gist, and GitHub answers the losers with 409s. The `busy` flag above is
+     * The automatic schedule runs in one tab (see `_startAuto`), but manual,
+     * character-switch and handoff syncs run in whichever tab asked, and two
+     * pushes to one gist at once get the loser a 409. The `busy` flag above is
      * per-tab; this is the cross-tab half, and it never waits: the lock is
      * taken only if free (a held lock is a sync running in another tab), and
      * Web Locks release on their own when a tab dies, so nothing can wedge it
