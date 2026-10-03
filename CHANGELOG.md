@@ -9,12 +9,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Chest badges match net worth
 
 - Chests and crates with a market price now show it on their inventory badge, as net worth does; the estimated value of their contents is used only when there's no market price.
+
 ### Bulk Sell vendor sales go through
 
 - Bulk Sell's vendor step now presses the game's "Confirm Sell For" the way the game accepts it, as the task reroll walk does; it used to stall at "confirm sent" without selling.
+
 ### Export Full Party in the Shykai format
 
 - The profile export's 👥 Export Full Party now works in the Shykai format too, copying the whole party with your saved loadout for Shykai's "All players import" box.
+
 ### Labyrinth clear chance holds steady
 
 - The live "Clear ~N%" on a labyrinth fight no longer flips between two estimates while the Labyrinth tab is open: once the fight replay has landed it keeps the header, and its tooltip shows how old it is.
