@@ -99,6 +99,9 @@ function parseHeaders(raw) {
  */
 const PAGE_FETCH_HOSTS = new Set(['api.github.com']);
 
+/** Methods a failed page fetch may be replayed with through the manager: repeating them changes nothing */
+const REPLAYABLE_METHODS = new Set(['GET', 'HEAD', 'PATCH', 'DELETE']);
+
 /**
  * Set once page fetches keep failing where the GM path reaches GitHub — CORS or a
  * CSP, not the network — so later requests stop paying for a doomed fetch first.
@@ -240,6 +243,10 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
         return response;
     } catch (error) {
         if (!error?.transportFailure) throw error;
+        // A fetch can fail after GitHub acted on it (the connection drops while the answer comes back).
+        // Replaying is safe for a read or a whole-gist overwrite, but a second POST creates a second
+        // gist, so a failed POST surfaces as the failure it is and the next sync starts over.
+        if (!REPLAYABLE_METHODS.has(String(method).toUpperCase())) throw error;
         const response = await managerRequest(send, request);
         // A 5xx says nothing about the page fetch (see above) and breaks the run: three in a row means
         // three in a row

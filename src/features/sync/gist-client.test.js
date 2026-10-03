@@ -139,6 +139,15 @@ describe('transport', () => {
         expect(calls.at(-1).transport).toBe('fetch');
     });
 
+    test('a page fetch that fails on a POST is not replayed, so a gist is never created twice', async () => {
+        responses.push({ fetchThrows: true });
+        await expect(
+            httpRequest({ method: 'POST', url: 'https://api.github.com/gists', body: '{}' })
+        ).rejects.toMatchObject({ kind: 'offline' });
+
+        expect(calls.map((call) => call.transport)).toEqual(['fetch']);
+    });
+
     test('a 5xx answer in the middle breaks the run of failures', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         responses.push({ fetchThrows: true }, { status: 200, body: [] });
