@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Mirror enhancement plans include their action time
 
 - Mirror enhancement plans now count each mirror use as one Enhancing action and include its duration. Their ordinary material quantities stay unchanged because mirror actions consume a copy item instead of the usual recipe.
+- Their XP estimates now include the selected leaf runs and guaranteed mirror successes, so XP per hour describes the same plan as the displayed time.
 
 ### Tea recommendations fit the equipped pouch
 

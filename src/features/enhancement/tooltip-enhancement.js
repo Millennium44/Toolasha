@@ -59,6 +59,29 @@ export { getProductionChainTime } from '../../utils/enhancement-pricing.js';
 const MIRROR_HRID = '/items/philosophers_mirror';
 
 /**
+ * Expected XP from one ordinary enhancement run.
+ * @param {Object} run - Markov result from calculateEnhancement
+ * @param {string} itemHrid - Item whose XP table applies to the run
+ * @param {number} wisdom - Bench wisdom as a decimal
+ * @returns {number} Expected XP for the run
+ * @private
+ */
+function expectedXPFromRun(run, itemHrid, wisdom) {
+    if (!run?.visitCounts) return 0;
+
+    let totalXP = 0;
+    for (let i = 0; i < run.visitCounts.length; i++) {
+        const visits = run.visitCounts[i];
+        if (!visits) continue;
+        const successRate = run.successRates[i].actualRate / 100;
+        const successXP = calculateSuccessXP(i, itemHrid, wisdom);
+        const failXP = calculateFailureXP(i, itemHrid, wisdom);
+        totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
+    }
+    return totalXP;
+}
+
+/**
  * Calculate optimal enhancement path for an item
  * Matches Enhancelator's algorithm exactly:
  * 1. Test all protection strategies for each level
@@ -213,39 +236,64 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         };
     }
 
-    // Calculate XP/hr for the optimal path
+    // Calculate XP/hr for the selected route
     let xpPerHour = null;
     let totalExpectedXP = null;
     try {
-        const xpCalc = calculateEnhancement({
-            enhancingLevel: config.enhancingLevel,
-            houseLevel: config.houseLevel,
-            toolBonus: config.toolBonus || 0,
-            speedBonus: config.speedBonus || 0,
-            itemLevel,
-            targetLevel: currentEnhancementLevel,
-            protectFrom: optimalStrategy.protectFrom,
-            blessedTea: config.teas.blessed,
-            guzzlingBonus: config.guzzlingBonus,
-            blessedTeaBonus: config.blessedTeaBonus,
-        });
+        // The bench being quoted, Pro included, not whatever the character has on right now
+        const benchWisdom = (config.experienceBonus || 0) / 100;
+        let totalXP = 0;
 
-        if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
-            // The bench being quoted, Pro included, not whatever the character has on right now
-            const benchWisdom = (config.experienceBonus || 0) / 100;
-            // Same XP formula the tracker and the XPH calculator use. The old inline copy read
-            // itemDetails.level, which enhanceable equipment does not have, so it fell through
-            // to a level-requirement lookup and produced a different number for the same item.
-            let totalXP = 0;
-            for (let i = 0; i < currentEnhancementLevel; i++) {
-                const visits = xpCalc.visitCounts[i];
-                if (!visits) continue;
-                const successRate = xpCalc.successRates[i].actualRate / 100;
-                const successXP = calculateSuccessXP(i, itemHrid, benchWisdom);
-                const failXP = calculateFailureXP(i, itemHrid, benchWisdom);
-                totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
+        if (mirrorPlan.mirrorCount > 0) {
+            const copyHrid = unrefinedBaseOf(itemHrid) || itemHrid;
+
+            // Each bought leaf follows the cheapest traditional route for its own level.
+            for (const leaf of mirrorPlan.leaves) {
+                if (leaf.level <= 0) continue;
+                const leafResults = allResults[leaf.level - 1];
+                const leafStrategy = leafResults.reduce((best, curr) =>
+                    curr.totalCost < best.totalCost ? curr : best
+                );
+                const leafHrid = leaf.primary ? itemHrid : copyHrid;
+                const leafItemLevel = gameData.itemDetailMap[leafHrid]?.itemLevel || itemLevel;
+                const leafRun = calculateEnhancement({
+                    enhancingLevel: config.enhancingLevel,
+                    houseLevel: config.houseLevel,
+                    toolBonus: config.toolBonus || 0,
+                    speedBonus: config.speedBonus || 0,
+                    itemLevel: leafItemLevel,
+                    targetLevel: leaf.level,
+                    protectFrom: leafStrategy.protectFrom,
+                    blessedTea: config.teas.blessed,
+                    guzzlingBonus: config.guzzlingBonus,
+                    blessedTeaBonus: config.blessedTeaBonus,
+                });
+                totalXP += leaf.quantity * expectedXPFromRun(leafRun, leafHrid, benchWisdom);
             }
-            xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
+
+            // The game guarantees mirror success and awards the usual success XP at that level.
+            for (const operation of mirrorPlan.mirrorOperations) {
+                const operationHrid = operation.primary ? itemHrid : copyHrid;
+                totalXP += operation.quantity * calculateSuccessXP(operation.level - 1, operationHrid, benchWisdom);
+            }
+        } else {
+            const xpCalc = calculateEnhancement({
+                enhancingLevel: config.enhancingLevel,
+                houseLevel: config.houseLevel,
+                toolBonus: config.toolBonus || 0,
+                speedBonus: config.speedBonus || 0,
+                itemLevel,
+                targetLevel: currentEnhancementLevel,
+                protectFrom: optimalStrategy.protectFrom,
+                blessedTea: config.teas.blessed,
+                guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
+            });
+            totalXP = expectedXPFromRun(xpCalc, itemHrid, benchWisdom);
+        }
+
+        if (optimalStrategy.totalTime > 0) {
+            xpPerHour = Math.round((totalXP / optimalStrategy.totalTime) * 3600);
             totalExpectedXP = Math.round(totalXP);
         }
     } catch {
@@ -427,8 +475,10 @@ function priceEnhancementInputs(itemHrid, itemDetails) {
  *
  * @param {number} targetLevel - Level the plan is building
  * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
- * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
- *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
+ * @returns {{leaves: Array<{level: number, quantity: number, primary: boolean}>,
+ *   mirrorOperations: Array<{level: number, quantity: number, primary: boolean}>,
+ *   mirrorCount: number, mirrorStartLevel: number|null}} Leaves are levels bought traditionally,
+ *   highest first; mirror operations record the guaranteed enhancements in the selected route
  * @private
  */
 function expandMirrorPlan(targetLevel, usedMirror) {
@@ -444,6 +494,7 @@ function expandMirrorPlan(targetLevel, usedMirror) {
 
     let mirrorCount = 0;
     let mirrorStartLevel = null;
+    const mirrorOperations = [];
 
     // High to low: a level is only expanded once every demand for it is known
     for (let level = targetLevel; level >= 2; level--) {
@@ -454,6 +505,8 @@ function expandMirrorPlan(targetLevel, usedMirror) {
 
         mirrorCount += primary + copies;
         mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
+        if (primary > 0) mirrorOperations.push({ level, quantity: primary, primary: true });
+        if (copies > 0) mirrorOperations.push({ level, quantity: copies, primary: false });
         if (primary) {
             needPrimary[level - 1] += primary;
             needCopy[level - 2] += primary;
@@ -472,7 +525,7 @@ function expandMirrorPlan(targetLevel, usedMirror) {
         if (needCopy[level] > 0) leaves.push({ level, quantity: needCopy[level], primary: false });
     }
 
-    return { leaves, mirrorCount, mirrorStartLevel };
+    return { leaves, mirrorCount, mirrorStartLevel, mirrorOperations };
 }
 
 /**
