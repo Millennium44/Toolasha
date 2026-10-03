@@ -703,7 +703,8 @@ class PFormancePanel {
             return (
                 `${self ? '▶ this tab' : tabId} — ${summary.characterName || 'no character yet'}, up ` +
                 `${formatSpan(summary.uptimeMs)}, writes ${formatBytes(traffic?.totals?.writeBytes ?? 0)} ` +
-                `(${formatBytes(traffic?.perHour?.writeBytes ?? 0)}/h), requests ${traffic?.totals?.requestCalls ?? 0}` +
+                `(${formatBytes(traffic?.perHour?.writeBytes ?? 0)}/h), requests ` +
+                `${(traffic?.totals?.requestCalls ?? 0) + (traffic?.totals?.pageRequestCalls ?? 0)}` +
                 `${heap}${stalls}`
             );
         });

@@ -1658,6 +1658,35 @@ describe('one tab runs the automatic schedule', () => {
         expect(second.push).toHaveBeenCalledTimes(4);
     });
 
+    test('a lock manager that refuses the request still leaves the tab its own schedule', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const refusing = {
+            request: () => Promise.reject(Object.assign(new Error('denied'), { name: 'SecurityError' })),
+        };
+        const tab = await openTab('A', refusing);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(tab.isLeader).toBe(true);
+        expect(tab.push).toHaveBeenCalledTimes(4);
+        warn.mockRestore();
+    });
+
+    test('a lock manager that throws on the request still leaves the tab its own schedule', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const throwing = {
+            request: () => {
+                throw new TypeError('bad options');
+            },
+        };
+        const tab = await openTab('A', throwing);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(tab.push).toHaveBeenCalledTimes(4);
+        warn.mockRestore();
+    });
+
     test('four tabs make as many automatic pushes and pulls per hour as one', async () => {
         const solo = await openTab('solo');
         await vi.advanceTimersByTimeAsync(HOUR);

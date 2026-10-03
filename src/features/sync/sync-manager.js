@@ -861,15 +861,30 @@ class SyncManager {
         this.leadership = { ticket, release, controller };
 
         const options = controller ? { signal: controller.signal } : {};
-        Promise.resolve(
-            locks.request(LEADER_LOCK, options, async () => {
+        // A lock manager that refuses outright (a SecurityError, an unsupported option) must not leave
+        // this tab with no schedule at all: it runs the schedule itself, as with no Web Locks
+        const unled = (error) => {
+            if (this.leadership?.ticket !== ticket || this.isLeader) return;
+            console.warn('[Sync] Could not take the sync-leader lock; this tab runs its own schedule:', error);
+            this.isLeader = true;
+            this._scheduleAuto();
+        };
+        let granted;
+        try {
+            granted = locks.request(LEADER_LOCK, options, async () => {
                 if (this.leadership?.ticket !== ticket) return;
                 this.isLeader = true;
                 this._scheduleAuto();
                 await held;
-            })
-        ).catch(() => {
-            // Aborted while queued: released before it was ever granted
+            });
+        } catch (error) {
+            unled(error);
+            return;
+        }
+        Promise.resolve(granted).catch((error) => {
+            // Aborted while queued is our own release, not a failure
+            if (error?.name === 'AbortError') return;
+            unled(error);
         });
     }
 

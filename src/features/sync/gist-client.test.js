@@ -106,16 +106,49 @@ describe('transport', () => {
         expect(calls.every((call) => call.transport === 'fetch')).toBe(true);
     });
 
-    test('a thrown page fetch falls back to the manager once, and stays there for the session', async () => {
+    test('a thrown page fetch falls back to the manager, and only a repeated failure keeps it there', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // One failure is a blip: the next request tries the page fetch again
         responses.push({ fetchThrows: true }, { status: 200, body: [] });
         await findSyncGist('tok');
         expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm']);
 
+        // Three in a row that the manager answers is a block (CORS, a CSP): the session stays on it
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
         responses.push({ status: 200, body: [] });
         await findSyncGist('tok');
-        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm']);
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'fetch', 'gm', 'fetch', 'gm', 'gm']);
         warn.mockRestore();
+    });
+
+    test('a page fetch that succeeds in between starts the failure count again', async () => {
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        expect(calls.at(-1).transport).toBe('fetch');
+    });
+
+    test('an edge error page with no CORS header never moves the session onto the manager', async () => {
+        // The 502 page throws the fetch (no Access-Control-Allow-Origin); the manager gets the same 502
+        for (let i = 0; i < 4; i++) {
+            responses.push({ fetchThrows: true }, { status: 502, body: 'bad gateway' });
+            await findSyncGist('tok').catch(() => {});
+        }
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        expect(calls.at(-1).transport).toBe('fetch');
     });
 
     test('a dead network fails both transports without giving up on the page fetch', async () => {

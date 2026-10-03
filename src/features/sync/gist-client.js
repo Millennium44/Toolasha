@@ -100,15 +100,28 @@ function parseHeaders(raw) {
 const PAGE_FETCH_HOSTS = new Set(['api.github.com']);
 
 /**
- * Set once a page fetch failed where the GM path then succeeded — CORS or a CSP,
- * not the network — so later requests stop paying for a doomed fetch first.
- * Module state: it lasts for the page.
+ * Set once page fetches keep failing where the GM path reaches GitHub — CORS or a
+ * CSP, not the network — so later requests stop paying for a doomed fetch first.
+ * Module state: it lasts for the page. Falling back is what the leak was, so the
+ * latch is earned, not tripped: see `FETCH_FAILURES_TO_LATCH`.
  */
 let pageFetchUnusable = false;
+
+/**
+ * Consecutive fetch failures that GM answered below 500, needed before the latch sets. One is a
+ * blip (a connection reset on wake); a CORS or CSP block repeats on every request. A 5xx is
+ * not counted: an error page from an edge carries no CORS header, so the fetch throws for the
+ * same reason GM gets the 5xx, and the page fetch is not to blame.
+ */
+const FETCH_FAILURES_TO_LATCH = 3;
+
+/** Fetch failures in a row that GM answered; any page fetch that succeeds resets it. */
+let fetchFailuresAnsweredByManager = 0;
 
 /** Tests only: forget a previous fallback. */
 export function resetTransportForTests() {
     pageFetchUnusable = false;
+    fetchFailuresAnsweredByManager = 0;
 }
 
 /**
@@ -222,12 +235,19 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
     if (!prefersPageFetch(url)) return managerRequest(send, request);
 
     try {
-        return await pageFetch(request, true);
+        const response = await pageFetch(request, true);
+        fetchFailuresAnsweredByManager = 0;
+        return response;
     } catch (error) {
         if (!error?.transportFailure) throw error;
         const response = await managerRequest(send, request);
-        pageFetchUnusable = true;
-        console.warn('[GistClient] Page fetch to GitHub failed where the userscript manager did not; using it.');
+        if (response.status < 500) fetchFailuresAnsweredByManager++;
+        if (fetchFailuresAnsweredByManager >= FETCH_FAILURES_TO_LATCH) {
+            pageFetchUnusable = true;
+            console.warn(
+                '[GistClient] Page fetch to GitHub keeps failing where the userscript manager does not; using it.'
+            );
+        }
         return response;
     }
 }
