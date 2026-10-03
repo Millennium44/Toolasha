@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Release build tools use patched dependencies
+
+- Release build tools now use security-patched script serialization, YAML configuration, and FTP response parsing.
+
 ### Cross-device sync no longer fills Tampermonkey's memory
 
 - Sync uploads went through Tampermonkey, which kept every one: hundreds of multi-megabyte copies, gigabytes over a day or two in Firefox. Sync now talks to GitHub directly from the page, only one game tab runs the automatic schedule, and unchanged gists are no longer downloaded in full.
@@ -413,7 +417,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Runs on the CN mirror
 
-- Toolasha now runs on www.milkywayidlecn.com and its test server, reading market data and sprites from whichever site you are on. Market-history contributions stay .com-only.
+- Toolasha now runs on `www.milkywayidlecn.com` and its test server, reading market data and sprites from whichever site you are on. Market-history contributions stay .com-only.
 
 ### Leaderboard EXP/hr history kept
 
