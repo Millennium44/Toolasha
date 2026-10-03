@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Optimizer XP follows the candidate equipment
+
+- Skilling and Alchemy XP comparisons now use the wisdom and charm bonuses of the equipment being compared. Simulated setups no longer borrow those XP bonuses from a different active loadout.
+
 ### Transmute XP follows the selected drinks
 
 - Transmute's XP fallback now takes Catalytic Tea's success bonus from the selected loadout and its Drink Concentration. Queued and picker XP estimates no longer use a different active tea setup when profit is unavailable.

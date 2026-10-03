@@ -197,10 +197,13 @@ export function parseConsumableWisdom(drinkSlots, itemDetailMap, drinkConcentrat
  * Calculate total experience multiplier and breakdown
  * @param {string} skillHrid - Skill HRID (e.g., "/skills/foraging")
  * @param {string} actionTypeHrid - Action type HRID (e.g., "/action_types/foraging")
+ * @param {{equipment?: Map, drinks?: Array}} [actionContext] - Optional setup to score; omitted fields use the active setup
  * @returns {Object} Experience data with breakdown
  */
-export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
-    const { equipment, drinks: activeDrinks } = resolveActionContext(actionTypeHrid);
+export function calculateExperienceMultiplier(skillHrid, actionTypeHrid, actionContext = null) {
+    const activeContext = resolveActionContext(actionTypeHrid);
+    const equipment = actionContext?.equipment ?? activeContext.equipment;
+    const activeDrinks = actionContext?.drinks ?? activeContext.drinks;
     const gameData = dataManager.getInitClientData();
     const itemDetailMap = gameData?.itemDetailMap || {};
 

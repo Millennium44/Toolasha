@@ -166,6 +166,75 @@ describe('parseConsumableWisdom', () => {
 });
 
 describe('calculateExperienceMultiplier', () => {
+    test('can score candidate equipment while keeping current non-equipment buffs and omitting current drinks', () => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/necklace_of_wisdom': {
+                    equipmentDetail: { type: '/equipment_types/neck', noncombatStats: { skillingExperience: 0.03 } },
+                },
+                '/items/philosophers_necklace': {
+                    equipmentDetail: {
+                        type: '/equipment_types/neck',
+                        noncombatStats: { skillingSpeed: 0.04, skillingEfficiency: 0.02, skillingExperience: 0.03 },
+                    },
+                },
+                '/items/basic_foraging_charm': {
+                    equipmentDetail: {
+                        type: '/equipment_types/charm',
+                        levelRequirements: [{ skillHrid: '/skills/foraging', level: 25 }],
+                        noncombatStats: { foragingExperience: 0.02 },
+                    },
+                },
+                '/items/expert_foraging_charm': {
+                    equipmentDetail: {
+                        type: '/equipment_types/charm',
+                        levelRequirements: [{ skillHrid: '/skills/foraging', level: 75 }],
+                        noncombatStats: { foragingExperience: 0.05 },
+                    },
+                },
+                '/items/wisdom_tea': {
+                    consumableDetail: {
+                        buffs: [
+                            { uniqueHrid: '/buff_uniques/wisdom_tea', typeHrid: '/buff_types/wisdom', flatBoost: 0.12 },
+                        ],
+                    },
+                },
+            },
+        };
+        state.equipment = new Map([
+            ['/item_locations/neck', { itemHrid: '/items/necklace_of_wisdom' }],
+            ['/item_locations/charm', { itemHrid: '/items/basic_foraging_charm' }],
+        ]);
+        state.drinks = [{ itemHrid: '/items/wisdom_tea' }];
+        state.houseRooms = new Map([['/house_rooms/kitchen', { level: 2 }]]);
+        state.communityBuffLevels['/community_buff_types/experience'] = 1;
+        state.achievementFlatBoost = 0.02;
+        state.personalFlatBoost = 0.03;
+        state.characterData = {
+            guildActionTypeBuffsMap: {
+                '/action_types/foraging': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.04 }],
+            },
+        };
+
+        const candidateEquipment = new Map([
+            ['/item_locations/neck', { itemHrid: '/items/philosophers_necklace' }],
+            ['/item_locations/charm', { itemHrid: '/items/expert_foraging_charm' }],
+        ]);
+        const result = calculateExperienceMultiplier('/skills/foraging', '/action_types/foraging', {
+            equipment: candidateEquipment,
+            drinks: [],
+        });
+
+        expect(result.breakdown.equipmentWisdom).toBeCloseTo(3, 6);
+        expect(result.breakdown.consumableWisdom).toBe(0);
+        expect(result.breakdown.houseWisdom).toBeCloseTo(0.1, 6);
+        expect(result.breakdown.communityWisdom).toBe(20);
+        expect(result.breakdown.achievementWisdom).toBe(2);
+        expect(result.breakdown.personalWisdom).toBe(3);
+        expect(result.breakdown.guildWisdom).toBe(4);
+        expect(result.charmExperience).toBeCloseTo(5, 6);
+    });
+
     test('combines all wisdom sources additively into totalMultiplier', () => {
         state.gameData = {
             itemDetailMap: {

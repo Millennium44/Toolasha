@@ -328,7 +328,9 @@ function calculateXpPerHour(actionDetails, buffs, playerLevel, otherEfficiency, 
 
     // Get the FULL XP multiplier from all sources
     const skillHrid = actionDetails.experienceGain.skillHrid;
-    const currentXpData = calculateExperienceMultiplier(skillHrid, actionDetails.type);
+    // Score the selected setup's gear, not the currently worn gear. Tea wisdom is
+    // supplied by `buffs` below, so leave active drinks out of the base multiplier.
+    const currentXpData = calculateExperienceMultiplier(skillHrid, actionDetails.type, { equipment, drinks: [] });
 
     // Replace current tea wisdom with our calculated tea wisdom
     const currentTeaWisdom = currentXpData.breakdown?.consumableWisdom || 0;
@@ -711,7 +713,12 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
 
     // XP per action: success gives full XP, failure gives 10%
     // Wisdom multiplier — replace current tea wisdom with our hypothetical tea wisdom
-    const xpData = calculateExperienceMultiplier('/skills/alchemy', '/action_types/alchemy');
+    // The candidate's gear is part of the simulated setup. Candidate tea wisdom is
+    // added below from `buffs`, so current drinks must not leak into the base.
+    const xpData = calculateExperienceMultiplier('/skills/alchemy', '/action_types/alchemy', {
+        equipment: calcContext.equipment,
+        drinks: [],
+    });
     const currentTeaWisdom = xpData.breakdown?.consumableWisdom || 0;
     const baseWisdomWithoutTea = xpData.totalWisdom - currentTeaWisdom;
     const totalWisdomWithOurTea = baseWisdomWithoutTea + buffs.wisdom + (otherEfficiency.houseWisdomDelta || 0);

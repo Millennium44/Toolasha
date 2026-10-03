@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
     actions: [],
     personalBuffs: {},
     characterData: {},
+    experienceContexts: [],
 }));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
 
@@ -38,13 +39,24 @@ vi.mock('../core/data-manager.js', () => ({
 }));
 
 // calculateAlchemyXpPerHour (and, incorrectly pre-fix, scoreEquipmentSetup's
-// alchemy branch under the gold goal too) reaches the real experience-parser
-// for a wisdom multiplier, which in turn wants house rooms, community/personal
-// buffs and guild data — none of which this file otherwise wires up. Stubbed
-// to a neutral multiplier since the tests below only care which calculator was
-// asked, not the wisdom arithmetic.
+// Alchemy and ordinary XP scoring reach the experience parser, which reads
+// house rooms, community/personal buffs and guild data. This mock keeps those
+// sources neutral while modeling equipment wisdom and skill-specific charm XP
+// from whichever gear the scorer supplies.
 vi.mock('./experience-parser.js', () => ({
-    calculateExperienceMultiplier: () => ({ totalWisdom: 0, breakdown: { consumableWisdom: 0 }, charmExperience: 0 }),
+    calculateExperienceMultiplier: (...args) => {
+        state.experienceContexts.push(args);
+        const equipment = args[2]?.equipment ?? state.equipment;
+        let totalWisdom = 0;
+        let charmExperience = 0;
+        for (const item of equipment?.values?.() || []) {
+            const stats = state.gameData?.itemDetailMap?.[item.itemHrid]?.equipmentDetail?.noncombatStats || {};
+            totalWisdom += (stats.skillingExperience || 0) * 100;
+            const skill = args[0]?.replace('/skills/', '');
+            charmExperience += (stats[`${skill}Experience`] || 0) * 100;
+        }
+        return { totalWisdom, breakdown: { consumableWisdom: 0 }, charmExperience };
+    },
 }));
 
 const alchemyCalc = vi.hoisted(() => ({ decompose: null, coinify: null, transmute: null, unrefine: null }));
@@ -102,6 +114,7 @@ beforeEach(() => {
     state.actions = [];
     state.personalBuffs = {};
     state.characterData = {};
+    state.experienceContexts = [];
     prices.byHrid = {};
     prices.estimated = new Set();
     alchemyCalc.decompose = null;
@@ -586,6 +599,73 @@ describe('actionHasUnpricedMaterials', () => {
     });
 });
 
+describe('calculateSkillPerformance — candidate gear XP', () => {
+    test('uses the selected cooking charm and Wisdom Tea instead of the active setup', () => {
+        const actionHrid = '/actions/cooking/blueberry_donut';
+        state.gameData.itemDetailMap['/items/basic_cooking_charm'] = {
+            equipmentDetail: {
+                type: '/equipment_types/charm',
+                levelRequirements: [{ skillHrid: '/skills/cooking', level: 25 }],
+                noncombatStats: { cookingExperience: 0.02 },
+            },
+        };
+        state.gameData.itemDetailMap['/items/expert_cooking_charm'] = {
+            equipmentDetail: {
+                type: '/equipment_types/charm',
+                levelRequirements: [{ skillHrid: '/skills/cooking', level: 75 }],
+                noncombatStats: { cookingExperience: 0.05 },
+            },
+        };
+        state.gameData.itemDetailMap['/items/wisdom_tea'] = {
+            consumableDetail: {
+                usableInActionTypeMap: { '/action_types/cooking': true },
+                buffs: [
+                    {
+                        uniqueHrid: '/buff_uniques/wisdom_tea',
+                        typeHrid: '/buff_types/wisdom',
+                        ratioBoost: 0,
+                        ratioBoostLevelBonus: 0,
+                        flatBoost: 0.12,
+                        flatBoostLevelBonus: 0,
+                    },
+                ],
+            },
+        };
+        state.gameData.actionDetailMap = {
+            [actionHrid]: {
+                hrid: actionHrid,
+                function: '/action_functions/production',
+                type: '/action_types/cooking',
+                name: 'Blueberry Donut',
+                baseTimeCost: 6750000000,
+                levelRequirement: { skillHrid: '/skills/cooking', level: 10 },
+                experienceGain: { skillHrid: '/skills/cooking', value: 8 },
+                inputItems: [
+                    { itemHrid: '/items/egg', count: 1 },
+                    { itemHrid: '/items/wheat', count: 1 },
+                    { itemHrid: '/items/sugar', count: 4 },
+                    { itemHrid: '/items/blueberry', count: 2 },
+                ],
+                outputItems: [{ itemHrid: '/items/blueberry_donut', count: 1 }],
+            },
+        };
+        state.equipment = new Map([['/item_locations/charm', { itemHrid: '/items/basic_cooking_charm' }]]);
+        const candidateEquipment = new Map([['/item_locations/charm', { itemHrid: '/items/expert_cooking_charm' }]]);
+
+        const result = calculateSkillPerformance(
+            'cooking',
+            candidateEquipment,
+            ['/items/wisdom_tea'],
+            100,
+            new Set([actionHrid])
+        );
+
+        // 3600 / 6.75 seconds × 8 base XP × (1 + 5% charm + 12% tea) × 1.9 efficiency.
+        expect(result.xpPerHour).toBeCloseTo(9484.8, 6);
+        expect(state.experienceContexts.at(-1)[2]).toEqual({ equipment: candidateEquipment, drinks: [] });
+    });
+});
+
 describe('scoreEquipmentSetup — alchemy', () => {
     // Alchemy XP is derived from item level rather than action data, so the
     // function special-cases it with a representative item — but the special
@@ -767,10 +847,19 @@ describe('calculateSkillPerformance — alchemy', () => {
     test('goldPerHour comes from the alchemy profit calculator instead of always reading zero', () => {
         alchemyCalc.decompose = () => ({ profitPerHour: 555 });
 
-        const result = calculateSkillPerformance('alchemy', new Map(), [], 10);
+        state.gameData.itemDetailMap['/items/basic_alchemy_charm'] = {
+            equipmentDetail: {
+                type: '/equipment_types/charm',
+                levelRequirements: [{ skillHrid: '/skills/alchemy', level: 25 }],
+                noncombatStats: { alchemyExperience: 0.02 },
+            },
+        };
+        const candidateEquipment = new Map([['/item_locations/charm', { itemHrid: '/items/basic_alchemy_charm' }]]);
+        const result = calculateSkillPerformance('alchemy', candidateEquipment, [], 100);
 
         expect(alchemyCalc.decompose).toBeTruthy();
         expect(result.goldPerHour).toBe(555);
+        expect(state.experienceContexts.at(-1)[2]).toEqual({ equipment: candidateEquipment, drinks: [] });
     });
 
     test('the gold score passes a selected Transmute input enhancement level', () => {
