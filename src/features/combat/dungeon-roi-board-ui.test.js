@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
     latestCombat: null,
     settings: {},
     characterGameMode: 'standard',
+    missingRewardTable: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -107,6 +108,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     // The sim's own expected-drop routine, as the real one reads a one-completion result
     calculateExpectedDrops: (simResult, gameData, playerHrid) => {
+        if (state.missingRewardTable === simResult.zoneName) return null;
         const table = gameData.actionDetailMap[simResult.zoneName].combatZoneInfo.dungeonInfo.rewardDropTable;
         const chests = (5 / simResult.numberOfPlayers) * (1 + (simResult.combatDropQuantity[playerHrid] || 0));
         const out = new Map();
@@ -151,6 +153,7 @@ vi.mock('../../utils/token-valuation.js', () => ({
 }));
 
 const { default: DungeonRoiBoardUI, listDungeons, rewardsPerCompletion } = await import('./dungeon-roi-board-ui.js');
+const dataManager = (await import('../../core/data-manager.js')).default;
 
 function run(dungeonName, tier, durationMs, team = ['Me']) {
     return { dungeonName, tier, duration: durationMs, team, teamKey: team.join(',') };
@@ -185,6 +188,7 @@ beforeEach(() => {
     state.settings = {};
     state.characterGameMode = 'standard';
     state.unpricedItems = [];
+    state.missingRewardTable = null;
 });
 
 afterEach(() => {
@@ -205,9 +209,45 @@ describe('gathering', () => {
         expect(rewards.get('/items/chimerical_refinement_chest')).toBeCloseTo(0.03);
         expect(rewards.get('/items/chimerical_token')).toBeCloseTo(48);
     });
+
+    test('an unloaded dungeon reward table is unknown rather than an empty payout', () => {
+        const dungeonInfo = dataManager.getInitClientData().actionDetailMap[DEN].combatZoneInfo.dungeonInfo;
+        const table = dungeonInfo.rewardDropTable;
+        delete dungeonInfo.rewardDropTable;
+        try {
+            expect(rewardsPerCompletion(DEN, 0, 1, 0)).toBeNull();
+        } finally {
+            dungeonInfo.rewardDropTable = table;
+        }
+    });
 });
 
 describe('drawing', () => {
+    test('an unavailable reward table shows unknown revenue, keys, and net', async () => {
+        state.missingRewardTable = DEN;
+        state.snapshot = {
+            zones: [
+                {
+                    zoneHrid: DEN,
+                    difficultyTier: 0,
+                    dungeon: { completions: 10, simHours: 1, partySize: 1, consumableCostPerHour: 3600 },
+                },
+            ],
+        };
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+
+        const den = [...container.querySelectorAll('.mwi-dt-roi-row')].find(
+            (tr) => tr.firstChild.textContent === 'Chimerical Den T0'
+        );
+        expect(den.children[4].textContent).toBe('—');
+        expect(den.children[5].textContent).toBe('—');
+        expect(den.children[6].textContent).toBe('—');
+        expect(den.children[8].textContent).toBe('—');
+        expect(den.children[8].title).toContain('reward table is unavailable');
+    });
+
     test('one row per dungeon and tier, sorted by gold/hr, measured where there are runs', async () => {
         state.runs = [run('Chimerical Den', 0, 600_000), run('Chimerical Den', 0, 660_000)];
         const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });

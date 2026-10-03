@@ -47,7 +47,7 @@ const COLUMNS = [
     {
         key: 'keyCostPerRun',
         label: 'Keys/run',
-        title: 'One entry key plus one chest key per chest, cheaper of buy and craft.',
+        title: 'Entry keys for regular chests and chest keys for all chests, at your key-pricing setting.',
     },
     {
         key: 'tokenValuePerRun',
@@ -109,6 +109,10 @@ export function listDungeons() {
  */
 export function rewardsPerCompletion(dungeonHrid, tier, partySize, dropQuantity) {
     const actionDetailMap = dataManager.getInitClientData()?.actionDetailMap || {};
+    // The sim returns an empty Map when it cannot find a reward table, which
+    // would make missing client data look like a known chest-free completion.
+    const rewardTable = actionDetailMap[dungeonHrid]?.combatZoneInfo?.dungeonInfo?.rewardDropTable;
+    if (!Array.isArray(rewardTable)) return null;
     const simResult = {
         isDungeon: true,
         dungeonsCompleted: 1,
@@ -240,6 +244,9 @@ const UNPRICED_MEASURED_FOOD = 'something your recorded sessions here consumed h
  * @returns {string} Tooltip text
  */
 function costGapNote(row) {
+    if (row.costGap === 'rewards') {
+        return 'No net: the dungeon reward table is unavailable, so its revenue and key cost are unknown';
+    }
     if (row.costGap === 'keys') {
         return 'No net: at least one key this run needs has no market price, so the cost is unknown';
     }
@@ -616,27 +623,36 @@ class DungeonRoiBoardUI {
         });
         cell(gold(row.keyCostPerRun), {
             color: '#ff6b6b',
-            title: row.keyEntries
-                .map((entry) => {
-                    const name = dataManager.getItemDetails?.(entry.itemHrid)?.name || entry.itemHrid.split('/').pop();
-                    const unit = Number.isFinite(entry.unitCost) ? gold(entry.unitCost) : 'unpriced';
-                    return `${entry.count % 1 === 0 ? entry.count : entry.count.toFixed(2)}× ${name} @ ${unit}`;
-                })
-                .join('\n'),
+            title:
+                row.rewardsKnown === false
+                    ? 'Unknown: the dungeon reward table is unavailable'
+                    : row.keyEntries
+                          .map((entry) => {
+                              const name =
+                                  dataManager.getItemDetails?.(entry.itemHrid)?.name || entry.itemHrid.split('/').pop();
+                              const unit = Number.isFinite(entry.unitCost) ? gold(entry.unitCost) : 'unpriced';
+                              return `${entry.count % 1 === 0 ? entry.count : entry.count.toFixed(2)}× ${name} @ ${unit}`;
+                          })
+                          .join('\n'),
         });
         cell(gold(row.tokenValuePerRun), {
             color: '#5fda5f',
-            title: row.tokenHrid
-                ? `${row.tokensPerRun.toFixed(1)} tokens per run at the best shop line`
-                : 'No tokens in this reward table',
+            title:
+                row.rewardsKnown === false
+                    ? 'Unknown: the dungeon reward table is unavailable'
+                    : row.tokenHrid
+                      ? `${row.tokensPerRun.toFixed(1)} tokens per run at the best shop line`
+                      : 'No tokens in this reward table',
         });
         cell(gold(row.chestEvPerRun), {
             color: '#5fda5f',
             title:
-                `${row.chestsPerRun.toFixed(2)} chest${row.chestsPerRun === 1 ? '' : 's'}` +
-                (row.refinementChestsPerRun > 0 ? ` + ${row.refinementChestsPerRun.toFixed(3)} refinement` : '') +
-                ' per run, at expected value' +
-                (row.otherValuePerRun > 0 ? `; other rewards ${gold(row.otherValuePerRun)}` : ''),
+                row.rewardsKnown === false
+                    ? 'Unknown: the dungeon reward table is unavailable'
+                    : `${row.chestsPerRun.toFixed(2)} chest${row.chestsPerRun === 1 ? '' : 's'}` +
+                      (row.refinementChestsPerRun > 0 ? ` + ${row.refinementChestsPerRun.toFixed(3)} refinement` : '') +
+                      ' per run, at expected value' +
+                      (row.otherValuePerRun > 0 ? `; other rewards ${gold(row.otherValuePerRun)}` : ''),
         });
         cell(gold(row.consumableCostPerRun), {
             color: '#ff6b6b',

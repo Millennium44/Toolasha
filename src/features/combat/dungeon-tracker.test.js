@@ -4240,6 +4240,47 @@ describe('a dungeon displaced by "Start Now"', () => {
         tracker.onActionsUpdated({ endCharacterActions: [milking()] });
     }
 
+    test('a finished party run still banks its completion key count after Start Now', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.currentRun.keyCountsMap = { Aster: 12, Briar: 12 };
+        tracker.firstKeyCountTimestamp = T0;
+        tracker.lastKeyCountTimestamp = T0;
+        tracker.onActionCompleted({ endCharacterAction: den({ wave: 0 }) });
+        expect(tracker.isFinalWaveCleared()).toBe(true);
+        expect(tracker.currentRun.awaitingKeyCount).not.toBe(true);
+
+        startMilkingNow();
+        tracker.onChatMessage(keyCountsData(new Date(DISPLACED_AT + 1000).toISOString(), '[Aster - 11], [Briar - 11]'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ validated: true, duration: DISPLACED_AT + 1000 - T0 });
+        expect(game.savedRuns[0].run.result).toBeUndefined();
+    });
+
+    test('a held party clear survives a new front action and battle until key counts arrive', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.awaitingKeyCount = true;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.currentRun.keyCountsMap = { Aster: 12, Briar: 12 };
+        tracker.firstKeyCountTimestamp = T0;
+        tracker.lastKeyCountTimestamp = T0;
+        const zone = { id: 503, actionHrid: FLY, ordinal: -6, isDone: false, wave: 3, partyID: 0 };
+        game.actions = [zone, den()];
+        tracker.onActionsUpdated({ endCharacterActions: [zone] });
+        await tracker.onNewBattle({ wave: 3, battleId: 90 });
+        tracker.onChatMessage(keyCountsData(new Date(DISPLACED_AT + 1000).toISOString(), '[Aster - 11], [Briar - 11]'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ validated: true, duration: DISPLACED_AT + 1000 - T0 });
+        expect(game.savedRuns[0].run.result).toBeUndefined();
+    });
+
     test('ends the old run despite the queued dungeon retaining its stale wave', async () => {
         game.recordAttempts = true;
         midDen();

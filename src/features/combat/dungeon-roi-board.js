@@ -444,16 +444,23 @@ export function buildDungeonRoiRows(input) {
                 partySizeSource = 'default';
             }
 
-            let rewardMap = new Map();
+            // Null means the table could not be read. An actual empty Map is a
+            // known payout with no chests, and correctly spends no entry keys.
+            let rewardMap = null;
             try {
-                rewardMap = pricing.rewardsPerRun?.(dungeon.hrid, economicsTier, partySize, dropQuantity) || new Map();
+                rewardMap = pricing.rewardsPerRun?.(dungeon.hrid, economicsTier, partySize, dropQuantity) ?? null;
             } catch (error) {
                 console.error(`[DungeonRoiBoard] Reward table for ${dungeon.hrid} T${economicsTier} failed:`, error);
             }
+            const rewardsKnown = rewardMap !== null;
             const rewards = priceRewards(rewardMap, pricing);
-            const keys = priceKeys(dungeon.hrid, rewards, pricing);
+            const keys = rewardsKnown
+                ? priceKeys(dungeon.hrid, rewards, pricing)
+                : { total: null, entries: [], complete: false };
 
-            const revenuePerRun = rewards.tokenValuePerRun + rewards.chestEvPerRun + rewards.otherValuePerRun;
+            const revenuePerRun = rewardsKnown
+                ? rewards.tokenValuePerRun + rewards.chestEvPerRun + rewards.otherValuePerRun
+                : null;
 
             let consumableCostPerHour = null;
             let consumableSource = null;
@@ -487,7 +494,13 @@ export function buildDungeonRoiRows(input) {
             // unpriced key or an unknown food bill as zero turned a cost the
             // board could not see into profit it reported, which is the one
             // number nobody should have to second-guess.
-            const costGap = !keys.complete ? 'keys' : consumableCostPerRun === null ? 'consumables' : null;
+            const costGap = !rewardsKnown
+                ? 'rewards'
+                : !keys.complete
+                  ? 'keys'
+                  : consumableCostPerRun === null
+                    ? 'consumables'
+                    : null;
             const costComplete = costGap === null;
             const netPerRun = costComplete ? revenuePerRun - (keys.total || 0) - consumableCostPerRun : null;
             const netPerHour = costComplete && runsPerHour ? netPerRun * runsPerHour : null;
@@ -510,13 +523,14 @@ export function buildDungeonRoiRows(input) {
                 wavesPerMinute,
                 keyCostPerRun: keys.total,
                 keyEntries: keys.entries,
+                rewardsKnown,
                 tokenHrid: rewards.tokenHrid,
                 tokensPerRun: rewards.tokensPerRun,
-                tokenValuePerRun: rewards.tokenValuePerRun,
+                tokenValuePerRun: rewardsKnown ? rewards.tokenValuePerRun : null,
                 chestsPerRun: rewards.chestsPerRun,
                 refinementChestsPerRun: rewards.refinementChestsPerRun,
-                chestEvPerRun: rewards.chestEvPerRun,
-                otherValuePerRun: rewards.otherValuePerRun,
+                chestEvPerRun: rewardsKnown ? rewards.chestEvPerRun : null,
+                otherValuePerRun: rewardsKnown ? rewards.otherValuePerRun : null,
                 rewardItems: rewards.items,
                 revenuePerRun,
                 consumableCostPerHour,

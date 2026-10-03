@@ -1237,6 +1237,11 @@ class DungeonTracker {
         const actions = dataManager.getCurrentActions?.();
         if (!Array.isArray(actions)) return;
 
+        // The last wave can be complete before the party's reward Key counts
+        // arrives. Start Now must not turn that clear into a cancel or discard
+        // the only run that can accept the delayed completion message.
+        if (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) return;
+
         const dungeonHrid = this.currentRun.dungeonHrid;
         const front = runningAction(actions);
 
@@ -1278,6 +1283,15 @@ class DungeonTracker {
         const battleAction = battleCombatAction(actions);
         const dungeonHrid = this.currentRun.dungeonHrid;
         const paused = this.isPaused();
+
+        // A different action's battle may precede the party reward message.
+        // Keep the finished run available for that message, without treating
+        // any of the new action's waves as this dungeon's progress.
+        if (
+            (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) &&
+            battleAction?.actionHrid !== dungeonHrid
+        )
+            return 'ignore';
 
         if (battleAction?.actionHrid === dungeonHrid) {
             if (!paused) return 'continue';

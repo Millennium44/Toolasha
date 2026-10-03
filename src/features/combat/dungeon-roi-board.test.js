@@ -518,7 +518,37 @@ describe('buildDungeonRoiRows', () => {
             },
         });
         expect(rows).toHaveLength(6);
-        expect(rows.every((row) => row.revenuePerRun === 0)).toBe(true);
+        expect(rows.every((row) => row.revenuePerRun === null && row.keyCostPerRun === null)).toBe(true);
+    });
+
+    test('a missing reward table leaves key cost and net unknown, unlike a known empty table', () => {
+        const denSnapshot = {
+            zones: [
+                {
+                    zoneHrid: DEN,
+                    difficultyTier: 0,
+                    dungeon: { completions: 10, simHours: 1, partySize: 1, consumableCostPerHour: 3600 },
+                },
+            ],
+        };
+        const input = { dungeons: [{ ...dungeons[0], maxDifficulty: 0 }], runs: [], snapshot: denSnapshot };
+        const missing = buildDungeonRoiRows({
+            ...input,
+            pricing: { ...pricing, rewardsPerRun: () => null },
+        })[0];
+        const knownEmpty = buildDungeonRoiRows({
+            ...input,
+            pricing: { ...pricing, rewardsPerRun: () => new Map() },
+        })[0];
+
+        expect(missing).toMatchObject({
+            keyCostPerRun: null,
+            revenuePerRun: null,
+            netPerRun: null,
+            costGap: 'rewards',
+        });
+        expect(knownEmpty).toMatchObject({ keyCostPerRun: 0, revenuePerRun: 0, costGap: null });
+        expect(knownEmpty.netPerRun).toBeLessThan(0);
     });
 });
 
