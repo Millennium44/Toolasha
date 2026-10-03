@@ -12,6 +12,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
+import { VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import { RANK_BADGE_SELECTOR } from '../../utils/rank-badge-data.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import chatHistoryPersistence, {
@@ -1422,6 +1423,12 @@ class ChatTabHandler {
      * @param {Event} e
      */
     _handleEmulatedEvent(e) {
+        // A live chat sender's React click opens its ChatMessage-owned action menu. That state belongs
+        // to the component that was unmounted when this line was evicted, so the captured callback cannot
+        // show the menu from this clone. Evicted senders are wired to the same direct profile action as
+        // persisted senders and must not also invoke that stale menu callback.
+        if (e.type === 'click' && e.target.closest('[data-mwi-restored-sender]')) return;
+
         const targetEl = e.target.closest('[data-mwi-uid]');
         if (!targetEl) return;
 
@@ -1592,12 +1599,19 @@ class ChatTabHandler {
 
                         if (!isDeleted) {
                             const clone = node.cloneNode(true);
+                            const html = serializeMessage(clone);
+                            const sender = clone.querySelector(SENDER_SELECTOR);
+                            const senderName = sender && senderNameFrom(sender);
+                            if (sender && VALID_PLAYER_NAME_RE.test(senderName)) {
+                                // Serialization deliberately precedes this session-only click marker.
+                                // Stored lines get the same marker when restore rewires them.
+                                sender.dataset.mwiRestoredSender = senderName;
+                            }
                             this.bufferEl.appendChild(clone);
 
                             // Serialized from the clone, before the trim below can take
                             // it away again: the record is capped separately from the
                             // buffer, so a message can leave the screen and stay stored.
-                            const html = serializeMessage(clone);
                             if (html && tabKey) {
                                 chatHistoryPersistence.record(
                                     tabKey,

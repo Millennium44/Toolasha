@@ -14,6 +14,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
+const profile = vi.hoisted(() => ({ openPlayerProfile: vi.fn() }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         onClass: vi.fn(() => () => {}),
@@ -84,7 +85,7 @@ vi.mock('../../utils/character-key.js', () => ({ characterKey: (base) => `${base
 vi.mock('../../core/data-manager.js', () => ({ default: { getItemDetails: vi.fn(() => null) } }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: vi.fn() }));
 vi.mock('../../utils/profile-command.js', () => ({
-    openPlayerProfile: vi.fn(),
+    openPlayerProfile: profile.openPlayerProfile,
     fillProfileCommand: vi.fn(),
     findChatInput: vi.fn(() => null),
     getGameCore: vi.fn(() => null),
@@ -256,6 +257,45 @@ describe('chat-history-extender', () => {
 
         clonedLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
+    test('an evicted sender opens its profile instead of its unmounted action menu', async () => {
+        const container = buildChatContainer();
+        const message = document.createElement('div');
+        message.className = 'ChatMessage_chatMessage__xyz';
+        message.innerHTML =
+            '<span class="ChatMessage_timestamp__1">[12:00:00 PM] </span>' +
+            '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+            '<div class="CharacterName_characterName__2FqyZ">' +
+            '<div class="CharacterName_name__1amXp"><span>Alice</span></div></div></span>' +
+            '<span>: hello</span>';
+        container.appendChild(message);
+
+        const openActionMenu = vi.fn();
+        profile.openPlayerProfile.mockClear();
+        const sender = message.querySelector('[class*="ChatMessage_name"]');
+        installFiberTree({
+            stateNode: document.getElementById('root'),
+            children: [
+                {
+                    stateNode: container,
+                    children: [
+                        { stateNode: message, children: [{ stateNode: sender, props: { onClick: openActionMenu } }] },
+                    ],
+                },
+            ],
+        });
+
+        chatHistoryExtender.initialize();
+        container.removeChild(message);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const bufferedName = container.querySelector('.mwi-history-buffer [class*="CharacterName_name"] span');
+        bufferedName.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(openActionMenu).not.toHaveBeenCalled();
+        expect(profile.openPlayerProfile).toHaveBeenCalledWith('Alice', { logPrefix: 'ChatHistoryPersistence' });
     });
 });
 
@@ -1413,12 +1453,13 @@ describe('chat-history-extender: a rank badge beside the sender name', () => {
         expect(visitedAfter, 'the walk went on through the whole tree looking for the badge').not.toHaveBeenCalled();
     });
 
-    test('a click on the badge of an evicted line reaches the sender’s handler', async () => {
+    test('a click on the badge of an evicted line opens the sender profile', async () => {
         const container = buildChatContainer();
         const message = badgedLine('Alice', 'hi');
         container.appendChild(message);
         const sender = message.querySelector('[class*="ChatMessage_name"]');
         const onClick = vi.fn();
+        profile.openPlayerProfile.mockClear();
         installFiberTree({
             stateNode: document.getElementById('root'),
             children: [
@@ -1436,7 +1477,8 @@ describe('chat-history-extender: a rank badge beside the sender name', () => {
         const badge = container.querySelector('.mwi-history-buffer [data-toolasha-rank-badge]');
         expect(badge).not.toBeNull();
         badge.querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(onClick).not.toHaveBeenCalled();
+        expect(profile.openPlayerProfile).toHaveBeenCalledWith('Alice', { logPrefix: 'ChatHistoryPersistence' });
     });
 });
 
