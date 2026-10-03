@@ -1591,7 +1591,7 @@ describe('one tab runs the automatic schedule', () => {
         vi.unstubAllGlobals();
     });
 
-    test('only the leader schedules pushes and pulls', async () => {
+    test('only the leader runs the repeating schedule; every tab makes its startup pulls', async () => {
         const first = await openTab('A');
         const second = await openTab('B');
 
@@ -1600,9 +1600,11 @@ describe('one tab runs the automatic schedule', () => {
         expect(first.isLeader).toBe(true);
         expect(second.isLeader).toBe(false);
         expect(first.push).toHaveBeenCalledTimes(4);
-        expect(first.pull.mock.calls.length).toBeGreaterThan(0);
+        expect(first.pull.mock.calls.length).toBeGreaterThan(3);
         expect(second.push).not.toHaveBeenCalled();
-        expect(second.pull).not.toHaveBeenCalled();
+        // A tab opened on a character another device just handed off collects it now, not at the
+        // leader's next interval: its three startup pulls, and nothing after them
+        expect(second.pull).toHaveBeenCalledTimes(3);
     });
 
     test('cleanup releases leadership, and a queued tab takes the schedule over', async () => {
@@ -1701,6 +1703,7 @@ describe('one tab runs the automatic schedule', () => {
         const total = (field) => tabs.reduce((sum, tab) => sum + tab[field].mock.calls.length, 0);
         expect(oneTab).toEqual({ push: 4, pull: 7 });
         expect(total('push')).toBe(oneTab.push);
-        expect(total('pull')).toBe(oneTab.pull);
+        // The repeating pulls are the leader's alone; each extra tab adds only its three startup pulls
+        expect(total('pull')).toBe(oneTab.pull + 3 * 3);
     });
 });

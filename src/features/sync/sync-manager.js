@@ -860,6 +860,15 @@ class SyncManager {
     _startAuto() {
         if (!config.getSetting('sync_auto', false) || !this.isConfigured()) return;
 
+        // Every tab that starts pulls a few times early, leader or not: a tab opened on a character another
+        // device just handed off must collect that handoff now, not at the leader's next interval. Only
+        // the repeating schedule is the leader's. An unchanged gist answers these with an empty 304.
+        for (const delay of STARTUP_PULL_DELAYS_MS) {
+            this.timers.scheduleTimeout(() => {
+                this.pull({ silent: true });
+            }, delay);
+        }
+
         const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
         if (typeof locks?.request !== 'function') {
             this._scheduleAuto();
@@ -937,18 +946,12 @@ class SyncManager {
     }
 
     /**
-     * The automatic schedule itself: staggered startup pulls, the push
+     * The leader's repeating schedule (the startup pulls are every tab's, see `_startAuto`): the push
      * interval, and the silent-pull interval offset between pushes.
      * @private
      */
     _scheduleAuto() {
         traceSync('schedule-started');
-        for (const delay of STARTUP_PULL_DELAYS_MS) {
-            this.timers.scheduleTimeout(() => {
-                this.pull({ silent: true });
-            }, delay);
-        }
-
         this.timers.registerInterval(
             setInterval(() => {
                 this.push({ silent: true });
