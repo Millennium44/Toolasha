@@ -130,6 +130,33 @@ const KEY_GIST_VERSION = 'toolasha_sync_gistVersion';
  * the `everything` scope is a full database read; doing that every minute would
  * be a visible stutter in exchange for freshness nobody asked for.
  */
+/**
+ * What this tab's sync did and why, newest last: leadership changes, the schedule starting, and every
+ * operation's outcome. Silent ticks report nothing on screen — `another-tab`, `busy`, `unchanged`,
+ * `not-modified` — so this is the only record of why an automatic sync made no request.
+ * Read it from the console with `Toolasha.debug.syncTrace()`.
+ */
+const syncTrace = [];
+const SYNC_TRACE_LIMIT = 100;
+
+/**
+ * Record one sync event for `getSyncTrace`.
+ * @param {string} event - What happened
+ * @param {Object} [detail] - Anything that says why
+ */
+function traceSync(event, detail = {}) {
+    syncTrace.push({ at: new Date().toISOString(), event, ...detail });
+    if (syncTrace.length > SYNC_TRACE_LIMIT) syncTrace.shift();
+}
+
+/**
+ * This tab's recent sync events, oldest first.
+ * @returns {Array<Object>} A copy of the trace
+ */
+export function getSyncTrace() {
+    return syncTrace.map((entry) => ({ ...entry }));
+}
+
 export const AUTO_PUSH_INTERVAL_MS = 15 * 60 * 1000;
 
 /** How long after a character switch the on-switch push waits for the dust. */
@@ -186,6 +213,7 @@ class SyncManager {
         this.isInitialized = true;
 
         const restart = () => {
+            traceSync('restart', { enabled: config.getSetting('sync_enabled', false) });
             this.timers.clearAll();
             this._releaseLeadership();
             this.handoffUnregister?.();
@@ -871,8 +899,13 @@ class SyncManager {
         };
         let granted;
         try {
+            traceSync('leader-requested');
             granted = locks.request(LEADER_LOCK, options, async () => {
-                if (this.leadership?.ticket !== ticket) return;
+                if (this.leadership?.ticket !== ticket) {
+                    traceSync('leader-granted-stale');
+                    return;
+                }
+                traceSync('leader-granted');
                 this.isLeader = true;
                 this._scheduleAuto();
                 await held;
@@ -895,6 +928,7 @@ class SyncManager {
      */
     _releaseLeadership() {
         const current = this.leadership;
+        if (current) traceSync('leader-released', { wasLeader: this.isLeader });
         this.leadership = null;
         this.isLeader = false;
         if (!current) return;
@@ -908,6 +942,7 @@ class SyncManager {
      * @private
      */
     _scheduleAuto() {
+        traceSync('schedule-started');
         for (const delay of STARTUP_PULL_DELAYS_MS) {
             this.timers.scheduleTimeout(() => {
                 this.pull({ silent: true });
@@ -1140,6 +1175,21 @@ class SyncManager {
     }
 
     async _run(label, silent, operation) {
+        const outcome = await this._runUntraced(label, silent, operation);
+        traceSync(label, {
+            silent,
+            isLeader: this.isLeader,
+            ok: outcome?.ok,
+            reason: outcome?.reason ?? (outcome?.skipped ? 'skipped' : null),
+        });
+        return outcome;
+    }
+
+    /**
+     * `_run`'s body: the guards and the operation, without the trace entry.
+     * @private
+     */
+    async _runUntraced(label, silent, operation) {
         if (!config.getSetting('sync_enabled', false)) {
             if (!silent) showToast('Cross-device sync is turned off.', { kind: 'warn' });
             return { ok: false, reason: 'disabled' };
