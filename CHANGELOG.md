@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement risk requires an enhanceable item
+
+- Enhancement risk forecasts now reject items with no enhancement recipe, including a typed item ID. Coins and other items that cannot be enhanced no longer produce a free enhancement plan.
+
+### Enhancement risk respects prices and affordable targets
+
+- Enhancement risk forecasts now explain when required material or protection prices are unavailable, and reject the game's invalid protect-from +1 setting. An attempt that reaches the target with exactly enough gold now counts as completion instead of ruin.
+
 ### Empty idle loadouts keep their picker
 
 - Choosing a saved loadout with no food or drinks now shows an empty message while keeping the loadout picker available. You can switch back to another setup directly from the Consumables panel.

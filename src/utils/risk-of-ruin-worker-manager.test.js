@@ -69,6 +69,21 @@ describe('runFixedOutcomeTrials', () => {
 });
 
 describe('runLevelWalkTrials', () => {
+    test('an exactly affordable final enhancement succeeds at zero remaining gold', () => {
+        const result = runLevelWalkTrials(
+            {
+                startingBalance: 1000,
+                trials: 10,
+                maxSteps: 2,
+                perLevelOutcomeDistributions: [[{ prob: 1, nextLevel: 1, net: -1000 }]],
+                targetLevel: 1,
+                startLevel: 0,
+            },
+            createSeededRng(1)
+        );
+        expect(result.ruinCount).toBe(0);
+        expect(result.undecidedCount).toBe(0);
+    });
     test('always ruins immediately when the only outcome is a guaranteed loss exceeding balance', () => {
         const rng = createSeededRng(1);
         const result = runLevelWalkTrials(

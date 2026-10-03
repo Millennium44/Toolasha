@@ -81,7 +81,8 @@ function buildLevelOutcomes({
  *   stepFn: function(state: Object, rng: function(): number): Object,
  *   isTargetReached: function(state: Object): boolean,
  *   initialState: {level: number},
- * }|null} null if the item/params are invalid or have no usable cost data. expectedTotalCost is
+ * }|{error: 'incomplete-prices'}|null} null if the item/params are invalid; a tagged error
+ *   means a material or reachable protection cost has no known price. expectedTotalCost is
  *   the closed-form expected gold spend from startLevel to targetLevel (attempts * costPerAttempt
  *   + protectionCount * protectionCostOnFailure) — the natural costPerAction for a depth-cap
  *   check against the resulting item, since exactly one item at targetLevel is produced per
@@ -89,7 +90,7 @@ function buildLevelOutcomes({
  */
 export function buildEnhancementModel(itemHrid, params) {
     const itemDetails = dataManager.getItemDetails(itemHrid);
-    if (!itemDetails) return null;
+    if (!itemDetails?.enhancementCosts?.length) return null;
 
     const {
         targetLevel,
@@ -109,11 +110,14 @@ export function buildEnhancementModel(itemHrid, params) {
     if (!calc?.successRates?.length) return null;
 
     const perAttemptMaterial = calculatePerAttemptMaterialCost(itemDetails);
+    if (perAttemptMaterial.costPartial) return { error: 'incomplete-prices' };
     const costPerAttempt = perAttemptMaterial.cost;
 
     let protectionCostOnFailure = 0;
-    if (protectFrom > 0) {
-        protectionCostOnFailure = getCheapestProtectionPrice(itemHrid)?.price || 0;
+    if (protectFrom > 0 && protectFrom < targetLevel) {
+        const protectionPrice = getCheapestProtectionPrice(itemHrid)?.price;
+        if (!Number.isFinite(protectionPrice)) return { error: 'incomplete-prices' };
+        protectionCostOnFailure = protectionPrice;
     }
 
     // Same double-jump ratio buildEnhancementMarkov() applies: the item's own blessed-tea
