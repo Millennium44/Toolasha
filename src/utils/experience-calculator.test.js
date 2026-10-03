@@ -99,6 +99,19 @@ describe('calculateLevelFromActions', () => {
         expect(reverse.timeElapsed).toBe(60);
     });
 
+    test('Pincer Gloves repeats carry across a level boundary within one cycle', () => {
+        // Captured game thresholds and recipe: one Pincer Gloves completion grants 1,600 XP
+        // and takes 60 seconds. At +100% efficiency, two completions fit in one timed cycle.
+        const gameTable = { 25: 6805, 26: 7618, 27: 8517, 28: 9508 };
+        const forward = calculateMultiLevelProgress(25, 7000, 28, 100, 60, 1600, gameTable);
+        const reverse = calculateLevelFromActions(25, 7000, 2, 100, 60, 1600, gameTable);
+
+        expect(forward).toEqual({ actionsNeeded: 2, timeNeeded: 60 });
+        expect(reverse.finalLevel).toBe(28);
+        expect(reverse.finalXP).toBe(10200);
+        expect(reverse.timeElapsed).toBe(60);
+    });
+
     test('Pincer Gloves XP modifiers do not add a fictitious completion across real levels', () => {
         // Captured game data: Pincer Gloves grants 1,600 base XP and requires level 25.
         // The test-client XP tooltip applies the live 1.295 XP multiplier (2,072 per action).
@@ -158,11 +171,14 @@ describe('calculateLevelFromActions', () => {
         const gameTable = { 199: 92125192822, 200: 100000000000 };
         const forward = calculateMultiLevelProgress(199, 99999998400, 200, 174, 60, 1600, gameTable);
         const reverse = calculateLevelFromActions(199, 99999998400, 1, 174, 60, 1600, gameTable);
+        const queuedPastCap = calculateLevelFromActions(199, 99999998400, 2, 100, 60, 1600, gameTable);
 
         expect(forward).toEqual({ actionsNeeded: 1, timeNeeded: 60 });
         expect(reverse.finalLevel).toBe(200);
         expect(reverse.finalXP).toBe(100000000000);
         expect(reverse.percentToNext).toBe(100);
+        // The second queued completion fits in the repeat capacity left by reaching the cap.
+        expect(queuedPastCap.timeElapsed).toBe(60);
     });
 
     test('zero XP leaves the level unchanged while queued actions still take time', () => {
@@ -199,7 +215,7 @@ describe('level efficiency deficit', () => {
     test('a deficit larger than the whole span keeps efficiency flat throughout', () => {
         const r = calculateMultiLevelProgress(1, 0, 3, 50, 6, 1, table, 50);
         // Efficiency changes time, while XP remains one point per queued completion.
-        expect(r.timeNeeded).toBe(Math.ceil(1000 / 1.5) * 6 + Math.ceil(2000 / 1.5) * 6);
+        expect(r.timeNeeded).toBe(2000 * 6); // Carry the 0.5 completion left from the first cycle
         expect(r.actionsNeeded).toBe(3000); // Efficiency changes time, not XP completions
         // Without the clamp the second level would have run at 51%
         expect(r.timeNeeded).toBeGreaterThan(calculateMultiLevelProgress(1, 0, 3, 50, 6, 1, table, 0).timeNeeded);

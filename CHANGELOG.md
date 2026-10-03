@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### XP carries across level boundaries
 
 - Level Progress and planner estimates now keep experience earned beyond each level threshold, so high-XP actions no longer add unnecessary queue completions. Action-count previews also retain that surplus instead of stopping at the first level reached.
+- Time estimates now carry efficiency repeats across level boundaries, so one action cycle that reaches multiple levels is counted once.
 
 ### Partial values for self-dropping gifts
 
