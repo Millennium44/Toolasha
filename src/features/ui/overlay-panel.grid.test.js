@@ -469,6 +469,56 @@ describe('arranging by hand', () => {
         expect(drawn()).toEqual(['b', 'a', 'c']);
     });
 
+    test('dragging across a missing provider reorders visible tiles and preserves its saved slot', () => {
+        registry.rows = [speaking('a'), speaking('b')];
+        overlayPanel.settings.visible = { a: true, b: true };
+        overlayPanel.settings.order = ['missing-account-view', 'a', 'b'];
+        overlayPanel.settings.locked = false;
+        overlayPanel.show();
+
+        const rects = { a: [0, 0], b: [100, 0] };
+        for (const [key, [left, top]] of Object.entries(rects)) {
+            overlayPanel.tiles.get(key).getBoundingClientRect = () => ({
+                left,
+                top,
+                right: left + 100,
+                bottom: top + 40,
+                width: 100,
+                height: 40,
+            });
+        }
+
+        drag(overlayPanel.tiles.get('a'), 180, 20);
+
+        expect(overlayPanel.settings.order).toEqual(['missing-account-view', 'b', 'a']);
+        expect(drawn()).toEqual(['b', 'a']);
+    });
+
+    test('dragging keeps a newly registered visible tile missing from saved order', () => {
+        registry.rows = [speaking('a'), speaking('b')];
+        overlayPanel.settings.visible = { a: true, b: true };
+        overlayPanel.settings.order = ['a'];
+        overlayPanel.settings.locked = false;
+        overlayPanel.show();
+
+        const rects = { a: [0, 0], b: [100, 0] };
+        for (const [key, [left, top]] of Object.entries(rects)) {
+            overlayPanel.tiles.get(key).getBoundingClientRect = () => ({
+                left,
+                top,
+                right: left + 100,
+                bottom: top + 40,
+                width: 100,
+                height: 40,
+            });
+        }
+
+        drag(overlayPanel.tiles.get('a'), 180, 20);
+
+        expect(overlayPanel.settings.order).toEqual(['b', 'a']);
+        expect(drawn()).toEqual(['b', 'a']);
+    });
+
     test('dragging to the line below moves it there rather than to the start', () => {
         const [first] = threeUnlocked();
 

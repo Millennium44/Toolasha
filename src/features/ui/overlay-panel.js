@@ -158,6 +158,29 @@ const STORAGE_KEY = 'overlayPanelV2';
 const LEGACY_STORAGE_KEY = 'overlayPanel';
 
 /**
+ * Reorder a rendered subset without moving keys the current UI cannot render.
+ * Saved row providers can be absent temporarily, so their keys keep their
+ * slots until the provider returns. Rows outside `keys` (including hidden
+ * tiles during a drag) likewise retain their saved positions.
+ *
+ * @param {string[]} order - Full saved order
+ * @param {string[]} keys - Keys represented by the rendered list
+ * @param {string[]} nextKeys - Their requested rendered order
+ * @returns {string[]} The full order with only rendered slots rearranged
+ */
+function reorderRenderedSlots(order, keys, nextKeys) {
+    const movable = new Set(keys);
+    const normalizedOrder = [...order];
+    const present = new Set(order);
+    for (const key of keys) {
+        if (!present.has(key)) normalizedOrder.push(key);
+    }
+
+    let nextIndex = 0;
+    return normalizedOrder.map((key) => (movable.has(key) ? nextKeys[nextIndex++] : key));
+}
+
+/**
  * Which named layout is in force, kept per character.
  *
  * Separate from the layout record rather than a field in it, because it is not
@@ -2419,8 +2442,11 @@ class OverlayPanel {
      * @param {number} delta - -1 earlier, 1 later
      */
     _move(key, delta) {
-        const next = moveRow(this.settings.order, key, delta);
-        if (next === this.settings.order) return;
+        const rendered = resolveRows(registeredRows(), this.settings).map((row) => row.key);
+        const nextRendered = moveRow(rendered, key, delta);
+        if (nextRendered === rendered) return;
+
+        const next = reorderRenderedSlots(this.settings.order, rendered, nextRendered);
 
         this.settings.order = next;
         this._save();
@@ -3387,8 +3413,12 @@ class OverlayPanel {
             const slot = dropIndex(laid, { x: event.clientX, y: event.clientY });
             // `dropIndex` counts slots in the list as drawn, which still holds
             // the dragged tile; `moveTo` wants the slot in the list without it
-            const from = laid.findIndex((box) => box.key === key);
-            const next = moveTo(this.settings.order, key, from >= 0 && slot > from ? slot - 1 : slot);
+            const rendered = laid.map((box) => box.key);
+            const from = rendered.indexOf(key);
+            const nextRendered = moveTo(rendered, key, from >= 0 && slot > from ? slot - 1 : slot);
+            if (nextRendered === rendered) return;
+
+            const next = reorderRenderedSlots(this.settings.order, rendered, nextRendered);
             if (next === this.settings.order) return;
 
             this.settings.order = next;

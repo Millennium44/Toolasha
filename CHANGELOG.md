@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overlay arrangement works around unavailable tiles
+
+- Moving overlay tiles now follows the rows shown in the picker or on the dashboard, even when a saved feature is unavailable. Newly loaded tiles also stay in the layout when reordered.
+
 ### Guided purchase controls keep their state
 
 - Starting a new Consumables purchase walk after canceling restores its Next button. A toolbar you dragged also keeps its position when switching between the panel and floating controls.
