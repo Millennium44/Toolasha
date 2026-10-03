@@ -125,7 +125,54 @@ afterEach(() => {
     taskIcons.cleanup();
 });
 
+/** Give a card the React fiber the game keeps its quest on, so the card's quest can be read */
+function giveQuest(card, quest) {
+    document.getElementById('root')?.remove();
+    const root = document.createElement('div');
+    root.id = 'root';
+    document.body.appendChild(root);
+
+    const questFiber = { memoizedProps: { characterQuest: quest }, return: null, child: null, sibling: null };
+    let previous = null;
+    for (const button of card.querySelectorAll('button')) {
+        const fiber = { stateNode: button, return: questFiber, child: null, sibling: null };
+        if (previous) previous.sibling = fiber;
+        else questFiber.child = fiber;
+        previous = fiber;
+    }
+    root._reactRootContainer = { current: questFiber };
+}
+
 describe('the picture on a task card', () => {
+    test('is drawn from the card quest when the task text is translated', () => {
+        // The Chinese client says "挤奶 - 奶牛"; no English name matches it
+        const card = cardOnBoard('挤奶 - 奶牛', ['Go', 'Reroll', '']);
+        giveQuest(card, { actionHrid: '/actions/milking/cow' });
+
+        taskIcons.processAllTaskCards();
+
+        expect(pictureOf(card)).toBe(`${ITEMS_SPRITE}#milk`);
+    });
+
+    test('an English card is named by its text, without reading the quest off the React tree', () => {
+        // A quest that would say otherwise shows it was never consulted: the walk costs a full tree
+        // traversal per card, and the English name already answers
+        const card = cardOnBoard('Milking - Cow', ['Go', 'Reroll', '']);
+        giveQuest(card, { actionHrid: '/actions/cheesesmithing/cheese' });
+
+        taskIcons.processAllTaskCards();
+
+        expect(pictureOf(card)).toBe(`${ITEMS_SPRITE}#milk`);
+    });
+
+    test('a translated card with no readable quest is left without a picture', () => {
+        const card = cardOnBoard('挤奶 - 奶牛', ['Go', 'Reroll', '']);
+
+        taskIcons.processAllTaskCards();
+
+        expect(pictureOf(card)).toBeNull();
+    });
+
     test('is drawn for the task the card is showing', () => {
         const card = cardOnBoard('Milking - Cow', ['Go', 'Reroll', '']);
 

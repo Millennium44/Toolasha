@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -235,7 +235,9 @@ class InventoryCountDisplay {
         if (!nameEl) return;
 
         const actionName = nameEl.textContent.trim();
-        const actionHrid = getActionHridFromName(actionName);
+        // Name first: an exact English match costs nothing, and the fiber lookup walks the whole React
+        // tree, which this path runs on every detail panel mounted. The fiber resolves a translated name.
+        const actionHrid = getActionHridFromName(actionName) || getActionHridFromFiber(panel);
         if (!actionHrid) return;
 
         const actionDetails = dataManager.getActionDetails(actionHrid);

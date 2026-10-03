@@ -1,7 +1,8 @@
 /**
  * Transmute History Viewer
- * Modal UI for browsing transmute session history.
- * Injected as a tab in the alchemy panel tab bar.
+ * Draws the transmute pane of the Alchemy History window: controls, filter badges,
+ * sessions table, totals and pagination. The window itself — its tab, overlay,
+ * title, close button and type switcher — is `alchemy-history-viewer.js`.
  */
 
 import config from '../../core/config.js';
@@ -10,7 +11,6 @@ import { transmuteHistoryTracker } from './transmute-history-tracker.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
-import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -45,27 +45,10 @@ import {
 } from './alchemy-pre-fix-sessions.js';
 import { getAlchemyOutputShopValue, describeShopValue } from './alchemy-shop-value.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { alchemyHistoryViewer } from './alchemy-history-viewer.js';
 
 const CATALYST_OF_TRANSMUTATION_HRID = '/items/catalyst_of_transmutation';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
-
-/**
- * Check whether any mutation added nodes that are, contain, or sit under a tablist.
- * Keeps the body-wide watcher from re-scanning every tablist on unrelated DOM churn.
- * @param {MutationRecord[]} mutations
- * @returns {boolean}
- */
-function mutationsTouchTablist(mutations) {
-    for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-            if (node.nodeType !== Node.ELEMENT_NODE) continue;
-            if (node.closest?.('[role="tablist"]') || node.querySelector?.('[role="tablist"]')) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
 
 /**
  * Columns of the "Totals by Input Item" table, with the tooltips that keep
@@ -155,10 +138,6 @@ class TransmuteHistoryViewer {
         // tracker fix; remembered per window, read on open
         this.includePreFix = true;
 
-        // Tab injection
-        this.alchemyTab = null;
-        this.tabWatcher = null;
-
         // Caches
         this.itemNameCache = new Map();
         this.itemsSpriteUrl = null;
@@ -180,7 +159,7 @@ class TransmuteHistoryViewer {
         }
 
         this.isInitialized = true;
-        this.addAlchemyTab();
+        alchemyHistoryViewer.register('transmute', this);
     }
 
     /**
@@ -189,18 +168,12 @@ class TransmuteHistoryViewer {
     disable() {
         // The filter popup and its document click listener live outside the modal
         this.closeActiveFilterPopup();
-        if (this.tabWatcher) {
-            this.tabWatcher();
-            this.tabWatcher = null;
-        }
-        if (this.alchemyTab && this.alchemyTab.parentNode) {
-            this.alchemyTab.remove();
-            this.alchemyTab = null;
-        }
         if (this.modal) {
             this.modal.remove();
             this.modal = null;
         }
+        // The last type out takes the window's tab and overlay with it
+        alchemyHistoryViewer.unregister('transmute', this);
         if (this.importInput) {
             this.importInput.remove();
             this.importInput = null;
@@ -209,84 +182,11 @@ class TransmuteHistoryViewer {
         this.isInitialized = false;
     }
 
-    // ─── Tab Injection ───────────────────────────────────────────────────────
+    // ─── Pane ────────────────────────────────────────────────────────────────
 
     /**
-     * Inject "Transmute History" tab into the alchemy tab bar.
-     * The alchemy tab bar contains Coinify, Decompose, Transmute, Unrefine, Current Action.
-     * We identify it by the presence of a "Transmute" tab text.
-     */
-    addAlchemyTab() {
-        const ensureTabExists = () => {
-            const tablist = document.querySelector('[role="tablist"]');
-            if (!tablist) return;
-
-            // Verify this is the alchemy tablist by checking for "Transmute" tab
-            const hasTransmute = Array.from(tablist.children).some(
-                (btn) => btn.textContent.includes('Transmute') && !btn.dataset.mwiTransmuteHistoryTab
-            );
-            if (!hasTransmute) return;
-
-            // Already injected?
-            if (tablist.querySelector('[data-mwi-transmute-history-tab="true"]')) return;
-
-            // Clone an existing tab for structure
-            const referenceTab = Array.from(tablist.children).find(
-                (btn) => btn.textContent.includes('Transmute') && !btn.dataset.mwiTransmuteHistoryTab
-            );
-            if (!referenceTab) return;
-
-            const tab = referenceTab.cloneNode(true);
-            tab.setAttribute('data-mwi-transmute-history-tab', 'true');
-            tab.classList.remove('Mui-selected');
-            tab.setAttribute('aria-selected', 'false');
-            tab.setAttribute('tabindex', '-1');
-
-            // Set label
-            const badge = tab.querySelector('.TabsComponent_badge__1Du26');
-            if (badge) {
-                // Replace first text node (the label) while keeping badge span
-                const badgeSpan = badge.querySelector('.MuiBadge-badge');
-                badge.textContent = '';
-                badge.appendChild(document.createTextNode('Transmute History'));
-                if (badgeSpan) badge.appendChild(badgeSpan);
-            } else {
-                tab.textContent = 'Transmute History';
-            }
-
-            tab.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                this.openModal();
-            });
-
-            tablist.appendChild(tab);
-            this.alchemyTab = tab;
-        };
-
-        // Watch for DOM changes that recreate the tablist
-        if (!this.tabWatcher) {
-            this.tabWatcher = createMutationWatcher(
-                document.body,
-                (mutations) => {
-                    if (!mutationsTouchTablist(mutations)) return;
-                    // If our tab was removed from DOM, clear reference
-                    if (this.alchemyTab && !document.body.contains(this.alchemyTab)) {
-                        this.alchemyTab = null;
-                    }
-                    ensureTabExists();
-                },
-                { childList: true, subtree: true }
-            );
-        }
-
-        ensureTabExists();
-    }
-
-    // ─── Modal ───────────────────────────────────────────────────────────────
-
-    /**
-     * Open the modal — load sessions and render
+     * Load sessions and draw this type's pane. Called by the Alchemy History window,
+     * which decides when the pane is visible.
      */
     async openModal() {
         this.sessions = await transmuteHistoryTracker.loadSessions();
@@ -302,79 +202,24 @@ class TransmuteHistoryViewer {
             this.createModal();
         }
 
-        this.modal.style.display = 'flex';
         this.renderTable();
     }
 
     /**
-     * Close the modal
+     * Close the Alchemy History window this pane sits in
      */
     closeModal() {
-        if (this.modal) {
-            this.modal.style.display = 'none';
-        }
+        alchemyHistoryViewer.closeModal();
         this.closeActiveFilterPopup();
     }
 
     /**
-     * Create modal DOM structure
+     * Create this type's pane — controls, badges, table, totals and pagination —
+     * and mount it in the Alchemy History window. `this.modal` is the pane.
      */
     createModal() {
         this.modal = document.createElement('div');
-        this.modal.className = 'mwi-transmute-history-modal';
-        this.modal.style.cssText = `
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 10000;
-        `;
-
-        const content = document.createElement('div');
-        content.className = 'mwi-transmute-history-content';
-        // Width bounds leave room for the 20px padding and an 8px gutter a side. A bare
-        // min-width: 500px beat max-width: 95vw on a phone, and the overlay's
-        // align-items: center hung the dialog off both edges (left edge -75px at 390px
-        // wide), where nothing can scroll to the clipped part. Desktop still gets 500px.
-        content.style.cssText = `
-            background: #2a2a2a;
-            border-radius: 8px;
-            padding: 20px;
-            width: fit-content;
-            min-width: min(500px, calc(100% - 56px));
-            max-width: min(95vw, calc(100% - 56px));
-            max-height: 90%;
-            overflow: auto;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-        `;
-
-        // Header
-        const header = document.createElement('div');
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        `;
-
-        const title = document.createElement('h2');
-        title.textContent = 'Transmute History';
-        title.style.cssText = 'margin: 0; color: #fff;';
-
-        const closeBtn = document.createElement('button');
-        closeBtn.textContent = '✕';
-        closeBtn.style.cssText = `
-            background: none; border: none; color: #fff;
-            font-size: 24px; cursor: pointer; padding: 0;
-            width: 30px; height: 30px;
-        `;
-        closeBtn.addEventListener('click', () => this.closeModal());
-
-        header.appendChild(title);
-        header.appendChild(closeBtn);
+        this.modal.className = 'mwi-transmute-history-pane';
 
         // Controls
         const controls = document.createElement('div');
@@ -420,20 +265,12 @@ class TransmuteHistoryViewer {
             align-items: center;
         `;
 
-        content.appendChild(header);
-        content.appendChild(controls);
-        content.appendChild(badges);
-        content.appendChild(tableContainer);
-        content.appendChild(totalsContainer);
-        content.appendChild(pagination);
-        this.modal.appendChild(content);
-        markToolashaSurface(this.modal, 'modal');
-        document.body.appendChild(this.modal);
-
-        // Close on backdrop click
-        this.modal.addEventListener('click', (e) => {
-            if (e.target === this.modal) this.closeModal();
-        });
+        this.modal.appendChild(controls);
+        this.modal.appendChild(badges);
+        this.modal.appendChild(tableContainer);
+        this.modal.appendChild(totalsContainer);
+        this.modal.appendChild(pagination);
+        alchemyHistoryViewer.mountPane('transmute', this.modal);
     }
 
     // ─── Filtering ───────────────────────────────────────────────────────────

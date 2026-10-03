@@ -52,7 +52,14 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
-const game = vi.hoisted(() => ({ characterId: 'char1', handlers: {}, skills: [], month: null, actions: [] }));
+const game = vi.hoisted(() => ({
+    characterId: 'char1',
+    handlers: {},
+    skills: [],
+    month: null,
+    actions: [],
+    clientData: null,
+}));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -62,6 +69,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: () => 'standard',
         getCurrentCharacterName: () => 'Main',
         getSkills: () => game.skills,
+        getInitClientData: () => game.clientData,
         getCurrentActions: () => game.actions,
         on: (event, handler) => {
             game.handlers[event] = handler;
@@ -478,5 +486,126 @@ describe('the month line in a skill tooltip', () => {
         xpTracker._addMonthGain(el);
 
         expect(el.querySelector('.mwi-xp-month-gain')).toBeNull();
+    });
+});
+
+describe('skills named by their icon, in any game language', () => {
+    const SPRITE = '/static/media/skills_sprite.0a1b2c.svg';
+
+    beforeEach(() => {
+        game.clientData = {
+            skillDetailMap: { '/skills/milking': { name: 'Milking' }, '/skills/melee': { name: 'Melee' } },
+        };
+    });
+
+    /** A nav entry as the game draws it: the skill's sprite icon, a label, and an XP bar */
+    const navEntry = (fragment, label) => {
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__abc';
+        nav.innerHTML =
+            (fragment ? `<svg><use href="${SPRITE}#${fragment}"></use></svg>` : '') +
+            `<span class="NavigationBar_label__x">${label}</span>` +
+            '<div><div class="NavigationBar_currentExperience__y"></div></div>';
+        return nav;
+    };
+
+    /** A tooltip as the game renders it, revealed inside its nav entry */
+    const tooltipIn = (nav, name) => {
+        const el = document.createElement('div');
+        for (const line of [name, 'Level: 154', 'Total Experience: 2,148,342,694', 'XP To Level Up: 1,000,000']) {
+            const div = document.createElement('div');
+            div.textContent = line;
+            el.appendChild(div);
+        }
+        nav.appendChild(el);
+        return el;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10 * HOUR);
+        xpTracker.combatSession = {};
+        xpTracker.xpHistory.melee = [
+            { t: 10 * HOUR - 5 * 60_000, xp: 1_000_000 },
+            { t: 10 * HOUR, xp: 1_100_000 },
+        ];
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('a translated tooltip under its nav entry still gets the time to level', () => {
+        const nav = navEntry('melee', '近战');
+        document.body.appendChild(nav);
+        const el = tooltipIn(nav, '近战');
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('50 minutes till next level');
+    });
+
+    test('a translated tooltip outside any nav entry has nothing to name it by, and gets no line', () => {
+        const el = tooltipIn(document.body, '近战');
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')).toBeNull();
+    });
+
+    test('a translated tooltip portaled to the body resolves through its aria-describedby trigger', () => {
+        const nav = navEntry('melee', '近战');
+        nav.querySelector('span').setAttribute('aria-describedby', 'mui-tip-7');
+        document.body.appendChild(nav);
+        // MUI portals the tooltip: a role=tooltip popper at body level, named by the trigger
+        const popper = document.createElement('div');
+        popper.setAttribute('role', 'tooltip');
+        popper.id = 'mui-tip-7';
+        document.body.appendChild(popper);
+        const el = tooltipIn(popper, '近战');
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('50 minutes till next level');
+    });
+
+    test('an English tooltip with no icon around it still resolves by its name', () => {
+        const el = tooltipIn(document.body, 'Melee');
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('50 minutes till next level');
+    });
+
+    test('the month line resolves a translated tooltip through its nav entry too', () => {
+        game.month = { gained: 4200, since: '2026-03-01', start: '2026-02-11' };
+        game.skills = [{ skillHrid: '/skills/melee', experience: 1_100_000, level: 30 }];
+        const nav = navEntry('melee', '近战');
+        document.body.appendChild(nav);
+        const el = tooltipIn(nav, '近战');
+
+        xpTracker._addMonthGain(el);
+
+        expect(el.querySelector('.mwi-xp-month-gain')).not.toBeNull();
+    });
+
+    test('a translated nav entry gets its XP/hr span from the icon', () => {
+        game.skills = [{ skillHrid: '/skills/melee', experience: 1_100_000, level: 30 }];
+        const nav = navEntry('melee', '近战');
+        document.body.appendChild(nav);
+
+        xpTracker._updateNavBars();
+
+        expect(nav.querySelector('.mwi-xp-rate')).not.toBeNull();
+    });
+
+    test('an icon-less English nav entry still gets its span from the label', () => {
+        const nav = navEntry(null, 'Melee');
+        document.body.appendChild(nav);
+
+        xpTracker._updateNavBars();
+
+        expect(nav.querySelector('.mwi-xp-rate')).not.toBeNull();
     });
 });

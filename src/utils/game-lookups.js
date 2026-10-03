@@ -8,6 +8,14 @@
 
 import dataManager from '../core/data-manager.js';
 import { isTesterShopEntry, testerShopEnabled } from './tester-shop.js';
+import { fiberFor } from './react-click.js';
+
+/*
+ * Display names are translated client-side while every detail map stores the English name, so a
+ * name -> hrid lookup silently misses on any non-English game language. The icon sprite fragment
+ * and the component props below are locale-independent; callers try them first and keep the name
+ * lookup as the fallback, which leaves English behavior unchanged.
+ */
 
 /**
  * Generate alternate display names to handle ★ ↔ (R) refined item naming.
@@ -83,6 +91,120 @@ function buildNameMap(detailMap) {
 
 const actionNames = new NameIndex();
 const itemNames = new NameIndex();
+
+/**
+ * Sprite fragment -> hrid memo for one detail map, keyed on the map's identity like NameIndex.
+ * The sheets key actions and skills by the last hrid segment ("milking" for
+ * /actions/milking/... and /skills/milking alike), so that segment is what is indexed.
+ */
+class FragmentIndex {
+    constructor() {
+        this.sourceMap = null;
+        /** @type {Map<string, string>|null} last hrid segment -> hrid */
+        this.byFragment = null;
+    }
+
+    /**
+     * @param {Object|undefined} detailMap - hrid -> details
+     * @param {string} fragment - Sprite fragment, e.g. "milking"
+     * @returns {string|null}
+     */
+    lookup(detailMap, fragment) {
+        if (!detailMap) return null;
+        if (detailMap !== this.sourceMap) {
+            const byFragment = new Map();
+            for (const hrid in detailMap) {
+                const key = hrid.slice(hrid.lastIndexOf('/') + 1);
+                if (!byFragment.has(key)) byFragment.set(key, hrid);
+            }
+            this.byFragment = byFragment;
+            this.sourceMap = detailMap;
+        }
+        return this.byFragment.get(fragment) ?? null;
+    }
+}
+
+const actionFragments = new FragmentIndex();
+const skillFragments = new FragmentIndex();
+
+/**
+ * The fragment of a sprite href when it points into the named sheet.
+ * @param {string|null|undefined} href - e.g. "/static/media/actions_sprite.<hash>.svg#milking"
+ * @param {string} sheet - Sheet name, e.g. "actions_sprite"
+ * @returns {string|null}
+ */
+function spriteFragment(href, sheet) {
+    if (!href || !href.includes(sheet)) return null;
+    const fragment = href.split('#')[1];
+    return fragment || null;
+}
+
+/**
+ * Resolve an action HRID from its icon sprite href, which does not change with the game language.
+ * @param {string|null|undefined} href - e.g. ".../actions_sprite.<hash>.svg#milking"
+ * @returns {string|null}
+ */
+export function getActionHridFromIconHref(href) {
+    const fragment = spriteFragment(href, 'actions_sprite');
+    if (!fragment) return null;
+    return actionFragments.lookup(dataManager.getInitClientData()?.actionDetailMap, fragment);
+}
+
+/**
+ * Resolve a skill HRID from its icon sprite href, which does not change with the game language.
+ * @param {string|null|undefined} href - e.g. ".../skills_sprite.<hash>.svg#milking"
+ * @returns {string|null}
+ */
+export function getSkillHridFromIconHref(href) {
+    const fragment = spriteFragment(href, 'skills_sprite');
+    if (!fragment) return null;
+    return skillFragments.lookup(dataManager.getInitClientData()?.skillDetailMap, fragment);
+}
+
+/**
+ * Resolve an item HRID from its icon sprite href. The item fragment is the whole hrid tail
+ * ("redwood_log" for /items/redwood_log), so it is validated against itemDetailMap, not indexed.
+ * @param {string|null|undefined} href - e.g. ".../items_sprite.<hash>.svg#redwood_log"
+ * @returns {string|null}
+ */
+export function getItemHridFromIconHref(href) {
+    const fragment = spriteFragment(href, 'items_sprite');
+    if (!fragment) return null;
+    const hrid = `/items/${fragment}`;
+    return dataManager.getInitClientData()?.itemDetailMap?.[hrid] ? hrid : null;
+}
+
+/**
+ * The first icon in a container that points into the given sprite sheet, as a href.
+ * @param {ParentNode|null|undefined} container
+ * @param {string} sheet - Sheet name, e.g. "skills_sprite"
+ * @returns {string|null}
+ */
+export function getIconHref(container, sheet) {
+    // Item icons often carry the sprite id on `xlink:href` alone (see alchemy-profit-calculator.js),
+    // which a plain `[href]` selector does not match, so both attributes are read
+    for (const use of container?.querySelectorAll?.('svg use') ?? []) {
+        const href = use.getAttribute('href') || use.getAttribute('xlink:href');
+        if (href?.includes(sheet)) return href;
+    }
+    return null;
+}
+
+/**
+ * Resolve an action HRID from a node inside the action detail modal. The modal draws no
+ * hrid-keyed icon of its own, but its component carries `actionDetail` as a prop.
+ * @param {Element|null|undefined} element - Any node inside the modal
+ * @returns {string|null}
+ */
+export function getActionHridFromFiber(element) {
+    let fiber = element ? fiberFor(element) : null;
+    while (fiber) {
+        const hrid = fiber.memoizedProps?.actionDetail?.hrid;
+        if (typeof hrid === 'string' && hrid.startsWith('/actions/')) return hrid;
+        fiber = fiber.return;
+    }
+    return null;
+}
 
 /**
  * Find an action HRID from its display name.

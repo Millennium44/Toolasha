@@ -33,12 +33,16 @@ vi.mock('../core/dom-observer.js', () => ({
 }));
 
 /** Name → hrid, and how often the lookup ran — the cost the dispatcher exists to share */
-const lookups = vi.hoisted(() => ({ byName: {}, calls: 0 }));
+const lookups = vi.hoisted(() => ({ byName: {}, calls: 0, byFiber: null, byIcon: {} }));
 vi.mock('./game-lookups.js', () => ({
     getActionHridFromName: vi.fn((name) => {
         lookups.calls += 1;
         return lookups.byName[name] ?? null;
     }),
+    // Locale-independent identity: what the modal's props and a tile's icon say, set per test
+    getActionHridFromFiber: vi.fn(() => lookups.byFiber),
+    getActionHridFromIconHref: vi.fn((href) => lookups.byIcon[href] ?? null),
+    getIconHref: vi.fn((el) => el.querySelector('use')?.getAttribute('href') ?? null),
 }));
 
 const {
@@ -59,6 +63,8 @@ beforeEach(() => {
     game.details = {};
     lookups.byName = {};
     lookups.calls = 0;
+    lookups.byFiber = null;
+    lookups.byIcon = {};
     vi.useRealTimers();
 });
 
@@ -154,6 +160,43 @@ describe('onDetailPanel', () => {
         off();
     });
 
+    test('a translated title resolves through the modal props, with no name match needed', () => {
+        // The Chinese client titles the modal "奶酪剑"; no English name matches it
+        const SWORD_HRID = '/actions/cheesesmithing/cheesy_sword';
+        game.details = { [SWORD_HRID]: { name: 'Cheesy Sword', type: '/action_types/cheesesmithing' } };
+        lookups.byFiber = SWORD_HRID;
+        const off = onDetailPanel(() => {});
+        const { panel } = buildTitled('SkillActionDetail_name__x', '奶酪剑');
+
+        expect(resolveDetailPanel(panel)).toMatchObject({
+            actionName: '奶酪剑',
+            actionHrid: SWORD_HRID,
+            actionDetails: game.details[SWORD_HRID],
+        });
+        off();
+    });
+
+    test('an English title resolves the detail panel without walking the React tree', async () => {
+        const { getActionHridFromFiber } = await import('./game-lookups.js');
+        getActionHridFromFiber.mockClear();
+        lookups.byName = { 'Cheesy Sword': SWORD };
+        const off = onDetailPanel(() => {});
+        const { panel } = buildTitled('SkillActionDetail_name__x', 'Cheesy Sword');
+
+        expect(resolveDetailPanel(panel).actionHrid).toBe(SWORD);
+        expect(getActionHridFromFiber).not.toHaveBeenCalled();
+        off();
+    });
+
+    test('a panel the props cannot name falls back to its English title', () => {
+        lookups.byFiber = null;
+        lookups.byName = { 'Cheesy Sword': SWORD };
+        const off = onDetailPanel(() => {});
+        const { panel } = buildTitled('SkillActionDetail_name__x', 'Cheesy Sword');
+        expect(resolveDetailPanel(panel).actionHrid).toBe(SWORD);
+        off();
+    });
+
     test('a panel without a title still reaches subscribers, unresolved', () => {
         const seen = [];
         const off = onDetailPanel((context) => seen.push(context));
@@ -245,6 +288,20 @@ describe('onActionTile', () => {
         expect(resolveActionTile(panel).actionHrid).toBe(COW);
         expect(lookups.calls).toBe(1);
         off();
+    });
+
+    test('a translated tile resolves by its icon, an icon-less one by its English title', () => {
+        const SPRITE = '/static/media/actions_sprite.0a1b2c.svg';
+        lookups.byIcon = { [`${SPRITE}#cow`]: COW };
+        lookups.byName = { Cow: COW };
+        game.details = { [COW]: { name: 'Cow', type: '/action_types/milking' } };
+
+        const translated = buildTitled('SkillAction_name__x', '奶牛').panel;
+        translated.innerHTML += `<svg><use href="${SPRITE}#cow"></use></svg>`;
+        expect(resolveActionTile(translated).actionHrid).toBe(COW);
+
+        const iconless = buildTitled('SkillAction_name__x', 'Cow').panel;
+        expect(resolveActionTile(iconless).actionHrid).toBe(COW);
     });
 
     test('tiles and detail panels are dispatched separately', () => {

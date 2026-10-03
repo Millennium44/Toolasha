@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One Alchemy History tab, and a Chinese game client recognized
+
+- Transmute, Coinify and Decompose history now share one Alchemy History tab with a switcher that remembers your last pick; every viewer feature works as before.
+- Actions and skills are recognized by their icon and the game's own data before their English name, so action-panel profit and speed, quick inputs, task icons, remaining XP and the XP tracker work with the game set to Chinese.
+
 ### Mirror enhancement plans include their action time
 
 - Mirror enhancement plans now count each mirror use as one Enhancing action and include its duration. Their ordinary material quantities stay unchanged because mirror actions consume a copy item instead of the usual recipe.

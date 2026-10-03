@@ -18,7 +18,13 @@ import { getOriginalText } from '../../utils/dom.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import actionFilter from './action-filter.js';
-import { getActionHridFromName, getItemHridFromName } from '../../utils/game-lookups.js';
+import {
+    getActionHridFromName,
+    getItemHridFromName,
+    getActionHridFromFiber,
+    getItemHridFromIconHref,
+    getIconHref,
+} from '../../utils/game-lookups.js';
 import { onActionTile } from '../../utils/action-panel-helper.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
@@ -359,7 +365,11 @@ async function handleActionPanel(panel) {
     }
 
     const actionName = getOriginalText(actionNameElement);
-    const actionHrid = getActionHridFromName(actionName);
+    // The detail modal draws no hrid-keyed icon of its own; its component props name the action
+    // whatever the game language, so the translated text is only the fallback.
+    // Name first: an exact English match costs nothing, and the fiber lookup walks the whole React
+    // tree, which this path runs on every action panel opened. The fiber resolves a translated name.
+    const actionHrid = getActionHridFromName(actionName) || getActionHridFromFiber(panel);
 
     if (!actionHrid) {
         return;
@@ -585,9 +595,10 @@ async function handleEnhancingPanel(panel) {
         return;
     }
 
-    // Find the item HRID from the name
+    // The item's icon sprite names it whatever the game language; the translated text is the fallback
     const gameData = dataManager.getInitClientData();
-    const itemHrid = getItemHridFromName(itemName);
+    const itemHrid =
+        getItemHridFromIconHref(getIconHref(outputsSection, 'items_sprite')) || getItemHridFromName(itemName);
 
     if (!itemHrid) {
         return;

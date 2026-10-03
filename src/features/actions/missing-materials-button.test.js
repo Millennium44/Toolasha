@@ -78,7 +78,10 @@ vi.mock('./enhancement-display.js', () => ({
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: () => null }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => ({ disconnect: () => {} }) }));
-vi.mock('../../utils/game-lookups.js', () => ({ getActionHridFromName: () => null }));
+vi.mock('../../utils/game-lookups.js', () => ({
+    getActionHridFromName: () => null,
+    getActionHridFromFiber: () => null,
+}));
 vi.mock('../../utils/tester-shop.js', () => ({
     testerShopEnabled: () => state.testerShop,
     // Every line of the test bill is sold, so the whole bill takes the shop path

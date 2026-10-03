@@ -37,7 +37,7 @@ import { parseItemCount, parseGameNumber, gameDigitsSource } from '../../utils/n
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
 
@@ -853,7 +853,10 @@ class TooltipPrices {
         const actionNameEl = actionPanel.querySelector('[class*="SkillActionDetail_name"]');
         if (!actionNameEl) return null;
 
-        const actionHrid = getActionHridFromName(actionNameEl.textContent.trim());
+        // Name first: an exact English match costs nothing, and the fiber lookup walks the whole React
+        // tree, which this path runs on every ingredient hovered. The fiber resolves a translated name.
+        const actionHrid =
+            getActionHridFromName(actionNameEl.textContent.trim()) || getActionHridFromFiber(actionPanel);
         if (!actionHrid) return null;
 
         const actionDetails = dataManager.getActionDetails(actionHrid);

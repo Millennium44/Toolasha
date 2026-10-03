@@ -35,6 +35,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (_key, fallback) => fallback,
+        getSettingValue: (_key, fallback) => fallback,
         COLOR_REMAINING_XP: '#fff',
     },
 }));
@@ -107,5 +108,56 @@ describe('calculateRemainingXPFromProgressBar', () => {
         game.characterData = { characterSkills: [{ skillHrid: '/skills/milking', level: 30 }] };
         game.initClientData = null;
         expect(remainingXP.calculateRemainingXPFromProgressBar(progressBar(50), 'Milking')).toBeNull();
+    });
+});
+
+describe('addRemainingXP names the skill by its icon', () => {
+    const SPRITE = '/static/media/skills_sprite.0a1b2c.svg';
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        game.initClientData.skillDetailMap = { '/skills/milking': { name: 'Milking' } };
+    });
+
+    /** A regular nav link as the game draws it: icon, label, XP bar */
+    const navLink = (fragment, label) => {
+        const link = document.createElement('div');
+        link.className = 'NavigationBar_navigationLink__x';
+        link.innerHTML =
+            (fragment ? `<svg><use href="${SPRITE}#${fragment}"></use></svg>` : '') +
+            `<span class="NavigationBar_label__y">${label}</span>` +
+            '<div class="NavigationBar_progress__z"><div class="NavigationBar_currentExperience__w"></div></div>';
+        document.body.appendChild(link);
+        const bar = link.querySelector('[class*="NavigationBar_currentExperience"]');
+        bar.style.width = '40%';
+        return { link, bar };
+    };
+
+    test('a translated label with the right icon still shows the XP left', () => {
+        const { link, bar } = navLink('milking', '挤奶');
+
+        remainingXP.addRemainingXP(bar);
+
+        expect(link.querySelector('.mwi-remaining-xp')?.textContent).toContain('XP left');
+    });
+
+    test('an icon-less English entry falls back to its label', () => {
+        const { link, bar } = navLink(null, 'Milking');
+
+        remainingXP.addRemainingXP(bar);
+
+        expect(link.querySelector('.mwi-remaining-xp')?.textContent).toContain('XP left');
+    });
+
+    test('a translated label with no icon cannot be named and shows nothing', () => {
+        const { link, bar } = navLink(null, '挤奶');
+
+        remainingXP.addRemainingXP(bar);
+
+        expect(link.querySelector('.mwi-remaining-xp')).toBeNull();
+    });
+
+    test('the calculation takes an hrid as well as a name', () => {
+        expect(remainingXP.calculateRemainingXPFromProgressBar(progressBar(40), '/skills/milking')).toBe(6000);
     });
 });

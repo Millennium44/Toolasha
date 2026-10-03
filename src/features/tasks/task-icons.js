@@ -12,6 +12,7 @@ import taskIconFilters from './task-icon-filters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { questForTaskCard } from './task-card-quest.js';
 
 class TaskIcons {
     constructor() {
@@ -357,11 +358,21 @@ class TaskIcons {
             return;
         }
 
+        // An English card names its action or monster by its text, at no cost. Only when that misses
+        // is the card's own quest read: it names them whatever the game language, but finding it
+        // walks the React tree, once per card. ("Defeat" only matches English, so a monster quest
+        // also marks a combat card.)
+        const resolvedByName = taskInfo.isCombatTask
+            ? this.findMonsterHrid(taskInfo.taskName)
+            : getActionHridFromName(taskInfo.taskName);
+        const quest = resolvedByName ? null : questForTaskCard(taskCard);
+        const info = { ...taskInfo, quest, isCombatTask: taskInfo.isCombatTask || Boolean(quest?.monsterHrid) };
+
         // Add appropriate icons based on task type
-        if (taskInfo.isCombatTask) {
-            this.addMonsterIcon(taskCard, taskInfo);
+        if (info.isCombatTask) {
+            this.addMonsterIcon(taskCard, info);
         } else {
-            this.addActionIcon(taskCard, taskInfo);
+            this.addActionIcon(taskCard, info);
         }
     }
 
@@ -395,16 +406,22 @@ class TaskIcons {
     }
 
     /**
-     * Find action HRID by display name
+     * Find action HRID from the card's quest, falling back to the display name
+     * @param {string} actionName - Translated task name
+     * @param {Object|null} [quest] - The card's `characterQuest`
      */
-    findActionHrid(actionName) {
-        return getActionHridFromName(actionName);
+    findActionHrid(actionName, quest = null) {
+        return quest?.actionHrid || getActionHridFromName(actionName);
     }
 
     /**
-     * Find monster HRID by display name
+     * Find monster HRID from the card's quest, falling back to the display name
+     * @param {string} monsterName - Translated task name
+     * @param {Object|null} [quest] - The card's `characterQuest`
      */
-    findMonsterHrid(monsterName) {
+    findMonsterHrid(monsterName, quest = null) {
+        if (quest?.monsterHrid) return quest.monsterHrid;
+
         // Strip zone tier suffix (e.g., "Grizzly BearZ8" → "Grizzly Bear")
         // Format is: MonsterNameZ# where # is the zone index
         const cleanName = monsterName.replace(/Z\d+$/, '').trim();
@@ -422,7 +439,7 @@ class TaskIcons {
      * Add action icon to task card
      */
     addActionIcon(taskCard, taskInfo) {
-        const actionHrid = this.findActionHrid(taskInfo.taskName);
+        const actionHrid = this.findActionHrid(taskInfo.taskName, taskInfo.quest);
         if (!actionHrid) {
             return;
         }
@@ -471,7 +488,7 @@ class TaskIcons {
      * Add monster icon to task card
      */
     async addMonsterIcon(taskCard, taskInfo) {
-        const monsterHrid = this.findMonsterHrid(taskInfo.taskName);
+        const monsterHrid = this.findMonsterHrid(taskInfo.taskName, taskInfo.quest);
         if (!monsterHrid) {
             return;
         }
