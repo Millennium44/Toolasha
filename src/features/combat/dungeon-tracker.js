@@ -274,6 +274,7 @@ class DungeonTracker {
         this._lostTimeBeat = null;
         this.timerRegistry = createTimerRegistry();
         this._completionKeyCountGrace = null;
+        this._expiredCompletionKeyCountCutoff = null;
         this.visibilityHandler = null;
 
         // Store handler references for cleanup
@@ -1192,6 +1193,23 @@ class DungeonTracker {
                 if (this._completionKeyCountGrace?.run !== run) return;
                 this._completionKeyCountGrace = null;
                 if (!this.isTracking || this.currentRun !== run) return;
+                // The old run can post its completion count after this timeout
+                // and after a successor has begun. Keep the timeout's server
+                // time so that count cannot become the successor's start/end.
+                const offset = this.chatClockOffset();
+                if (offset !== null) {
+                    this._expiredCompletionKeyCountCutoff = Date.now() - offset;
+                } else if (
+                    !run.joinedMidRun &&
+                    Number.isFinite(run.startTime) &&
+                    Number.isFinite(this.firstKeyCountTimestamp)
+                ) {
+                    // A restored run may have no in-memory chat samples. Its
+                    // recorded local start and server-stamped opening count still
+                    // give an approximate offset without sacrificing a genuine
+                    // successor's first count when the old count never arrives.
+                    this._expiredCompletionKeyCountCutoff = Date.now() - (run.startTime - this.firstKeyCountTimestamp);
+                }
                 // Without the party's completion message this cannot be validated
                 // or banked as a clear, but it must stop blocking later combat.
                 this.completeDungeon().catch((error) => {
@@ -1618,6 +1636,15 @@ class DungeonTracker {
         // how a solo run came to report a duration measured from the moment the
         // player joined the party.
         if (this.isSoloRun()) {
+            return;
+        }
+
+        if (
+            this.predatesCurrentRun(timestamp) ||
+            (Number.isFinite(this._expiredCompletionKeyCountCutoff) &&
+                Number.isFinite(timestamp) &&
+                timestamp <= this._expiredCompletionKeyCountCutoff)
+        ) {
             return;
         }
 
@@ -3084,6 +3111,7 @@ class DungeonTracker {
             if (this.unsettledEnd) this.flushHeldEnd(this.unsettledEnd);
             this.unsettledEnd = null;
             this.chatClockSamples = [];
+            this._expiredCompletionKeyCountCutoff = null;
 
             // Reset hibernation detection
             this.hibernationDetected = false;

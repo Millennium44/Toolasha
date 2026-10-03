@@ -11,6 +11,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Starting another action during a dungeon now ends that tracked attempt, so a stale queued wave cannot carry its time and progress into a later run. Dungeon profit estimates also charge entry keys only for regular completion chests; refinement-only and chest-free rewards no longer incur a phantom entry key.
 - A party clear waiting for its late key-count message now stays available even if another action starts, so the completed run is still recorded. If the dungeon reward table cannot be read, the ROI board shows unknown revenue and key cost instead of treating it as a free chestless run.
 - If the party key-count message never arrives, the finished tracker releases its run after ten seconds. A message inside that window still records the clear, and a later dungeon can start without inheriting the old run.
+- A delayed key-count message from an expired run no longer starts or completes the next dungeon. The tracker compares its server timestamp with the expired run's boundary before accepting it.
 
 ### Iron Bell: bells you can afford
 
