@@ -133,17 +133,19 @@ export function getRelevantTeas(skillName, goal) {
  * Generate all valid tea combinations respecting exclusivity rules
  * - Can only use ONE skill-specific tea (mutually exclusive)
  * - Can use any combination of general teas
- * - Max 3 teas total
+ * - Tea count cannot exceed the available drink slots (up to 3)
  * @param {Object} teaGroups - { skillTeas: [], generalTeas: [] }
+ * @param {Object|null} constraints - Optional pinned and banned teas
+ * @param {number} maxDrinkSlots - Available slots for this equipment setup
  * @returns {Array<Array<string>>} Array of valid tea combinations
  */
-function generateCombinations(teaGroups, constraints = null) {
+function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3) {
     const { skillTeas, generalTeas } = teaGroups;
     const combinations = [];
 
     // Helper to add combination if valid
     const addCombo = (combo) => {
-        if (combo.length > 0 && combo.length <= 3) {
+        if (combo.length > 0 && combo.length <= maxDrinkSlots) {
             if (constraints) {
                 if ([...constraints.pinned].some((t) => !combo.includes(t))) return;
                 if (combo.some((t) => constraints.banned.has(t))) return;
@@ -180,6 +182,21 @@ function generateCombinations(teaGroups, constraints = null) {
     }
 
     return combinations;
+}
+
+/**
+ * Get the drink-slot capacity for the equipment setup being scored.
+ * The game grants one drink slot by default and adds the equipped pouch's
+ * combatStats.drinkSlots. Enhancing a pouch does not change that slot count.
+ * @param {Map<string, Object>} equipment - Current or planned equipment keyed by item location HRID
+ * @param {Object} itemDetailMap - Item details from init_client_data
+ * @returns {number} Available drink slots, clamped to the game's 1–3 range
+ */
+function getDrinkSlotCount(equipment, itemDetailMap) {
+    const pouchHrid = equipment?.get?.('/item_locations/pouch')?.itemHrid;
+    const rawBonus = itemDetailMap?.[pouchHrid]?.equipmentDetail?.combatStats?.drinkSlots;
+    const slotBonus = Number.isFinite(rawBonus) ? rawBonus : 0;
+    return Math.min(3, Math.max(1, 1 + slotBonus));
 }
 
 /**
@@ -1143,7 +1160,8 @@ export function findOptimalTeas(
 
     // Get relevant teas and generate combinations
     const relevantTeas = getRelevantTeas(normalizedSkill, goal);
-    const combinations = generateCombinations(relevantTeas, constraints);
+    const drinkSlotCount = getDrinkSlotCount(equipment, gameData.itemDetailMap);
+    const combinations = generateCombinations(relevantTeas, constraints, drinkSlotCount);
 
     // Get actions for this skill (available and excluded)
     const actionData = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);

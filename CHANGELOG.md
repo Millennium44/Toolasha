@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Mirror enhancement plans include their action time
+
+- Mirror enhancement plans now count each mirror use as one Enhancing action and include its duration. Their ordinary material quantities stay unchanged because mirror actions consume a copy item instead of the usual recipe.
+- Their XP estimates now include the selected leaf runs and guaranteed mirror successes, so XP per hour describes the same plan as the displayed time.
+
+### Tea recommendations fit the equipped pouch
+
+- Tea recommendations now fit the drink slots available from the current or planned pouch. Characters with one or two slots no longer get an unusable three-tea recommendation.
+
+### Chest risk estimates preserve net drop values
+
+- Dungeon chest risk estimates no longer charge market tax again on nested chest and dungeon-token values. Payouts and worst-case losses now use the same tax rules as the chest value breakdown.
+
 ### XP carries across level boundaries
 
 - Level Progress and planner estimates now keep experience earned beyond each level threshold, so high-XP actions no longer add unnecessary queue completions. Action-count previews also retain that surplus instead of stopping at the first level reached.

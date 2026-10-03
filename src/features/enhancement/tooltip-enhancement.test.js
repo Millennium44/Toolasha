@@ -10,8 +10,10 @@
 import { describe, test, expect, beforeAll, beforeEach, vi } from 'vitest';
 import * as mathjs from 'mathjs';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { calculateSuccessXP } from './enhancement-xp.js';
 
 const ITEM = '/items/test_sword';
+const MASTER_ALCHEMY_CHARM = '/items/master_alchemy_charm';
 const MATERIAL = '/items/test_material';
 const MIRROR = '/items/philosophers_mirror';
 const PROTECTION = '/items/mirror_of_protection';
@@ -51,6 +53,15 @@ const gameData = {
             name: 'Test Sword',
             itemLevel: 10,
             enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
+        },
+        [MASTER_ALCHEMY_CHARM]: {
+            name: 'Master Alchemy Charm',
+            itemLevel: 80,
+            sellPrice: 6000000,
+            enhancementCosts: [
+                { itemHrid: '/items/trainee_alchemy_charm', count: 16 },
+                { itemHrid: '/items/coin', count: 1345 },
+            ],
         },
         [REFINED]: {
             name: 'Test Sword (Refined)',
@@ -283,15 +294,98 @@ describe('calculateEnhancementPath', () => {
         }
     });
 
-    test('time and attempts count only the levels the plan builds', () => {
+    test('time and attempts count the levels built and each mirror action', () => {
         const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
         const strategy = data.optimalStrategy;
 
         expect(strategy.totalTime).toBeGreaterThan(0);
         expect(strategy.expectedAttempts).toBeGreaterThan(0);
-        // Mirror combinations are instant, so a mirrored path is never slower than the
-        // traditional one it replaced
+        // A mirror adds one guaranteed action, while the mirrored route remains cheaper here.
         expect(strategy.totalCost).toBeLessThanOrEqual(strategy.traditionalCost);
+    });
+
+    test('a real +3 mirror route counts its guaranteed enhancement action and time', () => {
+        const oldItemPrice = prices[MASTER_ALCHEMY_CHARM];
+        const oldMirrorPrice = prices[MIRROR];
+        prices[MASTER_ALCHEMY_CHARM] = { ask: 6000000, bid: 6000000 };
+        prices[MIRROR] = { ask: 10000000, bid: 10000000 };
+
+        try {
+            const config = { ...enhancingConfig, enhancingLevel: 80 };
+            const data = calculateEnhancementPath(MASTER_ALCHEMY_CHARM, 3, config);
+            const strategy = data.optimalStrategy;
+
+            expect(strategy.usedMirror).toBe(true);
+            expect(strategy.mirrorCount).toBe(1);
+
+            const leafStrategies = strategy.consumedItems.map((item) => {
+                const leafData = calculateEnhancementPath(item.itemHrid, item.level, config);
+                return { ...item, data: leafData, strategy: leafData.optimalStrategy };
+            });
+            const leafAttempts = leafStrategies.reduce(
+                (sum, item) => sum + item.quantity * item.strategy.expectedAttempts,
+                0
+            );
+            const leafTime = leafStrategies.reduce((sum, item) => sum + item.quantity * item.strategy.totalTime, 0);
+            const actionTime = leafTime / leafAttempts;
+            const leafXP = leafStrategies.reduce((sum, item) => sum + item.quantity * item.data.totalExpectedXP, 0);
+            const mirrorXP = calculateSuccessXP(2, MASTER_ALCHEMY_CHARM, config.experienceBonus / 100);
+
+            expect(actionTime).toBeCloseTo(12, 8);
+            expect(strategy.expectedAttempts).toBeCloseTo(leafAttempts + strategy.mirrorCount, 8);
+            expect(strategy.totalTime).toBeCloseTo(leafTime + strategy.mirrorCount * actionTime, 8);
+            expect(data.totalExpectedXP).toBeCloseTo(leafXP + mirrorXP, 0);
+            expect(data.xpPerHour).toBeCloseTo(Math.round((data.totalExpectedXP / strategy.totalTime) * 3600), 0);
+            expect(strategy.totalCost).toBeCloseTo(strategy.consumedItemsCost + strategy.philosopherMirrorCost, 6);
+            expect(
+                strategy.materialBill.find((line) => line.itemHrid === '/items/trainee_alchemy_charm').count
+            ).toBeCloseTo(16 * leafAttempts, 8);
+        } finally {
+            if (oldItemPrice) prices[MASTER_ALCHEMY_CHARM] = oldItemPrice;
+            else delete prices[MASTER_ALCHEMY_CHARM];
+            prices[MIRROR] = oldMirrorPrice;
+        }
+    });
+
+    test('mirror route time and XP follow the selected speed and wisdom', () => {
+        const oldItemPrice = prices[MASTER_ALCHEMY_CHARM];
+        const oldMirrorPrice = prices[MIRROR];
+        prices[MASTER_ALCHEMY_CHARM] = { ask: 6000000, bid: 6000000 };
+        prices[MIRROR] = { ask: 10000000, bid: 10000000 };
+
+        try {
+            const config = {
+                ...enhancingConfig,
+                enhancingLevel: 90,
+                speedBonus: 15,
+                experienceBonus: 20,
+            };
+            const data = calculateEnhancementPath(MASTER_ALCHEMY_CHARM, 3, config);
+            const strategy = data.optimalStrategy;
+            const leafStrategies = strategy.consumedItems.map((item) => {
+                const leafData = calculateEnhancementPath(item.itemHrid, item.level, config);
+                return { ...item, data: leafData, strategy: leafData.optimalStrategy };
+            });
+            const leafAttempts = leafStrategies.reduce(
+                (sum, item) => sum + item.quantity * item.strategy.expectedAttempts,
+                0
+            );
+            const leafTime = leafStrategies.reduce((sum, item) => sum + item.quantity * item.strategy.totalTime, 0);
+            const leafXP = leafStrategies.reduce((sum, item) => sum + item.quantity * item.data.totalExpectedXP, 0);
+            const perActionTime = leafTime / leafAttempts;
+            const mirrorXP = calculateSuccessXP(2, MASTER_ALCHEMY_CHARM, config.experienceBonus / 100);
+
+            expect(perActionTime).toBeCloseTo(12 / 1.25, 8);
+            expect(strategy.totalTime).toBeCloseTo(leafTime + strategy.mirrorCount * perActionTime, 8);
+            expect(data.totalExpectedXP).toBeCloseTo(leafXP + mirrorXP, 0);
+            expect(
+                Math.abs(data.xpPerHour - Math.round((data.totalExpectedXP / strategy.totalTime) * 3600))
+            ).toBeLessThan(5);
+        } finally {
+            if (oldItemPrice) prices[MASTER_ALCHEMY_CHARM] = oldItemPrice;
+            else delete prices[MASTER_ALCHEMY_CHARM];
+            prices[MIRROR] = oldMirrorPrice;
+        }
     });
 });
 
@@ -325,7 +419,7 @@ describe('the material bill a path expects to consume', () => {
     });
 
     test('the count is attempts times the per-attempt recipe, as an expectation', () => {
-        const strategy = calculateEnhancementPath(ITEM, 4, enhancingConfig).optimalStrategy;
+        const strategy = calculateEnhancementPath(ITEM, 2, enhancingConfig).optimalStrategy;
         const material = strategy.materialBill.find((line) => line.itemHrid === MATERIAL);
 
         // One material per attempt, so the count is the expected attempts themselves —
@@ -350,12 +444,17 @@ describe('the material bill a path expects to consume', () => {
         expect(base.count).toBe(strategy.consumedItems.reduce((sum, item) => sum + item.quantity, 0));
     });
 
-    test("a mirrored path's materials scale with the attempts it actually makes", () => {
+    test("a mirrored path's materials scale with its ordinary leaf attempts", () => {
         const strategy = calculateEnhancementPath(ITEM, 8, enhancingConfig).optimalStrategy;
         const material = strategy.materialBill.find((line) => line.itemHrid === MATERIAL);
+        const leafAttempts = strategy.consumedItems.reduce((sum, item) => {
+            const leaf = calculateEnhancementPath(item.itemHrid, item.level, enhancingConfig).optimalStrategy;
+            return sum + item.quantity * leaf.expectedAttempts;
+        }, 0);
 
-        // One material per attempt again, so the whole plan's attempts is the whole plan's count
-        expect(material.count).toBeCloseTo(strategy.expectedAttempts, 6);
+        // Mirror actions consume a copy instead of one ordinary enhancement recipe.
+        expect(strategy.expectedAttempts).toBeCloseTo(leafAttempts + strategy.mirrorCount, 6);
+        expect(material.count).toBeCloseTo(leafAttempts, 6);
     });
 
     test('every line names something buyable and costs what it says', () => {
