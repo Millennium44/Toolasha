@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon restarts and key estimates
+
+- Starting another action during a dungeon now ends that tracked attempt, so a stale queued wave cannot carry its time and progress into a later run. Dungeon profit estimates also charge entry keys only for regular completion chests; refinement-only and chest-free rewards no longer incur a phantom entry key.
+- A party clear waiting for its late key-count message now stays available even if another action starts, so the completed run is still recorded. If the dungeon reward table cannot be read, the ROI board shows unknown revenue and key cost instead of treating it as a free chestless run.
+
 ### Enhancement runs and cost comparisons
 
 - Repeating the same enhancement setup as a new queue action now starts a separate tracker session, so the two runs keep their attempts and experience separate. The tracker also hides its cost versus expected comparison when a consumed material or protection has no known price, avoiding an incomplete cost estimate.

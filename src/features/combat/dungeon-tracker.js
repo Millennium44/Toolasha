@@ -462,13 +462,9 @@ class DungeonTracker {
      * is recent enough to still describe the run in front of us.
      * @param {Object|null} saved - Saved in-progress record
      *
-     * A paused record (see `pauseRun`) is held to a different test. Its last write
-     * was the pause, so its age is the length of whatever displaced the dungeon —
-     * hours of milking, legitimately — and the battle the dungeon comes back on is
-     * not known to keep its id. What identifies it instead is the wave: the game
-     * keeps a displaced dungeon's wave on the queued action and resumes from it, so
-     * a battle at or past the saved wave is the same run carrying on, and one
-     * below it is the dungeon started over.
+     * Older versions saved a paused record when Start Now displaced a dungeon.
+     * Its queued wave is stale: the dungeon restarts at wave 1 when it runs again,
+     * so such a record cannot prove continuity and must never be restored.
      *
      * @param {Object|null} saved - Saved in-progress record
      * @param {number|null} [expectedBattleId] - Battle ID to match, or null to accept the record's own
@@ -506,9 +502,7 @@ class DungeonTracker {
             return false;
         }
 
-        if (Number.isFinite(saved.pausedAt)) {
-            return Number.isFinite(resumeWave) && resumeWave >= saved.currentWave;
-        }
+        if (Number.isFinite(saved.pausedAt)) return false;
 
         // Waves only go up within a run. A battle below the saved wave is the
         // dungeon started over — a party action restarted, Start Now — and its
@@ -1181,15 +1175,10 @@ class DungeonTracker {
     }
 
     /**
-     * Pause the run: another action has taken the front of the queue while the
-     * dungeon waits behind it, unfinished.
+     * Pause the run while another action takes the front of the queue.
      *
-     * "Start Now" on a skilling action does exactly this mid-run. The game does
-     * not end the dungeon: it keeps the wave on the queued action and picks the
-     * run back up when the dungeon reaches the front again. So neither does the
-     * tracker: waves, wave times and anchors are kept, and only the clock stops.
-     * `getCurrentRun` reports nothing while paused, which is what hides the panel
-     * and idles its one-second loop.
+     * Kept for existing in-memory records. New Start Now displacements end the
+     * run because the queued wave is stale and combat restarts at wave 1.
      *
      * @param {number} [now] - When the dungeon was displaced
      */
@@ -1248,19 +1237,19 @@ class DungeonTracker {
         const actions = dataManager.getCurrentActions?.();
         if (!Array.isArray(actions)) return;
 
+        // The last wave can be complete before the party's reward Key counts
+        // arrives. Start Now must not turn that clear into a cancel or discard
+        // the only run that can accept the delayed completion message.
+        if (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) return;
+
         const dungeonHrid = this.currentRun.dungeonHrid;
         const front = runningAction(actions);
 
         if (front?.actionHrid === dungeonHrid) {
             if (!this.isPaused()) return;
-            // The game started the dungeon over rather than carrying the run on
-            if (Number.isFinite(front.wave) && front.wave < this.currentRun.currentWave) {
-                this.resetTracking();
-                return;
-            }
-            this.resumeRun();
-            this.notifyUpdate();
-            this.saveInProgressRun();
+            // A legacy paused run cannot be revived from this queue row: its
+            // wave can still be the one from before Start Now.
+            this.resetTracking();
             return;
         }
 
@@ -1274,29 +1263,39 @@ class DungeonTracker {
         const delivered = (data?.endCharacterActions || []).some(
             (action) => action && !action.isDone && action.id === front.id && action.actionHrid === front.actionHrid
         );
-        if (delivered) this.pauseRun();
+        if (delivered) {
+            // Start Now leaves the old dungeon queued with its old wave, but the
+            // next time it runs the server starts at wave 1. End this attempt at
+            // displacement instead of reviving it from that stale queue field.
+            this.resetTracking({ result: RUN_RESULT_CANCEL, endTimestamp: Date.now(), endFromServer: false });
+        }
     }
 
     /**
      * Settle a paused or displaced run against an arriving `new_battle`.
      *
-     * @param {number|undefined} wave - The battle's wave
      * @returns {'continue'|'ignore'|'reset'} `continue` to handle the battle as
-     *   usual (a resumed run carries on from here), `ignore` when the battle is
-     *   not this run's and the run waits on, `reset` when the run is over
+     *   usual, `ignore` for another action's battle, `reset` when the run is over
      */
-    reconcileBattle(wave) {
+    reconcileBattle() {
         if (!this.isTracking || !this.currentRun?.dungeonHrid) return 'continue';
         const actions = dataManager.getCurrentActions?.();
         const battleAction = battleCombatAction(actions);
         const dungeonHrid = this.currentRun.dungeonHrid;
         const paused = this.isPaused();
 
+        // A different action's battle may precede the party reward message.
+        // Keep the finished run available for that message, without treating
+        // any of the new action's waves as this dungeon's progress.
+        if (
+            (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) &&
+            battleAction?.actionHrid !== dungeonHrid
+        )
+            return 'ignore';
+
         if (battleAction?.actionHrid === dungeonHrid) {
             if (!paused) return 'continue';
-            if (Number.isFinite(wave) && wave < this.currentRun.currentWave) return 'reset';
-            this.resumeRun();
-            return 'continue';
+            return 'reset';
         }
 
         if (!battleAction) return paused ? 'ignore' : 'continue';
@@ -1305,9 +1304,10 @@ class DungeonTracker {
         // it. A paused run has nothing to hand over and simply ends.
         if (this.isDungeonAction(battleAction.actionHrid)) return paused ? 'reset' : 'continue';
 
-        // A normal zone's battle, which carries a wave number like a dungeon's
+        // A normal zone's battle can arrive before actions_updated. Its Start
+        // Now displacement ends the dungeon even if the old action remains queued.
         if (!isQueued(actions, dungeonHrid)) return 'reset';
-        this.pauseRun();
+        this.resetTracking({ result: RUN_RESULT_CANCEL, endTimestamp: Date.now(), endFromServer: false });
         return 'ignore';
     }
 
@@ -1734,9 +1734,9 @@ class DungeonTracker {
         // going done from destroying a live run.
         const running = runningCombatAction(dataManager.getCurrentActions?.());
 
-        // A run whose dungeon was displaced (by "Start Now" on another action)
-        // waits, and resumes when a battle of its own dungeon arrives.
-        const verdict = this.reconcileBattle(data.wave);
+        // A displaced dungeon may remain queued with its old wave, although its
+        // next battle begins a fresh run. Reconcile that before reading this wave.
+        const verdict = this.reconcileBattle();
         if (verdict === 'ignore') {
             return;
         }

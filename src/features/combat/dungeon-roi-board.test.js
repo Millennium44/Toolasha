@@ -118,11 +118,11 @@ describe('pricing a completion', () => {
         expect(bonus.entries[0].count).toBeCloseTo(1.295);
     });
 
-    test('a reward table with no chest still charges the one key the door took', () => {
+    test('a completion with no regular chest spends no entry key', () => {
         const rewards = priceRewards(new Map([['/items/chimerical_token', 40]]), pricing);
         const keys = priceKeys(DEN, rewards, pricing);
-        expect(keys.entries).toEqual([{ itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 }]);
-        expect(keys.total).toBeCloseTo(3_000);
+        expect(keys.entries).toEqual([]);
+        expect(keys.total).toBe(0);
     });
 
     test('refinement chests pull a chest key but never an entry key', () => {
@@ -138,6 +138,13 @@ describe('pricing a completion', () => {
             { itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 },
             { itemHrid: '/items/chimerical_chest_key', count: 3, unitCost: 1_000 },
         ]);
+    });
+
+    test('a refinement-only payout charges its chest key without an entry key', () => {
+        const rewards = priceRewards(new Map([['/items/chimerical_refinement_chest', 2]]), pricing);
+        const keys = priceKeys(DEN, rewards, pricing);
+        expect(keys.entries).toEqual([{ itemHrid: '/items/chimerical_chest_key', count: 2, unitCost: 1_000 }]);
+        expect(keys.total).toBe(2_000);
     });
 
     test('an unpriceable key leaves the total null rather than free', () => {
@@ -511,7 +518,37 @@ describe('buildDungeonRoiRows', () => {
             },
         });
         expect(rows).toHaveLength(6);
-        expect(rows.every((row) => row.revenuePerRun === 0)).toBe(true);
+        expect(rows.every((row) => row.revenuePerRun === null && row.keyCostPerRun === null)).toBe(true);
+    });
+
+    test('a missing reward table leaves key cost and net unknown, unlike a known empty table', () => {
+        const denSnapshot = {
+            zones: [
+                {
+                    zoneHrid: DEN,
+                    difficultyTier: 0,
+                    dungeon: { completions: 10, simHours: 1, partySize: 1, consumableCostPerHour: 3600 },
+                },
+            ],
+        };
+        const input = { dungeons: [{ ...dungeons[0], maxDifficulty: 0 }], runs: [], snapshot: denSnapshot };
+        const missing = buildDungeonRoiRows({
+            ...input,
+            pricing: { ...pricing, rewardsPerRun: () => null },
+        })[0];
+        const knownEmpty = buildDungeonRoiRows({
+            ...input,
+            pricing: { ...pricing, rewardsPerRun: () => new Map() },
+        })[0];
+
+        expect(missing).toMatchObject({
+            keyCostPerRun: null,
+            revenuePerRun: null,
+            netPerRun: null,
+            costGap: 'rewards',
+        });
+        expect(knownEmpty).toMatchObject({ keyCostPerRun: 0, revenuePerRun: 0, costGap: null });
+        expect(knownEmpty.netPerRun).toBeLessThan(0);
     });
 });
 
