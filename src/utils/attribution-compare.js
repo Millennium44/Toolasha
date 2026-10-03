@@ -216,11 +216,13 @@ export function presenceTick(tick, state) {
     for (const [index, monster] of Object.entries(mMap)) {
         if (state.monstersHP[index] === undefined) continue;
         const hp = Number(monster?.cHP ?? monster?.currentHitpoints) || 0;
-        const dmg = num(monster?.dmgCounter);
+        const dmg = monster?.dmgCounter == null ? null : num(monster.dmgCounter);
         const reset = dmg !== null && state.monstersDmg[index] !== undefined && dmg < state.monstersDmg[index];
         const diff = state.monstersHP[index] - hp;
         state.monstersHP[index] = hp;
-        if (dmg !== null) state.monstersDmg[index] = dmg;
+        // An omitted counter invalidates the cumulative baseline; a later lower value alone
+        // cannot prove a replacement after the gap.
+        state.monstersDmg[index] = dmg === null ? undefined : dmg;
         if (!reset && diff > 0) damage += diff;
     }
     if (!(damage > 0)) return { damage: 0, credited: {}, mode: 'none' };
@@ -319,12 +321,12 @@ function observeTick(tick, obs) {
     let hitLanded = false;
     let monsterHpLost = 0;
     for (const [index, monster] of Object.entries(mMap)) {
-        const dmg = num(monster?.dmgCounter);
+        const dmg = monster?.dmgCounter == null ? null : num(monster.dmgCounter);
         const reset = dmg !== null && obs.mDmg[index] !== undefined && dmg < obs.mDmg[index];
         if (dmg !== null) {
             if (obs.mDmg[index] !== undefined && dmg > obs.mDmg[index]) hitLanded = true;
-            obs.mDmg[index] = dmg;
         }
+        obs.mDmg[index] = dmg === null ? undefined : dmg;
         const hp = num(monster?.cHP ?? monster?.currentHitpoints);
         if (hp !== null) {
             if (!reset && obs.mHP[index] !== undefined && obs.mHP[index] > hp) monsterHpLost += obs.mHP[index] - hp;
