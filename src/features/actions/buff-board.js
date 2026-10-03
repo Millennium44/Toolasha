@@ -85,7 +85,7 @@ export const BUFF_SOURCES = [
     { key: 'community', label: 'Community', read: () => map('communityActionTypeBuffsMap') },
     {
         key: 'personal',
-        label: 'Seals',
+        label: 'Scrolls',
         read: () => map('personalActionTypeBuffsMap') || dataManager.personalActionTypeBuffsMap || null,
     },
 ];

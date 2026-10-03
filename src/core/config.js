@@ -201,7 +201,7 @@ class Config {
                 enabled: true,
                 name: 'Currency Token Tooltips',
                 category: 'Inventory',
-                description: 'Shows shop values for tokens, seals, and cowbells',
+                description: 'Shows shop values for tokens, scrolls, and cowbells',
                 settingKey: 'dungeonTokenTooltips',
             },
             expectedValueCalculator: {
