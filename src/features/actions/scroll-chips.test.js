@@ -210,6 +210,17 @@ describe('scroll chips', () => {
         element.remove();
     });
 
+    test('rows never put their own listener on the document, so a closed panel is not kept alive', () => {
+        const spy = vi.spyOn(document, 'addEventListener');
+        const rows = Array.from({ length: 5 }, () => buildScrollChips({ actionTypeHrid: BREWING, onChange: () => {} }));
+
+        // At most the one shared listener, however many panels have drawn a row
+        const own = spy.mock.calls.filter(([type]) => type === 'toolasha:scroll-selection-changed');
+        expect(own.length).toBeLessThanOrEqual(1);
+        rows.forEach((r) => r.dispose());
+        spy.mockRestore();
+    });
+
     test('a disposed row no longer redraws on a selection change', async () => {
         const onChange = vi.fn();
         const { element, dispose } = buildScrollChips({ actionTypeHrid: BREWING, onChange });

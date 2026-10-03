@@ -58,6 +58,46 @@ function paintChip(chip, isOn, selection) {
 }
 
 /**
+ * Rows that redraw on a selection change, held weakly: the game removes an action panel without
+ * telling anyone, and a strong reference from `document` would keep every closed panel (and its
+ * redraw closure) alive. One shared listener walks the live rows; a collected row drops out.
+ */
+const liveRows = new Set();
+const rowRedraws = new WeakMap();
+let sharedListenerInstalled = false;
+
+function onAnySelectionChanged() {
+    for (const ref of [...liveRows]) {
+        const row = ref.deref();
+        if (!row) {
+            liveRows.delete(ref);
+            continue;
+        }
+        if (row.isConnected) rowRedraws.get(row)?.();
+    }
+}
+
+/**
+ * Have `row` call `redraw` when the scroll selection changes. Returns the undo.
+ * @param {HTMLElement} row - The chip row
+ * @param {() => void} redraw - Queues the panel's redraw
+ * @returns {() => void} Stop listening
+ */
+function watchSelection(row, redraw) {
+    if (!sharedListenerInstalled) {
+        document.addEventListener(SELECTION_CHANGED_EVENT, onAnySelectionChanged);
+        sharedListenerInstalled = true;
+    }
+    const ref = new WeakRef(row);
+    liveRows.add(ref);
+    rowRedraws.set(row, redraw);
+    return () => {
+        liveRows.delete(ref);
+        rowRedraws.delete(row);
+    };
+}
+
+/**
  * Build the chip row for an action type.
  * @param {Object} options
  * @param {string} options.actionTypeHrid - The panel's action type
@@ -119,7 +159,7 @@ export function buildScrollChips({ actionTypeHrid, onChange, spriteUrl = '' }) {
             }
         });
     };
-    document.addEventListener(SELECTION_CHANGED_EVENT, onSelectionChanged);
+    const stopWatching = watchSelection(row, onSelectionChanged);
 
     // One delegated listener on the row, which goes away with the row
     const onClick = async (event) => {
@@ -146,7 +186,7 @@ export function buildScrollChips({ actionTypeHrid, onChange, spriteUrl = '' }) {
         element: row,
         dispose: () => {
             row.removeEventListener('click', onClick);
-            document.removeEventListener(SELECTION_CHANGED_EVENT, onSelectionChanged);
+            stopWatching();
         },
     };
 }
