@@ -41,6 +41,14 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+const marketListeners = vi.hoisted(() => new Set());
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        on: (fn) => marketListeners.add(fn),
+        off: (fn) => marketListeners.delete(fn),
+    },
+}));
+
 /** Deliver a data-manager event to whatever the panel subscribed */
 const emit = (event) => {
     for (const fn of events.listeners.get(event) || []) fn();
@@ -171,7 +179,7 @@ function costedLoop(overrides = {}) {
         goldPerDay: 6_660_000,
         alchemyFeePerHour: 37_500,
         bellPrice: 950_000,
-        bellPricing: { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask' },
+        bellPricing: { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask', quoted: true },
         bells: { perHour: 0.2921, perDay: 7.01, perWeek: 49.08 },
         pricingMode: 'hybrid',
         computedAt: Date.parse('2026-08-04T09:00:00Z'),
@@ -183,7 +191,7 @@ beforeEach(() => {
     plan.state = character();
     loop.result = costedLoop();
     loop.warnings = [];
-    loop.pricing = { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask' };
+    loop.pricing = { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask', quoted: true };
     loop.offline = { hours: 16, assumed: true };
     loop.pending = null;
     characterId.current = 'charA';
@@ -344,6 +352,8 @@ describe('what it says', () => {
     test('spending coins redraws the bell count while the panel stays open, and closing unsubscribes', async () => {
         plan.state = character({ coins: 30_000_000 });
         coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        // Other modules listen to the market too; only the panel's own listener is under test
+        const othersListening = marketListeners.size;
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
         expect(text()).toContain('20 (2 bags)');
@@ -355,9 +365,28 @@ describe('what it says', () => {
         expect(text()).toContain('0 (0 bags)');
         expect(text()).not.toContain(FAILED);
 
+        // A cheaper bag listed, coins and queue unchanged: 26M spare now buys three bags
+        loop.pricing = { ...loop.pricing, price: 800_000, bag: 800_000 };
+        plan.state = character({ coins: 30_000_000 });
+        for (const fn of marketListeners) fn();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('30 (3 bags)');
+
         ironCowFarmPanel.hide();
         expect(events.listeners.get('items_updated')?.size ?? 0).toBe(0);
         expect(events.listeners.get('actions_updated')?.size ?? 0).toBe(0);
+        expect(marketListeners.size).toBe(othersListening);
+    });
+
+    test('with no bag listed for sale, no bell count is offered', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [], stoppedAt: null };
+        loop.pricing = { ...loop.pricing, quoted: false };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        expect(text()).toContain('Bells you can buy now—');
+        expect(text()).not.toContain(FAILED);
     });
 
     test('an unreadable queue gives no bell count rather than one that ignores it', async () => {

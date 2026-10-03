@@ -85,6 +85,11 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? 0,
+    getItemPriceInfo: (hrid) => ({
+        price: market.prices[hrid] ?? null,
+        source: market.sources?.[hrid] ?? (market.prices[hrid] ? 'book' : null),
+        estimated: market.sources?.[hrid] === 'value',
+    }),
     getPricingMode: () => market.pricingMode,
     isPriceEstimated: () => false,
 }));
@@ -359,7 +364,16 @@ describe('bells', () => {
         expect(cowbellPricing()).toMatchObject({ price: 950_000, source: 'bag', bag: 950_000 });
 
         market.prices = { [COWBELL]: 900_000 };
-        expect(cowbellPricing()).toMatchObject({ price: null, source: null });
+        expect(cowbellPricing()).toMatchObject({ price: null, source: null, quoted: false });
+    });
+
+    test('a bag priced only from the value map, with nothing listed, is not a quote to buy at', () => {
+        market.prices = { [COWBELL_BAG]: 9_500_000 };
+        expect(cowbellPricing()).toMatchObject({ price: 950_000, quoted: true });
+
+        market.sources = { [COWBELL_BAG]: 'value' };
+        expect(cowbellPricing()).toMatchObject({ price: 950_000, quoted: false });
+        market.sources = undefined;
     });
 
     test('reports the pricing mode it quoted under', () => {

@@ -30,6 +30,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { formatKMB, formatPercentage, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
@@ -510,14 +511,15 @@ class IronCowFarmPanel {
         this._render();
         if (!this.loaded) this.loaded = this.load();
 
-        // Coins spent and rows queued change what the bells-you-can-buy count must be; redraw just
-        // those lines, a beat after a burst of updates settles
+        // Coins spent, rows queued and a new bag price change what the bells-you-can-buy count must
+        // be; redraw just those lines, a beat after a burst of updates settles
         this._liveHandler = () => {
             clearTimeout(this._liveTimer);
             this._liveTimer = setTimeout(() => this._onLiveChange(), LIVE_REDRAW_MS);
         };
         dataManager.on('items_updated', this._liveHandler);
         dataManager.on('actions_updated', this._liveHandler);
+        marketAPI.on(this._liveHandler);
     }
 
     /** Redraw the bells-you-can-buy lines against the coins and queue as they stand now */
@@ -530,6 +532,7 @@ class IronCowFarmPanel {
         if (this._liveHandler) {
             dataManager.off('items_updated', this._liveHandler);
             dataManager.off('actions_updated', this._liveHandler);
+            marketAPI.off(this._liveHandler);
             this._liveHandler = null;
         }
         clearTimeout(this._liveTimer);
@@ -968,6 +971,16 @@ class IronCowFarmPanel {
         const pricing = cowbellPricing();
         if (!pricing.price) return [];
         const label = 'Bells you can buy now';
+        if (!pricing.quoted) {
+            return [
+                line(
+                    label,
+                    '—',
+                    COLORS.textDim,
+                    'No bag of ten cowbells is listed for sale right now; the price above is only an estimate.'
+                ),
+            ];
+        }
         const walked = walkQueueCoins(actionTimeDisplay());
         if (!walked) {
             return [

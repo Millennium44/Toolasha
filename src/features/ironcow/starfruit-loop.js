@@ -50,7 +50,7 @@ import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
-import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
+import { getItemPriceInfo, getPricingMode } from '../../utils/market-data.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
 import { resolveLoopItems } from './loop-items.js';
 
@@ -119,13 +119,15 @@ function ironCowSuccessRate(result) {
 /**
  * What a cowbell costs: a tenth of a bag of ten, the only way the market sells them.
  *
- * @returns {{price: number|null, source: 'bag'|null, bag: number|null, pricingMode: string}} `price`
- *   and `bag` are per bell; null with no bag price
+ * @returns {{price: number|null, source: 'bag'|null, bag: number|null, pricingMode: string,
+ *   quoted: boolean}} `price` and `bag` are per bell; null with no bag price. `quoted` when the price
+ *   is a real listing (or the player's own override), not a value-map estimate for an empty book
  */
 export function cowbellPricing() {
     // 'buy' side, because buying cowbells is the only market act available. The book's quote even
     // under an Iron Cow valuation setting: that values loot, but these bags are bought for coins.
-    const bag = getItemPrice(COWBELL_BAG, { context: 'profit', side: 'buy', marketQuote: true });
+    const info = getItemPriceInfo(COWBELL_BAG, { context: 'profit', side: 'buy', marketQuote: true });
+    const bag = info?.price;
     const pricingMode = getPricingMode('profit', 'buy');
 
     const perBellFromBag = typeof bag === 'number' && bag > 0 ? bag / COWBELLS_PER_BAG : null;
@@ -134,6 +136,7 @@ export function cowbellPricing() {
         source: perBellFromBag === null ? null : 'bag',
         bag: perBellFromBag,
         pricingMode,
+        quoted: perBellFromBag !== null && (info.source === 'book' || info.source === 'custom'),
     };
 }
 
