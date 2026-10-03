@@ -104,7 +104,7 @@ export function simulateRuin({
         while (step < maxSteps && !isTargetReached(state)) {
             state = stepFn(state, rng);
             step += 1;
-            if (state.balance <= 0) {
+            if (state.balance < 0 || (state.balance === 0 && !isTargetReached(state))) {
                 ruined = true;
                 break;
             }

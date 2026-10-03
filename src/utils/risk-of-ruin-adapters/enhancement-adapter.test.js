@@ -6,14 +6,33 @@ beforeAll(() => {
 });
 
 const itemDetailsMap = { '/items/widget': { enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }] } };
+itemDetailsMap['/items/coin'] = { name: 'Coin' };
+itemDetailsMap['/items/cheese_sword'] = {
+    name: 'Cheese Sword',
+    itemLevel: 1,
+    enhancementCosts: [
+        { itemHrid: '/items/cheese', count: 5 },
+        { itemHrid: '/items/coin', count: 12 },
+    ],
+    isTradable: true,
+};
+itemDetailsMap['/items/kraken_chaps_refined'] = {
+    enhancementCosts: [
+        { itemHrid: '/items/pirate_essence', count: 14 },
+        { itemHrid: '/items/umbral_leather', count: 6 },
+        { itemHrid: '/items/coin', count: 4815 },
+    ],
+    protectionItemHrids: ['/items/kraken_leather', '/items/kraken_chaps'],
+};
 
 vi.mock('../../core/data-manager.js', () => ({
     default: { getItemDetails: (itemHrid) => itemDetailsMap[itemHrid] },
 }));
 
 let protectionPrice = 5000;
+let materialPricing = { cost: 1000, hasCost: true, costPartial: false };
 vi.mock('../../features/enhancement/tooltip-enhancement.js', () => ({
-    calculatePerAttemptMaterialCost: () => ({ cost: 1000, hasCost: true, costPartial: false }),
+    calculatePerAttemptMaterialCost: () => materialPricing,
     getCheapestProtectionPrice: () => ({ price: protectionPrice, itemHrid: '/items/mirror_of_protection' }),
 }));
 
@@ -34,6 +53,13 @@ const NEUTRAL_PARAMS = Object.freeze({
 describe('buildEnhancementModel', () => {
     test('returns null for an unknown item', () => {
         expect(buildEnhancementModel('/items/unknown', { ...NEUTRAL_PARAMS, targetLevel: 2 })).toBeNull();
+    });
+
+    test('rejects captured Coin without an enhancement recipe while accepting Cheese Sword', () => {
+        expect(buildEnhancementModel('/items/coin', { ...NEUTRAL_PARAMS, targetLevel: 2 })).toBeNull();
+        expect(buildEnhancementModel('/items/cheese_sword', { ...NEUTRAL_PARAMS, targetLevel: 2 })).toMatchObject({
+            costPerAttempt: 1000,
+        });
     });
 
     test('returns null when calculateEnhancement rejects the params', () => {
@@ -59,20 +85,76 @@ describe('buildEnhancementModel', () => {
         expect(success1).toEqual({ prob: 0.45, nextLevel: 2, net: -1000 });
     });
 
-    test('charges protection cost on failure only once protectFrom is reached', () => {
+    test('charges protection cost on failure only once the game-allowed +2 threshold is reached', () => {
         protectionPrice = 5000;
-        const model = buildEnhancementModel('/items/widget', { ...NEUTRAL_PARAMS, targetLevel: 3, protectFrom: 1 });
+        const model = buildEnhancementModel('/items/widget', { ...NEUTRAL_PARAMS, targetLevel: 3, protectFrom: 2 });
 
         // Level 0 (below protectFrom): unprotected failure, back to 0
         const [failure0] = model.perLevelOutcomeDistributions[0];
         expect(failure0).toEqual({ prob: 0.5, nextLevel: 0, net: -1000 });
 
-        // Level 1 (at protectFrom): protected failure, drops only to level 0, costs protection too
+        // Level 1 (below protectFrom): failure resets to 0 without protection
         const [failure1] = model.perLevelOutcomeDistributions[1];
-        expect(failure1).toEqual({ prob: 0.55, nextLevel: 0, net: -6000 });
+        expect(failure1).toEqual({ prob: 0.55, nextLevel: 0, net: -1000 });
+
+        // Level 2: protected failure drops to +1 and spends one protection
+        const [failure2] = model.perLevelOutcomeDistributions[2];
+        expect(failure2.nextLevel).toBe(1);
+        expect(failure2.net).toBe(-6000);
 
         expect(model.protectionCostOnFailure).toBe(5000);
         expect(model.maxSinglePossibleLoss).toBe(6000);
+    });
+
+    test('refuses a partial material price for a real refined item instead of treating missing inputs as free', () => {
+        materialPricing = { cost: 4815, hasCost: true, costPartial: true };
+        try {
+            expect(
+                buildEnhancementModel('/items/kraken_chaps_refined', {
+                    ...NEUTRAL_PARAMS,
+                    targetLevel: 3,
+                    protectFrom: 0,
+                })
+            ).toEqual({ error: 'incomplete-prices' });
+        } finally {
+            materialPricing = { cost: 1000, hasCost: true, costPartial: false };
+        }
+    });
+
+    test('refuses unknown protection price only when the protected level can be attempted', () => {
+        protectionPrice = null;
+        try {
+            expect(
+                buildEnhancementModel('/items/kraken_chaps_refined', {
+                    ...NEUTRAL_PARAMS,
+                    targetLevel: 3,
+                    protectFrom: 2,
+                })
+            ).toEqual({ error: 'incomplete-prices' });
+            const unused = buildEnhancementModel('/items/kraken_chaps_refined', {
+                ...NEUTRAL_PARAMS,
+                targetLevel: 3,
+                protectFrom: 3,
+            });
+            expect(unused.protectionCostOnFailure).toBe(0);
+        } finally {
+            protectionPrice = 5000;
+        }
+    });
+
+    test('treats an explicitly known zero protection price as free', () => {
+        protectionPrice = 0;
+        try {
+            const model = buildEnhancementModel('/items/kraken_chaps_refined', {
+                ...NEUTRAL_PARAMS,
+                targetLevel: 3,
+                protectFrom: 2,
+            });
+            expect(model.protectionCostOnFailure).toBe(0);
+            expect(model.error).toBeUndefined();
+        } finally {
+            protectionPrice = 5000;
+        }
     });
 
     test('splits blessed tea success into a normal +1 and a skip +2 branch', () => {

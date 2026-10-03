@@ -25,6 +25,17 @@ function gamblersRuinStepFn(winProb) {
 }
 
 describe('simulateRuin', () => {
+    test('a final affordable attempt that reaches the target with zero gold is a completion', () => {
+        const result = simulateRuin({
+            startingBalance: 1000,
+            trials: 10,
+            stepFn: (state) => ({ balance: state.balance - 1000, level: 1 }),
+            isTargetReached: (state) => state.level >= 1,
+            initialState: { level: 0 },
+        });
+        expect(result.ruinCount).toBe(0);
+        expect(result.undecidedCount).toBe(0);
+    });
     test('converges to the exact two-barrier gambler-ruin probability', () => {
         const winProb = 0.6;
         const startingBalance = 4;
