@@ -54,11 +54,15 @@ const CACHE_MS = 4000;
  * A missing market quote stays visible in the daily total.
  * @param {number|null} amount - Cost at one side of the market
  * @param {number} [unpriced] - Consumed items with no quote at this side
+ * @param {number} [unknownRate] - Items without a usable consumption estimate
  * @returns {string}
  */
-function formatConsumableCostSide(amount, unpriced = 0) {
+function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0) {
     const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
-    return unpriced ? `${total} (${unpriced} unpriced)` : total;
+    const notes = [unpriced ? `${unpriced} unpriced` : '', unknownRate ? `${unknownRate} rate unknown` : ''].filter(
+        Boolean
+    );
+    return notes.length ? `${total} (${notes.join(', ')})` : total;
 }
 
 let cached = null;
@@ -490,10 +494,12 @@ registerRow({
         const payload = consumablesPayload();
         if (!payload) return 'blank';
 
-        const { you, party, partyName, limiting, sides } = payload;
+        const { you, party, partyName, limiting, sides, youUnknown, partyUnknown } = payload;
         return [
             you ? `${shortDuration(you.secondsLeft)}@${runOutColor(you)}` : '--',
             party ? `${shortDuration(party.secondsLeft)}@${runOutColor(party)}` : '--',
+            youUnknown ? 'you-rate-unknown' : '',
+            partyUnknown ? 'party-rate-unknown' : '',
             partyName || '',
             limiting.itemHrid,
             limiting.held,
@@ -502,6 +508,8 @@ registerRow({
             sides.bid === null ? 'unknown' : Math.round(sides.bid),
             sides.askUnpriced || 0,
             sides.bidUnpriced || 0,
+            sides.askUnknown || 0,
+            sides.bidUnknown || 0,
             spriteUrl('items'),
         ].join('|');
     },
@@ -528,9 +536,23 @@ registerRow({
         const first = document.createElement('div');
         drawLine(first, [
             { text: 'You:', color: ROW_COLORS.dim },
-            { text: you ? shortDuration(you.secondsLeft) : '--', color: runOutColor(you) },
+            {
+                text: you
+                    ? `${shortDuration(you.secondsLeft)}${payload.youUnknown ? ' + ?' : ''}`
+                    : payload.youUnknown
+                      ? 'rate unknown'
+                      : '--',
+                color: runOutColor(you),
+            },
             { text: 'Party:', color: ROW_COLORS.dim, push: true },
-            { text: party ? shortDuration(party.secondsLeft) : '--', color: runOutColor(party) },
+            {
+                text: party
+                    ? `${shortDuration(party.secondsLeft)}${payload.partyUnknown ? ' + ?' : ''}`
+                    : payload.partyUnknown
+                      ? 'rate unknown'
+                      : '--',
+                color: runOutColor(party),
+            },
         ]);
         if (partyName) first.title = `${partyName} runs out first in the party.`;
         container.appendChild(first);
@@ -545,14 +567,16 @@ registerRow({
         Object.assign(second.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
 
         const count = document.createElement('span');
-        count.textContent = formatWithSeparator(limiting.held);
+        count.textContent = limiting.rateKnown ? formatWithSeparator(limiting.held) : '?';
         count.style.color = runOutColor(limiting);
         count.style.fontWeight = 'bold';
 
         const icon = itemIcon(limiting.itemHrid, 16);
 
         const name = document.createElement('span');
-        name.textContent = itemNameOf(limiting.itemHrid);
+        name.textContent = limiting.rateKnown
+            ? itemNameOf(limiting.itemHrid)
+            : `${itemNameOf(limiting.itemHrid)} · rate unknown`;
         Object.assign(name.style, {
             color: ROW_COLORS.dim,
             overflow: 'hidden',
@@ -581,7 +605,9 @@ registerRow({
         container.appendChild(label);
 
         const cost = document.createElement('div');
-        cost.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)}\nBid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
+        cost.textContent =
+            `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
+            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}`;
         // Existing layouts retain their saved dimensions; the full cost is
         // still available on hover if a player has made the tile smaller.
         container.title = cost.textContent;
@@ -711,13 +737,26 @@ function consumablePlayers() {
 function consumablesPayload() {
     const players = consumablePlayers();
     const { you, party, partyName } = partyOutlook(players);
-    if (!you && !party) return null;
-
     // Costed through the same forecast the panel uses, so the tile can show
     // both sides of the book the way the panel does and the two are read off
     // one calculation rather than two that happen to agree
     const mine = players.find((player) => player.isCurrent)?.forecasts || [];
-    return { you, party, partyName, limiting: you || party, sides: costPerDaySides(mine) };
+    const youPlayer = players.find((player) => player.isCurrent);
+    const otherPlayers = players.filter((player) => !player.isCurrent);
+    const youUnknown = !!youPlayer?.forecasts.some((entry) => !entry.rateKnown);
+    const partyUnknown = otherPlayers.some((player) => player.forecasts.some((entry) => !entry.rateKnown));
+    const unknown = players.flatMap((player) => player.forecasts).find((entry) => !entry.rateKnown) || null;
+    if (!you && !party && !unknown) return null;
+
+    return {
+        you,
+        party,
+        partyName,
+        youUnknown,
+        partyUnknown,
+        limiting: you || party || unknown,
+        sides: costPerDaySides(mine),
+    };
 }
 
 /**
@@ -746,7 +785,7 @@ function forecastPlayers() {
  * @returns {string} A color
  */
 function runOutColor(entry) {
-    if (!entry) return ROW_COLORS.dim;
+    if (!entry || !entry.rateKnown) return ROW_COLORS.dim;
 
     // Against the target you set in the Consumables panel, not a fixed hour.
     // With "3 days" chosen, something lasting two of them is precisely what the

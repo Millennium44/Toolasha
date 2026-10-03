@@ -135,26 +135,32 @@ const PANEL_ID = 'toolasha-consumables-panel';
 function burnStamp(forecasts) {
     if (!Array.isArray(forecasts) || !forecasts.length) return '-';
 
+    const unknownRates = forecasts.filter((entry) => entry?.rateKnown === false).length;
     let soonest = null;
     for (const entry of forecasts) {
         if (!Number.isFinite(entry?.secondsLeft)) continue;
         if (!soonest || entry.secondsLeft < soonest.secondsLeft) soonest = entry;
     }
-    if (!soonest) return '-';
+    if (!soonest) return unknownRates ? `?${unknownRates}` : '-';
     // The limiter's name is on the card too, so a swap of which slot empties
     // first has to invalidate even when the countdown lands on the same minute
-    return `${soonest.name || soonest.itemHrid || ''}@${Math.round(soonest.secondsLeft / 60)}`;
+    const stamp = `${soonest.name || soonest.itemHrid || ''}@${Math.round(soonest.secondsLeft / 60)}`;
+    return unknownRates ? `${stamp}?${unknownRates}` : stamp;
 }
 
 /**
  * A missing market quote stays visible in the daily total.
  * @param {number|null} amount - Cost at one side of the market
  * @param {number} [unpriced] - Consumed items with no quote at this side
+ * @param {number} [unknownRate] - Items without a usable consumption estimate
  * @returns {string}
  */
-function formatConsumableCostSide(amount, unpriced = 0) {
+function formatConsumableCostSide(amount, unpriced = 0, unknownRate = 0) {
     const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
-    return unpriced ? `${total} (${unpriced} unpriced)` : total;
+    const notes = [unpriced ? `${unpriced} unpriced` : '', unknownRate ? `${unknownRate} rate unknown` : ''].filter(
+        Boolean
+    );
+    return notes.length ? `${total} (${notes.join(', ')})` : total;
 }
 
 /**
@@ -1119,7 +1125,10 @@ class ConsumablesPanel {
                 name,
                 isSelf,
                 combatLevel: level,
-                forecasts: seen?.forecasts || null,
+                // Entry keys have their own exact one-per-clear inventory
+                // coverage above. Their measured chest rate is only used for
+                // the consumables table and must not make known food unread.
+                forecasts: seen?.forecasts?.filter((entry) => entry.itemHrid !== keyHrid) || null,
                 runSeconds: runLength?.seconds ?? null,
                 measuredFrom: seen ? 'last measured battle' : null,
                 keysHeld: keyHrid ? heldKeys : null,
@@ -1270,8 +1279,8 @@ class ConsumablesPanel {
                         `unknown — ${member.unknown}`,
                         COLORS.textDim,
                         member.isSelf
-                            ? 'Your own rate is measured from combat; nothing has been measured yet.'
-                            : 'Food and drinks travel in the battle payload, which only arrives once the run has started.'
+                            ? `Your food and drinks do not have a complete rate estimate: ${member.unknown}.`
+                            : `Food and drinks travel in the battle payload, which only arrives once the run has started: ${member.unknown}.`
                     )
                 );
                 continue;
@@ -1290,7 +1299,7 @@ class ConsumablesPanel {
                         short ? ROW_COLORS.bad : COLORS.textDim,
                         `Keys stated by ${member.keysFrom} — one per clear, so they cover ` +
                             `${formatWithSeparator(member.keyRunsCovered)} ` +
-                            'runs. Their food and drinks are only in the battle payload and are still unread.'
+                            `runs. Food and drinks are incomplete: ${member.unknown}.`
                     )
                 );
                 continue;
@@ -2168,18 +2177,21 @@ class ConsumablesPanel {
         const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
         const inventory = dataManager.getInventory?.();
         const concentration = this._idleConcentration();
-        const simPerDay = (hrid) => (sim?.perHour?.[hrid] > 0 ? sim.perHour[hrid] * 24 : null);
+        const simPerDay = (hrid) => {
+            const perHour = sim?.perHour?.[hrid];
+            return Number.isFinite(perHour) && perHour >= 0 ? perHour * 24 : null;
+        };
 
         const entries = [];
         for (const slot of loadout.drinks || []) {
             if (!slot?.itemHrid) continue;
             const duration = itemMap?.[slot.itemHrid]?.consumableDetail?.buffs?.[0]?.duration;
             const perDay = drinkRatePerDay(duration, concentration) ?? simPerDay(slot.itemHrid);
-            entries.push({ itemHrid: slot.itemHrid, perDay });
+            entries.push({ itemHrid: slot.itemHrid, perDay, isFood: false });
         }
         for (const slot of loadout.food || []) {
             if (!slot?.itemHrid) continue;
-            entries.push({ itemHrid: slot.itemHrid, perDay: simPerDay(slot.itemHrid) });
+            entries.push({ itemHrid: slot.itemHrid, perDay: simPerDay(slot.itemHrid), isFood: true });
         }
         if (!entries.length) return null;
 
@@ -2218,11 +2230,15 @@ class ConsumablesPanel {
         const source = document.createElement('span');
         source.style.marginLeft = 'auto';
         source.style.color = COLORS.textDim;
-        source.textContent = sim
-            ? `food rated from sim (${this._zoneLabel(sim)})`
-            : this._idleZoneKey && this._idleZoneKey !== 'last'
-              ? 'pinned zone unsimmed — run a sim there to rate food'
-              : 'food unrated — run a sim to rate it';
+        const unratedFood = entries.filter((entry) => entry.isFood && entry.perDay === null).length;
+        source.textContent =
+            sim && unratedFood
+                ? `food rate unavailable for ${unratedFood} item${unratedFood === 1 ? '' : 's'} — sim this loadout to rate it`
+                : sim
+                  ? `food rated from sim (${this._zoneLabel(sim)})`
+                  : this._idleZoneKey && this._idleZoneKey !== 'last'
+                    ? 'pinned zone unsimmed — run a sim there to rate food'
+                    : 'food unrated — run a sim to rate it';
 
         const forecasts = entries.map(({ itemHrid, perDay }) =>
             forecast(
@@ -2230,8 +2246,8 @@ class ConsumablesPanel {
                     itemHrid,
                     itemName: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
                     inventoryAmount: heldInInventory(inventory, itemHrid),
-                    consumptionRate: perDay > 0 ? perDay / 86400 : 0,
-                    consumedPerDay: perDay > 0 ? Math.ceil(perDay) : 0,
+                    consumptionRate: perDay === null ? null : perDay / 86400,
+                    consumedPerDay: perDay === null ? null : Math.ceil(perDay),
                 },
                 getItemPrices(itemHrid)
             )
@@ -2972,9 +2988,19 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
         const stops = document.createElement('span');
         stops.style.marginLeft = 'auto';
+        const unknownRates = player.forecasts.filter((entry) => !entry.rateKnown).length;
         if (soonest) {
-            stops.textContent = `stops in ${shortDuration(soonest.secondsLeft)} · ${soonest.name}`;
-            stops.style.color = soonest.secondsLeft < this.target.seconds ? ROW_COLORS.bad : ROW_COLORS.good;
+            stops.textContent = unknownRates
+                ? `known: stops in ${shortDuration(soonest.secondsLeft)} · ${soonest.name} · ${unknownRates} rate unknown`
+                : `stops in ${shortDuration(soonest.secondsLeft)} · ${soonest.name}`;
+            stops.style.color = unknownRates
+                ? COLORS.textDim
+                : soonest.secondsLeft < this.target.seconds
+                  ? ROW_COLORS.bad
+                  : ROW_COLORS.good;
+        } else if (unknownRates) {
+            stops.textContent = `rate unknown for ${unknownRates} item${unknownRates === 1 ? '' : 's'}`;
+            stops.style.color = COLORS.textDim;
         } else {
             // Nothing being consumed at all, which is not the same as lasting
             // forever — it usually means an empty slot
@@ -3052,7 +3078,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         });
         linkToMarketplace(name, entry.itemHrid, navigateToMarketplace);
 
-        const perDay = this._cell(entry.perDay >= 1 ? `${entry.perDay.toFixed(1)}/day` : '—');
+        const perDay = this._cell(!entry.rateKnown ? '?' : entry.perDay >= 1 ? `${entry.perDay.toFixed(1)}/day` : '—');
         perDay.style.color = COLORS.textDim;
 
         // Both sides stacked, because buying costs ask and what you hold is worth
@@ -3060,7 +3086,11 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const cost = document.createElement('span');
         Object.assign(cost.style, { textAlign: 'right', lineHeight: '1.15', fontSize: '90%' });
         const sides = entry.costPerDaySides;
-        if (sides.ask === null && sides.bid === null) {
+        if (!entry.rateKnown) {
+            cost.textContent = '—';
+            cost.title = 'Cost unavailable because the consumption rate is unknown.';
+            cost.style.color = COLORS.textDim;
+        } else if (sides.ask === null && sides.bid === null) {
             cost.textContent = '—';
             cost.style.color = COLORS.textDim;
         } else {
@@ -3069,8 +3099,12 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         }
 
         const need = refillFor(entry, this.target.seconds);
-        const buy = this._cell(need.count ? formatLargeNumber(need.count) : '✓');
-        buy.style.color = need.count ? ROW_COLORS.gold : ROW_COLORS.good;
+        const buy = this._cell(need.rateUnknown ? '?' : need.count ? formatLargeNumber(need.count) : '✓');
+        buy.style.color = need.rateUnknown ? COLORS.textDim : need.count ? ROW_COLORS.gold : ROW_COLORS.good;
+
+        if (need.rateUnknown) {
+            buy.title = 'Rate unknown. A food sim or dungeon chest measurement is needed to calculate a refill.';
+        }
 
         if (need.count) {
             const strategy = buyStrategy({
@@ -3107,7 +3141,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             });
         }
 
-        const lasts = this._cell(Number.isFinite(entry.secondsLeft) ? shortDuration(entry.secondsLeft) : '∞');
+        const lasts = this._cell(
+            !entry.rateKnown ? '?' : Number.isFinite(entry.secondsLeft) ? shortDuration(entry.secondsLeft) : '∞'
+        );
         if (!Number.isFinite(entry.secondsLeft)) lasts.style.color = COLORS.textDim;
         // Measured against the target rather than a fixed hour: with "3 days"
         // chosen, something lasting two of them is exactly what you opened this
@@ -3136,7 +3172,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
     /**
      * @param {{ask: number, bid: number}} sides - Cost per day
-     * @param {{items: number, cost: number, unpriced: number}} need - Total shortfall
+     * @param {{items: number, cost: number, unpriced: number, unrated: number}} need - Total shortfall
      * @param {Array<Object>} shortfall - What to buy, per item
      * @returns {HTMLElement}
      */
@@ -3157,7 +3193,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         label.style.color = COLORS.accent;
 
         const value = document.createElement('span');
-        value.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)} / Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
+        value.textContent =
+            `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown)} / ` +
+            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}`;
         value.style.whiteSpace = 'nowrap';
 
         const buy = document.createElement('span');
@@ -3168,17 +3206,25 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             // The whole restock in one gesture. Buying it a row at a time means
             // a trip back to this panel between each one, and this panel is
             // behind the marketplace you would be standing in.
-            buy.textContent = `Buy all ${formatLargeNumber(need.items)} · ${formatLargeNumber(Math.round(need.cost))}`;
+            buy.textContent =
+                `Buy all ${formatLargeNumber(need.items)}` +
+                (need.unrated ? ` known · ${need.unrated} rate unknown` : '') +
+                ` · ${formatLargeNumber(Math.round(need.cost))}`;
             buy.style.color = ROW_COLORS.gold;
             buy.style.cursor = 'pointer';
             buy.style.textDecoration = 'underline dotted';
             buy.title =
                 'Open the marketplace with a tab per item, each showing what is missing.' +
-                (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '');
+                (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '') +
+                (need.unrated ? `\n${need.unrated} item(s) have unknown consumption rates.` : '');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this._openShoppingList(shortfall);
             });
+        } else if (need.unrated) {
+            buy.textContent = `Rate unknown for ${need.unrated} item${need.unrated === 1 ? '' : 's'}`;
+            buy.style.color = COLORS.textDim;
+            buy.title = 'No restock total is available until these consumption rates are known.';
         } else {
             buy.textContent = 'Stocked ✓';
             buy.style.color = ROW_COLORS.good;

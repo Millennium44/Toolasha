@@ -91,11 +91,23 @@ describe('keyConsumableEntry', () => {
             fallbackPrice: 85000,
         });
 
-        expect(entry.consumptionRate).toBe(0);
-        expect(entry.consumedPerDay).toBe(0);
+        expect(entry.consumptionRate).toBeNull();
+        expect(entry.consumedPerDay).toBeNull();
         expect(entry.inventoryAmount).toBe(40);
         // The market stands in only when no run has priced the key
         expect(entry.pricePerItem).toBe(85000);
+    });
+
+    test('an explicit zero-count measurement remains a known zero rate', () => {
+        const entry = keyConsumableEntry({
+            itemHrid: KEY,
+            held: 40,
+            keyBreakdown: [{ itemHrid: KEY, count: 0 }],
+            durationSeconds: 3600,
+        });
+
+        expect(entry.consumptionRate).toBe(0);
+        expect(forecast(entry).secondsLeft).toBe(Infinity);
     });
 
     test('the breakdown price beats the market fallback', () => {
@@ -116,7 +128,7 @@ describe('keyConsumableEntry', () => {
             keyBreakdown: [{ itemHrid: '/items/chimerical_chest_key', count: 4, pricePerItem: 12000 }],
             durationSeconds: 3600,
         });
-        expect(entry.consumptionRate).toBe(0);
+        expect(entry.consumptionRate).toBeNull();
     });
 
     test('feeds the forecast arithmetic like any other consumable', () => {

@@ -83,7 +83,7 @@ export function cellItemHrid(cell) {
  * @param {Function} [sources.latest] - `combatStatsDataCollector.getLatestData`
  * @param {Function} [sources.stats] - `calculatePlayerStats`
  * @param {Function} [sources.itemDetails] - `dataManager.getItemDetails`
- * @returns {Map<string, number>} itemHrid → seconds left (`Infinity` when it is not being used)
+ * @returns {Map<string, number|null>} itemHrid → seconds left (`Infinity` when unused, null when unknown)
  */
 export function runwayByItem({
     latest = () => combatStatsDataCollector.getLatestData(),
@@ -111,15 +111,14 @@ export function runwayByItem({
 /**
  * What one caption says and what color it says it in.
  *
- * A slot that is filled but not being used reads `∞` rather than a duration — "you are not
- * drinking this" is a different statement from "this will last a long time", and the panel draws
- * that distinction the same way.
+ * A known unused slot reads `∞`; an unknown rate reads `?` rather than pretending it lasts forever.
  *
- * @param {number} secondsLeft - From {@link runwayByItem}
+ * @param {number|null} secondsLeft - From {@link runwayByItem}
  * @param {number} warnSeconds - Below this the caption warns
  * @returns {{text: string, color: string}}
  */
 export function captionFor(secondsLeft, warnSeconds) {
+    if (secondsLeft === null || secondsLeft === undefined) return { text: '?', color: ROW_COLORS.dim };
     if (!Number.isFinite(secondsLeft)) return { text: '∞', color: ROW_COLORS.dim };
     return {
         text: shortDuration(secondsLeft),

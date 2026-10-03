@@ -20,7 +20,7 @@
  * - **How fast they go**: the same session measurement the panel's cost figures
  *   already use. `calculateKeyCosts` counts one entry key per regular chest the
  *   run dropped, and dividing that by the session's duration is a measured clear
- *   rate. No chests yet means no rate — reported as none rather than guessed.
+ *   rate. Without a matching measured row, the rate is unknown rather than guessed.
  */
 
 import { entryKeyFor } from './key-ledger.js';
@@ -78,10 +78,8 @@ export function heldInInventory(items, itemHrid) {
  *
  * The rate comes from the session's key breakdown — one entry key per regular
  * chest, over the session's duration — which is the same measurement the combat
- * stats already price keys with. A session that has dropped no chests yet has
- * no rate, and the entry says so with a rate of zero: the panel renders that as
- * "—" for the rates while still showing what is held, which is honest about
- * what has and has not been measured.
+ * stats already price keys with. A session without a matching breakdown row
+ * has no measured rate; an explicit zero-count row remains a known zero.
  *
  * @param {Object} input - What is known about the key
  * @param {string} input.itemHrid - The key
@@ -95,9 +93,16 @@ export function heldInInventory(items, itemHrid) {
 export function keyConsumableEntry({ itemHrid, itemName, held, keyBreakdown, durationSeconds, fallbackPrice = null }) {
     const row = (keyBreakdown || []).find((entry) => entry?.itemHrid === itemHrid) || null;
 
-    const count = Number(row?.count) || 0;
+    const rawCount = row?.count;
+    const count = Number(rawCount) || 0;
     const duration = Number(durationSeconds) || 0;
-    const rate = count > 0 && duration > 0 ? count / duration : 0;
+    const rateKnown =
+        row !== null &&
+        rawCount !== null &&
+        rawCount !== undefined &&
+        Number.isFinite(Number(rawCount)) &&
+        duration > 0;
+    const rate = rateKnown ? count / duration : null;
 
     // The breakdown's price is the cheaper of buying and crafting the key,
     // which is what the panel's cost columns should agree with; the market ask
@@ -111,7 +116,7 @@ export function keyConsumableEntry({ itemHrid, itemName, held, keyBreakdown, dur
         itemName: itemName || row?.itemName || itemHrid,
         inventoryAmount: Number(held) || 0,
         consumptionRate: rate,
-        consumedPerDay: rate > 0 ? Math.ceil(rate * 86400) : 0,
+        consumedPerDay: rate === null ? null : Math.ceil(rate * 86400),
         pricePerItem: price,
     };
 }

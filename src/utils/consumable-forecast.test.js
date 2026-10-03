@@ -30,7 +30,17 @@ describe('forecast', () => {
     });
 
     test('something not being consumed lasts forever rather than zero seconds', () => {
-        expect(forecast({ ...drink, consumptionRate: 0 }).secondsLeft).toBe(Infinity);
+        const result = forecast({ ...drink, consumptionRate: 0 });
+        expect(result.rateKnown).toBe(true);
+        expect(result.secondsLeft).toBe(Infinity);
+    });
+
+    test('a missing rate remains unknown instead of becoming unused', () => {
+        const result = forecast({ ...drink, consumptionRate: null });
+        expect(result.rateKnown).toBe(false);
+        expect(result.perDay).toBeNull();
+        expect(result.secondsLeft).toBeNull();
+        expect(result.costPerDay).toBeNull();
     });
 
     test('an empty slot runs out now, not never', () => {
@@ -70,6 +80,15 @@ describe('forecastAll', () => {
         expect(list.map((entry) => entry.name)).toEqual(['Used', 'Unused']);
     });
 
+    test('unknown rates sort after measured use and measured zero', () => {
+        const list = forecastAll([
+            { ...drink, itemName: 'Unknown', consumptionRate: null },
+            { ...drink, itemName: 'Unused', consumptionRate: 0 },
+            { ...drink, itemName: 'Used', consumptionRate: 1 / 3600 },
+        ]);
+        expect(list.map((entry) => entry.name)).toEqual(['Used', 'Unused', 'Unknown']);
+    });
+
     test('survives nothing at all', () => {
         expect(forecastAll(null)).toEqual([]);
     });
@@ -88,6 +107,10 @@ describe('firstToRunOut', () => {
         // Infinity loses a numeric comparison, but only if it is compared at all
         const list = forecastAll([{ ...drink, itemName: 'Unused', consumptionRate: 0 }]);
         expect(firstToRunOut(list)).toBeNull();
+    });
+
+    test('unknown rates are not a candidate for soonest', () => {
+        expect(firstToRunOut(forecastAll([{ ...drink, consumptionRate: null }]))).toBeNull();
     });
 
     test('nothing in use is nobody', () => {
@@ -137,6 +160,14 @@ describe('refillFor', () => {
     test('something not being consumed needs nothing, however long the target', () => {
         expect(refillFor(forecast({ ...drink, consumptionRate: 0 }), 86400 * 30).count).toBe(0);
     });
+
+    test('an unknown rate does not recommend zero purchases', () => {
+        expect(refillFor(forecast({ ...drink, consumptionRate: null }), 86400)).toEqual({
+            count: null,
+            cost: null,
+            rateUnknown: true,
+        });
+    });
 });
 
 describe('refillAll', () => {
@@ -159,7 +190,12 @@ describe('refillAll', () => {
     });
 
     test('nothing needed costs nothing', () => {
-        expect(refillAll(forecastAll([drink]), 3600)).toEqual({ items: 0, cost: 0, unpriced: 0 });
+        expect(refillAll(forecastAll([drink]), 3600)).toEqual({ items: 0, cost: 0, unpriced: 0, unrated: 0 });
+    });
+
+    test('unknown-rate items are excluded from the purchase total and counted separately', () => {
+        const list = forecastAll([{ ...drink, consumptionRate: null }]);
+        expect(refillAll(list, 86400)).toEqual({ items: 0, cost: 0, unpriced: 0, unrated: 1 });
     });
 });
 
@@ -202,6 +238,8 @@ describe('two-sided pricing', () => {
             bid: null,
             askUnpriced: 1,
             bidUnpriced: 1,
+            askUnknown: 0,
+            bidUnknown: 0,
         });
     });
 
@@ -227,12 +265,47 @@ describe('two-sided pricing', () => {
             bid: 2160,
             askUnpriced: 1,
             bidUnpriced: 1,
+            askUnknown: 0,
+            bidUnknown: 0,
         });
     });
 
     test('an unused item with no quote does not make a zero-use total look unknown', () => {
         const unused = forecast({ ...drink, consumptionRate: 0, pricePerItem: null });
-        expect(costPerDaySides([unused])).toEqual({ ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0 });
+        expect(costPerDaySides([unused])).toEqual({
+            ask: 0,
+            bid: 0,
+            askUnpriced: 0,
+            bidUnpriced: 0,
+            askUnknown: 0,
+            bidUnknown: 0,
+        });
+    });
+
+    test('unknown-rate items are excluded from amounts and counted separately', () => {
+        const unknown = forecast({ ...drink, consumptionRate: null });
+        expect(costPerDaySides([unknown])).toEqual({
+            ask: null,
+            bid: null,
+            askUnpriced: 0,
+            bidUnpriced: 0,
+            askUnknown: 1,
+            bidUnknown: 1,
+        });
+    });
+
+    test('partial market totals expose unknown rates beside the known sum', () => {
+        const known = forecast({ ...drink, consumptionRate: 1 / 3600 }, { ask: 60, bid: 40 });
+        const unknown = forecast({ ...drink, itemHrid: '/items/blackberry_cake', consumptionRate: null });
+
+        expect(costPerDaySides([known, unknown])).toEqual({
+            ask: 1440,
+            bid: 960,
+            askUnpriced: 0,
+            bidUnpriced: 0,
+            askUnknown: 1,
+            bidUnknown: 1,
+        });
     });
 });
 

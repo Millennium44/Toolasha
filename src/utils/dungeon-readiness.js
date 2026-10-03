@@ -44,6 +44,9 @@ import { levelGapDebuff } from './dungeon-level-gap.js';
 /** Why a member's supplies could not be read */
 export const UNKNOWN_CONSUMABLES = 'not in party data';
 
+/** Why a measured breakdown still has an item with no usable rate */
+const UNKNOWN_CONSUMABLE_RATE = 'one or more food or drink rates are unknown';
+
 /** Why a member's level could not be read */
 export const UNKNOWN_LEVEL = 'no captured profile';
 
@@ -326,6 +329,9 @@ export function memberReadiness({
 
     if (!Array.isArray(forecasts) || !forecasts.length) return row;
 
+    const hasUnknownRate = forecasts.some((entry) => entry?.rateKnown === false);
+    if (hasUnknownRate) row.unknown = UNKNOWN_CONSUMABLE_RATE;
+
     // A run ends on the first empty slot, so the member's figure is the minimum
     // over slots that are actually being consumed — a slot with no rate is not
     // "lasts forever", it is "not measured", and must not win a minimum
@@ -337,7 +343,7 @@ export function memberReadiness({
 
     if (!soonest) return row;
 
-    row.unknown = null;
+    if (!hasUnknownRate) row.unknown = null;
     row.measuredFrom = measuredFrom;
     row.secondsLeft = soonest.secondsLeft;
     row.limitedBy = soonest.name || soonest.itemHrid || null;
@@ -597,6 +603,11 @@ export function readinessFootnotes(model) {
     }
     if (members.some((row) => row.unknown === UNKNOWN_CONSUMABLES && row.isSelf)) {
         notes.push('Your own supplies need a measured rate: fight something with food or drinks equipped first.');
+    }
+    if (members.some((row) => row.unknown === UNKNOWN_CONSUMABLE_RATE)) {
+        notes.push(
+            'At least one food or drink has no usable rate, so its runway is not included in the measured coverage.'
+        );
     }
     if (!model?.runSeconds) {
         notes.push(

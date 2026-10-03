@@ -366,6 +366,33 @@ describe('what the lobby cannot see', () => {
         expect(body.match(/unknown — not in party data/g)).toHaveLength(2);
     });
 
+    test('an unmeasured entry-key burn rate does not make measured food unknown', async () => {
+        inParty();
+        keysInBag(500);
+        measuredSelf();
+        // Captured Blackberry Cake metadata has a 60-second cooldown.
+        // A measured use every minute and 120 held cover the same twelve runs.
+        game.statsByName.Me.consumableBreakdown = [
+            {
+                itemHrid: '/items/blackberry_cake',
+                itemName: 'Blackberry Cake',
+                inventoryAmount: 120,
+                consumptionRate: 1 / 60,
+            },
+        ];
+        game.inventory = game.inventory.filter((entry) => entry.itemHrid === KEY);
+        game.inventory.push({
+            itemHrid: '/items/blackberry_cake',
+            count: 120,
+            itemLocationHrid: '/item_locations/inventory',
+        });
+        await render();
+
+        const body = text();
+        expect(body).toContain('12 runs · Blackberry Cake');
+        expect(body).not.toContain('Me (you)500 keys · food unknown');
+    });
+
     test('a key pile shorter than the food is what stops you, and says so', async () => {
         inParty();
         measuredSelf();
