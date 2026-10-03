@@ -41,7 +41,19 @@ describe('counting what is on the board', () => {
         expect(countActiveTasks([boardTask, boardTask, boardTask])).toBe(3);
     });
 
-    test('a claimed task has left the board, and so has another quest category', () => {
+    test('a completed task still occupies a slot until claimed or discarded', () => {
+        expect(
+            countActiveTasks([
+                boardTask,
+                { category: '/quest_category/random_task', status: '/quest_status/completed' },
+                { category: '/quest_category/random_task', status: '/quest_status/claimed' },
+                { category: '/quest_category/random_task', status: '/quest_status/discarded' },
+                { category: '/quest_category/daily', status: '/quest_status/in_progress' },
+            ])
+        ).toBe(2);
+    });
+
+    test('claimed tasks and other quest categories do not occupy random-task slots', () => {
         expect(
             countActiveTasks([
                 boardTask,

@@ -20,7 +20,7 @@ import {
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
 import taskCompletionTracker from './task-completion-tracker.js';
 import taskRerollTracker from './task-reroll-tracker.js';
-import { forecastTaskSlots } from './task-slot-forecast.js';
+import { countActiveTasks, forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
@@ -303,7 +303,7 @@ class TaskStatistics {
     calculateOverflowTime() {
         const forecast = forecastTaskSlots({
             characterInfo: dataManager.characterData?.characterInfo,
-            activeTaskCount: this.getActiveTasks().length,
+            activeTaskCount: countActiveTasks(dataManager.characterQuests),
         });
         if (!forecast.ok) {
             return { error: 'Character info not available' };
@@ -331,7 +331,7 @@ class TaskStatistics {
         }
 
         const unreadTaskCount = characterInfo.unreadTaskCount || 0;
-        const activeTaskCount = this.getActiveTasks().length;
+        const activeTaskCount = countActiveTasks(dataManager.characterQuests);
 
         return {
             used: unreadTaskCount + activeTaskCount,

@@ -140,6 +140,18 @@ describe('task slot alerts', () => {
         expect(game.notified[0].options.title).toBe('Task slots filling up');
     });
 
+    test('a completed but unclaimed task occupies its board slot', () => {
+        game.notified = [];
+        game.characterQuests.push({
+            category: '/quest_category/random_task',
+            status: '/quest_status/completed',
+        });
+        game.wsHandlers.quests_updated({});
+
+        expect(game.notified).toHaveLength(1);
+        expect(game.notified[0].message).toContain('All 6 task slots are full');
+    });
+
     test('a deadline still outside the lead window says nothing until it comes inside', async () => {
         taskSlotAlerts.disable();
         game.notified = [];
