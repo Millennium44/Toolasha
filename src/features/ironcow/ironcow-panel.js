@@ -77,6 +77,26 @@ const GEOMETRY_KEY = 'ironCowFarmPanel';
 const DEFAULT_PANEL = { width: 520, height: 620 };
 /** How long a burst of coin or queue updates settles before the bells-you-can-buy lines redraw */
 const LIVE_REDRAW_MS = 300;
+/**
+ * Data-manager events that can change what the queue spends: coins and materials, the queue itself,
+ * and everything that moves a success rate, an efficiency or a level penalty — skills, equipment,
+ * house rooms, consumables and every buff source
+ */
+const LIVE_EVENTS = [
+    'items_updated',
+    'actions_updated',
+    'skills_updated',
+    'buffs_updated',
+    'equipment_buffs_updated',
+    'house_rooms_updated',
+    'consumables_updated',
+    'consumable_buffs_updated',
+    'personal_buffs_updated',
+    'community_buffs_updated',
+    'guild_buffs_updated',
+    'moo_pass_buffs_updated',
+    'achievement_buffs_updated',
+];
 
 const COLORS = {
     background: 'rgba(10, 12, 20, 0.97)',
@@ -520,10 +540,7 @@ class IronCowFarmPanel {
             clearTimeout(this._liveTimer);
             this._liveTimer = setTimeout(() => this._onLiveChange(), LIVE_REDRAW_MS);
         };
-        dataManager.on('items_updated', this._liveHandler);
-        dataManager.on('actions_updated', this._liveHandler);
-        // A buff ending changes success rates, and with them how far a catalyst-limited paid row runs
-        dataManager.on('buffs_updated', this._liveHandler);
+        for (const event of LIVE_EVENTS) dataManager.on(event, this._liveHandler);
         marketAPI.on(this._liveHandler);
     }
 
@@ -535,9 +552,7 @@ class IronCowFarmPanel {
 
     _remove() {
         if (this._liveHandler) {
-            dataManager.off('items_updated', this._liveHandler);
-            dataManager.off('actions_updated', this._liveHandler);
-            dataManager.off('buffs_updated', this._liveHandler);
+            for (const event of LIVE_EVENTS) dataManager.off(event, this._liveHandler);
             marketAPI.off(this._liveHandler);
             this._liveHandler = null;
         }

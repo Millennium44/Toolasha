@@ -378,8 +378,31 @@ describe('what it says', () => {
         expect(events.listeners.get('items_updated')?.size ?? 0).toBe(0);
         expect(events.listeners.get('actions_updated')?.size ?? 0).toBe(0);
         expect(events.listeners.get('buffs_updated')?.size ?? 0).toBe(0);
+        expect(events.listeners.get('skills_updated')?.size ?? 0).toBe(0);
         expect(marketListeners.size).toBe(othersListening);
     });
+
+    test.each(['buffs_updated', 'skills_updated', 'equipment_buffs_updated', 'house_rooms_updated'])(
+        '%s redraws the bell count too',
+        async (event) => {
+            plan.state = character({ coins: 30_000_000 });
+            coinWalk.walked = {
+                stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }],
+                stoppedAt: null,
+            };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            expect(text()).toContain('20 (2 bags)');
+
+            coinWalk.walked = {
+                stages: [{ label: 'Decompose: Star Fruit', coinDelta: -20_000_000 }],
+                stoppedAt: null,
+            };
+            emit(event);
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            expect(text()).toContain('10 (1 bag)');
+        }
+    );
 
     test('a buff ending redraws the bell count too', async () => {
         plan.state = character({ coins: 30_000_000 });
