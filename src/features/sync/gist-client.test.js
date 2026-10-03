@@ -166,6 +166,39 @@ describe('transport', () => {
         expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm']);
     });
 
+    test('a page fetch that fails on a whole-gist PATCH is not replayed over a possibly newer gist', async () => {
+        responses.push({ fetchThrows: true });
+        await expect(
+            httpRequest({ method: 'PATCH', url: 'https://api.github.com/gists/g1', body: '{}' })
+        ).rejects.toMatchObject({ kind: 'offline' });
+
+        expect(calls.map((call) => call.transport)).toEqual(['fetch']);
+    });
+
+    test('a page fetch timeout breaks the run of failures', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+            responses.push({ hang: true });
+            const pending = findSyncGist('tok').catch(() => {});
+            await vi.advanceTimersByTimeAsync(30_000);
+            await pending;
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+            responses.push({ status: 200, body: [] });
+            await findSyncGist('tok');
+
+            expect(calls.at(-1).transport).toBe('fetch');
+        } finally {
+            warn.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
     test('a page fetch that fails on a POST is not replayed, so a gist is never created twice', async () => {
         responses.push({ fetchThrows: true });
         await expect(

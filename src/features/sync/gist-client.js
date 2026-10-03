@@ -99,8 +99,12 @@ function parseHeaders(raw) {
  */
 const PAGE_FETCH_HOSTS = new Set(['api.github.com']);
 
-/** Methods a failed page fetch may be replayed with through the manager: repeating them changes nothing */
-const REPLAYABLE_METHODS = new Set(['GET', 'HEAD', 'PATCH', 'DELETE']);
+/**
+ * Methods a failed page fetch may be replayed with through the manager: repeating them changes nothing.
+ * Not PATCH: a whole-gist write whose answer was lost may have landed, and replaying the same stale
+ * snapshot could overwrite a newer push another device made in between.
+ */
+const REPLAYABLE_METHODS = new Set(['GET', 'HEAD', 'DELETE']);
 
 /**
  * Set once page fetches keep failing where the GM path reaches GitHub — CORS or a
@@ -248,7 +252,11 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
         fetchFailuresAnsweredByManager = 0;
         return response;
     } catch (error) {
-        if (!error?.transportFailure) throw error;
+        if (!error?.transportFailure) {
+            // A timeout, not a refusal: it says nothing about the page fetch, and breaks the run
+            fetchFailuresAnsweredByManager = 0;
+            throw error;
+        }
         // A fetch can fail after GitHub acted on it (the connection drops while the answer comes back).
         // Replaying is safe for a read or a whole-gist overwrite, but a second POST creates a second
         // gist, so a failed POST surfaces as the failure it is and the next sync starts over.
