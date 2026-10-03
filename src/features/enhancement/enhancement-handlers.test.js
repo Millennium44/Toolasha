@@ -252,6 +252,21 @@ describe('the run ending in the queue', () => {
         expect(state.calls).toContainEqual(['finalize']);
         expect(state.calls).toContainEqual(['pendingStart']);
     });
+
+    test('a new queue action with the same item and settings starts a separate session', async () => {
+        state.actions = [enhanceRow({ id: 'a1', isDone: false, ordinal: 0 })];
+        await state.handlers.actions_updated({ endCharacterActions: [enhanceRow({ id: 'a1', isDone: false })] });
+        state.current = { id: 's1', itemHrid: '/items/enchanted_cloak_refined', targetLevel: 15, protectFrom: 2 };
+        state.calls = [];
+
+        state.actions = [enhanceRow({ id: 'a2', isDone: false, ordinal: 1 })];
+        await state.handlers.actions_updated({
+            endCharacterActions: [enhanceRow({ id: 'a1', isDone: true }), enhanceRow({ id: 'a2', isDone: false })],
+        });
+
+        expect(state.calls).toContainEqual(['finalize']);
+        expect(state.calls).toContainEqual(['pendingStart']);
+    });
 });
 
 describe('two attempts landing before the first has finished writing', () => {

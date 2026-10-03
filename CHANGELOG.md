@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement runs and cost comparisons
+
+- Repeating the same enhancement setup as a new queue action now starts a separate tracker session, so the two runs keep their attempts and experience separate. The tracker also hides its cost versus expected comparison when a consumed material or protection has no known price, avoiding an incomplete cost estimate.
+
 ### Shared agent rules brought up to date
 
 - Nothing a player sees changes. The workflow rules every coding agent reads now include the pull-request, review and briefing practices adopted since late September, and the newer code rules (spend buttons, non-English game clients, settings defaults).

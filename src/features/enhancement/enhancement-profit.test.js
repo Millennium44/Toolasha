@@ -62,6 +62,25 @@ describe('costVsExpected', () => {
         // 100/attempt × 14 expected = 1400 vs actual 1000 → +400 below.
         expect(c.diff).toBe(400);
     });
+
+    test('does not quote a partial cost when a consumed material has no price', () => {
+        const run = session({
+            materialCosts: {
+                '/items/prime_catalyst': { count: 20, totalCost: 2000 },
+                '/items/unpriced': { count: 20, totalCost: 0 },
+            },
+        });
+        expect(costVsExpected(run)).toBeNull();
+    });
+
+    test('does not quote a partial cost when consumed protection has no price', () => {
+        const run = session({
+            protectionCount: 2,
+            protectionCost: 0,
+            predictions: { expectedAttempts: 14, expectedProtections: 2 },
+        });
+        expect(costVsExpected(run)).toBeNull();
+    });
 });
 
 describe('valueVsCost', () => {

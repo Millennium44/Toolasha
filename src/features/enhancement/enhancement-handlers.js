@@ -259,6 +259,7 @@ async function handleActionsUpdated(data) {
         // nothing to react to.
         return;
     }
+    const previousActionId = trackedEnhanceActionId;
     trackedEnhanceActionId = enhancingAction?.id ?? null;
     pendingBaseline = enhancingAction ? baselineFrom(enhancingAction) : null;
 
@@ -276,10 +277,14 @@ async function handleActionsUpdated(data) {
     // next action_completed starts a fresh one instead of continuing the old one.
     const currentSession = enhancementTracker.getCurrentSession();
     if (currentSession) {
+        // A new queue id is a new run even when the player queues the same item with
+        // the same target and protection settings again. Keep its attempts and XP separate.
+        const runChanged =
+            previousActionId != null && enhancingAction.id != null && previousActionId !== enhancingAction.id;
         const targetChanged = enhancingAction.enhancingMaxLevel !== currentSession.targetLevel;
         const protectionChanged =
             (enhancingAction.enhancingProtectionMinLevel || 0) !== (currentSession.protectFrom || 0);
-        if (targetChanged || protectionChanged) {
+        if (runChanged || targetChanged || protectionChanged) {
             await enhancementTracker.finalizeCurrentSession();
         }
     }
