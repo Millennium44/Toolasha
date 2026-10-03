@@ -13,6 +13,7 @@ import { MARKET_TAX } from './profit-constants.js';
 const state = vi.hoisted(() => ({
     gameData: null,
     skills: [],
+    equipment: new Map(),
     houseRooms: new Map(),
     actions: [],
     personalBuffs: {},
@@ -24,7 +25,7 @@ vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => state.gameData,
         getSkills: () => state.skills,
-        getEquipment: () => new Map(),
+        getEquipment: () => state.equipment,
         getHouseRooms: () => state.houseRooms,
         getCurrentActions: () => state.actions,
         getCommunityBuffLevel: () => 0,
@@ -96,6 +97,7 @@ const knownItems = [
 beforeEach(() => {
     state.gameData = { itemDetailMap: Object.fromEntries(knownItems.map((hrid) => [hrid, {}])) };
     state.skills = [];
+    state.equipment = new Map();
     state.houseRooms = new Map();
     state.actions = [];
     state.personalBuffs = {};
@@ -171,6 +173,135 @@ describe('getRelevantTeas', () => {
     });
 });
 
+describe('findOptimalTeas respects available drink slots', () => {
+    const cheeseTea = '/items/ultra_cheesesmithing_tea';
+    const efficiencyTea = '/items/efficiency_tea';
+    const wisdomTea = '/items/wisdom_tea';
+    const pouchDetails = {
+        '/items/small_pouch': { equipmentDetail: { combatStats: { foodSlots: 1 } } },
+        '/items/medium_pouch': { equipmentDetail: { combatStats: { drinkSlots: 1 } } },
+        '/items/large_pouch': { equipmentDetail: { combatStats: { drinkSlots: 1 } } },
+        '/items/giant_pouch': { equipmentDetail: { combatStats: { drinkSlots: 2 } } },
+        '/items/gluttonous_pouch': { equipmentDetail: { combatStats: { drinkSlots: 2 } } },
+        '/items/guzzling_pouch': { equipmentDetail: { combatStats: { drinkSlots: 2 } } },
+    };
+
+    beforeEach(() => {
+        const skillTeaHrids = ['/items/cheesesmithing_tea', '/items/super_cheesesmithing_tea', cheeseTea];
+        const itemDetailMap = {
+            ...pouchDetails,
+            '/items/crab_pincer': {},
+            '/items/pincer_gloves': {},
+            [efficiencyTea]: {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/cheesesmithing': true },
+                    buffs: [
+                        {
+                            uniqueHrid: '/buff_uniques/efficiency_tea',
+                            typeHrid: '/buff_types/efficiency',
+                            flatBoost: 0.1,
+                        },
+                    ],
+                },
+            },
+            [wisdomTea]: {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/cheesesmithing': true },
+                    buffs: [
+                        { uniqueHrid: '/buff_uniques/wisdom_tea', typeHrid: '/buff_types/wisdom', flatBoost: 0.12 },
+                    ],
+                },
+            },
+            '/items/artisan_tea': {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/cheesesmithing': true },
+                    buffs: [
+                        { uniqueHrid: '/buff_uniques/artisan_tea', typeHrid: '/buff_types/artisan', flatBoost: 0.1 },
+                    ],
+                },
+            },
+        };
+        for (const [index, hrid] of skillTeaHrids.entries()) {
+            itemDetailMap[hrid] = {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/cheesesmithing': true },
+                    buffs: [
+                        {
+                            uniqueHrid: '/buff_uniques/cheesesmithing_tea',
+                            typeHrid: '/buff_types/cheesesmithing_level',
+                            flatBoost: [3, 6, 8][index],
+                        },
+                        {
+                            uniqueHrid: '/buff_uniques/cheesesmithing_tea',
+                            typeHrid: '/buff_types/efficiency',
+                            flatBoost: [0.02, 0.04, 0.06][index],
+                        },
+                    ],
+                },
+            };
+        }
+        state.gameData = {
+            itemDetailMap,
+            actionDetailMap: {
+                '/actions/cheesesmithing/pincer_gloves': {
+                    type: '/action_types/cheesesmithing',
+                    function: '/action_functions/production',
+                    category: '/action_categories/cheesesmithing/hands',
+                    name: 'Pincer Gloves',
+                    baseTimeCost: 60e9,
+                    levelRequirement: { skillHrid: '/skills/cheesesmithing', level: 25 },
+                    experienceGain: { skillHrid: '/skills/cheesesmithing', value: 1600 },
+                    inputItems: [{ itemHrid: '/items/crab_pincer', count: 2 }],
+                    outputItems: [{ itemHrid: '/items/pincer_gloves', count: 1 }],
+                },
+            },
+        };
+        state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 100 }];
+        prices.byHrid = { '/items/crab_pincer': 50, '/items/pincer_gloves': 100 };
+    });
+
+    test('current equipment with no pouch only evaluates one-drink combinations', () => {
+        state.equipment = new Map();
+
+        const result = findOptimalTeas('cheesesmithing', 'xp');
+
+        expect(result.optimal.teas).toHaveLength(1);
+        expect(result.combinationsEvaluated).toBe(6);
+        expect(result.allResults.every((row) => row.teas.length <= 1)).toBe(true);
+    });
+
+    test.each([
+        ['Small Pouch', '/items/small_pouch', 0, 1, 6],
+        ['Medium Pouch at +20', '/items/medium_pouch', 20, 2, 18],
+        ['Large Pouch', '/items/large_pouch', 0, 2, 18],
+        ['Giant Pouch', '/items/giant_pouch', 0, 3, 28],
+        ['Gluttonous Pouch', '/items/gluttonous_pouch', 0, 3, 28],
+        ['Guzzling Pouch', '/items/guzzling_pouch', 0, 3, 28],
+    ])(
+        '%s limits planned recommendations to its drink-slot capacity',
+        (_name, pouchHrid, enhancementLevel, slots, combos) => {
+            const plannedEquipment = new Map([['/item_locations/pouch', { itemHrid: pouchHrid, enhancementLevel }]]);
+
+            const result = findOptimalTeas('cheesesmithing', 'xp', null, null, null, null, plannedEquipment);
+
+            expect(result.combinationsEvaluated).toBe(combos);
+            expect(result.optimal.teas.length).toBeLessThanOrEqual(slots);
+            expect(result.allResults.every((row) => row.teas.length <= slots)).toBe(true);
+        }
+    );
+
+    test('pinned teas that exceed available slots use the existing no-valid-combination result', () => {
+        const result = findOptimalTeas('cheesesmithing', 'xp', null, null, {
+            pinned: new Set([cheeseTea, efficiencyTea]),
+            banned: new Set(),
+        });
+
+        expect(result.error).toBeUndefined();
+        expect(result.optimal).toBeNull();
+        expect(result.allResults).toEqual([]);
+    });
+});
+
 describe('calculateSkillPerformance — gathering Processing', () => {
     test('prices whole Milk-to-Cheese conversions after efficiency repeats', () => {
         state.gameData = {
@@ -182,6 +313,9 @@ describe('calculateSkillPerformance — gathering Processing', () => {
                 },
                 '/items/efficiency_tea': {
                     consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 1 }] },
+                },
+                '/items/medium_pouch': {
+                    equipmentDetail: { combatStats: { foodSlots: 1, drinkSlots: 1 } },
                 },
             },
             actionDetailMap: {
@@ -205,9 +339,10 @@ describe('calculateSkillPerformance — gathering Processing', () => {
             '/items/efficiency_tea': 0,
         };
 
+        const twoDrinkSlots = new Map([['/item_locations/pouch', { itemHrid: '/items/medium_pouch' }]]);
         const result = calculateSkillPerformance(
             'milking',
-            new Map(),
+            twoDrinkSlots,
             ['/items/processing_tea', '/items/efficiency_tea'],
             1
         );
@@ -224,7 +359,7 @@ describe('calculateSkillPerformance — gathering Processing', () => {
             null,
             { pinned: new Set(['/items/processing_tea', '/items/efficiency_tea']), banned: new Set() },
             null,
-            new Map(),
+            twoDrinkSlots,
             null,
             1
         );

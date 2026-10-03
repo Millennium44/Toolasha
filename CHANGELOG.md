@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tea recommendations fit the equipped pouch
+
+- Tea recommendations now fit the drink slots available from the current or planned pouch. Characters with one or two slots no longer get an unusable three-tea recommendation.
+
 ### Chest risk estimates preserve net drop values
 
 - Dungeon chest risk estimates no longer charge market tax again on nested chest and dungeon-token values. Payouts and worst-case losses now use the same tax rules as the chest value breakdown.
