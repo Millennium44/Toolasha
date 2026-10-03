@@ -1483,6 +1483,17 @@ describe('a monster respawning into a slot', () => {
         expect(next[0].amount).toBe(60);
     });
 
+    test('an absent splat counter after a positive one still counts health loss', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(900, 1000, 4) } }, state);
+
+        // A sparse older payload states health but no splat counter; absence is not a reset to zero.
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: { cHP: 700, mHP: 1000 } } }, state);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ amount: 200, isDot: true, playerIndex: '0' });
+    });
+
     test('the tick after the re-baseline counts normally', () => {
         const state = newAttributionState();
         attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(200, 1000, 4) } }, state);

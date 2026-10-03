@@ -872,7 +872,8 @@ export function attributeTick(tick, state, options) {
         const beforeCrits = state.critCounter[index];
         const beforeAttacks = monsterAttacks[index];
 
-        const damageCount = Number(monster?.dmgCounter) || 0;
+        const hasDamageCounter = monster?.dmgCounter != null && Number.isFinite(Number(monster.dmgCounter));
+        const damageCount = hasDamageCounter ? Number(monster.dmgCounter) : 0;
         const critCount = Number(monster?.critCounter) || 0;
         const attacks = Number(monster?.atkCounter);
 
@@ -893,7 +894,7 @@ export function attributeTick(tick, state, options) {
         // replacement can also have the same maximum as its predecessor.
         if (
             (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) ||
-            (beforeDamage !== undefined && damageCount < beforeDamage)
+            (hasDamageCounter && beforeDamage !== undefined && damageCount < beforeDamage)
         )
             continue;
 
