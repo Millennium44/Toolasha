@@ -943,7 +943,8 @@ class QuickInputButtons {
      * @returns {Object|null} Action details or null if not found
      */
     getActionDetailsByName(actionName, gameData, panel = null) {
-        const hrid = (panel && getActionHridFromFiber(panel)) || getActionHridFromName(actionName);
+        // Name first: the fiber lookup walks the whole React tree, and resolves a translated name
+        const hrid = getActionHridFromName(actionName) || (panel && getActionHridFromFiber(panel));
         if (!hrid) {
             return null;
         }

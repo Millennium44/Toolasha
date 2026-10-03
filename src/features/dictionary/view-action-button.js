@@ -293,7 +293,8 @@ class ViewActionButton {
             .trim();
 
         // The detail modal's props name the action in any game language; the text is the fallback
-        const actionHrid = getActionHridFromFiber(nameEl) || getActionHridFromName(actionName);
+        // Name first: the fiber lookup walks the whole React tree, and resolves a translated name
+        const actionHrid = getActionHridFromName(actionName) || getActionHridFromFiber(nameEl);
         if (!actionHrid) return null;
 
         // Read current numActions from the count input

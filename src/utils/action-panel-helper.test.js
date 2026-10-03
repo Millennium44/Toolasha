@@ -176,6 +176,18 @@ describe('onDetailPanel', () => {
         off();
     });
 
+    test('an English title resolves the detail panel without walking the React tree', async () => {
+        const { getActionHridFromFiber } = await import('./game-lookups.js');
+        getActionHridFromFiber.mockClear();
+        lookups.byName = { 'Cheesy Sword': SWORD };
+        const off = onDetailPanel(() => {});
+        const { panel } = buildTitled('SkillActionDetail_name__x', 'Cheesy Sword');
+
+        expect(resolveDetailPanel(panel).actionHrid).toBe(SWORD);
+        expect(getActionHridFromFiber).not.toHaveBeenCalled();
+        off();
+    });
+
     test('a panel the props cannot name falls back to its English title', () => {
         lookups.byFiber = null;
         lookups.byName = { 'Cheesy Sword': SWORD };
