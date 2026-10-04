@@ -19,6 +19,8 @@ const engine = vi.hoisted(() => ({
     pricingModes: [],
     settings: { marketSort: true, marketSort_mode: 'profit' },
     writes: [],
+    gatheringProfit: null,
+    gameData: { itemDetailMap: {}, actionDetailMap: {} },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -45,7 +47,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ itemDetailMap: {}, actionDetailMap: {} }),
+        getInitClientData: () => engine.gameData,
     },
 }));
 
@@ -53,7 +55,7 @@ vi.mock('../../api/marketplace.js', () => ({ default: { lastFetchTimestamp: 1000
 
 // Production and gathering profit are the other mode's business
 vi.mock('./profit-calculator.js', () => ({ default: { calculateProfit: async () => null } }));
-vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
+vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => engine.gatheringProfit }));
 
 vi.mock('./alchemy-profit-calculator.js', () => {
     const answer = (itemHrid, action) => engine.answers[itemHrid]?.[action] ?? null;
@@ -131,6 +133,8 @@ beforeEach(() => {
     engine.pricingModes = [];
     engine.writes = [];
     engine.settings = { marketSort: true, marketSort_mode: 'profit' };
+    engine.gatheringProfit = null;
+    engine.gameData = { itemDetailMap: {}, actionDetailMap: {} };
 
     marketSort.clearCaches();
     marketSort.originalOrder = [];
@@ -285,6 +289,23 @@ describe('pricing', () => {
         await marketSort.sortByProfitability();
 
         expect(engine.pricingModes).toEqual([]);
+    });
+});
+
+describe('gathering prices', () => {
+    test('an incompletely priced gathering result has no ranking value', async () => {
+        engine.gameData.actionDetailMap = {
+            '/actions/foraging/apple': {
+                type: '/action_types/foraging',
+                dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 1 }],
+            },
+        };
+        engine.gatheringProfit = { profitPerHour: 800, hasMissingPrices: true };
+
+        await expect(marketSort.calculateItemProfit('/items/apple', engine.gameData)).resolves.toEqual({
+            profit: null,
+            detail: null,
+        });
     });
 });
 

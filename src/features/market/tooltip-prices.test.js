@@ -19,6 +19,7 @@ const settings = vi.hoisted(() => ({
 const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
 const openableState = vi.hoisted(() => ({ drops: {} }));
+const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -50,6 +51,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('../../core/data-manager.js', () => {
     const itemDetailMap = {
+        '/items/apple': { name: 'Apple' },
         '/items/cheese': { name: 'Cheese' },
         '/items/griffin_bulwark': { name: 'Griffin Bulwark', equipmentDetail: {} },
         '/items/wisdom_tea': { name: 'Wisdom Tea', consumableDetail: {} },
@@ -74,6 +76,7 @@ vi.mock('../../core/data-manager.js', () => {
         default: {
             getInitClientData: () => ({
                 itemDetailMap,
+                actionDetailMap: gatheringState.actionDetailMap,
                 openableLootDropMap: openableState.drops,
                 abilityDetailMap: { '/abilities/berserk': { name: 'Berserk' } },
             }),
@@ -116,7 +119,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     uninstallEnhancementSourceToggle: () => {},
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParamsFor: () => null }));
-vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
+vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => gatheringState.profitData }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({ ask: 10, bid: 9 }),
     getItemPrice: (hrid) => (hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' ? null : 10),
@@ -192,6 +195,8 @@ beforeEach(async () => {
     alchemyState.candidates = {};
     alchemyState.decompose = {};
     openableState.drops = {};
+    gatheringState.actionDetailMap = {};
+    gatheringState.profitData = null;
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -291,6 +296,48 @@ describe('routing by classification', () => {
     test('disable unsubscribes', () => {
         tooltipPrices.disable();
         expect(tooltipObserver.subscribers.has('TooltipPrices')).toBe(false);
+    });
+});
+
+describe('gathering tooltip prices', () => {
+    test('marks the solo net rate incomplete when any drop quote is missing', async () => {
+        gatheringState.actionDetailMap = {
+            '/actions/foraging/apple': {
+                hrid: '/actions/foraging/apple',
+                name: 'Apple',
+                type: '/action_types/foraging',
+                category: '/action_categories/foraging/shimmering_lake',
+                baseTimeCost: 8_000_000_000,
+                experienceGain: { skillHrid: '/skills/foraging', value: 7.5 },
+                dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 4 }],
+                essenceDropTable: [
+                    { itemHrid: '/items/foraging_essence', dropRate: 0.024444444444444446, minCount: 1, maxCount: 1 },
+                ],
+                rareDropTable: [
+                    {
+                        itemHrid: '/items/small_meteorite_cache',
+                        dropRate: 0.00020370370370370372,
+                        minCount: 1,
+                        maxCount: 1,
+                    },
+                ],
+                inputItems: null,
+                outputItems: null,
+            },
+        };
+        gatheringState.profitData = {
+            profitPerHour: 800,
+            hasMissingPrices: true,
+            baseOutputs: [{ itemHrid: '/items/apple', itemsPerHour: 1125 }],
+        };
+        const el = itemTooltip('Apple');
+        const sources = await tooltipPrices.findGatheringSources('/items/apple');
+
+        tooltipPrices.injectGatheringDisplay(el, sources);
+
+        expect(el.textContent).toContain('-- ⚠/hr');
+        expect(el.textContent).toContain('-- ⚠/day');
+        expect(el.textContent).not.toContain('800/hr');
     });
 });
 

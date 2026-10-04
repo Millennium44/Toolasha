@@ -377,6 +377,7 @@ class PinnedActionsPage {
                 profitPerHour: isWarm ? (cachedStats.profitPerHour ?? null) : null,
                 expPerHour: isWarm ? (cachedStats.expPerHour ?? null) : null,
                 liquidityLimit: isWarm ? (cachedStats.liquidityLimit ?? null) : null,
+                hasMissingPrices: isWarm && Boolean(cachedStats.hasMissingPrices),
                 // Distinct from a resolved `null` (computed, nothing to report):
                 // this row hasn't been computed yet, and must say so rather than
                 // read as a method that simply makes nothing.
@@ -420,6 +421,7 @@ class PinnedActionsPage {
             row.profitPerHour = stats?.profitPerHour ?? null;
             row.expPerHour = stats?.expPerHour ?? null;
             row.liquidityLimit = stats?.liquidityLimit ?? null;
+            row.hasMissingPrices = Boolean(stats?.hasMissingPrices);
         } catch (error) {
             // computeStats already catches everything itself; this is a second net
             // so a row can never be left pending forever (or take the rest of the
@@ -742,7 +744,11 @@ class PinnedActionsPage {
             // round trip the first time — see loadActions' doc comment) says so
             // rather than showing '-', which reads as "there is nothing here"
             // instead of "this hasn't arrived yet".
-            const profitText = action.pending ? 'measuring…' : `${profitPrefix}${formatCompact(action.profitPerHour)}`;
+            const profitText = action.pending
+                ? 'measuring…'
+                : action.hasMissingPrices
+                  ? '-- ⚠'
+                  : `${profitPrefix}${formatCompact(action.profitPerHour)}`;
             const expText = action.pending ? 'measuring…' : formatCompact(action.expPerHour);
 
             const row = document.createElement('div');
@@ -1118,6 +1124,7 @@ class PinnedActionsPage {
             let profitPerHour = null;
             let expPerHour = null;
             let sells = [];
+            let hasMissingPrices = false;
 
             if (pinnedItemHrid && actionHrid.startsWith('/actions/alchemy/')) {
                 const alchemyType = actionHrid.replace('/actions/alchemy/', '');
@@ -1129,11 +1136,13 @@ class PinnedActionsPage {
                 const isGathering = GATHERING_TYPES.includes(details.type);
                 if (isGathering) {
                     const profitData = await calculateGatheringProfit(actionHrid);
-                    profitPerHour = profitData?.profitPerHour ?? null;
+                    hasMissingPrices = Boolean(profitData?.hasMissingPrices);
+                    profitPerHour = hasMissingPrices ? null : (profitData?.profitPerHour ?? null);
                     sells = sellsFromProfitData(profitData);
                 } else {
                     const profitData = await calculateProductionProfit(actionHrid);
-                    profitPerHour = profitData?.profitPerHour ?? null;
+                    hasMissingPrices = Boolean(profitData?.hasMissingPrices);
+                    profitPerHour = hasMissingPrices ? null : (profitData?.profitPerHour ?? null);
                     sells = sellsFromProfitData(profitData);
                 }
 
@@ -1153,7 +1162,7 @@ class PinnedActionsPage {
                 }
             }
 
-            const stats = { profitPerHour, expPerHour, liquidityLimit, liquidityChecked: true };
+            const stats = { profitPerHour, expPerHour, liquidityLimit, liquidityChecked: true, hasMissingPrices };
             if (!actionPanelSort.cachedStats) actionPanelSort.cachedStats = {};
             const cacheKey = pinnedItemHrid ? `${actionHrid}|${pinnedItemHrid}` : actionHrid;
             actionPanelSort.cachedStats[cacheKey] = stats;

@@ -45,6 +45,7 @@ vi.mock('../../utils/asset-manifest.js', () => ({
 const mockDataManager = vi.hoisted(() => ({
     actionDetails: {},
     itemDetails: {},
+    gatheringProfit: null,
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -52,6 +53,8 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (itemHrid) => mockDataManager.itemDetails[itemHrid] ?? null,
     },
 }));
+vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => mockDataManager.gatheringProfit }));
+vi.mock('./production-profit.js', () => ({ calculateProductionProfit: async () => null }));
 
 const mockActionPanelSort = vi.hoisted(() => ({
     pinned: [],
@@ -336,6 +339,19 @@ describe('the merged table', () => {
         expect(page.getFilteredSorted().map((row) => row.name)).toEqual(['Loss', 'Profit', 'Measuring']);
 
         page.allActions = [];
+    });
+});
+
+describe('gathering prices', () => {
+    test('an incompletely priced gathering action is withheld from the pinned ranking', async () => {
+        const actionHrid = '/actions/foraging/apple';
+        const details = { type: '/action_types/foraging' };
+        mockDataManager.gatheringProfit = { profitPerHour: 800, hasMissingPrices: true, baseOutputs: [] };
+
+        const stats = await page.computeStats(actionHrid, details);
+
+        expect(stats.profitPerHour).toBeNull();
+        expect(stats.hasMissingPrices).toBe(true);
     });
 });
 

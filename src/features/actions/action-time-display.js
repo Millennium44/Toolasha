@@ -5389,6 +5389,7 @@ class ActionTimeDisplay {
         try {
             let totalProfit = 0;
             let hasProfitData = false;
+            let hasIncompleteProfitData = Boolean(valueTally?.incomplete);
 
             // Create all profit calculation promises at once (parallel execution)
             const profitPromises = actionsToCalculate.map(
@@ -5435,6 +5436,8 @@ class ActionTimeDisplay {
                             profitDiv.innerHTML = html;
                         }
                     }
+                } else if (actionsToCalculate[index].isReachable !== false) {
+                    hasIncompleteProfitData = true;
                 }
             });
 
@@ -5445,7 +5448,7 @@ class ActionTimeDisplay {
             }
 
             // Update display with value
-            if (hasProfitData) {
+            if (hasProfitData || hasIncompleteProfitData) {
                 // Get value mode setting to determine label and color
                 const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
                 const isEstimatedValue = valueMode === 'estimated_value';
@@ -5462,8 +5465,11 @@ class ActionTimeDisplay {
                 // A row that could not be valued — a fight with no simulated rate, or one that
                 // runs forever with nothing to bound it — leaves the total short, and says so the
                 // way the time total says it: `+ [?]`, not a quietly smaller number
-                const incomplete = valueTally?.incomplete ? ' + [?]' : '';
-                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`;
+                const incomplete = hasIncompleteProfitData ? ' + [?]' : '';
+                const amount = hasProfitData
+                    ? `<span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`
+                    : '<span style="color: #aaa;">-- ⚠</span>';
+                const valueText = `<br>${valueLabel}: ${amount}`;
                 totalDiv.innerHTML = baseText + valueText + xpText;
             }
         } catch (error) {
@@ -5511,6 +5517,10 @@ class ActionTimeDisplay {
         }
 
         if (!profitData) {
+            return null;
+        }
+
+        if (profitData.hasMissingPrices) {
             return null;
         }
 
@@ -5904,6 +5914,12 @@ class ActionTimeDisplay {
 
             if (!profitData || typeof profitData.profitPerHour !== 'number') {
                 this.profitElement.innerHTML = '';
+                return;
+            }
+
+            if (profitData.hasMissingPrices) {
+                this.profitElement.innerHTML =
+                    '<span style="color:#888;">Profit:</span> <span style="color:#aaa;">-- ⚠</span>';
                 return;
             }
 

@@ -1380,7 +1380,8 @@ class TooltipPrices {
             const profitData = await calculateGatheringProfit(action.actionHrid);
             if (profitData) {
                 action.itemsPerHour = profitData.baseOutputs?.[0]?.itemsPerHour || 0;
-                action.profitPerHour = profitData.profitPerHour || 0;
+                action.hasMissingPrices = Boolean(profitData.hasMissingPrices);
+                action.profitPerHour = action.hasMissingPrices ? null : profitData.profitPerHour || 0;
             }
         }
 
@@ -1453,8 +1454,16 @@ class TooltipPrices {
 
             for (const action of gatheringData.soloActions) {
                 const itemsPerHourStr = action.itemsPerHour ? Math.round(action.itemsPerHour) : '?';
-                const profitStr = action.profitPerHour ? formatKMB(Math.round(action.profitPerHour)) : '?';
-                const profitDayStr = action.profitPerHour ? formatKMB(Math.round(action.profitPerHour * 24)) : '?';
+                const profitStr = action.hasMissingPrices
+                    ? '-- ⚠'
+                    : action.profitPerHour
+                      ? formatKMB(Math.round(action.profitPerHour))
+                      : '?';
+                const profitDayStr = action.hasMissingPrices
+                    ? '-- ⚠'
+                    : action.profitPerHour
+                      ? formatKMB(Math.round(action.profitPerHour * 24))
+                      : '?';
 
                 html += `<div style="margin-left: 8px;">• ${action.actionName}: ${itemsPerHourStr} items/hr | ${profitStr}/hr (${profitDayStr}/day)</div>`;
             }

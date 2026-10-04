@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Gathering estimates disclose missing prices
+
+- Gathering profit tiles, queue and action-bar estimates, tooltips, and pinned-action rankings now show when prices are missing. Market sorting keeps incomplete gathering profits out of its numeric rankings.
+
 ### Food recommendations keep unknown costs explicit
 
 - Food recommendations now keep missing consumable prices explicit and withhold cheapest or savings claims until both setups can be valued.

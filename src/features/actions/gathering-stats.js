@@ -262,7 +262,7 @@ class GatheringStats {
         data.profitPerHour = profitPerHour;
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
-        actionPanelSort.updateProfit(actionPanel, profitPerHour);
+        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour);
         actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
 
         // Check if we should hide actions with negative profit (unless pinned)
@@ -270,7 +270,7 @@ class GatheringStats {
         const isPinned = actionPanelSort.isPinned(data.actionHrid);
         const isFilterHidden = actionFilter.isFilterHidden(actionPanel);
 
-        if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0 && !isPinned) {
+        if (hideNegativeProfit && !hasMissingPrices && profitPerHour !== null && profitPerHour < 0 && !isPinned) {
             // Hide the entire action panel
             actionPanel.style.display = 'none';
             return;
@@ -482,12 +482,15 @@ class GatheringStats {
      * @param {Object} data - Stored action data
      */
     renderIndicators(actionPanel, data) {
-        const { profitPerHour, expPerHour } = data;
+        const { profitPerHour, expPerHour, hasMissingPrices } = data;
         const showProfit = config.getSetting('actionPanel_showProfitPerHour_gathering');
         const showExp = config.getSetting('actionPanel_showExpPerHour_gathering');
         let html = '';
 
-        if (showProfit && profitPerHour !== null) {
+        if (showProfit && hasMissingPrices) {
+            html += '<div class="mwi-action-stat-line" style="white-space: nowrap;">';
+            html += '<span data-stat="profit" style="color: #aaa;">Profit/hr: -- ⚠</span></div>';
+        } else if (showProfit && profitPerHour !== null) {
             const profitColor = profitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             const profitSign = profitPerHour >= 0 ? '' : '-';
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;

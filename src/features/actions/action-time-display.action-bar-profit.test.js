@@ -32,6 +32,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     actionDetails: {},
+    gatheringProfit: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -65,7 +66,7 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { isLoaded: () => true, getPrice: () => null, on: () => () => {} },
 }));
 
-vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
+vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => game.gatheringProfit }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculateProfit: async () => null } }));
 
 /**
@@ -119,6 +120,7 @@ beforeEach(() => {
     liquidity.throttle = null;
     alchemyCalc.coinify = null;
     game.actionDetails = {};
+    game.gatheringProfit = null;
 });
 
 describe('action bar profit line — idempotent injection', () => {
@@ -242,6 +244,33 @@ describe('action bar profit line — "remaining" basis', () => {
         const html = actionTimeDisplay.profitElement.innerHTML;
         expect(html).toContain('+1.90M/hr');
         expect(html).not.toContain('remaining');
+    });
+});
+
+describe('action bar profit line — incomplete gathering prices', () => {
+    test('does not display an exact rate or remaining total when a gathering quote is missing', async () => {
+        setActionNameDom();
+        actionTimeDisplay.displayElement = null;
+        actionTimeDisplay.profitElement = null;
+        actionTimeDisplay.createDisplayPanel();
+        actionTimeDisplay.activeBarProfitId = null;
+        const action = { actionHrid: '/actions/foraging/apple' };
+        game.actionDetails = {
+            [action.actionHrid]: { type: '/action_types/foraging', outputItems: [] },
+        };
+        game.gatheringProfit = {
+            profitPerHour: 800,
+            actionsPerHour: 360,
+            efficiencyMultiplier: 1,
+            hasMissingPrices: true,
+        };
+
+        await actionTimeDisplay.updateActionBarProfit(action, 20);
+
+        expect(actionTimeDisplay.profitElement.textContent).toContain('Profit: --');
+        expect(actionTimeDisplay.profitElement.textContent).toContain('⚠');
+        expect(actionTimeDisplay.profitElement.textContent).not.toContain('800');
+        expect(actionTimeDisplay.profitElement.textContent).not.toContain('remaining');
     });
 });
 

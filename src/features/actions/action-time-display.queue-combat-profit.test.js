@@ -25,6 +25,9 @@ const game = vi.hoisted(() => ({
     valueMode: 'profit',
     showValue: true,
     characterId: 'char1',
+    gatheringProfit: null,
+    gatheringProfitCalls: [],
+    marketLoaded: false,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -64,10 +67,15 @@ vi.mock('../../core/config.js', () => ({
 
 vi.mock('../../api/marketplace.js', () => ({
     // Not loaded, so nothing but the combat rows can contribute to the value total
-    default: { isLoaded: () => false, getPrice: () => null, on: () => () => {} },
+    default: { isLoaded: () => game.marketLoaded, getPrice: () => null, on: () => () => {} },
 }));
 
-vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
+vi.mock('./gathering-profit.js', () => ({
+    calculateGatheringProfit: async (actionHrid) => {
+        game.gatheringProfitCalls.push(actionHrid);
+        return game.gatheringProfit;
+    },
+}));
 vi.mock('../../utils/experience-calculator.js', () => ({ calculateExpPerHour: () => null }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
@@ -97,6 +105,60 @@ const cow = {
     inputItems: [],
     outputItems: [{ itemHrid: '/items/milk', count: 1 }],
     experienceGain: { skillHrid: '/skills/milking', value: 10 },
+};
+
+const APPLE = '/actions/foraging/apple';
+// Captured October 3 action shape: solo foraging rows use the baseTimeCost and
+// separate ordinary, essence, and rare drop tables; there are no recipe outputs.
+const apple = {
+    hrid: APPLE,
+    name: 'Apple',
+    type: '/action_types/foraging',
+    category: '/action_categories/foraging/shimmering_lake',
+    baseTimeCost: 8_000_000_000,
+    levelRequirement: { skillHrid: '/skills/foraging', level: 10 },
+    experienceGain: { skillHrid: '/skills/foraging', value: 7.5 },
+    dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 4 }],
+    essenceDropTable: [
+        { itemHrid: '/items/foraging_essence', dropRate: 0.024444444444444446, minCount: 1, maxCount: 1 },
+    ],
+    rareDropTable: [
+        { itemHrid: '/items/small_meteorite_cache', dropRate: 0.00020370370370370372, minCount: 1, maxCount: 1 },
+    ],
+    inputItems: null,
+    outputItems: null,
+};
+
+const incompleteAppleProfit = {
+    profitPerHour: 800,
+    profitPerAction: 1.7777777777777777,
+    profitPerDay: 19_200,
+    revenuePerHour: 900,
+    drinkCostPerHour: 0,
+    drinkCosts: [],
+    actionsPerHour: 450,
+    baseOutputs: [
+        {
+            itemHrid: '/items/apple',
+            name: 'Apple',
+            itemsPerHour: 1125,
+            itemsPerAction: 2.5,
+            revenuePerAction: 2,
+            dropRate: 1,
+            priceEach: 0.8,
+            revenuePerHour: 900,
+            missingPrice: false,
+        },
+    ],
+    bonusRevenue: {
+        totalBonusRevenue: 0,
+        bonusDrops: [
+            { itemHrid: '/items/foraging_essence', expectedItemsPerHour: 0, itemPrice: 0, missingPrice: true },
+        ],
+        hasMissingPrices: true,
+    },
+    efficiencyMultiplier: 1,
+    hasMissingPrices: true,
 };
 
 /** A Repeat-∞ row: no count, and for a gathering action nothing to cap it either. */
@@ -429,5 +491,53 @@ describe('the Queued Actions panel shows what a fight is expected to make', () =
         expect(totalText()).not.toContain('1.00M');
         expect(totalText()).not.toContain('+0');
         expect(totalText()).toBe('Total time: ~2h 00m 00s');
+    });
+});
+
+describe('the queue value total with no priced rows', () => {
+    test('a mixed combat and gathering queue marks the total short for missing gathering prices', async () => {
+        game.valueMode = 'profit';
+        game.marketLoaded = true;
+        game.gatheringProfit = incompleteAppleProfit;
+        game.gatheringProfitCalls = [];
+        game.actionDetails = { [GOBO]: gobo, [APPLE]: apple };
+        game.currentActions = [
+            combatAction(1),
+            {
+                id: 2,
+                ordinal: 2,
+                actionHrid: APPLE,
+                primaryItemHash: '',
+                hasMaxCount: true,
+                maxCount: 10,
+                currentCount: 0,
+            },
+        ];
+        game.loadoutMap = { [COMBAT_ID]: { name: 'Combat' } };
+        game.snapshot = snapshot();
+        game.rates = {};
+        const menu = queueMenu(['Gobo Planet (T3)', 'Apple']);
+        const appleRow = menu.querySelectorAll('[class*="QueuedActions_action__"]')[1];
+        const staleProfit = document.createElement('div');
+        staleProfit.className = 'mwi-queue-action-profit';
+        staleProfit.dataset.divIndex = '1';
+        staleProfit.textContent = 'Profit: +99.00K';
+        appleRow.querySelector('[class*="QueuedActions_actionText"]').appendChild(staleProfit);
+
+        await actionTimeDisplay.refreshCombatSnapshot();
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(game.gatheringProfitCalls).toContain(APPLE);
+        expect(menu.querySelectorAll('.mwi-queue-action-profit')[1].textContent).toBe('');
+        expect(menu.textContent).not.toContain('+99.00K');
+        expect(totalText()).toContain('Total profit: +2.00M + [?]');
+
+        game.marketLoaded = false;
+        game.gatheringProfit = null;
+        game.currentActions = [];
+        actionTimeDisplay._combatSnapshotCache = null;
+        actionTimeDisplay._lastQueueMenu = null;
+        menu.parentElement.remove();
     });
 });
