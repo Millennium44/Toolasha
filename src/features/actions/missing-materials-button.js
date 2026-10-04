@@ -35,7 +35,11 @@ import {
     visibleTabsContainer,
     attachRegularTabClearListener,
 } from '../../utils/marketplace-tabs.js';
-import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancement-display.js';
+import {
+    getProtectionItemFromUI,
+    getProtectFromLevelFromUI,
+    getCurrentEnhancementLevel,
+} from './enhancement-display.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -45,7 +49,6 @@ import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.j
 // The walk to the Tester tab is shared with the Item Dictionary's ability-book
 // panel — see utils/tester-shop-nav.js
 import { findTesterTab, setShopFilter, openTesterShopPage } from '../../utils/tester-shop-nav.js';
-import { runningAction } from '../../utils/combat-actions.js';
 import {
     effectiveInventory,
     INVENTORY_LOCATION,
@@ -377,37 +380,6 @@ function processEnhancingPanel(panel) {
 }
 
 /**
- * Get current enhancement level from action queue or DOM
- * @param {HTMLElement} panel - Enhancing panel element
- * @returns {number} Current enhancement level (0-19)
- */
-function getCurrentEnhancementLevel(panel) {
-    // Try action queue first
-    const currentActions = dataManager.getCurrentActions();
-    // The enhance action running now, not the first enhance entry in array
-    // order (a queued one, with several items lined up)
-    const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
-    if (enhancingAction?.primaryItemHash) {
-        const parts = enhancingAction.primaryItemHash.split('::');
-        const lastPart = parts[parts.length - 1];
-        if (lastPart && !lastPart.startsWith('/')) {
-            const parsed = parseInt(lastPart, 10);
-            if (!isNaN(parsed)) return parsed;
-        }
-    }
-
-    // Fallback: read from DOM text (e.g., "Dairyhand's Top +5")
-    const inputItems = panel.querySelectorAll('.SkillActionDetail_item__2vEAz .Item_name__2C42x');
-    if (inputItems.length > 0) {
-        const inputName = inputItems[0].textContent.trim();
-        const levelMatch = inputName.match(/\+(\d+)$/);
-        if (levelMatch) return parseInt(levelMatch[1], 10);
-    }
-
-    return 0;
-}
-
-/**
  * Get target enhancement level from UI input
  * @param {HTMLElement} panel - Enhancing panel element
  * @returns {number|null} Target level (1-20) or null if not found
@@ -474,7 +446,8 @@ function updateEnhancementButton(panel) {
     }
 
     // Get current and target levels
-    const startLevel = getCurrentEnhancementLevel(panel);
+    // Only the running enhance of THIS item counts: another item's level says nothing here
+    const startLevel = getCurrentEnhancementLevel(panel, itemHrid) ?? 0;
     const targetLevel = getTargetLevelFromUI(panel);
     if (targetLevel === null || targetLevel <= startLevel) {
         return;
