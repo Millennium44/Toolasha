@@ -1,6 +1,6 @@
 /**
  * Budget Calculator
- * Calculates how many units you can produce within a gold budget,
+ * Calculates how many actions you can queue within a gold budget,
  * buying missing tradeable materials at ask price.
  */
 
@@ -25,6 +25,9 @@ const PRODUCTION_TYPES = [
 ];
 
 const UI_ID = 'mwi-budget-calculator';
+// artisanInputTotal changes from per-action to expected rounding at 100 actions.
+const ARTISAN_ROUNDING_THRESHOLD = 100;
+const MAX_AFFORDABLE_ACTIONS = 10_000_000;
 
 /**
  * The owner the calculator claims stock under, while its breakdown is open.
@@ -54,30 +57,30 @@ function findActionInput(panel) {
 }
 
 /**
- * Binary search for maximum units produceable within budget.
+ * Binary search for maximum actions producible within budget.
  * @param {string} actionHrid
  * @param {number} budget
- * @returns {{n: number, materials: Array}|null} null if no tradeable materials with prices
+ * @returns {{n: number, materials: Array, unresolvedMaterials: Array<string>}|null} null if game data is unavailable
  */
-function findMaxUnits(actionHrid, budget) {
+function findMaxActions(actionHrid, budget) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData?.actionDetailMap[actionHrid];
     if (!actionDetail) return null;
     if (!PRODUCTION_TYPES.includes(actionDetail.type)) return null;
     if (!actionDetail.inputItems?.length) return null;
 
-    // Verify at least one tradeable material has a market price
-    const hasTradeableMat = actionDetail.inputItems.some((input) => {
-        const itemDetails = gameData.itemDetailMap[input.itemHrid];
-        if (!itemDetails?.isTradable) return false;
-        const price = marketAPI.getPrice(input.itemHrid);
-        return price?.ask > 0;
-    });
-    if (!hasTradeableMat) return null;
+    // The material calculator cannot produce a line when an input's item data
+    // is missing. Treat incomplete game data as unavailable instead of letting
+    // the omitted ingredient disappear from the cost.
+    const requiredItems = [
+        ...actionDetail.inputItems.map((input) => input.itemHrid),
+        ...(actionDetail.upgradeItemHrid ? [actionDetail.upgradeItemHrid] : []),
+    ];
+    if (requiredItems.some((itemHrid) => !gameData.itemDetailMap[itemHrid])) return null;
 
     /**
-     * Calculate purchase cost for N units using current inventory.
-     * @param {number} n
+     * Calculate purchase cost for N actions using current inventory.
+     * @param {number} n - Action count
      * @returns {number}
      */
     const costForN = (n) => {
@@ -87,39 +90,65 @@ function findMaxUnits(actionHrid, budget) {
         for (const mat of mats) {
             if (!mat.isTradeable || mat.missing <= 0) continue;
             const price = marketAPI.getPrice(mat.itemHrid);
-            if (!price?.ask) continue;
+            if (!(price?.ask > 0)) return Infinity;
             total += mat.missing * price.ask;
         }
+        if (mats.some((mat) => !mat.isTradeable && mat.missing > 0)) return Infinity;
         return total;
     };
 
-    // If we can't afford even 1 unit, return 0
-    if (costForN(1) > budget) {
-        const materials = calculateMaterialRequirements(actionHrid, 1, false, { ownerId: RESERVATION_OWNER });
-        return { n: 0, materials };
-    }
+    /**
+     * Items that keep the next action infeasible because they cannot be priced or bought.
+     * @param {number} n
+     * @returns {Array<string>}
+     */
+    const unresolvedForN = (n) => {
+        const mats = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+        return [
+            ...new Set(
+                mats
+                    .filter((mat) => {
+                        if (mat.missing <= 0) return false;
+                        if (!mat.isTradeable) return true;
+                        return !(marketAPI.getPrice(mat.itemHrid)?.ask > 0);
+                    })
+                    .map((mat) => mat.itemName)
+            ),
+        ];
+    };
 
-    // Binary search: find max n where cost <= budget
-    let lo = 1;
-    let hi = 10_000_000;
-
-    while (lo < hi) {
-        const mid = Math.floor((lo + hi + 1) / 2);
-        if (costForN(mid) <= budget) {
-            lo = mid;
-        } else {
-            hi = mid - 1;
+    // Each artisan rounding regime is monotone on its own, but hybrid mode can
+    // make the 100-action total smaller than the 99-action total. Search both
+    // sides of that transition so the binary search cannot step over an
+    // affordable island at the threshold.
+    const maxInRange = (first, last) => {
+        if (first > last || costForN(first) > budget) return 0;
+        let lo = first;
+        let hi = last;
+        while (lo < hi) {
+            const mid = Math.floor((lo + hi + 1) / 2);
+            if (costForN(mid) <= budget) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
         }
-    }
+        return lo;
+    };
 
-    const materials = calculateMaterialRequirements(actionHrid, lo, false, { ownerId: RESERVATION_OWNER });
-    return { n: lo, materials };
+    const n = Math.max(
+        maxInRange(1, ARTISAN_ROUNDING_THRESHOLD - 1),
+        maxInRange(ARTISAN_ROUNDING_THRESHOLD, MAX_AFFORDABLE_ACTIONS)
+    );
+
+    const materials = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+    return { n, materials, unresolvedMaterials: unresolvedForN(n + 1) };
 }
 
 /**
  * Show the breakdown modal for a budget calculation result.
  * @param {number} budget - The budget entered
- * @param {{n: number, materials: Array}} result
+ * @param {{n: number, materials: Array, unresolvedMaterials?: Array<string>}} result
  */
 function showBreakdownModal(budget, result) {
     // Remove any existing modal
@@ -160,7 +189,7 @@ function showBreakdownModal(budget, result) {
             <span style="margin-left:10px; color:#aaa;">
                 Budget: <strong style="color:#fff;">${formatKMB(budget)}</strong>
                 &nbsp;→&nbsp;
-                <strong style="color:#7ec87e;">${formatWithSeparator(result.n)} units</strong>
+                <strong style="color:#7ec87e;">${formatWithSeparator(result.n)} actions</strong>
             </span>
         </div>
         <button id="mwi-budget-modal-close" style="
@@ -181,9 +210,10 @@ function showBreakdownModal(budget, result) {
     const tdDimStyle = 'padding:5px 10px; text-align:right; color:#666; border-bottom:1px solid #252525;';
 
     let totalSpend = 0;
-    let perUnitCost = 0;
-    // The binary search charges nothing for a tradeable material the market has no ask for,
-    // so a shortfall in one of those makes the unit count an upper bound, not a promise.
+    let perActionCost = 0;
+    // A quote can disappear after the search and before this modal renders.
+    // Keep a defensive warning for that narrow race; unresolved requirements
+    // from the following action are attached to the search result below.
     let hasUnpricedShortfall = false;
 
     const rows = result.materials
@@ -193,7 +223,7 @@ function showBreakdownModal(budget, result) {
             const lineCost = ask && mat.missing > 0 ? mat.missing * ask : 0;
             if (mat.isTradeable && mat.missing > 0 && !ask) hasUnpricedShortfall = true;
             totalSpend += lineCost;
-            if (ask) perUnitCost += ask * (mat.required / (result.n || 1));
+            if (ask) perActionCost += ask * (mat.required / (result.n || 1));
 
             const toBuyCell = mat.isTradeable
                 ? `<td style="${tdStyle}; color:${mat.missing > 0 ? '#e8a87c' : '#7ec87e'};">${formatWithSeparator(mat.missing)}</td>`
@@ -238,8 +268,8 @@ function showBreakdownModal(budget, result) {
             <tbody>${rows}</tbody>
             <tfoot>
                 <tr>
-                    <td colspan="5" style="${summaryRowStyle}; text-align:left; color:#aaa;">Per unit cost (ask)</td>
-                    <td style="${summaryRowStyle}">${formatKMB(Math.round(perUnitCost))}</td>
+                    <td colspan="5" style="${summaryRowStyle}; text-align:left; color:#aaa;">Per action cost (ask)</td>
+                    <td style="${summaryRowStyle}">${formatKMB(Math.round(perActionCost))}</td>
                 </tr>
                 <tr>
                     <td colspan="5" style="${summaryRowStyle}; text-align:left; color:#aaa;">Total spend</td>
@@ -267,7 +297,7 @@ function showBreakdownModal(budget, result) {
         modal.appendChild(note);
     }
 
-    if (hasUnpricedShortfall) {
+    if (hasUnpricedShortfall || result.unresolvedMaterials?.length) {
         const note = document.createElement('div');
         note.id = 'mwi-budget-unpriced-note';
         note.style.cssText = `
@@ -275,9 +305,11 @@ function showBreakdownModal(budget, result) {
             background: rgba(232,168,124,0.12); border: 1px solid rgba(232,168,124,0.35);
             color: #e8a87c; font-size: 12px;
         `;
-        note.textContent =
-            'Some materials you still need have no market data and were counted as free — ' +
-            'the unit figure above is an upper bound, not a price you can actually pay.';
+        note.textContent = hasUnpricedShortfall
+            ? 'Some materials you still need have no market data and were counted as free — ' +
+              'the action figure above is an upper bound, not a price you can actually pay.'
+            : `The next action needs materials you cannot currently buy: ${result.unresolvedMaterials.join(', ')}. ` +
+              'Only actions covered by your stock or priced within the budget are counted.';
         modal.appendChild(note);
     }
     overlay.appendChild(modal);
@@ -319,20 +351,22 @@ function showBreakdownModal(budget, result) {
     // line list and reserve() itself throwing instead of returning its usual rejected-never
     // promise; either way release() runs defensively in case anything was written before the
     // failure, so no claim is left held with nothing left to release it.
-    try {
-        Promise.resolve(
-            reserve(
-                RESERVATION_OWNER,
-                result.materials.map((mat) => ({ itemHrid: mat.itemHrid, count: mat.required })),
-                { label: 'Budget calculator' }
-            )
-        ).catch((error) => {
+    if (result.n > 0) {
+        try {
+            Promise.resolve(
+                reserve(
+                    RESERVATION_OWNER,
+                    result.materials.map((mat) => ({ itemHrid: mat.itemHrid, count: mat.required })),
+                    { label: 'Budget calculator' }
+                )
+            ).catch((error) => {
+                console.error('[BudgetCalculator] Failed to claim materials:', error);
+                release(RESERVATION_OWNER);
+            });
+        } catch (error) {
             console.error('[BudgetCalculator] Failed to claim materials:', error);
             release(RESERVATION_OWNER);
-        });
-    } catch (error) {
-        console.error('[BudgetCalculator] Failed to claim materials:', error);
-        release(RESERVATION_OWNER);
+        }
     }
 }
 
@@ -485,7 +519,7 @@ class BudgetCalculator {
             if (!raw) return;
 
             const budget = parseKMB(raw);
-            if (isNaN(budget) || budget <= 0) {
+            if (isNaN(budget) || budget < 0) {
                 input.style.borderColor = '#c0392b';
                 this.timerRegistry.scheduleTimeout(() => {
                     input.style.borderColor = '#555';
@@ -497,7 +531,7 @@ class BudgetCalculator {
             const actionHrid = getActionHridFromPanel(panel);
             if (!actionHrid) return;
 
-            const result = findMaxUnits(actionHrid, budget);
+            const result = findMaxActions(actionHrid, budget);
             if (!result) {
                 calcBtn.textContent = 'No data';
                 this.timerRegistry.scheduleTimeout(() => {

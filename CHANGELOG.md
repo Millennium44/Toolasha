@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Budget calculations count affordable actions
+
+- Production budgets now stop at unpriced or unbuyable material shortages, while a zero-gold budget can use materials already held. A zero-action result no longer reserves materials.
+- Artisan rounding at 100 actions no longer causes the calculator to miss larger affordable batches. The breakdown labels its result as actions, including recipes that make several items per action.
+
 ### Net worth follows the selected equipment and settings
 
 - Excluding a loadout now matches its resolved equipment level, so a different enhancement copy stays counted. Changes to valuation and item inclusion settings refresh the displayed total immediately.

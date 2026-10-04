@@ -13,6 +13,7 @@
  * bring the widget back.
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { artisanInputTotal, ARTISAN_MATERIAL_MODE } from '../../utils/artisan-material-mode.js';
 
 const world = vi.hoisted(() => ({
     settings: { actions_budgetCalculator: true },
@@ -21,6 +22,8 @@ const world = vi.hoisted(() => ({
     materials: [],
     /** Every owner id the calculator asked the material calculator under */
     ownerIds: [],
+    /** Values offered to the game's action-count input */
+    actionCounts: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -39,8 +42,8 @@ vi.mock('../../utils/material-calculator.js', () => ({
         world.ownerIds.push(options?.ownerId ?? null);
         return world.materials.map((m) => ({
             ...m,
-            required: m.perUnit * n,
-            missing: Math.max(0, m.perUnit * n - m.have),
+            required: m.requiredFor ? m.requiredFor(n) : m.perUnit * n,
+            missing: Math.max(0, (m.requiredFor ? m.requiredFor(n) : m.perUnit * n) - m.have),
         }));
     },
 }));
@@ -71,7 +74,7 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
     release: (...args) => reservationsMock.release(...args),
 }));
 vi.mock('../../utils/react-input.js', () => ({
-    setReactInputValue: () => {},
+    setReactInputValue: (_input, value) => world.actionCounts.push(value),
 }));
 
 const dispatcher = vi.hoisted(() => ({ callback: null }));
@@ -98,8 +101,12 @@ const { resolveDetailPanel } = await import('../../utils/action-panel-helper.js'
 function mountPanel() {
     const panel = document.createElement('div');
     panel.dataset.actionHrid = '/actions/cooking/omelette';
+    const actionCount = document.createElement('div');
+    actionCount.className = 'maxActionCountInput';
+    actionCount.appendChild(document.createElement('input'));
     const anchor = document.createElement('div');
     anchor.id = 'mwi-missing-mats-button';
+    panel.appendChild(actionCount);
     panel.appendChild(anchor);
     document.body.appendChild(panel);
     return panel;
@@ -111,6 +118,7 @@ beforeEach(() => {
     world.gameData = null;
     world.prices = {};
     world.materials = [];
+    world.actionCounts = [];
 });
 
 afterEach(() => {
@@ -184,20 +192,135 @@ describe('budget calculator unpriced materials', () => {
         return document.getElementById('mwi-budget-modal-overlay');
     }
 
-    test('warns that the unit count is an upper bound when a needed material has no price', () => {
+    test('does not count an unpriced shortfall as free actions', () => {
         stageRecipe();
-        // Only the egg is charged for, so 1000g "affords" 100 omelettes — the truffles are free
         const modal = calculate(1000);
-        expect(modal.textContent).toContain('100 units');
-        expect(modal.querySelector('#mwi-budget-unpriced-note')).not.toBeNull();
+        expect(modal.textContent).toContain('0 actions');
+        expect(world.actionCounts).toEqual([]);
+        expect(ledger.reserved).toEqual([]);
     });
 
     test('stays quiet when every material a shortfall covers is priced', () => {
         stageRecipe();
         world.prices['/items/truffle'] = { ask: 40 };
         const modal = calculate(1000);
-        expect(modal.textContent).toContain('20 units');
+        expect(modal.textContent).toContain('20 actions');
         expect(modal.querySelector('#mwi-budget-unpriced-note')).toBeNull();
+    });
+
+    test('caps the action count at held stock when an input has no market ask', () => {
+        stageRecipe();
+        world.materials[1].have = 3;
+        const modal = calculate(1000);
+
+        expect(modal.textContent).toContain('3 actions');
+        expect(world.actionCounts).toEqual([3]);
+        expect(modal.querySelector('#mwi-budget-unpriced-note').textContent).toContain('Truffle');
+    });
+
+    test('does not count missing nontradeable inputs as free', () => {
+        stageRecipe();
+        ledger.reserved = [];
+        world.gameData.itemDetailMap['/items/truffle'].isTradable = false;
+        const modal = calculate(1000);
+
+        expect(modal.textContent).toContain('0 actions');
+        expect(world.actionCounts).toEqual([]);
+        expect(ledger.reserved).toEqual([]);
+        expect(modal.querySelector('#mwi-budget-unpriced-note').textContent).toContain('Truffle');
+    });
+
+    test('uses held nontradeable inputs even though they cannot be bought', () => {
+        stageRecipe();
+        world.gameData.itemDetailMap['/items/truffle'].isTradable = false;
+        world.materials[0].have = 3;
+        world.materials[1].have = 3;
+        const modal = calculate(1000);
+
+        expect(modal.textContent).toContain('3 actions');
+        expect(world.actionCounts).toEqual([3]);
+        expect(modal.querySelector('#mwi-budget-unpriced-note').textContent).toContain('Truffle');
+    });
+
+    test('zero budget still counts actions covered by held stock', () => {
+        stageRecipe();
+        world.materials[0].have = 4;
+        world.materials[1].have = 4;
+        const modal = calculate(0);
+
+        expect(modal.textContent).toContain('4 actions');
+        expect(world.actionCounts).toEqual([4]);
+        expect(modal.querySelector('#mwi-budget-unpriced-note').textContent).toContain('Truffle');
+    });
+
+    test('reports actions, matching the action-count input when the recipe has multiple outputs', () => {
+        world.gameData = {
+            actionDetailMap: {
+                '/actions/crafting/arrow': {
+                    type: '/action_types/crafting',
+                    inputItems: [{ itemHrid: '/items/shaft', count: 1 }],
+                    outputItems: [{ itemHrid: '/items/arrow', count: 2 }],
+                },
+            },
+            itemDetailMap: { '/items/shaft': { isTradable: true } },
+        };
+        world.prices = { '/items/shaft': { ask: 10 } };
+        world.materials = [{ itemHrid: '/items/shaft', itemName: 'Shaft', perUnit: 1, have: 0, isTradeable: true }];
+
+        budgetCalculator.initialize();
+        const panel = mountPanel();
+        panel.dataset.actionHrid = '/actions/crafting/arrow';
+        dispatcher.callback(resolveDetailPanel(panel));
+        const ui = document.getElementById('mwi-budget-calculator');
+        ui.querySelector('input').value = '20';
+        ui.querySelector('button').click();
+
+        const modal = document.getElementById('mwi-budget-modal-overlay');
+        expect(modal.textContent).toContain('2 actions');
+        expect(modal.textContent).toContain('Per action cost (ask)');
+        expect(world.actionCounts).toEqual([2]);
+    });
+
+    test('finds the affordable count across a synthetic hybrid artisan rounding drop at 100 actions', () => {
+        const actionHrid = '/actions/crafting/table';
+        world.gameData = {
+            actionDetailMap: {
+                [actionHrid]: {
+                    type: '/action_types/crafting',
+                    inputItems: [{ itemHrid: '/items/plank', count: 4 }],
+                    outputItems: [{ itemHrid: '/items/table', count: 1 }],
+                },
+            },
+            itemDetailMap: {
+                '/items/plank': { name: 'Plank', isTradable: true },
+            },
+        };
+        world.prices = { '/items/plank': { ask: 1 } };
+        // Synthetic math fixture: use the production rounding helper for four
+        // input units at 10% artisan, without implying a captured game recipe.
+        world.materials = [
+            {
+                itemHrid: '/items/plank',
+                itemName: 'Plank',
+                perUnit: 4,
+                requiredFor: (n) => artisanInputTotal(4, 0.1, n, ARTISAN_MATERIAL_MODE.HYBRID),
+                have: 0,
+                isTradeable: true,
+            },
+        ];
+
+        budgetCalculator.initialize();
+        const panel = mountPanel();
+        panel.dataset.actionHrid = actionHrid;
+        dispatcher.callback(resolveDetailPanel(panel));
+        const ui = document.getElementById('mwi-budget-calculator');
+        ui.querySelector('input').value = '379';
+        ui.querySelector('button').click();
+
+        const modal = document.getElementById('mwi-budget-modal-overlay');
+        expect(modal.textContent).toContain('105 actions');
+        expect(modal.textContent).toContain('378');
+        expect(world.actionCounts).toEqual([105]);
     });
 });
 
@@ -320,6 +443,12 @@ describe('the budget calculator and the reservation ledger', () => {
             ownerId: 'budgetCalculator',
             lines: [{ itemHrid: '/items/egg', count: 100 }],
         });
+    });
+
+    test('a zero-action result does not reserve materials for an unused action', () => {
+        const modal = calculate(0);
+        expect(modal.textContent).toContain('0 actions');
+        expect(ledger.reserved).toEqual([]);
     });
 
     test('closing the breakdown via the × button gives the claim back', () => {
