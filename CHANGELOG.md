@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The task tooltip's itemized drink costs now use the task speed bonus like its total, and an enhancement session's value-vs-cost net is hidden whenever an input had no price, as its luck line already was.
 
+### Toolasha tab section totals keep up with item values
+
+- A section header's total in the Toolasha inventory tab could stay at the value it had when the tab was drawn, before prices arrived, until the section was collapsed and reopened; it now redraws when the item values land or change.
+
 ### Opened chest profit
 
 - Gathering and production forecasts, queued action totals, and tea comparisons now avoid taxing chest bonus values twice. Their profit and cost breakdowns agree with the contents' expected value.
