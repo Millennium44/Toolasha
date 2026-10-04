@@ -124,24 +124,37 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (SKIP_ITEMS.has(hrid) || !profitCalculator.findProductionAction?.(hrid)) continue;
         if (await pause()) return null;
         try {
-            const profitData = await profitCalculator.calculateProfit(hrid);
-            if (!profitData) continue;
-            // A recipe above the character's level cannot be started, and an Action Level tea
-            // raises the requirement: no craft or craft + decompose route for it
-            if (
-                !canStartAction({
-                    requiredLevel: profitData.baseRequirement,
-                    skillLevel: profitData.skillLevel,
-                    teaSkillLevelBonus: profitData.teaSkillLevelBonus,
-                    actionLevelBonus: profitData.actionLevelBonus,
-                })
-            ) {
-                continue;
+            const preferred = await profitCalculator.calculateProfit(hrid);
+            if (!preferred) continue;
+            // The calculator picks the best-margin recipe without asking whether the character can
+            // start it; a locked pick must not hide another recipe for the same item that is open.
+            // An Action Level tea raises the requirement, which canStartAction counts
+            const startable = (data) =>
+                canStartAction({
+                    requiredLevel: data.baseRequirement,
+                    skillLevel: data.skillLevel,
+                    teaSkillLevelBonus: data.teaSkillLevelBonus,
+                    actionLevelBonus: data.actionLevelBonus,
+                });
+            const recipes = [preferred];
+            for (const actionHrid of preferred.productionCandidates || []) {
+                if (actionHrid === preferred.actionHrid) continue;
+                const alternative = await profitCalculator.calculateProfit(hrid, { actionHrid });
+                if (alternative) recipes.push(alternative);
             }
-            const actionDetails = dataManager.getActionDetails?.(profitData.actionHrid) ?? null;
-            const comparison = ownUseCompare(profitData, actionDetails);
-            const perHour = Number(profitData.totalItemsPerHour);
-            if (!comparison || !(perHour > 0)) continue;
+            let chosen = null;
+            for (const data of recipes) {
+                if (!startable(data)) continue;
+                const details = dataManager.getActionDetails?.(data.actionHrid) ?? null;
+                const comparison = ownUseCompare(data, details);
+                const perHour = Number(data.totalItemsPerHour);
+                if (!comparison || !(perHour > 0)) continue;
+                if (!chosen || comparison.make < chosen.comparison.make) {
+                    chosen = { profitData: data, actionDetails: details, comparison, perHour };
+                }
+            }
+            if (!chosen) continue;
+            const { profitData, actionDetails, comparison, perHour } = chosen;
             makeCost.set(hrid, comparison.make);
             makeSeconds.set(hrid, 3600 / perHour);
             // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15.

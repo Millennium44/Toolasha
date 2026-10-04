@@ -122,12 +122,16 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../market/profit-calculator.js', () => ({
     default: {
         findProductionAction: (hrid) => (game.craftable.has(hrid) ? { actionHrid: '/actions/cheesesmithing/x' } : null),
-        calculateProfit: async (hrid) => ({
-            itemHrid: hrid,
-            actionHrid: '/actions/x',
-            totalItemsPerHour: 360,
-            ...game.profitExtra,
-        }),
+        calculateProfit: async (hrid, options = {}) =>
+            options.actionHrid === '/actions/alt'
+                ? { itemHrid: hrid, actionHrid: '/actions/alt', totalItemsPerHour: 360, ...game.altProfit }
+                : {
+                      itemHrid: hrid,
+                      actionHrid: '/actions/x',
+                      totalItemsPerHour: 360,
+                      productionCandidates: game.altProfit ? ['/actions/x', '/actions/alt'] : ['/actions/x'],
+                      ...game.profitExtra,
+                  },
     },
 }));
 vi.mock('../market/tooltip-prices.js', () => ({
@@ -220,6 +224,7 @@ beforeEach(() => {
     game.shopUnits = 1;
     game.actionDetails = null;
     game.estimated = new Set();
+    game.altProfit = null;
     game.mixedShop = false;
     game.ironCow = false;
 });
@@ -294,6 +299,14 @@ describe('a recipe the character cannot start', () => {
         const routes = await buildCollectionRoutes();
         expect(routes.craft).toEqual([]);
         expect(routes.sources.filter((s) => s.route === 'craftDecompose')).toEqual([]);
+    });
+
+    test('a locked best-margin recipe does not hide another recipe the character can start', async () => {
+        game.profitExtra = { baseRequirement: 50, skillLevel: 40, teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+        game.altProfit = { baseRequirement: 30, skillLevel: 40, teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft).toHaveLength(1);
+        expect(routes.craft[0].itemHrid).toBe('/items/cheese');
     });
 
     test('an Action Level tea that raises the requirement past the level blocks it too', async () => {
