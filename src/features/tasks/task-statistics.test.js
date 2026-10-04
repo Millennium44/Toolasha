@@ -34,6 +34,7 @@ const game = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => true,
+        getSettingValue: (_key, fallback) => fallback,
         onSettingChange: () => {},
         COLOR_TEXT_PRIMARY: '#fff',
         COLOR_TEXT_SECONDARY: '#888',
@@ -187,6 +188,31 @@ describe('task slot occupancy', () => {
         };
         taskStatistics.calculateOverflowTime();
         expect(game.forecastInput.activeTaskCount).toBe(48);
+    });
+
+    test('a full board labels the countdown as the first task wasted', () => {
+        const msUntilWaste = 2 * 3_600_000 + 21 * 60_000 + 48_000;
+        game.characterInfo = { unreadTaskCount: 0, taskSlotCap: 48 };
+        game.quests = Array.from({ length: 48 }, (_, id) => task({ id }));
+        game.forecastResult = {
+            ok: true,
+            wastesAt: Date.now() + msUntilWaste,
+            msUntilWaste,
+            slotCap: 48,
+            cooldownHours: 3,
+            usedSlots: 48,
+            freeSlots: 0,
+        };
+
+        const overflow = taskStatistics.calculateOverflowTime();
+        const section = taskStatistics.createOverflowSection(overflow, '#fff');
+
+        expect(section.textContent).toContain('48 / 48');
+        expect(section.textContent).toContain('First task wasted in');
+        expect(section.textContent).toContain('2h 21m 48s');
+        expect(section.textContent).toContain('First task wasted at');
+        expect(section.textContent).not.toContain('Full in');
+        expect(section.textContent).not.toContain('Full at');
     });
 });
 

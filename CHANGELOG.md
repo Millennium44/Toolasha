@@ -12,7 +12,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Task-slot warnings count newly issued tasks
 
-- Task-slot forecasts and alerts now count new random tasks already on the board, so the fill warning matches the game's occupied slots.
+- Task-slot forecasts and alerts now count new random tasks already on the board, so the fill warning matches the game's occupied slots. Task Statistics now labels its countdown as the first wasted task, instead of when the board becomes full.
 
 ### Budget calculations count affordable actions
 

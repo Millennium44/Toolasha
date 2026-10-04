@@ -854,8 +854,8 @@ class TaskStatistics {
         } else {
             const overflowTimeStr = timeReadable(overflow.msUntilOverflow / 1000);
             const overflowDateStr = formatDateTime(overflow.overflowDate);
-            section.appendChild(this.createRow('Full in', overflowTimeStr, config.COLOR_INFO));
-            section.appendChild(this.createRow('Full at', overflowDateStr, config.COLOR_TEXT_SECONDARY));
+            section.appendChild(this.createRow('First task wasted in', overflowTimeStr, config.COLOR_INFO));
+            section.appendChild(this.createRow('First task wasted at', overflowDateStr, config.COLOR_TEXT_SECONDARY));
         }
 
         return section;
