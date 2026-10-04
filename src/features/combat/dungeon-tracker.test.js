@@ -5461,7 +5461,7 @@ describe('recording failed and canceled runs', () => {
         test('a delayed "Party failed" still settles the old run when the new one is paused by then', async () => {
             await restartedAt('2026-08-04T10:04:57.000Z');
             // Start Now on another action pauses the new run before the old run's message lands
-            tracker.pauseRun();
+            tracker.currentRun.pausedAt = Date.now();
 
             tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:55.000Z'));
             await windowCloses();

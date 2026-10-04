@@ -539,7 +539,7 @@ class DungeonTracker {
     /**
      * Restore in-progress run from IndexedDB
      * @param {number} currentBattleId - Current battle ID from new_battle message
-     * @param {number|null} [wave] - Wave of that battle; a paused record resumes only on its own wave or later
+     * @param {number|null} [wave] - Wave of that battle; a record saved on a later wave is refused
      * @returns {Promise<boolean>} True if restored successfully
      */
     async restoreInProgressRun(currentBattleId, wave = null) {
@@ -584,7 +584,6 @@ class DungeonTracker {
             return false; // No saved state
         }
 
-        const pausedRecord = Number.isFinite(saved.pausedAt);
         if (!this.canRestoreRecord(saved, currentBattleId, { resumeWave: wave })) {
             await this.clearInProgressRun();
             return false;
@@ -595,10 +594,8 @@ class DungeonTracker {
         // one merely queued behind the fight in progress — restoring on that
         // resurrects a finished run, or attributes this fight to a dungeon the
         // character has not entered.
-        // A paused record comes back when the displacing action has just finished,
-        // which is exactly when that action can still be cached at the front.
         const actions = dataManager.getCurrentActions();
-        const running = pausedRecord ? battleCombatAction(actions) : runningCombatAction(actions);
+        const running = runningCombatAction(actions);
 
         if (!running || !this.isDungeonAction(running.actionHrid) || running.actionHrid !== saved.dungeonHrid) {
             await this.clearInProgressRun();
@@ -645,22 +642,11 @@ class DungeonTracker {
             startRecovered: saved.startRecovered === true,
             recoveredStartTime: saved.recoveredStartTime ?? null,
             partyNames: Array.isArray(saved.partyNames) ? [...saved.partyNames] : null,
-            pausedAt: pausedRecord ? saved.pausedAt : null,
+            pausedAt: null,
             pausedMs: Number.isFinite(saved.pausedMs) ? saved.pausedMs : 0,
             awaitingKeyCount: saved.awaitingKeyCount === true,
             actionId: saved.actionId ?? null,
         };
-
-        // Only a battle of this dungeon at or past the saved wave gets here, so the
-        // pause is over: everything since `pausedAt`, the reload included, is gap.
-        if (pausedRecord) {
-            this.resumeRun();
-            if (Number.isFinite(wave)) {
-                this.currentRun.currentWave = wave;
-                this.waveStartTime = new Date();
-            }
-            this.saveInProgressRun();
-        }
 
         this.notifyUpdate();
         return true;
@@ -1227,21 +1213,6 @@ class DungeonTracker {
         if (!this._completionKeyCountGrace) return;
         this.timerRegistry.cancelTimeout(this._completionKeyCountGrace.timerId);
         this._completionKeyCountGrace = null;
-    }
-
-    /**
-     * Pause the run while another action takes the front of the queue.
-     *
-     * Kept for existing in-memory records. New Start Now displacements end the
-     * run because the queued wave is stale and combat restarts at wave 1.
-     *
-     * @param {number} [now] - When the dungeon was displaced
-     */
-    pauseRun(now = Date.now()) {
-        if (!this.isTracking || !this.currentRun || this.isPaused()) return;
-        this.currentRun.pausedAt = now;
-        this.notifyUpdate();
-        this.saveInProgressRun();
     }
 
     /**

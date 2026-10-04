@@ -105,7 +105,8 @@ export function listDungeons() {
  * @param {number} tier - Difficulty tier
  * @param {number} partySize - How many split the payout
  * @param {number} dropQuantity - Combat drop quantity bonus, as a fraction
- * @returns {Map<string, number>} itemHrid → expected count per completion
+ * @returns {Map<string, number>|null} itemHrid → expected count per completion, or null when the dungeon's reward
+ *   table is missing from the client data
  */
 export function rewardsPerCompletion(dungeonHrid, tier, partySize, dropQuantity) {
     const actionDetailMap = dataManager.getInitClientData()?.actionDetailMap || {};
