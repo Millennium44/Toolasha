@@ -2213,6 +2213,17 @@ describe('the panel, end to end', () => {
 
         expect(game.recorder.downloads).toEqual([{ exportedAt: 'now', bundle: true }]);
     });
+    test('a failed download is shown on the export button so the user can retry', async () => {
+        game.recorder.downloadName = null;
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        const control = [...document.querySelectorAll('button')].find((button) =>
+            button.textContent.includes('Export')
+        );
+        control.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(control.textContent).toContain('Export failed');
+        expect(control.title).toContain('download');
+    });
 
     test('the per-player button opens the panel', () => {
         fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));

@@ -4881,8 +4881,16 @@ class GuildTrials {
             this._render(findTrialsRoot());
         });
         on('export', async () => {
-            const bundle = await buildTrialExport({ guildName: this.guildName });
-            downloadTrialExport(bundle);
+            try {
+                const bundle = await buildTrialExport({ guildName: this.guildName });
+                if (!downloadTrialExport(bundle)) throw new Error('The download could not be started.');
+            } catch (error) {
+                const control = block.querySelector('[data-action="export"]');
+                if (control) {
+                    control.textContent = 'Export failed — try again';
+                    control.title = error.message;
+                }
+            }
         });
         on('trace', async () => {
             await guildTrialTrace.exportTrace();

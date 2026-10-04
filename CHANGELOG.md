@@ -149,6 +149,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Imported skilling percentages now display cleanly while retaining their full precision in simulations and exports.
 - Post-rebalance trial recordings now calibrate the skilling success curve and boss scaling; estimates include proportional rewards from the unfinished tier and the guild's combat building buffs.
 - Trial exports now keep collected View Loadout gear and triggers, matching dated profiles, and building/buff context, so those simulator inputs can be saved before refreshing the game.
+- Opening more than 20 guild profiles keeps their simulator inputs for the current session; exports require a known roster and reject a character or guild switch during collection.
+- A failed trial export now says so on its button and offers a retry.
 
 ### Labyrinth dates and scroll names
 

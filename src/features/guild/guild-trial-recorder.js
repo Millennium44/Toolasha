@@ -46,7 +46,12 @@ import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildTrialTrace from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
-import { captureTrialSimulationInputs } from './guild-trial-simulation-inputs.js';
+import {
+    captureTrialSimulationInputs,
+    startTrialSimulationCapture,
+    stopTrialSimulationCapture,
+    clearTrialSimulationProfiles,
+} from './guild-trial-simulation-inputs.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -256,6 +261,7 @@ class GuildTrialRecorder {
         this.session = null;
         this.guildName = null;
         this.characterId = null;
+        this.exportScopeVersion = 0;
         /** Last moment anything said a trial was happening */
         this.lastActivityAt = 0;
         /** Where the guild panel says the cycle is; null until one has been read */
@@ -291,10 +297,13 @@ class GuildTrialRecorder {
      * @param {string|null} guildName - The key sessions are stored under
      */
     initialize(guildName = null) {
+        if (this.guildName !== guildName || this.characterId !== (dataManager.getCurrentCharacterId?.() ?? null))
+            this.exportScopeVersion++;
         this.guildName = guildName;
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         if (this.initialized) return;
         this.initialized = true;
+        startTrialSimulationCapture();
 
         this.watcherId = setInterval(() => this._tick(), SNAPSHOT_MS);
         this.timers.registerInterval(this.watcherId, 'guildTrialRecorder.tick');
@@ -305,6 +314,8 @@ class GuildTrialRecorder {
     }
 
     cleanup() {
+        this.exportScopeVersion++;
+        stopTrialSimulationCapture();
         this.timers.clearAll();
         this.watcherId = null;
         this.initialized = false;
@@ -323,6 +334,7 @@ class GuildTrialRecorder {
      */
     setGuildName(guildName) {
         const next = guildName || null;
+        if (this.guildName !== next) this.exportScopeVersion++;
         if (this.guildName && next && this.guildName !== next) this.forget();
         this.guildName = next;
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
@@ -344,6 +356,8 @@ class GuildTrialRecorder {
      * ledger at all.
      */
     forget() {
+        this.exportScopeVersion++;
+        clearTrialSimulationProfiles();
         if (this.recording) this.stop('character switched');
         // The damage module is reset right after this; any totals arriving
         // later belong to the next character's trial
@@ -1134,14 +1148,21 @@ const guildTrialRecorder = new GuildTrialRecorder();
  */
 export async function buildTrialExport({ guildName = null } = {}) {
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    const scopeVersion = guildTrialRecorder.exportScopeVersion;
+    const roster = structuredClone(guildXPTracker.getMemberList?.() || []);
+    if (guildName && guildTrialRecorder.guildName && guildName !== guildTrialRecorder.guildName)
+        throw new Error('Guild or character changed during export. Export again on the current guild.');
     const record = await loadTrialRecord(guildName, Date.now(), characterId);
     const loadouts = characterId ? await loadLoadouts(characterId) : null;
     const trialDamage = guildTrialDamage.breakdown?.() ?? null;
     const session = await guildTrialRecorder.loadSession();
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
-    const simulationInputs = await captureTrialSimulationInputs(characterId, guildXPTracker.getMemberList?.() || []);
-    if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId) {
-        throw new Error('Character changed during export. Export again on the current character.');
+    const simulationInputs = await captureTrialSimulationInputs(characterId, roster);
+    if (
+        (dataManager.getCurrentCharacterId?.() ?? null) !== characterId ||
+        guildTrialRecorder.exportScopeVersion !== scopeVersion
+    ) {
+        throw new Error('Guild or character changed during export. Export again on the current guild.');
     }
 
     return {
@@ -1193,9 +1214,8 @@ export async function buildTrialExport({ guildName = null } = {}) {
 /**
  * Whether a bundle has nothing in it worth keeping.
  *
- * `buildTrialExport` never refuses: it always returns a well-formed bundle, and
- * a week with nothing in it comes back as a fresh empty record and a null
- * session rather than as an error. That is right for the file — a reader can
+ * An empty week returns a well-formed bundle with a fresh empty record and a null
+ * session; a guild/character switch during the read requires a retry. A reader can
  * tell "we recorded nothing" from a bundle and cannot tell it from a missing
  * one — but it means a caller wanting to *say* whether there was anything has
  * to look. Four sources, because a week can have any one of them without the

@@ -1,5 +1,15 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
-const game = vi.hoisted(() => ({ owner: '1', entries: [], profileRead: vi.fn(), buildings: {} }));
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+const game = vi.hoisted(() => ({ owner: '1', entries: [], profileRead: vi.fn(), buildings: {}, ws: {} }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => {
+            game.ws[type] = handler;
+        },
+        off: (type) => {
+            delete game.ws[type];
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.owner,
@@ -17,14 +27,57 @@ vi.mock('../../utils/view-loadout.js', () => ({
     getLoadouts: () => game.entries,
     VIEW_LOADOUT_CONTEXT: { GuildTrial: 'guild_trial' },
 }));
-import { captureTrialSimulationInputs } from './guild-trial-simulation-inputs.js';
+import {
+    captureTrialSimulationInputs,
+    startTrialSimulationCapture,
+    stopTrialSimulationCapture,
+} from './guild-trial-simulation-inputs.js';
 beforeEach(() => {
     game.owner = '1';
     game.entries = [];
     game.buildings = {};
     game.profileRead.mockReset();
+    game.ws = {};
 });
+afterEach(() => stopTrialSimulationCapture?.());
 describe('trial simulation export inputs', () => {
+    test('an unavailable roster cannot export captures from an earlier guild', async () => {
+        game.entries = [{ context: 'guild_trial', ownerCharacterId: '1', characterId: '2', name: 'Former guildmate' }];
+        game.profileRead.mockResolvedValue([]);
+        expect((await captureTrialSimulationInputs('1', [])).viewLoadouts).toEqual([]);
+    });
+    test('keeps opened profiles for a full guild after the general cache evicts its earliest members', async () => {
+        startTrialSimulationCapture?.();
+        const roster = Array.from({ length: 21 }, (_, i) => ({ characterID: i + 10, name: `Member ${i + 1}` }));
+        const profiles = roster.map((member) => ({
+            characterID: member.characterID,
+            characterName: member.name,
+            timestamp: Date.now(),
+            profile: {
+                sharableCharacter: { id: member.characterID, name: member.name },
+                characterSkills: [{ characterID: member.characterID, skillHrid: '/skills/attack', level: 100 }],
+                houseRooms: {},
+            },
+        }));
+        game.entries = roster.map((member) => ({
+            context: 'guild_trial',
+            ownerCharacterId: '1',
+            characterId: String(member.characterID),
+            name: member.name,
+            kind: 'combat',
+            hasLoadout: true,
+            loadout: { wearableItemMap: {}, equippedAbilities: [], abilityCombatTriggersMap: {} },
+        }));
+        for (const profile of profiles) game.ws.profile_shared?.({ type: 'profile_shared', profile: profile.profile });
+        game.profileRead.mockResolvedValue(profiles.slice(1));
+        const result = await captureTrialSimulationInputs('1', roster);
+        expect(result.profiles).toHaveLength(21);
+        expect(
+            result.profiles.find((profile) => Number(profile.characterID) === 10).profile.characterSkills[0].level
+        ).toBe(100);
+        stopTrialSimulationCapture?.();
+        expect(game.ws.profile_shared).toBeUndefined();
+    });
     test('exports only this character’s current guild captures with matching dated profiles and building context', async () => {
         const entry = {
             context: 'guild_trial',

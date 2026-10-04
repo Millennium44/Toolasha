@@ -28,6 +28,7 @@ const game = vi.hoisted(() => ({
     /** Whether this is the test server, where a week runs several cycles */
     testServer: false,
     viewLoadouts: [],
+    profileRead: null,
 }));
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
@@ -51,7 +52,8 @@ vi.mock('../../core/storage.js', () => ({
             game.store[key] = value;
             return true;
         },
-        getJSON: async (key, _store, fallback) => game.store[key] ?? fallback,
+        getJSON: async (key, _store, fallback) =>
+            game.profileRead ? game.profileRead() : (game.store[key] ?? fallback),
     },
 }));
 vi.mock('./guild-trial-damage.js', () => ({
@@ -133,6 +135,7 @@ test('trial export preserves the saved trial gear and triggers captured through 
         },
     };
     game.viewLoadouts = [capture, { ...capture, context: 'party' }];
+    game.members = [{ characterID: '2', name: 'Ada' }];
     try {
         const bundle = await buildTrialExport({ guildName: 'Milky Way' });
         expect(bundle.simulationInputs.viewLoadouts).toEqual([capture]);
@@ -141,6 +144,30 @@ test('trial export preserves the saved trial gear and triggers captured through 
         expect(bundle.simulationInputs.viewLoadouts[0].loadout.equippedAbilities[0].level).toBe(50);
     } finally {
         game.viewLoadouts = [];
+        game.members = [];
+    }
+});
+test('export rejects a same-character guild switch during a delayed profile read', async () => {
+    guildTrialRecorder.setGuildName('Milky Way');
+    let markStarted, finish;
+    const started = new Promise((resolve) => {
+        markStarted = resolve;
+    });
+    const pending = new Promise((resolve) => {
+        finish = resolve;
+    });
+    game.profileRead = () => {
+        markStarted();
+        return pending;
+    };
+    try {
+        const exporting = buildTrialExport({ guildName: 'Milky Way' });
+        await started;
+        guildTrialRecorder.setGuildName('Other guild');
+        finish([]);
+        await expect(exporting).rejects.toThrow('Guild or character changed');
+    } finally {
+        game.profileRead = null;
     }
 });
 
