@@ -19,6 +19,7 @@ import {
     protectFromLevels,
     NO_PROTECTION,
     MIN_PROTECT_FROM,
+    spareStock,
 } from './enhancement-protect-sweep.js';
 
 beforeAll(() => {
@@ -274,5 +275,140 @@ describe('cheapestProtectPlan', () => {
         const bare = plan({ protectionOptions: [] });
         expect(bare.protectFrom).toBe(NO_PROTECTION);
         expect(bare.cost).toBeGreaterThan(plan().cost);
+    });
+});
+
+describe('protection from stock', () => {
+    const prices = {
+        '/items/sword': 20_000,
+        '/items/mirror_of_protection': 8_000,
+        '/items/sword_protector': 3_000,
+        '/items/other_cape': 6_000,
+    };
+    const sells = {
+        '/items/sword': 18_000,
+        '/items/mirror_of_protection': 7_000,
+        '/items/sword_protector': 2_500,
+        '/items/other_cape': 5_000,
+    };
+    const priceOf = (hrid) => prices[hrid] || 0;
+    const sellPriceOf = (hrid) => sells[hrid] || 0;
+    const itemDetails = { protectionItemHrids: ['/items/sword_protector', '/items/other_cape'] };
+    const choose = (holdings, reserve) =>
+        chooseProtectionOptions({
+            itemHrid: '/items/sword',
+            itemDetails,
+            selectedHrid: '/items/mirror_of_protection',
+            priceOf,
+            holdingsOf: (hrid) => holdings[hrid] || 0,
+            reserve,
+            sellPriceOf,
+        }).options;
+    const cape = { itemHrid: '/items/other_cape', name: 'Cape', price: 6_000, selected: false };
+
+    test('spare stock is what is held above the reserve, never negative', () => {
+        expect(spareStock(3, 2)).toBe(1);
+        expect(spareStock(1, 2)).toBe(0);
+        expect(spareStock(3, 0)).toBe(3);
+        expect(spareStock(undefined, 2)).toBe(0);
+    });
+
+    test('every held candidate with spare copies gets a column; the slot and cheapest keep theirs', () => {
+        const options = choose({ '/items/other_cape': 3, '/items/sword_protector': 1 }, 2);
+        expect(options.map((option) => [option.itemHrid, option.role, option.stock])).toEqual([
+            ['/items/mirror_of_protection', 'slot', 0],
+            ['/items/sword_protector', 'cheapest', 0],
+            ['/items/other_cape', 'held', 1],
+        ]);
+        // Spare copies are valued at what they would sell for
+        expect(options[2].stockPrice).toBe(5_000);
+        expect(options[2].held).toBe(3);
+        expect(options[2].reserve).toBe(2);
+    });
+
+    test('reserve 0 spends every copy; reserve 2 keeps two back', () => {
+        const all = choose({ '/items/other_cape': 3 }, 0).find((o) => o.itemHrid === '/items/other_cape');
+        const kept = choose({ '/items/other_cape': 3 }, 2).find((o) => o.itemHrid === '/items/other_cape');
+        expect(all.stock).toBe(3);
+        expect(kept.stock).toBe(1);
+        expect(choose({ '/items/other_cape': 2 }, 2).some((o) => o.itemHrid === '/items/other_cape')).toBe(false);
+    });
+
+    test('no bid falls back to the buy price; a bid above the ask is capped at it', () => {
+        const base = { itemHrid: '/items/sword', itemDetails, priceOf, holdingsOf: () => 5, reserve: 2 };
+        const noBid = chooseProtectionOptions({ ...base, sellPriceOf: () => 0 }).options;
+        expect(noBid.length).toBeGreaterThan(1);
+        expect(noBid.every((o) => o.stockPrice === o.price && o.stock === 3)).toBe(true);
+        const inverted = chooseProtectionOptions({ ...base, sellPriceOf: (hrid) => priceOf(hrid) * 2 }).options;
+        expect(inverted.every((o) => o.stockPrice === o.price)).toBe(true);
+    });
+
+    test('held 3, keep 2: one protection from stock at the sell price, the rest bought at the ask', () => {
+        const plain = sweep({ protectionOptions: [cape] });
+        const stocked = sweep({ protectionOptions: [{ ...cape, held: 3, reserve: 2, stock: 1, stockPrice: 5_000 }] });
+        const index = plain.rows.findIndex((row) => row.protections > 1);
+        expect(index).toBeGreaterThan(0);
+        const before = plain.rows[index];
+        const after = stocked.rows[index];
+        expect(after.protections).toBe(before.protections);
+        expect(after.protectionsFromStock).toBe(1);
+        expect(after.protectionsToBuy).toBeCloseTo(before.protections - 1, 10);
+        // One copy that would have cost the ask now costs what it would have sold for
+        expect(after.expectedCost).toBeCloseTo(before.expectedCost - (6_000 - 5_000), 6);
+        // Never more from stock than the run expects to use
+        for (const row of stocked.rows) {
+            expect(row.protectionsFromStock).toBeLessThanOrEqual(row.protections);
+            expect(row.protectionsFromStock + row.protectionsToBuy).toBeCloseTo(row.protections, 10);
+        }
+    });
+
+    test('reserve 0 versus 2 on the same bag: more stock, cheaper rows', () => {
+        const keep0 = sweep({ protectionOptions: [{ ...cape, held: 3, reserve: 0, stock: 3, stockPrice: 5_000 }] });
+        const keep2 = sweep({ protectionOptions: [{ ...cape, held: 3, reserve: 2, stock: 1, stockPrice: 5_000 }] });
+        const index = keep0.rows.findIndex((row) => row.protections > 3);
+        expect(index).toBeGreaterThan(0);
+        expect(keep0.rows[index].protectionsFromStock).toBe(3);
+        expect(keep2.rows[index].protectionsFromStock).toBe(1);
+        expect(keep2.rows[index].expectedCost - keep0.rows[index].expectedCost).toBeCloseTo(2 * 1_000, 6);
+    });
+
+    test('no spare stock leaves every row exactly as it was', () => {
+        const plain = sweep({ protectionOptions: [cape] });
+        const empty = sweep({ protectionOptions: [{ ...cape, held: 2, reserve: 2, stock: 0, stockPrice: 0 }] });
+        const pick = ({ expectedCost, costStdDev, p10, p90, protections, goldPerXp }) => ({
+            expectedCost,
+            costStdDev,
+            p10,
+            p90,
+            protections,
+            goldPerXp,
+        });
+        expect(empty.rows.map(pick)).toEqual(plain.rows.map(pick));
+        expect(empty.cheapestIndex).toBe(plain.cheapestIndex);
+        expect(empty.rows.every((row) => row.protectionsFromStock === 0)).toBe(true);
+    });
+
+    test('the memo misses when holdings or the reserve change', () => {
+        const option = (held, reserve) => ({
+            ...cape,
+            held,
+            reserve,
+            stock: spareStock(held, reserve),
+            stockPrice: 5_000,
+        });
+        const args = (held, reserve) => ({
+            chain,
+            targetLevel: 6,
+            materialCostPerAttempt: 100,
+            protectionOptions: [option(held, reserve)],
+            perActionTime: 10,
+        });
+        const first = sweepProtectFromMemo(args(3, 2));
+        expect(sweepProtectFromMemo(args(3, 2))).toBe(first);
+        const bought = sweepProtectFromMemo(args(4, 2));
+        expect(bought).not.toBe(first);
+        // Protect from +2 to +6 spends more than two protections, so the extra copy shows
+        expect(bought.rows[1].protectionsFromStock).toBeGreaterThan(first.rows[1].protectionsFromStock);
+        expect(sweepProtectFromMemo(args(3, 0))).not.toBe(first);
     });
 });

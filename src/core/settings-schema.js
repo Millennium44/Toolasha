@@ -1056,6 +1056,23 @@ export const settingsGroups = {
                 default: false,
                 help: 'When enabled, automatically fills the Protect From Level input with the optimal (cheapest) value whenever a protection item is placed in the slot.',
             },
+            enhanceSim_protectFromStock: {
+                id: 'enhanceSim_protectFromStock',
+                label: 'Enhancement: Protect-from sweep spends protection items you hold',
+                type: 'checkbox',
+                default: false,
+                help: 'When enabled, the protect-from sweep prices every protection item you hold spare copies of: those copies are used first, valued at what they would sell for, and only the rest are bought.',
+            },
+            enhanceSim_protectStockReserve: {
+                id: 'enhanceSim_protectStockReserve',
+                label: 'Enhancement: Keep this many of each protection item',
+                type: 'number',
+                default: 2,
+                min: 0,
+                max: 100000,
+                requires: 'enhanceSim_protectFromStock',
+                help: 'Copies of each protection item the protect-from sweep leaves in your bag. Only what you hold above this is counted as spare.',
+            },
             enhancementItemPins: {
                 id: 'enhancementItemPins',
                 label: 'Enhancing panel: Pin items in the item picker',

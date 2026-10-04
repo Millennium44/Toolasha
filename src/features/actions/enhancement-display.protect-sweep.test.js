@@ -13,6 +13,10 @@ import * as mathjs from 'mathjs';
 
 const state = vi.hoisted(() => ({
     settings: { enhanceSim: true, enhanceSim_autoDetect: false },
+    // Rows the way `characterItems` carries them: one per stack, with its location and level
+    inventory: [],
+    // What a copy would sell for (the profit sell side); the buy side reads `prices`
+    sellPrices: {},
     prices: {
         '/items/cheese': 500,
         '/items/mirror_of_protection': 20_000,
@@ -49,6 +53,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: () => ({ baseTimeCost: 12e9 }),
         getCurrentActions: () => [],
         getPersonalBuffFlatBoost: () => 0,
+        getInventory: () => [...state.inventory],
     },
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({
@@ -68,7 +73,10 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { getPrice: (hrid) => ({ ask: state.prices[hrid] || -1, bid: -1 }), on: () => {} },
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
-    resolveItemPrice: (hrid) => ({ price: state.prices[hrid] || 0, custom: false, missing: !state.prices[hrid] }),
+    resolveItemPrice: (hrid, options = {}) => {
+        const table = options.side === 'sell' ? state.sellPrices : state.prices;
+        return { price: table[hrid] || 0, custom: false, missing: !table[hrid] };
+    },
 }));
 vi.mock('../../utils/tester-shop.js', () => ({
     testerShopEnabled: () => false,
@@ -85,14 +93,23 @@ beforeAll(() => {
     globalThis.math = mathjs;
 });
 
+const BASE_PRICES = { ...state.prices };
+
 beforeEach(() => {
     clearProtectSweepMemo();
     document.body.innerHTML = '';
+    state.settings = { enhanceSim: true, enhanceSim_autoDetect: false };
+    state.inventory = [];
+    state.sellPrices = {};
+    state.prices = { ...BASE_PRICES };
 });
 
-function buildPanel({ target = 5, protectFrom = 3, protection = 'mirror_of_protection' } = {}) {
+function buildPanel({ target = 5, protectFrom = 3, protection = 'mirror_of_protection', itemName = null } = {}) {
     const panel = document.createElement('div');
     panel.innerHTML =
+        (itemName
+            ? `<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">${itemName}</div></div>`
+            : '') +
         `<div><span>Target Level</span><input type="number" value="${target}"></div>` +
         `<div><span>Protect From Level</span><input type="number" value="${protectFrom}"></div>` +
         `<div class="protectionItemInputContainer">${
@@ -185,5 +202,175 @@ describe('protect-from sweep in the enhancing panel', () => {
 
     test('protectSweepHTML returns nothing without an item', () => {
         expect(protectSweepHTML({ itemDetails: null, targetLevel: 5 })).toBe('');
+    });
+});
+
+/** One `characterItems` row, the shape the game sends */
+let nextId = 1;
+function stack(itemHrid, count, { level = 0, location = '/item_locations/inventory' } = {}) {
+    const id = nextId++;
+    return {
+        id,
+        characterID: 1234,
+        itemLocationHrid: location,
+        itemHrid,
+        enhancementLevel: level,
+        count,
+        offlineCount: 0,
+        hash: `1234::${location}::${itemHrid}::${level}`,
+        createdAt: '2026-09-01T00:00:00Z',
+        updatedAt: '2026-09-01T00:00:00Z',
+    };
+}
+
+describe('protect-from sweep spending held protection', () => {
+    const SWORD = '/items/cheese_sword';
+    const PROTECTOR = '/items/cheese_sword_protector';
+
+    const stockOn = (reserve = 2) => {
+        state.settings.enhanceSim_protectFromStock = true;
+        state.settings.enhanceSim_protectStockReserve = reserve;
+    };
+    const render = async (panelOptions) => {
+        document.body.innerHTML = '';
+        const panel = buildPanel(panelOptions);
+        await displayEnhancementStats(panel, SWORD);
+        return panel.querySelector('#mwi-enhancement-stats');
+    };
+    const groupHeader = (stats, name) =>
+        Array.from(stats.querySelectorAll('#mwi-protsweep-table td[colspan]')).find((td) =>
+            td.textContent.startsWith(name)
+        );
+    const rowsFor = (stats, hrid) =>
+        Array.from(stats.querySelectorAll('.mwi-protsweep-row')).filter((row) => row.dataset.item === hrid);
+
+    test('held 3 with keep 2: one from stock, the rest bought, and held items get their own column', async () => {
+        stockOn(2);
+        state.sellPrices = { [SWORD]: 45_000, [PROTECTOR]: 3_000 };
+        state.inventory = [
+            // Four at +0 in the bag, one of them the copy on the bench
+            stack(SWORD, 4),
+            // An equipped copy and an enhanced one are not protection stock
+            stack(SWORD, 1, { location: '/item_locations/main_hand' }),
+            stack(SWORD, 1, { level: 2 }),
+            stack(PROTECTOR, 3),
+        ];
+        const stats = await render();
+        expect(stats.textContent).not.toContain('failed');
+
+        // The cheapest alternative draws on its one spare copy
+        const protectorHeader = groupHeader(stats, 'Cheese Sword Protector');
+        expect(protectorHeader.textContent).toContain('cheapest alternative');
+        expect(protectorHeader.textContent).toContain('3 held, 1 spare @3.00K, then @4.00K');
+        const protectorRows = rowsFor(stats, PROTECTOR);
+        const split = protectorRows.find((row) => row.querySelector('.mwi-protsweep-stock'));
+        expect(split.querySelector('.mwi-protsweep-stock').textContent).toMatch(
+            /^1\.00 from stock \+ \d[\d,]*\.\d\d to buy$/
+        );
+
+        // The item itself is held beyond the reserve once the bench copy is set aside: 4 − 1 = 3
+        const swordHeader = groupHeader(stats, 'Cheese Sword (');
+        expect(swordHeader.textContent).toContain('(held, 3 held, 1 spare @45.00K, then @50.00K)');
+        expect(rowsFor(stats, SWORD).map((row) => row.dataset.protectFrom)).toEqual(['2', '3', '4', '5']);
+        expect(stats.textContent).toContain('beyond 2 of each are used first');
+    });
+
+    test('an enhanced copy on the bench is not one of the +0 spares', async () => {
+        stockOn(2);
+        state.sellPrices = { [SWORD]: 45_000 };
+        state.inventory = [stack(SWORD, 4), stack(SWORD, 1, { level: 3 })];
+        const stats = await render({ itemName: 'Cheese Sword +3' });
+        expect(groupHeader(stats, 'Cheese Sword (').textContent).toContain('4 held, 2 spare');
+    });
+
+    test('reserve 0 spends every spare copy', async () => {
+        stockOn(0);
+        state.sellPrices = { [PROTECTOR]: 3_000 };
+        state.inventory = [stack(PROTECTOR, 3)];
+        const stats = await render();
+        expect(groupHeader(stats, 'Cheese Sword Protector').textContent).toContain('3 held, 3 spare');
+    });
+
+    test('no spare stock, or the setting off, leaves the table exactly as it was', async () => {
+        const baseline = (await render()).querySelector('#mwi-protsweep-table').innerHTML;
+
+        state.inventory = [stack(PROTECTOR, 2), stack(SWORD, 3)];
+        state.sellPrices = { [PROTECTOR]: 3_000, [SWORD]: 45_000 };
+        const off = (await render()).querySelector('#mwi-protsweep-table').innerHTML;
+        expect(off).toBe(baseline);
+
+        // On, but everything held is within the reserve (the bench copy takes the sword to 2)
+        stockOn(2);
+        clearProtectSweepMemo();
+        const within = await render();
+        expect(within.querySelector('#mwi-protsweep-table').innerHTML).toBe(baseline);
+        expect(within.querySelector('.mwi-protsweep-stock')).toBeNull();
+    });
+
+    test('the cheapest star weighs held stock with everything else', async () => {
+        stockOn(2);
+        // Copies that would fetch almost nothing are almost free to spend
+        state.sellPrices = { [SWORD]: 1 };
+        state.inventory = [stack(SWORD, 40)];
+        const stats = await render();
+        const starred = Array.from(stats.querySelectorAll('.mwi-protsweep-row')).filter((row) =>
+            row.textContent.includes('★')
+        );
+        expect(starred).toHaveLength(1);
+        expect(starred[0].dataset.item).toBe(SWORD);
+    });
+
+    test('a copy bought or sold redraws the rows rather than serving the remembered sweep', async () => {
+        stockOn(2);
+        state.sellPrices = { [PROTECTOR]: 3_000 };
+        state.inventory = [stack(PROTECTOR, 3)];
+        const before = await render();
+        expect(groupHeader(before, 'Cheese Sword Protector').textContent).toContain('1 spare');
+        // Protect from +2: the row that spends the most protections, so every spare copy counts
+        const beforeRow = rowsFor(before, PROTECTOR)[0];
+        expect(beforeRow.querySelector('.mwi-protsweep-stock').textContent).toMatch(/^1\.00 from stock/);
+        const beforeCost = beforeRow.children[1].textContent;
+
+        state.inventory = [stack(PROTECTOR, 6)];
+        const after = await render();
+        expect(groupHeader(after, 'Cheese Sword Protector').textContent).toContain('4 spare');
+        const afterRow = rowsFor(after, PROTECTOR)[0];
+        expect(afterRow.querySelector('.mwi-protsweep-stock').textContent).toMatch(/^4\.00 from stock/);
+        expect(afterRow.children[1].textContent).not.toBe(beforeCost);
+    });
+});
+
+describe("Philosopher's Mirror beside the protect-from sweep", () => {
+    test('the mirror route is summarized whatever the slot holds, and the costs table keeps its columns', async () => {
+        state.prices['/items/philosophers_mirror'] = 1;
+        const panel = buildPanel({ protection: 'mirror_of_protection' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+        const line = stats.querySelector('.mwi-protsweep-mirror');
+        expect(line).not.toBeNull();
+        expect(line.textContent).toMatch(/use mirrors starting at \+\d+ — saves [\d.,]+[KMB]? to \+20/);
+        // Visible with the sweep collapsed: it sits beside the toggle, not inside it
+        expect(stats.querySelector('#mwi-enh-protsweep').contains(line)).toBe(false);
+        // A non-mirror slot still draws today's costs table: no Mirror Cost column, no banner
+        expect(stats.textContent).not.toContain('Mirror Cost');
+        expect(stats.textContent).not.toContain("Philosopher's Mirror Strategy");
+    });
+
+    test('an unpriced mirror is no quote, not a saving', async () => {
+        const panel = buildPanel({ protection: 'mirror_of_protection' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        expect(panel.querySelector('.mwi-protsweep-mirror').textContent).toContain('no quote');
+    });
+
+    test('with the mirror in the slot the banner and column stay, and the line agrees with the banner', async () => {
+        state.prices['/items/philosophers_mirror'] = 1;
+        const panel = buildPanel({ protection: 'philosophers_mirror' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+        expect(stats.textContent).toContain('Mirror Cost');
+        expect(stats.textContent).toContain("Philosopher's Mirror Strategy");
+        const bannerStart = stats.textContent.match(/Use mirrors starting at \+(\d+)/)[1];
+        const lineStart = stats.querySelector('.mwi-protsweep-mirror').textContent.match(/starting at \+(\d+)/)[1];
+        expect(lineStart).toBe(bannerStart);
     });
 });
