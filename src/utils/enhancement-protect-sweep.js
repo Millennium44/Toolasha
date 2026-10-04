@@ -86,9 +86,137 @@ export function expectedRunXp(calc, { xpBaseLevel = 0, wisdomDecimal = 0 } = {})
 }
 
 /**
+ * How many copies of a protection item a player can spend on a run without dipping below the
+ * number they keep in reserve.
+ * @param {number} held - Copies held at +0 in the bag
+ * @param {number} reserve - Copies to keep untouched
+ * @returns {number} max(0, held − reserve), whole copies
+ */
+export function spareStock(held, reserve) {
+    const have = Math.max(0, Math.floor(Number(held) || 0));
+    const keep = Math.max(0, Math.floor(Number(reserve) || 0));
+    return Math.max(0, have - keep);
+}
+
+/**
+ * Invert a small square matrix (Gauss–Jordan with partial pivoting).
+ * @param {number[][]} matrix - n×n, not modified
+ * @returns {number[][]|null} The inverse, or null when singular
+ */
+function invertSmall(matrix) {
+    const n = matrix.length;
+    const a = matrix.map((row, i) => [...row, ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))]);
+    for (let col = 0; col < n; col++) {
+        let pivot = col;
+        for (let r = col + 1; r < n; r++) if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r;
+        if (!(Math.abs(a[pivot][col]) > 1e-15)) return null;
+        [a[col], a[pivot]] = [a[pivot], a[col]];
+        const scale = a[col][col];
+        for (let c = 0; c < 2 * n; c++) a[col][c] /= scale;
+        for (let r = 0; r < n; r++) {
+            if (r === col || a[r][col] === 0) continue;
+            const factor = a[r][col];
+            for (let c = 0; c < 2 * n; c++) a[r][c] -= factor * a[col][c];
+        }
+    }
+    return a.map((row) => row.slice(n));
+}
+
+/**
+ * How many protections a run is expected to draw from a stock of `stock` copies: E[min(stock, N)],
+ * N being the protections the run consumes.
+ *
+ * `protectionCount` is E[N], and min(stock, E[N]) is not the same thing: a level with a 50%
+ * success rate expects one failure, yet one held copy is spent in only half of runs. Since
+ * min(·) is concave the shortcut always overstates what stock covers, and so understates the
+ * bill whenever stock is cheaper than buying.
+ *
+ * Exactly, E[min(s, N)] = Σ_{k=1..s} P(N ≥ k). Let g_k(i) be the chance a run standing at +i
+ * consumes at least k more protections before reaching the target. g_0 = 1, and g_k solves the
+ * chain with the protected failures taken out as transitions and put back as the source term:
+ * g_k = (I − Q′)⁻¹ · b_k, b_k(i) = P(protected failure at i) · g_{k−1}(i − 1). Q′ is the transient
+ * block of the same chain `buildEnhancementMarkov` builds (Blessed Tea included), minus those
+ * failures. That makes g_k = Lᵏ·1 for one fixed matrix L, so the whole tail sums in closed form:
+ * with h = (I − L)⁻¹·1, E[N] = h(start) − 1 and Σ_{k>s} P(N ≥ k) = (L^{s+1}·h)(start). Two small
+ * inversions and log₂(s) squarings, exact for any stock.
+ *
+ * @param {Object} args - Inputs
+ * @param {number[]} args.successChances - Success chance per level 0..target−1, as decimals
+ * @param {number} args.targetLevel - Absorbing level
+ * @param {number} [args.startLevel=0] - Level the run starts from
+ * @param {number} args.protectFrom - Protect-from level (0 = none)
+ * @param {boolean} [args.blessedTea=false] - Whether Blessed Tea can double-jump
+ * @param {number} [args.guzzlingBonus=1] - Drink concentration multiplier
+ * @param {number} [args.blessedTeaBonus=0.01] - Blessed Tea double-jump chance as a decimal
+ * @param {number} args.stock - Copies on hand
+ * @returns {number|null} E[min(stock, N)], or null when the chain is not described well enough
+ *   to solve (the caller then falls back to min(stock, E[N]))
+ */
+export function expectedProtectionsFromStock({
+    successChances,
+    targetLevel,
+    startLevel = 0,
+    protectFrom,
+    blessedTea = false,
+    guzzlingBonus = 1,
+    blessedTeaBonus = 0.01,
+    stock,
+}) {
+    const s = Math.max(0, Math.floor(Number(stock) || 0));
+    if (s === 0 || !(protectFrom > 0)) return 0;
+    const T = Math.floor(Number(targetLevel) || 0);
+    if (!(T >= 1) || !Array.isArray(successChances) || successChances.length < T) return null;
+    const start = Math.max(0, Math.min(T - 1, Math.floor(Number(startLevel) || 0)));
+
+    const jump = blessedTea ? (Number(blessedTeaBonus) || 0) * (Number(guzzlingBonus) || 1) : 0;
+    const A = Array.from({ length: T }, (_, i) => Array.from({ length: T }, (__, j) => (i === j ? 1 : 0)));
+    const protectedFail = new Array(T).fill(0);
+    for (let i = 0; i < T; i++) {
+        const p = Math.min(1, Math.max(0, Number(successChances[i]) || 0));
+        const skip = p * jump;
+        // Landing on or past the target is absorbed, so those moves leave the transient block
+        if (i + 1 < T) A[i][i + 1] -= p - skip;
+        if (i + 2 < T) A[i][i + 2] -= skip;
+        if (i >= protectFrom) protectedFail[i] = 1 - p;
+        else A[i][0] -= 1 - p;
+    }
+    const inverse = invertSmall(A);
+    if (!inverse) return null;
+
+    // L maps g_{k−1} to g_k: L[i][j] = (I − Q′)⁻¹[i][j + 1] · P(protected failure at j + 1)
+    const L = inverse.map((row) => row.map((_, j) => (j + 1 < T ? row[j + 1] * protectedFail[j + 1] : 0)));
+    // h = Σ_{k≥0} Lᵏ·1 = (I − L)⁻¹·1, so h(start) = 1 + E[N]
+    const minusL = L.map((row, i) => row.map((value, j) => (i === j ? 1 : 0) - value));
+    const resolvent = invertSmall(minusL);
+    if (!resolvent) return null;
+    const h = resolvent.map((row) => row.reduce((sum, value) => sum + value, 0));
+    const meanUses = h[start] - 1;
+
+    // Σ_{k>s} P(N ≥ k) = (L^{s+1}·h)(start); square-and-multiply, since stock can run to thousands
+    const matVec = (m, v) => m.map((row) => row.reduce((sum, value, j) => sum + value * v[j], 0));
+    const matMul = (a, b) =>
+        a.map((row) => b[0].map((_, j) => row.reduce((sum, value, k) => sum + value * b[k][j], 0)));
+    let beyond = h;
+    let power = L;
+    for (let e = s + 1; e > 0; e = Math.floor(e / 2)) {
+        if (e % 2 === 1) beyond = matVec(power, beyond);
+        if (e > 1) power = matMul(power, power);
+    }
+    const fromStock = meanUses - beyond[start];
+    if (!Number.isFinite(fromStock)) return null;
+    return Math.max(0, Math.min(s, meanUses, fromStock));
+}
+
+/**
  * The protection items worth pricing for an item: what is in the slot, and the cheapest other
  * thing that would work. The Philosopher's Mirror is not among them — it guarantees the attempt
  * instead of softening the fall, so the protect-from chain says nothing about it.
+ *
+ * With `holdingsOf`, every candidate the player holds spare copies of (above `reserve`) is
+ * priced too, and each option carries what it can draw from the bag: `held`, `reserve`,
+ * `stock` (the spare copies), `stockPrice` (what one would sell for — the run spends that, not
+ * the ask) and `role` ('slot', 'cheapest' or 'held'). Without it the options are exactly what
+ * they always were.
  *
  * @param {Object} args - Inputs
  * @param {string} args.itemHrid - The item being enhanced (it protects itself)
@@ -96,35 +224,90 @@ export function expectedRunXp(calc, { xpBaseLevel = 0, wisdomDecimal = 0 } = {})
  * @param {string|null} [args.selectedHrid] - What the panel's protection slot holds
  * @param {function(string): number} args.priceOf - Buy price for an item hrid, 0 when unknown
  * @param {function(string): string} [args.nameOf] - Display name for an item hrid
- * @returns {{options: Array<{itemHrid: string, name: string, price: number, selected: boolean}>,
- *   selectedIsMirror: boolean}} At most two options, the selected one first. `selectedIsMirror`
- *   when the slot holds a Philosopher's Mirror, which the sweep cannot price
+ * @param {function(string): number} [args.holdingsOf] - Copies of an item held at +0 that could
+ *   be spent (the caller leaves out the copy on the bench); omit to ignore the bag
+ * @param {number} [args.reserve=0] - Copies of each protection item to keep
+ * @param {function(string): number} [args.sellPriceOf] - What one copy would sell for, 0 when
+ *   unknown; falls back to the buy price, and never exceeds it
+ * @returns {{options: Array<{itemHrid: string, name: string, price: number, selected: boolean,
+ *   role?: string, held?: number, reserve?: number, stock?: number, stockPrice?: number}>,
+ *   selectedIsMirror: boolean}} The selected one first, then the cheapest alternative, then any
+ *   other held candidate, cheapest stock first. `selectedIsMirror` when the slot holds a
+ *   Philosopher's Mirror, which the sweep cannot price
  */
-export function chooseProtectionOptions({ itemHrid, itemDetails, selectedHrid = null, priceOf, nameOf }) {
+export function chooseProtectionOptions({
+    itemHrid,
+    itemDetails,
+    selectedHrid = null,
+    priceOf,
+    nameOf,
+    holdingsOf,
+    reserve = 0,
+    sellPriceOf,
+}) {
     const name = (hrid) => (typeof nameOf === 'function' ? nameOf(hrid) : null) || hrid;
     const selectedIsMirror = selectedHrid === PHILOSOPHERS_MIRROR_HRID;
     const selected = selectedIsMirror ? null : selectedHrid || null;
+    const useStock = typeof holdingsOf === 'function';
+    const keep = Math.max(0, Math.floor(Number(reserve) || 0));
+
+    // What the bag can put toward an option. Only attached when the caller asked, so an option
+    // built without holdings is the same object it always was
+    const withStock = (option, role) => {
+        if (!useStock) return option;
+        const held = Math.max(0, Math.floor(Number(holdingsOf(option.itemHrid)) || 0));
+        const spare = spareStock(held, keep);
+        let stockPrice = 0;
+        if (spare > 0) {
+            const sell = typeof sellPriceOf === 'function' ? Number(sellPriceOf(option.itemHrid)) || 0 : 0;
+            // A copy spent is a copy not sold. With no bid, what buying one would cost is the
+            // stand-in; a bid above the ask is never what a copy is worth to keep
+            stockPrice = sell > 0 ? (option.price > 0 ? Math.min(sell, option.price) : sell) : option.price;
+        }
+        // Stock nothing can value is left in the bag rather than spent for free
+        return { ...option, role, held, reserve: keep, stock: stockPrice > 0 ? spare : 0, stockPrice };
+    };
 
     const candidates = [itemHrid, MIRROR_OF_PROTECTION_HRID, ...(itemDetails?.protectionItemHrids || [])];
     if (selected && !candidates.includes(selected)) candidates.push(selected);
 
     const options = [];
     if (selected) {
-        options.push({ itemHrid: selected, name: name(selected), price: priceOf(selected) || 0, selected: true });
+        options.push(
+            withStock(
+                { itemHrid: selected, name: name(selected), price: priceOf(selected) || 0, selected: true },
+                'slot'
+            )
+        );
     }
 
     let cheapest = null;
+    const priced = [];
     for (const hrid of new Set(candidates)) {
         if (!hrid || hrid === selected || hrid === PHILOSOPHERS_MIRROR_HRID) continue;
         const price = priceOf(hrid) || 0;
         if (!(price > 0)) continue;
-        if (!cheapest || price < cheapest.price)
-            cheapest = { itemHrid: hrid, name: name(hrid), price, selected: false };
+        const option = { itemHrid: hrid, name: name(hrid), price, selected: false };
+        priced.push(option);
+        if (!cheapest || price < cheapest.price) cheapest = option;
     }
     // The alternative earns its column when there is nothing selected, the selected item has
     // no price, or it is genuinely cheaper than what is in the slot
-    if (cheapest && (!selected || !(options[0].price > 0) || cheapest.price < options[0].price)) {
-        options.push(cheapest);
+    const showCheapest = Boolean(
+        cheapest && (!selected || !(options[0].price > 0) || cheapest.price < options[0].price)
+    );
+    if (showCheapest) options.push(withStock(cheapest, 'cheapest'));
+
+    // Every other candidate the player holds spare copies of earns a column of its own: the
+    // cheapest plan may well be the one that spends what is already in the bag. A candidate
+    // with no buy price stays out — its rows would buy the shortfall for nothing
+    if (useStock) {
+        const held = priced
+            .filter((option) => !(showCheapest && option === cheapest))
+            .map((option) => withStock(option, 'held'))
+            .filter((option) => option.stock > 0)
+            .sort((a, b) => a.stockPrice - b.stockPrice);
+        options.push(...held);
     }
     return { options, selectedIsMirror };
 }
@@ -149,7 +332,9 @@ export function chooseProtectionOptions({ itemHrid, itemDetails, selectedHrid = 
  *   "no protection" row first, then for each protection option every protect-from level from 2
  *   to the target. Each row: protectFrom, itemHrid (null for none), name, attempts,
  *   attemptsStdDev, protections, expectedCost, costStdDev, p10, p90, spreadApprox, xp,
- *   goldPerXp, time. `spreadApprox` marks the rows whose p10–p90 is only approximate.
+ *   goldPerXp, time, and the stock split protectionsFromStock (E[min(stock, N)]),
+ *   protectionsToBuy, stockPrice, stockSplitApprox. `spreadApprox` marks the rows whose p10–p90
+ *   is only approximate; `stockSplitApprox` the rows whose split fell back to min(stock, E[N]).
  *   The index fields point at the cheapest expected cost and the lowest gold per XP
  */
 export function sweepProtectFrom({
@@ -179,12 +364,50 @@ export function sweepProtectFrom({
             protectFrom,
         });
 
+    // E[min(stock, N)] per protect-from level and stock size; options sharing a stock share it
+    const fromStockCache = new Map();
+    const expectedFromStock = (calc, protectFrom, stock, protections) => {
+        const key = `${protectFrom}:${stock}`;
+        if (!fromStockCache.has(key)) {
+            const exact = expectedProtectionsFromStock({
+                successChances: Array.isArray(calc.successRates)
+                    ? calc.successRates.map((rate) => (Number(rate?.actualRate) || 0) / 100)
+                    : null,
+                targetLevel: target,
+                startLevel: start,
+                protectFrom,
+                blessedTea: Boolean(chain?.blessedTea),
+                guzzlingBonus: chain?.guzzlingBonus ?? 1,
+                blessedTeaBonus: chain?.blessedTeaBonus ?? 0.01,
+                stock,
+            });
+            fromStockCache.set(key, exact);
+        }
+        const exact = fromStockCache.get(key);
+        // No exact figure (a calculator result without per-level success rates): the mean-count
+        // shortcut, which overstates what stock covers, and the row says so
+        if (exact === null) return { value: Math.min(stock, protections), approx: true };
+        return { value: Math.min(protections, exact), approx: false };
+    };
+
     const buildRow = (calc, protectFrom, option) => {
         const protections = protectFrom > 0 ? calc.protectionCount || 0 : 0;
         const protectionPrice = option?.price || 0;
+        // Spare copies in the bag go first, at what they would have sold for; the rest are bought.
+        // The split is E[min(stock, N)] over the run's protection uses N — not min(stock, E[N]),
+        // which spends a held copy in every run that merely expects to need one
+        const stockPrice = option?.stockPrice > 0 ? option.stockPrice : 0;
+        const stock = stockPrice > 0 ? Math.max(0, Math.floor(option?.stock || 0)) : 0;
+        const split =
+            stock > 0 && protections > 0
+                ? expectedFromStock(calc, protectFrom, stock, protections)
+                : { value: 0, approx: false };
+        const protectionsFromStock = split.value;
+        const protectionsToBuy = protections - protectionsFromStock;
+        const protectionCost = protectionsFromStock * stockPrice + protectionsToBuy * protectionPrice;
         // Protection is consumed on protected failures, whose expected count scales with the
         // attempt count — so it folds into the per-attempt rate the cost distribution is built on
-        const protectionPerAttempt = calc.attempts > 0 ? (protections * protectionPrice) / calc.attempts : 0;
+        const protectionPerAttempt = calc.attempts > 0 ? protectionCost / calc.attempts : 0;
         const stats = costStats(calc, { costPerAttempt: materials + protectionPerAttempt, fixedCost: fixed });
         const percentiles = costPercentiles(stats, [0.1, 0.9]);
         const xp = expectedRunXp(calc, xpInputs);
@@ -198,6 +421,10 @@ export function sweepProtectFrom({
             attemptsStdDev: calc.attemptsStdDev || 0,
             protections,
             protectionPrice,
+            protectionsFromStock,
+            protectionsToBuy,
+            stockSplitApprox: split.approx,
+            stockPrice,
             expectedCost: stats.expected,
             costStdDev: stats.stdDev,
             p10: percentiles.p10,
@@ -306,7 +533,17 @@ const memo = new Map();
  */
 function memoKey(args) {
     const chain = args.chain || {};
-    const options = (args.protectionOptions || []).map((option) => [option.itemHrid, option.price, option.selected]);
+    // Holdings and the reserve are in it: a copy bought, sold or spent, or a changed keep-N,
+    // moves what the bag covers and so every protected row
+    const options = (args.protectionOptions || []).map((option) => [
+        option.itemHrid,
+        option.price,
+        option.selected,
+        option.held ?? null,
+        option.reserve ?? null,
+        option.stock ?? null,
+        option.stockPrice ?? null,
+    ]);
     return JSON.stringify([
         chain.enhancingLevel,
         chain.toolBonus,

@@ -19,10 +19,11 @@ import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
-import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { calculatePriceAfterTax, resolveItemPrice } from '../../utils/profit-helpers.js';
 import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
@@ -234,7 +235,9 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice) {
  * @param {number} protectFromLevel - Protection level from UI
  * @param {Array} enhancementCosts - Array of {itemHrid, count} for materials
  * @param {string|null} protectionItemHrid - Protection item HRID (cached, avoid repeated DOM queries)
- * @returns {string} HTML string
+ * @returns {{html: string, mirrorSummary: {priced: boolean, mirrorStartLevel: number|null,
+ *   totalSavings: number, isPhilosopherMirror: boolean}}} The table, and the Philosopher's
+ *   Mirror route against its Total Cost column whatever the slot holds
  */
 function generateCostsByLevelTable(
     panel,
@@ -269,20 +272,20 @@ function generateCostsByLevelTable(
         // Protection only applies when target level reaches the protection threshold
         const effectiveProtect = protectFromLevel >= 2 && level >= protectFromLevel ? protectFromLevel : 0;
 
-        const calc = calculateEnhancement({
+        const chainArgs = {
             enhancingLevel: params.enhancingLevel,
             houseLevel: params.houseLevel,
             toolBonus: params.toolBonus,
             speedBonus: params.speedBonus,
             itemLevel: itemLevel,
             targetLevel: level,
-            protectFrom: effectiveProtect,
             blessedTea: params.teas.blessed,
             guzzlingBonus: params.guzzlingBonus,
             // The real double-jump chance, read from item data by getEnhancingParams. Leaving
             // it out silently pinned the chain to the 1% stand-in the calculator defaults to.
             blessedTeaBonus: params.blessedTeaBonus,
-        });
+        };
+        const calc = calculateEnhancement({ ...chainArgs, protectFrom: effectiveProtect });
 
         // Calculate material cost breakdown
         let materialCost = 0;
@@ -342,6 +345,15 @@ function generateCostsByLevelTable(
 
         const totalCost = materialCost + protectionCost;
 
+        // What the mirror route is weighed against. With the slot empty a protect-from setting
+        // protects nothing, so the protected chain's attempts at no protection cost are a route
+        // that does not exist; the unprotected chain is the real alternative
+        let mirrorFootingCost = totalCost;
+        if (effectiveProtect && !protectionItemHrid) {
+            const bare = calculateEnhancement({ ...chainArgs, protectFrom: 0 });
+            mirrorFootingCost = calc.attempts > 0 ? (materialCost / calc.attempts) * bare.attempts : 0;
+        }
+
         // Override time with buff-map-based per-action time (authoritative source)
         const totalTime = perActionTime * calc.attempts;
 
@@ -366,38 +378,46 @@ function generateCostsByLevelTable(
             time: totalTime,
             xpPerHour,
             cost: totalCost,
+            mirrorFootingCost,
             breakdown: materialBreakdown,
         });
     }
 
-    // Calculate Philosopher's Mirror costs (if mirror is equipped)
+    // Philosopher's Mirror route. Computed whatever the slot holds, so the protect-from sweep can
+    // set it beside the protect-from plans; the column and banner below still draw only when the
+    // mirror is in the slot
     const isPhilosopherMirror = protectionItemHrid === '/items/philosophers_mirror';
-    let mirrorStartLevel = null;
-    let totalSavings = 0;
-
+    // The book answers "no quote" with -1, which is not a price
+    const askOf = (hrid) => {
+        const ask = (ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0))?.ask;
+        return ask > 0 ? ask : 0;
+    };
+    const mirrorPrice = askOf('/items/philosophers_mirror');
+    const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
+    const column = mirrorCostColumn(
+        costData.map((data) => data.mirrorFootingCost),
+        basePrice,
+        mirrorPrice
+    );
     if (isPhilosopherMirror) {
-        // The book answers "no quote" with -1, which is not a price
-        const askOf = (hrid) => {
-            const ask = (ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0))?.ask;
-            return ask > 0 ? ask : 0;
-        };
-        const mirrorPrice = askOf('/items/philosophers_mirror');
-        const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
-
-        const column = mirrorCostColumn(
-            costData.map((data) => data.cost),
-            basePrice,
-            mirrorPrice
-        );
         column.levels.forEach((entry, index) => {
             if (entry) {
                 costData[index].mirrorCost = entry.mirrorCost;
                 costData[index].isMirrorCheaper = entry.isMirrorCheaper;
             }
         });
-        mirrorStartLevel = column.mirrorStartLevel;
-        totalSavings = column.totalSavings;
     }
+    const mirrorStartLevel = column.mirrorStartLevel;
+    const totalSavings = column.totalSavings;
+    const mirrorSummary = {
+        priced: basePrice > 0 && mirrorPrice > 0,
+        // Not always one run from the start level: a protect-from threshold or a success-rate
+        // bracket can make the mirror dearer at a level between two where it is cheaper
+        cheaperLevels: column.levels.flatMap((entry, index) => (entry?.isMirrorCheaper ? [index + 1] : [])),
+        mirrorStartLevel,
+        totalSavings,
+        isPhilosopherMirror,
+    };
 
     // Add Philosopher's Mirror summary banner (if applicable)
     if (isPhilosopherMirror && mirrorStartLevel !== null) {
@@ -531,7 +551,7 @@ function generateCostsByLevelTable(
     lines.push('</div>'); // Close scrollable container
     lines.push('</div>'); // Close section
 
-    return lines.join('');
+    return { html: lines.join(''), mirrorSummary };
 }
 
 /**
@@ -590,14 +610,43 @@ export function isRepeatUnlimitedFromUI(panel) {
 }
 
 /**
+ * The level of the copy the panel shows, off its level badge or its name ("… +5").
+ * @param {HTMLElement} panel - Enhancing panel element
+ * @returns {number|null} The level, or null when the panel shows no item to read
+ */
+function panelItemLevel(panel) {
+    const item = panel.querySelector('.SkillActionDetail_item__2vEAz');
+    if (!item) return null;
+    const badge = item.querySelector('[class*="Item_enhancementLevel"]');
+    const badgeLevel = badge?.textContent.trim().match(/^\+(\d+)$/);
+    if (badgeLevel) return parseInt(badgeLevel[1], 10);
+    const name = item.querySelector('.Item_name__2C42x');
+    const nameLevel = name?.textContent.trim().match(/\+(\d+)$/);
+    if (nameLevel) return parseInt(nameLevel[1], 10);
+    // A +0 copy draws an empty badge, or a name with no level
+    return badge || name ? 0 : null;
+}
+
+/**
  * The enhancement level the item on the panel is currently at: the queued/running enhance
  * action's own hash when there is one (authoritative — several items can be queued, and this
  * is the one actually running, via `runningAction`), falling back to the level parsed off the
  * item name shown in the panel itself (e.g. "Dairyhand's Top +5") before anything is queued.
+ *
+ * With `itemHrid`, the running action counts only when it is enhancing that item: a player can
+ * be enhancing one item while the Enhance tab prepares another, and the running item's level
+ * says nothing about the one on the panel.
  * @param {HTMLElement} panel - Enhancing panel element
+ * @param {string|null} [itemHrid] - The item the panel shows; omit to take the running action as is
  * @returns {number|null} Current enhancement level, or null when nothing says otherwise
  */
-export function getCurrentEnhancementLevel(panel) {
+export function getCurrentEnhancementLevel(panel, itemHrid = null) {
+    // The panel's own copy first: the running enhance can be on another copy of the same item
+    // (a +7 running while a second +0 is prepared), and its hash cannot say which copy is shown
+    if (itemHrid) {
+        const shown = panelItemLevel(panel);
+        if (shown !== null) return shown;
+    }
     let currentLevel = null;
 
     const currentActions = dataManager.getCurrentActions();
@@ -605,7 +654,8 @@ export function getCurrentEnhancementLevel(panel) {
     // enhance entry in array order can be a queued one, whose item this
     // would then read
     const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
-    if (enhancingAction?.primaryItemHash) {
+    const runningItem = enhancingAction?.primaryItemHash?.split('::').find((part) => part.startsWith('/items/'));
+    if (enhancingAction?.primaryItemHash && (!itemHrid || runningItem === itemHrid)) {
         const parts = enhancingAction.primaryItemHash.split('::');
         const lastPart = parts[parts.length - 1];
         if (lastPart && !lastPart.startsWith('/')) {
@@ -781,12 +831,85 @@ function sweepBuyPrice(itemHrid) {
 }
 
 /**
+ * What one held copy would sell for, the sell side of the same profit pricing the buy side
+ * above uses, after the market tax the sale would pay — a protection item spent from the bag
+ * is one not sold, and what is given up is the proceeds, not the quote.
+ * @param {string} itemHrid - Item hrid
+ * @returns {number} Price in coins, 0 when nothing knows one
+ */
+function sweepSellPrice(itemHrid) {
+    try {
+        const quote = resolveItemPrice(itemHrid, { context: 'profit', side: 'sell' })?.price || 0;
+        return calculatePriceAfterTax(quote);
+    } catch {
+        return 0;
+    }
+}
+
+/** The stock path's switch and its keep-N, read together so the sweep and its memo agree */
+function protectStockSettings() {
+    const enabled = config.getSetting('enhanceSim_protectFromStock') === true;
+    const reserve = Math.max(0, Math.floor(Number(config.getSettingValue('enhanceSim_protectStockReserve', 2)) || 0));
+    return { enabled, reserve };
+}
+
+/**
+ * Levels as runs: [5, 7, 8, 9] → "+5, +7–+9".
+ * @param {number[]} levels - Ascending levels
+ * @returns {string} The runs
+ */
+function levelRanges(levels) {
+    const runs = [];
+    for (const level of levels) {
+        const last = runs[runs.length - 1];
+        if (last && level === last[1] + 1) last[1] = level;
+        else runs.push([level, level]);
+    }
+    return runs.map(([from, to]) => (from === to ? `+${from}` : `+${from}–+${to}`)).join(', ');
+}
+
+/**
+ * The Philosopher's Mirror line set beside the protect-from plans.
+ * @param {{priced: boolean, cheaperLevels?: number[], mirrorStartLevel: number|null,
+ *   totalSavings: number}|null} summary
+ * @param {function(number): string} coins - Coin formatter
+ * @returns {string} HTML, '' without a summary
+ */
+export function mirrorSummaryLine(summary, coins) {
+    if (!summary) return '';
+    let text;
+    if (!summary.priced) {
+        text = "Philosopher's Mirror: no quote — the base item or the mirror has no market price.";
+    } else if (summary.mirrorStartLevel === null) {
+        text = "Philosopher's Mirror: never cheaper than enhancing up to +20.";
+    } else {
+        const levels = summary.cheaperLevels || [];
+        const contiguous = levels.length > 0 && levels.every((level, i) => level === levels[0] + i);
+        const where =
+            contiguous || levels.length === 0
+                ? `use mirrors starting at <strong>+${summary.mirrorStartLevel}</strong>`
+                : `mirrors are cheaper at <strong>${levelRanges(levels)}</strong>`;
+        text = `Philosopher's Mirror: ${where} — saves <strong>${coins(summary.totalSavings)}</strong> to +20.`;
+    }
+    return (
+        '<div class="mwi-protsweep-mirror" style="color:#FFD700; font-size:0.8em; margin-top:2px;" ' +
+        'title="Against the Costs by Enhancement Level table\'s Total Cost column, at your current protect-from setting">' +
+        `💎 ${text}</div>`
+    );
+}
+
+/**
  * The protect-from sweep: every protect-from level from 2 to the panel's
  * target, plus no protection, each priced with the protection item in the slot
  * and with the cheapest other item that would work — so the protect-from box
  * can be filled in from the table rather than by feel. Collapsed by default;
  * the toggle keeps its state across the panel's re-renders like the stat
  * breakdowns above it.
+ *
+ * With the stock setting on, every protection item held beyond the keep-N
+ * reserve gets a column too, and each row spends those spare copies first at
+ * their sell price before buying the rest. The Philosopher's Mirror route sits
+ * on one line beside the toggle, whatever the slot holds.
  *
  * @param {Object} args - Inputs, all already read off the panel by the caller
  * @param {Object} args.params - Enhancing parameters (getEnhancingParams)
@@ -796,6 +919,8 @@ function sweepBuyPrice(itemHrid) {
  * @param {Array} args.enhancementCosts - Per-attempt materials {itemHrid, count}
  * @param {string|null} args.protectionItemHrid - What the protection slot holds
  * @param {number} args.perActionTime - Seconds per attempt from the buff maps
+ * @param {number|null} [args.currentLevel] - The item's current enhancement level, null when unknown
+ * @param {Object|null} [args.mirrorSummary] - The Philosopher's Mirror route from the costs table
  * @returns {string} HTML, or '' when there is nothing to sweep
  */
 export function protectSweepHTML({
@@ -806,18 +931,34 @@ export function protectSweepHTML({
     enhancementCosts,
     protectionItemHrid,
     perActionTime,
+    currentLevel = null,
+    mirrorSummary = null,
 }) {
     try {
         if (!itemDetails?.hrid || !targetLevel || targetLevel < 1) return '';
 
         const nameOf = (hrid) => dataManager.getItemDetails?.(hrid)?.name || null;
+        const stockSettings = protectStockSettings();
+        // The copy on the bench is the one being enhanced: at +0 it sits in the bag beside any
+        // spares and is counted with them, but it cannot protect itself. Unknown level counts as
+        // +0, the cautious reading — it can only hide one spare, never invent one
+        const benchAtZero = !(currentLevel > 0);
+        const holdingsOf = (hrid) => {
+            // Copies a crafting or goal plan has claimed are not spare
+            const held = effectiveInventory(hrid, 0);
+            return hrid === itemDetails.hrid && benchAtZero ? Math.max(0, held - 1) : held;
+        };
         const { options, selectedIsMirror } = chooseProtectionOptions({
             itemHrid: itemDetails.hrid,
             itemDetails,
             selectedHrid: protectionItemHrid,
             priceOf: sweepBuyPrice,
             nameOf,
+            ...(stockSettings.enabled
+                ? { holdingsOf, reserve: stockSettings.reserve, sellPriceOf: sweepSellPrice }
+                : {}),
         });
+        const optionOf = new Map(options.map((option) => [option.itemHrid, option]));
 
         let materialCostPerAttempt = 0;
         let materialsUnpriced = false;
@@ -864,8 +1005,12 @@ export function protectSweepHTML({
         let lastItem;
         sweep.rows.forEach((row, index) => {
             if (row.itemHrid !== lastItem && row.itemHrid) {
-                const label = row.selected ? 'in the slot' : 'cheapest alternative';
-                const priceNote = row.protectionPrice > 0 ? `@${coins(row.protectionPrice)}` : 'no price';
+                const option = optionOf.get(row.itemHrid);
+                const label = row.selected ? 'in the slot' : option?.role === 'held' ? 'held' : 'cheapest alternative';
+                let priceNote = row.protectionPrice > 0 ? `@${coins(row.protectionPrice)}` : 'no price';
+                if (option?.stock > 0) {
+                    priceNote = `${option.held.toLocaleString()} held, ${option.stock.toLocaleString()} spare @${coins(option.stockPrice)}, then ${priceNote}`;
+                }
                 rows.push(
                     `<tr><td colspan="9" style="padding:6px 0 2px; color:#9bd; font-weight:bold;">${row.name} ` +
                         `<span style="color:#888; font-weight:normal;">(${label}, ${priceNote})</span></td></tr>`
@@ -899,10 +1044,15 @@ export function protectSweepHTML({
                     `title="${row.spreadApprox ? SPREAD_APPROX_NOTE : SPREAD_EXACT_NOTE}">` +
                     `${coins(row.p10)} – ${coins(row.p90)}${row.spreadApprox ? ' ≈' : ''}</td>` +
                     cell(formatAttempts(row.attempts)) +
-                    cell(
-                        row.protections > 0 ? formatAttempts(row.protections) : '-',
-                        row.protections > 0 ? '#ffa500' : '#888'
-                    ) +
+                    (row.protectionsFromStock > 0
+                        ? `<td class="mwi-protsweep-stock" style="padding:2px 8px 2px 0; text-align:right; color:#ffa500; white-space:nowrap;" ` +
+                          `title="${formatAttempts(row.protections)} expected: spare copies @${coins(row.stockPrice)} first, the rest bought @${coins(row.protectionPrice)}` +
+                          `${row.stockSplitApprox ? '. Approximate: split on the expected count, which overstates what the stock covers' : ''}">` +
+                          `${formatAttempts(row.protectionsFromStock)} from stock + ${formatAttempts(row.protectionsToBuy)} to buy${row.stockSplitApprox ? ' ≈' : ''}</td>`
+                        : cell(
+                              row.protections > 0 ? formatAttempts(row.protections) : '-',
+                              row.protections > 0 ? '#ffa500' : '#888'
+                          )) +
                     cell(timeReadable(row.time)) +
                     cell(row.xp > 0 ? formatLargeNumber(Math.round(row.xp)) : '-', config.COLOR_XP_RATE) +
                     cell(
@@ -925,6 +1075,12 @@ export function protectSweepHTML({
         } else if (!selectedHrid) {
             notes.push('Nothing in the protection slot — priced with the cheapest item that would work.');
         }
+        if (stockSettings.enabled) {
+            notes.push(
+                `Protection items you hold beyond ${stockSettings.reserve.toLocaleString()} of each are used first, ` +
+                    'valued at their sell price; the rest are bought.'
+            );
+        }
         if (materialsUnpriced) notes.push('Some materials have no price; costs are understated.');
         if (testerShopEnabled()) notes.push('Tester shop prices floor the materials and protection.');
         notes.push(
@@ -936,6 +1092,7 @@ export function protectSweepHTML({
             '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
             '<div class="mwi-enh-toggle" data-target="mwi-enh-protsweep" style="color: #9bd; font-weight: bold; font-size: 0.95em; cursor: pointer;">' +
             `Protect-from sweep to +${targetLevel} <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>` +
+            mirrorSummaryLine(mirrorSummary, coins) +
             '<div id="mwi-enh-protsweep" style="display: none;">' +
             `<div style="color:#888; font-size:0.8em; margin:4px 0;">${notes.join(' ')}</div>` +
             '<div style="overflow-x:auto;"><table id="mwi-protsweep-table" style="font-size:0.85em; border-collapse:collapse; width:100%;">' +
@@ -1039,7 +1196,7 @@ function formatEnhancementDisplay(
         lines.push('<div id="mwi-enh-success" style="display: none;">');
 
         // Show base rate and final rate for current enhancement level
-        const currentLevel = getCurrentEnhancementLevel(panel);
+        const currentLevel = getCurrentEnhancementLevel(panel, itemDetails.hrid);
 
         if (currentLevel !== null && currentLevel >= 0 && currentLevel < BASE_SUCCESS_RATES.length) {
             const baseRate = BASE_SUCCESS_RATES[currentLevel];
@@ -1268,12 +1425,14 @@ function formatEnhancementDisplay(
     // Read once and shared by both sections below it, the way the panel's other lookups
     // (protection item, protect-from level) are read once by the caller and threaded through.
     const targetLevelForPanel = getTargetLevelFromUI(panel);
+    // The panel's own item: a running enhance on some other item says nothing about this one
+    const currentLevelForPanel = getCurrentEnhancementLevel(panel, itemDetails.hrid);
 
     lines.push(
         unlimitedRepeatHTML({
             panel,
             itemDetails,
-            currentLevel: getCurrentEnhancementLevel(panel),
+            currentLevel: currentLevelForPanel,
             targetLevel: targetLevelForPanel,
             protectFromLevel,
             protectionItemHrid,
@@ -1281,7 +1440,7 @@ function formatEnhancementDisplay(
     );
 
     // Costs by level table for all 20 levels
-    const costsByLevelHTML = generateCostsByLevelTable(
+    const costsByLevel = generateCostsByLevelTable(
         panel,
         params,
         itemDetails,
@@ -1290,7 +1449,7 @@ function formatEnhancementDisplay(
         protectionItemHrid,
         perActionTime
     );
-    lines.push(costsByLevelHTML);
+    lines.push(costsByLevel.html);
     lines.push(testerRouteHTML(itemDetails));
     lines.push(
         protectSweepHTML({
@@ -1301,6 +1460,8 @@ function formatEnhancementDisplay(
             enhancementCosts,
             protectionItemHrid,
             perActionTime,
+            currentLevel: currentLevelForPanel,
+            mirrorSummary: costsByLevel.mirrorSummary,
         })
     );
 

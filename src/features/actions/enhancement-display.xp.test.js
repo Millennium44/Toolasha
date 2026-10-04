@@ -90,6 +90,7 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { getPrice: (hrid) => ({ ask: state.prices[hrid] || -1, bid: -1 }), on: () => {} },
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => price,
     resolveItemPrice: (hrid) => ({ price: state.prices[hrid] || 0, custom: false, missing: !state.prices[hrid] }),
 }));
 vi.mock('../../utils/tester-shop.js', () => ({

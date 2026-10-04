@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Protect-from sweep uses the protection you hold, and always compares mirrors
+
+- An opt-in setting lets the enhancing protect-from sweep spend protection items you hold above a keep-N reserve (default 2), valued at their sell price before buying the rest, and the Philosopher's Mirror start level and savings now show whatever is in the protection slot.
+- The success-rate line and the Missing Mats button no longer take the level of an enhance running on a different item.
+
 ### Bestiary points target alert
 
 - A new notification (off by default) fires when your Bestiary points reach a target you set in settings or from the Bestiary planner; between the counts the game sends, it estimates from the kills it sees, so it sends no extra requests.

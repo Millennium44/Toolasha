@@ -104,6 +104,7 @@ vi.mock('../../api/marketplace.js', () => ({
 }));
 
 vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => price,
     resolveItemPrice: (hrid) => ({ price: state.prices[hrid] || 0, custom: false, missing: !state.prices[hrid] }),
 }));
 

@@ -74,6 +74,7 @@ vi.mock('../../utils/marketplace-autofill.js', () => ({
 vi.mock('./enhancement-display.js', () => ({
     getProtectionItemFromUI: () => null,
     getProtectFromLevelFromUI: () => 0,
+    getCurrentEnhancementLevel: () => 0,
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: () => null }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
