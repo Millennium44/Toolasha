@@ -166,7 +166,8 @@ export class GuildTrialSim {
         };
         this.handlers.push(domObserver.onClass('GuildTrialSimulator', 'GuildPanel_', inject));
         this.handlers.push(domObserver.onReady('GuildTrialSimulatorCatchUp', inject));
-        const capture = (data) => {
+        const capture = (data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (!data?.trialHrid?.startsWith('/guild_skilling/')) return;
             const previous = this.readings[data.trialHrid];
             if (previous && data.tier < previous.tier) delete this.successReadings[data.trialHrid];

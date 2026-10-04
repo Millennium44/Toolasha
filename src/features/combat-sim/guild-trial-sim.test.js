@@ -5,6 +5,7 @@ const harness = vi.hoisted(() => ({
     char: '1',
     listeners: {},
     ws: {},
+    activeSocket: null,
     entries: [],
     capturedProfiles: [],
     loadoutBuilder: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('../../core/data-manager.js', () => ({
         guildBuildingLevelMap: {},
         getCurrentCharacterId: () => harness.char,
         getInitClientData: () => ({ guildTrialDetailMap: {} }),
+        isFromActiveSocket: (context) => !harness.activeSocket || context?.socket === harness.activeSocket,
         on: (key, cb) => {
             harness.listeners[key] = cb;
         },
@@ -125,6 +127,7 @@ beforeEach(() => {
     harness.capturedProfiles = [];
     harness.listeners = {};
     harness.ws = {};
+    harness.activeSocket = null;
     harness.worker.mockReset();
     harness.loadoutBuilder.mockReset();
     feature = new GuildTrialSim();
@@ -242,6 +245,25 @@ describe('trial simulator controls and ownership', () => {
         );
         expect(success.querySelector('input').value).toBe('8');
         expect(feature.skillingMembers[0].successRate).toBe(GUILD_SKILLING_TICKS[0].successRate);
+    });
+    test('ignores personal readings from a departed character socket', () => {
+        const currentSocket = {};
+        const previousSocket = {};
+        harness.activeSocket = currentSocket;
+        feature.kind = 'skilling';
+        const current = GUILD_SKILLING_TICKS[0];
+        harness.ws.guild_skilling_updated(current, { socket: currentSocket });
+        harness.ws.guild_skilling_updated(
+            { ...current, tier: 11, successRate: 0.2, progressPerAction: current.progressPerAction * 2 },
+            { socket: previousSocket }
+        );
+
+        feature.addReading();
+
+        expect(feature.settings.startTier).toBe(current.tier);
+        expect(feature.skillingMembers[0].workPower).toBe(current.progressPerAction);
+        expect(feature.skillingMembers[0].successRate).toBe(current.successRate);
+        expect(Object.keys(feature.successReadings[current.trialHrid])).toEqual([String(current.tier)]);
     });
     test('uses multiple recorded tiers to calibrate the success bend, and forgets it for the next run', () => {
         feature.kind = 'skilling';
