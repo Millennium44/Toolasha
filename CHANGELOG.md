@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bestiary target alerts follow the current battle
+
+- Bestiary target alerts now ignore updates from an earlier battle, preventing a new wave's reused monster slots from falsely counting kills.
+
 ### Trial captures and plan exports follow the participant
 
 - Trial ability coverage now rejects saved loadouts belonging to a different character. Exported plan checks stay with the current participant's capture, including after a rename, so historical same-name records do not inherit their verdict.

@@ -107,6 +107,8 @@ class BestiaryPointsAlerts {
         this.credits = {};
         /** slot → {hrid, alive} of the wave on screen */
         this.slots = new Map();
+        /** Battle whose slot map is current; the game includes this on both battle messages */
+        this.battleId = null;
         /** Party size and tier of the fight on screen */
         this.partySize = 1;
         this.seenTarget = null;
@@ -210,6 +212,7 @@ class BestiaryPointsAlerts {
      */
     onNewBattle(data) {
         this.slots = new Map();
+        this.battleId = data?.battleId ?? null;
         for (const [slot, unit] of unitEntries(data?.monsters)) {
             const hrid = unit?.hrid ?? unit?.combatMonsterHrid;
             if (typeof hrid !== 'string') continue;
@@ -225,7 +228,9 @@ class BestiaryPointsAlerts {
      * @returns {Promise<void>|undefined}
      */
     onBattleUpdated(data) {
-        if (this.real === null || !data?.mMap) return;
+        // The client applies this same battleId check before updating its current wave. A delayed
+        // tick from an earlier wave can reuse a slot number and must not kill this wave's monster.
+        if (this.real === null || this.battleId === null || data?.battleId !== this.battleId || !data?.mMap) return;
         const action = runningCombatAction(dataManager.getCurrentActions?.());
         let killed = false;
         for (const [slot, unit] of unitEntries(data.mMap)) {

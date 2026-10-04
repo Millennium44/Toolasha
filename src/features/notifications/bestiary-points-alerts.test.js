@@ -3,7 +3,8 @@
  *
  * The baseline is a real `monsters_updated` reading (`{monsterHrid, count, tierData}`, count already
  * tier-weighted and fractional). Between readings the alert counts kills off the combat stream:
- * `new_battle` (`monsters` and `players` keyed by slot) and `battle_updated` (`mMap` of `{cHP}`).
+ * `new_battle` (array-shaped `monsters` and `players`, plus `battleId`) and compact `battle_updated`
+ * (the matching `battleId` and an `mMap` keyed by slot, with `{cHP}` entries).
  * It must never ask the game for the Bestiary.
  */
 
@@ -24,6 +25,8 @@ const game = vi.hoisted(() => ({
     fiberTouched: 0,
     activeSocket: 'socket-a',
     writeFails: false,
+    nextBattleId: 0,
+    battleId: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -124,23 +127,24 @@ const reading = async (counts) => {
 
 /** A wave of the given monsters, solo unless more players are named */
 const wave = (names, players = 1, context = ACTIVE) => {
+    game.battleId = ++game.nextBattleId;
     game.wire.new_battle(
         {
-            monsters: Object.fromEntries(
-                names.map((name, i) => [
-                    String(i),
-                    { hrid: `/monsters/${name}`, currentHitpoints: 100, combatDetails: { maxHitpoints: 100 } },
-                ])
-            ),
-            players: Object.fromEntries(Array.from({ length: players }, (_, i) => [String(i), { name: `p${i}` }])),
+            battleId: game.battleId,
+            monsters: names.map((name) => ({
+                hrid: `/monsters/${name}`,
+                currentHitpoints: 100,
+                combatDetails: { maxHitpoints: 100 },
+            })),
+            players: Array.from({ length: players }, (_, i) => ({ name: `p${i}` })),
         },
         context
     );
 };
 
 /** Kill the monster in a slot, as a compact tick shows it */
-const kill = async (slot = 0, context = ACTIVE) => {
-    game.wire.battle_updated({ mMap: { [slot]: { cHP: 0 } } }, context);
+const kill = async (slot = 0, context = ACTIVE, battleId = game.battleId) => {
+    game.wire.battle_updated({ battleId, pMap: {}, mMap: { [slot]: { cHP: 0 } } }, context);
     await tick();
 };
 
@@ -162,6 +166,8 @@ describe('bestiary points alerts', () => {
         game.requests = 0;
         game.fiberTouched = 0;
         game.writeFails = false;
+        game.nextBattleId = 0;
+        game.battleId = null;
         fighting(0);
         alerts.disable();
     });
@@ -222,6 +228,18 @@ describe('bestiary points alerts', () => {
         await kill();
         await kill();
         expect(alerts.estimatedCounts()['/monsters/fly']).toBe(6);
+    });
+
+    test('a late tick from the previous battle cannot kill the new wave', async () => {
+        await reading({ fly: 5, bear: 5 });
+        await alerts.initialize();
+        wave(['fly']);
+        const oldBattleId = game.battleId;
+        wave(['bear']);
+
+        await kill(0, ACTIVE, oldBattleId);
+
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 5, '/monsters/bear': 5 });
     });
 
     test('a real reading replaces the estimate and fires if the estimate missed the crossing', async () => {
@@ -327,7 +345,7 @@ describe('bestiary points alerts', () => {
             release = resolve;
         });
         wave(['fly']);
-        game.wire.battle_updated({ mMap: { 0: { cHP: 0 } } }, ACTIVE); // would cross for character A
+        game.wire.battle_updated({ battleId: game.battleId, pMap: {}, mMap: { 0: { cHP: 0 } } }, ACTIVE); // would cross for character A
         game.characterId = 'char-b';
         game.monsters = null;
         release();
