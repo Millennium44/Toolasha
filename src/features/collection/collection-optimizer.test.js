@@ -19,6 +19,7 @@ const game = vi.hoisted(() => ({
     craftable: new Set(['/items/cheese']),
     profitExtra: {},
     shopUnits: 1,
+    actionDetails: null,
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
@@ -94,7 +95,7 @@ vi.mock('../../core/data-manager.js', () => ({
             },
         }),
         getItemDetails: (hrid) => ITEMS[hrid] || null,
-        getActionDetails: () => null,
+        getActionDetails: () => game.actionDetails ?? null,
         getCurrentCharacterGameMode: () => 'standard',
         on: (event, handler) => {
             (bus.handlers[event] ||= []).push(handler);
@@ -217,6 +218,7 @@ beforeEach(() => {
     game.craftable = new Set(['/items/cheese']);
     game.profitExtra = {};
     game.shopUnits = 1;
+    game.actionDetails = null;
     game.estimated = new Set();
     game.mixedShop = false;
     game.ironCow = false;
@@ -270,6 +272,18 @@ describe('whole actions for sources', () => {
         expect(routes.sources.find((s) => s.sourceHrid === '/items/umbral_hood' && s.route === 'decompose').batch).toBe(
             1
         );
+    });
+});
+
+describe('Gourmet and a craft batch', () => {
+    test('the batch is the expected output per action, base count times one plus the Gourmet chance', async () => {
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese', count: 2 }] };
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft[0].batch).toBeCloseTo(2.5, 9);
+        // Without Gourmet it is the recipe's own count
+        game.profitExtra = {};
+        expect((await buildCollectionRoutes()).craft[0].batch).toBe(2);
     });
 });
 

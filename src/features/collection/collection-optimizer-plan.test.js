@@ -155,6 +155,20 @@ describe('route options', () => {
         expect(option.credits.get('/items/crushed_amber')).toBe(15);
     });
 
+    test('a Gourmet batch charges and credits the expected output of the whole action', () => {
+        // 15 base copies at +20% Gourmet is 18 expected per action; 0 → 1 needs one action
+        const option = evaluateOption('/items/crushed_amber', new Map(), {
+            route: 'craft',
+            itemHrid: '/items/crushed_amber',
+            unitCost: 2,
+            unitSeconds: 1,
+            batch: 18,
+        });
+        expect(option.units).toBe(18);
+        expect(option.gold).toBe(36);
+        expect(option.credits.get('/items/crushed_amber')).toBe(18);
+    });
+
     test('a route with an unpriced kept output is left out of the ranking', () => {
         const counts = collectionCounts(ROWS);
         const index = indexRoutes({ craft: [], sources: [{ ...cheeseSword(), partlyUnpriced: true }] });

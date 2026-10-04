@@ -144,8 +144,10 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             if (!comparison || !(perHour > 0)) continue;
             makeCost.set(hrid, comparison.make);
             makeSeconds.set(hrid, 3600 / perHour);
-            // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15
-            const batch = Math.max(1, Number(actionDetails?.outputItems?.[0]?.count) || 1);
+            // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15.
+            // Gourmet adds expected copies from the same inputs, counted as profitData counts items
+            const gourmet = Math.max(0, Number(profitData.gourmetBonus) || 0);
+            const batch = Math.max(1, (Number(actionDetails?.outputItems?.[0]?.count) || 1) * (1 + gourmet));
             craft.push({
                 route: 'craft',
                 itemHrid: hrid,
