@@ -304,6 +304,39 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.combatMembers.map((member) => member.id)).toEqual(['2']);
         expect(feature.error).toBe('');
     });
+    test('imports a pasted capture larger than a build export and saves its signup roster', async () => {
+        const capture = { ...captureBundle(), padding: 'x'.repeat(3_000_000) };
+        harness.loadoutBuilder.mockResolvedValue({ dto: build(), levelsFrom: 'profile' });
+        feature.importText = JSON.stringify(capture);
+
+        await feature.importSetup(feature.importText);
+
+        expect(harness.saveCapture).toHaveBeenCalledWith(expect.objectContaining({ guildName: 'SuperMoo' }));
+        expect(feature.combatMembers.map((member) => member.id)).toEqual(['2']);
+        expect(feature.participantCount).toBe(3);
+        expect(feature.importText).toBeNull();
+        expect(feature.error).toBe('');
+    });
+    test('ignores a pasted capture saved across a character switch', async () => {
+        let finish;
+        harness.saveCapture.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const pending = feature.importSetup(JSON.stringify(captureBundle()));
+        expect(feature.loading).toBe(true);
+
+        harness.char = '9';
+        harness.listeners.character_switched();
+        finish();
+        await pending;
+
+        expect(feature.combatMembers).toEqual([]);
+        expect(feature.inputCapture).toBeNull();
+        expect(feature.loading).toBe(false);
+    });
     test('rejects a mismatched capture without replacing the existing setup', async () => {
         feature.addCurrentBuild();
         const before = feature.makeScenario();

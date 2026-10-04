@@ -554,10 +554,24 @@ export class GuildTrialSim {
         this.notice = `One personal reading imported from ${new Date(reading.at).toLocaleString()}; observed with ${reading.participantIds.length} participants. Add the other members to simulate that roster.`;
     }
 
-    importSetup(text) {
+    async importSetup(text) {
+        if (this.loading || this.controller) return;
+        const generation = this.generation;
         try {
-            if (text.length > 2_000_000) throw new Error('Import must be smaller than 2 MB.');
+            if (text.length > MAX_TRIAL_INPUT_BYTES) throw new Error('Import must be smaller than 20 MB.');
             const input = JSON.parse(text);
+            if (input.format === 'toolasha-guild-trial-inputs') {
+                const bundle = parseTrialInputBundle(text);
+                this.loading = true;
+                this.panel?.render();
+                await saveTrialInputBundle(bundle);
+                if (generation !== this.generation) return;
+                this.loading = false;
+                await this.selectInputCapture(bundle);
+                if (generation === this.generation) this.importText = null;
+                return;
+            }
+            if (text.length > 2_000_000) throw new Error('Build or setup import must be smaller than 2 MB.');
             if (input.toolashaGuildTrialSimulation === 1) {
                 const scenario = validateTrialScenario(input.scenario);
                 this.kind = scenario.kind;
@@ -605,9 +619,13 @@ export class GuildTrialSim {
             this.changed();
             this.importText = null;
         } catch (error) {
-            this.error = `Import failed: ${error.message}`;
+            if (generation === this.generation) this.error = `Import failed: ${error.message}`;
+        } finally {
+            if (generation === this.generation) {
+                this.loading = false;
+                this.panel?.render();
+            }
         }
-        this.panel?.render();
     }
 
     exportSetup() {
@@ -672,6 +690,15 @@ export class GuildTrialSim {
         );
         const captures = row(body);
         button(captures, 'Import capture JSON', () => this.importCaptureFile(), busy);
+        button(
+            captures,
+            'Paste capture JSON',
+            () => {
+                this.importText = this.importText === null ? '' : null;
+                this.panel?.render();
+            },
+            busy
+        );
         button(captures, 'Load saved captures', () => this.loadSavedCaptures(), busy);
         if (this.savedCaptures.length) {
             select(
@@ -756,7 +783,7 @@ export class GuildTrialSim {
             );
         if (this.importText !== null) {
             const area = document.createElement('textarea');
-            area.setAttribute('aria-label', 'Build or setup JSON');
+            area.setAttribute('aria-label', 'Capture, build or setup JSON');
             area.value = this.importText;
             area.style.cssText = 'width:100%;box-sizing:border-box;min-height:80px;background:#1b2030;color:#eee;';
             area.disabled = busy;

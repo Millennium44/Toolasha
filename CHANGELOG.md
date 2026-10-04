@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Paste trial captures into the simulator
+
+- Trial Input Capture JSON can also be pasted into Trial Sim, using the same saved capture library and signup checks as file import.
+
 ### Reuse trial captures in the simulator
 
 - Trial Sim now appears beside the Guild tabs and imports Trial Input Capture JSON, loading only the selected boss’s signups. Members without usable builds remain explicit and still count toward boss scaling.
