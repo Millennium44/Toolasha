@@ -151,6 +151,7 @@ const fighting = (difficultyTier) => {
 describe('bestiary points alerts', () => {
     beforeEach(async () => {
         game.settings = { [MASTER_SETTING]: true };
+        alerts.stoppedOn = null;
         game.monsters = null;
         game.characterId = 'char-a';
         game.stored = new Map([[`${TARGET_KEY}_char-a`, 3]]);
@@ -409,6 +410,40 @@ describe('bestiary points alerts', () => {
         game.settings[MASTER_SETTING] = true;
         await alerts.initialize();
         expect(game.notified).toHaveLength(0);
+    });
+
+    test('switching it off and on waits for a fresh reading instead of estimating from the old one', async () => {
+        await reading({ fly: 9 }); // 1 point, target 3
+        await alerts.initialize();
+
+        game.settings[MASTER_SETTING] = false;
+        alerts.disable(); // the live stop
+        expect(game.stored.get(`${BASELINE_KEY}_char-a`)).toBeNull();
+
+        // The tenth fly dies while it is off; switched back on, the held reading still says 9
+        game.settings[MASTER_SETTING] = true;
+        await alerts.initialize();
+        expect(alerts.estimatedCounts()).toBeNull();
+        wave(['fly']);
+        await kill();
+        expect(game.notified).toHaveLength(0);
+
+        // The next real reading is the baseline again, and the crossing it shows is old news
+        await reading({ fly: 11 });
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 11 });
+        expect(game.notified).toHaveLength(0);
+    });
+
+    test('a reading that arrived while it was off is a baseline when it is switched back on', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        game.settings[MASTER_SETTING] = false;
+        alerts.disable();
+
+        await reading({ fly: 9 }); // a newer reading, taken while it was off
+        game.settings[MASTER_SETTING] = true;
+        await alerts.initialize();
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 9 });
     });
 
     test('does nothing while the setting is off', async () => {

@@ -92,6 +92,11 @@ class BestiaryPointsAlerts {
         this.resetState();
         this.handlers = [];
         this.isInitialized = false;
+        /**
+         * Set when the setting is switched off: {who, snapshot}. Kills go unseen while it is off, so
+         * the reading held then is no baseline when it is switched back on; a newer one is
+         */
+        this.stoppedOn = null;
     }
 
     /** Forget every reading, estimate and armed bit */
@@ -168,11 +173,13 @@ class BestiaryPointsAlerts {
 
         // A reading already held this session, else the one kept from the last page load
         const held = dataManager.getCharacterMonsters?.();
-        if (Array.isArray(held)) {
+        const stopped = this.stoppedOn?.who === (dataManager.getCurrentCharacterId?.() ?? null) ? this.stoppedOn : null;
+        if (Array.isArray(held) && held !== stopped?.snapshot) {
+            this.stoppedOn = null;
             this.real = countsByMonster(held);
             // Kept too: the alert may start after the reading it is built on (the planner's fetch)
             writeScoped(BASELINE_KEY, this.real, 'settings').catch(() => {});
-        } else {
+        } else if (!stopped) {
             const who = dataManager.getCurrentCharacterId?.();
             const stored = await readScoped(BASELINE_KEY, 'settings', null);
             if (!this.isInitialized || dataManager.getCurrentCharacterId?.() !== who) return;
@@ -191,6 +198,7 @@ class BestiaryPointsAlerts {
         if (!Array.isArray(monsters)) return;
         this.real = countsByMonster(monsters);
         this.credits = {};
+        this.stoppedOn = null;
         const who = dataManager.getCurrentCharacterId?.();
         if (who) writeScoped(BASELINE_KEY, this.real, 'settings').catch(() => {});
         await this.check(true);
@@ -290,6 +298,12 @@ class BestiaryPointsAlerts {
      * Cleanup
      */
     disable() {
+        // Switched off, not a character switch: what is held now goes stale while kills go unseen
+        if (this.isInitialized && !config.getSetting(MASTER_SETTING)) {
+            const who = dataManager.getCurrentCharacterId?.() ?? null;
+            this.stoppedOn = { who, snapshot: dataManager.getCharacterMonsters?.() ?? null };
+            if (who) writeScoped(BASELINE_KEY, null, 'settings').catch(() => {});
+        }
         this.handlers.forEach((off) => off());
         this.handlers = [];
         this.resetState();
