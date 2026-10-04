@@ -429,6 +429,43 @@ describe('a party member with a shared party loadout', () => {
         expect(built.dto.magicLevel).toBe(1);
         expect(built.dto.equipment['/equipment_types/main_hand'].hrid).toBe('/items/rippling_trident');
     });
+
+    test('an explicit loadout id never borrows levels from a different character with the same name', async () => {
+        mocks.profileList = [
+            {
+                characterID: 23,
+                characterName: 'Ally',
+                timestamp: 300,
+                profile: {
+                    characterSkills: [{ skillHrid: '/skills/magic', level: 95 }],
+                    characterHouseRoomMap: { a: { houseRoomHrid: '/house_rooms/library', level: 6 } },
+                },
+            },
+        ];
+        const entry = {
+            characterId: 42,
+            name: 'Ally',
+            hasLoadout: true,
+            loadout: sharedLoadout(42),
+        };
+
+        const built = await buildPlayerDTOFromLoadout(entry);
+
+        expect(built.levelsFrom).toBeNull();
+        expect(built.dto.magicLevel).toBe(1);
+        expect(built.dto.houseRooms).toEqual({});
+        expect(built.dto.equipment['/equipment_types/main_hand'].hrid).toBe('/items/rippling_trident');
+    });
+
+    test('an id-less loadout can still use the named profile fallback', async () => {
+        mocks.profileList = [allyProfile()];
+        const entry = { name: 'Ally', hasLoadout: true, loadout: sharedLoadout(null) };
+
+        const built = await buildPlayerDTOFromLoadout(entry);
+
+        expect(built.levelsFrom).toBe('profile');
+        expect(built.dto.magicLevel).toBe(95);
+    });
 });
 
 const FORCE = {

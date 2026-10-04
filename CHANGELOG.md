@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A new tooltip setting (off by default) adds untaxed self-use lines under Alternative Actions: decompose once, decompose the whole gear chain down (listing the gear it collects for the collection log), and transmute an item you hold against selling it after tax.
 
+### Captured loadouts use the correct player's profile
+
+- Opening a captured loadout in the simulator now matches an explicit character ID without borrowing a different same-name player's levels or buffs. Name matching remains available for older captures without an ID.
+
 ### Enhancement stock and purchase hints stay usable
 
 - Protection comparisons no longer treat an unknown purchase price as free. Valued spare copies can still cover modeled expected uses without a buy quote, with that limitation shown in the table.

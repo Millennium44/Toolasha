@@ -504,7 +504,7 @@ export function buildPlayerDTOFromProfile(profileData) {
  *
  * The loadout has the gear, abilities, consumables and triggers; skill levels,
  * house rooms and buffs come from that player's cached shared profile when
- * Toolasha has one (matched by character id, else by name). Without one the
+ * Toolasha has one (matched by character id, falling back to name only when the loadout has no id). Without one the
  * levels are left at 1 and `levelsFrom` is null, for the caller to say so.
  *
  * @param {Object} entry - A capture from `view-loadout.js` (`getLoadout`)
@@ -527,9 +527,9 @@ export async function buildPlayerDTOFromLoadout(entry) {
     const id = entry.characterId == null ? null : String(entry.characterId);
     const name = String(entry.name || '').toLowerCase();
     const profile =
-        (id && profileList.find((p) => String(p?.characterID) === id)) ||
-        (name && profileList.find((p) => String(p?.characterName || '').toLowerCase() === name)) ||
-        null;
+        (id
+            ? profileList.find((p) => String(p?.characterID) === id)
+            : profileList.find((p) => name && String(p?.characterName || '').toLowerCase() === name)) || null;
 
     const dto = buildPartyMemberDTO(profile?.profile ? profile : { profile: {} }, clientData, null);
     applySharedLoadoutToDTO(dto, entry.loadout, clientData);
