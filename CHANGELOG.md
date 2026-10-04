@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat funding follows market sales volume
+
+- Combat income in the Goal Planner now accounts for how quickly its drops can sell, so a thin market no longer makes a gold goal look faster than it is.
+
 ### Self-use crate values disclose missing prices
 
 - Self-use alchemy now labels partly priced crate contents as lower bounds and keeps incomplete values out of automatic setup comparisons. If every setup is incomplete, its displayed estimate is marked as unoptimized.

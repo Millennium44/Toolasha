@@ -305,6 +305,10 @@ export function combatRatesFromSnapshot(snapshot, { now = Date.now(), loadout = 
             zoneHrid: zone.zoneHrid,
             zoneName: zone.zoneName || '',
             difficultyTier: zone.difficultyTier ?? 0,
+            // The snapshot keeps raw net profit for calibration readers; the
+            // planner passes the drop composition to its market-volume bound
+            // before it ranks or spends that income.
+            sells: Array.isArray(zone.sells) ? zone.sells : [],
             // Total combat experience across every skill — see the module doc
             // for why this is not offered as a per-skill rate
             xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : 0,
