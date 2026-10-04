@@ -4,6 +4,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import {
     LootLogStats,
@@ -379,6 +380,47 @@ describe('LootLogStats.getModelPrice', () => {
 
         getItemPrices.mockReturnValue(null);
         expect(stats.getModelPrice('/items/unlisted')).toBeNull();
+    });
+});
+
+describe('LootLogStats.calculateProfit container valuation', () => {
+    let stats;
+    const chestHrid = '/items/small_treasure_chest';
+    const entry = { actionHrid: '/actions/foraging/asteroid_belt', actionCount: 1, drops: { [chestHrid]: 1 } };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        expectedValueCalculator.isInitialized = true;
+        expectedValueCalculator.calculateExpectedValue.mockReturnValue({ expectedValue: 100 });
+        dataManager.getActionDetails.mockReturnValue({ inputItems: null });
+        dataManager.getItemDetails.mockImplementation((hrid) => ({ isOpenable: hrid === chestHrid }));
+        getItemPrices.mockReturnValue({ ask: 100, bid: 80 });
+        stats = new LootLogStats();
+    });
+
+    test('a chest with coin-only EV keeps face value while ordinary drops pay market tax', () => {
+        const drops = { [chestHrid]: 1, '/items/milk': 2, '/items/coin': 50 };
+        const profit = stats.calculateProfit({ ...entry, drops });
+
+        expect(profit.askProfit).toBeCloseTo(150 + 200 * (1 - MARKET_TAX), 10);
+        expect(profit.bidProfit).toBeCloseTo(150 + 160 * (1 - MARKET_TAX), 10);
+        expect(stats.calculateTotalValue(drops)).toEqual({ askTotal: 350, bidTotal: 310 });
+    });
+
+    test('a chest with mixed coin and taxed-item EV uses that net value once', () => {
+        const netContents = 100 + 100 * (1 - MARKET_TAX);
+        expectedValueCalculator.calculateExpectedValue.mockReturnValue({ expectedValue: netContents });
+
+        expect(stats.calculateProfit(entry)).toMatchObject({ askProfit: netContents, bidProfit: netContents });
+    });
+
+    test.each(['not initialized', 'unavailable'])('market-priced chest fallback is taxed when EV is %s', (state) => {
+        expectedValueCalculator.isInitialized = state !== 'not initialized';
+        expectedValueCalculator.calculateExpectedValue.mockReturnValue(null);
+
+        const profit = stats.calculateProfit(entry);
+        expect(profit.askProfit).toBeCloseTo(100 * (1 - MARKET_TAX), 10);
+        expect(profit.bidProfit).toBeCloseTo(80 * (1 - MARKET_TAX), 10);
     });
 });
 
