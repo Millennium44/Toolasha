@@ -149,6 +149,21 @@ class SettingsUI {
         // start next read the cache synchronously
         const overridesReady = initCustomPriceOverrides();
 
+        // A setting the mode came to manage after it was switched on is forced now. Not awaited:
+        // rows are painted only when the panel opens, and initialize() must not suspend here
+        ironCowMode.reconcile().catch((error) => {
+            console.error('[SettingsUI] Iron Cow reconcile failed:', error);
+        });
+        // ...and again for every character's settings that load later, as a switch does
+        if (!this._ironCowReconcileHooked) {
+            this._ironCowReconcileHooked = true;
+            config.onSettingsLoaded?.(() => {
+                ironCowMode.reconcile().catch((error) => {
+                    console.error('[SettingsUI] Iron Cow reconcile failed:', error);
+                });
+            });
+        }
+
         // Current settings come from config's already-loaded map rather than a
         // third storage read of the same record; the entries are copied so the
         // panel's working copy stays its own, as a fresh load's would be

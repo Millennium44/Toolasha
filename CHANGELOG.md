@@ -69,6 +69,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Self-use alchemy lines in item tooltips
 
 - A new tooltip setting (off by default) adds untaxed self-use lines under Alternative Actions: decompose once, decompose the whole gear chain down (listing the gear it collects for the collection log), and transmute an item you hold against selling it after tax.
+- They are hidden for Iron Cow characters, and shop-only outputs such as Labyrinth Tokens are valued at their shop conversion instead of leaving the line partly unpriced.
 
 ### Enhancement stock and purchase hints stay usable
 
