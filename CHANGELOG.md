@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial captures and plan exports follow the participant
+
+- Trial ability coverage now rejects saved loadouts belonging to a different character. Exported plan checks stay with the current participant's capture, including after a rename, so historical same-name records do not inherit their verdict.
+
 ### Task-slot warnings count newly issued tasks
 
 - Task-slot forecasts and alerts now count new random tasks already on the board, so the fill warning matches the game's occupied slots.

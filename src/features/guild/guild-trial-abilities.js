@@ -184,8 +184,8 @@ export function normalizeRoster(list) {
 /**
  * The stored capture for a roster member, if any.
  *
- * Id first, then the name key, then a name match against id-keyed entries —
- * because the roster and the capture do not always both know the id.
+ * Id first, then a same-name fallback only when the capture has no id or has
+ * the same id — because the roster and capture do not always both know it.
  *
  * @param {Object} players - The session's players, keyed by {@link playerKey}
  * @param {{characterId?: string|number|null, name?: string}} member - A roster member
@@ -193,7 +193,8 @@ export function normalizeRoster(list) {
  */
 export function captureFor(players, member) {
     if (!players || !member) return null;
-    if (member.characterId !== null && member.characterId !== undefined) {
+    const hasCharacterId = member.characterId !== null && member.characterId !== undefined;
+    if (hasCharacterId) {
         const byId = players[`id:${member.characterId}`];
         if (byId) return byId;
     }
@@ -202,8 +203,17 @@ export function captureFor(players, member) {
         .toLowerCase();
     if (!wanted) return null;
     const byName = players[`name:${wanted}`];
-    if (byName) return byName;
-    return Object.values(players).find((entry) => String(entry?.name || '').toLowerCase() === wanted) || null;
+    const sameCharacter = (entry) =>
+        !hasCharacterId ||
+        entry?.characterId === null ||
+        entry?.characterId === undefined ||
+        String(entry.characterId) === String(member.characterId);
+    if (byName && sameCharacter(byName)) return byName;
+    return (
+        Object.values(players).find(
+            (entry) => String(entry?.name || '').toLowerCase() === wanted && sameCharacter(entry)
+        ) || null
+    );
 }
 
 /**
@@ -1183,6 +1193,18 @@ class GuildTrialAbilities {
     exportSnapshot(abilityDetailMap = this._abilityMap()) {
         const view = this.state(abilityDetailMap);
         const players = {};
+        // Plan verdicts belong to current roster rows, while this export also
+        // retains captures for people who have since left. Join by the actual
+        // capture object so a historical same-name record cannot inherit a
+        // current participant's verdict, and an id-matched rename keeps it.
+        const verdictByCapture = new Map();
+        for (const participant of view.participants) {
+            if (!participant.capture || !participant.name) continue;
+            const name = String(participant.name).trim().toLowerCase();
+            const verdict = view.planCompare?.byName?.[name];
+            if (verdict) verdictByCapture.set(participant.capture, verdict);
+        }
+
         for (const entry of Object.values(this.session?.players || {})) {
             const key =
                 entry.characterId !== null && entry.characterId !== undefined
@@ -1191,7 +1213,7 @@ class GuildTrialAbilities {
                           .trim()
                           .toLowerCase();
             players[key] = { ...entry, abilities: entry.abilities ? [...entry.abilities] : null };
-            const verdict = view.planCompare?.byName?.[String(entry.name || '').toLowerCase()];
+            const verdict = verdictByCapture.get(entry);
             if (verdict) players[key].planVerdict = { ...verdict };
         }
 

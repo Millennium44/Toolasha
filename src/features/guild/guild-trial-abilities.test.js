@@ -54,7 +54,7 @@ const {
     aggregateAuras,
     auraCoverage,
 } = await import('./guild-trial-abilities.js');
-const { default: guildTrialPlan, parsePlan } = await import('./guild-trial-plan.js');
+const { default: guildTrialPlan, parsePlan, comparePlan } = await import('./guild-trial-plan.js');
 
 const NOW = 1_800_000_000_000;
 
@@ -164,6 +164,37 @@ describe('playerKey and roster plumbing', () => {
         expect(captureFor(players, { characterId: null, name: 'BOB' })).toBe(players['name:bob']);
         expect(captureFor(players, { characterId: null, name: 'alice' })).toBe(players['id:1']);
         expect(captureFor(players, { characterId: null, name: 'Cara' })).toBeNull();
+    });
+
+    test('an id-bearing roster rejects a same-name capture carrying a different id', () => {
+        const players = {
+            'id:1': { characterId: 1, name: 'Alice', abilitiesAuthoritative: true },
+        };
+
+        expect(captureFor(players, { characterId: 2, name: 'Alice' })).toBeNull();
+
+        const nameOnly = {
+            'name:alice': { characterId: null, name: 'Alice', abilitiesAuthoritative: true },
+        };
+        expect(captureFor(nameOnly, { characterId: 2, name: 'Alice' })).toBe(nameOnly['name:alice']);
+
+        const conflictingNameKey = {
+            'name:alice': { characterId: 1, name: 'Alice', abilitiesAuthoritative: true },
+        };
+        expect(captureFor(conflictingNameKey, { characterId: 2, name: 'Alice' })).toBeNull();
+    });
+
+    test('a stale same-name capture cannot transfer aura coverage or plan compliance to another id', () => {
+        // Models a historical/rekeyed entry still present in the session; the
+        // live roster contains only ID 2, even though both records say Alice.
+        const s = session([{ characterId: 2, name: 'Alice' }]);
+        s.recordCapture(snap('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]), { at: NOW });
+
+        const view = s.state(GAME);
+        expect(view.capturedCount).toBe(0);
+        expect(view.coverage['/abilities/fierce_aura']).toBe('unknown');
+        const compare = comparePlan(parsePlan('Alice: Fierce Aura', GAME), view.participants, GAME);
+        expect(compare.byName.alice.status).toBe('uncaptured');
     });
 });
 
@@ -792,6 +823,39 @@ describe('exportSnapshot', () => {
         expect(out.complete).toBe(false);
         expect(out.completedAt).toBeNull();
         expect(out.missingAuras).toBeUndefined();
+    });
+
+    test('a historical same-name capture does not export the current participant verdict', () => {
+        const current = session([{ characterId: 2, name: 'Alice' }]);
+        current.recordCapture(snap('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]), { at: NOW });
+        vi.spyOn(guildTrialPlan, 'parsed').mockReturnValue(parsePlan('Alice: Aqua Aura', GAME));
+
+        try {
+            const out = current.exportSnapshot(GAME);
+
+            expect(out.players['1']).toMatchObject({ name: 'Alice', abilitiesAuthoritative: true });
+            expect(out.players['1']).not.toHaveProperty('planVerdict');
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
+
+    test('a renamed current participant verdict stays with its same-id capture', () => {
+        const renamed = session([{ characterId: 1, name: 'Alicia' }]);
+        renamed.recordCapture(snap('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]), { at: NOW });
+        vi.spyOn(guildTrialPlan, 'parsed').mockReturnValue(parsePlan('Alicia: Aqua Aura', GAME));
+
+        try {
+            const out = renamed.exportSnapshot(GAME);
+
+            expect(out.players['1'].planVerdict).toMatchObject({
+                name: 'Alicia',
+                planName: 'Alicia',
+                status: 'missing',
+            });
+        } finally {
+            vi.restoreAllMocks();
+        }
     });
 });
 
