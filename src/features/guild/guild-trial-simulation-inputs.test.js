@@ -60,6 +60,26 @@ describe('trial simulation export inputs', () => {
         game.profileRead.mockResolvedValue([]);
         expect((await captureTrialSimulationInputs('1', [])).viewLoadouts).toEqual([]);
     });
+    test('a matching name cannot override an explicit loadout id outside the current roster', async () => {
+        const current = {
+            context: 'guild_trial',
+            ownerCharacterId: '1',
+            characterId: '2',
+            name: 'Previous name',
+            kind: 'combat',
+            hasLoadout: true,
+            capturedAt: 100,
+            loadout: { wearableItemMap: {}, equippedAbilities: [], abilityCombatTriggersMap: {} },
+        };
+        const nameOnly = { ...current, characterId: null, name: 'ADA', hasLoadout: false };
+        const differentMember = { ...current, characterId: '3', name: 'Ada' };
+        game.entries = [current, nameOnly, differentMember];
+        game.profileRead.mockResolvedValue([]);
+
+        const result = await captureTrialSimulationInputs('1', [{ characterID: 2, name: 'Ada' }]);
+
+        expect(result.viewLoadouts).toEqual([current, nameOnly]);
+    });
     test('keeps opened profiles for a full guild after the general cache evicts its earliest members', async () => {
         startTrialSimulationCapture?.();
         const roster = Array.from({ length: 125 }, (_, i) => ({ characterID: i + 10, name: `Member ${i + 1}` }));

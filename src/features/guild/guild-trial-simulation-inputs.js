@@ -74,8 +74,9 @@ export async function captureTrialSimulationInputs(characterId, roster = []) {
                 entry.context === VIEW_LOADOUT_CONTEXT.GuildTrial &&
                 entry.ownerCharacterId === owner &&
                 roster.length > 0 &&
-                ((entry.characterId != null && memberIds.has(String(entry.characterId))) ||
-                    memberNames.has(String(entry.name || '').toLowerCase()))
+                (entry.characterId != null
+                    ? memberIds.has(String(entry.characterId))
+                    : memberNames.has(String(entry.name || '').toLowerCase()))
         )
     );
     const clientData = dataManager.getInitClientData();

@@ -85,6 +85,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Rush-floor advice now waits for loadout data and checks that recorded fights match your current gear, preventing old-build losses from recommending a lower rush floor. Historical supply and burn summaries remain available.
 
+### Trial input exports match guild members
+
+- Trial input exports now exclude saved loadouts whose character ID is outside the current roster, even when the name matches. Captures stay with the correct member after a rename.
+
 ### Bestiary target alerts follow the current battle
 
 - Bestiary target alerts now ignore updates from an earlier battle, preventing a new wave's reused monster slots from falsely counting kills.
