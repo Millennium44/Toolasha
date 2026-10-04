@@ -136,6 +136,22 @@ describe('section header totals after the prices arrive', () => {
         expect(layout).toHaveBeenCalledTimes(2);
     });
 
+    test('redraws when two tiles change by opposite amounts, leaving the overall sum alone', async () => {
+        const { container, tiles, layout } = await setup();
+        tiles[0].dataset.askValue = '3000';
+        tiles[1].dataset.askValue = '1000';
+        await ui._applyLayout();
+        layout.mockClear();
+
+        badgeMock.renderAllBadges.mockImplementationOnce(async () => {
+            tiles[0].dataset.askValue = '1000';
+            tiles[1].dataset.askValue = '3000';
+        });
+        await ui._refreshBadgesWhenSettled(container);
+
+        expect(layout).toHaveBeenCalledTimes(1);
+    });
+
     test('does not redraw when the render left the values alone, so the refresh settles', async () => {
         const { container, tiles, layout } = await setup();
         tiles[0].dataset.askValue = '1000';

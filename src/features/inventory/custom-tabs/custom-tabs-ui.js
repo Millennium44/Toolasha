@@ -2113,15 +2113,12 @@ export default class CustomTabsUI {
      * @returns {string}
      */
     _tileValueSignature(invContainer) {
-        let ask = 0;
-        let bid = 0;
-        let count = 0;
+        // Per tile, not summed: two sections changing by opposite amounts leave the sums alone
+        const values = [];
         for (const tile of invContainer.querySelectorAll('[class*="Item_itemContainer"]')) {
-            ask += parseFloat(tile.dataset.askValue) || 0;
-            bid += parseFloat(tile.dataset.bidValue) || 0;
-            count++;
+            values.push(`${tile.dataset.askValue ?? ''},${tile.dataset.bidValue ?? ''}`);
         }
-        return `${totalValueKey(inventorySort.currentMode)}|${count}|${ask}|${bid}`;
+        return `${totalValueKey(inventorySort.currentMode)}|${values.join(';')}`;
     }
 
     /**
