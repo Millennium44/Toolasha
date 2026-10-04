@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
     settings: { enhanceSim: true, enhanceSim_autoDetect: false },
     // Rows the way `characterItems` carries them: one per stack, with its location and level
     inventory: [],
+    // The character's action queue
+    actions: [],
     // What a copy would sell for (the profit sell side); the buy side reads `prices`
     sellPrices: {},
     prices: {
@@ -51,7 +53,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ itemDetailMap: state.items }),
         getItemDetails: (hrid) => state.items[hrid] || null,
         getActionDetails: () => ({ baseTimeCost: 12e9 }),
-        getCurrentActions: () => [],
+        getCurrentActions: () => [...state.actions],
         getPersonalBuffFlatBoost: () => 0,
         getInventory: () => [...state.inventory],
     },
@@ -100,6 +102,7 @@ beforeEach(() => {
     document.body.innerHTML = '';
     state.settings = { enhanceSim: true, enhanceSim_autoDetect: false };
     state.inventory = [];
+    state.actions = [];
     state.sellPrices = {};
     state.prices = { ...BASE_PRICES };
 });
@@ -282,6 +285,34 @@ describe('protect-from sweep spending held protection', () => {
         state.inventory = [stack(SWORD, 4), stack(SWORD, 1, { level: 3 })];
         const stats = await render({ itemName: 'Cheese Sword +3' });
         expect(groupHeader(stats, 'Cheese Sword (').textContent).toContain('4 held, 2 spare');
+    });
+
+    test('an enhance running on another item does not hide the +0 bench copy of this one', async () => {
+        stockOn(2);
+        state.sellPrices = { [SWORD]: 45_000 };
+        state.inventory = [stack(SWORD, 4)];
+        // Enhancing some other item at +7 while the Enhance tab prepares a +0 Cheese Sword
+        state.actions = [
+            {
+                id: 1,
+                actionHrid: '/actions/enhancing/enhance',
+                primaryItemHash: '1234::/item_locations/inventory::/items/cheese_spear::7',
+                isDone: false,
+                ordinal: 1,
+            },
+        ];
+        const stats = await render({ itemName: 'Cheese Sword' });
+        // 4 held, one of them on the bench: 3, of which 1 is spare above the keep-2
+        expect(groupHeader(stats, 'Cheese Sword (').textContent).toContain('3 held, 1 spare');
+
+        // The same action on this very item is the bench copy's level, and an enhanced copy is
+        // not among the +0 ones
+        state.actions = [
+            { ...state.actions[0], primaryItemHash: '1234::/item_locations/inventory::/items/cheese_sword::7' },
+        ];
+        clearProtectSweepMemo();
+        const own = await render({ itemName: 'Cheese Sword' });
+        expect(groupHeader(own, 'Cheese Sword (').textContent).toContain('4 held, 2 spare');
     });
 
     test('reserve 0 spends every spare copy', async () => {

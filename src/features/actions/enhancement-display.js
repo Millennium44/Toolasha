@@ -601,10 +601,15 @@ export function isRepeatUnlimitedFromUI(panel) {
  * action's own hash when there is one (authoritative — several items can be queued, and this
  * is the one actually running, via `runningAction`), falling back to the level parsed off the
  * item name shown in the panel itself (e.g. "Dairyhand's Top +5") before anything is queued.
+ *
+ * With `itemHrid`, the running action counts only when it is enhancing that item: a player can
+ * be enhancing one item while the Enhance tab prepares another, and the running item's level
+ * says nothing about the one on the panel.
  * @param {HTMLElement} panel - Enhancing panel element
+ * @param {string|null} [itemHrid] - The item the panel shows; omit to take the running action as is
  * @returns {number|null} Current enhancement level, or null when nothing says otherwise
  */
-export function getCurrentEnhancementLevel(panel) {
+export function getCurrentEnhancementLevel(panel, itemHrid = null) {
     let currentLevel = null;
 
     const currentActions = dataManager.getCurrentActions();
@@ -612,7 +617,8 @@ export function getCurrentEnhancementLevel(panel) {
     // enhance entry in array order can be a queued one, whose item this
     // would then read
     const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
-    if (enhancingAction?.primaryItemHash) {
+    const runningItem = enhancingAction?.primaryItemHash?.split('::').find((part) => part.startsWith('/items/'));
+    if (enhancingAction?.primaryItemHash && (!itemHrid || runningItem === itemHrid)) {
         const parts = enhancingAction.primaryItemHash.split('::');
         const lastPart = parts[parts.length - 1];
         if (lastPart && !lastPart.startsWith('/')) {
@@ -1359,7 +1365,8 @@ function formatEnhancementDisplay(
     // Read once and shared by both sections below it, the way the panel's other lookups
     // (protection item, protect-from level) are read once by the caller and threaded through.
     const targetLevelForPanel = getTargetLevelFromUI(panel);
-    const currentLevelForPanel = getCurrentEnhancementLevel(panel);
+    // The panel's own item: a running enhance on some other item says nothing about this one
+    const currentLevelForPanel = getCurrentEnhancementLevel(panel, itemDetails.hrid);
 
     lines.push(
         unlimitedRepeatHTML({
