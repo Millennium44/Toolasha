@@ -818,6 +818,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Displays best profit/hr highlighted, with other alternative actions (craft, coinify, decompose, transmute) summarized below',
             },
+            itemTooltip_selfUseAlchemy: {
+                id: 'itemTooltip_selfUseAlchemy',
+                label: 'Show self-use alchemy lines (no sales tax)',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds self-use lines to the alternative actions: decompose once, the full decompose chain down to materials (with the gear it collects along the way, for the collection log), and transmuting an item you already hold. Outputs you keep are valued at what you would pay for them under your pricing mode, with no sales tax; the decomposed item costs the cheaper of making or buying it, and a held item costs what selling it would bring after tax. The ordinary taxed figures are unchanged.',
+            },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Self-use alchemy lines in item tooltips
+
+- A new tooltip setting (off by default) adds untaxed self-use lines under Alternative Actions: decompose once, decompose the whole gear chain down (listing the gear it collects for the collection log), and transmute an item you hold against selling it after tax.
+
 ### Enhancement stock and purchase hints stay usable
 
 - Protection comparisons no longer treat an unknown purchase price as free. Valued spare copies can still cover modeled expected uses without a buy quote, with that limitation shown in the table.
