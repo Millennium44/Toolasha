@@ -13,6 +13,8 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ setting: true, collections: null, characterId: 'char-1' }));
+/** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
+const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
 const bus = vi.hoisted(() => ({ handlers: {} }));
 const observer = vi.hoisted(() => ({ handlers: [] }));
 
@@ -135,7 +137,10 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
                       requirementCosts: [{ itemHrid: hrid, count: 1, price: BUY[hrid] }],
                       catalystCostPerHour: 0,
                       totalTeaCostPerHour: 0,
-                      dropRevenues: [],
+                      // The alchemy-wide bonus drop every action rolls
+                      dropRevenues: [
+                          { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
+                      ],
                   },
     },
 }));
@@ -149,6 +154,17 @@ vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinCost: (hrid) => (hrid === '/items/cheese_sword' ? 50 : 0),
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price }));
+vi.mock('../../utils/character-key.js', () => ({
+    readScoped: async (base, _store, fallback) => {
+        const key = `${game.characterId}:${base}`;
+        if (scoped.gate) await scoped.gate;
+        return scoped.values.has(key) ? scoped.values.get(key) : fallback;
+    },
+    writeScoped: async (base, value) => {
+        scoped.values.set(`${game.characterId}:${base}`, value);
+        return true;
+    },
+}));
 
 const { default: optimizer, buildCollectionRoutes } = await import('./collection-optimizer.js');
 
@@ -173,6 +189,8 @@ beforeEach(() => {
     game.setting = true;
     game.collections = COLLECTIONS;
     game.characterId = 'char-1';
+    scoped.values = new Map();
+    scoped.gate = null;
     bus.handlers = {};
     observer.handlers = [];
 });
@@ -267,6 +285,67 @@ describe('the panel', () => {
         document.querySelector('.toolasha-collopt-header').click();
         expect(document.querySelector('.toolasha-collopt-table')).toBeNull();
         expect(panel()).not.toBeNull();
+    });
+
+    test('the bonus drop is credited but never a row of its own', async () => {
+        const routes = await buildCollectionRoutes();
+        const umbral = routes.sources.find((s) => s.sourceHrid === '/items/umbral_hood');
+        expect(umbral.yields.get('/items/alchemy_essence')).toBeGreaterThan(0);
+        expect(umbral.bonus.has('/items/alchemy_essence')).toBe(true);
+
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const items = [...document.querySelectorAll('.toolasha-collopt-row')].map((row) => row.dataset.item);
+        expect(items).not.toContain('/items/alchemy_essence');
+    });
+
+    test('max time per step: 8 h by default, drops slower rows, and is kept per character', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-maxstep')).not.toBeNull());
+        expect(document.querySelector('.toolasha-collopt-maxstep').value).toBe('8');
+        const items = () => [...document.querySelectorAll('.toolasha-collopt-row')].map((row) => row.dataset.item);
+        // At 100 actions an hour: Gobo Hood's first unit is 2 Beast Hood chains (108 s), Beast Hood's
+        // 2 Umbral Hood chains (133 s); Gobo Leather's first is one Gobo Hood decompose (36 s)
+        expect(items()).toContain('/items/gobo_hood');
+        expect(items()).toContain('/items/beast_hood');
+
+        const input = document.querySelector('.toolasha-collopt-maxstep');
+        input.value = '0.01';
+        input.dispatchEvent(new Event('change'));
+        expect(items()).not.toContain('/items/gobo_hood');
+        expect(items()).not.toContain('/items/beast_hood');
+        expect(items()).toContain('/items/gobo_leather');
+        await vi.waitFor(() => expect(scoped.values.get('char-1:collectionOptimizerMaxStepHours')).toBe(0.01));
+
+        // The next opening reads it back for this character, and not for another
+        optimizer.disable();
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        expect(document.querySelector('.toolasha-collopt-maxstep').value).toBe('0.01');
+        optimizer.disable();
+        game.characterId = 'char-2';
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        expect(optimizer.maxStepHours).toBe(8);
+    });
+
+    test("a switch during the read never applies one character's choice to another", async () => {
+        scoped.values.set('char-1:collectionOptimizerMaxStepHours', 2);
+        let release;
+        scoped.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        drawCollectionsTab();
+        optimizer.initialize();
+        game.characterId = 'char-2';
+        release();
+        await optimizer.prefsLoaded;
+        expect(optimizer.maxStepHours).toBe(8);
     });
 
     test('disable removes the panel and stops listening', () => {

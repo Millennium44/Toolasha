@@ -10,6 +10,7 @@
 
 import { describe, test, expect } from 'vitest';
 import {
+    ALCHEMY_BONUS_DROPS,
     bestOptions,
     collectionAchievementTargets,
     collectionCounts,
@@ -180,5 +181,58 @@ describe('the "+N points" plan', () => {
         const counts = new Map([['/items/cheese', 5]]);
         planTarget(counts, indexRoutes({ sources: [cheeseSword()] }), 10);
         expect(counts.get('/items/cheese')).toBe(5);
+    });
+});
+
+describe('the alchemy-wide bonus drops', () => {
+    /** A Cheese Sword chain that also rolls Alchemy Essence and a Small Artisan's Crate */
+    const withBonus = () => ({
+        ...cheeseSword('shop', 50),
+        yields: new Map([
+            ['/items/cheese', 18],
+            ['/items/alchemy_essence', 0.5],
+            ['/items/small_artisans_crate', 0.001],
+            ['/items/prime_catalyst_shard', 0.01],
+        ]),
+        bonus: new Set(['/items/prime_catalyst_shard']),
+    });
+
+    test('are never a route target, whether known or flagged by the route', () => {
+        const index = indexRoutes({ sources: [withBonus()] });
+        expect(index.has('/items/cheese')).toBe(true);
+        expect(index.has('/items/prime_catalyst_shard')).toBe(false);
+        for (const hrid of ALCHEMY_BONUS_DROPS) expect(index.has(hrid)).toBe(false);
+    });
+
+    test('still count toward the points of the route that yields them', () => {
+        const route = withBonus();
+        route.yields.set('/items/alchemy_essence', 2);
+        // 5 → 10 cheese is one sword, which also brings the first 2 essence: +1
+        const option = evaluateOption('/items/cheese', new Map([['/items/cheese', 5]]), route);
+        expect(option.gain).toBe(2);
+        expect(option.collateral).toBe(1);
+        expect(option.points).toBe(3);
+        expect(option.credits.get('/items/alchemy_essence')).toBe(2);
+    });
+});
+
+describe('the max time per step', () => {
+    test('leaves slower options out of the ranking', () => {
+        const counts = new Map([['/items/cheese', 10]]);
+        const index = indexRoutes({ sources: [cheeseSword()] });
+        // 10 → 100 cheese is 5 swords at 36 s each
+        expect(bestOptions(counts, index, { maxSeconds: 180 })).toHaveLength(1);
+        expect(bestOptions(counts, index, { maxSeconds: 179 })).toHaveLength(0);
+        expect(bestOptions(counts, index)).toHaveLength(1);
+    });
+
+    test('and out of the plan', () => {
+        const counts = new Map([['/items/cheese', 0]]);
+        const index = indexRoutes({ sources: [cheeseSword()] });
+        const plan = planTarget(counts, index, 6, { maxSeconds: 100 });
+        // One sword (36 s) for +3; the next rung's five swords (180 s) are over the limit
+        expect(plan.steps).toHaveLength(1);
+        expect(plan.points).toBe(3);
+        expect(plan.reached).toBe(false);
     });
 });

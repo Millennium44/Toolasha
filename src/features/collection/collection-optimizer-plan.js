@@ -27,6 +27,23 @@ import { pointsFromCount, nextPointCount } from '../../utils/points-from-count.j
 /** The display name of each route */
 export const ROUTE_LABELS = { craft: 'Craft', decompose: 'Decompose', shop: 'Shop gear' };
 
+/**
+ * The alchemy-wide bonus drops. They roll on every alchemy action whatever the
+ * item, so "decompose X to collect them" is never a real plan: they are never
+ * a route's target, though what a route yields of them still counts toward its
+ * points. A route can name more (`route.bonus`, from the calculator's
+ * `isEssence` / `isRare` flags); these are the ones known today.
+ */
+export const ALCHEMY_BONUS_DROPS = new Set([
+    '/items/alchemy_essence',
+    '/items/small_artisans_crate',
+    '/items/medium_artisans_crate',
+    '/items/large_artisans_crate',
+]);
+
+/** The default cap on one step's time: an option slower than this is left out */
+export const DEFAULT_MAX_STEP_SECONDS = 8 * 3600;
+
 /** The counts past which the ladder stops paying */
 const LADDER_CAP = 1e14;
 
@@ -111,7 +128,8 @@ export function nextAchievementTarget(targets, total) {
  * every item in its `yields` — the gear in between and the kept outputs.
  * @param {{craft?: Iterable<Object>, sources?: Iterable<Object>}} routes
  *   craft: `{route: 'craft', itemHrid, unitCost, unitSeconds}`;
- *   sources: `{route: 'decompose'|'shop', sourceHrid, cost, seconds, yields: Map, kept: Map}`
+ *   sources: `{route: 'decompose'|'shop', sourceHrid, cost, seconds, yields: Map, kept: Map,
+ *   bonus?: Set}` — `bonus` names yields that are alchemy-wide bonus drops
  * @returns {Map<string, Array<Object>>}
  */
 export function indexRoutes(routes) {
@@ -126,6 +144,8 @@ export function indexRoutes(routes) {
     for (const route of routes?.sources || []) {
         if (!Number.isFinite(route?.cost) || !(route.yields instanceof Map)) continue;
         for (const [hrid, expected] of route.yields) {
+            // A bonus drop is credited as a by-product, never targeted
+            if (ALCHEMY_BONUS_DROPS.has(hrid) || route.bonus?.has?.(hrid)) continue;
             if (expected > 0) add(hrid, route);
         }
     }
@@ -206,15 +226,19 @@ export function evaluateOption(itemHrid, counts, route) {
  * Each item's cheapest next rung, cheapest gold per point first.
  * @param {Map<string, number>} counts
  * @param {Map<string, Array<Object>>} index - From {@link indexRoutes}
- * @returns {Array<Object>} One option per item a route can collect
+ * @param {Object} [opts]
+ * @param {number} [opts.maxSeconds=Infinity] - Leave out any option slower than this
+ * @returns {Array<Object>} One option per item a route can collect within the time
  */
-export function bestOptions(counts, index) {
+export function bestOptions(counts, index, { maxSeconds = Infinity } = {}) {
+    const limit = Number(maxSeconds) > 0 ? Number(maxSeconds) : Infinity;
     const options = [];
     for (const [itemHrid, routes] of index) {
         let best = null;
         for (const route of routes) {
             const option = evaluateOption(itemHrid, counts, route);
             if (!option || !Number.isFinite(option.goldPerPoint)) continue;
+            if (!(option.seconds <= limit)) continue;
             if (!best || option.goldPerPoint < best.goldPerPoint) best = option;
         }
         if (best) options.push(best);
@@ -234,9 +258,10 @@ export function bestOptions(counts, index) {
  * @param {number} targetPoints - Points wanted
  * @param {Object} [opts]
  * @param {number} [opts.maxSteps=300]
+ * @param {number} [opts.maxSeconds=Infinity] - Leave out any step slower than this
  * @returns {{steps: Array<Object>, points: number, gold: number, seconds: number, reached: boolean}}
  */
-export function planTarget(counts, index, targetPoints, { maxSteps = 300 } = {}) {
+export function planTarget(counts, index, targetPoints, { maxSteps = 300, maxSeconds = Infinity } = {}) {
     const working = new Map(counts);
     const start = totalCollectionPoints(working);
     const want = Math.max(0, Math.floor(Number(targetPoints) || 0));
@@ -245,7 +270,7 @@ export function planTarget(counts, index, targetPoints, { maxSteps = 300 } = {})
     let seconds = 0;
     let gained = 0;
     while (gained < want && steps.length < maxSteps) {
-        const [pick] = bestOptions(working, index);
+        const [pick] = bestOptions(working, index, { maxSeconds });
         if (!pick) break;
         for (const [hrid, added] of pick.credits) working.set(hrid, (working.get(hrid) || 0) + added);
         gained = totalCollectionPoints(working) - start;

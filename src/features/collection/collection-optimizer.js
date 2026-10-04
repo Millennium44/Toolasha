@@ -27,7 +27,9 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ownUseUnitCost, selfUseDecomposeChain } from '../../utils/self-use-alchemy.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import {
+    DEFAULT_MAX_STEP_SECONDS,
     ROUTE_LABELS,
     bestOptions,
     collectionAchievementTargets,
@@ -43,6 +45,23 @@ export const SETTING_KEY = 'collectionOptimizer';
 
 /** The panel's root class */
 const PANEL_CLASS = 'toolasha-collopt';
+
+/** Where the max-time-per-step choice is kept, per character */
+const MAX_STEP_KEY = 'collectionOptimizerMaxStepHours';
+const MAX_STEP_STORE = 'collections';
+
+/** The default max time per step, in hours */
+const DEFAULT_MAX_STEP_HOURS = DEFAULT_MAX_STEP_SECONDS / 3600;
+
+/**
+ * A max-time-per-step value in hours: positive and finite, else the default.
+ * @param {*} value
+ * @returns {number}
+ */
+function validHours(value) {
+    const hours = Number(value);
+    return Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_MAX_STEP_HOURS;
+}
 
 /** Rows shown in the ranking */
 const MAX_ROWS = 40;
@@ -150,11 +169,19 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             if (value !== null && value !== undefined) kept.set(itemHrid, value);
         }
         if (yields.size === 0) continue;
+        // The alchemy-wide bonus drops each step rolls: credited, never a target
+        const bonus = new Set();
+        for (const step of chain.steps) {
+            for (const drop of getDecompose(step.itemHrid)?.dropRevenues || []) {
+                if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
+            }
+        }
         const shared = {
             sourceHrid: hrid,
             seconds: chain.seconds,
             yields,
             kept,
+            bonus,
             partlyUnpriced: chain.partlyUnpriced,
         };
 
@@ -229,6 +256,46 @@ class CollectionOptimizer {
         this.generation = 0;
         this.collapsed = false;
         this.targetPoints = 10;
+        this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
+    }
+
+    /** The max time per step, in seconds */
+    get maxSeconds() {
+        return this.maxStepHours * 3600;
+    }
+
+    /**
+     * Keep this character's max time per step.
+     * @param {number} hours
+     * @returns {Promise<void>}
+     */
+    async saveMaxStep(hours) {
+        try {
+            await writeScoped(MAX_STEP_KEY, hours, MAX_STEP_STORE);
+        } catch (error) {
+            console.error('[CollectionOptimizer] Saving max time per step failed:', error);
+        }
+    }
+
+    /**
+     * Read this character's max time per step, then redraw a mounted panel.
+     * The character is captured before the read and checked after it, so a
+     * switch landing in between never applies one character's choice to another.
+     * @returns {Promise<void>}
+     */
+    async loadPrefs() {
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        const generation = this.generation;
+        try {
+            const stored = await readScoped(MAX_STEP_KEY, MAX_STEP_STORE, DEFAULT_MAX_STEP_HOURS);
+            if (generation !== this.generation) return;
+            if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId) return;
+            this.maxStepHours = validHours(stored);
+            const root = document.querySelector(`.${PANEL_CLASS}`);
+            if (root) this.render(root);
+        } catch (error) {
+            console.error('[CollectionOptimizer] Reading max time per step failed:', error);
+        }
     }
 
     initialize() {
@@ -251,6 +318,7 @@ class CollectionOptimizer {
 
         const open = this.findVisiblePanel();
         if (open) this.mount(open);
+        this.prefsLoaded = this.loadPrefs();
     }
 
     disable() {
@@ -266,6 +334,7 @@ class CollectionOptimizer {
         this.routesFor = null;
         this.index = null;
         this.building = null;
+        this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
         this.isInitialized = false;
     }
 
@@ -403,6 +472,24 @@ class CollectionOptimizer {
         const go = el('button', 'font-size:11px;', 'Plan');
         go.className = 'toolasha-collopt-plan';
         row.appendChild(go);
+
+        // Anything slower than this per step is left out of the ranking and the plan
+        row.appendChild(el('span', 'margin-left:10px;', 'Max time per step'));
+        const maxStep = el('input', 'width:50px;font-size:12px;background:#222;color:#eee;border:1px solid #444;');
+        maxStep.type = 'number';
+        maxStep.min = '0.1';
+        maxStep.step = '0.5';
+        maxStep.value = String(this.maxStepHours);
+        maxStep.className = 'toolasha-collopt-maxstep';
+        row.appendChild(maxStep);
+        row.appendChild(el('span', '', 'h'));
+        maxStep.addEventListener('click', (event) => event.stopPropagation());
+        maxStep.addEventListener('change', () => {
+            this.maxStepHours = validHours(maxStep.value);
+            this.saveMaxStep(this.maxStepHours);
+            const root = maxStep.closest(`.${PANEL_CLASS}`);
+            if (root) this.render(root);
+        });
         body.appendChild(row);
 
         const result = el('div', '');
@@ -412,7 +499,7 @@ class CollectionOptimizer {
         const run = () => {
             const wanted = Math.max(1, Math.floor(Number(input.value) || 0));
             this.targetPoints = wanted;
-            const plan = planTarget(counts, this.index, wanted);
+            const plan = planTarget(counts, this.index, wanted, { maxSeconds: this.maxSeconds });
             result.replaceChildren();
             const head = plan.reached
                 ? `+${plan.points} points: ${formatKMB(plan.gold)} gold, ${timeReadable(plan.seconds)}`
@@ -447,9 +534,15 @@ class CollectionOptimizer {
      * @param {Map<string, number>} counts
      */
     renderRanking(body, counts) {
-        const options = bestOptions(counts, this.index);
+        const options = bestOptions(counts, this.index, { maxSeconds: this.maxSeconds });
         if (options.length === 0) {
-            body.appendChild(el('div', 'color:#aaa;', 'No priced route yet — market data may still be loading.'));
+            body.appendChild(
+                el(
+                    'div',
+                    'color:#aaa;',
+                    'No priced route within the max time per step — raise it, or market data may still be loading.'
+                )
+            );
             return;
         }
         const table = el('table', 'width:100%;border-collapse:collapse;font-size:11px;');
