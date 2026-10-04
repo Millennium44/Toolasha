@@ -138,7 +138,9 @@ vi.mock('../../utils/market-data.js', () => ({
 vi.mock('../../utils/alchemy-shop-value.js', () => ({
     getAlchemyOutputShopValue: (hrid, options) => {
         priceState.shopSides.push(options?.side ?? 'sell');
-        return hrid in priceState.shop ? { valuePerUnit: priceState.shop[hrid] } : null;
+        return hrid in priceState.shop
+            ? { valuePerUnit: priceState.shop[hrid], sourceItemHrid: '/items/foo', sourceItemName: 'Shop Thing' }
+            : null;
     },
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
@@ -977,6 +979,8 @@ describe('self-use alchemy lines', () => {
         // Valued at what keeping them saves: the shop items on the buy side, like every other output
         expect(priceState.shopSides).toContain('buy');
         expect(priceState.shopSides).not.toContain('sell');
+        // The figure is named as a shop conversion, not passed off as a market price
+        expect(text).toMatch(/Labyrinth Token valued at its Labyrinth Shop conversion \(.+\), not a market price\./);
         expect(text).toContain('(550/action)');
         expect(text).not.toContain('partly unpriced');
     });

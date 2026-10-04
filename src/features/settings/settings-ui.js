@@ -154,6 +154,15 @@ class SettingsUI {
         ironCowMode.reconcile().catch((error) => {
             console.error('[SettingsUI] Iron Cow reconcile failed:', error);
         });
+        // ...and again for every character's settings that load later, as a switch does
+        if (!this._ironCowReconcileHooked) {
+            this._ironCowReconcileHooked = true;
+            config.onSettingsLoaded?.(() => {
+                ironCowMode.reconcile().catch((error) => {
+                    console.error('[SettingsUI] Iron Cow reconcile failed:', error);
+                });
+            });
+        }
 
         // Current settings come from config's already-loaded map rather than a
         // third storage read of the same record; the entries are copied so the

@@ -1618,6 +1618,10 @@ class TooltipPrices {
         }
 
         for (const line of selfUseLines) {
+            if (line.kind === 'note') {
+                html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${line.text}</div>`;
+                continue;
+            }
             html += `<div style="color: ${line.color};" title="${SELF_USE_TITLE}">• ${line.text}`;
             if (line.detail) {
                 html += ` <span style="opacity: 0.7;">${line.detail}</span>`;
@@ -1654,10 +1658,16 @@ class TooltipPrices {
             // A shop-only output (Labyrinth Tokens) has no market price; the calculator values it
             // through a shop conversion, and the same figure stands in here. Untaxed: a shop
             // conversion has no market tax.
-            const priceOf = (hrid) =>
-                getItemPrice(hrid, { context: 'profit', side: 'buy' }) ??
-                getAlchemyOutputShopValue(hrid, { side: 'buy' })?.valuePerUnit ??
-                null;
+            // Shop-derived figures are named on the tooltip, not passed off as market prices
+            const shopSources = new Map();
+            const priceOf = (hrid) => {
+                const market = getItemPrice(hrid, { context: 'profit', side: 'buy' });
+                if (market != null) return market;
+                const shop = getAlchemyOutputShopValue(hrid, { side: 'buy' });
+                if (!shop) return null;
+                shopSources.set(hrid, shop);
+                return shop.valuePerUnit;
+            };
             // A crate with no order book is worth its contents, untaxed at the buy side — the
             // calculator's crate figure is the taxed container EV. Contents go through the
             // buy-side resolver so coin, dungeon tokens and cowbells keep their special values.
@@ -1807,6 +1817,15 @@ class TooltipPrices {
                         text: `Transmute held item (self-use): ${lowerBound}${formatKMB(held.netPerHour)}/hr`,
                         detail: `(${lowerBound}${formatKMB(held.netPerAction)}/action${unpricedTag(held.partlyUnpriced, heldPick.optimized)})`,
                         color: held.partlyUnpriced ? config.COLOR_TOOLTIP_INFO : lineColor(held.netPerHour),
+                    });
+                }
+            }
+            if (lines.length > 0) {
+                for (const [hrid, shop] of shopSources) {
+                    const name = dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
+                    lines.push({
+                        kind: 'note',
+                        text: `${name} valued at its Labyrinth Shop conversion (${shop.sourceItemName}), not a market price.`,
                     });
                 }
             }
