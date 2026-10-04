@@ -1,5 +1,6 @@
 /** A user-driven checklist for the inputs needed to replay a guild trial. */
 import dataManager from '../../core/data-manager.js';
+import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import guildTrialRecorder from './guild-trial-recorder.js';
@@ -7,10 +8,16 @@ import {
     captureTrialSimulationInputs,
     startTrialSimulationCapture,
     trialSimulationProfiles,
+    trialSimulationLoadouts,
+    restoreTrialSimulationInputs,
+    loadSavedTrialInputBundles,
+    saveTrialInputBundle,
+    parseTrialInputBundle,
+    MAX_TRIAL_INPUT_BYTES,
 } from './guild-trial-simulation-inputs.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
-import { fetchLoadout, getLoadouts, onLoadoutCaptured, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { fetchLoadout, onLoadoutCaptured, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { isTestServer } from '../../utils/game-server.js';
 
@@ -98,17 +105,130 @@ let pending = null;
 let notice = '';
 let offLoadout = null;
 let profileHandler = null;
+let saveTimer = null;
+let restoredScope = null;
+let restoring = false;
+let roundVersion = 0;
+let savedAt = null;
+let saveNotice = '';
 const skipped = new Set();
 
 function adoptScope() {
     const next = scopeNow();
     if (next === scope) return;
     cancelPending();
+    cancelSave();
+    roundVersion++;
     scope = next;
     since = Date.now();
     selection = '';
     notice = '';
     skipped.clear();
+    restoredScope = null;
+    restoring = false;
+    savedAt = null;
+    saveNotice = '';
+}
+
+function cancelSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+}
+
+function matchesCurrentGuild(bundle) {
+    return (
+        bundle.guildName === guildXPTracker.getOwnGuildName?.() &&
+        bundle.weekStartAt === guildXPTracker.getCurrentWeekStartAt?.() &&
+        (bundle.guildID == null || String(bundle.guildID) === String(guildXPTracker.getOwnGuildID?.()))
+    );
+}
+
+async function restoreSavedCapture() {
+    if (config.getSetting('guildTrialKeepInputs') !== true || !currentGuildReady() || restoredScope === scope) return;
+    const expected = scope;
+    const version = roundVersion;
+    restoredScope = expected;
+    restoring = true;
+    try {
+        const saved = await loadSavedTrialInputBundles();
+        if (scopeNow() !== expected || roundVersion !== version || !currentGuildReady()) return;
+        const bundle = saved.find(matchesCurrentGuild);
+        if (bundle) {
+            restoreTrialSimulationInputs(bundle);
+            since = Math.min(since, bundle.capturedSince);
+            savedAt = bundle.exportedAt;
+            saveNotice = 'Restored this guild/week’s saved captures. Check their dates and refresh changed loadouts.';
+        }
+    } catch (error) {
+        if (scope === expected && roundVersion === version)
+            saveNotice = `Could not restore saved captures: ${error.message}`;
+    } finally {
+        if (scope === expected && roundVersion === version) {
+            restoring = false;
+            trialInputCapturePanel.render();
+            scheduleSave();
+        }
+    }
+}
+
+async function saveCurrentCapture(automatic = false) {
+    const expected = scope;
+    const version = roundVersion;
+    try {
+        const bundle = await buildTrialInputExport();
+        if (
+            scope !== expected ||
+            roundVersion !== version ||
+            (automatic && config.getSetting('guildTrialKeepInputs') !== true)
+        )
+            return;
+        await saveTrialInputBundle(bundle);
+        if (scope !== expected || roundVersion !== version) return;
+        savedAt = bundle.exportedAt;
+        saveNotice = 'Captures saved on this browser. Trial Sim can load this guild/week’s signup roster.';
+    } catch (error) {
+        if (scope === expected && roundVersion === version) saveNotice = `Save failed: ${error.message}`;
+    }
+    if (scope === expected && roundVersion === version) trialInputCapturePanel.render();
+}
+
+function scheduleSave() {
+    cancelSave();
+    if (config.getSetting('guildTrialKeepInputs') !== true || restoring) return;
+    saveTimer = setTimeout(() => {
+        saveTimer = null;
+        if (!pending && currentGuildReady()) void saveCurrentCapture(true);
+    }, 750);
+}
+
+function importCaptureFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.setAttribute('aria-label', 'Trial capture JSON file');
+    const expected = scope;
+    const version = roundVersion;
+    input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+            if (file.size > MAX_TRIAL_INPUT_BYTES) throw new Error('Capture JSON must be smaller than 20 MB.');
+            const bundle = parseTrialInputBundle(await file.text());
+            if (scopeNow() !== expected || roundVersion !== version) return;
+            await saveTrialInputBundle(bundle);
+            if (scopeNow() !== expected || roundVersion !== version) return;
+            if (currentGuildReady() && matchesCurrentGuild(bundle)) {
+                restoreTrialSimulationInputs(bundle);
+                since = Math.min(since, bundle.capturedSince);
+            }
+            savedAt = bundle.exportedAt;
+            saveNotice = `Imported and saved ${bundle.guildName}’s capture from ${new Date(bundle.exportedAt).toLocaleString()}. Load it in Trial Sim.`;
+        } catch (error) {
+            if (scope === expected && roundVersion === version) saveNotice = `Import failed: ${error.message}`;
+        }
+        if (scope === expected && roundVersion === version) trialInputCapturePanel.render();
+    });
+    input.click();
 }
 
 function cancelPending() {
@@ -122,7 +242,7 @@ function rowsNow() {
     return trialInputCoverage(trialInputRoster(), {
         owner: dataManager.getCurrentCharacterId?.(),
         since,
-        loadouts: getLoadouts(),
+        loadouts: trialSimulationLoadouts(),
         profiles: trialSimulationProfiles(),
     });
 }
@@ -207,6 +327,7 @@ async function requestStep(row, kind) {
         }
     } finally {
         trialInputCapturePanel.render();
+        scheduleSave();
     }
 }
 
@@ -240,6 +361,7 @@ export async function buildTrialInputExport() {
         host,
         isTestServer: host ? isTestServer(host) : null,
         guildName,
+        guildID: guildXPTracker.getOwnGuildID?.() ?? null,
         weekStartAt,
         capturedSince,
         coverage,
@@ -250,12 +372,21 @@ export async function buildTrialInputExport() {
 async function exportInputs() {
     try {
         const bundle = await buildTrialInputExport();
+        if (config.getSetting('guildTrialKeepInputs') === true) {
+            try {
+                await saveTrialInputBundle(bundle);
+                savedAt = bundle.exportedAt;
+                saveNotice = 'Captures saved on this browser.';
+            } catch (error) {
+                saveNotice = `Local save failed: ${error.message}`;
+            }
+        }
         const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
         const link = document.createElement('a');
         link.href = url;
         link.download = `toolasha-trial-inputs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         link.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         notice = 'Inputs exported. The file includes missing-input coverage.';
     } catch (error) {
         notice = `Export failed: ${error.message}`;
@@ -270,6 +401,7 @@ function trialName(hrid) {
 
 function draw(body) {
     const allRows = rowsNow();
+    void restoreSavedCapture();
     const trials = [...new Set(allRows.flatMap((row) => Object.values(row.trials)))];
     if (selection && !trials.includes(selection)) selection = '';
     const rows = visibleRows(allRows);
@@ -315,18 +447,50 @@ function draw(body) {
     );
     controls.appendChild(button('Export inputs', exportInputs, Boolean(pending) || !allRows.length));
     controls.appendChild(
+        button('Save captures', () => saveCurrentCapture(), Boolean(pending) || restoring || !allRows.length)
+    );
+    controls.appendChild(button('Import capture JSON', importCaptureFile, Boolean(pending) || restoring));
+    controls.appendChild(
         button(
             'Start fresh captures',
             () => {
+                roundVersion++;
+                cancelSave();
+                restoredScope = scope;
+                restoring = false;
                 since = Date.now();
                 skipped.clear();
                 notice = 'Older captures stay in the export, but each step now needs a fresh response.';
                 trialInputCapturePanel.render();
+                scheduleSave();
             },
             Boolean(pending)
         )
     );
     body.appendChild(controls);
+    const keepLabel = document.createElement('label');
+    const keep = document.createElement('input');
+    keep.type = 'checkbox';
+    keep.checked = config.getSetting('guildTrialKeepInputs') === true;
+    keep.disabled = Boolean(pending) || restoring;
+    keep.addEventListener('change', async () => {
+        config.setSetting('guildTrialKeepInputs', keep.checked);
+        if (keep.checked) {
+            await restoreSavedCapture();
+            await saveCurrentCapture(true);
+        } else cancelSave();
+        trialInputCapturePanel.render();
+    });
+    keepLabel.append(keep, document.createTextNode(' Keep captures on this browser'));
+    body.appendChild(keepLabel);
+    body.appendChild(
+        panelNote(
+            'Saved locally: latest capture per guild/week, up to eight sets per character. Older captures retain their dates.'
+        )
+    );
+    if (restoring) body.appendChild(panelNote('Restoring saved captures…'));
+    if (savedAt) body.appendChild(panelNote(`Saved capture date: ${new Date(savedAt).toLocaleString()}`));
+    if (saveNotice) body.appendChild(panelNote(saveNotice));
     const loadoutStatuses = rows.flatMap((row) => Object.keys(row.trials).map((kind) => row.captured[kind]));
     body.appendChild(
         panelNote(
@@ -336,7 +500,7 @@ function draw(body) {
     );
     body.appendChild(
         panelNote(
-            'One click requests one loadout or profile. Close a profile popup to continue. Export before refreshing.'
+            'One click requests one loadout or profile. Close a profile popup to continue. Save or export before refreshing.'
         )
     );
     if (notice) body.appendChild(panelNote(notice));
@@ -383,7 +547,11 @@ export const trialInputCapturePanel = createPanel({
 /** Attach the response listeners for either a manually opened or restored checklist. */
 function listenForInputs() {
     startTrialSimulationCapture();
-    if (!offLoadout) offLoadout = onLoadoutCaptured(() => trialInputCapturePanel.render());
+    if (!offLoadout)
+        offLoadout = onLoadoutCaptured(() => {
+            trialInputCapturePanel.render();
+            scheduleSave();
+        });
     if (!profileHandler) {
         profileHandler = (message) => {
             const request = pending;
@@ -402,6 +570,7 @@ function listenForInputs() {
                 }
             }
             trialInputCapturePanel.render();
+            scheduleSave();
         };
         webSocketHook.on('profile_shared', profileHandler);
     }
@@ -417,6 +586,10 @@ export function openTrialInputCapture() {
 /** Release the helper when Guild Trials is disabled or the character changes. */
 export function closeTrialInputCapture() {
     cancelPending();
+    cancelSave();
+    roundVersion++;
+    restoredScope = null;
+    restoring = false;
     offLoadout?.();
     offLoadout = null;
     if (profileHandler) webSocketHook.off('profile_shared', profileHandler);

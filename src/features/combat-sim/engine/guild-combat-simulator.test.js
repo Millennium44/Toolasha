@@ -56,6 +56,17 @@ afterEach(() => {
 });
 
 describe('current game trial boss data', () => {
+    test('counts signed-up members without usable builds in boss scaling', () => {
+        const input = validateTrialScenario(scenario({ participantCount: 2 }));
+        const sim = new GuildCombatSimulator(createTrialPlayers(input.members), input, ['/monsters/trial_badger']);
+        sim.simulationTime = 0;
+        vi.spyOn(sim, 'checkTriggers').mockImplementation(() => {});
+        vi.spyOn(sim, 'startAttacks').mockImplementation(() => {});
+        sim.startNewEncounter();
+        expect(sim.enemies[0].combatDetails.maxHitpoints).toBe(379500 * 1.02);
+        expect(sim.enemies[0].combatDetails.combatStats.abilityHaste).toBe(4);
+        expect(sim.players).toHaveLength(1);
+    });
     test.each(RECORDED_TRIAL_BOSSES)(
         'matches $hrid T$tier with $participants participants on $recordedOn',
         (recorded) => {

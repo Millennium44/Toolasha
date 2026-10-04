@@ -94,6 +94,13 @@ export function validateTrialScenario(input) {
             throw new Error('Reduce the runs or increase work time for this roster.');
     } else {
         if (!/^\/guild_combat\/[a-z_]+$/.test(input.trialHrid || '')) throw new Error('Choose a trial boss.');
+        result.participantCount = numberIn(
+            input.participantCount ?? members.length,
+            members.length,
+            MAX_TRIAL_MEMBERS,
+            'Participants for boss scaling',
+            true
+        );
         result.resetBetweenTiers = input.resetBetweenTiers !== false;
         result.members = members.map((member, i) => ({
             ...member,
@@ -259,6 +266,9 @@ export function summarizeTrialRuns(scenario, attempts) {
         seed: scenario.seed,
         runs: count,
         participants: scenario.members.length,
+        ...(scenario.kind === 'combat'
+            ? { bossParticipants: scenario.participantCount ?? scenario.members.length }
+            : {}),
         startTier: scenario.startTier,
         meanHighestTier: highest.reduce((sum, tier) => sum + tier, 0) / count,
         medianHighestTier: percentile(highest, 0.5),

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reuse trial captures in the simulator
+
+- Trial Sim now appears beside the Guild tabs and imports Trial Input Capture JSON, loading only the selected boss’s signups. Members without usable builds remain explicit and still count toward boss scaling.
+- Trial captures can be saved and reimported, with an optional setting to keep the latest eight guild/week sets on this browser. Saved profiles retain their dates and restore after a refresh.
+
 ### Collection points optimizer
 
 - A new panel on Achievements → Collections (off by default) ranks the cheapest next collection point per item by gold per point — crafting, decompose chains that collect each lower piece, and shop gear decomposed — with a "+N points" planner and a max time per step; it uses only the counts the game sends when the tab opens.

@@ -11,6 +11,8 @@ const harness = vi.hoisted(() => ({
     loadoutBuilder: vi.fn(),
     worker: vi.fn(),
     initializedPanel: null,
+    savedRead: vi.fn(),
+    saveCapture: vi.fn(),
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => harness.enabled } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -52,8 +54,13 @@ vi.mock('../../utils/view-loadout.js', () => ({
     getLoadouts: () => harness.entries,
     VIEW_LOADOUT_CONTEXT: { GuildTrial: 'guild_trial' },
 }));
-vi.mock('../guild/guild-trial-simulation-inputs.js', () => ({
+vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => [], setJSON: async () => true } }));
+vi.mock('../guild/guild-trial-simulation-inputs.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     trialSimulationProfiles: () => harness.capturedProfiles,
+    trialSimulationLoadouts: () => harness.entries,
+    loadSavedTrialInputBundles: (...args) => harness.savedRead(...args),
+    saveTrialInputBundle: (...args) => harness.saveCapture(...args),
 }));
 vi.mock('../../utils/simple-panel.js', () => ({
     createPanel: ({ draw }) => {
@@ -130,6 +137,8 @@ beforeEach(() => {
     harness.activeSocket = null;
     harness.worker.mockReset();
     harness.loadoutBuilder.mockReset();
+    harness.savedRead.mockReset().mockResolvedValue([]);
+    harness.saveCapture.mockReset().mockImplementation(async (capture) => capture);
     feature = new GuildTrialSim();
     feature.initialize();
 });
@@ -144,7 +153,182 @@ const press = (label) =>
         .find((b) => b.textContent === label)
         .click();
 
+function captureBundle() {
+    const at = Date.parse('2026-10-04T16:00:00Z');
+    const coverage = [
+        { characterId: '2', name: 'Ada', trials: { combat: '/guild_combat/badger' } },
+        { characterId: '3', name: 'Bob', trials: { combat: '/guild_combat/badger' } },
+        { characterId: '4', name: 'Cam', trials: { combat: '/guild_combat/badger' } },
+        { characterId: '5', name: 'Dan', trials: { combat: '/guild_combat/swarm' } },
+    ];
+    return {
+        format: 'toolasha-guild-trial-inputs',
+        version: 1,
+        host: location.hostname,
+        guildName: 'SuperMoo',
+        weekStartAt: '2026-10-04T00:00:00Z',
+        exportedAt: new Date(at).toISOString(),
+        capturedSince: at - 1000,
+        coverage,
+        simulationInputs: {
+            version: 1,
+            ownerCharacterId: '1',
+            capturedAt: at,
+            viewLoadouts: coverage
+                .filter((member) => member.characterId !== '4')
+                .map((member) => ({
+                    ownerCharacterId: '1',
+                    characterId: member.characterId,
+                    name: member.name,
+                    context: 'guild_trial',
+                    kind: 'combat',
+                    capturedAt: at,
+                    hasLoadout: member.characterId !== '3',
+                    loadout: {
+                        wearableItemMap: {},
+                        equippedAbilities: [],
+                        combatConsumables: [],
+                        abilityCombatTriggersMap: {},
+                        consumableCombatTriggersMap: {},
+                    },
+                })),
+            profiles: coverage.map((member) => ({
+                characterID: Number(member.characterId),
+                characterName: member.name,
+                timestamp: at,
+                profile: {
+                    sharableCharacter: { id: Number(member.characterId), name: member.name },
+                    characterSkills: ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic'].map(
+                        (skill) => ({
+                            characterID: Number(member.characterId),
+                            skillHrid: `/skills/${skill}`,
+                            level: 100,
+                        })
+                    ),
+                    characterHouseRoomMap: {},
+                    guildBuffLevelMap: {},
+                },
+            })),
+            guildBuildingLevelMap: { '/guild_buildings/builders_hall': 20, '/guild_buildings/treasury': 3 },
+            guildBuildingDetailMap: {},
+            guildBuffDetailMap: {},
+            guildTrialDetailMap: {},
+            buffTypeDetailMap: {},
+        },
+    };
+}
+
 describe('trial simulator controls and ownership', () => {
+    test('does not substitute level 1 for a skill missing from an imported profile', async () => {
+        const capture = captureBundle();
+        capture.simulationInputs.profiles[0].profile.characterSkills.pop();
+        harness.loadoutBuilder.mockResolvedValue({ dto: build(), levelsFrom: 'profile' });
+        await feature.selectInputCapture(capture);
+        expect(feature.combatMembers).toEqual([]);
+        expect(feature.participantCount).toBe(3);
+        expect(feature.notice).toContain('2 lack a usable');
+    });
+    test('loads only this boss’s captured signups and scales for no-loadout and missing members', async () => {
+        harness.loadoutBuilder.mockResolvedValue({ dto: build(), levelsFrom: 'profile', profileCapturedAt: 1234 });
+        await feature.selectInputCapture(captureBundle());
+        expect(feature.combatMembers.map((member) => member.name)).toEqual(['Ada']);
+        expect(feature.makeScenario().participantCount).toBe(3);
+        expect(feature.hallLevel).toBe(20);
+        expect(feature.treasuryLevel).toBe(3);
+        expect(harness.loadoutBuilder).toHaveBeenCalledWith(
+            expect.objectContaining({ characterId: '2' }),
+            expect.any(Array),
+            { onlyProvidedProfiles: true }
+        );
+        expect(feature.notice).toContain('1 have no selected trial loadout');
+        expect(feature.notice).toContain('1 lack a usable');
+        expect(text()).toContain('Import capture JSON');
+        expect(text()).toContain('capture');
+        const trial = [...document.querySelectorAll('label')]
+            .find((label) => label.firstChild.textContent === 'Trial')
+            .querySelector('select');
+        trial.value = '/guild_combat/swarm';
+        trial.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(feature.loading).toBe(false));
+        expect(feature.combatMembers.map((member) => member.name)).toEqual(['Dan']);
+        expect(feature.makeScenario().participantCount).toBe(1);
+    });
+    test('a delayed imported profile cannot restore a departing character’s roster', async () => {
+        let finish;
+        harness.loadoutBuilder.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const pending = feature.selectInputCapture(captureBundle());
+        harness.char = '9';
+        harness.listeners.character_switched();
+        finish({ dto: build(), levelsFrom: 'profile' });
+        await pending;
+        expect(feature.inputCapture).toBeNull();
+        expect(feature.combatMembers).toEqual([]);
+        expect(feature.participantCount).toBeNull();
+    });
+    test('ignores saved captures read across a character switch', async () => {
+        let finish;
+        harness.savedRead.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const pending = feature.loadSavedCaptures();
+        harness.char = '9';
+        harness.listeners.character_switched();
+        finish([captureBundle()]);
+        await pending;
+        expect(feature.savedCaptures).toEqual([]);
+        expect(feature.loading).toBe(false);
+    });
+    test('imports an over-2-MB capture file through the file control and saves it locally', async () => {
+        const capture = { ...captureBundle(), padding: 'x'.repeat(3_000_000) };
+        harness.loadoutBuilder.mockResolvedValue({ dto: build(), levelsFrom: 'profile' });
+        let chooser;
+        vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function () {
+            chooser = this;
+        });
+        feature.panel.render();
+        press('Import capture JSON');
+        Object.defineProperty(chooser, 'files', {
+            value: [{ size: 3_010_000, text: async () => JSON.stringify(capture) }],
+        });
+        chooser.dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(feature.loading).toBe(false));
+        expect(harness.saveCapture).toHaveBeenCalledWith(expect.objectContaining({ guildName: 'SuperMoo' }));
+        expect(feature.combatMembers.map((member) => member.id)).toEqual(['2']);
+        expect(feature.error).toBe('');
+    });
+    test('rejects a mismatched capture without replacing the existing setup', async () => {
+        feature.addCurrentBuild();
+        const before = feature.makeScenario();
+        const wrong = captureBundle();
+        wrong.simulationInputs.profiles[0].profile.sharableCharacter.id = 99;
+        await feature.selectInputCapture(wrong);
+        expect(feature.makeScenario()).toEqual(before);
+        expect(feature.error).toContain('mismatched');
+    });
+    test('places Trial Sim in the visible Guild tab row instead of below all trial content', () => {
+        feature.disable();
+        const guild = document.createElement('div');
+        guild.className = 'GuildPanel_guildPanel__1IIto';
+        const container = document.createElement('div');
+        container.className = 'GuildPanel_tabsComponentContainer__1JjQu';
+        const tabs = document.createElement('div');
+        tabs.setAttribute('role', 'tablist');
+        const content = document.createElement('div');
+        content.className = 'GuildPanel_trialsContent__2xzbO';
+        container.append(tabs, content);
+        guild.appendChild(container);
+        document.body.appendChild(guild);
+        feature.initialize();
+        expect(document.querySelector('.toolasha-guild-trial-sim-button').parentElement).toBe(tabs);
+    });
     test('draws both modes and catches missing dependencies in the panel', () => {
         feature.panel.render();
         expect(text()).toContain('Combat roster');

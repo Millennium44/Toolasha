@@ -505,24 +505,27 @@ export function buildPlayerDTOFromProfile(profileData) {
  * The loadout has the gear, abilities, consumables and triggers; skill levels,
  * house rooms and buffs come from that player's newest shared profile across
  * the general cache and supplied session captures (matched by character id,
- * falling back to name only when the loadout has no id). Without one the
+ * with name fallback only when the loadout has no id). Without one the
  * levels are left at 1 and `levelsFrom` is null, for the caller to say so.
  *
  * @param {Object} entry - A capture from `view-loadout.js` (`getLoadout`)
  * @param {Array<Object>} additionalProfiles - Optional session-only profile captures
+ * @param {Object} options - Set onlyProvidedProfiles for a dated capture import, excluding newer cached profiles
  * @returns {Promise<{dto: Object, levelsFrom: 'profile'|null, profileCapturedAt: number|null}|null>}
  *   Null when there is no loadout to use or game data is not loaded
  */
-export async function buildPlayerDTOFromLoadout(entry, additionalProfiles = []) {
+export async function buildPlayerDTOFromLoadout(entry, additionalProfiles = [], { onlyProvidedProfiles = false } = {}) {
     if (!entry?.loadout || entry.hasLoadout === false) return null;
     const clientData = dataManager.getInitClientData();
     if (!clientData) return null;
 
     let profileList = [];
-    try {
-        profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
-    } catch (error) {
-        console.error('[CombatSimAdapter] Failed to load profile list:', error);
+    if (!onlyProvidedProfiles) {
+        try {
+            profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
+        } catch (error) {
+            console.error('[CombatSimAdapter] Failed to load profile list:', error);
+        }
     }
     if (!Array.isArray(profileList)) profileList = [];
 

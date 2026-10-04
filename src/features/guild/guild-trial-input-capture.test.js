@@ -17,6 +17,17 @@ const game = vi.hoisted(() => ({
     openProfile: vi.fn(),
     profileRead: vi.fn(),
     loadoutListeners: new Set(),
+    keepInputs: false,
+    stored: new Map(),
+    save: vi.fn(),
+}));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => key === 'guildTrialKeepInputs' && game.keepInputs,
+        setSetting: (key, value) => {
+            if (key === 'guildTrialKeepInputs') game.keepInputs = value;
+        },
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -29,7 +40,8 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         getJSON: (...args) => game.profileRead(...args),
-        setJSON: async () => {},
+        setJSON: (...args) => game.save(...args),
+        update: (...args) => game.save(...args),
     },
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
@@ -39,6 +51,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     reopenIfLeftOpen: async () => {},
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
+    clampPanelToViewport: () => {},
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -162,7 +175,16 @@ beforeEach(() => {
     game.loadoutListeners.clear();
     game.fetch.mockReset();
     game.openProfile.mockReset().mockReturnValue(true);
-    game.profileRead.mockReset().mockResolvedValue([]);
+    game.keepInputs = false;
+    game.stored.clear();
+    game.save.mockReset().mockImplementation(async (key, mutate) => {
+        const value = mutate(structuredClone(game.stored.get(key)));
+        game.stored.set(key, structuredClone(value));
+        return { written: true, value };
+    });
+    game.profileRead
+        .mockReset()
+        .mockImplementation(async (key, _store, fallback) => structuredClone(game.stored.get(key) ?? fallback));
 });
 afterEach(() => {
     closeTrialInputCapture();
@@ -172,6 +194,57 @@ afterEach(() => {
 });
 
 describe('trial input capture helper', () => {
+    test('explicit save survives a session reset and opt-in restores this guild/week without requesting profiles', async () => {
+        openTrialInputCapture();
+        game.entries = [loadout(2, 'combat'), loadout(2, 'skilling')];
+        sendProfile(2);
+        press('Save captures');
+        await settle();
+        await settle();
+        expect(game.stored.get('guild_trial_inputs_1')).toHaveLength(1);
+        closeTrialInputCapture();
+        stopTrialSimulationCapture();
+        game.entries = [];
+        game.keepInputs = true;
+        openTrialInputCapture();
+        await settle();
+        expect(text()).toContain('2/2 loadouts');
+        expect(text()).toContain('1/1 profiles');
+        expect(text()).toContain('Restored this guild/week');
+        expect(game.fetch).not.toHaveBeenCalled();
+        expect(game.openProfile).not.toHaveBeenCalled();
+    });
+    test('autosaves response changes only after the keep setting is enabled', async () => {
+        openTrialInputCapture();
+        sendProfile(2);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(game.save).not.toHaveBeenCalled();
+        game.keepInputs = true;
+        sendProfile(2);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(game.stored.get('guild_trial_inputs_1')[0].simulationInputs.profiles).toHaveLength(1);
+    });
+    test('a late saved read cannot overwrite a fresh capture round', async () => {
+        openTrialInputCapture();
+        const saved = await buildTrialInputExport();
+        closeTrialInputCapture();
+        stopTrialSimulationCapture();
+        let finish;
+        game.profileRead.mockImplementation((key) =>
+            key === 'guild_trial_inputs_1'
+                ? new Promise((resolve) => {
+                      finish = resolve;
+                  })
+                : Promise.resolve([])
+        );
+        game.keepInputs = true;
+        openTrialInputCapture();
+        press('Start fresh captures');
+        finish([saved]);
+        await settle();
+        expect(text()).not.toContain('Restored this guild/week');
+        expect(text()).toContain('Older captures stay');
+    });
     test('includes combat and skilling signups, excluding old weeks and absent ids', () => {
         game.members.push(
             member(3, 'Bob', { signedUpCombatTrialHrid: '', signedUpSkillingTrialHrid: '/guild_skilling/crafting' }),

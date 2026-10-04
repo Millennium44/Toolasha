@@ -163,7 +163,9 @@ export class GuildCombatSimulator extends CombatSimulator {
     startNewEncounter() {
         syncEncounterRng(this.encounterIndex++);
         this.tierStartedAt = this.simulationTime;
-        this.enemies = this.monsterHrids.map((hrid) => new GuildTrialMonster(hrid, this.tier, this.players.length));
+        this.enemies = this.monsterHrids.map(
+            (hrid) => new GuildTrialMonster(hrid, this.tier, this.scenario.participantCount ?? this.players.length)
+        );
         for (const enemy of this.enemies) {
             enemy.reset(this.simulationTime);
             this.simResult.updateTimeSpentAlive(enemy.hrid, true, this.simulationTime);

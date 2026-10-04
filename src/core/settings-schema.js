@@ -3809,6 +3809,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Adds Trial Sim to the Guild page and command palette. Simulates a chosen roster locally with editable assumptions, per-tier clear odds and payout estimates. Does not sign up members or modify game loadouts.',
             },
+            guildTrialKeepInputs: {
+                id: 'guildTrialKeepInputs',
+                label: 'Guild Trials: Keep captured inputs on this browser',
+                type: 'checkbox',
+                default: false,
+                help: 'Saves trial loadouts and profiles while the capture helper is open, and restores the current guild/week after a refresh. Keeps the latest capture for up to eight guild/week sets per character locally. Captures retain their dates and can become outdated.',
+            },
             guildTrialTracking: {
                 id: 'guildTrialTracking',
                 label: 'Guild Trials: Track trial combat per player (damage, healing, kills)',

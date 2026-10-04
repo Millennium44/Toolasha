@@ -5,7 +5,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { createPanel, panelCard, panelNote, panelLine } from '../../utils/simple-panel.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
-import { getLoadouts, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import {
     buildPlayerDTO,
     buildPlayerDTOFromLoadout,
@@ -21,7 +21,15 @@ import {
 } from './guild-trial-adapter.js';
 import { validateTrialScenario, skillingWorkPerSecond } from './guild-trial-model.js';
 import { COMBAT_ENCOUNTERS, TRIAL_SKILLS, levelFromTier } from '../guild/guild-trials-math.js';
-import { trialSimulationProfiles } from '../guild/guild-trial-simulation-inputs.js';
+import {
+    trialSimulationProfiles,
+    trialSimulationLoadouts,
+    parseTrialInputBundle,
+    validateTrialInputBundle,
+    loadSavedTrialInputBundles,
+    saveTrialInputBundle,
+    MAX_TRIAL_INPUT_BYTES,
+} from '../guild/guild-trial-simulation-inputs.js';
 
 const ACCENT = '#b9a6ff';
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
@@ -138,6 +146,10 @@ export class GuildTrialSim {
         this.importText = null;
         this.contextOverrides = null;
         this.loading = false;
+        this.inputCapture = null;
+        this.savedCaptures = [];
+        this.selectedSavedCapture = '-1';
+        this.participantCount = null;
     }
 
     initialize() {
@@ -158,11 +170,14 @@ export class GuildTrialSim {
         });
         const inject = () => {
             const root =
-                document.querySelector('[class*="GuildPanel_tabsComponentContainer"]') ||
-                document.querySelector('[class*="GuildPanel_guildPanel"]');
+                document.querySelector('[class*="GuildPanel_tabsComponentContainer"] [role="tablist"]') ||
+                document.querySelector('[class*="GuildPanel_guildPanel"] [class*="GuildPanel_title"]');
             if (!root || root.querySelector(`.${BUTTON_CLASS}`)) return;
             const control = button(root, 'Trial Sim', () => this.panel?.toggle());
             control.className = BUTTON_CLASS;
+            control.style.alignSelf = 'center';
+            control.style.flexShrink = '0';
+            control.style.margin = '0 6px';
         };
         this.handlers.push(domObserver.onClass('GuildTrialSimulator', 'GuildPanel_', inject));
         this.handlers.push(domObserver.onReady('GuildTrialSimulatorCatchUp', inject));
@@ -235,6 +250,7 @@ export class GuildTrialSim {
             ...this.settings,
             kind: this.kind,
             trialHrid: this.kind === 'combat' ? this.combatTrial : this.skillingTrial,
+            ...(this.kind === 'combat' ? { participantCount: this.participantCount ?? this.combatMembers.length } : {}),
             members: structuredClone(this.kind === 'combat' ? this.combatMembers : this.skillingMembers).map((m) => {
                 if (this.kind === 'combat' && !this.includeHouses) m.dto.houseRooms = {};
                 return m;
@@ -308,7 +324,7 @@ export class GuildTrialSim {
         this.loading = true;
         this.panel?.render();
         try {
-            const entries = getLoadouts().filter(
+            const entries = trialSimulationLoadouts().filter(
                 (entry) =>
                     entry.context === VIEW_LOADOUT_CONTEXT.GuildTrial && entry.kind === 'combat' && entry.hasLoadout
             );
@@ -346,6 +362,176 @@ export class GuildTrialSim {
         }
     }
 
+    /** Adopt the selected boss's signup members, using the export's own dated profiles. */
+    async useInputCapture(value) {
+        if (this.loading || this.controller) return;
+        const generation = this.generation;
+        this.loading = true;
+        this.error = '';
+        this.panel?.render();
+        try {
+            const bundle = validateTrialInputBundle(value);
+            const inputs = bundle.simulationInputs;
+            const signedUp = bundle.coverage.filter((member) => member.trials.combat === this.combatTrial);
+            if (!signedUp.length)
+                throw new Error('This capture has no signups for the selected combat trial. Choose its boss first.');
+            const members = [];
+            let noLoadout = 0;
+            let missing = 0;
+            const profiles = inputs.profiles.filter(
+                (entry) =>
+                    Array.isArray(entry.profile?.characterSkills) &&
+                    ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic'].every((skill) =>
+                        entry.profile.characterSkills.some(
+                            (row) =>
+                                row.skillHrid === `/skills/${skill}` &&
+                                typeof row.level === 'number' &&
+                                Number.isFinite(row.level) &&
+                                row.level >= 1 &&
+                                row.level <= 1000
+                        )
+                    )
+            );
+            for (const member of signedUp) {
+                const entry = inputs.viewLoadouts
+                    .filter(
+                        (item) =>
+                            item.kind === 'combat' &&
+                            (item.characterId != null
+                                ? String(item.characterId) === String(member.characterId)
+                                : String(item.name || '').toLowerCase() === member.name.toLowerCase())
+                    )
+                    .sort((a, b) => b.capturedAt - a.capturedAt)[0];
+                if (entry?.hasLoadout === false) {
+                    noLoadout++;
+                    continue;
+                }
+                if (
+                    !entry?.hasLoadout ||
+                    !profiles.some((profile) => String(profile.characterID) === String(member.characterId))
+                ) {
+                    missing++;
+                    continue;
+                }
+                const built = await buildPlayerDTOFromLoadout({ ...entry, characterId: member.characterId }, profiles, {
+                    onlyProvidedProfiles: true,
+                });
+                if (generation !== this.generation) return;
+                if (!built?.levelsFrom) {
+                    missing++;
+                    continue;
+                }
+                members.push({
+                    id: String(member.characterId),
+                    name: member.name,
+                    dto: built.dto,
+                    source: `Trial capture · ${bundle.guildName}`,
+                    capturedAt: entry.capturedAt,
+                    profileCapturedAt: built.profileCapturedAt,
+                });
+            }
+            if (generation !== this.generation) return;
+            this.kind = 'combat';
+            this.combatMembers = members;
+            this.inputCapture = bundle;
+            this.participantCount = signedUp.length;
+            this.contextOverrides = {
+                buildingBuffs: trialBuildingBuffs(inputs, inputs.guildBuildingLevelMap),
+                sharedBuffs: buildExtraBuffs(getCommunityBuffs()),
+            };
+            this.extra = {};
+            this.includeHouses = true;
+            this.hallLevel = Number(inputs.guildBuildingLevelMap['/guild_buildings/builders_hall']) || 0;
+            this.treasuryLevel = Number(inputs.guildBuildingLevelMap['/guild_buildings/treasury']) || 0;
+            this.changed();
+            this.notice = `${members.length}/${signedUp.length} signup members loaded for this boss. ${noLoadout} have no selected trial loadout; ${missing} lack a usable combat capture or profile. All ${signedUp.length} signups count toward boss scaling; only loaded builds contribute damage and healing. Captured guild building buffs and current community buffs are used.`;
+        } catch (error) {
+            if (generation === this.generation) this.error = `Capture import failed: ${error.message}`;
+        } finally {
+            if (generation === this.generation) {
+                this.loading = false;
+                this.panel?.render();
+            }
+        }
+    }
+
+    async loadSavedCaptures() {
+        if (this.loading || this.controller) return;
+        const generation = this.generation;
+        this.loading = true;
+        this.panel?.render();
+        try {
+            const saved = await loadSavedTrialInputBundles();
+            if (generation !== this.generation) return;
+            this.savedCaptures = saved;
+            this.selectedSavedCapture = '-1';
+            this.notice = saved.length
+                ? 'Choose a saved capture, then load the selected boss’s signup roster.'
+                : 'No captures saved for this character yet. Save captures in the capture helper or import your JSON file.';
+        } catch (error) {
+            if (generation === this.generation) this.error = `Could not read saved captures: ${error.message}`;
+        } finally {
+            if (generation === this.generation) {
+                this.loading = false;
+                this.panel?.render();
+            }
+        }
+    }
+
+    /** Choose a captured boss without mixing its signup roster with another trial. */
+    async selectInputCapture(value) {
+        if (this.loading || this.controller) return;
+        try {
+            const bundle = validateTrialInputBundle(value);
+            const trials = bundle.coverage.map((member) => member.trials.combat).filter(Boolean);
+            if (trials.length) {
+                if (!trials.includes(this.combatTrial)) this.combatTrial = trials[0];
+                await this.useInputCapture(bundle);
+            } else {
+                this.inputCapture = bundle;
+                this.kind = 'skilling';
+                this.changed();
+                this.notice =
+                    'Skilling capture loaded. Personal trial readings are still needed; equipment and profile levels alone do not supply work power or work time.';
+                this.panel?.render();
+            }
+        } catch (error) {
+            this.error = `Capture import failed: ${error.message}`;
+            this.panel?.render();
+        }
+    }
+
+    importCaptureFile() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.setAttribute('aria-label', 'Trial capture JSON file');
+        const generation = this.generation;
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file || generation !== this.generation || this.loading || this.controller) return;
+            this.loading = true;
+            this.panel?.render();
+            try {
+                if (file.size > MAX_TRIAL_INPUT_BYTES) throw new Error('Capture JSON must be smaller than 20 MB.');
+                const bundle = parseTrialInputBundle(await file.text());
+                if (generation !== this.generation) return;
+                await saveTrialInputBundle(bundle);
+                if (generation !== this.generation) return;
+                this.loading = false;
+                await this.selectInputCapture(bundle);
+            } catch (error) {
+                if (generation === this.generation) this.error = `Capture import failed: ${error.message}`;
+            } finally {
+                if (generation === this.generation) {
+                    this.loading = false;
+                    this.panel?.render();
+                }
+            }
+        });
+        input.click();
+    }
+
     addReading() {
         const reading = this.readings[this.skillingTrial];
         const member = memberFromSkillingReading(
@@ -378,6 +564,7 @@ export class GuildTrialSim {
                 if (scenario.kind === 'combat') {
                     this.combatTrial = scenario.trialHrid;
                     this.combatMembers = scenario.members;
+                    this.participantCount = scenario.participantCount;
                 } else {
                     this.skillingTrial = scenario.trialHrid;
                     this.skillingMembers = scenario.members;
@@ -411,8 +598,10 @@ export class GuildTrialSim {
                 if (this.combatMembers.length + members.length > 100)
                     throw new Error('A scenario can have at most 100 members.');
                 this.combatMembers.push(...members);
+                this.participantCount = null;
                 this.notice = `${members.length} combat builds added. Food, drinks and Labyrinth scrolls are excluded when simulating.`;
             }
+            this.inputCapture = null;
             this.changed();
             this.importText = null;
         } catch (error) {
@@ -477,9 +666,47 @@ export class GuildTrialSim {
                 }
                 this.changed();
                 this.panel?.render();
+                if (this.kind === 'combat' && this.inputCapture) void this.useInputCapture(this.inputCapture);
             },
             busy
         );
+        const captures = row(body);
+        button(captures, 'Import capture JSON', () => this.importCaptureFile(), busy);
+        button(captures, 'Load saved captures', () => this.loadSavedCaptures(), busy);
+        if (this.savedCaptures.length) {
+            select(
+                captures,
+                'Saved capture',
+                this.selectedSavedCapture,
+                [
+                    ['-1', 'Choose a capture…'],
+                    ...this.savedCaptures.map((capture, i) => [
+                        String(i),
+                        `${capture.guildName} · ${new Date(capture.exportedAt).toLocaleString()} · ${capture.coverage.length} signups`,
+                    ]),
+                ],
+                (value) => {
+                    this.selectedSavedCapture = value;
+                    this.panel?.render();
+                },
+                busy
+            );
+            button(
+                captures,
+                'Use saved capture',
+                () => this.selectInputCapture(this.savedCaptures[Number(this.selectedSavedCapture)]),
+                busy || this.selectedSavedCapture === '-1'
+            );
+        }
+        if (this.inputCapture) {
+            body.appendChild(
+                panelNote(
+                    `${this.inputCapture.guildName} · capture ${new Date(this.inputCapture.exportedAt).toLocaleString()} · trial week ${this.inputCapture.weekStartAt}. Rosters and profiles come from this dated capture.`
+                )
+            );
+            if (this.kind === 'combat')
+                button(captures, 'Reload captured signup roster', () => this.useInputCapture(this.inputCapture), busy);
+        }
         const settings = row(body);
         for (const [key, label, min, max, factor] of [
             ['startTier', 'Starting tier', 1, 21, 1],
@@ -634,6 +861,21 @@ export class GuildTrialSim {
                 )
             );
         const rules = panelCard(body, 'Combat assumptions and buffs', ACCENT);
+        field(
+            row(rules),
+            'Participants for boss scaling',
+            this.participantCount ?? this.combatMembers.length,
+            (value) => {
+                this.participantCount = value;
+                this.changed();
+            },
+            { min: this.combatMembers.length, max: 100, step: 1, disabled: busy }
+        );
+        rules.appendChild(
+            panelNote(
+                'Includes signed-up members with missing builds. Only roster builds contribute damage and healing; missing builds make this an incomplete prediction.'
+            )
+        );
         select(
             row(rules),
             'Between tiers',
@@ -864,7 +1106,7 @@ export class GuildTrialSim {
         );
         card.appendChild(
             panelNote(
-                `${result.runs} runs · seed ${result.seed} · ${result.participants} ${result.participants === 1 ? 'member' : 'members'} · ${result.outcomes.defeat} defeats / ${result.outcomes.timeout} timeouts / ${result.outcomes['max-tier']} full clears. Percentiles describe simulation randomness, not model accuracy.`
+                `${result.runs} runs · seed ${result.seed} · ${result.participants} ${result.participants === 1 ? 'member' : 'members'}${result.kind === 'combat' ? ` simulated / ${result.bossParticipants ?? result.participants} signups for boss scaling` : ''} · ${result.outcomes.defeat} defeats / ${result.outcomes.timeout} timeouts / ${result.outcomes['max-tier']} full clears. Percentiles describe simulation randomness, not model accuracy.`
             )
         );
         if (result.kind === 'skilling')
