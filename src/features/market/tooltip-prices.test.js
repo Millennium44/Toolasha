@@ -152,6 +152,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
 }));
 vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: () => 0 }));
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getActionHridFromName: () => null,
     getActionHridFromFiber: () => null,
 }));

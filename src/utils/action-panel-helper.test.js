@@ -35,6 +35,7 @@ vi.mock('../core/dom-observer.js', () => ({
 /** Name → hrid, and how often the lookup ran — the cost the dispatcher exists to share */
 const lookups = vi.hoisted(() => ({ byName: {}, calls: 0, byFiber: null, byIcon: {} }));
 vi.mock('./game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getActionHridFromName: vi.fn((name) => {
         lookups.calls += 1;
         return lookups.byName[name] ?? null;

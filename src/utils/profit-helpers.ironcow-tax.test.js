@@ -24,7 +24,7 @@ vi.mock('./market-data.js', () => ({
     getPricingMode: () => 'ask',
 }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
-vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
+vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
 
 const { calculatePriceAfterTax, outputTaxRate } = await import('./profit-helpers.js');

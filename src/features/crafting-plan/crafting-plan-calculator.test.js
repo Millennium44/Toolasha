@@ -56,6 +56,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getShopCoinCost: (hrid) => market.shopCosts[hrid] ?? 0,
 }));
 

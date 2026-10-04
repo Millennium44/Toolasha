@@ -50,6 +50,7 @@ vi.mock('../combat/scroll-simulator.js', () => ({
 
 const lookups = vi.hoisted(() => ({ fiberAction: null }));
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getActionHridFromName: (name) => (name === 'Cheese' ? '/actions/cheesesmithing/cheese' : null),
     getActionHridFromFiber: () => lookups.fiberAction,
 }));

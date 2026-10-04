@@ -35,7 +35,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid) => game.prices[itemHrid] ?? null,
 }));
 
-vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
+vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 
 vi.mock('../../utils/tea-parser.js', () => ({
     parseArtisanBonus: () => game.artisanBonus,

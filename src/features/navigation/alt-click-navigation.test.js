@@ -19,7 +19,10 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 const lookupState = vi.hoisted(() => ({ names: {} }));
-vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: (name) => lookupState.names[name] || null }));
+vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
+    getItemHridFromName: (name) => lookupState.names[name] || null,
+}));
 vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem: vi.fn() }));
 
 const { default: altClickNavigation } = await import('./alt-click-navigation.js');

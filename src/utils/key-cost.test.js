@@ -101,7 +101,7 @@ vi.mock('./market-data.js', () => ({
     },
 }));
 
-vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
+vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 
 vi.mock('./tea-parser.js', () => ({ parseArtisanBonus: () => player.artisan, getDrinkConcentration: () => 0 }));
 

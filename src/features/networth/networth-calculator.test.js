@@ -99,7 +99,10 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('../../utils/networth-worker-manager.js', () => ({ calculateItemValueBatch: vi.fn() }));
 vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
-vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: (hrid) => mocks.shopCosts[hrid] ?? 0 }));
+vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
+    getShopCoinCost: (hrid) => mocks.shopCosts[hrid] ?? 0,
+}));
 vi.mock('./networth-exclusions.js', () => ({
     isExcluded: (type, value) => mocks.excluded.has(`${type}:${value}`),
     getExclusions: () =>

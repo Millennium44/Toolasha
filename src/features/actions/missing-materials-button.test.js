@@ -86,6 +86,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPa
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getActionHridFromName: () => null,
     getActionHridFromFiber: () => null,
 }));

@@ -58,7 +58,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: () => ({ price: 0 }),
     getRealisticBaseItemPrice: (hrid) => (hrid === '/items/philosophers_mirror' ? 1e12 : 0),
 }));
-vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
+vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
     buildGoldPerCredit: () => ({}),
     priceGuildCreditCosts: () => ({ lines: [], total: null, unpriced: [] }),
