@@ -80,6 +80,9 @@ const SINGLE_COPY_FEATURES = new Set([
     'src/features/combat/combat-record-control.js',
     'src/features/combat/scroll-simulator-ui.js',
     'src/features/market/network-alert.js',
+    // Combat collects the session profiles, while the trial simulator reads them.
+    // A private store in each bundle would discard the collected guild roster.
+    'src/features/guild/guild-trial-simulation-inputs.js',
     // The inventory badge pipeline: registered providers, the processed-item set
     // and the price caches the dots, category totals and custom tabs all read.
     // The sim bundle used to reach it through combat-sim-ui's bundled watchlist

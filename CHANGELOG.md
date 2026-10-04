@@ -126,6 +126,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Experimental Guild Trial Simulator
 
+- Trial profile capture and the simulator now share one session store in the production build, so profiles collected for a larger guild remain available when adding its trial builds.
 - Imported trial setups now check combat stat types and normalize personal buff values before simulation, preventing text-valued inputs from inflating HP or damage.
 - Adding captured trial builds now uses the full session's profiles, including members evicted from the general 20-profile cache, and uses the newest profile when several captures exist.
 - A Capture inputs checklist now guides combat and skilling trial loadout and profile collection, shows missing inputs, and exports the collected data before a trial starts. Each press requests one input; skipped steps remain marked as missing.
