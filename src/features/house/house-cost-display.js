@@ -4,9 +4,11 @@
  */
 
 import config from '../../core/config.js';
+import marketAPI from '../../api/marketplace.js';
 import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
+import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { testerShopEnabled } from '../../utils/tester-shop.js';
@@ -211,6 +213,7 @@ class HouseCostDisplay {
         this.autofillManager = createAutofillManager('MissingMats-Houses');
         this._itemsUpdatedHandler = null; // Inventory change listener
         this._houseRoomsUpdatedHandler = null; // House room level change listener
+        this._marketPricesUpdatedHandler = null; // Market quote change listener
         this._cumulativeState = null; // State for refreshing cumulative display
         this._costContext = null; // { houseRoomHrid, currentLevel, targetLevel } for recalculating missing mats
         this._refreshGen = 0; // Generation counter to discard stale async refreshes
@@ -271,6 +274,12 @@ class HouseCostDisplay {
         // Listen for house room level changes to refresh the dropdown and display
         this._houseRoomsUpdatedHandler = () => this._onHouseRoomUpdated();
         dataManager.on('house_rooms_updated', this._houseRoomsUpdatedHandler);
+
+        // The modal's cost columns are a snapshot of the prices at the time it
+        // opened. A price feed or a live listing patch can land while it stays
+        // open, so redraw that room from the same calculator on each update.
+        this._marketPricesUpdatedHandler = () => this._onMarketPricesUpdated();
+        marketAPI.on(this._marketPricesUpdatedHandler);
 
         this.autofillManager.initialize();
 
@@ -375,6 +384,8 @@ class HouseCostDisplay {
      * @param {Element} modalContent - The modal content element
      */
     async addCostColumn(costsSection, houseRoomHrid, modalContent) {
+        const previousTargetLevel =
+            this._costContext?.houseRoomHrid === houseRoomHrid ? this._costContext.targetLevel : null;
         // Remove any existing augmentation first
         this.removeExistingColumn(modalContent);
 
@@ -382,12 +393,14 @@ class HouseCostDisplay {
 
         // Don't show if already max level
         if (currentLevel >= 8) {
+            this._cumulativeState = null;
+            this._costContext = null;
             return;
         }
 
         try {
             // Add "Cumulative to Level" section
-            await this.addCompactToLevel(costsSection, houseRoomHrid, currentLevel);
+            await this.addCompactToLevel(costsSection, houseRoomHrid, currentLevel, previousTargetLevel);
 
             // The section now carries `flex-shrink: 0`, so the panel has to be
             // allowed to grow. Only needed where PANEL_LAYOUT_CSS's `:has()`
@@ -636,7 +649,7 @@ class HouseCostDisplay {
             return;
         }
 
-        const inventoryCount = houseCostCalculator.getInventoryCount(materialData.itemHrid);
+        const inventoryCount = effectiveInventory(materialData.itemHrid, 0);
         const hasEnough = inventoryCount >= materialData.count;
         const amountNeeded = Math.max(0, materialData.count - inventoryCount);
 
@@ -690,8 +703,9 @@ class HouseCostDisplay {
      * @param {Element} costsSection - Native costs section
      * @param {string} houseRoomHrid - House room HRID
      * @param {number} currentLevel - Current level
+     * @param {number|null} [targetLevelOverride] - Previously selected target to preserve on refresh
      */
-    async addCompactToLevel(costsSection, houseRoomHrid, currentLevel) {
+    async addCompactToLevel(costsSection, houseRoomHrid, currentLevel, targetLevelOverride = null) {
         const section = document.createElement('div');
         section.className = 'mwi-house-to-level';
         // `flex-shrink: 0` replaces the `min-height: 0` that used to sit here.
@@ -756,9 +770,11 @@ class HouseCostDisplay {
             dropdown.appendChild(option);
         }
 
-        // Default to next level (currentLevel + 1)
-        const defaultLevel = currentLevel + 1;
-        dropdown.value = defaultLevel;
+        // Default to next level (currentLevel + 1), retaining the player's
+        // selection when an inventory or price update redraws this section.
+        const defaultLevel =
+            targetLevelOverride > currentLevel && targetLevelOverride <= 8 ? targetLevelOverride : currentLevel + 1;
+        dropdown.value = String(defaultLevel);
 
         headerRow.appendChild(label);
         headerRow.appendChild(dropdown);
@@ -909,7 +925,7 @@ class HouseCostDisplay {
      */
     appendMaterialRow(container, material) {
         const itemName = houseCostCalculator.getItemName(material.itemHrid);
-        const inventoryCount = houseCostCalculator.getInventoryCount(material.itemHrid);
+        const inventoryCount = effectiveInventory(material.itemHrid, 0);
         const hasEnough = inventoryCount >= material.count;
         const amountNeeded = Math.max(0, material.count - inventoryCount);
         const isCoin = material.itemHrid === '/items/coin';
@@ -986,20 +1002,13 @@ class HouseCostDisplay {
      */
     getMissingMaterials(costData) {
         const gameData = dataManager.getInitClientData();
-        const inventory = dataManager.getInventory();
         const missing = [];
 
         // Process all materials (skip coins)
         for (const material of costData.materials) {
             // Only count items in inventory (not equipped) with no enhancement
             // Enhanced items and equipped items cannot be used for house construction
-            const inventoryItem = inventory.find(
-                (i) =>
-                    i.itemHrid === material.itemHrid &&
-                    i.itemLocationHrid === '/item_locations/inventory' &&
-                    (!i.enhancementLevel || i.enhancementLevel === 0)
-            );
-            const have = inventoryItem?.count || 0;
+            const have = effectiveInventory(material.itemHrid, 0);
             const missingAmount = Math.max(0, material.count - have);
 
             // Only include if missing > 0
@@ -1268,12 +1277,26 @@ class HouseCostDisplay {
         });
     }
 
-    /**
-     * Handle inventory changes — refresh the cumulative display if visible
-     */
+    /** Refresh the whole open room display after one of its inputs changes. */
+    async _refreshCurrentModal() {
+        const modalContent = this.currentModalContent;
+        const houseRoomHrid = this._costContext?.houseRoomHrid;
+        if (!modalContent?.isConnected || !houseRoomHrid) return false;
+
+        const costsSection = modalContent.querySelector('[class*="HousePanel_costs"]');
+        if (!costsSection) return false;
+        await this.addCostColumn(costsSection, houseRoomHrid, modalContent);
+        return true;
+    }
+
+    /** Handle inventory changes — refresh the room, cumulative display and tabs. */
     async _onInventoryChanged() {
         // Update marketplace tabs (visible while shopping)
         this._updateMarketplaceTabs();
+
+        // A house modal can remain open while inventory changes. Rebuild it so
+        // the visible material count and missing amount use the new stock.
+        if (await this._refreshCurrentModal()) return;
 
         if (!this._cumulativeState) return;
         const { costContainer, houseRoomHrid, currentLevel, dropdown } = this._cumulativeState;
@@ -1289,6 +1312,9 @@ class HouseCostDisplay {
      * Handle house room level changes — refresh the dropdown and cumulative display
      */
     async _onHouseRoomUpdated() {
+        // The game's own material list may now describe a different level.
+        if (await this._refreshCurrentModal()) return;
+
         if (!this._cumulativeState) return;
         const { costContainer, houseRoomHrid, dropdown } = this._cumulativeState;
         if (!costContainer.isConnected) {
@@ -1323,6 +1349,11 @@ class HouseCostDisplay {
         this._costContext = { houseRoomHrid, currentLevel: newLevel, targetLevel };
 
         await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, newLevel, targetLevel);
+    }
+
+    /** Refresh the open room's displayed costs when market prices change. */
+    async _onMarketPricesUpdated() {
+        await this._refreshCurrentModal();
     }
 
     /**
@@ -1421,6 +1452,11 @@ class HouseCostDisplay {
         if (this._houseRoomsUpdatedHandler) {
             dataManager.off('house_rooms_updated', this._houseRoomsUpdatedHandler);
             this._houseRoomsUpdatedHandler = null;
+        }
+
+        if (this._marketPricesUpdatedHandler) {
+            marketAPI.off(this._marketPricesUpdatedHandler);
+            this._marketPricesUpdatedHandler = null;
         }
 
         this._cumulativeState = null;

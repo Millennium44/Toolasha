@@ -11,12 +11,27 @@ const MATERIALS = Array.from({ length: 14 }, (_, i) => ({
 
 const itemDetailMap = Object.fromEntries(MATERIALS.map((m, i) => [m.itemHrid, { name: `Mat ${i}`, isTradable: true }]));
 
+const inventoryState = vi.hoisted(() => ({
+    items: [],
+    reserved: new Map(),
+    marketListeners: [],
+    unitPrice: 10,
+    notifyMarketUpdate: () => Promise.all(inventoryState.marketListeners.map((listener) => listener())),
+}));
+
 vi.mock('../../utils/house-cost-calculator.js', () => ({
-    calculateCumulativeCost: async () => ({
-        coins: 5000,
-        materials: MATERIALS,
-        totalValue: 1_000_000,
-    }),
+    calculateCumulativeCost: async () => {
+        const materials = MATERIALS.map((material) => ({
+            ...material,
+            marketPrice: inventoryState.unitPrice,
+            totalValue: material.count * inventoryState.unitPrice,
+        }));
+        return {
+            coins: 5000,
+            materials,
+            totalValue: 5000 + materials.reduce((sum, material) => sum + material.totalValue, 0),
+        };
+    },
     getCurrentRoomLevel: () => 5,
     // Nothing in the inventory, so every material is short
     getInventoryCount: () => 0,
@@ -26,9 +41,34 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ itemDetailMap }),
-        getInventory: () => [],
+        getInventory: () => inventoryState.items,
         on: () => {},
         off: () => {},
+    },
+}));
+
+vi.mock('../../utils/inventory-reservations.js', () => ({
+    effectiveInventory: (itemHrid, enhancementLevel = 0) => {
+        const held = inventoryState.items
+            .filter(
+                (item) =>
+                    item.itemHrid === itemHrid &&
+                    item.itemLocationHrid === '/item_locations/inventory' &&
+                    (item.enhancementLevel || 0) === enhancementLevel
+            )
+            .reduce((sum, item) => sum + item.count, 0);
+        return Math.max(0, held - (inventoryState.reserved.get(`${itemHrid}:${enhancementLevel}`) || 0));
+    },
+}));
+
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        on: (listener) => inventoryState.marketListeners.push(listener),
+        off: (listener) => {
+            inventoryState.marketListeners = inventoryState.marketListeners.filter(
+                (candidate) => candidate !== listener
+            );
+        },
     },
 }));
 
@@ -52,6 +92,10 @@ async function render(currentLevel = 5) {
 
 beforeEach(() => {
     document.body.innerHTML = '';
+    inventoryState.items = [];
+    inventoryState.reserved = new Map();
+    inventoryState.marketListeners = [];
+    inventoryState.unitPrice = 10;
 });
 
 describe('the material rows fit a phone-width dialog', () => {
@@ -107,6 +151,101 @@ describe('the materials list has no scroller of its own', () => {
         // It has no max-height and no height-constraining ancestor, so an
         // `overflow-y` here would be inert and misleading.
         expect(section.style.overflowY).toBe('');
+    });
+});
+
+describe('house material hints and reservations', () => {
+    test('the shortage uses stock left after another plan claims part of the stack', () => {
+        const material = MATERIALS[0];
+        inventoryState.items = [
+            {
+                itemHrid: material.itemHrid,
+                itemLocationHrid: '/item_locations/inventory',
+                enhancementLevel: 0,
+                count: material.count,
+            },
+        ];
+        inventoryState.reserved.set(`${material.itemHrid}:0`, 400);
+
+        expect(houseCostDisplay.getMissingMaterials({ materials: [material] })).toEqual([
+            {
+                itemHrid: material.itemHrid,
+                itemName: 'Mat 0',
+                required: material.count,
+                missing: 400,
+                isTradeable: true,
+            },
+        ]);
+
+        const row = document.createElement('div');
+        houseCostDisplay.appendMaterialRow(row, material);
+        expect(row.textContent).toContain('600 / 1,000');
+        expect(row.textContent).toContain('Missing: 400');
+    });
+});
+
+describe('market quote refresh', () => {
+    test('updates rendered prices when market quotes change and unregisters on disable', async () => {
+        houseCostDisplay.initialize();
+        const modalContent = document.createElement('div');
+        const costsSection = document.createElement('div');
+        modalContent.className = 'HousePanel_modalContent__test';
+        costsSection.className = 'HousePanel_costs__test';
+        modalContent.appendChild(costsSection);
+        document.body.appendChild(modalContent);
+        await houseCostDisplay.addCostColumn(costsSection, '/house_rooms/mystical_study', modalContent);
+
+        const materialsList = modalContent.querySelector('.mwi-cumulative-materials-list');
+        expect(materialsList.textContent).toContain('@ 10 = 10K');
+        expect(materialsList.textContent).toContain('Missing: 1,000');
+        expect(modalContent.textContent).toContain('Total Market Value: 145K');
+
+        inventoryState.unitPrice = 20;
+        await inventoryState.notifyMarketUpdate();
+        const updatedList = modalContent.querySelector('.mwi-cumulative-materials-list');
+        expect(updatedList.textContent).toContain('@ 20 = 20K');
+        expect(updatedList.textContent).toContain('Missing: 1,000');
+        expect(modalContent.textContent).toContain('Total Market Value: 285K');
+        expect(inventoryState.marketListeners).toHaveLength(1);
+
+        houseCostDisplay.disable();
+        expect(inventoryState.marketListeners).toHaveLength(0);
+    });
+});
+
+describe('inventory refresh', () => {
+    test('updates the visible shortage and retains the selected cumulative target', async () => {
+        houseCostDisplay.initialize();
+        const modalContent = document.createElement('div');
+        const costsSection = document.createElement('div');
+        costsSection.className = 'HousePanel_costs__test';
+        modalContent.appendChild(costsSection);
+        document.body.appendChild(modalContent);
+        await houseCostDisplay.addCostColumn(costsSection, '/house_rooms/mystical_study', modalContent);
+
+        const dropdown = modalContent.querySelector('select');
+        dropdown.value = '7';
+        dropdown.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+        expect(houseCostDisplay._costContext.targetLevel).toBe(7);
+        const material = MATERIALS[0];
+        inventoryState.items = [
+            {
+                itemHrid: material.itemHrid,
+                itemLocationHrid: '/item_locations/inventory',
+                enhancementLevel: 0,
+                count: 400,
+            },
+        ];
+
+        await houseCostDisplay._itemsUpdatedHandler();
+
+        const updatedList = modalContent.querySelector('.mwi-cumulative-materials-list');
+        expect(updatedList.textContent).toContain('400 / 1,000');
+        expect(updatedList.textContent).toContain('Missing: 600');
+        expect(modalContent.querySelector('select').value).toBe('7');
+
+        houseCostDisplay.disable();
     });
 });
 
