@@ -9631,7 +9631,8 @@ class CombatSimUI {
             picksText = lines.join('<br>');
         }
 
-        const savings = current.costPerHour != null ? current.costPerHour - rec.costPerHour : null;
+        const costsKnown = Number.isFinite(current.costPerHour) && Number.isFinite(rec.costPerHour);
+        const savings = costsKnown ? current.costPerHour - rec.costPerHour : null;
         let savingsText = '';
         if (savings != null && !food.keepCurrent) {
             if (savings > 1) {
@@ -9664,14 +9665,17 @@ class CombatSimUI {
         const statsLine = food.keepCurrent
             ? ''
             : `<div style="color:#aaa; font-size:11px; margin-top:4px;">
-                ${formatKMB(rec.costPerHour)}/hr in consumables ${savingsText ? '— ' + savingsText : ''}
+                ${Number.isFinite(rec.costPerHour) ? `${formatKMB(rec.costPerHour)}/hr in consumables` : 'Cost unknown in consumables'} ${savingsText ? '— ' + savingsText : ''}
                 <span style="color:#666;">
                     · ${rec.deathsPerHour.toFixed(2)} deaths/hr · ${pct(rec.oomFraction)} out of mana
                 </span>
             </div>`;
 
+        const hasUnknownCost = !Number.isFinite(current.costPerHour) || !Number.isFinite(rec.costPerHour);
+        const heading = hasUnknownCost ? 'Viable food — costs incomplete' : 'Cheapest viable food';
+
         return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;">Cheapest viable food</div>
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;">${heading}</div>
             <div style="color:#e0e0e0; font-size:12px; line-height:1.5;">${picksText}</div>
             ${statsLine}
             <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>

@@ -1073,6 +1073,92 @@ describe('the panel', () => {
         ui._upgradeColumnMenuOpen = false;
     });
 
+    test('food with an unknown recommendation cost does not claim cheapest or savings', () => {
+        ui._renderUpgradeResults({
+            baseline: null,
+            results: [],
+            food: {
+                keepCurrent: false,
+                simCount: 4,
+                ceilingDies: false,
+                ceilingOoms: false,
+                current: {
+                    items: ['Blackberry Cake'],
+                    costPerHour: 200,
+                    deathsPerHour: 0,
+                    oomFraction: 0,
+                },
+                recommendation: {
+                    slots: [
+                        {
+                            index: 0,
+                            fromHrid: '/items/blackberry_cake',
+                            fromName: 'Blackberry Cake',
+                            hrid: '/items/spaceberry_cake',
+                            name: 'Spaceberry Cake',
+                            hpRestore: 350,
+                            mpRestore: 0,
+                            changed: true,
+                        },
+                    ],
+                    costPerHour: null,
+                    deathsPerHour: 0,
+                    oomFraction: 0,
+                },
+            },
+        });
+
+        const food = ui.panel.querySelector('#mwi-csim-upgrade-results').textContent;
+        expect(food).toContain('food — costs incomplete');
+        expect(food).toContain('Cost unknown in consumables');
+        expect(food).not.toContain('saves');
+        expect(food).not.toContain('same spend');
+        expect(food).not.toContain('0/hr in consumables');
+    });
+
+    test('food with an unknown current cost qualifies the recommendation and shows unknown spend', () => {
+        ui._renderUpgradeResults({
+            baseline: null,
+            results: [],
+            food: {
+                keepCurrent: false,
+                simCount: 4,
+                ceilingDies: false,
+                ceilingOoms: false,
+                current: {
+                    items: ['Blackberry Cake'],
+                    costPerHour: null,
+                    deathsPerHour: 0,
+                    oomFraction: 0,
+                },
+                recommendation: {
+                    slots: [
+                        {
+                            index: 0,
+                            fromHrid: '/items/blackberry_cake',
+                            fromName: 'Blackberry Cake',
+                            hrid: '/items/spaceberry_cake',
+                            name: 'Spaceberry Cake',
+                            hpRestore: 350,
+                            mpRestore: 0,
+                            changed: true,
+                        },
+                    ],
+                    costPerHour: 100,
+                    deathsPerHour: 0,
+                    oomFraction: 0,
+                },
+            },
+        });
+
+        const food = ui.panel.querySelector('#mwi-csim-upgrade-results').textContent;
+        expect(food).toContain('food — costs incomplete');
+        expect(food).toContain('Current: Blackberry Cake — cost unknown');
+        expect(food).toContain('100/hr in consumables');
+        expect(food).not.toContain('saves');
+        expect(food).not.toContain('same spend');
+    });
+
     test('a re-render replaces the export bar rather than stacking them', () => {
         const results = { baseline: BASELINE, results: [row('Ring', { slot: '/equipment_types/ring' })], food: null };
         ui._renderUpgradeResults(results);

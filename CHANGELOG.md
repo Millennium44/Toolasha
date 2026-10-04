@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Food recommendations keep unknown costs explicit
+
+- Food recommendations now keep missing consumable prices explicit and withhold cheapest or savings claims until both setups can be valued.
+
 ### Combat funding follows market sales volume
 
 - Combat income in the Goal Planner now accounts for how quickly its drops can sell, so a thin market no longer makes a gold goal look faster than it is.

@@ -345,17 +345,20 @@ export function readViability(simResult, playerHrid) {
  * Consumable spend per hour implied by a sim result.
  * @param {Object} simResult - SimResult
  * @param {string} playerHrid - Player HRID
- * @param {Object} priceCache - hrid → unit price
- * @returns {number} Gold per hour
+ * @param {Object} priceCache - hrid → unit price, or null when unresolved
+ * @returns {number|null} Gold per hour, or null when positive spend is unpriced
  */
 function consumableCostPerHour(simResult, playerHrid, priceCache) {
     const simHours = (simResult?.simulatedTime || 0) / (3600 * 1e9) || 1;
     const used = simResult?.consumablesUsed?.[playerHrid] || {};
     let total = 0;
     for (const [hrid, count] of Object.entries(used)) {
+        if (!(count > 0)) continue;
         if (priceCache[hrid] === undefined) {
-            priceCache[hrid] = resolveItemPrice(hrid, { side: 'buy' }).price || 0;
+            const price = resolveItemPrice(hrid, { side: 'buy' }).price;
+            priceCache[hrid] = Number.isFinite(price) ? price : null;
         }
+        if (priceCache[hrid] === null) return null;
         total += (count / simHours) * priceCache[hrid];
     }
     return total;
@@ -604,6 +607,8 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
     const keepCurrent =
         currentRecord.deathsPerHour <= deathTarget &&
         currentRecord.oomFraction <= oomTarget &&
+        Number.isFinite(currentRecord.costPerHour) &&
+        Number.isFinite(final.costPerHour) &&
         currentRecord.costPerHour <= final.costPerHour;
 
     const slots = searchSlots.map((slot) => {

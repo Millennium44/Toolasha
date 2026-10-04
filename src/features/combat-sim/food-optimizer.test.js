@@ -449,6 +449,206 @@ describe('runFoodOptimization', () => {
         expect(result.keepCurrent).toBe(true);
     });
 
+    test('does not treat a missing quote on the equipped baseline as zero spend', async () => {
+        const gameData = {
+            itemDetailMap: {
+                '/items/blackberry_cake': {
+                    name: 'Blackberry Cake',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: {
+                        cooldownDuration: 60_000_000_000,
+                        hitpointRestore: 150,
+                        manapointRestore: 0,
+                        recoveryDuration: 30_000_000_000,
+                        defaultCombatTriggers: [
+                            {
+                                dependencyHrid: '/combat_trigger_dependencies/self',
+                                conditionHrid: '/combat_trigger_conditions/missing_hp',
+                                comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                                value: 150,
+                            },
+                        ],
+                    },
+                },
+                '/items/spaceberry_cake': {
+                    name: 'Spaceberry Cake',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: {
+                        cooldownDuration: 60_000_000_000,
+                        hitpointRestore: 350,
+                        manapointRestore: 0,
+                        recoveryDuration: 30_000_000_000,
+                    },
+                },
+            },
+        };
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === '/items/blackberry_cake'
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 10, custom: false, missing: false, estimated: false }
+        );
+        runSimulation.mockImplementation(async ({ playerDTOs, hours }) => ({
+            simulatedTime: hours * HOUR_NS,
+            deaths: { player1: playerDTOs[0].food.some(Boolean) ? 0 : 1 },
+            playerRanOutOfManaTime: {
+                player1: { isOutOfMana: false, startTimeForOutOfMana: 0, totalTimeForOutOfMana: 0 },
+            },
+            consumablesUsed: {
+                player1: Object.fromEntries(playerDTOs[0].food.filter(Boolean).map((slot) => [slot.hrid, 10])),
+            },
+        }));
+
+        const result = await runFoodOptimization(
+            {
+                gameData,
+                playerDTOs: [{ hrid: 'player1', food: [{ hrid: '/items/blackberry_cake' }, null, null] }],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/gobo_planet',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                seed: 1,
+                baselineResult: {
+                    simulatedTime: HOUR_NS,
+                    deaths: { player1: 0 },
+                    playerRanOutOfManaTime: {
+                        player1: { isOutOfMana: false, startTimeForOutOfMana: 0, totalTimeForOutOfMana: 0 },
+                    },
+                    consumablesUsed: { player1: { '/items/blackberry_cake': 10 } },
+                },
+            },
+            null,
+            {}
+        );
+
+        expect(result.current.costPerHour).toBe(null);
+        expect(result.recommendation.costPerHour).toBe(100);
+        expect(result.keepCurrent).toBe(false);
+    });
+
+    test('keeps an unpriced untouched food type in the spend total as unknown', async () => {
+        const gameData = {
+            itemDetailMap: {
+                '/items/blackberry_cake': {
+                    name: 'Blackberry Cake',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 150, manapointRestore: 0, recoveryDuration: 30_000_000_000 },
+                },
+                '/items/gummy': {
+                    name: 'Gummy',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 40, recoveryDuration: 0 },
+                },
+                '/items/apple_gummy': {
+                    name: 'Apple Gummy',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 80, recoveryDuration: 0 },
+                },
+            },
+        };
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === '/items/blackberry_cake'
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 5, custom: false, missing: false, estimated: false }
+        );
+        runSimulation.mockImplementation(async ({ playerDTOs, hours }) => ({
+            simulatedTime: hours * HOUR_NS,
+            deaths: { player1: 0 },
+            playerRanOutOfManaTime: {
+                player1: { isOutOfMana: false, startTimeForOutOfMana: 0, totalTimeForOutOfMana: 0 },
+            },
+            consumablesUsed: {
+                player1: Object.fromEntries(
+                    playerDTOs[0].food
+                        .filter(Boolean)
+                        .map((slot) => [slot.hrid, slot.hrid === '/items/blackberry_cake' ? 4 : 2])
+                ),
+            },
+        }));
+
+        const result = await runFoodOptimization(
+            {
+                gameData,
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        food: [{ hrid: '/items/blackberry_cake' }, { hrid: '/items/gummy' }, null],
+                    },
+                ],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/gobo_planet',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                seed: 1,
+                baselineResult: null,
+            },
+            null,
+            {}
+        );
+
+        expect(result.recommendation.slots.map((slot) => slot.index)).toEqual([1]);
+        expect(result.recommendation.costPerHour).toBe(null);
+        expect(result.current.costPerHour).toBe(null);
+    });
+
+    test('does not mark zero-count unknown items as unknown spend', async () => {
+        const gameData = {
+            itemDetailMap: {
+                '/items/blackberry_cake': {
+                    name: 'Blackberry Cake',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 150, manapointRestore: 0, recoveryDuration: 30_000_000_000 },
+                },
+                '/items/spaceberry_cake': {
+                    name: 'Spaceberry Cake',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 350, manapointRestore: 0, recoveryDuration: 30_000_000_000 },
+                },
+            },
+        };
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === '/items/blackberry_cake'
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 10, custom: false, missing: false, estimated: false }
+        );
+        runSimulation.mockImplementation(async ({ playerDTOs, hours }) => ({
+            simulatedTime: hours * HOUR_NS,
+            deaths: { player1: 0 },
+            playerRanOutOfManaTime: {
+                player1: { isOutOfMana: false, startTimeForOutOfMana: 0, totalTimeForOutOfMana: 0 },
+            },
+            consumablesUsed: {
+                player1: Object.fromEntries(playerDTOs[0].food.filter(Boolean).map((slot) => [slot.hrid, 1])),
+            },
+        }));
+
+        const result = await runFoodOptimization(
+            {
+                gameData,
+                playerDTOs: [{ hrid: 'player1', food: [{ hrid: '/items/blackberry_cake' }, null, null] }],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/gobo_planet',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                seed: 1,
+                baselineResult: {
+                    simulatedTime: HOUR_NS,
+                    deaths: { player1: 0 },
+                    playerRanOutOfManaTime: {
+                        player1: { isOutOfMana: false, startTimeForOutOfMana: 0, totalTimeForOutOfMana: 0 },
+                    },
+                    consumablesUsed: { player1: { '/items/blackberry_cake': 0 } },
+                },
+            },
+            null,
+            {}
+        );
+
+        expect(result.current.costPerHour).toBe(0);
+    });
+
     test('returns null when no restore food is equipped', async () => {
         mockSimFromFood();
         const p = params();
