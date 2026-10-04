@@ -2089,14 +2089,20 @@ describe('the tier-opening message', () => {
     });
 
     test('it is the tier boundary, so a fresh wave is never read as a heal', () => {
+        const serverStart = Date.parse(NEW_GUILD_BATTLE.combatStartTime);
+        vi.setSystemTime(serverStart + 415);
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         game.wsHandlers[GUILD_BATTLE_MESSAGE]({
             ...GUILD_BATTLE_TICKS[0],
             mMap: { 0: { cHP: 10_000, mHP: 429_000, dmgCounter: 5 } },
         });
 
-        vi.setSystemTime(at + 200_000);
-        game.wsHandlers.new_guild_battle({ ...NEW_GUILD_BATTLE, tier: 2 });
+        vi.setSystemTime(serverStart + 200_000 + 415);
+        game.wsHandlers.new_guild_battle({
+            ...NEW_GUILD_BATTLE,
+            tier: 2,
+            combatStartTime: new Date(serverStart + 200_000).toISOString(),
+        });
         game.wsHandlers[GUILD_BATTLE_MESSAGE]({
             ...GUILD_BATTLE_TICKS[0],
             tier: 2,
@@ -2107,7 +2113,33 @@ describe('the tier-opening message', () => {
         expect(report.tier).toBe(2);
         expect(report.totalDamage).toBe(0);
         // And the boundary is stamped, so a tier's duration is exact
-        expect(report.tierStarts).toEqual({ 1: at, 2: at + 200_000 });
+        expect(report.tierStarts).toEqual({ 1: serverStart, 2: serverStart + 200_000 });
+    });
+
+    test('tier starts keep known server times through late restatements', () => {
+        const serverStart = Date.parse(NEW_GUILD_BATTLE.combatStartTime);
+        vi.setSystemTime(serverStart + 415);
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        vi.setSystemTime(serverStart + 30_000);
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        expect(guildTrialDamage.breakdown().tierStarts[1]).toBe(serverStart);
+
+        const withoutStamp = structuredClone(NEW_GUILD_BATTLE);
+        delete withoutStamp.combatStartTime;
+        vi.setSystemTime(serverStart + 60_000);
+        game.wsHandlers.new_guild_battle(withoutStamp);
+        expect(guildTrialDamage.breakdown().tierStarts[1]).toBe(serverStart);
+    });
+
+    test('tier starts preserve the first receipt when the server time is unavailable', () => {
+        const withoutStamp = structuredClone(NEW_GUILD_BATTLE);
+        delete withoutStamp.combatStartTime;
+        game.wsHandlers.new_guild_battle(withoutStamp);
+
+        vi.setSystemTime(at + 30_000);
+        game.wsHandlers.new_guild_battle(withoutStamp);
+        expect(guildTrialDamage.breakdown().tierStarts[1]).toBe(at);
     });
 
     test('the end message closes the trial rather than leaving it to go quiet', () => {

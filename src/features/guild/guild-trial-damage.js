@@ -1472,7 +1472,8 @@ class GuildTrialDamage {
             // A tier opening is the stream running again, whatever ended or froze it
             if (this.frozenSeconds !== null || this.endedAt !== null) this._resumeStream();
             if (!this.startedAt) this.startedAt = now;
-            if (Number.isFinite(tier)) this.tierStarts[tier] = now;
+            // Keep the game's boundary, or the first observation when an opening lacks its timestamp.
+            if (Number.isFinite(tier)) this.tierStarts[tier] = startMs ?? this.tierStarts[tier] ?? now;
             this._restoreOwedStats();
 
             // The roster replaces every weaker source, and a new battle restates
@@ -3782,7 +3783,7 @@ class GuildTrialDamage {
             // The roster the game stated, and the party size the ladders scale by
             roster: { ...this.roster },
             participants: this.participants ?? null,
-            // When each tier started, so a trial's tier durations are exact
+            // Game-stated tier starts, with first-observed times for unstamped openings
             tierStarts: { ...this.tierStarts },
             endedAt: this.endedAt,
             // What a game-totals rate is divided by: the whole fight's span,
