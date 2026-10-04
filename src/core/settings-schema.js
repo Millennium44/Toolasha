@@ -1080,6 +1080,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a 📌 to each item in the Enhance Item list that moves it to the front. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
             },
+            enhancingPanel_wide: {
+                id: 'enhancingPanel_wide',
+                label: 'Enhancing panel: Wider center panel',
+                type: 'checkbox',
+                default: false,
+                help: "Raises the width cap on the game's Enhancing panel (up to 1400px, 92% of the window) while the Enhancing skill panel is shown, so the Enhancement Calculator has more room. Other skills are unaffected.",
+            },
             enhanceSim_autoDetect: {
                 id: 'enhanceSim_autoDetect',
                 label: 'Auto-detect your stats (false = use settings below)',
