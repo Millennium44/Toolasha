@@ -20,7 +20,24 @@ function numberIn(value, min, max, label, integer = false) {
     return n;
 }
 
-/** Validate a scenario without changing its roster or any imported build. */
+function validateBuffs(buffs, label) {
+    if (!Array.isArray(buffs) || buffs.length > 300)
+        throw new Error(`${label} must be a buff list with at most 300 entries.`);
+    return buffs.map((buff) => {
+        if (!/^\/buff_types\/[a-z_]+$/.test(buff?.typeHrid || '')) throw new Error('A buff has an unsupported type.');
+        return {
+            ...buff,
+            flatBoost: numberIn(buff.flatBoost ?? 0, -1000, 10000, 'Buff flat boost'),
+            ratioBoost: numberIn(buff.ratioBoost ?? 0, -0.95, 100, 'Buff ratio boost'),
+        };
+    });
+}
+
+function isRecord(value) {
+    return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Validate a scenario without mutating its roster or any imported build. */
 export function validateTrialScenario(input) {
     if (!['combat', 'skilling'].includes(input?.kind)) throw new Error('Choose a combat or skilling trial.');
     const members = input.members;
@@ -37,21 +54,10 @@ export function validateTrialScenario(input) {
         seed: numberIn(input.seed ?? 1, 0, 4294967295, 'Seed', true),
     };
     for (const key of ['sharedBuffs', 'buildingBuffs']) {
-        const buffs = input[key] ?? [];
-        if (!Array.isArray(buffs) || buffs.length > 300)
-            throw new Error(`${key} must be a buff list with at most 300 entries.`);
-        result[key] = buffs.map((buff) => {
-            if (!/^\/buff_types\/[a-z_]+$/.test(buff?.typeHrid || ''))
-                throw new Error('A buff has an unsupported type.');
-            return {
-                ...buff,
-                flatBoost: numberIn(buff.flatBoost ?? 0, -1000, 10000, 'Buff flat boost'),
-                ratioBoost: numberIn(buff.ratioBoost ?? 0, -0.95, 100, 'Buff ratio boost'),
-            };
-        });
+        result[key] = validateBuffs(input[key] ?? [], key);
     }
     if (input.kind === 'skilling') {
-        if (!TRIAL_SKILLS.includes(String(input.trialHrid || '').replace('/guild_skilling/', '')))
+        if (!TRIAL_SKILLS.some((skill) => input.trialHrid === `/guild_skilling/${skill}`))
             throw new Error('Choose a skilling trial.');
         result.baseWork = numberIn(input.baseWork, 1, 1e9, 'Tier 1 work before participants');
         result.members = members.map((member, i) => {
@@ -95,11 +101,19 @@ export function validateTrialScenario(input) {
         }));
         for (const member of result.members) {
             const dto = member.dto;
-            if (!dto?.equipment || !Array.isArray(dto.abilities) || !dto.houseRooms) {
+            if (!isRecord(dto?.equipment) || !Array.isArray(dto.abilities) || !isRecord(dto.houseRooms)) {
                 throw new Error(`${member.name} needs a complete combat build.`);
             }
             for (const skill of ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic']) {
+                // The engine adds these levels to base stats; a numeric string
+                // would concatenate instead and silently inflate the build.
+                if (typeof dto[`${skill}Level`] !== 'number')
+                    throw new Error(`${member.name}: ${skill} level must be a numeric value.`);
                 numberIn(dto[`${skill}Level`], 1, 1000, `${member.name}: ${skill} level`);
+            }
+            member.dto = { ...dto };
+            for (const key of ['guildCombatBuffs', 'achievementCombatBuffs']) {
+                if (dto[key] != null) member.dto[key] = validateBuffs(dto[key], `${member.name}: ${key}`);
             }
             if (Object.keys(dto.equipment).some((key) => !key.startsWith('/equipment_types/'))) {
                 throw new Error(`${member.name} has equipment in an unsupported format.`);

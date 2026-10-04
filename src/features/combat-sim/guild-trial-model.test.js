@@ -150,6 +150,18 @@ describe('guild work pool simulation', () => {
             validateTrialScenario(scenario({ buildingBuffs: [{ typeHrid: '/buff_types/damage', ratioBoost: NaN }] }))
         ).toThrow('Buff ratio');
     });
+    test('rejects a skilling setup whose trial identifier is not a full game hrid', () => {
+        expect(() => validateTrialScenario(scenario({ trialHrid: 'crafting' }))).toThrow('Choose a skilling trial');
+    });
+    test.each(['equipment', 'houseRooms'])('rejects a combat build whose %s map is an array', (key) => {
+        const dto = { equipment: {}, abilities: [], houseRooms: {}, [key]: [] };
+        for (const skill of ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic']) {
+            dto[`${skill}Level`] = 100;
+        }
+        expect(() =>
+            validateTrialScenario({ kind: 'combat', trialHrid: '/guild_combat/badger', members: [{ dto }] })
+        ).toThrow('complete combat build');
+    });
     test('later-tier clear odds include earlier losses; conditional time does not', () => {
         const result = summarizeTrialRuns(validateTrialScenario(scenario()), [
             {

@@ -10,6 +10,7 @@ import {
 import Monster from './monster.js';
 import * as rng from './rng.js';
 import { RECORDED_TRIAL_BOSSES } from '../guild-trial-rebalance.fixture.js';
+import { validateTrialScenario } from '../guild-trial-model.js';
 
 const build = () => ({
     staminaLevel: 100,
@@ -118,6 +119,29 @@ describe('current game trial boss data', () => {
 });
 
 describe('trial participants and lifecycle', () => {
+    test('rejects imported text levels before they inflate combat stats', () => {
+        const dto = { ...build(), staminaLevel: '100' };
+        expect(() => simulateGuildCombat(scenario({ members: [{ name: 'Imported', dto }] }))).toThrow(
+            'stamina level must be a numeric value'
+        );
+    });
+    test.each(['guildCombatBuffs', 'achievementCombatBuffs'])(
+        'normalizes imported %s before folding player stats without mutating the build',
+        (key) => {
+            const dto = {
+                ...build(),
+                [key]: [{ typeHrid: '/buff_types/max_hitpoints', flatBoost: '0', ratioBoost: '0.1' }],
+            };
+            const before = structuredClone(dto);
+            // Both the worker and the setup importer use scenario validation.
+            const input = validateTrialScenario(scenario({ members: [{ name: 'Imported', dto }] }));
+            const [player] = createTrialPlayers(input.members);
+            player.generatePermanentBuffs();
+            player.reset(0);
+            expect(player.combatDetails.maxHitpoints).toBe(1210);
+            expect(dto).toEqual(before);
+        }
+    );
     test('keeps net progress across the whole boss roster when defeat ends a tier', () => {
         const players = createTrialPlayers(scenario().members);
         const sim = new GuildCombatSimulator(players, scenario(), ['/monsters/trial_badger', '/monsters/trial_badger']);
