@@ -4,6 +4,10 @@ import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     owner: '1',
     guild: '10',
+    recorderOwner: '1',
+    recorderGuild: 'Guild 10',
+    adoption: null,
+    scopeVersion: 1,
     week: '2026-09-28T00:00:00Z',
     members: [],
     entries: [],
@@ -51,6 +55,22 @@ vi.mock('./guild-xp-tracker.js', () => ({
         getCurrentWeekStartAt: () => game.week,
         getOwnGuildID: () => game.guild,
         getOwnGuildName: () => `Guild ${game.guild}`,
+    },
+}));
+vi.mock('./guild-trial-recorder.js', () => ({
+    default: {
+        get characterId() {
+            return game.recorderOwner;
+        },
+        get guildName() {
+            return game.recorderGuild;
+        },
+        get pendingGuildAdoption() {
+            return game.adoption;
+        },
+        get exportScopeVersion() {
+            return game.scopeVersion;
+        },
     },
 }));
 vi.mock('../../utils/profile-command.js', () => ({
@@ -128,6 +148,10 @@ beforeEach(() => {
     vi.setSystemTime(NOW);
     game.owner = '1';
     game.guild = '10';
+    game.recorderOwner = '1';
+    game.recorderGuild = 'Guild 10';
+    game.adoption = null;
+    game.scopeVersion = 1;
     game.week = '2026-09-28T00:00:00Z';
     game.members = [member(2, 'Alice', { signedUpSkillingTrialHrid: '/guild_skilling/alchemy' })];
     game.entries = [];
@@ -280,6 +304,8 @@ describe('trial input capture helper', () => {
         press('Capture next');
         game.owner = '9';
         game.guild = '99';
+        game.recorderOwner = '9';
+        game.recorderGuild = 'Guild 99';
         vi.setSystemTime(NOW + 1);
         trialInputCapturePanel.render();
         reply({ status: 'done', entry: loadout(2) });
@@ -299,7 +325,43 @@ describe('trial input capture helper', () => {
             game.week = 'next-week';
             return [];
         });
+        game.recorderGuild = 'Guild 99';
         game.members = [member(2, 'Alice')];
+        await expect(buildTrialInputExport()).rejects.toThrow('changed');
+    });
+    test('stale tracker metadata cannot supply inputs while a new character or guild is being adopted', async () => {
+        openTrialInputCapture();
+        game.adoption = ++game.scopeVersion;
+        trialInputCapturePanel.render();
+        expect(body().querySelector('[aria-label="Alice: capture combat"]')).toBeNull();
+        await expect(buildTrialInputExport()).rejects.toThrow('changed');
+        expect(game.profileRead).not.toHaveBeenCalled();
+
+        game.adoption = null;
+        game.owner = '9';
+        game.recorderOwner = '9';
+        game.recorderGuild = null;
+        trialInputCapturePanel.render();
+        expect(body().querySelector('[aria-label="Alice: capture combat"]')).toBeNull();
+        await expect(buildTrialInputExport()).rejects.toThrow('changed');
+        expect(game.profileRead).not.toHaveBeenCalled();
+
+        // The arriving scope is usable only after tracker metadata agrees with the recorder.
+        game.guild = '99';
+        game.recorderGuild = 'Guild 99';
+        game.members = [member(3, 'Bob')];
+        trialInputCapturePanel.render();
+        expect(text()).toContain('Capture next: Bob');
+        expect((await buildTrialInputExport()).coverage.map((row) => row.name)).toEqual(['Bob']);
+    });
+    test('an adoption that starts and finishes during the cache read still invalidates the export', async () => {
+        openTrialInputCapture();
+        game.profileRead.mockImplementation(async () => {
+            game.adoption = ++game.scopeVersion;
+            game.adoption = null;
+            game.scopeVersion++;
+            return [];
+        });
         await expect(buildTrialInputExport()).rejects.toThrow('changed');
     });
     test('fresh capture rounds do not count the previous snapshots', () => {

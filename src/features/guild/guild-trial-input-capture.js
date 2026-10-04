@@ -2,6 +2,7 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
+import guildTrialRecorder from './guild-trial-recorder.js';
 import {
     captureTrialSimulationInputs,
     startTrialSimulationCapture,
@@ -67,7 +68,21 @@ function scopeNow() {
         guildXPTracker.getOwnGuildID?.() ?? null,
         guildXPTracker.getOwnGuildName?.() ?? null,
         guildXPTracker.getCurrentWeekStartAt?.() ?? null,
+        guildTrialRecorder.exportScopeVersion,
     ]);
+}
+
+function currentGuildReady() {
+    const owner = dataManager.getCurrentCharacterId?.() ?? null;
+    const guildName = guildXPTracker.getOwnGuildName?.() ?? null;
+    // Tracker metadata can lag a character or guild switch while its history loads.
+    return Boolean(
+        owner !== null &&
+        guildName &&
+        guildTrialRecorder.pendingGuildAdoption === null &&
+        String(guildTrialRecorder.characterId) === String(owner) &&
+        guildTrialRecorder.guildName === guildName
+    );
 }
 
 let scope = null;
@@ -97,6 +112,7 @@ function cancelPending() {
 
 function rowsNow() {
     adoptScope();
+    if (!currentGuildReady()) return [];
     return trialInputCoverage(trialInputRoster(), {
         owner: dataManager.getCurrentCharacterId?.(),
         since,
@@ -186,6 +202,8 @@ async function requestStep(row, kind) {
 
 /** Build a standalone input export, rejecting a character, guild or week change during the storage read. */
 export async function buildTrialInputExport() {
+    if (!currentGuildReady())
+        throw new Error('Guild or character changed. Wait for current Guild data and export again.');
     const rows = rowsNow();
     const expected = scope;
     if (!rows.length) throw new Error('No current trial signups are available. Open Guild first.');
@@ -195,7 +213,7 @@ export async function buildTrialInputExport() {
     const weekStartAt = guildXPTracker.getCurrentWeekStartAt?.() ?? null;
     const capturedSince = since;
     const simulationInputs = await captureTrialSimulationInputs(owner, roster);
-    if (!simulationInputs || scopeNow() !== expected || scope !== expected)
+    if (!simulationInputs || !currentGuildReady() || scopeNow() !== expected || scope !== expected)
         throw new Error('Guild, character or capture round changed. Export again.');
     const coverage = trialInputCoverage(rows, {
         owner,
@@ -313,7 +331,13 @@ function draw(body) {
     );
     if (notice) body.appendChild(panelNote(notice));
     if (!rows.length)
-        body.appendChild(panelNote('No current trial signups found. Open Guild to load the roster and current week.'));
+        body.appendChild(
+            panelNote(
+                currentGuildReady()
+                    ? 'No current trial signups found. Open Guild to load the roster and current week.'
+                    : 'Waiting for current character and guild data. Open Guild after the switch completes.'
+            )
+        );
     for (const row of rows) {
         const card = document.createElement('div');
         card.style.cssText = 'padding:8px 0;border-top:1px solid #ffffff22;';

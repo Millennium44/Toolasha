@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { openTrialInputCapture } from './guild-trial-input-capture.js';
 
 const game = vi.hoisted(() => ({
     settings: { guildTrialsInfo: true },
@@ -3405,6 +3406,13 @@ describe('the panel, end to end', () => {
         expect(guildTrials.socketPhase).toBeNull();
         expect(guildTrials.lastForecast).toBeNull();
         expect(guildTrials._trialBudgetMs('combat', now)).toBeNull();
+    });
+
+    test('a character switch closes the input checklist before delayed tracker metadata arrives', () => {
+        openTrialInputCapture();
+        expect(document.getElementById('toolasha-trialInputCapture-panel')).not.toBeNull();
+        guildTrials._forgetCharacter(222);
+        expect(document.getElementById('toolasha-trialInputCapture-panel')).toBeNull();
     });
 
     test('a watched fight feeds the pool to a card the game draws no bar on', async () => {

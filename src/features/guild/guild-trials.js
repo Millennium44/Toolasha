@@ -2823,6 +2823,7 @@ class GuildTrials {
      */
     _forgetCharacter(newId = null) {
         try {
+            closeTrialInputCapture();
             this.record = null;
             this.guildName = null;
             this.socketGuildName = null;

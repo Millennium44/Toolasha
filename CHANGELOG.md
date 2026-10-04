@@ -127,6 +127,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Experimental Guild Trial Simulator
 
 - A Capture inputs checklist now guides combat and skilling trial loadout and profile collection, shows missing inputs, and exports the collected data before a trial starts. Each press requests one input; skipped steps remain marked as missing.
+- The input checklist closes on character switches and waits for guild data to finish updating, so exports cannot carry over the previous guild's roster.
 - Skilling and combat trial scenarios can now be simulated locally with editable rosters, per-tier clear odds, payout estimates, and setup import and export. The experimental tool is off by default and labels rules still awaiting comparison with recorded trials.
 - Imported skilling percentages now display cleanly while retaining their full precision in simulations and exports.
 - Post-rebalance trial recordings now calibrate the skilling success curve and boss scaling; estimates include proportional rewards from the unfinished tier and the guild's combat building buffs.
