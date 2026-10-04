@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loot luck with party shares
+
+- Combat loot luck now handles a rare item split among party members as a possible whole-item payout, so expensive drops cannot wrap into the wrong luck percentile.
+
 <!-- shipped in 3.64.0 -->
 
 ### Enhancing panel reads the level of the item you put in
