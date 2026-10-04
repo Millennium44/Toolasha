@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing panel reads the level of the item you put in
+
+- An unreleased change read the Enhance tab's item level off the Outputs tile, one level too high; the success-rate line, Missing Mats, the Repeat ∞ estimate and the held-protection count now read the input tile.
+
 ### Protect-from sweep uses the protection you hold, and always compares mirrors
 
 - An opt-in setting lets the enhancing protect-from sweep spend protection items you hold above a keep-N reserve (default 2), valued at their sell price before buying the rest, and the Philosopher's Mirror start level and savings now show whatever is in the protection slot.

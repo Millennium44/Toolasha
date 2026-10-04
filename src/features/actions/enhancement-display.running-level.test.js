@@ -117,13 +117,35 @@ const running = (itemHrid, level) => [
     },
 ];
 
+/**
+ * The Enhance tab's two item tiles as the game draws them (test server, 2026-10-04): the input
+ * copy in the selector, with a level badge only above +0, and the Outputs copy one level up,
+ * whose name carries no level and whose badge is the input's plus one
+ * @param {string} itemName - "Name" or "Name +N"
+ * @returns {string} HTML
+ */
+const enhancingItems = (itemName) => {
+    const level = Number((itemName.match(/\+(\d+)$/) || [0, 0])[1]);
+    const name = itemName.replace(/\s*\+\d+$/, '');
+    return (
+        '<div class="SkillActionDetail_primaryItemSelectorContainer__nrvNW"><div class="Item_itemContainer__x7kH1">' +
+        '<div class="Item_item__2De2O Item_clickable__3viV6 Item_large__1aJaU">' +
+        (level > 0 ? `<div class="Item_enhancementLevel__19g-e">+${level}</div>` : '') +
+        '</div></div></div>' +
+        '<div class="SkillActionDetail_enhancingOutput__VPHbY"><div class="SkillActionDetail_item__2vEAz">' +
+        '<div class="Item_itemContainer__x7kH1"><div class="Item_item__2De2O Item_inline__3eeJo">' +
+        `<div class="Item_name__2C42x">${name}</div><div class="Item_enhancementLevel__19g-e">+${level + 1}</div>` +
+        '</div></div></div></div>'
+    );
+};
+
 async function successLine(itemName, itemHrid) {
     const panel = document.createElement('div');
     panel.innerHTML =
         '<div><span>Target Level</span><input type="number" value="10"></div>' +
         '<div><span>Protect From Level</span><input type="number" value="0"></div>' +
         '<div class="protectionItemInputContainer"></div>' +
-        `<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">${itemName}</div></div>`;
+        enhancingItems(itemName);
     document.body.appendChild(panel);
     await displayEnhancementStats(panel, itemHrid);
     return panel.textContent.match(/\+(\d+) \u2192 \+(\d+):\s*[\d.]+%\s*\u2192/);
@@ -151,10 +173,8 @@ describe('the success-rate line level', () => {
         expect(line.slice(1, 3)).toEqual(['0', '1']);
     });
 
-    test('a +0 copy draws an empty level badge, and a +4 one a badge', async () => {
-        state.actions = running('/items/brie_sword', 7);
-        const badge = (text) => `Brie Sword</div><div class="Item_enhancementLevel__19g-e">${text}</div><div>`;
-        expect((await successLine(badge(''), '/items/brie_sword')).slice(1, 3)).toEqual(['0', '1']);
-        expect((await successLine(badge('+4'), '/items/brie_sword')).slice(1, 3)).toEqual(['4', '5']);
+    test('the level is the input tile, not the Outputs tile one level up', async () => {
+        const line = await successLine('Brie Sword +4', '/items/brie_sword');
+        expect(line.slice(1, 3)).toEqual(['4', '5']);
     });
 });

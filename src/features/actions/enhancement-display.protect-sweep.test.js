@@ -122,12 +122,32 @@ beforeEach(() => {
     state.prices = { ...BASE_PRICES };
 });
 
+/**
+ * The Enhance tab's two item tiles as the game draws them (test server, 2026-10-04): the input
+ * copy in the selector, with a level badge only above +0, and the Outputs copy one level up,
+ * whose name carries no level and whose badge is the input's plus one
+ * @param {string} itemName - "Name" or "Name +N"
+ * @returns {string} HTML
+ */
+const enhancingItems = (itemName) => {
+    const level = Number((itemName.match(/\+(\d+)$/) || [0, 0])[1]);
+    const name = itemName.replace(/\s*\+\d+$/, '');
+    return (
+        '<div class="SkillActionDetail_primaryItemSelectorContainer__nrvNW"><div class="Item_itemContainer__x7kH1">' +
+        '<div class="Item_item__2De2O Item_clickable__3viV6 Item_large__1aJaU">' +
+        (level > 0 ? `<div class="Item_enhancementLevel__19g-e">+${level}</div>` : '') +
+        '</div></div></div>' +
+        '<div class="SkillActionDetail_enhancingOutput__VPHbY"><div class="SkillActionDetail_item__2vEAz">' +
+        '<div class="Item_itemContainer__x7kH1"><div class="Item_item__2De2O Item_inline__3eeJo">' +
+        `<div class="Item_name__2C42x">${name}</div><div class="Item_enhancementLevel__19g-e">+${level + 1}</div>` +
+        '</div></div></div></div>'
+    );
+};
+
 function buildPanel({ target = 5, protectFrom = 3, protection = 'mirror_of_protection', itemName = null } = {}) {
     const panel = document.createElement('div');
     panel.innerHTML =
-        (itemName
-            ? `<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">${itemName}</div></div>`
-            : '') +
+        (itemName ? enhancingItems(itemName) : '') +
         `<div><span>Target Level</span><input type="number" value="${target}"></div>` +
         `<div><span>Protect From Level</span><input type="number" value="${protectFrom}"></div>` +
         `<div class="protectionItemInputContainer">${
