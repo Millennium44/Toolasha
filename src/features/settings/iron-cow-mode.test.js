@@ -58,6 +58,7 @@ vi.mock('../../core/config.js', () => ({
             market_listingTimeFormat: { type: 'select', value: '24hour' },
             market_listingAge: { type: 'select', value: 'both' },
             inv_valueBadges: { type: 'select', value: 'alwaysAsk' },
+            itemTooltip_selfUseAlchemy: { type: 'checkbox', isTrue: true },
         },
         getSetting: () => true,
         setSetting: (id, value) => world.restored.push([id, value]),
@@ -148,5 +149,49 @@ describe('iron cow mode leaves the date and time display formats alone', () => {
         await ironCowMode.disable();
 
         expect(world.restored).toEqual([['market_showOrderTotals', true]]);
+    });
+});
+
+// The self-use alchemy tooltip lines are priced off the market, so an Iron Cow
+// character has nothing for them to say; hidden the same way as the multi-action
+// profit line. The mode forces the setting only while it is on and keeps the
+// player's own value in the snapshot for when it is turned off.
+describe('iron cow mode hides the self-use alchemy tooltip lines', () => {
+    beforeEach(() => {
+        world.characterId = 'char1';
+        world.store = new Map();
+        world.deleted = [];
+        world.restored = [];
+    });
+
+    test('the setting is managed alongside the multi-action profit line', () => {
+        expect(IRON_COW_SETTINGS.has('itemTooltip_multiActionProfit')).toBe(true);
+        expect(IRON_COW_SETTINGS.has('itemTooltip_selfUseAlchemy')).toBe(true);
+    });
+
+    test('enabling the mode forces it off and snapshots the player own value', async () => {
+        await ironCowMode.enable();
+
+        expect(Object.fromEntries(world.restored).itemTooltip_selfUseAlchemy).toBe(false);
+        expect(world.store.get('settings::toolasha_ironCowSnapshot_char1').itemTooltip_selfUseAlchemy).toEqual({
+            type: 'checkbox',
+            value: true,
+        });
+    });
+
+    test('disabling the mode puts the player own value back', async () => {
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', {
+            itemTooltip_selfUseAlchemy: { type: 'checkbox', value: true },
+        });
+
+        await ironCowMode.disable();
+
+        expect(world.restored).toEqual([['itemTooltip_selfUseAlchemy', true]]);
+    });
+
+    test('a character who never enabled the mode has nothing written to it', async () => {
+        await ironCowMode.disable();
+
+        expect(world.restored).toEqual([]);
     });
 });
