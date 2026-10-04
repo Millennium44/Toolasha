@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### House panels keep the latest calculation
+
+- Overlapping house estimate refreshes now keep the latest room and inventory state without adding duplicate or empty cost sections.
+
 ### House estimates follow current prices and available stock
 
 - House upgrade estimates refresh when prices, inventory or room levels change while preserving the selected target level. Material shortages now respect stock reserved by other plans.

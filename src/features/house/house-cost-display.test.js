@@ -16,11 +16,15 @@ const inventoryState = vi.hoisted(() => ({
     reserved: new Map(),
     marketListeners: [],
     unitPrice: 10,
+    deferredCosts: [],
     notifyMarketUpdate: () => Promise.all(inventoryState.marketListeners.map((listener) => listener())),
 }));
 
 vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateCumulativeCost: async () => {
+        const deferred = inventoryState.deferredCosts.shift();
+        if (deferred) return deferred.promise;
+
         const materials = MATERIALS.map((material) => ({
             ...material,
             marketPrice: inventoryState.unitPrice,
@@ -90,12 +94,21 @@ async function render(currentLevel = 5) {
     return modal.querySelector('.mwi-house-to-level');
 }
 
+function deferred() {
+    let resolve;
+    const promise = new Promise((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
 beforeEach(() => {
     document.body.innerHTML = '';
     inventoryState.items = [];
     inventoryState.reserved = new Map();
     inventoryState.marketListeners = [];
     inventoryState.unitPrice = 10;
+    inventoryState.deferredCosts = [];
 });
 
 describe('the material rows fit a phone-width dialog', () => {
@@ -244,6 +257,50 @@ describe('inventory refresh', () => {
         expect(updatedList.textContent).toContain('400 / 1,000');
         expect(updatedList.textContent).toContain('Missing: 600');
         expect(modalContent.querySelector('select').value).toBe('7');
+
+        houseCostDisplay.disable();
+    });
+});
+
+describe('overlapping room modal refreshes', () => {
+    test('a stale render cannot append an empty section or replace the current state', async () => {
+        houseCostDisplay.initialize();
+        const modalContent = document.createElement('div');
+        const costsSection = document.createElement('div');
+        modalContent.className = 'HousePanel_modalContent__test';
+        costsSection.className = 'HousePanel_costs__test';
+        modalContent.appendChild(costsSection);
+        document.body.appendChild(modalContent);
+        await houseCostDisplay.addCostColumn(costsSection, '/house_rooms/mystical_study', modalContent);
+
+        const older = deferred();
+        const newer = deferred();
+        inventoryState.deferredCosts.push(older, newer);
+
+        // These model the real items_updated and house_rooms_updated paths.
+        const inventoryRefresh = houseCostDisplay._itemsUpdatedHandler();
+        const roomRefresh = houseCostDisplay._houseRoomsUpdatedHandler();
+
+        newer.resolve({ coins: 5000, materials: MATERIALS, totalValue: 2222 });
+        await roomRefresh;
+        const currentDropdown = modalContent.querySelector('select');
+        expect(modalContent.querySelectorAll('.mwi-house-to-level')).toHaveLength(1);
+        expect(houseCostDisplay._cumulativeState.dropdown).toBe(currentDropdown);
+        expect(modalContent.textContent).toContain('Total Market Value: 2,222');
+
+        older.resolve({ coins: 5000, materials: MATERIALS, totalValue: 1111 });
+        await inventoryRefresh;
+
+        expect(modalContent.querySelectorAll('.mwi-house-to-level')).toHaveLength(1);
+        expect(modalContent.querySelector('select')).toBe(currentDropdown);
+        expect(houseCostDisplay._cumulativeState.dropdown).toBe(currentDropdown);
+        expect(houseCostDisplay._costContext).toEqual({
+            houseRoomHrid: '/house_rooms/mystical_study',
+            currentLevel: 5,
+            targetLevel: 6,
+        });
+        expect(modalContent.textContent).toContain('Total Market Value: 2,222');
+        expect(modalContent.textContent).not.toContain('Total Market Value: 1,111');
 
         houseCostDisplay.disable();
     });

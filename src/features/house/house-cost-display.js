@@ -384,6 +384,7 @@ class HouseCostDisplay {
      * @param {Element} modalContent - The modal content element
      */
     async addCostColumn(costsSection, houseRoomHrid, modalContent) {
+        const generation = ++this._refreshGen;
         const previousTargetLevel =
             this._costContext?.houseRoomHrid === houseRoomHrid ? this._costContext.targetLevel : null;
         // Remove any existing augmentation first
@@ -400,7 +401,14 @@ class HouseCostDisplay {
 
         try {
             // Add "Cumulative to Level" section
-            await this.addCompactToLevel(costsSection, houseRoomHrid, currentLevel, previousTargetLevel);
+            const rendered = await this.addCompactToLevel(
+                costsSection,
+                houseRoomHrid,
+                currentLevel,
+                previousTargetLevel,
+                generation
+            );
+            if (!rendered) return;
 
             // The section now carries `flex-shrink: 0`, so the panel has to be
             // allowed to grow. Only needed where PANEL_LAYOUT_CSS's `:has()`
@@ -704,8 +712,11 @@ class HouseCostDisplay {
      * @param {string} houseRoomHrid - House room HRID
      * @param {number} currentLevel - Current level
      * @param {number|null} [targetLevelOverride] - Previously selected target to preserve on refresh
+     * @param {number|null} [generation] - Caller generation for rejecting superseded modal renders
+     * @returns {Promise<boolean>} Whether this render was current and appended
      */
-    async addCompactToLevel(costsSection, houseRoomHrid, currentLevel, targetLevelOverride = null) {
+    async addCompactToLevel(costsSection, houseRoomHrid, currentLevel, targetLevelOverride = null, generation = null) {
+        const renderGeneration = generation ?? ++this._refreshGen;
         const section = document.createElement('div');
         section.className = 'mwi-house-to-level';
         // `flex-shrink: 0` replaces the `min-height: 0` that used to sit here.
@@ -791,7 +802,14 @@ class HouseCostDisplay {
         section.appendChild(costContainer);
 
         // Initial render
-        await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, currentLevel, parseInt(dropdown.value));
+        const rendered = await this.updateCompactCumulativeDisplay(
+            costContainer,
+            houseRoomHrid,
+            currentLevel,
+            parseInt(dropdown.value),
+            renderGeneration
+        );
+        if (!rendered) return false;
 
         // Store state for inventory-change refresh
         this._cumulativeState = { costContainer, houseRoomHrid, currentLevel, dropdown };
@@ -809,6 +827,7 @@ class HouseCostDisplay {
         });
 
         costsSection.parentElement.appendChild(section);
+        return true;
     }
 
     /**
@@ -817,14 +836,16 @@ class HouseCostDisplay {
      * @param {string} houseRoomHrid - House room HRID
      * @param {number} currentLevel - Current level
      * @param {number} targetLevel - Target level
+     * @param {number|null} [generation] - Existing caller generation, or a new one when absent
+     * @returns {Promise<boolean>} Whether this calculation was current and rendered
      */
-    async updateCompactCumulativeDisplay(container, houseRoomHrid, currentLevel, targetLevel) {
+    async updateCompactCumulativeDisplay(container, houseRoomHrid, currentLevel, targetLevel, generation = null) {
         // Concurrent calls (items_updated + house_rooms_updated fire in the same turn)
         // must not interleave clear/append — only the latest call may write to the DOM
-        const gen = ++this._refreshGen;
+        const gen = generation ?? ++this._refreshGen;
 
         const costData = await houseCostCalculator.calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel);
-        if (gen !== this._refreshGen) return;
+        if (gen !== this._refreshGen) return false;
 
         // Build into a detached fragment, then clear+append in one synchronous swap
         const fragment = document.createDocumentFragment();
@@ -916,6 +937,7 @@ class HouseCostDisplay {
         // it no longer has a scroll position of its own to carry.
         container.innerHTML = '';
         container.appendChild(fragment);
+        return true;
     }
 
     /**
