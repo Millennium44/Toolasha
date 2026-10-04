@@ -19,7 +19,7 @@ import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
-import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { calculatePriceAfterTax, resolveItemPrice } from '../../utils/profit-helpers.js';
 import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
@@ -805,13 +805,15 @@ function sweepBuyPrice(itemHrid) {
 
 /**
  * What one held copy would sell for, the sell side of the same profit pricing the buy side
- * above uses — a protection item spent from the bag is one not sold.
+ * above uses, after the market tax the sale would pay — a protection item spent from the bag
+ * is one not sold, and what is given up is the proceeds, not the quote.
  * @param {string} itemHrid - Item hrid
  * @returns {number} Price in coins, 0 when nothing knows one
  */
 function sweepSellPrice(itemHrid) {
     try {
-        return resolveItemPrice(itemHrid, { context: 'profit', side: 'sell' })?.price || 0;
+        const quote = resolveItemPrice(itemHrid, { context: 'profit', side: 'sell' })?.price || 0;
+        return calculatePriceAfterTax(quote);
     } catch {
         return 0;
     }

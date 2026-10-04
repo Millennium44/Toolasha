@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
     sellPrices: {},
     // Copies claimed by other plans in the reservation ledger
     reservedElsewhere: {},
+    // The market tax a sale pays (0 keeps the other tests' figures round)
+    taxRate: 0,
     prices: {
         '/items/cheese': 500,
         '/items/mirror_of_protection': 20_000,
@@ -85,6 +87,7 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { getPrice: (hrid) => ({ ask: state.prices[hrid] || -1, bid: -1 }), on: () => {} },
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => price * (1 - state.taxRate),
     resolveItemPrice: (hrid, options = {}) => {
         const table = options.side === 'sell' ? state.sellPrices : state.prices;
         return { price: table[hrid] || 0, custom: false, missing: !table[hrid] };
@@ -114,6 +117,7 @@ beforeEach(() => {
     state.inventory = [];
     state.actions = [];
     state.reservedElsewhere = {};
+    state.taxRate = 0;
     state.sellPrices = {};
     state.prices = { ...BASE_PRICES };
 });
@@ -288,6 +292,15 @@ describe('protect-from sweep spending held protection', () => {
         expect(swordHeader.textContent).toContain('(held, 3 held, 1 spare @45.00K, then @50.00K)');
         expect(rowsFor(stats, SWORD).map((row) => row.dataset.protectFrom)).toEqual(['2', '3', '4', '5']);
         expect(stats.textContent).toContain('beyond 2 of each are used first');
+    });
+
+    test('a held copy is valued at what its sale would bring in after market tax', async () => {
+        stockOn(2);
+        state.taxRate = 0.04;
+        state.sellPrices = { [PROTECTOR]: 3_000 };
+        state.inventory = [stack(PROTECTOR, 3)];
+        const stats = await render();
+        expect(groupHeader(stats, 'Cheese Sword Protector').textContent).toContain('1 spare @2.88K, then @4.00K');
     });
 
     test('copies claimed by other plans are not spare protection', async () => {
