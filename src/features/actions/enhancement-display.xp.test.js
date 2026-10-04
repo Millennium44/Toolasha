@@ -143,6 +143,28 @@ async function xpColumn(itemHrid) {
         .map((cells) => cells[column]?.textContent.trim() ?? '');
 }
 
+/**
+ * The Enhance tab's two item tiles as the game draws them (test server, 2026-10-04): the input
+ * copy in the selector, with a level badge only above +0, and the Outputs copy one level up,
+ * whose name carries no level and whose badge is the input's plus one
+ * @param {string} itemName - "Name" or "Name +N"
+ * @returns {string} HTML
+ */
+const enhancingItems = (itemName) => {
+    const level = Number((itemName.match(/\+(\d+)$/) || [0, 0])[1]);
+    const name = itemName.replace(/\s*\+\d+$/, '');
+    return (
+        '<div class="SkillActionDetail_primaryItemSelectorContainer__nrvNW"><div class="Item_itemContainer__x7kH1">' +
+        '<div class="Item_item__2De2O Item_clickable__3viV6 Item_large__1aJaU">' +
+        (level > 0 ? `<div class="Item_enhancementLevel__19g-e">+${level}</div>` : '') +
+        '</div></div></div>' +
+        '<div class="SkillActionDetail_enhancingOutput__VPHbY"><div class="SkillActionDetail_item__2vEAz">' +
+        '<div class="Item_itemContainer__x7kH1"><div class="Item_item__2De2O Item_inline__3eeJo">' +
+        `<div class="Item_name__2C42x">${name}</div><div class="Item_enhancementLevel__19g-e">+${level + 1}</div>` +
+        '</div></div></div></div>'
+    );
+};
+
 describe('the costs-by-level XP column', () => {
     test('keys on the item level, not on whatever skill the item happens to require', async () => {
         const required = await xpColumn('/items/cheese_sword');
@@ -183,7 +205,7 @@ describe('the success-rate breakdown', () => {
             '<div><span>Target Level</span><input type="number" value="5"></div>' +
             '<div><span>Protect From Level</span><input type="number" value="0"></div>' +
             '<div class="protectionItemInputContainer"></div>' +
-            '<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">Brie Sword +0</div></div>';
+            enhancingItems('Brie Sword');
         document.body.appendChild(panel);
 
         return displayEnhancementStats(panel, '/items/brie_sword').then(() => {

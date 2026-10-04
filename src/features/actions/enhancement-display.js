@@ -610,28 +610,27 @@ export function isRepeatUnlimitedFromUI(panel) {
 }
 
 /**
- * The level of the copy the panel shows, off its level badge or its name ("… +5").
+ * The level of the copy the panel shows, off the input tile's level badge. The input tile sits
+ * in the item selector and draws a "+N" badge only above +0; the `SkillActionDetail_item` tile
+ * is the Outputs one, a level up, and is never the copy being enhanced (test server, 2026-10-04).
  * @param {HTMLElement} panel - Enhancing panel element
- * @returns {number|null} The level, or null when the panel shows no item to read
+ * @returns {number|null} The level, or null when no item is selected
  */
 function panelItemLevel(panel) {
-    const item = panel.querySelector('.SkillActionDetail_item__2vEAz');
+    const item = panel.querySelector('[class*="SkillActionDetail_primaryItemSelectorContainer"] [class*="Item_item"]');
     if (!item) return null;
-    const badge = item.querySelector('[class*="Item_enhancementLevel"]');
-    const badgeLevel = badge?.textContent.trim().match(/^\+(\d+)$/);
-    if (badgeLevel) return parseInt(badgeLevel[1], 10);
-    const name = item.querySelector('.Item_name__2C42x');
-    const nameLevel = name?.textContent.trim().match(/\+(\d+)$/);
-    if (nameLevel) return parseInt(nameLevel[1], 10);
-    // A +0 copy draws an empty badge, or a name with no level
-    return badge || name ? 0 : null;
+    const badge = item
+        .querySelector('[class*="Item_enhancementLevel"]')
+        ?.textContent.trim()
+        .match(/^\+(\d+)$/);
+    return badge ? parseInt(badge[1], 10) : 0;
 }
 
 /**
  * The enhancement level the item on the panel is currently at: the queued/running enhance
  * action's own hash when there is one (authoritative — several items can be queued, and this
- * is the one actually running, via `runningAction`), falling back to the level parsed off the
- * item name shown in the panel itself (e.g. "Dairyhand's Top +5") before anything is queued.
+ * is the one actually running, via `runningAction`), falling back to the input tile's level
+ * badge before anything is queued.
  *
  * With `itemHrid`, the running action counts only when it is enhancing that item: a player can
  * be enhancing one item while the Enhance tab prepares another, and the running item's level
@@ -664,15 +663,8 @@ export function getCurrentEnhancementLevel(panel, itemHrid = null) {
         }
     }
 
-    // Fallback: read from the enhancing input item name in the DOM (e.g., "Dairyhand's Top +5")
-    if (currentLevel === null) {
-        const inputItems = panel.querySelectorAll('.SkillActionDetail_item__2vEAz .Item_name__2C42x');
-        if (inputItems.length > 0) {
-            const inputName = inputItems[0].textContent.trim();
-            const levelMatch = inputName.match(/\+(\d+)$/);
-            currentLevel = levelMatch ? parseInt(levelMatch[1], 10) : 0;
-        }
-    }
+    // Fallback: the input tile's own badge, before anything is queued
+    if (currentLevel === null) currentLevel = panelItemLevel(panel);
 
     return currentLevel;
 }
