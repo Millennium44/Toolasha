@@ -21,6 +21,7 @@ import {
 } from './guild-trial-adapter.js';
 import { validateTrialScenario, skillingWorkPerSecond } from './guild-trial-model.js';
 import { COMBAT_ENCOUNTERS, TRIAL_SKILLS, levelFromTier } from '../guild/guild-trials-math.js';
+import { trialSimulationProfiles } from '../guild/guild-trial-simulation-inputs.js';
 
 const ACCENT = '#b9a6ff';
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
@@ -308,8 +309,9 @@ export class GuildTrialSim {
             );
             let added = 0;
             let missing = 0;
+            const profiles = trialSimulationProfiles();
             for (const entry of entries) {
-                const built = await buildPlayerDTOFromLoadout(entry);
+                const built = await buildPlayerDTOFromLoadout(entry, profiles);
                 if (generation !== this.generation) return;
                 if (!built?.levelsFrom) {
                     missing++;

@@ -6,6 +6,7 @@ const harness = vi.hoisted(() => ({
     listeners: {},
     ws: {},
     entries: [],
+    capturedProfiles: [],
     loadoutBuilder: vi.fn(),
     worker: vi.fn(),
     initializedPanel: null,
@@ -48,6 +49,9 @@ vi.mock('../../utils/command-registry.js', () => ({ registerCommand: vi.fn(), un
 vi.mock('../../utils/view-loadout.js', () => ({
     getLoadouts: () => harness.entries,
     VIEW_LOADOUT_CONTEXT: { GuildTrial: 'guild_trial' },
+}));
+vi.mock('../guild/guild-trial-simulation-inputs.js', () => ({
+    trialSimulationProfiles: () => harness.capturedProfiles,
 }));
 vi.mock('../../utils/simple-panel.js', () => ({
     createPanel: ({ draw }) => {
@@ -118,6 +122,7 @@ beforeEach(() => {
     harness.enabled = true;
     harness.char = '1';
     harness.entries = [];
+    harness.capturedProfiles = [];
     harness.listeners = {};
     harness.ws = {};
     harness.worker.mockReset();
@@ -190,6 +195,38 @@ describe('trial simulator controls and ownership', () => {
         await adding;
         expect(feature.combatMembers).toEqual([]);
         expect(feature.loading).toBe(false);
+    });
+    test('adds the full captured roster after the general cache has evicted its first profile', async () => {
+        harness.entries = Array.from({ length: 21 }, (_, index) => ({
+            context: 'guild_trial',
+            kind: 'combat',
+            hasLoadout: true,
+            characterId: String(index + 2),
+            name: `Member ${index + 2}`,
+        }));
+        harness.capturedProfiles = harness.entries.map((entry) => ({
+            characterID: entry.characterId,
+            characterName: entry.name,
+            timestamp: 1234,
+            profile: { characterSkills: [{ skillHrid: '/skills/magic', level: 100 }] },
+        }));
+        const cachedIds = new Set(harness.entries.slice(1).map((entry) => entry.characterId));
+        harness.loadoutBuilder.mockImplementation(async (entry, sessionProfiles = []) => ({
+            dto: build(),
+            levelsFrom:
+                cachedIds.has(entry.characterId) ||
+                sessionProfiles.some((profile) => String(profile.characterID) === entry.characterId)
+                    ? 'profile'
+                    : null,
+            profileCapturedAt: 1234,
+        }));
+
+        await feature.addCapturedBuilds();
+
+        expect(feature.combatMembers).toHaveLength(21);
+        expect(feature.combatMembers[0]).toMatchObject({ id: '2', profileCapturedAt: 1234 });
+        expect(feature.notice).toContain('21 trial builds added');
+        expect(feature.notice).not.toContain('skipped');
     });
     test('keeps the actual per-member reading precision and observed pool', () => {
         feature.kind = 'skilling';
