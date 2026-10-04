@@ -272,20 +272,20 @@ function generateCostsByLevelTable(
         // Protection only applies when target level reaches the protection threshold
         const effectiveProtect = protectFromLevel >= 2 && level >= protectFromLevel ? protectFromLevel : 0;
 
-        const calc = calculateEnhancement({
+        const chainArgs = {
             enhancingLevel: params.enhancingLevel,
             houseLevel: params.houseLevel,
             toolBonus: params.toolBonus,
             speedBonus: params.speedBonus,
             itemLevel: itemLevel,
             targetLevel: level,
-            protectFrom: effectiveProtect,
             blessedTea: params.teas.blessed,
             guzzlingBonus: params.guzzlingBonus,
             // The real double-jump chance, read from item data by getEnhancingParams. Leaving
             // it out silently pinned the chain to the 1% stand-in the calculator defaults to.
             blessedTeaBonus: params.blessedTeaBonus,
-        });
+        };
+        const calc = calculateEnhancement({ ...chainArgs, protectFrom: effectiveProtect });
 
         // Calculate material cost breakdown
         let materialCost = 0;
@@ -345,6 +345,15 @@ function generateCostsByLevelTable(
 
         const totalCost = materialCost + protectionCost;
 
+        // What the mirror route is weighed against. With the slot empty a protect-from setting
+        // protects nothing, so the protected chain's attempts at no protection cost are a route
+        // that does not exist; the unprotected chain is the real alternative
+        let mirrorFootingCost = totalCost;
+        if (effectiveProtect && !protectionItemHrid) {
+            const bare = calculateEnhancement({ ...chainArgs, protectFrom: 0 });
+            mirrorFootingCost = calc.attempts > 0 ? (materialCost / calc.attempts) * bare.attempts : 0;
+        }
+
         // Override time with buff-map-based per-action time (authoritative source)
         const totalTime = perActionTime * calc.attempts;
 
@@ -369,6 +378,7 @@ function generateCostsByLevelTable(
             time: totalTime,
             xpPerHour,
             cost: totalCost,
+            mirrorFootingCost,
             breakdown: materialBreakdown,
         });
     }
@@ -385,7 +395,7 @@ function generateCostsByLevelTable(
     const mirrorPrice = askOf('/items/philosophers_mirror');
     const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
     const column = mirrorCostColumn(
-        costData.map((data) => data.cost),
+        costData.map((data) => data.mirrorFootingCost),
         basePrice,
         mirrorPrice
     );

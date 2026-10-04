@@ -391,6 +391,17 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
         expect(stats.textContent).not.toContain("Philosopher's Mirror Strategy");
     });
 
+    test('with the slot empty, a protect-from setting does not hand the mirror comparison free protection', async () => {
+        state.prices['/items/philosophers_mirror'] = 1;
+        const lineFor = async (protectFrom) => {
+            const panel = buildPanel({ protection: null, protectFrom });
+            await displayEnhancementStats(panel, '/items/cheese_sword');
+            return panel.querySelector('.mwi-protsweep-mirror').textContent;
+        };
+        // An empty slot protects nothing, so the setting must not change the comparison
+        expect(await lineFor(3)).toBe(await lineFor(0));
+    });
+
     test('an unpriced mirror is no quote, not a saving', async () => {
         const panel = buildPanel({ protection: 'mirror_of_protection' });
         await displayEnhancementStats(panel, '/items/cheese_sword');
