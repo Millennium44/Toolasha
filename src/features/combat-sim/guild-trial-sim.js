@@ -60,7 +60,10 @@ function field(parent, label, value, change, { type = 'number', min, max, step =
     caption.textContent = label;
     const input = document.createElement('input');
     input.type = type;
-    input.value = value;
+    input.value =
+        type === 'number' && typeof value === 'number' && Number.isFinite(value)
+            ? Number(value.toPrecision(12))
+            : value;
     input.disabled = disabled;
     input.style.cssText =
         'width:100%;box-sizing:border-box;background:#1b2030;color:#eee;border:1px solid #495268;border-radius:4px;padding:5px;';
@@ -347,7 +350,7 @@ export class GuildTrialSim {
         this.settings.baseWork = base;
         this.settings.startTier = member.referenceTier;
         this.changed();
-        this.notice = `One personal reading imported from ${new Date(reading.at).toLocaleString()}; observed with ${reading.participantIds.length} participants. Add the other members to simulate that roster. Earlier tiers are treated as already banked.`;
+        this.notice = `One personal reading imported from ${new Date(reading.at).toLocaleString()}; observed with ${reading.participantIds.length} participants. Add the other members to simulate that roster.`;
     }
 
     importSetup(text) {
@@ -561,7 +564,11 @@ export class GuildTrialSim {
     }
 
     drawCombat(body, busy) {
-        const roster = panelCard(body, `Combat roster · ${this.combatMembers.length} members`, ACCENT);
+        const roster = panelCard(
+            body,
+            `Combat roster · ${this.combatMembers.length} ${this.combatMembers.length === 1 ? 'member' : 'members'}`,
+            ACCENT
+        );
         roster.style.maxHeight = '260px';
         roster.style.overflowY = 'auto';
         const add = row(roster);
@@ -688,7 +695,11 @@ export class GuildTrialSim {
                 '40,000 is an editable Crafting observation, not a verified default for every skill. Use a trial reading to calibrate the pool and your personal stats.'
             )
         );
-        const roster = panelCard(body, `Skilling roster · ${this.skillingMembers.length} members`, ACCENT);
+        const roster = panelCard(
+            body,
+            `Skilling roster · ${this.skillingMembers.length} ${this.skillingMembers.length === 1 ? 'member' : 'members'}`,
+            ACCENT
+        );
         roster.style.maxHeight = '300px';
         roster.style.overflowY = 'auto';
         const add = row(roster);
@@ -805,7 +816,7 @@ export class GuildTrialSim {
         );
         card.appendChild(
             panelNote(
-                `${result.runs} runs · seed ${result.seed} · ${result.participants} members · ${result.outcomes.defeat} defeats / ${result.outcomes.timeout} timeouts / ${result.outcomes['max-tier']} full clears. Percentiles describe simulation randomness, not model accuracy.`
+                `${result.runs} runs · seed ${result.seed} · ${result.participants} ${result.participants === 1 ? 'member' : 'members'} · ${result.outcomes.defeat} defeats / ${result.outcomes.timeout} timeouts / ${result.outcomes['max-tier']} full clears. Percentiles describe simulation randomness, not model accuracy.`
             )
         );
         if (result.kind === 'skilling')

@@ -199,6 +199,12 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.settings.baseWork).toBeCloseTo(40000);
         expect(feature.skillingMembers[0].actionSeconds).toBe(4.464);
         expect(feature.notice).toContain('17 participants');
+        feature.panel.render();
+        const success = Array.from(document.querySelectorAll('label')).find((label) =>
+            label.textContent.includes('Success at reference')
+        );
+        expect(success.querySelector('input').value).toBe('8');
+        expect(feature.skillingMembers[0].successRate).toBe(GUILD_SKILLING_TICKS[0].successRate);
     });
     test('imports a setup atomically and preserves its captured buffs on round-trip', () => {
         feature.addCurrentBuild();
