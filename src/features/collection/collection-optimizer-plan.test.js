@@ -127,6 +127,21 @@ describe('route options', () => {
         expect(option.goldPerPoint).toBeCloseTo(50 / 3);
     });
 
+    test('a recipe making 15 at a time crafts whole actions and collects all 15', () => {
+        // Uncollected: one action makes 15, past 1 and 10 at once, for 3 points
+        const option = evaluateOption('/items/crushed_amber', new Map(), {
+            route: 'craft',
+            itemHrid: '/items/crushed_amber',
+            unitCost: 2,
+            unitSeconds: 1,
+            batch: 15,
+        });
+        expect(option.units).toBe(15);
+        expect(option.gold).toBe(30);
+        expect(option.points).toBe(3);
+        expect(option.credits.get('/items/crushed_amber')).toBe(15);
+    });
+
     test('a route with an unpriced kept output is left out of the ranking', () => {
         const counts = collectionCounts(ROWS);
         const index = indexRoutes({ craft: [], sources: [{ ...cheeseSword(), partlyUnpriced: true }] });

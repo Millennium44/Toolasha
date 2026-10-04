@@ -183,7 +183,11 @@ export function evaluateOption(itemHrid, counts, route) {
     const base = { itemHrid, route: route.route, from: step.count, to: step.threshold, gain: step.gain };
 
     if (route.route === 'craft') {
-        const units = Math.ceil(step.needed - 1e-9);
+        // Whole actions only, and every unit an action makes is collected
+        const batch = Math.max(1, Number(route.batch) || 1);
+        const units = Math.ceil(step.needed / batch - 1e-9) * batch;
+        const before = counts.get(itemHrid) || 0;
+        const gain = pointsFromCount(before + units) - pointsFromCount(before);
         const gold = units * route.unitCost;
         const credits = new Map([[itemHrid, units]]);
         return {
@@ -192,10 +196,11 @@ export function evaluateOption(itemHrid, counts, route) {
             needed: step.needed,
             units,
             collateral: 0,
-            points: step.gain,
+            gain,
+            points: gain,
             gold,
             seconds: units * (Number(route.unitSeconds) || 0),
-            goldPerPoint: gold / step.gain,
+            goldPerPoint: gold / gain,
             credits,
         };
     }

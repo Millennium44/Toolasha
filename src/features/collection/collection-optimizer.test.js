@@ -231,7 +231,9 @@ describe('the routes', () => {
         expect(sword.cost).toBe(50);
         expect(sword.yields.get('/items/cheese')).toBe(18);
 
-        expect(routes.craft).toEqual([{ route: 'craft', itemHrid: '/items/cheese', unitCost: 4, unitSeconds: 10 }]);
+        expect(routes.craft).toEqual([
+            { route: 'craft', itemHrid: '/items/cheese', unitCost: 4, unitSeconds: 10, batch: 1 },
+        ]);
         const kinds = new Set([...routes.craft, ...routes.sources].map((r) => r.route));
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
         // No route ever yields the source it starts from

@@ -125,12 +125,21 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         try {
             const profitData = await profitCalculator.calculateProfit(hrid);
             if (!profitData) continue;
-            const comparison = ownUseCompare(profitData, dataManager.getActionDetails?.(profitData.actionHrid) ?? null);
+            const actionDetails = dataManager.getActionDetails?.(profitData.actionHrid) ?? null;
+            const comparison = ownUseCompare(profitData, actionDetails);
             const perHour = Number(profitData.totalItemsPerHour);
             if (!comparison || !(perHour > 0)) continue;
             makeCost.set(hrid, comparison.make);
             makeSeconds.set(hrid, 3600 / perHour);
-            craft.push({ route: 'craft', itemHrid: hrid, unitCost: comparison.make, unitSeconds: 3600 / perHour });
+            // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15
+            const batch = Math.max(1, Number(actionDetails?.outputItems?.[0]?.count) || 1);
+            craft.push({
+                route: 'craft',
+                itemHrid: hrid,
+                unitCost: comparison.make,
+                unitSeconds: 3600 / perHour,
+                batch,
+            });
         } catch (error) {
             console.error('[CollectionOptimizer] Craft route failed for', hrid, error);
         }
