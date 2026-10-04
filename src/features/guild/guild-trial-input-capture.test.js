@@ -10,6 +10,7 @@ const game = vi.hoisted(() => ({
     scopeVersion: 1,
     week: '2026-09-28T00:00:00Z',
     members: [],
+    tracker: null,
     entries: [],
     handlers: new Map(),
     fetch: vi.fn(),
@@ -50,11 +51,11 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
-        getMemberList: () => game.members,
-        getMemberMeta: () => null,
-        getCurrentWeekStartAt: () => game.week,
-        getOwnGuildID: () => game.guild,
-        getOwnGuildName: () => `Guild ${game.guild}`,
+        getMemberList: () => game.tracker?.getMemberList() ?? game.members,
+        getMemberMeta: (id) => game.tracker?.getMemberMeta(id) ?? null,
+        getCurrentWeekStartAt: () => game.tracker?.getCurrentWeekStartAt() ?? game.week,
+        getOwnGuildID: () => game.tracker?.getOwnGuildID() ?? game.guild,
+        getOwnGuildName: () => game.tracker?.getOwnGuildName() ?? `Guild ${game.guild}`,
     },
 }));
 vi.mock('./guild-trial-recorder.js', () => ({
@@ -154,6 +155,7 @@ beforeEach(() => {
     game.scopeVersion = 1;
     game.week = '2026-09-28T00:00:00Z';
     game.members = [member(2, 'Alice', { signedUpSkillingTrialHrid: '/guild_skilling/alchemy' })];
+    game.tracker = null;
     game.entries = [];
     game.handlers.clear();
     game.loadoutListeners.clear();
@@ -363,6 +365,80 @@ describe('trial input capture helper', () => {
             return [];
         });
         await expect(buildTrialInputExport()).rejects.toThrow('changed');
+    });
+    test('a pending member-history load excludes outgoing signups from standalone exports', async () => {
+        const { guildXPTracker: tracker } = await vi.importActual('./guild-xp-tracker.js');
+        const records = vi.spyOn(tracker, '_recordsHistory').mockReturnValue(false);
+        await tracker._onCharacterInit({
+            guild: { name: 'Guild 10', currentWeekStartAt: game.week },
+            guildCharacterMap: { 2: { guildID: '10', ...member(2, 'Alice') } },
+            guildSharableCharacterMap: { 2: { name: 'Alice' } },
+        });
+        records.mockReturnValue(true);
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        const read = vi.spyOn(tracker, '_loadMap').mockImplementation(async (key) => {
+            if (key === 'memberXP_99') await held;
+            return {};
+        });
+        const persist = vi.spyOn(tracker, '_persist').mockImplementation(() => {});
+        game.tracker = tracker;
+        game.recorderGuild = 'Guild 99';
+        const changing = tracker._onMembersUpdated({
+            guildCharacterMap: { 3: { guildID: '99', ...member(3, 'Bob') } },
+            guildSharableCharacterMap: { 3: { name: 'Bob' } },
+        });
+        try {
+            await tracker._onGuildUpdated({ guild: { id: 99, name: 'Guild 99', currentWeekStartAt: game.week } });
+            openTrialInputCapture();
+            expect(tracker.getOwnGuildID()).toBe('99');
+            trialInputCapturePanel.render();
+            expect(text()).not.toContain('Alice');
+            await expect(buildTrialInputExport()).rejects.toThrow('No current trial signups');
+            expect(game.profileRead).not.toHaveBeenCalled();
+            release();
+            await changing;
+            const bundle = await buildTrialInputExport();
+            expect(bundle.guildName).toBe('Guild 99');
+            expect(bundle.coverage.map((row) => row.name)).toEqual(['Bob']);
+        } finally {
+            release();
+            await changing;
+            read.mockRestore();
+            records.mockRestore();
+            persist.mockRestore();
+            tracker.disable();
+            game.tracker = null;
+        }
+    });
+    test('a guild identity arriving before its members cannot export the previous roster', async () => {
+        const { guildXPTracker: tracker } = await vi.importActual('./guild-xp-tracker.js');
+        const records = vi.spyOn(tracker, '_recordsHistory').mockReturnValue(false);
+        try {
+            await tracker._onCharacterInit({
+                guild: { id: 10, name: 'Guild 10', currentWeekStartAt: game.week },
+                guildCharacterMap: { 2: { guildID: '10', ...member(2, 'Alice') } },
+                guildSharableCharacterMap: { 2: { name: 'Alice' } },
+            });
+            game.tracker = tracker;
+            game.recorderGuild = 'Guild 99';
+            await tracker._onGuildUpdated({ guild: { id: 99, name: 'Guild 99', currentWeekStartAt: game.week } });
+            openTrialInputCapture();
+            expect(text()).not.toContain('Alice');
+            await expect(buildTrialInputExport()).rejects.toThrow('No current trial signups');
+            expect(game.profileRead).not.toHaveBeenCalled();
+            await tracker._onMembersUpdated({
+                guildCharacterMap: { 3: { guildID: '99', ...member(3, 'Bob') } },
+                guildSharableCharacterMap: { 3: { name: 'Bob' } },
+            });
+            expect((await buildTrialInputExport()).coverage.map((row) => row.name)).toEqual(['Bob']);
+        } finally {
+            records.mockRestore();
+            tracker.disable();
+            game.tracker = null;
+        }
     });
     test('fresh capture rounds do not count the previous snapshots', () => {
         openTrialInputCapture();

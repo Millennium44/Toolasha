@@ -952,6 +952,12 @@ class GuildXPTracker {
         const guild = data.guild;
         if (!guild) return;
 
+        // Guild identity may arrive before the member update. Keep the old ID until that update can load its
+        // history, but stop exposing the departed guild's roster under the arriving guild's name.
+        if (guild.id != null && this.ownGuildID != null && String(guild.id) !== String(this.ownGuildID)) {
+            this.memberMeta = {};
+        }
+
         const name = guild.name;
         const previous = this.ownGuildName;
         this.ownGuildName = name;
@@ -1002,6 +1008,8 @@ class GuildXPTracker {
         const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
 
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
+            // Readers must not pair the arriving guild ID with the departed guild's signups while history loads.
+            this.memberMeta = {};
             // Guild switched — drop the old guild's member data and load the new
             // guild's record. A read that fails here starts the new record empty
             // rather than carrying the old guild's members into it; nothing is
@@ -1023,7 +1031,6 @@ class GuildXPTracker {
             } else {
                 this.memberXPHistory = {};
             }
-            this.memberMeta = {};
         } else if (newGuildID) {
             this.ownGuildID = newGuildID;
         }
