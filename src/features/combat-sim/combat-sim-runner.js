@@ -256,8 +256,12 @@ export function terminateIdleWorkers() {
  * @param {Function} [onProgress] - Progress callback (0-100 for this chunk)
  * @returns {Promise<Object>} SimResult
  */
-export function runWorkerChunk(message, onProgress) {
+export function runWorkerChunk(message, onProgress, { signal } = {}) {
     return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new Error('Simulation canceled.'));
+            return;
+        }
         const wrapper = acquireWorker(message.gameData);
         const worker = wrapper.worker;
         activeWorkers.push(wrapper);
@@ -273,9 +277,17 @@ export function runWorkerChunk(message, onProgress) {
 
         const cleanup = () => {
             disarmStall();
+            signal?.removeEventListener('abort', abort);
             activeWorkers = activeWorkers.filter((w) => w !== wrapper);
             pendingRejects = pendingRejects.filter((r) => r !== reject);
         };
+
+        const abort = () => {
+            worker.terminate();
+            cleanup();
+            reject(new Error('Simulation canceled.'));
+        };
+        signal?.addEventListener('abort', abort, { once: true });
 
         const armStall = () => {
             disarmStall();

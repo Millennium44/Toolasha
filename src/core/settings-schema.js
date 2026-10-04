@@ -3802,6 +3802,13 @@ export const settingsGroups = {
                     'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
                     'Guild Points and token payout the week’s tiers are worth.',
             },
+            guildTrialSim: {
+                id: 'guildTrialSim',
+                label: 'Guild Trials: Experimental skilling and combat simulator',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds Trial Sim to the Guild page and command palette. Simulates a chosen roster locally with editable assumptions, per-tier clear odds and payout estimates. Does not sign up members or modify game loadouts.',
+            },
             guildTrialTracking: {
                 id: 'guildTrialTracking',
                 label: 'Guild Trials: Track trial combat per player (damage, healing, kills)',

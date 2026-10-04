@@ -57,6 +57,8 @@ vi.mock('./engine/combat-simulator.js', () => ({
 
 vi.mock('./engine/game-data.js', () => ({ setGameData: (data) => harness.gameDataSet.push(data) }));
 vi.mock('./engine/rng.js', () => ({ seedSimRng: () => {} }));
+vi.mock('./engine/guild-combat-simulator.js', () => ({ simulateGuildCombat: () => ({ kind: 'combat' }) }));
+vi.mock('./engine/guild-skilling-simulator.js', () => ({ simulateGuildSkilling: () => ({ kind: 'skilling' }) }));
 vi.mock('./engine/extra-buffs.js', () => ({ buildPlayerExtraBuffs: () => [] }));
 vi.mock('./engine/combat-unit.js', () => ({
     setBuffCapture: (on) => harness.captureCalls.push(['buffs', on]),
@@ -102,6 +104,13 @@ function fullAbilitiesArg() {
 }
 
 describe('the labyrinth monster the worker builds', () => {
+    test.each(['combat', 'skilling'])('routes the %s trial request separately from normal combat', (kind) => {
+        globalThis.onmessage({
+            data: { type: 'start_guild_trial_simulation', taskId: 'trial', gameData: {}, scenario: { kind } },
+        });
+        expect(harness.posted).toEqual([{ type: 'result', taskId: 'trial', simResult: { kind } }]);
+        expect(harness.labyrinthArgs).toEqual([]);
+    });
     test('only adds diagnostic tracing when explicitly requested', () => {
         const message = startMessage(null);
         globalThis.onmessage(message);

@@ -153,6 +153,7 @@ const Utils = toolashaNamespace.Utils;
 const Market = toolashaNamespace.Market;
 const Actions = toolashaNamespace.Actions;
 const Combat = toolashaNamespace.Combat;
+const Sim = toolashaNamespace.Sim;
 const UI = toolashaNamespace.UI;
 
 // Destructure core modules
@@ -2357,6 +2358,13 @@ function registerFeatures() {
             category: 'Guild',
             module: Combat.guildTrialLedgerView,
             async: true,
+        },
+        {
+            key: 'guildTrialSim',
+            name: 'Guild Trial Simulator',
+            category: 'Guild',
+            module: Sim.guildTrialSim,
+            async: false,
         },
         {
             key: 'insights_calibration',

@@ -25,6 +25,7 @@ import * as combatSimRunner from '../features/combat-sim/combat-sim-runner.js';
 import * as wilson from '../features/combat-sim/engine/wilson.js';
 import * as gameData from '../features/combat-sim/engine/game-data.js';
 import Monster from '../features/combat-sim/engine/monster.js';
+import guildTrialSim from '../features/combat-sim/guild-trial-sim.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -36,6 +37,7 @@ if (typeof unsafeWindow !== 'undefined') {
 
 toolashaRoot.Sim = {
     combatSim,
+    guildTrialSim,
     labSim,
     combatSimUI,
     combatSimAdapter,

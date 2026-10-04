@@ -143,6 +143,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A new setting (off by default) lifts the game's width cap on the Enhancing panel so the enhancement calculator has room beside the controls.
 
+### Experimental Guild Trial Simulator
+
+- Skilling and combat trial scenarios can now be simulated locally with editable rosters, per-tier clear odds, payout estimates, and setup import and export. The experimental tool is off by default and labels rules still awaiting comparison with recorded trials.
+
 ### Labyrinth dates and scroll names
 
 - The Labyrinth entry forecast treats any pre-1970 date as unset, so no spelling of the game's "never set" date can bring back a false "entry ready" alert.

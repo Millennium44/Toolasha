@@ -37,6 +37,7 @@ const {
     cancelActiveSimulations,
     terminateIdleWorkers,
     splitTaskRemaining,
+    runWorkerChunk,
 } = await import('./combat-sim-runner.js');
 
 /** The bare shape mergeSimResults walks unconditionally */
@@ -83,6 +84,32 @@ beforeEach(() => {
 });
 
 describe('how wide one simulation spreads itself', () => {
+    test('a scoped abort terminates only the requesting worker', async () => {
+        const workers = [];
+        vi.stubGlobal(
+            'Worker',
+            class {
+                constructor() {
+                    this.terminate = vi.fn();
+                    workers.push(this);
+                }
+                postMessage(message) {
+                    this.message = message;
+                }
+            }
+        );
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:sim', revokeObjectURL: () => {} });
+        const controller = new AbortController();
+        const aborted = runWorkerChunk({ taskId: 'trial', gameData: {} }, null, { signal: controller.signal });
+        const rejected = expect(aborted).rejects.toThrow('canceled');
+        const other = runWorkerChunk({ taskId: 'normal', gameData: {} });
+        controller.abort();
+        await rejected;
+        expect(workers[0].terminate).toHaveBeenCalledOnce();
+        expect(workers[1].terminate).not.toHaveBeenCalled();
+        workers[1].onmessage({ data: { taskId: 'normal', type: 'result', simResult: EMPTY_SIM_RESULT } });
+        await expect(other).resolves.toEqual(EMPTY_SIM_RESULT);
+    });
     test('a short run stays in one worker', () => {
         // Splitting an hour four ways spends more on starting workers than the
         // simulation itself costs
