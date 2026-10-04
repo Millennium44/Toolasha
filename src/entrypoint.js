@@ -2268,6 +2268,14 @@ function registerFeatures() {
             concurrent: true,
         },
         {
+            key: 'wideEnhancingPanel',
+            name: 'Wider Enhancing Panel',
+            category: 'Enhancement',
+            module: UI.wideEnhancingPanel,
+            async: false,
+            customCheck: () => config.getSetting('enhancingPanel_wide'),
+        },
+        {
             key: 'riskOfRuin',
             name: 'Risk of Ruin Calculator',
             category: 'Risk of Ruin',
