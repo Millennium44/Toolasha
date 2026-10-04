@@ -25,11 +25,7 @@ import {
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { timeReadable, formatPercentage, formatKMB } from '../../utils/formatters.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
-import {
-    calculateSecondsForActions,
-    calculateEffectiveActionsPerHour,
-    calculateActionsPerHour,
-} from '../../utils/profit-helpers.js';
+import { calculateSecondsForActions, calculateActionsPerHour } from '../../utils/profit-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { debugEquipmentSpeedBonuses, parseEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
@@ -2684,11 +2680,9 @@ class TaskProfitDisplay {
 
             if (details?.materialCosts) {
                 const actionsNeeded = profitData.action.breakdown.quantity;
-                const effectiveActionsPerHour = calculateEffectiveActionsPerHour(
-                    details.actionsPerHour,
-                    details.efficiencyMultiplier || 1
-                );
-                const hoursNeeded = effectiveActionsPerHour > 0 ? actionsNeeded / effectiveActionsPerHour : 0;
+                // The calculator's own hours, so the itemized drinks sum to the total's drink cost
+                // (details.actionsPerHour is the base rate, without the task speed bonus)
+                const hoursNeeded = profitData.action.hoursNeeded || 0;
                 lines.push(
                     `<div style="margin-top: 4px; color: #aaa;">Material Costs: ${formatTotalValue(profitData.action.breakdown.materialCost)}</div>`
                 );

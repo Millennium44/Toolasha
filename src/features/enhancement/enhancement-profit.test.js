@@ -150,6 +150,26 @@ describe('valueVsCost', () => {
         expect(v.net).toBeNull();
     });
 
+    test('shows no net figure when an input was recorded unpriced, even after later priced units', () => {
+        const run = createSession('/items/test_sword', 'Test Sword', 0, 2, 0);
+        run.currentLevel = 3;
+        addMaterialCost(run, '/items/prime_catalyst', 1, 0);
+        addMaterialCost(run, '/items/prime_catalyst', 1, 100);
+        expect(valueVsCost(run, prices(10000))).toBeNull();
+    });
+
+    test('shows no net figure when consumed protection has no price', () => {
+        expect(valueVsCost(session({ protectionCount: 2, protectionCost: 0 }), prices(10000))).toBeNull();
+    });
+
+    test('a fully priced session still shows its net figure', () => {
+        const run = createSession('/items/test_sword', 'Test Sword', 0, 2, 2);
+        run.currentLevel = 3;
+        addMaterialCost(run, '/items/prime_catalyst', 2, 100);
+        addProtectionCost(run, '/items/mirror_of_protection', 100);
+        expect(valueVsCost(run, prices(10000)).net).toBeCloseTo(10000 * (1 - MARKET_SELL_TAX) - run.totalCost, 5);
+    });
+
     test('net is unknown when the +0 opportunity value is unpriced', () => {
         const getPrices = (hrid, level) => (level === 3 ? { bid: 10000 } : null);
         const v = valueVsCost(session(), getPrices);

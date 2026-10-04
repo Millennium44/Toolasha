@@ -253,3 +253,42 @@ describe('getRelativeEfficiencyGradientColor', () => {
         expect(getRelativeEfficiencyGradientColor(0, 0, 10, '#ff0000', '#00ff00', '#888')).toBe('rgb(255, 0, 0)');
     });
 });
+
+describe('buildBreakdownHTML drink lines', () => {
+    test('itemized drinks use the calculator hours, so they sum to the total drink cost under a task speed bonus', async () => {
+        const { default: display } = await import('./task-profit-display.js');
+        // 100 actions at a base 100/h would be 1h; a +100% task speed bonus makes it 0.5h.
+        // The calculator reports 0.5h and charges 20000/h of drinks -> 10000 in total.
+        const profitData = {
+            type: 'production',
+            hasMissingPrices: false,
+            rewards: {
+                error: null,
+                coins: 0,
+                taskTokens: 0,
+                purpleGift: 0,
+                breakdown: { tokensReceived: 0, tokenValue: 0, giftPerTask: 0 },
+            },
+            action: {
+                totalProfit: 0,
+                hoursNeeded: 0.5,
+                breakdown: { quantity: 100, materialCost: 10000, perAction: 0 },
+                details: {
+                    actionsPerHour: 100,
+                    efficiencyMultiplier: 1,
+                    materialCosts: [],
+                    teaCosts: [
+                        { itemName: 'Tea A', drinksPerHour: 12, pricePerDrink: 1000, totalCost: 12000 },
+                        { itemName: 'Tea B', drinksPerHour: 8, pricePerDrink: 1000, totalCost: 8000 },
+                    ],
+                },
+            },
+        };
+        const html = display.buildBreakdownHTML(profitData);
+        const costs = [...html.matchAll(/Tea [AB]: [\d.]+ drinks @ [^=]+= ([\d.]+)(K?)/g)].map(
+            (m) => parseFloat(m[1]) * (m[2] ? 1000 : 1)
+        );
+        expect(costs).toHaveLength(2);
+        expect(costs[0] + costs[1]).toBe(10000);
+    });
+});
