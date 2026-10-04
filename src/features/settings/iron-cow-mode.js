@@ -222,7 +222,8 @@ class IronCowMode {
             added = true;
         }
         if (!added) return;
-        await storage.setJSON(key, snapshot, 'settings', true);
+        // Forcing a setting the stored snapshot does not hold would lose the player's value
+        if ((await storage.setJSON(key, snapshot, 'settings', true)) === false) return;
         // The arriving character's settings are not this snapshot's; its own load reconciles them
         if (this._snapshotKey() !== key) return;
         this.reapply();

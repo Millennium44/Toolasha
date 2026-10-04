@@ -48,6 +48,7 @@ vi.mock('../../core/storage.js', () => ({
             return value;
         }),
         setJSON: vi.fn(async (key, value, store = 'settings') => {
+            if (world.writeFails) return false;
             world.store.set(`${store}::${key}`, value);
             if (world.switchOnWrite) world.characterId = 'char2';
             return true;
@@ -216,6 +217,7 @@ describe('iron cow mode already on when a setting joins its list', () => {
         world.switchOnRead = false;
         world.switchOnWrite = false;
         world.readFails = false;
+        world.writeFails = false;
     });
 
     test('startup records the new setting as the player left it and forces it off', async () => {
@@ -275,6 +277,15 @@ describe('iron cow mode already on when a setting joins its list', () => {
             type: 'checkbox',
             value: true,
         });
+        expect(world.restored).toEqual([]);
+    });
+
+    test('a failed snapshot write forces nothing', async () => {
+        world.writeFails = true;
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', {});
+
+        await ironCowMode.reconcile();
+
         expect(world.restored).toEqual([]);
     });
 });
