@@ -21,7 +21,7 @@ const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose:
 const openableState = vi.hoisted(() => ({ drops: {} }));
 const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null }));
 /** Items the market cannot price, and the shop-conversion value (if any) for each */
-const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {} }));
+const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {}, shopSides: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -136,7 +136,10 @@ vi.mock('../../utils/market-data.js', () => ({
             : 10,
 }));
 vi.mock('../../utils/alchemy-shop-value.js', () => ({
-    getAlchemyOutputShopValue: (hrid) => (hrid in priceState.shop ? { valuePerUnit: priceState.shop[hrid] } : null),
+    getAlchemyOutputShopValue: (hrid, options) => {
+        priceState.shopSides.push(options?.side ?? 'sell');
+        return hrid in priceState.shop ? { valuePerUnit: priceState.shop[hrid] } : null;
+    },
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityCost: () => ({ total: 1234, books: 3 }),
@@ -213,6 +216,7 @@ beforeEach(async () => {
     gatheringState.profitData = null;
     priceState.unpriced = new Set();
     priceState.shop = {};
+    priceState.shopSides = [];
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -970,6 +974,9 @@ describe('self-use alchemy lines', () => {
         const text = el.querySelector('.market-multi-action-injected').textContent;
         // 20 tokens x 30 x 100/hr = 60,000 kept, against 100 seals x 50 = 5,000
         expect(text).toContain('Decompose (self-use): 55.0K/hr');
+        // Valued at what keeping them saves: the shop items on the buy side, like every other output
+        expect(priceState.shopSides).toContain('buy');
+        expect(priceState.shopSides).not.toContain('sell');
         expect(text).toContain('(550/action)');
         expect(text).not.toContain('partly unpriced');
     });

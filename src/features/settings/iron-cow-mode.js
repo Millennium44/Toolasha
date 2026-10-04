@@ -193,6 +193,36 @@ class IronCowMode {
     }
 
     /**
+     * Bring a mode switched on by an older build up to the current list. A setting added to
+     * {@link IRON_COW_SETTINGS} after the mode was enabled is in no snapshot and was never
+     * forced, so its row would read locked while it stays on. Record its current value — still
+     * the player's own — then force the list again. Settings already snapshotted are untouched.
+     * @returns {Promise<void>}
+     */
+    async reconcile() {
+        if (!this.isEnabled()) return;
+        const key = this._snapshotKey();
+        const stored = await storage.getJSON(key, 'settings', null);
+        // A character switch during the read makes this the wrong character's snapshot
+        if (this._snapshotKey() !== key) return;
+        const snapshot = stored && typeof stored === 'object' ? { ...stored } : {};
+        let added = false;
+        for (const id of IRON_COW_SETTINGS) {
+            if (Object.prototype.hasOwnProperty.call(snapshot, id)) continue;
+            const entry = config.settingsMap[id];
+            if (!entry) continue;
+            snapshot[id] =
+                entry.type === 'checkbox'
+                    ? { type: 'checkbox', value: entry.isTrue ?? false }
+                    : { type: entry.type, value: entry.value };
+            added = true;
+        }
+        if (!added) return;
+        await storage.setJSON(key, snapshot, 'settings', true);
+        this.reapply();
+    }
+
+    /**
      * Disable Iron Cow mode.
      * Restores each setting to its pre-Iron-Cow value from the snapshot.
      * @returns {Promise<void>}

@@ -36,16 +36,19 @@ const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
  * deliberately narrow) or the shop itself has nothing priced either.
  *
  * @param {string} itemHrid - The result item
+ * @param {Object} [options]
+ * @param {'buy'|'sell'} [options.side='sell'] - Book side the shop items are priced on: sell for
+ *   what a result realizes, buy for what keeping it saves (the self-use lines)
  * @returns {{valuePerUnit: number, sourceItemHrid: string, sourceItemName: string}|null}
  */
-export function getAlchemyOutputShopValue(itemHrid) {
+export function getAlchemyOutputShopValue(itemHrid, { side = 'sell' } = {}) {
     if (itemHrid !== LABYRINTH_TOKEN_HRID) return null;
 
     const gameData = dataManager.getInitClientData();
     const shopMap = gameData?.labyrinthShopItemDetailMap;
     if (!shopMap) return null;
 
-    const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side: 'sell' });
+    const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side });
     const best = labyrinthTokenValueDetail(shopMap, priceOf);
     if (!best || !(best.value > 0)) return null;
 

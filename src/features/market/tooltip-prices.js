@@ -1656,7 +1656,7 @@ class TooltipPrices {
             // conversion has no market tax.
             const priceOf = (hrid) =>
                 getItemPrice(hrid, { context: 'profit', side: 'buy' }) ??
-                getAlchemyOutputShopValue(hrid)?.valuePerUnit ??
+                getAlchemyOutputShopValue(hrid, { side: 'buy' })?.valuePerUnit ??
                 null;
             // A crate with no order book is worth its contents, untaxed at the buy side — the
             // calculator's crate figure is the taxed container EV. Contents go through the

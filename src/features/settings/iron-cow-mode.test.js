@@ -19,6 +19,8 @@ const world = vi.hoisted(() => ({
     deleted: [],
     /** Settings written back by `disable()` */
     restored: [],
+    /** Whether a storage read lands a character switch */
+    switchOnRead: true,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,7 +36,7 @@ vi.mock('../../core/storage.js', () => ({
             // The read is where the switch lands: the player clicked the toggle
             // and the character pointer moved while IndexedDB was answering.
             const value = world.store.has(k) ? world.store.get(k) : fallback;
-            world.characterId = 'char2';
+            if (world.switchOnRead) world.characterId = 'char2';
             return value;
         }),
         setJSON: vi.fn(async (key, value, store = 'settings') => {
@@ -193,5 +195,50 @@ describe('iron cow mode hides the self-use alchemy tooltip lines', () => {
         await ironCowMode.disable();
 
         expect(world.restored).toEqual([]);
+    });
+});
+
+describe('iron cow mode already on when a setting joins its list', () => {
+    beforeEach(() => {
+        world.characterId = 'char1';
+        world.store = new Map();
+        world.deleted = [];
+        world.restored = [];
+        world.switchOnRead = false;
+    });
+
+    test('startup records the new setting as the player left it and forces it off', async () => {
+        // A snapshot written by a build that did not manage the self-use lines yet
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', {
+            invWorth: { type: 'checkbox', value: false },
+        });
+
+        await ironCowMode.reconcile();
+
+        const snapshot = world.store.get('settings::toolasha_ironCowSnapshot_char1');
+        expect(snapshot.itemTooltip_selfUseAlchemy).toEqual({ type: 'checkbox', value: true });
+        // What was already snapshotted keeps the player's original, not the forced value
+        expect(snapshot.invWorth).toEqual({ type: 'checkbox', value: false });
+        expect(Object.fromEntries(world.restored).itemTooltip_selfUseAlchemy).toBe(false);
+    });
+
+    test('nothing is written when every managed setting is already snapshotted', async () => {
+        const full = {};
+        for (const id of IRON_COW_SETTINGS) full[id] = { type: 'checkbox', value: true };
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', full);
+
+        await ironCowMode.reconcile();
+
+        expect(world.restored).toEqual([]);
+    });
+
+    test('a character switch during the read leaves both characters alone', async () => {
+        world.switchOnRead = true;
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', {});
+
+        await ironCowMode.reconcile();
+
+        expect(world.restored).toEqual([]);
+        expect(world.store.get('settings::toolasha_ironCowSnapshot_char1')).toEqual({});
     });
 });
