@@ -66,6 +66,7 @@ function scopeNow() {
     return JSON.stringify([
         dataManager.getCurrentCharacterId?.() ?? null,
         guildXPTracker.getOwnGuildID?.() ?? null,
+        guildXPTracker.getOwnGuildSnapshotID?.() ?? null,
         guildXPTracker.getOwnGuildName?.() ?? null,
         guildXPTracker.getCurrentWeekStartAt?.() ?? null,
         guildTrialRecorder.exportScopeVersion,
@@ -75,10 +76,15 @@ function scopeNow() {
 function currentGuildReady() {
     const owner = dataManager.getCurrentCharacterId?.() ?? null;
     const guildName = guildXPTracker.getOwnGuildName?.() ?? null;
+    const memberGuildID = guildXPTracker.getOwnGuildID?.() ?? null;
+    const snapshotGuildID = guildXPTracker.getOwnGuildSnapshotID?.() ?? null;
     // Tracker metadata can lag a character or guild switch while its history loads.
     return Boolean(
         owner !== null &&
         guildName &&
+        memberGuildID !== null &&
+        snapshotGuildID !== null &&
+        String(memberGuildID) === String(snapshotGuildID) &&
         guildTrialRecorder.pendingGuildAdoption === null &&
         String(guildTrialRecorder.characterId) === String(owner) &&
         guildTrialRecorder.guildName === guildName
