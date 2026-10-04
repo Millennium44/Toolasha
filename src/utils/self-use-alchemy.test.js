@@ -28,7 +28,7 @@ vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPric
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
 
-const { ownUseUnitCost, selfUseDecompose, selfUseDecomposeChain, selfUseTransmuteHeld } =
+const { ownUseUnitCost, selfUseDecompose, selfUseDecomposeChain, selfUseTransmuteHeld, untaxedContainerValue } =
     await import('./self-use-alchemy.js');
 
 beforeEach(() => {
@@ -193,6 +193,31 @@ describe('decompose once, self-use', () => {
             { ownUseCost: 0, priceOf: prices }
         );
         expect(step.outputValuePerHour).toBeCloseTo(18 * 10 * 100 + 5 * 400 + 0.1 * 2000, 6);
+    });
+
+    test('a crate with no book is worth its contents untaxed, not the taxed container figure', () => {
+        // Contents worth 10,000 at the buy side; the calculator's figure is that less the 4% tax
+        const contents = 10_000;
+        const bonus = [
+            { itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 0.5, price: contents * 0.96 },
+        ];
+        const containerValue = (hrid) => (hrid === '/items/small_artisans_crate' ? contents : null);
+        const step = selfUseDecompose(
+            result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 1, bonus }),
+            ITEMS['/items/cheese_sword'],
+            { ownUseCost: 0, priceOf, containerValue }
+        );
+        expect(step.outputValuePerHour).toBeCloseTo(18 * 10 * 100 + 0.5 * contents, 6);
+
+        const chain = selfUseDecomposeChain('/items/cheese_sword', {
+            getDecompose: (hrid) => result({ itemHrid: hrid, actionsPerHour: 100, successRate: 1, bonus }),
+            getItemDetails,
+            isChainable,
+            priceOf,
+            ownUseCost: 0,
+            containerValue,
+        });
+        expect(chain.terminalValue).toBeCloseTo(18 * 10 + (0.5 / 100) * contents, 6);
     });
 
     test('an item with no decompose outputs has no line', () => {
@@ -432,5 +457,50 @@ describe('transmute a held item, self-use', () => {
 
     test('no sell price means no line — the opportunity cost is the whole question', () => {
         expect(selfUseTransmuteHeld(revive(), ITEMS['/items/revive'], { sellPrice: null, priceOf })).toBeNull();
+    });
+});
+
+describe('a container opened for keeps', () => {
+    const tables = {
+        '/items/small_artisans_crate': [
+            { itemHrid: '/items/cheese', dropRate: 1, minCount: 10, maxCount: 30 },
+            { itemHrid: '/items/beast_leather', dropRate: 0.5, minCount: 2, maxCount: 2 },
+            { itemHrid: '/items/inner_box', dropRate: 0.25, minCount: 1, maxCount: 1 },
+        ],
+        '/items/inner_box': [{ itemHrid: '/items/gobo_leather', dropRate: 1, minCount: 4, maxCount: 4 }],
+        '/items/loop_a': [{ itemHrid: '/items/loop_b', dropRate: 1, minCount: 1, maxCount: 1 }],
+        '/items/loop_b': [
+            { itemHrid: '/items/loop_a', dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: '/items/cheese', dropRate: 1, minCount: 1, maxCount: 1 },
+        ],
+    };
+    const containerDrops = (hrid) => tables[hrid] || null;
+
+    test('is the untaxed buy-side sum of its contents, a nested container opened too', () => {
+        // 20 cheese × 10 + 0.5 × 2 × 300 + 0.25 × (4 × 50)
+        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf })).toBeCloseTo(
+            200 + 300 + 50,
+            6
+        );
+    });
+
+    test('is the same for an Iron Cow — nothing is sold', () => {
+        state.gameMode = 'ironcow';
+        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf })).toBeCloseTo(550, 6);
+    });
+
+    test('skips unpriced contents, and is null when nothing is priced or it is no container', () => {
+        const onlyCheese = (hrid) => (hrid === '/items/cheese' ? 10 : null);
+        expect(
+            untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf: onlyCheese })
+        ).toBeCloseTo(200, 6);
+        expect(
+            untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf: () => null })
+        ).toBeNull();
+        expect(untaxedContainerValue('/items/cheese', { containerDrops, priceOf })).toBeNull();
+    });
+
+    test('a container that holds itself does not recurse forever', () => {
+        expect(untaxedContainerValue('/items/loop_a', { containerDrops, priceOf })).toBeCloseTo(10, 6);
     });
 });

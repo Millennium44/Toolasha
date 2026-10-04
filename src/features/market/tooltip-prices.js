@@ -46,6 +46,7 @@ import {
     selfUseDecompose,
     selfUseDecomposeChain,
     selfUseTransmuteHeld,
+    untaxedContainerValue,
 } from '../../utils/self-use-alchemy.js';
 
 // Compiled regex patterns (created once, reused for performance)
@@ -1640,6 +1641,22 @@ class TooltipPrices {
         const lines = [];
         try {
             const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' });
+            // A crate with no order book is worth its contents, untaxed at the buy side — the
+            // calculator's crate figure is the taxed container EV. Contents go through the
+            // buy-side resolver so coin, dungeon tokens and cowbells keep their special values.
+            const crateValues = new Map();
+            const containerValue = (hrid) => {
+                if (!crateValues.has(hrid)) {
+                    crateValues.set(
+                        hrid,
+                        untaxedContainerValue(hrid, {
+                            containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
+                            priceOf: (h) => expectedValueCalculator.resolveBuySideValue?.(h)?.value ?? priceOf(h),
+                        })
+                    );
+                }
+                return crateValues.get(hrid);
+            };
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const decompose = alchemyProfits?.decompose;
             const lineColor = (value) => (value >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS);
@@ -1648,7 +1665,7 @@ class TooltipPrices {
             if (decompose && itemDetails) {
                 const ownUseCost = await this.selfUseOwnUseCost(itemHrid, decompose, craftProfitData);
 
-                const step = selfUseDecompose(decompose, itemDetails, { ownUseCost, priceOf });
+                const step = selfUseDecompose(decompose, itemDetails, { ownUseCost, priceOf, containerValue });
                 if (step) {
                     lines.push({
                         text: `Decompose (self-use): ${formatKMB(step.netPerHour)}/hr`,
@@ -1667,6 +1684,7 @@ class TooltipPrices {
                     },
                     priceOf,
                     ownUseCost,
+                    containerValue,
                 });
                 // A chain that yields no gear is the one-step line again; say it once
                 if (chain && chain.collected.length > 0) {
@@ -1701,6 +1719,7 @@ class TooltipPrices {
                 const held = selfUseTransmuteHeld(transmute, itemDetails, {
                     sellPrice: getItemPrice(itemHrid, { context: 'profit', side: 'sell' }),
                     priceOf,
+                    containerValue,
                 });
                 if (held) {
                     lines.push({
