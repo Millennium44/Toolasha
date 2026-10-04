@@ -20,6 +20,8 @@ const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
 const openableState = vi.hoisted(() => ({ drops: {} }));
 const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null }));
+/** Items the market cannot price, and the shop-conversion value (if any) for each */
+const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -53,6 +55,12 @@ vi.mock('../../core/data-manager.js', () => {
     const itemDetailMap = {
         '/items/apple': { name: 'Apple' },
         '/items/cheese': { name: 'Cheese' },
+        '/items/labyrinth_token': { name: 'Labyrinth Token' },
+        // A scroll decomposes into untradeable Labyrinth Tokens, which only a shop conversion prices
+        '/items/seal_of_gathering': {
+            name: 'Seal of Gathering',
+            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/labyrinth_token', count: 20 }] },
+        },
         '/items/griffin_bulwark': { name: 'Griffin Bulwark', equipmentDetail: {} },
         '/items/wisdom_tea': { name: 'Wisdom Tea', consumableDetail: {} },
         '/items/cheese_sword': {
@@ -122,7 +130,13 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParam
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => gatheringState.profitData }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({ ask: 10, bid: 9 }),
-    getItemPrice: (hrid) => (hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' ? null : 10),
+    getItemPrice: (hrid) =>
+        hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' || priceState.unpriced.has(hrid)
+            ? null
+            : 10,
+}));
+vi.mock('../../utils/alchemy-shop-value.js', () => ({
+    getAlchemyOutputShopValue: (hrid) => (hrid in priceState.shop ? { valuePerUnit: priceState.shop[hrid] } : null),
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityCost: () => ({ total: 1234, books: 3 }),
@@ -197,6 +211,8 @@ beforeEach(async () => {
     openableState.drops = {};
     gatheringState.actionDetailMap = {};
     gatheringState.profitData = null;
+    priceState.unpriced = new Set();
+    priceState.shop = {};
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -933,6 +949,38 @@ describe('self-use alchemy lines', () => {
         // twin. But the sword is decomposed again for 18 x 0.6 x 10 = 108, so per twin the
         // catalyst gives 50 + 108 - 50 = 108 against 0.5 x 158 = 79; less the twin's 100
         expect(block.textContent).toContain('Full decompose chain (self-use): 8/item');
+    });
+
+    // Decomposing a seal yields Labyrinth Tokens: untradeable, so the market has no price for
+    // them, but the ordinary calculator values them through a shop conversion
+    const sealDecompose = () => ({
+        ...cheeseSwordDecompose(),
+        itemHrid: '/items/seal_of_gathering',
+        successRate: 1,
+        requirementCosts: [{ itemHrid: '/items/seal_of_gathering', count: 1, price: 50 }],
+    });
+
+    test('a shop-only output is priced through its shop conversion, untaxed, not left unpriced', async () => {
+        settings.selfUseAlchemy = true;
+        priceState.unpriced.add('/items/labyrinth_token');
+        priceState.shop['/items/labyrinth_token'] = 30;
+        alchemyState.profits = { decompose: sealDecompose() };
+        const el = itemTooltip('Seal of Gathering');
+        await tooltipPrices.injectMultiActionProfitDisplay(el, '/items/seal_of_gathering', 0);
+        const text = el.querySelector('.market-multi-action-injected').textContent;
+        // 20 tokens x 30 x 100/hr = 60,000 kept, against 100 seals x 50 = 5,000
+        expect(text).toContain('Decompose (self-use): 55.0K/hr');
+        expect(text).toContain('(550/action)');
+        expect(text).not.toContain('partly unpriced');
+    });
+
+    test('with no shop conversion either, the output stays unpriced and the line says so', async () => {
+        settings.selfUseAlchemy = true;
+        priceState.unpriced.add('/items/labyrinth_token');
+        alchemyState.profits = { decompose: sealDecompose() };
+        const el = itemTooltip('Seal of Gathering');
+        await tooltipPrices.injectMultiActionProfitDisplay(el, '/items/seal_of_gathering', 0);
+        expect(el.querySelector('.market-multi-action-injected').textContent).toContain('partly unpriced');
     });
 
     test('nothing to say about an item no alchemy applies to', async () => {

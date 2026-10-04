@@ -29,6 +29,7 @@ import {
     timeReadable,
 } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -1650,7 +1651,13 @@ class TooltipPrices {
     async buildSelfUseAlchemyLines(itemHrid, alchemyProfits, craftProfitData) {
         const lines = [];
         try {
-            const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' });
+            // A shop-only output (Labyrinth Tokens) has no market price; the calculator values it
+            // through a shop conversion, and the same figure stands in here. Untaxed: a shop
+            // conversion has no market tax.
+            const priceOf = (hrid) =>
+                getItemPrice(hrid, { context: 'profit', side: 'buy' }) ??
+                getAlchemyOutputShopValue(hrid)?.valuePerUnit ??
+                null;
             // A crate with no order book is worth its contents, untaxed at the buy side — the
             // calculator's crate figure is the taxed container EV. Contents go through the
             // buy-side resolver so coin, dungeon tokens and cowbells keep their special values.
