@@ -246,6 +246,24 @@ describe('trial input capture helper', () => {
             profile: 'captured',
         });
     });
+    test('uses numeric game member ids for both trial loadout requests', async () => {
+        game.fetch.mockImplementation(async (row, context, kind) => {
+            // The game's roster passes its numeric member id to View Loadout.
+            if (typeof row.characterId !== 'number') return { status: 'no_reply', entry: null };
+            const entry = loadout(row.characterId, kind);
+            game.entries.push(entry);
+            for (const handler of game.loadoutListeners) handler(entry);
+            return { status: 'done', entry };
+        });
+        openTrialInputCapture();
+        press('Capture next: Alice · combat');
+        await settle();
+        expect(text()).toContain('Combat loadout: Captured');
+        press('Capture next: Alice · skilling');
+        await settle();
+        expect(text()).toContain('2/2 loadouts');
+        expect(game.fetch.mock.calls.map(([row]) => row.characterId)).toEqual([2, 2]);
+    });
     test('trial filtering captures only that kind and shares one profile between both trials', () => {
         openTrialInputCapture();
         const select = body().querySelector('select');

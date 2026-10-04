@@ -190,7 +190,9 @@ async function requestStep(row, kind) {
                 notice = 'The profile could not be opened. Open it from the game roster, or retry.';
             }
         } else {
-            const result = await fetchLoadout(current, VIEW_LOADOUT_CONTEXT.GuildTrial, kind);
+            // Capture keys use strings, but the game's View Loadout request uses a numeric member id.
+            const loadoutMember = { ...current, characterId: Number(current.characterId) };
+            const result = await fetchLoadout(loadoutMember, VIEW_LOADOUT_CONTEXT.GuildTrial, kind);
             if (pending !== request || scopeNow() !== request.scope) return;
             cancelPending();
             if (result.status !== 'done') notice = `Loadout not captured (${result.status}). Retry or skip this step.`;
