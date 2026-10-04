@@ -15,6 +15,22 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 /**
+ * Whether any consumed material or protection was recorded with no price. Tracking
+ * retains consumed quantities when a market, production, and vendor price are all
+ * absent, so the tracked total leaves that input out and every figure built on it
+ * (cost vs expected, value vs cost) would be wrong in the player's favor. One
+ * check shared by both so they cannot drift.
+ *
+ * @param {Object} session - Live enhancement session
+ * @returns {boolean}
+ */
+export function hasUnpricedInput(session) {
+    if (session?.hasUnpricedInput === true) return true;
+    if (Object.values(session?.materialCosts || {}).some((m) => m.count > 0 && !(m.totalCost > 0))) return true;
+    return (session?.protectionCount || 0) > 0 && !((session?.protectionCost || 0) > 0);
+}
+
+/**
  * Cost this run paid vs the prediction's expected cost, at this run's own unit
  * prices. Whole-session; returns null when it cannot be read honestly:
  *  - no attempts or no stored prediction,
@@ -44,11 +60,7 @@ export function costVsExpected(session, leg = null) {
     const protActual = session.protectionCost || 0;
     const protCount = session.protectionCount || 0;
 
-    // Tracking retains consumed quantities when a market, production, and vendor
-    // price are all absent. A zero-priced input makes the bill incomplete.
-    if (session.hasUnpricedInput === true) return null;
-    if (Object.values(session.materialCosts || {}).some((m) => m.count > 0 && !(m.totalCost > 0))) return null;
-    if (protCount > 0 && !(protActual > 0)) return null;
+    if (hasUnpricedInput(session)) return null;
 
     // Materials and coins are spent per attempt; protection per protect.
     const perAttempt = (materialActual + coinActual) / totalAttempts;
@@ -92,12 +104,14 @@ export const MARKET_SELL_TAX = MARKET_TAX;
  * @param {number} [sellTax] - Fraction taken on a sale; `MARKET_SELL_TAX`, or `0` for the
  *   current Iron Cow character, which has no market access to sell an enhanced piece on
  * @returns {{level:number, baseLevel:number, spent:number, valueN:number|null, value0:number|null,
- *   net:number|null, sellTax:number}|null} `value0` is the bid at `baseLevel`, the session's start level
+ *   net:number|null, sellTax:number}|null} null when an input was unpriced; `value0` is the bid at `baseLevel`, the session's start level
  */
 export function valueVsCost(session, getPrices, sellTax = isIronCowCharacter() ? 0 : MARKET_SELL_TAX) {
     if (!session?.itemHrid) return null;
     const level = session.currentLevel || 0;
     if (level <= 0) return null;
+    // The spent figure would leave the unpriced input out and overstate the net
+    if (hasUnpricedInput(session)) return null;
 
     const baseLevel = Math.max(0, Number(session.startLevel) || 0);
     const spent = session.totalCost || 0;
