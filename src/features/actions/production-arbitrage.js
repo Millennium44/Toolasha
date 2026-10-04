@@ -364,7 +364,14 @@ export function arrangeRows(rows, { sort = 'day', skillHrid = null, query = '', 
         return true;
     });
 
+    // A missing quote makes the calculator's gold figure incomplete. Keep
+    // those rows visible with their quality warning, but do not let an
+    // understated cost outrank recipes with usable prices.
+    const qualityRank = (row) => (row.quality === null ? 0 : row.quality === 'stale' ? 1 : 2);
+
     return kept.sort((a, b) => {
+        const quality = qualityRank(a) - qualityRank(b);
+        if (quality !== 0) return quality;
         const primary = key(b) - key(a);
         if (primary !== 0) return primary;
         return b.marginPerHour - a.marginPerHour;

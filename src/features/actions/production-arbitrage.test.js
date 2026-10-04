@@ -168,6 +168,7 @@ beforeEach(() => {
             '/items/cheese': { name: 'Cheese' },
             '/items/egg': { name: 'Egg' },
             '/items/log': { name: 'Log' },
+            '/items/milk': { name: 'Milk' },
             '/items/verdant_cheese': { name: 'Verdant Cheese' },
         },
         actionDetailMap: {
@@ -175,6 +176,7 @@ beforeEach(() => {
                 name: 'Cheese',
                 type: '/action_types/cheesesmithing',
                 levelRequirement: { skillHrid: '/skills/cheesesmithing', level: 1 },
+                inputItems: [{ itemHrid: '/items/milk', count: 2 }],
                 outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
             },
             '/actions/cheesesmithing/verdant_cheese': {
@@ -448,6 +450,44 @@ describe('arrangeRows', () => {
     test('sorts by margin per hour and per unit', () => {
         expect(arrangeRows(rows, { sort: 'hour' })[0].itemHrid).toBe('/items/verdant_cheese');
         expect(arrangeRows(rows, { sort: 'unit' })[0].itemHrid).toBe('/items/verdant_cheese');
+    });
+
+    test('keeps rows with unpriced inputs below rows with complete quotes', () => {
+        const recipes = productionRecipes();
+        const cheeseRecipe = recipes.find((entry) => entry.actionHrid === '/actions/cheesesmithing/cheese');
+        const verdantRecipe = recipes.find((entry) => entry.actionHrid === '/actions/cheesesmithing/verdant_cheese');
+        const incomplete = rowFromProfit(
+            cheeseRecipe,
+            answer({
+                itemName: 'Cheese',
+                itemHrid: '/items/cheese',
+                actionHrid: '/actions/cheesesmithing/cheese',
+                costPerItem: 50,
+                priceAfterTax: 550,
+                profitPerItem: 500,
+                profitPerAction: 500,
+                profitPerHour: 50_000,
+                hasMissingPrices: true,
+            })
+        );
+        const complete = rowFromProfit(
+            verdantRecipe,
+            answer({
+                itemName: 'Verdant Cheese',
+                itemHrid: '/items/verdant_cheese',
+                actionHrid: '/actions/cheesesmithing/verdant_cheese',
+                costPerItem: 50,
+                priceAfterTax: 51,
+                profitPerItem: 1,
+                profitPerAction: 1,
+                profitPerHour: 100,
+            })
+        );
+
+        expect(arrangeRows([incomplete, complete]).map((row) => row.itemHrid)).toEqual([
+            complete.itemHrid,
+            incomplete.itemHrid,
+        ]);
     });
 
     test('filters by skill, by name and by craftability', () => {

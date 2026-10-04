@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Production rankings show complete quotes first
+
+- Production Arbitrage now ranks recipes with complete quotes ahead of rows with stale or missing price data, so missing inputs cannot inflate the board's top results.
+
 ### Self-use bonus values follow the selected buy prices
 
 - Self-use alchemy now marks bonus drops with no buy-side value as partly unpriced instead of valuing them from a sell-side quote.
