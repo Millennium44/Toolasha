@@ -166,6 +166,13 @@ vi.mock('./guild-trial-recorder.js', () => ({
         initialize: vi.fn(),
         cleanup: vi.fn(),
         setGuildName: vi.fn(),
+        beginGuildAdoption: () => {
+            game.recorder.adopting = true;
+            return 1;
+        },
+        endGuildAdoption: () => {
+            game.recorder.adopting = false;
+        },
         forget: () => {
             game.recorder.recording = false;
             game.recorder.forgotten = true;
@@ -190,7 +197,10 @@ vi.mock('./guild-trial-recorder.js', () => ({
         },
         loadSession: async () => game.recorder.session ?? null,
     },
-    buildTrialExport: async () => game.recorder.bundle ?? { exportedAt: 'now', bundle: true },
+    buildTrialExport: async () => {
+        if (game.recorder.adopting) throw new Error('Guild or character changed during export.');
+        return game.recorder.bundle ?? { exportedAt: 'now', bundle: true };
+    },
     downloadTrialExport: (bundle) => {
         game.recorder.downloads.push(bundle);
         // Undefined unless a test says otherwise, so the default is "it worked".
@@ -3284,6 +3294,57 @@ describe('the panel, end to end', () => {
         expect(guildTrials.guildName).toBe('SuperMoo');
         expect(guildTrials.record.tiles['skilling::alchemy']).toBeUndefined();
         expect(game.store['guildTrials_SuperMoo']?.tiles?.['skilling::alchemy']).toBeUndefined();
+    });
+
+    test('export is unavailable while the new guild history is still loading', async () => {
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Old Guild';
+        game.store = {};
+        await trialsFeature.initialize();
+        const root = buildTab([{ name: 'Milking', level: 130, bar: '0 / 65,280' }]);
+        fire(root);
+
+        let release;
+        game.holds['guildTrials_New Guild'] = new Promise((resolve) => {
+            release = resolve;
+        });
+        game.guildName = 'New Guild';
+        const adopting = guildTrials._adoptGuildName();
+        try {
+            root.querySelector('[data-action="export"]').click();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(game.recorder.downloads).toEqual([]);
+            expect(root.textContent).toContain('Export failed — try again');
+        } finally {
+            release();
+            await adopting;
+        }
+        expect(game.recorder.adopting).toBe(false);
+    });
+
+    test('guild adoption starts from the socket while the Guild panel is closed', async () => {
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Old Guild';
+        game.store = {};
+        document.body.replaceChildren();
+        await trialsFeature.initialize();
+        let release;
+        game.holds['guildTrials_New Guild'] = new Promise((resolve) => {
+            release = resolve;
+        });
+        game.guildName = 'New Guild';
+        game.wsHandlers.guild_updated({ guild: { name: 'New Guild' } });
+        try {
+            expect(game.recorder.adopting).toBe(true);
+        } finally {
+            release();
+            await vi.advanceTimersByTimeAsync(0);
+        }
+        expect(guildTrials.guildName).toBe('New Guild');
+        expect(game.recorder.adopting).toBe(false);
     });
 
     test('a character switch during the guild adoption read does not merge one guild into another', async () => {

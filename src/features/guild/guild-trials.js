@@ -2655,6 +2655,9 @@ class GuildTrials {
 
         this._refresh = (data) => {
             this._noteGuildName(data);
+            // Adoption starts even with the Guild page closed, so exports stop
+            // using the old scope before the history's storage read completes.
+            this._adoptGuildName().catch(() => {});
             this._noteCurrentTrials(data);
             this._render(findTrialsRoot());
         };
@@ -3301,6 +3304,7 @@ class GuildTrials {
         if (!name || name === this.guildName || this.adopting) return;
 
         this.adopting = true;
+        const exportToken = guildTrialRecorder.beginGuildAdoption?.();
         try {
             const changing = this.guildName !== null;
             const characterId = this.characterId;
@@ -3340,6 +3344,7 @@ class GuildTrials {
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
         } finally {
+            guildTrialRecorder.endGuildAdoption?.(exportToken);
             this.adopting = false;
         }
     }

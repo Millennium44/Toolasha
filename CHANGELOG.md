@@ -124,6 +124,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Combat loot luck now handles a rare item split among party members as a possible whole-item payout, so expensive drops cannot wrap into the wrong luck percentile.
 
+### Experimental Guild Trial Simulator
+
+- Skilling and combat trial scenarios can now be simulated locally with editable rosters, per-tier clear odds, payout estimates, and setup import and export. The experimental tool is off by default and labels rules still awaiting comparison with recorded trials.
+- Imported skilling percentages now display cleanly while retaining their full precision in simulations and exports.
+- Post-rebalance trial recordings now calibrate the skilling success curve and boss scaling; estimates include proportional rewards from the unfinished tier and the guild's combat building buffs.
+- Trial exports now keep collected View Loadout gear and triggers, matching dated profiles, and building/buff context, so those simulator inputs can be saved before refreshing the game.
+- Opening more than 20 guild profiles keeps their simulator inputs for the current session; exports require a known roster and reject a character or guild switch during collection.
+- A failed trial export now says so on its button and offers a retry.
+- Trial exports wait for a new guild's history to load, including when the Guild page is closed, so a guild switch cannot download the previous guild's data during that read.
+
 <!-- shipped in 3.64.0 -->
 
 ### Enhancing panel reads the level of the item you put in
@@ -142,15 +152,6 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Wider Enhancing panel
 
 - A new setting (off by default) lifts the game's width cap on the Enhancing panel so the enhancement calculator has room beside the controls.
-
-### Experimental Guild Trial Simulator
-
-- Skilling and combat trial scenarios can now be simulated locally with editable rosters, per-tier clear odds, payout estimates, and setup import and export. The experimental tool is off by default and labels rules still awaiting comparison with recorded trials.
-- Imported skilling percentages now display cleanly while retaining their full precision in simulations and exports.
-- Post-rebalance trial recordings now calibrate the skilling success curve and boss scaling; estimates include proportional rewards from the unfinished tier and the guild's combat building buffs.
-- Trial exports now keep collected View Loadout gear and triggers, matching dated profiles, and building/buff context, so those simulator inputs can be saved before refreshing the game.
-- Opening more than 20 guild profiles keeps their simulator inputs for the current session; exports require a known roster and reject a character or guild switch during collection.
-- A failed trial export now says so on its button and offers a retry.
 
 ### Labyrinth dates and scroll names
 

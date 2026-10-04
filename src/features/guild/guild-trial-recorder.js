@@ -262,6 +262,7 @@ class GuildTrialRecorder {
         this.guildName = null;
         this.characterId = null;
         this.exportScopeVersion = 0;
+        this.pendingGuildAdoption = null;
         /** Last moment anything said a trial was happening */
         this.lastActivityAt = 0;
         /** Where the guild panel says the cycle is; null until one has been read */
@@ -315,10 +316,24 @@ class GuildTrialRecorder {
 
     cleanup() {
         this.exportScopeVersion++;
+        this.pendingGuildAdoption = null;
         stopTrialSimulationCapture();
         this.timers.clearAll();
         this.watcherId = null;
         this.initialized = false;
+    }
+
+    /** Block exports while the arriving guild's history and capture scope are being adopted. */
+    beginGuildAdoption() {
+        this.pendingGuildAdoption = ++this.exportScopeVersion;
+        return this.pendingGuildAdoption;
+    }
+
+    /** An older storage read cannot unblock a newer adoption. */
+    endGuildAdoption(token) {
+        if (this.pendingGuildAdoption !== token) return;
+        this.pendingGuildAdoption = null;
+        this.exportScopeVersion++;
     }
 
     /**
@@ -357,6 +372,7 @@ class GuildTrialRecorder {
      */
     forget() {
         this.exportScopeVersion++;
+        this.pendingGuildAdoption = null;
         clearTrialSimulationProfiles();
         if (this.recording) this.stop('character switched');
         // The damage module is reset right after this; any totals arriving
@@ -1150,7 +1166,10 @@ export async function buildTrialExport({ guildName = null } = {}) {
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
     const scopeVersion = guildTrialRecorder.exportScopeVersion;
     const roster = structuredClone(guildXPTracker.getMemberList?.() || []);
-    if (guildName && guildTrialRecorder.guildName && guildName !== guildTrialRecorder.guildName)
+    if (
+        guildTrialRecorder.pendingGuildAdoption !== null ||
+        (guildName && guildTrialRecorder.guildName && guildName !== guildTrialRecorder.guildName)
+    )
         throw new Error('Guild or character changed during export. Export again on the current guild.');
     const record = await loadTrialRecord(guildName, Date.now(), characterId);
     const loadouts = characterId ? await loadLoadouts(characterId) : null;
@@ -1160,7 +1179,8 @@ export async function buildTrialExport({ guildName = null } = {}) {
     const simulationInputs = await captureTrialSimulationInputs(characterId, roster);
     if (
         (dataManager.getCurrentCharacterId?.() ?? null) !== characterId ||
-        guildTrialRecorder.exportScopeVersion !== scopeVersion
+        guildTrialRecorder.exportScopeVersion !== scopeVersion ||
+        guildTrialRecorder.pendingGuildAdoption !== null
     ) {
         throw new Error('Guild or character changed during export. Export again on the current guild.');
     }

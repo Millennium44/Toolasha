@@ -147,6 +147,15 @@ test('trial export preserves the saved trial gear and triggers captured through 
         game.members = [];
     }
 });
+test('export rejects an unresolved guild adoption and an old completion cannot resume it', async () => {
+    const first = guildTrialRecorder.beginGuildAdoption();
+    const second = guildTrialRecorder.beginGuildAdoption();
+    guildTrialRecorder.endGuildAdoption(first);
+    await expect(buildTrialExport()).rejects.toThrow('Guild or character changed');
+    guildTrialRecorder.endGuildAdoption(second);
+    await expect(buildTrialExport()).resolves.toHaveProperty('format', 'toolasha-guild-trial');
+});
+
 test('export rejects a same-character guild switch during a delayed profile read', async () => {
     guildTrialRecorder.setGuildName('Milky Way');
     let markStarted, finish;
