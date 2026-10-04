@@ -186,6 +186,29 @@ describe('detail snapshots are stored one key each', () => {
         expect(networthHistory.detailHistory).toHaveLength(25);
     });
 
+    test('keeps an inventory and equipped copy of the same item and enhancement level', () => {
+        const data = fakeNetworthData();
+        data.currentAssets.inventory.breakdown = [
+            { itemHrid: '/items/cheese_sword', enhancementLevel: 5, count: 1, value: 100 },
+        ];
+        data.currentAssets.equipped.breakdown = [{ itemHrid: '/items/cheese_sword', enhancementLevel: 5, value: 100 }];
+
+        networthHistory.takeDetailSnapshot(data);
+
+        expect(networthHistory.detailHistory.at(-1).items['/items/cheese_sword:5']).toEqual({ count: 2, value: 200 });
+    });
+
+    test('uses counted coins once when the inventory breakdown also contains the coin row', () => {
+        const data = fakeNetworthData();
+        data.coins = 5000;
+        data.countedCoins = 5000;
+        data.currentAssets.inventory.breakdown = [{ itemHrid: '/items/coin', count: 5000, value: 5000 }];
+
+        networthHistory.takeDetailSnapshot(data);
+
+        expect(networthHistory.detailHistory.at(-1).items['/items/coin:0']).toEqual({ count: 5000, value: 5000 });
+    });
+
     test('the old single-array key is migrated into per-snapshot keys and removed', async () => {
         const legacy = [
             { t: 1, items: { a: 1 } },

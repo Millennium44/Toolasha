@@ -923,17 +923,23 @@ export async function calculateNetworth() {
     const priceCache = marketAPI.getPricesBatch(itemsToPrice);
     phase('collectAndPrice');
 
-    // Precompute loadout-excluded item hrids: Map<itemHrid → loadoutName>
-    const loadoutExcludedHridToName = new Map();
+    // A loadout exclusion describes each item by slot and the enhancement
+    // level the loadout resolves to. Match all three fields so a different
+    // equipped slot or enhancement copy is not silently excluded with it.
+    const loadoutExcludedEquipmentToName = new Map();
+    const equipmentKey = (equipment) =>
+        `${equipment.itemLocationHrid}:${equipment.itemHrid}:${equipment.enhancementLevel || 0}`;
     const loadoutExclusions = getExclusions().filter((e) => e.type === 'loadout');
     if (loadoutExclusions.length > 0) {
-        const allSnapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots();
+        const loadout = loadoutSnapshot() || bundledLoadoutSnapshot;
+        const allSnapshots = loadout.getAllSnapshots();
         for (const exc of loadoutExclusions) {
             const snapshot = allSnapshots.find((s) => s.name === exc.value);
             if (snapshot) {
-                for (const eq of snapshot.equipment) {
-                    if (!loadoutExcludedHridToName.has(eq.itemHrid)) {
-                        loadoutExcludedHridToName.set(eq.itemHrid, exc.value);
+                for (const eq of loadout.resolveEquipment(snapshot)) {
+                    const key = equipmentKey(eq);
+                    if (!loadoutExcludedEquipmentToName.has(key)) {
+                        loadoutExcludedEquipmentToName.set(key, exc.value);
                     }
                 }
             }
@@ -975,7 +981,7 @@ export async function calculateNetworth() {
             trackExcluded('item', item.itemHrid, displayName, value);
             continue;
         }
-        const loadoutName = loadoutExcludedHridToName.get(item.itemHrid);
+        const loadoutName = loadoutExcludedEquipmentToName.get(equipmentKey(item));
         if (loadoutName) {
             trackExcluded('loadout', loadoutName, `Loadout: ${loadoutName}`, value);
             continue;

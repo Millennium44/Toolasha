@@ -352,6 +352,14 @@ class NetworthHistory {
      */
     takeDetailSnapshot(data) {
         const items = {};
+        const addItem = (key, count, value) => {
+            if (items[key]) {
+                items[key].count += count;
+                items[key].value += value;
+            } else {
+                items[key] = { count, value };
+            }
+        };
 
         // Gold
         const coins = Math.round(data.countedCoins ?? data.coins);
@@ -359,16 +367,18 @@ class NetworthHistory {
 
         // Inventory items
         for (const item of data.currentAssets.inventory.breakdown) {
-            if (!item.itemHrid) continue;
+            // Gold already owns the coin entry above, where countedCoins
+            // preserves the calculator's post-exclusion balance.
+            if (!item.itemHrid || item.itemHrid === '/items/coin') continue;
             const key = `${item.itemHrid}:${item.enhancementLevel || 0}`;
-            items[key] = { count: item.count || 0, value: Math.round(item.value || 0) };
+            addItem(key, item.count || 0, Math.round(item.value || 0));
         }
 
         // Equipped items
         for (const item of data.currentAssets.equipped.breakdown) {
             if (!item.itemHrid) continue;
             const key = `${item.itemHrid}:${item.enhancementLevel || 0}`;
-            items[key] = { count: 1, value: Math.round(item.value || 0) };
+            addItem(key, 1, Math.round(item.value || 0));
         }
 
         // Houses (fixed assets)
@@ -384,7 +394,7 @@ class NetworthHistory {
         // Ability books (fixed assets)
         for (const book of data.fixedAssets.abilityBooks.breakdown) {
             if (!book.itemHrid) continue;
-            items[`abilitybook:${book.itemHrid}`] = { count: book.count || 1, value: Math.round(book.value || 0) };
+            addItem(`abilitybook:${book.itemHrid}`, book.count || 1, Math.round(book.value || 0));
         }
 
         // Market listings

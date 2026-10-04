@@ -83,6 +83,7 @@ beforeEach(() => {
     displayMock.inventory.update.mockClear();
     popupMock.refresh.mockClear();
     networthFeature.currentData = null;
+    networthFeature.isActive = false;
 });
 
 describe('a calculation that had nothing to price with', () => {
@@ -209,19 +210,33 @@ describe('the game value map refreshing', () => {
 });
 
 describe('pricing settings', () => {
-    test('the value source re-prices net worth, exactly as the pricing mode does', () => {
+    test('settings that affect valuation invoke recalculation and publish the new total', async () => {
+        networthFeature.isActive = true;
+        networthFeature.currentData = { totalNetworth: 10, coins: 0 };
         configMock.onSettingChange.mockClear();
         networthFeature.setupEventListeners();
 
         const keys = configMock.onSettingChange.mock.calls.map(([key]) => key);
         expect(keys).toContain('networth_pricingMode');
         expect(keys).toContain('networth_valueSource');
-
-        // Both are the same handler, so either one triggers a recalculation
-        const handlers = configMock.onSettingChange.mock.calls
-            .filter(([key]) => key.startsWith('networth_'))
-            .map(([, handler]) => handler);
-        expect(new Set(handlers).size).toBe(1);
+        const handlerFor = (key) =>
+            configMock.onSettingChange.mock.calls.find(([registeredKey]) => registeredKey === key)?.[1];
+        const keysThatReprice = [
+            'networth_pricingMode',
+            'networth_valueSource',
+            'networth_highEnhancementUseCost',
+            'networth_highEnhancementMinLevel',
+            'networth_includeCowbells',
+            'networth_includeTaskTokens',
+            'networth_abilityBooksAsInventory',
+        ];
+        for (const [index, key] of keysThatReprice.entries()) {
+            calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 20 + index, coins: 0 });
+            handlerFor(key)();
+            await vi.waitFor(() => expect(networthFeature.currentData.totalNetworth).toBe(20 + index));
+        }
+        expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(keysThatReprice.length);
+        networthFeature.isActive = false;
     });
 
     test('the Iron Cow valuation re-prices net worth with the same handler as the pricing mode', () => {
@@ -234,5 +249,21 @@ describe('pricing settings', () => {
         // net worth on the old figure until an unrelated item or price update
         expect(handlerFor('profitCalc_ironCowValuation')).toBeTypeOf('function');
         expect(handlerFor('profitCalc_ironCowValuation')).toBe(handlerFor('networth_pricingMode'));
+    });
+
+    test('Iron Cow valuation setting invokes recalculation', async () => {
+        networthFeature.isActive = true;
+        networthFeature.currentData = { totalNetworth: 10, coins: 0 };
+        configMock.onSettingChange.mockClear();
+        networthFeature.setupEventListeners();
+
+        calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 25, coins: 0 });
+        const handler = configMock.onSettingChange.mock.calls.find(
+            ([key]) => key === 'profitCalc_ironCowValuation'
+        )?.[1];
+        handler();
+        await vi.waitFor(() => expect(networthFeature.currentData.totalNetworth).toBe(25));
+        expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(1);
+        networthFeature.isActive = false;
     });
 });

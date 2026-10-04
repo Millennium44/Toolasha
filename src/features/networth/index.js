@@ -35,7 +35,16 @@ import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
  * lot. The Iron Cow valuation replaces the market price outright on an Iron Cow
  * character, so it belongs here as much as the pricing mode does.
  */
-const PRICING_SETTINGS = ['networth_pricingMode', 'networth_valueSource', IRONCOW_VALUATION_SETTING];
+const NETWORTH_RECALC_SETTINGS = [
+    'networth_pricingMode',
+    'networth_valueSource',
+    'networth_highEnhancementUseCost',
+    'networth_highEnhancementMinLevel',
+    'networth_includeCowbells',
+    'networth_includeTaskTokens',
+    'networth_abilityBooksAsInventory',
+    IRONCOW_VALUATION_SETTING,
+];
 
 class NetworthFeature {
     constructor() {
@@ -162,7 +171,7 @@ class NetworthFeature {
                 this.recalculate();
             }
         };
-        for (const key of PRICING_SETTINGS) config.onSettingChange(key, this.pricingModeHandler);
+        for (const key of NETWORTH_RECALC_SETTINGS) config.onSettingChange(key, this.pricingModeHandler);
 
         // Listen for inventory changes
         this.itemsUpdateHandler = () => {
@@ -317,7 +326,7 @@ class NetworthFeature {
             }
 
             if (this.pricingModeHandler) {
-                for (const key of PRICING_SETTINGS) config.offSettingChange(key, this.pricingModeHandler);
+                for (const key of NETWORTH_RECALC_SETTINGS) config.offSettingChange(key, this.pricingModeHandler);
                 this.pricingModeHandler = null;
             }
 

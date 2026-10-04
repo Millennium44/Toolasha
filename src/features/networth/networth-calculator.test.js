@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
     batchPrices: {}, // "hrid:level" -> {ask, bid}, for getPricesBatch
     excluded: new Set(), // "type:value" pairs isExcluded() answers true for
     characterGuildBuffMap: null,
+    loadoutSnapshots: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -107,7 +108,13 @@ vi.mock('./networth-exclusions.js', () => ({
             return { type: entry.slice(0, split), value: entry.slice(split + 1) };
         }),
 }));
-vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        getAllSnapshots: () => mocks.loadoutSnapshots,
+        resolveEquipment: (snapshot) => snapshot.equipment || [],
+    },
+}));
+vi.mock('../../utils/bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
 // Guild credits are never listed, so their gold value comes from conversions.
 // Priced here at a flat rate so the shrine arithmetic is the only thing under test.
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
@@ -149,6 +156,7 @@ beforeEach(() => {
     mocks.batchPrices = {};
     mocks.excluded = new Set();
     mocks.characterGuildBuffMap = null;
+    mocks.loadoutSnapshots = [];
     workerBatch.mockReset();
     _resetMarketValues();
 });
@@ -1077,6 +1085,49 @@ describe('market listings', () => {
 
         // Nothing is locked any more: the units came back and so did the coins
         expect(listings.value).toBe(50 * 100 + 50_000);
+    });
+});
+
+describe('loadout exclusions', () => {
+    test('do not exclude an equipped copy at a different enhancement than an exact loadout', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.excluded.add('loadout:Boss');
+        mocks.loadoutSnapshots = [
+            {
+                name: 'Boss',
+                useExactEnhancement: true,
+                equipment: [
+                    {
+                        itemHrid: '/items/cheese_sword',
+                        enhancementLevel: 4,
+                        itemLocationHrid: '/item_locations/main_hand',
+                    },
+                ],
+            },
+        ];
+        mocks.itemPrices['/items/cheese_sword'] = { ask: 1000, bid: 900 };
+        mocks.batchPrices['/items/cheese_sword:5'] = { ask: 5000, bid: 4500 };
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/cheese_sword',
+                    enhancementLevel: 5,
+                    count: 1,
+                    itemLocationHrid: '/item_locations/main_hand',
+                },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: { '/items/cheese_sword': { name: 'Cheese Sword' } },
+        };
+        workerBatch.mockResolvedValue([]);
+
+        const result = await calculateNetworth();
+
+        expect(result.currentAssets.equipped.value).toBe(5000);
+        expect(result.excluded.items).toEqual([]);
     });
 });
 

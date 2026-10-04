@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Net worth follows the selected equipment and settings
+
+- Excluding a loadout now matches its resolved equipment level, so a different enhancement copy stays counted. Changes to valuation and item inclusion settings refresh the displayed total immediately.
+- Item-level history now combines inventory and equipped copies of the same item and level, keeping the count and value used by its activity breakdown complete.
+
 ### Task drink lines and enhancement value respect what is known
 
 - The task tooltip's itemized drink costs now use the task speed bonus like its total, and an enhancement session's value-vs-cost net is hidden whenever an input had no price, as its luck line already was.
