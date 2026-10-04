@@ -1068,7 +1068,7 @@ export const settingsGroups = {
                 label: 'Enhancing panel: Wider center panel',
                 type: 'checkbox',
                 default: false,
-                help: "Widens the game's center panel (up to 1400px, 92% of the window) while the Enhancing skill panel is shown, so the Enhancement Calculator has more room. Other skills are unaffected.",
+                help: "Raises the width cap on the game's Enhancing panel (up to 1400px, 92% of the window) while the Enhancing skill panel is shown, so the Enhancement Calculator has more room. Other skills are unaffected.",
             },
             enhanceSim_autoDetect: {
                 id: 'enhanceSim_autoDetect',
