@@ -232,6 +232,26 @@ export function getItemHridFromName(itemName) {
  * @param {string} itemHrid - Item HRID
  * @returns {number} Coin cost, or 0 if not available in shop
  */
+/**
+ * The coin price of an item in the in-game shop when coins are its whole price: 0 when it is not
+ * sold there or the offer also asks for another currency, which a coin figure would understate.
+ * @param {string} itemHrid
+ * @returns {number} Coins, or 0
+ */
+export function getShopCoinOnlyCost(itemHrid) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.shopItemDetailMap) return 0;
+    const testerOn = testerShopEnabled();
+    for (const [key, shopItem] of Object.entries(gameData.shopItemDetailMap)) {
+        if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
+        if (shopItem.itemHrid !== itemHrid || !shopItem.costs?.length) continue;
+        if (shopItem.costs.every((cost) => cost.itemHrid === '/items/coin')) {
+            return shopItem.costs.reduce((sum, cost) => sum + (Number(cost.count) || 0), 0);
+        }
+    }
+    return 0;
+}
+
 export function getShopCoinCost(itemHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.shopItemDetailMap) return 0;

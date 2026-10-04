@@ -154,12 +154,16 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => BUY[hrid] ?? null,
-    getItemPriceInfo: (hrid) => ({ price: BUY[hrid] ?? null }),
+    getItemPriceInfo: (hrid) =>
+        game.estimated.has(hrid)
+            ? { price: BUY[hrid] ?? null, source: 'value', estimated: true }
+            : { price: BUY[hrid] ?? null, source: 'book', estimated: false },
     getPricingMode: () => 'ask',
 }));
 vi.mock('../../utils/game-lookups.js', () => ({
-    getShopCoinCost: (hrid) => (hrid === '/items/cheese_sword' ? 50 : 0),
+    getShopCoinOnlyCost: (hrid) => (hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0),
 }));
+vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price }));
 vi.mock('../../utils/character-key.js', () => ({
     readScoped: async (base, _store, fallback) => {
@@ -201,6 +205,9 @@ beforeEach(() => {
     bus.handlers = {};
     observer.handlers = [];
     game.craftable = new Set(['/items/cheese']);
+    game.estimated = new Set();
+    game.mixedShop = false;
+    game.ironCow = false;
 });
 
 afterEach(() => {
@@ -229,6 +236,28 @@ describe('the routes', () => {
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
         // No route ever yields the source it starts from
         for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+    });
+});
+
+describe('how a source can be got', () => {
+    test('a value-map estimate is not a price anyone can buy at', async () => {
+        game.estimated = new Set(['/items/umbral_hood']);
+        const routes = await buildCollectionRoutes();
+        expect(
+            routes.sources.find((s) => s.sourceHrid === '/items/umbral_hood' && s.route === 'decompose')
+        ).toBeUndefined();
+    });
+
+    test('an Iron Cow buys nothing', async () => {
+        game.ironCow = true;
+        const routes = await buildCollectionRoutes();
+        expect(routes.sources.filter((s) => s.route === 'decompose')).toEqual([]);
+    });
+
+    test('a shop offer that also asks for another currency is no shop route', async () => {
+        game.mixedShop = true;
+        const routes = await buildCollectionRoutes();
+        expect(routes.sources.filter((s) => s.route === 'shop')).toEqual([]);
     });
 });
 

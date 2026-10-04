@@ -24,8 +24,9 @@ import profitCalculator from '../market/profit-calculator.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPrice } from '../../utils/market-data.js';
-import { getShopCoinCost } from '../../utils/game-lookups.js';
+import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -95,6 +96,16 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const getItemDetails = (hrid) => itemDetailMap[hrid] || dataManager.getItemDetails?.(hrid) || null;
     const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' });
+    // What a source can actually be bought for: a live order book (or the player's own price),
+    // never the value-map estimate an empty book falls back to, and nothing on an Iron Cow, which
+    // cannot use the market at all
+    const ironCow = isIronCowCharacter();
+    const buyableQuote = (hrid) => {
+        if (ironCow) return null;
+        const info = getItemPriceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true });
+        if (!info || info.estimated || !['book', 'custom'].includes(info.source)) return null;
+        return info.price > 0 ? info.price : null;
+    };
 
     const craft = [];
     const makeCost = new Map();
@@ -202,7 +213,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
 
         // Bought sources are not collected; a crafted one is, and its making takes time — two
         // routes, each priced and timed for how the source is actually got
-        const buy = priceOf(hrid);
+        const buy = buyableQuote(hrid);
         if (buy > 0) sources.push({ ...shared, route: 'decompose', cost: buy + chain.overheadCost });
         const make = makeCost.get(hrid);
         if (make > 0) {
@@ -216,7 +227,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 seconds: chain.seconds + (makeSeconds.get(hrid) || 0),
             });
         }
-        const shopPrice = getShopCoinCost(hrid);
+        const shopPrice = getShopCoinOnlyCost(hrid);
         if (shopPrice > 0) sources.push({ ...shared, route: 'shop', cost: shopPrice + chain.overheadCost });
     }
     if (cancelled()) return null;
