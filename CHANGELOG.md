@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### House panels stay off after disabling
+
+- Pending house cost calculations no longer restore the upgrade estimate after the house feature is turned off.
+
 ### House panels keep the latest calculation
 
 - Overlapping house estimate refreshes now keep the latest room and inventory state without adding duplicate or empty cost sections.

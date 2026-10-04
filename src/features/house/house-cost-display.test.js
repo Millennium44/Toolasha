@@ -304,6 +304,33 @@ describe('overlapping room modal refreshes', () => {
 
         houseCostDisplay.disable();
     });
+
+    test('a pending render cannot restore house UI after the feature is disabled', async () => {
+        houseCostDisplay.initialize();
+        const modalContent = document.createElement('div');
+        const costsSection = document.createElement('div');
+        modalContent.className = 'HousePanel_modalContent__test';
+        costsSection.className = 'HousePanel_costs__test';
+        modalContent.appendChild(costsSection);
+        document.body.appendChild(modalContent);
+
+        const pending = deferred();
+        inventoryState.deferredCosts.push(pending);
+        const render = houseCostDisplay.addCostColumn(costsSection, '/house_rooms/mystical_study', modalContent);
+
+        houseCostDisplay.disable();
+        pending.resolve({ coins: 5000, materials: MATERIALS, totalValue: 2222 });
+        await render;
+
+        try {
+            expect(modalContent.querySelector('.mwi-house-to-level')).toBeNull();
+            expect(houseCostDisplay._cumulativeState).toBeNull();
+            expect(houseCostDisplay._costContext).toBeNull();
+            expect(houseCostDisplay.currentModalContent).toBeNull();
+        } finally {
+            houseCostDisplay.disable();
+        }
+    });
 });
 
 describe('the section holds its own height inside the panel flex column', () => {

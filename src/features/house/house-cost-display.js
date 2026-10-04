@@ -1436,6 +1436,8 @@ class HouseCostDisplay {
      * Disable the feature
      */
     disable() {
+        // Invalidate any pending calculation before removing its existing UI.
+        this._refreshGen += 1;
         removeStyles(PANEL_LAYOUT_STYLE_ID);
         this._unregisterButtonRow?.();
         this._unregisterButtonRow = null;
