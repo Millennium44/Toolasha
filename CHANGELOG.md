@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Self-use bonus values follow the selected buy prices
+
+- Self-use alchemy now marks bonus drops with no buy-side value as partly unpriced instead of valuing them from a sell-side quote.
+
 ### House panels stay off after disabling
 
 - Pending house cost calculations no longer restore the upgrade estimate after the house feature is turned off.

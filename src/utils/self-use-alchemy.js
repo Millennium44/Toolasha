@@ -159,16 +159,15 @@ export function untaxedContainerValue(containerHrid, { containerDrops, priceOf }
 /**
  * One bonus drop's unit value, untaxed. A crate is openable and usually has no
  * order book; then it is worth its contents at the buy side
- * ({@link untaxedContainerValue}). The calculator's own figure is the last
- * resort only — for a crate it is taxed.
+ * ({@link untaxedContainerValue}). The calculator stores seller-side values
+ * in `drop.price`, so this helper never uses that field for a kept bonus.
  * @param {Object} drop - A bonus entry of `dropRevenues`
  * @param {(hrid: string) => number|null} priceOf
  * @param {((hrid: string) => number|null)|undefined} containerValue - Untaxed opened value
  * @returns {number|null}
  */
 function bonusUnitPrice(drop, priceOf, containerValue) {
-    const fallback = Number(drop.price) > 0 ? Number(drop.price) : null;
-    return usablePrice(priceOf(drop.itemHrid)) ?? usablePrice(containerValue?.(drop.itemHrid)) ?? fallback;
+    return usablePrice(priceOf(drop.itemHrid)) ?? usablePrice(containerValue?.(drop.itemHrid));
 }
 
 /**

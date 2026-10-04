@@ -187,7 +187,7 @@ describe('decompose once, self-use', () => {
         expect(step.netPerAction).toBeCloseTo(3 * 18 * 10 - 3 * 100, 6);
     });
 
-    test('bonus drops are valued at the buy side, a crate at its expected value when it has no book', () => {
+    test('bonus drops use buy-side values, with the resolved keep value for a crate', () => {
         const bonus = [
             { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 5, price: 999 },
             { itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 0.1, price: 2000 },
@@ -196,7 +196,11 @@ describe('decompose once, self-use', () => {
         const step = selfUseDecompose(
             result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 1, bonus }),
             ITEMS['/items/cheese_sword'],
-            { ownUseCost: 0, priceOf: prices }
+            {
+                ownUseCost: 0,
+                priceOf: prices,
+                containerValue: (hrid) => (hrid === '/items/small_artisans_crate' ? 2000 : null),
+            }
         );
         expect(step.outputValuePerHour).toBeCloseTo(18 * 10 * 100 + 5 * 400 + 0.1 * 2000, 6);
     });
@@ -224,6 +228,33 @@ describe('decompose once, self-use', () => {
             containerValue,
         });
         expect(chain.terminalValue).toBeCloseTo(18 * 10 + (0.5 / 100) * contents, 6);
+    });
+
+    test('a missing buy quote does not borrow the producer sell-side bonus price', () => {
+        // Shape emitted by calculateAlchemyBonusDrops for its non-openable Alchemy Essence
+        // output: price is populated from getItemPrice(... side: 'sell').
+        const bonus = {
+            itemHrid: '/items/alchemy_essence',
+            count: 1,
+            dropRate: 0.05,
+            effectiveDropRate: 0.05,
+            price: 500,
+            isEssence: true,
+            isRare: false,
+            revenuePerAttempt: 25,
+            revenuePerHour: 2500,
+            dropsPerHour: 5,
+        };
+        const buyPriceOf = (hrid) => (hrid === '/items/cheese' ? 10 : null);
+        const step = selfUseDecompose(
+            result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 1, bonus: [bonus] }),
+            ITEMS['/items/cheese_sword'],
+            { ownUseCost: 0, priceOf: buyPriceOf }
+        );
+
+        expect(step.outputValuePerHour).toBe(18_000);
+        expect(step.unpriced).toEqual(['/items/alchemy_essence']);
+        expect(step.partlyUnpriced).toBe(true);
     });
 
     test('an item with no decompose outputs has no line', () => {
