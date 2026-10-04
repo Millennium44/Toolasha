@@ -1693,35 +1693,55 @@ class TooltipPrices {
                     });
                 }
 
-                // Each chain step picks its own candidate. Steps run one after another, so given
-                // the units that reach a step, its setup is independent of the others'; it is
-                // scored per action (per item reaching it), as the chain is valued per item.
-                // The input's cost is the same under every candidate, so it is left at 0 here.
-                const chainSteps = new Map();
-                const bestChainStep = (hrid) => {
-                    if (!chainSteps.has(hrid)) {
-                        const details = dataManager.getItemDetails(hrid);
-                        const pick = bestSelfUseCandidate(
-                            candidatesFor('decompose', hrid, () =>
-                                hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid)
-                            ),
-                            (result) => selfUseDecompose(result, details, { ownUseCost: 0, priceOf, containerValue }),
-                            'netPerAction'
-                        );
-                        chainSteps.set(hrid, pick?.result ?? null);
-                    }
-                    return chainSteps.get(hrid);
-                };
-                const chain = selfUseDecomposeChain(itemHrid, {
-                    getDecompose: bestChainStep,
+                // Each chain step picks its own candidate, scored by what the chain below it is
+                // worth: the gear a step yields is decomposed further, never kept, so its market
+                // price would be the wrong objective. Children are settled first (memoized), and
+                // a step is scored per item reaching it with its input cost left at 0, the same
+                // under every candidate. A step whose sub-chain cannot be priced falls back to
+                // scoring its own outputs.
+                const chainDeps = {
                     getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
                     isChainable: (hrid) => {
                         const details = dataManager.getItemDetails(hrid);
                         return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
                     },
                     priceOf,
-                    ownUseCost,
                     containerValue,
+                };
+                const chainSteps = new Map();
+                const bestChainStep = (hrid) => {
+                    if (!chainSteps.has(hrid)) {
+                        // Placeholder first, so a cycle back to this step reads as unknown, not a loop
+                        chainSteps.set(hrid, null);
+                        const details = dataManager.getItemDetails(hrid);
+                        const candidates = candidatesFor('decompose', hrid, () =>
+                            hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid)
+                        );
+                        const pick =
+                            bestSelfUseCandidate(
+                                candidates,
+                                (result) =>
+                                    selfUseDecomposeChain(hrid, {
+                                        ...chainDeps,
+                                        getDecompose: (h) => (h === hrid ? result : bestChainStep(h)),
+                                        ownUseCost: 0,
+                                    }),
+                                'net'
+                            ) ??
+                            bestSelfUseCandidate(
+                                candidates,
+                                (result) =>
+                                    selfUseDecompose(result, details, { ownUseCost: 0, priceOf, containerValue }),
+                                'netPerAction'
+                            );
+                        chainSteps.set(hrid, pick?.result ?? null);
+                    }
+                    return chainSteps.get(hrid);
+                };
+                const chain = selfUseDecomposeChain(itemHrid, {
+                    ...chainDeps,
+                    getDecompose: bestChainStep,
+                    ownUseCost,
                 });
                 // A chain that yields no gear is the one-step line again; say it once
                 if (chain && chain.collected.length > 0) {

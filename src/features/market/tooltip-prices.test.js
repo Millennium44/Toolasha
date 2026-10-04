@@ -837,6 +837,25 @@ describe('self-use alchemy lines', () => {
         expect(block.textContent).toContain('Full decompose chain (self-use): 65/item');
     });
 
+    test('a chain step is scored by what its gear yields further down, not its market price', async () => {
+        settings.selfUseAlchemy = true;
+        const twin = (successRate, catalystCostPerHour) => ({
+            ...cheeseSwordDecompose(),
+            itemHrid: '/items/twin_sword',
+            successRate,
+            catalystCostPerHour,
+            requirementCosts: [{ itemHrid: '/items/twin_sword', count: 1, price: 100 }],
+        });
+        alchemyState.profits = { decompose: twin(0.5, 0) };
+        alchemyState.decompose = { '/items/cheese_sword': cheeseSwordDecompose() };
+        alchemyState.candidates = { 'decompose|/items/twin_sword': [twin(0.5, 0), twin(1, 5000)] };
+        const block = await blockFor('/items/twin_sword');
+        // Valued as it comes out (the sword at its price of 10) the plain setup wins, 30 to 10 per
+        // twin. But the sword is decomposed again for 18 x 0.6 x 10 = 108, so per twin the
+        // catalyst gives 50 + 108 - 50 = 108 against 0.5 x 158 = 79; less the twin's 100
+        expect(block.textContent).toContain('Full decompose chain (self-use): 8/item');
+    });
+
     test('nothing to say about an item no alchemy applies to', async () => {
         settings.selfUseAlchemy = true;
         expect(await blockFor('/items/cheese_sword')).toBeNull();
