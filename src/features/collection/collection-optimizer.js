@@ -27,6 +27,7 @@ import { ownUseCompare } from '../market/tooltip-prices.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
+import { canStartAction } from '../../utils/efficiency.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -125,6 +126,18 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         try {
             const profitData = await profitCalculator.calculateProfit(hrid);
             if (!profitData) continue;
+            // A recipe above the character's level cannot be started, and an Action Level tea
+            // raises the requirement: no craft or craft + decompose route for it
+            if (
+                !canStartAction({
+                    requiredLevel: profitData.baseRequirement,
+                    skillLevel: profitData.skillLevel,
+                    teaSkillLevelBonus: profitData.teaSkillLevelBonus,
+                    actionLevelBonus: profitData.actionLevelBonus,
+                })
+            ) {
+                continue;
+            }
             const actionDetails = dataManager.getActionDetails?.(profitData.actionHrid) ?? null;
             const comparison = ownUseCompare(profitData, actionDetails);
             const perHour = Number(profitData.totalItemsPerHour);
