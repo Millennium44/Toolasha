@@ -21,6 +21,9 @@ const engine = vi.hoisted(() => ({
     writes: [],
     gatheringProfit: null,
     gameData: { itemDetailMap: {}, actionDetailMap: {} },
+    marketListeners: new Set(),
+    marketOnCalls: 0,
+    marketOffCalls: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -51,7 +54,22 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('../../api/marketplace.js', () => ({ default: { lastFetchTimestamp: 1000 } }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        lastFetchTimestamp: 1000,
+        on: (callback) => {
+            engine.marketListeners.add(callback);
+            engine.marketOnCalls += 1;
+        },
+        off: (callback) => {
+            engine.marketListeners.delete(callback);
+            engine.marketOffCalls += 1;
+        },
+        emitPricePatch: () => {
+            for (const callback of [...engine.marketListeners]) callback();
+        },
+    },
+}));
 
 // Production and gathering profit are the other mode's business
 vi.mock('./profit-calculator.js', () => ({ default: { calculateProfit: async () => null } }));
@@ -129,12 +147,16 @@ function badges(container) {
 }
 
 beforeEach(() => {
+    marketSort.disable();
     engine.answers = {};
     engine.pricingModes = [];
     engine.writes = [];
     engine.settings = { marketSort: true, marketSort_mode: 'profit' };
     engine.gatheringProfit = null;
     engine.gameData = { itemDetailMap: {}, actionDetailMap: {} };
+    engine.marketListeners.clear();
+    engine.marketOnCalls = 0;
+    engine.marketOffCalls = 0;
 
     marketSort.clearCaches();
     marketSort.originalOrder = [];
@@ -327,6 +349,66 @@ describe('caching', () => {
 
         // Three calculator methods asked, once, for the one distinct item
         expect(calls).toBe(3);
+    });
+
+    test('market price patches invalidate null results so a repaired quote ranks on the next sort', async () => {
+        const container = buildGrid(['apple']);
+        engine.gameData.actionDetailMap = {
+            '/actions/foraging/apple': {
+                type: '/action_types/foraging',
+                dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 1 }],
+            },
+        };
+        let calculations = 0;
+        engine.gatheringProfit = { profitPerHour: 800, hasMissingPrices: true };
+        const originalCalculateItemProfit = marketSort.calculateItemProfit.bind(marketSort);
+        vi.spyOn(marketSort, 'calculateItemProfit').mockImplementation(async (...args) => {
+            calculations += 1;
+            return originalCalculateItemProfit(...args);
+        });
+        marketSort.initialize();
+        await marketSort.sortByProfitability();
+
+        expect(marketSort.profitCache.get('profit:/items/apple')).toEqual({ profit: null, detail: null });
+        expect(badges(container)).toEqual(['—']);
+
+        engine.gatheringProfit = { profitPerHour: 12_000, hasMissingPrices: false };
+        const marketplace = (await import('../../api/marketplace.js')).default;
+        marketplace.emitPricePatch();
+        await marketSort.sortByProfitability();
+
+        expect(calculations).toBe(2);
+        expect(marketSort.profitCache.get('profit:/items/apple')).toEqual({ profit: 12_000, detail: null });
+        expect(badges(container)).toEqual(['+12K']);
+        marketSort.disable();
+        expect(engine.marketListeners.size).toBe(0);
+        expect(engine.marketOffCalls).toBe(1);
+    });
+
+    test('an in-flight old calculation cannot repopulate the cache after a market patch', async () => {
+        const container = buildGrid(['apple']);
+        engine.gameData.actionDetailMap = {
+            '/actions/foraging/apple': {
+                type: '/action_types/foraging',
+                dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 1 }],
+            },
+        };
+        let resolveOld;
+        engine.gatheringProfit = new Promise((resolve) => {
+            resolveOld = resolve;
+        });
+        marketSort.initialize();
+        const pendingSort = marketSort.sortByProfitability();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const marketplace = (await import('../../api/marketplace.js')).default;
+        marketplace.emitPricePatch();
+        resolveOld({ profitPerHour: 100, hasMissingPrices: false });
+        await pendingSort;
+
+        expect(marketSort.profitCache.has('profit:/items/apple')).toBe(false);
+        expect(badges(container)).toEqual([null]);
     });
 });
 

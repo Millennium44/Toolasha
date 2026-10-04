@@ -5431,7 +5431,11 @@ class ActionTimeDisplay {
                             // A minus, not a bare number: the colour alone carried the sign, and a
                             // loss read as a gain to anyone who could not tell the two reds apart
                             const profitSign = actionProfit >= 0 ? '+' : '-';
-                            let html = `Profit: <span style="color: ${profitColor};">${profitSign}${formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
+                            const valueLabel =
+                                config.getSettingValue('actionQueue_valueMode', 'profit') === 'estimated_value'
+                                    ? 'Value'
+                                    : 'Profit';
+                            let html = `${valueLabel}: <span style="color: ${profitColor};">${profitSign}${formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
                             html += this.buildQueueCoinifyCashLine(action);
                             profitDiv.innerHTML = html;
                         }
@@ -5520,7 +5524,20 @@ class ActionTimeDisplay {
             return null;
         }
 
-        if (profitData.hasMissingPrices) {
+        const hasMissingRevenuePrices = isAlchemy
+            ? Boolean(profitData.hasMissingPrices)
+            : profitData.baseOutputs
+              ? [
+                    ...(profitData.baseOutputs || []),
+                    ...(profitData.gourmetBonuses || []),
+                    ...(profitData.processingConversions || []),
+                    ...(profitData.bonusRevenue?.bonusDrops || []),
+                ].some((output) => output.missingPrice) || Boolean(profitData.bonusRevenue?.hasMissingPrices)
+              : (profitData.outputPriceMissing && !profitData.outputPriceEstimated) ||
+                Boolean(profitData.bonusRevenue?.hasMissingPrices) ||
+                (profitData.bonusRevenue?.bonusDrops || []).some((drop) => drop.missingPrice);
+
+        if (profitData.hasMissingPrices && (valueMode !== 'estimated_value' || hasMissingRevenuePrices)) {
             return null;
         }
 

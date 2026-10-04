@@ -91,6 +91,7 @@ class MarketSort {
 
         // Profit cache for current session (cleared on navigation)
         this.profitCache = new Map();
+        this.cacheRevision = 0;
 
         // Alchemy candidates per item, keyed by item hrid. One entry holds every
         // alchemy action that priced, so both alchemy modes read the same
@@ -143,6 +144,7 @@ class MarketSort {
      * @returns {void}
      */
     clearCaches() {
+        this.cacheRevision += 1;
         this.profitCache.clear();
         this.alchemyCache.clear();
         this.alchemyCacheStamp = null;
@@ -162,6 +164,10 @@ class MarketSort {
 
         this.isInitialized = true;
         this.sortMode = getSortMode(config.getSettingValue('marketSort_mode', DEFAULT_SORT_MODE)).value;
+
+        const onMarketPriceUpdate = () => this.clearCaches();
+        marketAPI.on(onMarketPriceUpdate);
+        this.unregisterHandlers.push(() => marketAPI.off(onMarketPriceUpdate));
 
         // Register DOM observers for marketplace panel
         this.registerDOMObservers();
@@ -421,6 +427,7 @@ class MarketSort {
         // A new market fetch makes every cached figure a quote against prices
         // that no longer exist. Cheaper to notice here than to re-derive.
         this.invalidateOnPriceRefresh();
+        const cacheRevision = this.cacheRevision;
 
         // Get all visible item divs
         const itemDivs = Array.from(marketItemsContainer.querySelectorAll('div[class*="Item_itemContainer"]'));
@@ -472,6 +479,9 @@ class MarketSort {
 
             // Calculate profit
             const result = await this.calculateItemProfit(itemHrid, gameData);
+            if (this.cacheRevision !== cacheRevision) {
+                return;
+            }
             this.profitCache.set(cacheKey, result);
             itemsWithProfit.push({ element: itemDiv, ...result, itemHrid });
         }
@@ -543,8 +553,7 @@ class MarketSort {
     invalidateOnPriceRefresh() {
         const stamp = marketAPI?.lastFetchTimestamp ?? null;
         if (this.alchemyCacheStamp !== null && this.alchemyCacheStamp !== stamp) {
-            this.profitCache.clear();
-            this.alchemyCache.clear();
+            this.clearCaches();
         }
         this.alchemyCacheStamp = stamp;
     }

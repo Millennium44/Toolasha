@@ -395,6 +395,7 @@ class GatheringStats {
 
             const { profitPerHour, expPerHour, hasMissingPrices } = data;
             if (hasMissingPrices || profitPerHour === null || expPerHour === null || expPerHour <= 0) {
+                data.effectiveXpPerHour = null;
                 continue;
             }
 
@@ -454,7 +455,11 @@ class GatheringStats {
             const overallSpan = data.displayElement.querySelector('[data-stat="overall"]');
             if (overallSpan) {
                 const effXp = data.effectiveXpPerHour;
-                const label = effXp != null ? `Eff. XP/hr: ${formatKMB(effXp)}` : stripEmoji(overallSpan.textContent);
+                const label = data.hasMissingPrices
+                    ? 'Eff. XP/hr: -- ⚠'
+                    : effXp != null
+                      ? `Eff. XP/hr: ${formatKMB(effXp)}`
+                      : stripEmoji(overallSpan.textContent);
                 overallSpan.textContent = label + (isBestOverall ? ' 🏆' : '');
 
                 if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {
@@ -502,7 +507,14 @@ class GatheringStats {
             html += `<span data-stat="exp" style="color: #fff;">Exp/hr: ${formatKMB(expPerHour)}</span></div>`;
         }
 
-        if (showProfit && showExp && profitPerHour !== null && expPerHour !== null && expPerHour > 0) {
+        if (
+            showProfit &&
+            !hasMissingPrices &&
+            showExp &&
+            profitPerHour !== null &&
+            expPerHour !== null &&
+            expPerHour > 0
+        ) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
             html += `<span data-stat="overall" style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}</span></div>`;
         }

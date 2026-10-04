@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Known queue values survive missing costs
+
+- Estimated Value queues retain known output values when only a cost quote is missing, and market sorting recalculates after price updates. Gathering tiles also clear effective-XP estimates when the underlying profit becomes incomplete.
+
 ### Gathering estimates disclose missing prices
 
 - Gathering profit tiles, queue and action-bar estimates, tooltips, and pinned-action rankings now show when prices are missing. Market sorting keeps incomplete gathering profits out of its numeric rankings.

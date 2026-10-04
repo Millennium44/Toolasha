@@ -27,6 +27,8 @@ const game = vi.hoisted(() => ({
     characterId: 'char1',
     gatheringProfit: null,
     gatheringProfitCalls: [],
+    productionProfit: null,
+    productionProfitCalls: [],
     marketLoaded: false,
 }));
 
@@ -77,7 +79,14 @@ vi.mock('./gathering-profit.js', () => ({
     },
 }));
 vi.mock('../../utils/experience-calculator.js', () => ({ calculateExpPerHour: () => null }));
-vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
+vi.mock('../market/profit-calculator.js', () => ({
+    default: {
+        calculateProfit: async (...args) => {
+            game.productionProfitCalls.push(args);
+            return game.productionProfit;
+        },
+    },
+}));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
 
@@ -129,13 +138,30 @@ const apple = {
     outputItems: null,
 };
 
+const CHEESE = '/actions/cheesesmithing/cheese';
+const cheese = {
+    hrid: CHEESE,
+    name: 'Cheese',
+    type: '/action_types/cheesesmithing',
+    inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+};
+
 const incompleteAppleProfit = {
-    profitPerHour: 800,
-    profitPerAction: 1.7777777777777777,
-    profitPerDay: 19_200,
+    profitPerHour: 864,
+    profitPerAction: 1.92,
+    profitPerDay: 20_736,
     revenuePerHour: 900,
     drinkCostPerHour: 0,
-    drinkCosts: [],
+    drinkCosts: [
+        {
+            name: 'Gathering Tea',
+            priceEach: 0,
+            drinksPerHour: 0.1,
+            costPerHour: 0,
+            missingPrice: true,
+        },
+    ],
     actionsPerHour: 450,
     baseOutputs: [
         {
@@ -153,7 +179,16 @@ const incompleteAppleProfit = {
     bonusRevenue: {
         totalBonusRevenue: 0,
         bonusDrops: [
-            { itemHrid: '/items/foraging_essence', expectedItemsPerHour: 0, itemPrice: 0, missingPrice: true },
+            {
+                itemHrid: '/items/foraging_essence',
+                dropsPerHour: 11,
+                dropsPerAction: 0.024444444444444446,
+                priceEach: 0,
+                revenuePerHour: 0,
+                revenuePerAction: 0,
+                missingPrice: true,
+                taxExempt: false,
+            },
         ],
         hasMissingPrices: true,
     },
@@ -495,6 +530,19 @@ describe('the Queued Actions panel shows what a fight is expected to make', () =
 });
 
 describe('the queue value total with no priced rows', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        game.currentActions = [];
+        game.actionDetails = {};
+        game.gatheringProfit = null;
+        game.productionProfit = null;
+        game.gatheringProfitCalls = [];
+        game.productionProfitCalls = [];
+        game.marketLoaded = false;
+        game.valueMode = 'profit';
+        actionTimeDisplay.activeProfitCalculationId = null;
+    });
+
     test('a mixed combat and gathering queue marks the total short for missing gathering prices', async () => {
         game.valueMode = 'profit';
         game.marketLoaded = true;
@@ -539,5 +587,139 @@ describe('the queue value total with no priced rows', () => {
         actionTimeDisplay._combatSnapshotCache = null;
         actionTimeDisplay._lastQueueMenu = null;
         menu.parentElement.remove();
+    });
+
+    test('estimated value keeps known Apple gross when the tea cost is missing', async () => {
+        game.valueMode = 'estimated_value';
+        game.marketLoaded = true;
+        game.gatheringProfit = {
+            ...incompleteAppleProfit,
+            drinkCosts: [
+                {
+                    name: 'Gathering Tea',
+                    priceEach: 0,
+                    drinksPerHour: 0.1,
+                    costPerHour: 0,
+                    missingPrice: true,
+                },
+            ],
+            bonusRevenue: { bonusDrops: [], hasMissingPrices: false },
+            // Gross Apple revenue is known while the tea ingredient quote is not.
+            hasMissingPrices: true,
+        };
+        game.actionDetails = { [APPLE]: apple };
+        const menu = queueMenu(['Apple']);
+        const row = menu.querySelector('[class*="QueuedActions_action__"]');
+        const rowValue = document.createElement('div');
+        rowValue.className = 'mwi-queue-action-profit';
+        rowValue.dataset.divIndex = '0';
+        row.appendChild(rowValue);
+        const total = document.createElement('div');
+        document.body.appendChild(total);
+
+        await actionTimeDisplay.calculateAndDisplayTotalProfit(
+            total,
+            [{ actionHrid: APPLE, count: 10, divIndex: 0, isReachable: true }],
+            'Total time: 1m',
+            menu
+        );
+
+        expect(rowValue.textContent).toContain('Value: +20');
+        expect(total.textContent).toContain('Estimated value: +20');
+        expect(total.textContent).not.toContain('[?]');
+    });
+
+    test('estimated value keeps known Cheese gross when only Milk cost is missing', async () => {
+        game.valueMode = 'estimated_value';
+        game.marketLoaded = true;
+        game.gatheringProfit = null;
+        game.actionDetails = { [CHEESE]: cheese };
+        game.productionProfit = {
+            itemHrid: '/items/cheese',
+            actionsPerHour: 600,
+            outputAmount: 1,
+            outputPrice: 12,
+            outputPriceMissing: false,
+            outputPriceEstimated: false,
+            materialCosts: [
+                {
+                    itemHrid: '/items/milk',
+                    itemName: 'Milk',
+                    baseAmount: 2,
+                    amount: 2,
+                    askPrice: 0,
+                    totalCost: 0,
+                    missingPrice: true,
+                    estimatedPrice: false,
+                    customPrice: false,
+                    isUpgradeItem: false,
+                    isCrafted: false,
+                },
+            ],
+            bonusRevenue: { bonusDrops: [], hasMissingPrices: false },
+            profitPerHour: null,
+            revenuePerHour: 7200,
+            hasMissingPrices: true,
+        };
+        game.productionProfitCalls = [];
+        const menu = queueMenu(['Cheese']);
+        const row = menu.querySelector('[class*="QueuedActions_action__"]');
+        const rowValue = document.createElement('div');
+        rowValue.className = 'mwi-queue-action-profit';
+        rowValue.dataset.divIndex = '0';
+        row.appendChild(rowValue);
+        const total = document.createElement('div');
+        document.body.appendChild(total);
+
+        const value = await actionTimeDisplay.calculateProfitForAction({ actionHrid: CHEESE, count: 3 });
+        expect(value).toBe(36);
+        const calculate = vi.spyOn(actionTimeDisplay, 'calculateProfitForAction').mockResolvedValue(value);
+        await actionTimeDisplay.calculateAndDisplayTotalProfit(
+            total,
+            [{ actionHrid: CHEESE, count: 3, divIndex: 0, isReachable: true }],
+            'Total time: 1m',
+            menu
+        );
+
+        expect(game.productionProfitCalls).toEqual([['/items/cheese', { actionHrid: CHEESE }]]);
+        expect(rowValue.textContent).toContain('Value: +36');
+        expect(total.textContent).toContain('Estimated value: +36');
+        expect(total.textContent).not.toContain('[?]');
+        calculate.mockRestore();
+    });
+
+    test.each([
+        [
+            'missing output',
+            {
+                outputPriceMissing: true,
+                outputPriceEstimated: false,
+                bonusRevenue: { bonusDrops: [], hasMissingPrices: false },
+            },
+        ],
+        [
+            'missing bonus',
+            {
+                outputPriceMissing: false,
+                outputPriceEstimated: false,
+                bonusRevenue: { bonusDrops: [{ missingPrice: true }], hasMissingPrices: true },
+            },
+        ],
+    ])('estimated value remains unknown for %s', async (_label, overrides) => {
+        game.valueMode = 'estimated_value';
+        game.marketLoaded = true;
+        game.gatheringProfit = null;
+        game.actionDetails = { [CHEESE]: cheese };
+        game.productionProfit = {
+            actionsPerHour: 600,
+            outputAmount: 1,
+            outputPrice: 12,
+            materialCosts: [],
+            bonusRevenue: { bonusDrops: [], hasMissingPrices: false },
+            hasMissingPrices: true,
+            ...overrides,
+        };
+        const result = await actionTimeDisplay.calculateProfitForAction({ actionHrid: CHEESE, count: 3 });
+        expect(result).toBeNull();
     });
 });
