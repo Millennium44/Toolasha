@@ -9,6 +9,7 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { MARKET_TAX } from './profit-constants.js';
+import expectedValueCalculator from '../features/market/expected-value-calculator.js';
 
 const state = vi.hoisted(() => ({
     gameData: null,
@@ -121,6 +122,39 @@ beforeEach(() => {
     alchemyCalc.coinify = null;
     alchemyCalc.transmute = null;
     alchemyCalc.unrefine = null;
+});
+
+describe('already-net container bonuses in tea scoring', () => {
+    test.each(['milking', 'cheesesmithing'])('keeps container EV net for %s gold scoring', (skill) => {
+        const actionHrid = `/actions/${skill}/${skill === 'milking' ? 'cow' : 'cheese'}`;
+        const action = {
+            type: `/action_types/${skill}`,
+            baseTimeCost: 10e9,
+            levelRequirement: { level: 1 },
+            experienceGain: { value: 1 },
+            rareDropTable: [{ itemHrid: '/items/small_meteorite_cache', minCount: 1, maxCount: 1, dropRate: 0.01 }],
+            ...(skill === 'milking'
+                ? { dropTable: [{ itemHrid: '/items/milk', minCount: 1, maxCount: 1, dropRate: 1 }] }
+                : { inputItems: [], outputItems: [{ itemHrid: '/items/cheese', count: 1 }] }),
+        };
+        state.gameData = {
+            itemDetailMap: {
+                '/items/milk': { name: 'Milk' },
+                '/items/cheese': { name: 'Cheese' },
+                '/items/small_meteorite_cache': { name: 'Small Meteorite Cache', isOpenable: true },
+            },
+            actionDetailMap: { [actionHrid]: action },
+        };
+        prices.byHrid = { '/items/milk': 100, '/items/cheese': 100 };
+        const ev = vi.spyOn(expectedValueCalculator, 'getCachedValue').mockReturnValue(200);
+        try {
+            const result = calculateSkillPerformance(skill, new Map(), [], 1);
+            expect(result.goldPerHour).toBeCloseTo(36000 * (1 - MARKET_TAX) + 720, 6);
+            expect(scoreEquipmentSetup(skill, 'gold', new Map(), 1)).toBeCloseTo(result.goldPerHour, 6);
+        } finally {
+            ev.mockRestore();
+        }
+    });
 });
 
 describe('getRelevantTeas', () => {

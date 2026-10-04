@@ -10,6 +10,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A section header's total in the Toolasha inventory tab could stay at the value it had when the tab was drawn, before prices arrived, until the section was collapsed and reopened; it now redraws when the item values land or change.
 
+### Opened chest profit
+
+- Gathering and production forecasts, queued action totals, and tea comparisons now avoid taxing chest bonus values twice. Their profit and cost breakdowns agree with the contents' expected value.
+- Loot & XP Log profit now uses chest contents' expected value once, avoiding a second market tax on contents that were already valued after tax and on coins inside chests.
+
+### Loot luck with party shares
+
+- Combat loot luck now handles a rare item split among party members as a possible whole-item payout, so expensive drops cannot wrap into the wrong luck percentile.
+
 <!-- shipped in 3.64.0 -->
 
 ### Enhancing panel reads the level of the item you put in

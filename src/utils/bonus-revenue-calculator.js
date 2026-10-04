@@ -12,6 +12,9 @@ import { getItemPrice } from './market-data.js';
 
 /**
  * Calculate bonus revenue from essence and rare find drops
+ * Display totals include raw market prices and already-net container EV. Each
+ * container drop carries `taxExempt`; `taxExemptBonusRevenue` sums that portion
+ * at base actions/hour so callers can omit it from any further market tax.
  * @param {Object} actionDetails - Action details from game data
  * @param {number} actionsPerHour - Base actions per hour (efficiency not applied)
  * @param {Map} characterEquipment - Equipment map
@@ -62,6 +65,9 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
 
     const bonusDrops = [];
     let totalBonusRevenue = 0;
+    // Container EV is already net of its contents' tax, while market prices
+    // are gross. Keep display revenue intact and identify the net portion.
+    let taxExemptBonusRevenue = 0;
     let hasMissingPrices = false;
 
     // Process essence drops
@@ -116,9 +122,11 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
                 revenuePerAction,
                 type: 'essence',
                 missingPrice: isMissingPrice,
+                taxExempt: Boolean(itemDetails.isOpenable),
             });
 
             totalBonusRevenue += revenuePerHour;
+            if (itemDetails.isOpenable) taxExemptBonusRevenue += revenuePerHour;
             if (isMissingPrice) {
                 hasMissingPrices = true;
             }
@@ -177,9 +185,11 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
                 revenuePerAction,
                 type: 'rare_find',
                 missingPrice: isMissingPrice,
+                taxExempt: Boolean(itemDetails.isOpenable),
             });
 
             totalBonusRevenue += revenuePerHour;
+            if (itemDetails.isOpenable) taxExemptBonusRevenue += revenuePerHour;
             if (isMissingPrice) {
                 hasMissingPrices = true;
             }
@@ -192,6 +202,7 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
         rareFindBreakdown,
         bonusDrops, // Array of all bonus drops with details
         totalBonusRevenue, // Total revenue/hour from all bonus drops
+        taxExemptBonusRevenue, // Already-net container revenue/hour, before efficiency
         hasMissingPrices,
     };
 }

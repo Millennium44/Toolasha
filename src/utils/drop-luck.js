@@ -515,7 +515,9 @@ export function sessionCF({ spawnInfo, monsterDrops, bossDrops = {}, normalCount
  * @returns {number} The bound, in the same units as `price`
  */
 function maxPossibleIncome({ spawnInfo, monsterDrops = {}, bossDrops = {}, normalCount = 0, bossCount = 0 }) {
-    const maxDropsValue = (drops) => (drops || []).reduce((sum, d) => sum + d.maxCount * d.price, 0);
+    // Fractional counts can round up to the next whole item in dropCF, including
+    // a one-item drop split five ways. The window must hold that whole payout.
+    const maxDropsValue = (drops) => (drops || []).reduce((sum, d) => sum + Math.ceil(d.maxCount) * d.price, 0);
 
     const maxSpawnCount = spawnInfo?.maxSpawnCount || 0;
     const perWaveMax = (spawnInfo?.spawns || []).reduce((best, spawn) => {

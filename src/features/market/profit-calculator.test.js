@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     skills: null,
     efficiencyContext: {},
     buyMode: 'ask',
+    bonusRevenue: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -36,7 +37,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
 vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mocks.efficiencyContext }));
-vi.mock('../../utils/bonus-revenue-calculator.js', () => ({ calculateBonusRevenue: () => null }));
+vi.mock('../../utils/bonus-revenue-calculator.js', () => ({ calculateBonusRevenue: () => mocks.bonusRevenue }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: (hrid, mode) => {
         const cost = mocks.productionCosts[hrid];
@@ -68,6 +69,7 @@ const { default: profitCalculator } = await import('./profit-calculator.js');
 
 beforeEach(() => {
     mocks.settings = {};
+    mocks.bonusRevenue = null;
     mocks.initData = { actionDetailMap: {}, communityBuffTypeDetailMap: {} };
     mocks.itemDetails = {};
     mocks.resolvedPrices = {};
@@ -510,6 +512,20 @@ describe('calculateProfit — itemPrice reconciliation', () => {
         mocks.resolvedPrices['/items/milk'] = 10;
         mocks.resolvedPrices['/items/cheese'] = 100;
     }
+
+    test('already-net container bonuses avoid a second tax in production profit', async () => {
+        simpleRecipe();
+        mocks.marketPrices['/items/cheese'] = 100;
+        mocks.efficiencyContext.efficiencyMultiplier = 2;
+        mocks.bonusRevenue = { totalBonusRevenue: 1000, taxExemptBonusRevenue: 600 };
+
+        const result = await profitCalculator.calculateProfit('/items/cheese');
+
+        // 720 items at 100, material cost 7200; bonus 2000 includes 1200 net EV.
+        expect(result.revenuePerHour).toBe(72000);
+        expect(result.profitPerHour).toBeCloseTo(72800 * 0.98 + 1200 - 7200, 6);
+        expect(result.bonusRevenue.totalBonusRevenue).toBe(1000);
+    });
 
     // profit-calculator.js used to read the tooltipped item's own ask/bid straight off
     // `marketAPI.getPrice`, bypassing the value-map reconciliation `getItemPrices` (and the

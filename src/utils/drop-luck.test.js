@@ -279,4 +279,23 @@ describe('sessionLuck', () => {
         const { limit } = sessionLuck(session, 5e8);
         expect(limit).toBeGreaterThan(5e8);
     });
+
+    test.each(['ordinary', 'boss'])('a fractional %s share keeps its whole-item outcome inside the window', (kind) => {
+        // A fixed one-item stack split among five players becomes 0.2 in the
+        // combat model: 80% no item, 20% one whole item. Its maximum payout is
+        // the whole item's value, even if this player received nothing.
+        const drops = [{ minCount: 0.2, maxCount: 0.2, dropRate: 1, price: 1e9 }];
+        const session = {
+            spawnInfo: soloZone,
+            monsterDrops: kind === 'ordinary' ? { '/monsters/m': drops } : {},
+            bossDrops: kind === 'boss' ? { boss: drops } : {},
+            normalCount: kind === 'ordinary' ? 1 : 0,
+            bossCount: kind === 'boss' ? 1 : 0,
+        };
+        const { limit, cdf } = sessionLuck(session, 0);
+
+        expect(limit).toBeGreaterThan(1e9);
+        expect(cdf(5e8)).toBeCloseTo(0.8, 3);
+        expect(cdf(1.01e9)).toBeCloseTo(1, 3);
+    });
 });
