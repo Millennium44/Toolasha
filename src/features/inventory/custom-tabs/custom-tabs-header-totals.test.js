@@ -176,6 +176,21 @@ describe('section header totals after the prices arrive', () => {
         expect(layout).toHaveBeenCalled();
     });
 
+    test('redraws when a tile is replaced by a different item of the same value', async () => {
+        const { container, tiles, layout } = await setup();
+        tiles[0].dataset.askValue = '1000';
+        tiles[1].dataset.askValue = '1000';
+        await ui._applyLayout();
+        layout.mockClear();
+        const baseHrid = vi.spyOn(ui, '_tileBaseHrid');
+        baseHrid.mockImplementation((tile) => (tile === tiles[0] ? '/items/egg' : tile.dataset.hrid));
+
+        await ui._refreshBadgesWhenSettled(container);
+        baseHrid.mockRestore();
+
+        expect(layout).toHaveBeenCalledTimes(1);
+    });
+
     test('does not redraw when the render left the values alone, so the refresh settles', async () => {
         const { container, tiles, layout } = await setup();
         tiles[0].dataset.askValue = '1000';

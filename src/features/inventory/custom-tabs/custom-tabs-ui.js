@@ -2120,7 +2120,11 @@ export default class CustomTabsUI {
         // Per tile, not summed: two sections changing by opposite amounts leave the sums alone
         const values = [];
         for (const tile of invContainer.querySelectorAll('[class*="Item_itemContainer"]')) {
-            values.push(`${tile.dataset.askValue ?? ''},${tile.dataset.bidValue ?? ''}`);
+            // Identity too: an item swapped for one of equal value can belong to another section
+            const level = tile.querySelector('[class*="Item_enhancementLevel"]')?.textContent.trim() ?? '';
+            values.push(
+                `${this._tileBaseHrid(tile) ?? ''}${level},${tile.dataset.askValue ?? ''},${tile.dataset.bidValue ?? ''}`
+            );
         }
         return `${totalValueKey(inventorySort.currentMode)}|${values.join(';')}`;
     }
