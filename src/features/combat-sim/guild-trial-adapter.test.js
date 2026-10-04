@@ -28,6 +28,31 @@ describe('trial inputs from the game', () => {
         expect(baseWorkFromSkillingReading({ ...GUILD_SKILLING_UPDATED, participantIds: [] })).toBeNull();
         expect(memberFromSkillingReading({ successRate: 0.8 })).toBeNull();
     });
+    test.each(['tier', 'successRate', 'progressPerAction', 'actionTimeMs', 'doubleProgressChance'])(
+        'rejects a null %s instead of turning it into a numeric zero',
+        (field) => {
+            expect(memberFromSkillingReading({ ...GUILD_SKILLING_UPDATED, [field]: null })).toBeNull();
+        }
+    );
+    test.each([
+        ['tier', 1.5],
+        ['successRate', 0],
+        ['successRate', 1.01],
+        ['progressPerAction', -1],
+        ['progressPerAction', 1e7 + 1],
+        ['actionTimeMs', 0],
+        ['actionTimeMs', 3_600_001],
+        ['doubleProgressChance', -0.01],
+        ['doubleProgressChance', 1.01],
+    ])('rejects an out-of-range %s reading (%s)', (field, value) => {
+        expect(memberFromSkillingReading({ ...GUILD_SKILLING_UPDATED, [field]: value })).toBeNull();
+    });
+    test.each([[910001, 910001], [910001, null], [true], [[910001]], ['910001'], [910001, 'not-a-character-id']])(
+        'does not count an invalid participant roster %j as full signup count',
+        (...participantIds) => {
+            expect(baseWorkFromSkillingReading({ ...GUILD_SKILLING_UPDATED, participantIds })).toBeNull();
+        }
+    );
     test('includes the encounter map in the worker payload', () => {
         expect(buildTrialGameData().guildTrialDetailMap).toEqual({ test: true });
     });

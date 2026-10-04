@@ -34,16 +34,29 @@ export function trialBuildingBuffs(clientData, levels) {
 /** Normalize one real personal trial footer, never inventing other members' stats. */
 export function memberFromSkillingReading(data, name = 'Current character', readings = []) {
     const values = ['tier', 'successRate', 'progressPerAction', 'actionTimeMs', 'doubleProgressChance'];
-    if (!values.every((key) => Number.isFinite(Number(data?.[key])))) return null;
-    if (!(data.tier >= 1 && data.tier <= 21 && data.actionTimeMs > 0 && data.progressPerAction >= 0)) return null;
+    if (!values.every((key) => typeof data?.[key] === 'number' && Number.isFinite(data[key]))) return null;
+    if (
+        !Number.isInteger(data.tier) ||
+        data.tier < 1 ||
+        data.tier > 21 ||
+        data.successRate < 0.05 ||
+        data.successRate > 1 ||
+        data.progressPerAction < 0 ||
+        data.progressPerAction > 1e7 ||
+        data.actionTimeMs < 100 ||
+        data.actionTimeMs > 3_600_000 ||
+        data.doubleProgressChance < 0 ||
+        data.doubleProgressChance > 1
+    )
+        return null;
     return {
         name,
-        referenceTier: Number(data.tier),
-        successRate: Number(data.successRate),
+        referenceTier: data.tier,
+        successRate: data.successRate,
         successLossPerTier: 0.08,
-        workPower: Number(data.progressPerAction),
-        actionSeconds: Number(data.actionTimeMs) / 1000,
-        doubleChance: Number(data.doubleProgressChance),
+        workPower: data.progressPerAction,
+        actionSeconds: data.actionTimeMs / 1000,
+        doubleChance: data.doubleProgressChance,
         source: `Trial reading at tier ${data.tier}`,
         ...fitSkillingSuccessCurve(readings),
     };
@@ -51,9 +64,23 @@ export function memberFromSkillingReading(data, name = 'Current character', read
 
 /** Recover base work from a server reading that includes the full signed-up roster. */
 export function baseWorkFromSkillingReading(data) {
-    if (!Array.isArray(data?.participantIds) || !data.participantIds.length) return null;
-    const tier = Number(data.tier);
-    const target = Number(data.targetWorkValue);
-    if (!(tier >= 1 && tier <= 21 && Number.isInteger(tier) && target > 0 && Number.isFinite(target))) return null;
-    return target / ((1 + 0.1 * (tier - 1)) * (1 + 0.01 * data.participantIds.length));
+    const participantIds = data?.participantIds;
+    if (!Array.isArray(participantIds) || !participantIds.length) return null;
+    if (
+        !participantIds.every((id) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0) ||
+        new Set(participantIds).size !== participantIds.length
+    )
+        return null;
+    const { tier, targetWorkValue: target } = data;
+    if (
+        !Number.isInteger(tier) ||
+        tier < 1 ||
+        tier > 21 ||
+        typeof target !== 'number' ||
+        !Number.isFinite(target) ||
+        target <= 0
+    )
+        return null;
+    const baseWork = target / ((1 + 0.1 * (tier - 1)) * (1 + 0.01 * participantIds.length));
+    return baseWork >= 1 && baseWork <= 1e9 ? baseWork : null;
 }

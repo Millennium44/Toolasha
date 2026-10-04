@@ -170,7 +170,11 @@ export class GuildTrialSim {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (!data?.trialHrid?.startsWith('/guild_skilling/')) return;
             const previous = this.readings[data.trialHrid];
-            if (previous && data.tier < previous.tier) delete this.successReadings[data.trialHrid];
+            const newAttempt =
+                typeof previous?.timeoutAt === 'string' &&
+                typeof data.timeoutAt === 'string' &&
+                previous.timeoutAt !== data.timeoutAt;
+            if (previous && (data.tier < previous.tier || newAttempt)) delete this.successReadings[data.trialHrid];
             this.readings[data.trialHrid] = { ...data, at: Date.now() };
             if (Number.isInteger(data.tier) && data.tier >= 1 && data.tier <= 21 && Number.isFinite(data.successRate)) {
                 const readings = (this.successReadings[data.trialHrid] ||= {});

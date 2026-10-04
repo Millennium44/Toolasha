@@ -282,6 +282,27 @@ describe('trial simulator controls and ownership', () => {
         feature.addReading();
         expect(feature.skillingMembers[0].effectiveLevel).toBeUndefined();
     });
+    test('clears the curve cache when the trial deadline changes between observed tiers', () => {
+        feature.kind = 'skilling';
+        harness.ws.guild_skilling_updated({
+            ...GUILD_SKILLING_TICKS[0],
+            tier: 1,
+            successRate: 0.828,
+            timeoutAt: '2026-08-21T16:00:00.000Z',
+        });
+        harness.ws.guild_skilling_updated({
+            ...GUILD_SKILLING_TICKS[0],
+            tier: 2,
+            successRate: 0.768,
+            timeoutAt: '2026-08-28T16:00:00.000Z',
+        });
+
+        feature.addReading();
+
+        expect(feature.skillingMembers[0].effectiveLevel).toBeUndefined();
+        expect(feature.skillingMembers[0].successBonus).toBeUndefined();
+        expect(Object.keys(feature.successReadings[GUILD_SKILLING_TICKS[0].trialHrid])).toEqual(['2']);
+    });
     test('imports a setup atomically and preserves its captured buffs on round-trip', () => {
         feature.addCurrentBuild();
         const scenario = feature.makeScenario();
