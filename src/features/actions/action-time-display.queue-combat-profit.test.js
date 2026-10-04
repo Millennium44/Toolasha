@@ -29,6 +29,8 @@ const game = vi.hoisted(() => ({
     gatheringProfitCalls: [],
     productionProfit: null,
     productionProfitCalls: [],
+    alchemyProfit: null,
+    alchemyProfitCalls: [],
     marketLoaded: false,
 }));
 
@@ -87,7 +89,26 @@ vi.mock('../market/profit-calculator.js', () => ({
         },
     },
 }));
-vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
+vi.mock('../market/alchemy-profit-calculator.js', () => ({
+    default: {
+        calculateCoinifyProfit: (...args) => {
+            game.alchemyProfitCalls.push(['coinify', ...args]);
+            return game.alchemyProfit;
+        },
+        calculateTransmuteProfit: (...args) => {
+            game.alchemyProfitCalls.push(['transmute', ...args]);
+            return game.alchemyProfit;
+        },
+        calculateDecomposeProfit: (...args) => {
+            game.alchemyProfitCalls.push(['decompose', ...args]);
+            return game.alchemyProfit;
+        },
+        calculateUnrefineProfit: (...args) => {
+            game.alchemyProfitCalls.push(['unrefine', ...args]);
+            return game.alchemyProfit;
+        },
+    },
+}));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
 
 vi.mock('../../utils/all-zones-snapshot.js', async (importOriginal) => ({
@@ -145,6 +166,16 @@ const cheese = {
     type: '/action_types/cheesesmithing',
     inputItems: [{ itemHrid: '/items/milk', count: 2 }],
     outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+};
+
+const TRANSMUTE = '/actions/alchemy/transmute';
+const ABYSSAL_ESSENCE = '/items/abyssal_essence';
+const transmute = {
+    hrid: TRANSMUTE,
+    name: 'Transmute',
+    type: '/action_types/alchemy',
+    inputItems: null,
+    outputItems: null,
 };
 
 const incompleteAppleProfit = {
@@ -536,8 +567,10 @@ describe('the queue value total with no priced rows', () => {
         game.actionDetails = {};
         game.gatheringProfit = null;
         game.productionProfit = null;
+        game.alchemyProfit = null;
         game.gatheringProfitCalls = [];
         game.productionProfitCalls = [];
+        game.alchemyProfitCalls = [];
         game.marketLoaded = false;
         game.valueMode = 'profit';
         actionTimeDisplay.activeProfitCalculationId = null;
@@ -721,5 +754,52 @@ describe('the queue value total with no priced rows', () => {
         };
         const result = await actionTimeDisplay.calculateProfitForAction({ actionHrid: CHEESE, count: 3 });
         expect(result).toBeNull();
+    });
+
+    test.each(['profit', 'estimated_value'])(
+        'alchemy with unpriced outputs stays unknown in %s mode',
+        async (valueMode) => {
+            game.valueMode = valueMode;
+            game.actionDetails = { [TRANSMUTE]: transmute };
+            game.alchemyProfit = {
+                profitPerHour: 900,
+                actionsPerHour: 100,
+                revenuePerHour: 1200,
+                unpricedOutputs: ['/items/twilight_essence'],
+            };
+            game.alchemyProfitCalls = [];
+            const action = {
+                actionHrid: TRANSMUTE,
+                primaryItemHash: `char1::/item_locations/inventory::${ABYSSAL_ESSENCE}::0`,
+                secondaryItemHash: '',
+                count: 10,
+            };
+
+            // The October 3 item map contains Abyssal Essence with a transmute table for
+            // Golem Essence, Twilight Essence, and Abyssal Essence.
+            await expect(actionTimeDisplay.calculateProfitForAction(action)).resolves.toBeNull();
+            expect(game.alchemyProfitCalls).toEqual([['transmute', ABYSSAL_ESSENCE, true, null, 'none', null, 0]]);
+        }
+    );
+
+    test.each([
+        ['profit', 90],
+        ['estimated_value', 120],
+    ])('fully priced alchemy remains available in %s mode', async (valueMode, expected) => {
+        game.valueMode = valueMode;
+        game.actionDetails = { [TRANSMUTE]: transmute };
+        game.alchemyProfit = {
+            profitPerHour: 900,
+            actionsPerHour: 100,
+            revenuePerHour: 1200,
+            unpricedOutputs: [],
+        };
+        await expect(
+            actionTimeDisplay.calculateProfitForAction({
+                actionHrid: TRANSMUTE,
+                primaryItemHash: `char1::/item_locations/inventory::${ABYSSAL_ESSENCE}::0`,
+                count: 10,
+            })
+        ).resolves.toBe(expected);
     });
 });

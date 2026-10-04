@@ -99,11 +99,12 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
 
 const alchemyCalc = vi.hoisted(() => ({
     coinify: null,
+    transmute: null,
 }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
         calculateCoinifyProfit: (...args) => alchemyCalc.coinify?.(...args) ?? null,
-        calculateTransmuteProfit: () => null,
+        calculateTransmuteProfit: (...args) => alchemyCalc.transmute?.(...args) ?? null,
         calculateDecomposeProfit: () => null,
     },
 }));
@@ -119,6 +120,7 @@ function setActionNameDom() {
 beforeEach(() => {
     liquidity.throttle = null;
     alchemyCalc.coinify = null;
+    alchemyCalc.transmute = null;
     game.actionDetails = {};
     game.gatheringProfit = null;
 });
@@ -270,6 +272,36 @@ describe('action bar profit line — incomplete gathering prices', () => {
         expect(actionTimeDisplay.profitElement.textContent).toContain('Profit: --');
         expect(actionTimeDisplay.profitElement.textContent).toContain('⚠');
         expect(actionTimeDisplay.profitElement.textContent).not.toContain('800');
+        expect(actionTimeDisplay.profitElement.textContent).not.toContain('remaining');
+    });
+});
+
+describe('action bar profit line — incomplete alchemy outputs', () => {
+    test('does not show partial profit when the alchemy result lists an unpriced output', async () => {
+        setActionNameDom();
+        actionTimeDisplay.displayElement = null;
+        actionTimeDisplay.profitElement = null;
+        actionTimeDisplay.createDisplayPanel();
+        actionTimeDisplay.activeBarProfitId = null;
+        const action = {
+            actionHrid: '/actions/alchemy/transmute',
+            primaryItemHash: '/item_locations/inventory::/items/abyssal_essence::0',
+        };
+        game.actionDetails = {
+            [action.actionHrid]: { type: '/action_types/alchemy', name: 'Transmute', outputItems: null },
+        };
+        alchemyCalc.transmute = () => ({
+            profitPerHour: 900,
+            actionsPerHour: 100,
+            revenuePerHour: 1200,
+            unpricedOutputs: ['/items/twilight_essence'],
+        });
+
+        await actionTimeDisplay.updateActionBarProfit(action, 10);
+
+        expect(actionTimeDisplay.profitElement.textContent).toContain('Profit: --');
+        expect(actionTimeDisplay.profitElement.textContent).toContain('⚠');
+        expect(actionTimeDisplay.profitElement.textContent).not.toContain('900');
         expect(actionTimeDisplay.profitElement.textContent).not.toContain('remaining');
     });
 });

@@ -5524,8 +5524,11 @@ class ActionTimeDisplay {
             return null;
         }
 
+        const hasMissingPriceData = Boolean(
+            profitData.hasMissingPrices || (isAlchemy && profitData.unpricedOutputs?.length > 0)
+        );
         const hasMissingRevenuePrices = isAlchemy
-            ? Boolean(profitData.hasMissingPrices)
+            ? hasMissingPriceData
             : profitData.baseOutputs
               ? [
                     ...(profitData.baseOutputs || []),
@@ -5537,7 +5540,7 @@ class ActionTimeDisplay {
                 Boolean(profitData.bonusRevenue?.hasMissingPrices) ||
                 (profitData.bonusRevenue?.bonusDrops || []).some((drop) => drop.missingPrice);
 
-        if (profitData.hasMissingPrices && (valueMode !== 'estimated_value' || hasMissingRevenuePrices)) {
+        if (hasMissingPriceData && (valueMode !== 'estimated_value' || hasMissingRevenuePrices)) {
             return null;
         }
 
@@ -5934,7 +5937,11 @@ class ActionTimeDisplay {
                 return;
             }
 
-            if (profitData.hasMissingPrices) {
+            const hasMissingPrices = Boolean(
+                profitData.hasMissingPrices ||
+                (actionDetails.type === '/action_types/alchemy' && profitData.unpricedOutputs?.length > 0)
+            );
+            if (hasMissingPrices) {
                 this.profitElement.innerHTML =
                     '<span style="color:#888;">Profit:</span> <span style="color:#aaa;">-- ⚠</span>';
                 return;

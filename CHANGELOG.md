@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy estimates disclose unpriced outputs
+
+- Alchemy queue totals and action-bar profit now show when an output cannot be priced, preventing a partial result from appearing complete.
+
 ### Known queue values survive missing costs
 
 - Estimated Value queues retain known output values when only a cost quote is missing, and market sorting recalculates after price updates. Gathering tiles also clear effective-XP estimates when the underlying profit becomes incomplete.
