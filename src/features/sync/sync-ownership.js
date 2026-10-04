@@ -178,6 +178,7 @@ export const OWNED_KEY_PREFIXES = [
     'stunPersistenceTally',
     'waveGapTally',
     'tickPeriodTally',
+    'bestiaryPointsTarget',
     'combatProfitView',
     'combatIncomeNetSalesTax',
     'combatLevelSelection',

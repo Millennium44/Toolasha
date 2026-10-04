@@ -2452,6 +2452,18 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_ttlTargetReached'),
         },
         {
+            key: 'bestiaryPointsAlerts',
+            name: 'Bestiary Points Alerts',
+            category: 'Notifications',
+            module: UI.bestiaryPointsAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry.
+            customCheck: () => config.getSetting('notifications_bestiaryPointsTarget'),
+            // Clearing the setting must take the combat handlers down: left installed they keep
+            // crediting kills while check() returns early, and re-enabling announces an old crossing.
+            liveStop: true,
+        },
+        {
             key: 'marketUndercutAlerts',
             name: 'Market Undercut Alerts',
             category: 'Notifications',

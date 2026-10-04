@@ -4182,6 +4182,21 @@ export const settingsGroups = {
                 default: false,
                 help: 'Reads the target level you set in the Time to Level tile (the Combat Level panel selection) and says so once the skill reaches it. Only a target you actually chose counts — the tile’s default “next level” is left to the level-up notification. Re-arms when you pick a new target; a target already passed when you switched this on is not announced.',
             },
+            notifications_bestiaryPointsTarget: {
+                id: 'notifications_bestiaryPointsTarget',
+                label: 'Notify when your Bestiary points reach a target',
+                type: 'checkbox',
+                default: false,
+                help: 'Fires once when your total Bestiary points first reach the target. Set the target for the current character with the "Notify me at N points" button under the Bestiary plan in the combat simulator (it also turns this on), or give every character without one the default below. The game only sends the Bestiary when something asks for it, and this never asks: open Achievements once (or run the combat sim) to start tracking. Between those readings your points are estimated from the kills it sees, and a crossing found that way says "about"; the next real reading corrects the estimate. A target already reached when the page loads is not announced; raising it re-arms the alert.',
+            },
+            notifications_bestiaryPointsTargetDefault: {
+                id: 'notifications_bestiaryPointsTargetDefault',
+                label: 'Bestiary points target (default for characters without their own)',
+                type: 'number',
+                default: 0,
+                min: 0,
+                help: 'Total Bestiary points to be told about, for any character that has not had one set from the Bestiary plan. 0 means none. A target set from the planner belongs to that character alone and wins over this.',
+            },
             notifications_enhancementTarget: {
                 id: 'notifications_enhancementTarget',
                 label: 'Notify when an item reaches its enhancement target',

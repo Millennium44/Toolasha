@@ -132,6 +132,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_combatDeath',
     'notifications_skillLevelUp',
     'notifications_ttlTargetReached',
+    'notifications_bestiaryPointsTarget',
     'notifications_enhancementTarget',
     'notifications_philosophersStone',
     'notifications_trialStarting',
