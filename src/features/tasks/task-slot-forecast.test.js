@@ -41,16 +41,26 @@ describe('counting what is on the board', () => {
         expect(countActiveTasks([boardTask, boardTask, boardTask])).toBe(3);
     });
 
-    test('a completed task still occupies a slot until claimed or discarded', () => {
+    test('new and completed tasks occupy slots until claimed or discarded', () => {
         expect(
             countActiveTasks([
                 boardTask,
+                {
+                    id: 42,
+                    category: '/quest_category/random_task',
+                    type: '/quest_type/action',
+                    status: '/quest_status/new',
+                    actionHrid: '/actions/milking/cow',
+                    currentCount: 0,
+                    goalCount: 10,
+                    updatedAt: '2026-08-05T12:00:00.000Z',
+                },
                 { category: '/quest_category/random_task', status: '/quest_status/completed' },
                 { category: '/quest_category/random_task', status: '/quest_status/claimed' },
                 { category: '/quest_category/random_task', status: '/quest_status/discarded' },
                 { category: '/quest_category/daily', status: '/quest_status/in_progress' },
             ])
-        ).toBe(2);
+        ).toBe(3);
     });
 
     test('claimed tasks and other quest categories do not occupy random-task slots', () => {

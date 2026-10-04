@@ -42,9 +42,9 @@ const HOUR_MS = 3_600_000;
  * How many of the character's random tasks are occupying board slots.
  *
  * Counted rather than taken from a field because there is no field: the board's
- * occupancy is `unreadTaskCount` plus however many in-progress or completed
- * random tasks the quest list holds. Completed tasks stay on the board until
- * claimed or discarded.
+ * occupancy is `unreadTaskCount` plus however many new, in-progress or
+ * completed random tasks the quest list holds. Completed tasks stay on the
+ * board until claimed or discarded.
  *
  * @param {Array<Object>|null|undefined} characterQuests - `dataManager.characterQuests`
  * @returns {number} Tasks on the board
@@ -54,7 +54,9 @@ export function countActiveTasks(characterQuests) {
     return characterQuests.filter(
         (quest) =>
             quest?.category === '/quest_category/random_task' &&
-            (quest?.status === '/quest_status/in_progress' || quest?.status === '/quest_status/completed')
+            (quest?.status === '/quest_status/new' ||
+                quest?.status === '/quest_status/in_progress' ||
+                quest?.status === '/quest_status/completed')
     ).length;
 }
 

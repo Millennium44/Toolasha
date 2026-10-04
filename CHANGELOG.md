@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task-slot warnings count newly issued tasks
+
+- Task-slot forecasts and alerts now count new random tasks already on the board, so the fill warning matches the game's occupied slots.
+
 ### Budget calculations count affordable actions
 
 - Production budgets now stop at unpriced or unbuyable material shortages, while a zero-gold budget can use materials already held. A zero-action result no longer reserves materials.

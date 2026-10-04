@@ -152,6 +152,24 @@ describe('task slot alerts', () => {
         expect(game.notified[0].message).toContain('All 6 task slots are full');
     });
 
+    test('a new random task occupies its board slot', () => {
+        game.notified = [];
+        game.characterQuests.push({
+            id: 42,
+            category: '/quest_category/random_task',
+            type: '/quest_type/action',
+            status: '/quest_status/new',
+            actionHrid: '/actions/milking/cow',
+            currentCount: 0,
+            goalCount: 10,
+            updatedAt: new Date(NOW).toISOString(),
+        });
+        game.wsHandlers.quests_updated({});
+
+        expect(game.notified).toHaveLength(1);
+        expect(game.notified[0].message).toContain('All 6 task slots are full');
+    });
+
     test('a deadline still outside the lead window says nothing until it comes inside', async () => {
         taskSlotAlerts.disable();
         game.notified = [];
