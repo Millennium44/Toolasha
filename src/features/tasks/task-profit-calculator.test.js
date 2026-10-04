@@ -155,28 +155,26 @@ describe('task shop token valuation', () => {
 });
 
 describe("Purple's Gift accrual", () => {
-    test('credits the gift once per task, not once per token', () => {
-        const giftPerTask = 500000 / 50;
+    test('credits one Task Point per task token rewarded', () => {
+        const giftPerTaskPoint = 500000 / 50;
         const oneToken = calculateTaskRewardValue(0, 1);
         const fiveTokens = calculateTaskRewardValue(0, 5);
 
-        expect(oneToken.purpleGift).toBe(giftPerTask);
-        expect(fiveTokens.purpleGift).toBe(giftPerTask);
-        // Tokens still scale — only the gift is flat
+        expect(oneToken.purpleGift).toBe(giftPerTaskPoint);
+        expect(fiveTokens.purpleGift).toBe(5 * giftPerTaskPoint);
+        expect(calculateTaskRewardValue(0, 0).purpleGift).toBe(0);
         expect(fiveTokens.taskTokens).toBe(5 * oneToken.taskTokens);
     });
 
-    test('prorates the gift across a whole board of tasks', () => {
-        const board = calculateTaskRewardValue(0, 12, 4);
-        expect(board.purpleGift).toBe(4 * (500000 / 50));
+    test('credits gifts from the total task tokens on a board', () => {
+        const board = calculateTaskRewardValue(0, 12);
+        expect(board.purpleGift).toBe(12 * (500000 / 50));
     });
 
     test('the valuation hands the two rates back apart, so neither can stand in for the other', () => {
         const valuation = calculateTaskTokenValue();
         expect(valuation.tokenValue).toBe(2000);
-        expect(valuation.giftPerTask).toBe(500000 / 50);
-        // There is no pre-added per-token figure to multiply a gift by
-        expect(valuation.totalPerToken).toBeUndefined();
+        expect(valuation.giftPerTaskPoint).toBe(500000 / 50);
     });
 
     test('a gift with unpriced contents is flagged partial, not silently priced clean', () => {
@@ -184,7 +182,7 @@ describe("Purple's Gift accrual", () => {
 
         const valuation = calculateTaskTokenValue();
 
-        expect(valuation.giftPerTask).toBe(400000 / 50);
+        expect(valuation.giftPerTaskPoint).toBe(400000 / 50);
         expect(valuation.giftIsPartial).toBe(true);
         expect(valuation.giftPartialDrops).toBe(2);
         // A partial gift must not also flip the unrelated shop-line flag
@@ -197,7 +195,7 @@ describe("Purple's Gift accrual", () => {
         const valuation = calculateTaskTokenValue();
 
         // Nothing to price it with, so it contributes nothing to the sum...
-        expect(valuation.giftPerTask).toBe(0);
+        expect(valuation.giftPerTaskPoint).toBe(0);
         // ...but the sum is marked a floor rather than presented as exact
         expect(valuation.giftIsPartial).toBe(true);
         expect(valuation.giftPartialDrops).toBeGreaterThan(0);
@@ -210,22 +208,22 @@ describe("Purple's Gift accrual", () => {
     });
 });
 
-describe('pricing coins, tokens and tasks together', () => {
-    test('tokens scale with the token count and the gift with the task count', () => {
+describe('pricing coins, tokens and task points together', () => {
+    test('tokens and Task Points scale with the tokens rewarded', () => {
         const valuation = calculateTaskTokenValue();
 
-        // 3 tasks, 8 tokens between them, 5,000 coins
-        expect(valueTaskRewards(valuation, { coins: 5000, tokens: 8, taskCount: 3 })).toBe(5000 + 8 * 2000 + 3 * 10000);
+        // 8 task tokens each grant one Task Point, regardless of task grouping
+        expect(valueTaskRewards(valuation, { coins: 5000, tokens: 8 })).toBe(5000 + 8 * 2000 + 8 * 10000);
     });
 
-    test('one task paying many tokens is credited exactly one gift', () => {
+    test('a task paying many tokens is credited one Task Point per token', () => {
         const valuation = calculateTaskTokenValue();
-        expect(valueTaskRewards(valuation, { tokens: 10, taskCount: 1 })).toBe(10 * 2000 + 10000);
+        expect(valueTaskRewards(valuation, { tokens: 10 })).toBe(10 * 2000 + 10 * 10000);
     });
 
     test('an unpriced token gives null, never a zero', () => {
         game.initClientData = {};
-        expect(valueTaskRewards(calculateTaskTokenValue(), { tokens: 10, taskCount: 1 })).toBe(null);
+        expect(valueTaskRewards(calculateTaskTokenValue(), { tokens: 10 })).toBe(null);
         expect(valueTaskRewards(null, { tokens: 10 })).toBe(null);
     });
 
@@ -301,6 +299,36 @@ describe('task profit scales to what is left to do', () => {
 
         const done = await calculateTaskProfit(milkingTask(100, 100));
         expect(done.action.totalValue).toBe(0);
+    });
+
+    test('an unpriced task reward cannot produce an exact total profit', async () => {
+        actions.gathering = gatheringAction();
+        market.expectedValues['/items/purples_gift'] = 0;
+        game.initClientData.taskShopItemDetailMap = {};
+
+        const result = await calculateTaskProfit({ ...milkingTask(100, 0), taskTokenReward: 5, coinReward: 1000 });
+
+        expect(result.rewards.error).toBe('Task Shop data unavailable');
+        expect(result.hasMissingPrices).toBe(true);
+        expect(result.totalProfit).toBe(null);
+    });
+
+    test('a partially priced task reward marks the task total as a floor', async () => {
+        actions.gathering = gatheringAction();
+        market.expectedValues['/items/large_treasure_chest'] = {
+            expectedValue: 60000,
+            missingCount: 2,
+            isPartial: true,
+        };
+        market.expectedValues['/items/purples_gift'] = 500000;
+
+        const result = await calculateTaskProfit({ ...milkingTask(100, 0), taskTokenReward: 2 });
+
+        expect(result.hasMissingPrices).toBe(false);
+        expect(result.isPartial).toBe(true);
+        expect(result.rewards.tokenRewardIsPartial).toBe(true);
+        expect(result.rewards.giftRewardIsPartial).toBe(false);
+        expect(result.totalProfit).toBeGreaterThan(0);
     });
 });
 

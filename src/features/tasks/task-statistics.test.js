@@ -5,8 +5,8 @@
  *
  * Two figures in here were wrong in ways that read as confident:
  *
- * - The seven-day reward value multiplied a per-TASK prorated Purple's Gift by
- *   a TOKEN count, so a week of multi-token tasks was credited a gift per token.
+ * - The seven-day reward value used task claim counts as Task Points, even
+ *   though the game awards one Task Point per task token rewarded.
  * - A task whose action could not be priced arrived as `totalValue: null` (from
  *   gathering) or `totalProfit: null` (from production), and a `||` chain turned
  *   both into 0 — drawn green as a break-even and summed into the totals, while
@@ -20,7 +20,7 @@ const game = vi.hoisted(() => ({
     characterInfo: null,
     forecastInput: null,
     forecastResult: {},
-    valuation: { tokenValue: 2000, giftPerTask: 10000, error: null },
+    valuation: { tokenValue: 2000, giftPerTaskPoint: 10000, error: null },
     /** Per action hrid: what calculateTaskProfit hands back as `action` */
     actionProfits: {},
     completions: null,
@@ -71,27 +71,27 @@ vi.mock('../../core/data-manager.js', () => ({
 
 // Mocked outright rather than through importOriginal: the real module pulls in
 // the market and enhancement stack, which is not what this panel is being
-// tested for. `valueTaskRewards` is the one piece kept real — it is the
-// arithmetic under test.
+// tested for. The producer's Task Point arithmetic is exercised directly in
+// task-profit-calculator.test.js; this factory keeps the panel's wiring local.
 vi.mock('./task-profit-calculator.js', () => ({
-    // Real enough to test the "≥" wiring this file is about, without pulling in
-    // the real module's own rounding/pluralisation — that belongs to its test file.
+    // Exercise the "≥" wiring without duplicating the real module's own
+    // rounding/pluralisation — that belongs to its test file.
     formatTokenFigure: (value, tokenData) =>
         tokenData?.isPartial ? `≥ ${Math.round(value)}` : String(Math.round(value)),
-    valueTaskRewards: (tokenData, { coins = 0, tokens = 0, taskCount = 0 } = {}) => {
+    valueTaskRewards: (tokenData, { coins = 0, tokens = 0 } = {}) => {
         if (!tokenData || tokenData.error || !Number.isFinite(tokenData.tokenValue)) return null;
-        const giftPerTask = Number.isFinite(tokenData.giftPerTask) ? tokenData.giftPerTask : 0;
-        return coins + tokens * tokenData.tokenValue + taskCount * giftPerTask;
+        const giftPerTaskPoint = Number.isFinite(tokenData.giftPerTaskPoint) ? tokenData.giftPerTaskPoint : 0;
+        return coins + tokens * tokenData.tokenValue + tokens * giftPerTaskPoint;
     },
     calculateTaskTokenValue: () => game.valuation,
-    calculateTaskRewardValue: (coins, tokens, taskCount) =>
+    calculateTaskRewardValue: (coins, tokens) =>
         game.valuation.error
             ? { coins, taskTokens: 0, purpleGift: 0, total: coins, breakdown: {}, error: game.valuation.error }
             : {
                   coins,
                   taskTokens: tokens * game.valuation.tokenValue,
-                  purpleGift: taskCount * game.valuation.giftPerTask,
-                  total: coins + tokens * game.valuation.tokenValue + taskCount * game.valuation.giftPerTask,
+                  purpleGift: tokens * game.valuation.giftPerTaskPoint,
+                  total: coins + tokens * game.valuation.tokenValue + tokens * game.valuation.giftPerTaskPoint,
                   breakdown: {},
                   error: null,
               },
@@ -160,7 +160,7 @@ beforeEach(() => {
     game.characterInfo = null;
     game.forecastInput = null;
     game.forecastResult = {};
-    game.valuation = { tokenValue: 2000, giftPerTask: 10000, error: null };
+    game.valuation = { tokenValue: 2000, giftPerTaskPoint: 10000, error: null };
     game.actionProfits = {};
     game.completions = null;
     game.rerollHistory = [];
@@ -217,7 +217,7 @@ describe('task slot occupancy', () => {
 });
 
 describe("Purple's Gift across a week of claims", () => {
-    test('the gift is prorated per claimed task, not per token claimed', async () => {
+    test('the gift is prorated per rewarded token, independent of claim grouping', async () => {
         // 10 tasks claimed, paying 40 tokens and 500,000 coins between them
         game.completions = {
             rates: {
@@ -229,12 +229,12 @@ describe("Purple's Gift across a week of claims", () => {
 
         const result = await taskStatistics.calculateCompletions(0);
 
-        // 500,000 + 40 × 2,000 + 10 × 10,000 — not 40 × (2,000 + 10,000)
-        expect(result.rewardValue).toBe(500000 + 40 * 2000 + 10 * 10000);
+        // 500,000 + 40 × 2,000 + 40 Task Points × 10,000
+        expect(result.rewardValue).toBe(500000 + 40 * 2000 + 40 * 10000);
     });
 
     test('an unpriceable token leaves the reward value null rather than zero', async () => {
-        game.valuation = { tokenValue: null, giftPerTask: null, error: 'Market data not loaded' };
+        game.valuation = { tokenValue: null, giftPerTaskPoint: null, error: 'Market data not loaded' };
         game.completions = {
             rates: { week: { completions: 3, tokens: 6, coins: 1000, spanMs: 1000 }, session: null },
             recent: [],
@@ -249,7 +249,7 @@ describe("Purple's Gift across a week of claims", () => {
 
 describe('an action nobody can price', () => {
     test('a token valuation failure cannot turn a board total into its coins alone', async () => {
-        game.valuation = { tokenValue: null, giftPerTask: null, error: 'Market data not loaded' };
+        game.valuation = { tokenValue: null, giftPerTaskPoint: null, error: 'Market data not loaded' };
         game.quests = [task({ id: 1, coins: 5000, tokens: 4, actionHrid: '/actions/foraging/egg' })];
         game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
 
@@ -345,7 +345,7 @@ describe('an action nobody can price', () => {
     });
 
     test('a partially priced task token makes the combined total a floor too', async () => {
-        game.valuation = { tokenValue: 2000, giftPerTask: 10000, isPartial: true, partialDrops: 1, error: null };
+        game.valuation = { tokenValue: 2000, giftPerTaskPoint: 10000, isPartial: true, partialDrops: 1, error: null };
         game.quests = [task({ id: 1, coins: 1000, tokens: 1, actionHrid: '/actions/foraging/egg' })];
         game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
 
@@ -361,7 +361,7 @@ describe('an action nobody can price', () => {
     test('a partial Task Shop line does not float a board with no tokens on it', async () => {
         // The shop's best line is a partial chest, but this board claimed no
         // tokens at all — the partial line never enters the combined total
-        game.valuation = { tokenValue: 2000, giftPerTask: 10000, isPartial: true, partialDrops: 1, error: null };
+        game.valuation = { tokenValue: 2000, giftPerTaskPoint: 10000, isPartial: true, partialDrops: 1, error: null };
         game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
         game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
 
@@ -373,9 +373,15 @@ describe('an action nobody can price', () => {
         expect(section.textContent).not.toContain('unpriced');
     });
 
-    test("an unpriced Purple's Gift floors the combined total even with no tokens on the board", async () => {
-        game.valuation = { tokenValue: 2000, giftPerTask: 0, giftIsPartial: true, giftPartialDrops: 1, error: null };
-        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+    test("an unpriced Purple's Gift floors the combined total when Task Points are earned", async () => {
+        game.valuation = {
+            tokenValue: 2000,
+            giftPerTaskPoint: 0,
+            giftIsPartial: true,
+            giftPartialDrops: 1,
+            error: null,
+        };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 1, actionHrid: '/actions/foraging/egg' })];
         game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
 
         const rewards = await taskStatistics.calculateRewardsSummary();
@@ -386,12 +392,36 @@ describe('an action nobody can price', () => {
         expect(section.textContent).toContain('Combined Total≥');
         expect(section.textContent).toContain('1 unpriced');
     });
+
+    test('an unpriced Gift cannot make a board with no rewarded tokens partial', async () => {
+        game.valuation = {
+            tokenValue: 2000,
+            giftPerTaskPoint: 0,
+            giftIsPartial: true,
+            giftPartialDrops: 1,
+            error: null,
+        };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+        game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        const section = taskStatistics.createActionProfitSection(rewards);
+
+        expect(section.textContent).not.toContain('Combined Total≥');
+        expect(section.textContent).not.toContain('1 unpriced');
+    });
 });
 
 describe('the Expected Rewards section', () => {
-    test("an unpriced Purple's Gift is marked a floor on its own row", async () => {
-        game.valuation = { tokenValue: 2000, giftPerTask: 0, giftIsPartial: true, giftPartialDrops: 1, error: null };
-        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+    test("an unpriced Purple's Gift is marked a floor when tokens earn Task Points", async () => {
+        game.valuation = {
+            tokenValue: 2000,
+            giftPerTaskPoint: 0,
+            giftIsPartial: true,
+            giftPartialDrops: 1,
+            error: null,
+        };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 1, actionHrid: '/actions/foraging/egg' })];
 
         const rewards = await taskStatistics.calculateRewardsSummary();
         const section = taskStatistics.createRewardsSection(rewards, '#fff');
@@ -409,7 +439,7 @@ describe('the Expected Rewards section', () => {
     });
 
     test('a partial shop line does not float the tokens-received row when none were received', async () => {
-        game.valuation = { tokenValue: 2000, giftPerTask: 10000, isPartial: true, partialDrops: 1, error: null };
+        game.valuation = { tokenValue: 2000, giftPerTaskPoint: 10000, isPartial: true, partialDrops: 1, error: null };
         game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
 
         const rewards = await taskStatistics.calculateRewardsSummary();
@@ -562,7 +592,7 @@ describe('the realized-payout-by-type card', () => {
     });
 
     test('an unpriceable token drops the whole card rather than reporting zeroes', async () => {
-        game.valuation = { tokenValue: null, giftPerTask: null, error: 'Market data not loaded' };
+        game.valuation = { tokenValue: null, giftPerTaskPoint: null, error: 'Market data not loaded' };
         game.claimLog = claims({ category: 'combat', n: 6, coins: 1000 });
 
         const stats = await taskStatistics.calculateAllStatistics();

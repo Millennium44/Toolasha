@@ -19,9 +19,8 @@ import { getItemPrice } from '../../utils/market-data.js';
 
 const TASK_TOKEN_HRID = '/items/task_token';
 
-// Purple's Gift drops once per 50 completed tasks — the basis is tasks, not
-// tokens, so the prorated value is credited per task rather than per token.
-const TASKS_PER_PURPLES_GIFT = 50;
+// Every Task Token rewarded grants a Task Point; 50 points claim one Gift.
+const TASK_POINTS_PER_PURPLES_GIFT = 50;
 
 /**
  * Value one Task Shop line is worth per task token.
@@ -139,12 +138,11 @@ export function findBestTaskShopValue() {
  * Uses the best coins-per-token line the Task Shop actually offers.
  *
  * The two halves are handed back separately and never pre-added: `tokenValue`
- * is per TOKEN and `giftPerTask` is per TASK, and a single combined
- * "per token" figure invited callers to multiply the gift by a token count.
- * They did — a five-token task was credited five gifts. {@link valueTaskRewards}
- * is the way to put them together.
+ * is the market value per TOKEN and `giftPerTaskPoint` is the value of one
+ * Task Point, earned per task token rewarded. {@link valueTaskRewards} combines
+ * them without confusing earned points with a task count.
  *
- * @returns {{tokenValue: number|null, giftPerTask: number|null, bestShopItemHrid?: string,
+ * @returns {{tokenValue: number|null, giftPerTaskPoint: number|null, bestShopItemHrid?: string,
  *   bestShopTokenCost?: number, partialDrops?: number, isPartial?: boolean,
  *   giftPartialDrops?: number, giftIsPartial?: boolean, error: string|null}} Token value
  *   breakdown or error state
@@ -154,7 +152,7 @@ export function calculateTaskTokenValue() {
     if (!expectedValueCalculator.isInitialized) {
         return {
             tokenValue: null,
-            giftPerTask: null,
+            giftPerTaskPoint: null,
             error: 'Market data not loaded',
         };
     }
@@ -163,14 +161,14 @@ export function calculateTaskTokenValue() {
     if (!best) {
         return {
             tokenValue: null,
-            giftPerTask: null,
+            giftPerTaskPoint: null,
             error: 'Task Shop data unavailable',
         };
     }
 
     const taskTokenValue = best.perToken;
 
-    // Calculate Purple's Gift prorated value (one gift per 50 tasks)
+    // One Task Point is earned for each task token rewarded; 50 points claim a Gift.
     const giftResult = expectedValueCalculator.calculateExpectedValue('/items/purples_gift');
     if (!giftResult) {
         console.warn('[TaskProfit] Expected value returned null for /items/purples_gift');
@@ -181,11 +179,11 @@ export function calculateTaskTokenValue() {
     const giftIsPartial = giftResult ? Boolean(giftResult.isPartial) : true;
     const giftPartialDrops = giftResult ? giftResult.missingCount || 0 : 1;
     const giftValue = giftResult?.expectedValue ?? 0;
-    const giftPerTask = giftValue / TASKS_PER_PURPLES_GIFT;
+    const giftPerTaskPoint = giftValue / TASK_POINTS_PER_PURPLES_GIFT;
 
     return {
         tokenValue: taskTokenValue,
-        giftPerTask: giftPerTask,
+        giftPerTaskPoint,
         bestShopItemHrid: best.itemHrid,
         bestShopTokenCost: best.tokenCost,
         // The best shop line was an openable whose own contents are not fully priceable, so
@@ -201,22 +199,19 @@ export function calculateTaskTokenValue() {
 }
 
 /**
- * Coins, tokens and tasks priced together.
+ * Coins, tokens and Task Points priced together.
  *
- * Tokens scale with the token count and Purple's Gift scales with the task
- * count — the game hands one out every 50 tasks however many tokens each paid.
- * Every caller that has both counts goes through here so the two multipliers
- * cannot be crossed.
+ * Every task token rewarded grants a Task Point, and 50 points claim one Gift.
  *
- * @param {{tokenValue: number|null, giftPerTask: number|null, error: string|null}|null} tokenData -
+ * @param {{tokenValue: number|null, giftPerTaskPoint: number|null, error: string|null}|null} tokenData -
  *   From {@link calculateTaskTokenValue}
- * @param {{coins?: number, tokens?: number, taskCount?: number}} counts - What was earned
+ * @param {{coins?: number, tokens?: number}} counts - Coins and task tokens rewarded
  * @returns {number|null} Total coin value, or null when a token cannot be priced
  */
-export function valueTaskRewards(tokenData, { coins = 0, tokens = 0, taskCount = 0 } = {}) {
+export function valueTaskRewards(tokenData, { coins = 0, tokens = 0 } = {}) {
     if (!tokenData || tokenData.error || !Number.isFinite(tokenData.tokenValue)) return null;
-    const giftPerTask = Number.isFinite(tokenData.giftPerTask) ? tokenData.giftPerTask : 0;
-    return coins + tokens * tokenData.tokenValue + taskCount * giftPerTask;
+    const giftPerTaskPoint = Number.isFinite(tokenData.giftPerTaskPoint) ? tokenData.giftPerTaskPoint : 0;
+    return coins + tokens * tokenData.tokenValue + tokens * giftPerTaskPoint;
 }
 
 /**
@@ -246,16 +241,14 @@ export function formatTokenFigure(value, tokenData, format = (n) => String(Math.
 /**
  * Calculate task reward value (coins + tokens + Purple's Gift)
  *
- * Tokens scale with the token payout; Purple's Gift does not — the game hands
- * one out every 50 tasks regardless of how many tokens each task paid, so a
- * multi-token task must not be credited a multiple of the gift.
+ * Each task token rewarded adds a Task Point toward Purple's Gift. Therefore
+ * both the token's market value and the prorated Gift value scale with tokens.
  *
  * @param {number} coinReward - Coin reward amount
  * @param {number} taskTokenReward - Task token reward amount
- * @param {number} [taskCount=1] - Number of tasks this reward covers
  * @returns {Object} Reward value breakdown
  */
-export function calculateTaskRewardValue(coinReward, taskTokenReward, taskCount = 1) {
+export function calculateTaskRewardValue(coinReward, taskTokenReward) {
     const tokenData = calculateTaskTokenValue();
 
     // Handle error state (market data not loaded)
@@ -268,26 +261,31 @@ export function calculateTaskRewardValue(coinReward, taskTokenReward, taskCount 
             breakdown: {
                 tokenValue: 0,
                 tokensReceived: taskTokenReward,
-                giftPerTask: 0,
-                taskCount,
+                giftPerTaskPoint: 0,
             },
             error: tokenData.error,
         };
     }
 
     const taskTokenValue = taskTokenReward * tokenData.tokenValue;
-    const purpleGiftValue = taskCount * tokenData.giftPerTask;
+    const purpleGiftValue = taskTokenReward * tokenData.giftPerTaskPoint;
+    const tokenRewardIsPartial = taskTokenReward > 0 && Boolean(tokenData.isPartial);
+    const giftRewardIsPartial = taskTokenReward > 0 && Boolean(tokenData.giftIsPartial);
 
     return {
         coins: coinReward,
         taskTokens: taskTokenValue,
         purpleGift: purpleGiftValue,
         total: coinReward + taskTokenValue + purpleGiftValue,
+        isPartial: tokenRewardIsPartial || giftRewardIsPartial,
+        tokenRewardIsPartial,
+        giftRewardIsPartial,
+        tokenPartialDrops: tokenRewardIsPartial ? tokenData.partialDrops || 0 : 0,
+        giftPartialDrops: giftRewardIsPartial ? tokenData.giftPartialDrops || 0 : 0,
         breakdown: {
             tokenValue: tokenData.tokenValue,
             tokensReceived: taskTokenReward,
-            giftPerTask: tokenData.giftPerTask,
-            taskCount,
+            giftPerTaskPoint: tokenData.giftPerTaskPoint,
         },
         error: null,
     };
@@ -652,7 +650,7 @@ export async function calculateTaskProfit(taskData) {
     const isProduction = taskType === 'production';
     const actionValue = isProduction ? actionProfit.totalProfit : actionProfit.totalValue;
     const fullActionValue = isProduction ? actionProfit.fullTotalProfit : actionProfit.fullTotalValue;
-    const hasMissingPrices = actionProfit.hasMissingPrices;
+    const hasMissingPrices = actionProfit.hasMissingPrices || Boolean(rewardValue.error);
     const totalProfit = hasMissingPrices ? null : rewardValue.total + actionValue;
     const fullTotalProfit = hasMissingPrices ? null : rewardValue.total + fullActionValue;
 
@@ -677,6 +675,7 @@ export async function calculateTaskProfit(taskData) {
         opportunityCost,
         bestAlternativePerHour,
         hasMissingPrices,
+        isPartial: Boolean(rewardValue.isPartial),
         rewards: rewardValue,
         action: actionProfit,
         taskInfo: taskInfo,

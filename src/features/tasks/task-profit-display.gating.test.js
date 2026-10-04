@@ -28,6 +28,7 @@ vi.mock('./task-profit-calculator.js', () => ({
     // between the profit line and the combat estimate UI.
     calculateTaskProfit: vi.fn(async () => null),
     calculateTaskRewardValue: vi.fn(() => ({})),
+    formatTokenFigure: (value) => String(value),
 }));
 
 describe('entrypoint.js registry gate for taskProfitDisplay', () => {

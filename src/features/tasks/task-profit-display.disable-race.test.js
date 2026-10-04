@@ -20,6 +20,7 @@ import { calculateTaskProfit } from './task-profit-calculator.js';
 vi.mock('./task-profit-calculator.js', () => ({
     calculateTaskProfit: vi.fn(),
     calculateTaskRewardValue: vi.fn(() => ({})),
+    formatTokenFigure: (value) => String(value),
 }));
 
 /**

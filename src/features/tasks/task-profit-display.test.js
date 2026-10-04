@@ -44,7 +44,13 @@ const createProfitData = ({
 });
 
 /** Build a task card carrying a rendered rating, as the display leaves it */
-const createRatedCard = ({ value, mode = 'gold', completionSeconds = 3600, ratingHours = null } = {}) => {
+const createRatedCard = ({
+    value,
+    mode = 'gold',
+    completionSeconds = 3600,
+    ratingHours = null,
+    partial = false,
+} = {}) => {
     const card = document.createElement('div');
     const container = document.createElement('div');
     if (completionSeconds !== null) {
@@ -55,6 +61,7 @@ const createRatedCard = ({ value, mode = 'gold', completionSeconds = 3600, ratin
         rating.className = 'mwi-task-profit-rating';
         rating.dataset.ratingValue = `${value}`;
         rating.dataset.ratingMode = mode;
+        if (partial) rating.dataset.ratingPartial = 'true';
         if (ratingHours !== null) rating.dataset.ratingHours = `${ratingHours}`;
         container.appendChild(rating);
     }
@@ -112,7 +119,7 @@ describe('calculateTaskEfficiencyRating', () => {
         });
 
         const result = calculateTaskEfficiencyRating(profitData, 'gold');
-        expect(result).toEqual({ value: 600, hours: 2, unitLabel: 'gold/hr', error: null });
+        expect(result).toEqual({ value: 600, hours: 2, unitLabel: 'gold/hr', isPartial: false, error: null });
     });
 
     test('returns warning when gold rewards are unavailable', () => {
@@ -158,7 +165,7 @@ describe('calculateTaskEfficiencyRating over a partly-done task', () => {
         profitData.fullTotalProfit = 1200; // what the whole task is worth
 
         const result = calculateTaskEfficiencyRating(profitData, 'gold');
-        expect(result).toEqual({ value: 600, hours: 2, unitLabel: 'gold/hr', error: null });
+        expect(result).toEqual({ value: 600, hours: 2, unitLabel: 'gold/hr', isPartial: false, error: null });
     });
 
     test('falls back to the remaining figure when no whole-task figure exists', () => {
@@ -170,6 +177,36 @@ describe('calculateTaskEfficiencyRating over a partly-done task', () => {
         });
 
         expect(calculateTaskEfficiencyRating(profitData, 'gold').value).toBe(600);
+    });
+});
+
+describe('partial task reward ratings', () => {
+    test('marks a gold rating derived from incomplete reward prices as a floor', () => {
+        const profitData = createProfitData({
+            actionsPerHour: 60,
+            quantity: 60,
+            rewardTotal: 1200,
+            totalProfit: 1200,
+        });
+        profitData.isPartial = true;
+        profitData.fullTotalProfit = 1200;
+
+        expect(calculateTaskEfficiencyRating(profitData, 'gold')).toEqual({
+            value: 1200,
+            hours: 1,
+            unitLabel: 'gold/hr',
+            isPartial: true,
+            error: null,
+        });
+    });
+
+    test('a lower-bound rating does not enter the auto-reroll board comparison', () => {
+        const cards = [createRatedCard({ value: 100 }), createRatedCard({ value: 900, partial: true })];
+
+        const board = readVisibleTaskRatings(cards);
+
+        expect(board.entries.has(cards[0])).toBe(true);
+        expect(board.entries.has(cards[1])).toBe(false);
     });
 });
 
@@ -267,7 +304,7 @@ describe('buildBreakdownHTML drink lines', () => {
                 coins: 0,
                 taskTokens: 0,
                 purpleGift: 0,
-                breakdown: { tokensReceived: 0, tokenValue: 0, giftPerTask: 0 },
+                breakdown: { tokensReceived: 0, tokenValue: 0, giftPerTaskPoint: 0 },
             },
             action: {
                 totalProfit: 0,
@@ -290,5 +327,48 @@ describe('buildBreakdownHTML drink lines', () => {
         );
         expect(costs).toHaveLength(2);
         expect(costs[0] + costs[1]).toBe(10000);
+    });
+});
+
+describe('task reward completeness in the profit breakdown', () => {
+    test('an unpriced task reward keeps the total unknown', async () => {
+        const { default: display } = await import('./task-profit-display.js');
+        const html = display.buildBreakdownHTML({
+            type: 'production',
+            hasMissingPrices: true,
+            rewards: { error: 'Task Shop data unavailable', coins: 100, taskTokens: 0, purpleGift: 0, breakdown: {} },
+            action: { totalProfit: 500, breakdown: { quantity: 1, materialCost: 0, perAction: 500 }, details: null },
+            totalProfit: null,
+        });
+
+        expect(html).toContain('Task Tokens: Unavailable');
+        expect(html).toContain('Total Profit: -- ⚠');
+        expect(html).not.toContain('Total Profit: 600');
+    });
+
+    test('a partial task reward marks the combined total as a floor', async () => {
+        const { default: display } = await import('./task-profit-display.js');
+        const html = display.buildBreakdownHTML({
+            type: 'production',
+            hasMissingPrices: false,
+            isPartial: true,
+            rewards: {
+                error: null,
+                coins: 100,
+                taskTokens: 200,
+                purpleGift: 50,
+                tokenRewardIsPartial: true,
+                tokenPartialDrops: 1,
+                giftRewardIsPartial: false,
+                giftPartialDrops: 0,
+                breakdown: { tokensReceived: 1, tokenValue: 200, giftPerTaskPoint: 50 },
+            },
+            action: { totalProfit: 500, breakdown: { quantity: 1, materialCost: 0, perAction: 500 }, details: null },
+            totalProfit: 850,
+        });
+
+        expect(html).toContain('Task Tokens: ≥');
+        expect(html).toContain('Total Profit: ≥');
+        expect(html).toContain('per Task Point');
     });
 });

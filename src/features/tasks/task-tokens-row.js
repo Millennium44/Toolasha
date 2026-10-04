@@ -215,9 +215,14 @@ registerRow({
 
         const valuation = calculateTaskTokenValue();
         const perToken = valuation?.tokenValue;
-        // The gift is one per 50 tasks however many tokens each pays, so the
-        // board's task count prorates it — not its token count
-        const worth = valueTaskRewards(valuation, { tokens, taskCount: tasks });
+        // Each task token rewarded grants one Task Point toward Purple's Gift.
+        const worth = valueTaskRewards(valuation, { tokens });
+        const partialReward = {
+            isPartial: tokens > 0 && Boolean(valuation?.isPartial || valuation?.giftIsPartial),
+            partialDrops:
+                (tokens > 0 && valuation?.isPartial ? valuation.partialDrops || 0 : 0) +
+                (tokens > 0 && valuation?.giftIsPartial ? valuation.giftPartialDrops || 0 : 0),
+        };
 
         const rates = measuredRates();
         const week = rates?.week;
@@ -235,7 +240,7 @@ registerRow({
                     text:
                         worth === null
                             ? '\u2014'
-                            : formatTokenFigure(worth, valuation, (n) => formatLargeNumber(Math.round(n)), true),
+                            : formatTokenFigure(worth, partialReward, (n) => formatLargeNumber(Math.round(n)), true),
                     color: worth === null ? ROW_COLORS.dim : ROW_COLORS.gold,
                     push: true,
                 },
@@ -257,8 +262,8 @@ registerRow({
             `${formatWithSeparator(tokens)} task tokens across ${tasks} task${tasks === 1 ? '' : 's'} in progress.\n` +
             (Number.isFinite(perToken)
                 ? `A token is worth about ${Math.round(perToken).toLocaleString()} coins, ` +
-                  'from the best line in the Task Shop. The figure above adds a prorated ' +
-                  'Purple’s Gift, one per 50 tasks, for each task on the board.'
+                  'from the best line in the Task Shop. Each task token rewarded grants a Task Point, ' +
+                  'and 50 Task Points allow one Purple’s Gift; the figure above includes the prorated Gift value.'
                 : `Token value unavailable: ${valuation?.error || 'the Task Shop has not loaded'}.`) +
             '\nThat figure is what the board will pay when it is finished, not a rate.' +
             rateTooltip(rates) +

@@ -38,8 +38,8 @@ const roundedKMB = (value) => formatKMB(Math.round(value));
  * it — the best line is a property of the shop, not of the board — so its own
  * `isPartial` is only relevant to a total that actually includes token value. A
  * board with zero tokens received must not show "≥" over a partial line it never
- * multiplied in. Purple's Gift has no such gate: it accrues per claimed task, so
- * it is relevant whenever the total covers at least one task.
+ * multiplied in. Purple's Gift also needs at least one task token, because each
+ * token rewarded grants a Task Point toward the Gift.
  *
  * @param {Object|null} tokenValue - From {@link calculateTaskTokenValue}
  * @param {number} tokensReceived - Task tokens actually counted into this total
@@ -47,7 +47,7 @@ const roundedKMB = (value) => formatKMB(Math.round(value));
  */
 function rewardTotalPartial(tokenValue, tokensReceived) {
     const tokenPartial = tokensReceived > 0 && Boolean(tokenValue?.isPartial);
-    const giftPartial = Boolean(tokenValue?.giftIsPartial);
+    const giftPartial = tokensReceived > 0 && Boolean(tokenValue?.giftIsPartial);
     const partialDrops =
         (tokenPartial ? tokenValue.partialDrops || 0 : 0) + (giftPartial ? tokenValue.giftPartialDrops || 0 : 0);
     return { isPartial: tokenPartial || giftPartial, partialDrops };
@@ -241,12 +241,10 @@ class TaskStatistics {
             const week = rates.week;
 
             const tokenValue = calculateTaskTokenValue();
-            // Purple's Gift accrues per claimed task, not per token, so the
-            // window's completion count is what prorates it
+            // Each rewarded task token contributes one Task Point toward the Gift.
             const rewardValue = valueTaskRewards(tokenValue, {
                 coins: week.coins,
                 tokens: week.tokens,
-                taskCount: week.completions,
             });
 
             // Only the rerolls paid on tasks retired inside the same window, so
@@ -449,10 +447,8 @@ class TaskStatistics {
             });
         }
 
-        // Token valuation — Purple's Gift accrues per task, so the whole board's
-        // task count is what prorates it, not the token total
         const tokenValue = calculateTaskTokenValue();
-        const rewardValue = calculateTaskRewardValue(totalCoins, totalTokens, activeTasks.length);
+        const rewardValue = calculateTaskRewardValue(totalCoins, totalTokens);
 
         // What the board on screen has already cost in rerolls
         const rerollSpend = this.calculateRerollSpend(activeTasks);
@@ -893,7 +889,10 @@ class TaskStatistics {
             );
             // Priced independently of the Task Shop line above — a shop line that priced
             // cleanly says nothing about whether the gift's own contents did
-            const giftPartial = { isPartial: partial?.giftIsPartial, partialDrops: partial?.giftPartialDrops };
+            const giftPartial = {
+                isPartial: rewards.totalTokens > 0 && partial?.giftIsPartial,
+                partialDrops: rewards.totalTokens > 0 ? partial?.giftPartialDrops : 0,
+            };
             section.appendChild(
                 this.createRow(
                     "Purple's Gift",

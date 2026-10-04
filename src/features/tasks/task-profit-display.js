@@ -13,7 +13,7 @@ import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
 import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } from '../../utils/combat-zone-open.js';
-import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
+import { calculateTaskProfit, calculateTaskRewardValue, formatTokenFigure } from './task-profit-calculator.js';
 import {
     isCardInConfirmState,
     isConfirmPendingFor,
@@ -152,7 +152,7 @@ function readVisibleTaskRatings(cards) {
         if (!ratingLine || ratingLine.dataset.ratingMode !== ratingMode) continue;
 
         const value = Number.parseFloat(ratingLine.dataset.ratingValue ?? '');
-        if (!Number.isFinite(value)) continue;
+        if (!Number.isFinite(value) || ratingLine.dataset.ratingPartial === 'true') continue;
 
         const ratedHours = Number.parseFloat(ratingLine.dataset.ratingHours ?? '');
         let hours = Number.isFinite(ratedHours) && ratedHours > 0 ? ratedHours : null;
@@ -267,6 +267,7 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
             value: ratedProfit / hours,
             hours,
             unitLabel: 'gold/hr',
+            isPartial: Boolean(profitData.isPartial),
             error: null,
         };
     }
@@ -1947,13 +1948,18 @@ class TaskProfitDisplay {
         const completionHours = completionSeconds > 0 ? completionSeconds / 3600 : 0;
         const totalDropValue = dropEntries.reduce((s, d) => s + d.totalValue * completionHours, 0);
         const totalConsumableCost = consumableEntries.reduce((s, c) => s + c.totalCost * completionHours, 0);
-        const totalProfit = Math.round(totalDropValue - totalConsumableCost + rewardValue.total);
+        const totalProfit = rewardValue.error
+            ? null
+            : Math.round(totalDropValue - totalConsumableCost + rewardValue.total);
+        const totalProfitLabel =
+            totalProfit === null ? '-- ⚠' : `${rewardValue.isPartial ? '≥ ' : ''}${formatKMB(totalProfit)}`;
 
-        const profitColor = totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+        const profitColor =
+            totalProfit === null ? config.COLOR_ACCENT : totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
 
         const mainLine = document.createElement('div');
         mainLine.style.cssText = `color: ${profitColor}; cursor: pointer; user-select: none;`;
-        mainLine.innerHTML = `⚔ ${formatKMB(totalProfit)} | <span style="display:inline-block; margin-right:0.25em;">⏱</span> ${timeEstimate} ▸`;
+        mainLine.innerHTML = `⚔ ${totalProfitLabel} | <span style="display:inline-block; margin-right:0.25em;">⏱</span> ${timeEstimate} ▸`;
 
         const breakdown = document.createElement('div');
         breakdown.className = 'mwi-task-profit-breakdown';
@@ -1986,13 +1992,32 @@ class TaskProfitDisplay {
         lines.push('<div style="margin-bottom: 4px; color: #aaa;">Task Rewards:</div>');
         lines.push(`<div style="margin-left: 10px;">Coins: ${formatKMB(rewardValue.coins)}</div>`);
         if (!rewardValue.error) {
-            lines.push(`<div style="margin-left: 10px;">Task Tokens: ${formatKMB(rewardValue.taskTokens)}</div>`);
+            const tokenPartial = {
+                isPartial: rewardValue.tokenRewardIsPartial,
+                partialDrops: rewardValue.tokenPartialDrops,
+            };
+            const giftPartial = {
+                isPartial: rewardValue.giftRewardIsPartial,
+                partialDrops: rewardValue.giftPartialDrops,
+            };
+            lines.push(
+                `<div style="margin-left: 10px;">Task Tokens: ${formatTokenFigure(rewardValue.taskTokens, tokenPartial, formatKMB)}</div>`
+            );
             lines.push(
                 `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${rewardValue.breakdown.tokensReceived} tokens @ ${formatKMB(Math.round(rewardValue.breakdown.tokenValue))} each)</div>`
             );
-            lines.push(`<div style="margin-left: 10px;">Purple's Gift: ${formatKMB(rewardValue.purpleGift)}</div>`);
             lines.push(
-                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${formatKMB(Math.round(rewardValue.breakdown.giftPerTask))} per task)</div>`
+                `<div style="margin-left: 10px;">Purple's Gift: ${formatTokenFigure(rewardValue.purpleGift, giftPartial, formatKMB)}</div>`
+            );
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${formatKMB(Math.round(rewardValue.breakdown.giftPerTaskPoint))} per Task Point)</div>`
+            );
+        } else {
+            lines.push(
+                '<div style="margin-left: 10px; color: #888; font-style: italic;">Task Tokens: Unavailable</div>'
+            );
+            lines.push(
+                '<div style="margin-left: 10px; color: #888; font-style: italic;">Purple\'s Gift: Unavailable</div>'
             );
         }
 
@@ -2039,7 +2064,7 @@ class TaskProfitDisplay {
         mainLine.addEventListener('click', () => {
             const hidden = breakdown.style.display === 'none';
             breakdown.style.display = hidden ? 'block' : 'none';
-            mainLine.innerHTML = `⚔ ${formatKMB(totalProfit)} | <span style="display:inline-block; margin-right:0.25em;">⏱</span> ${timeEstimate} ${hidden ? '▾' : '▸'}`;
+            mainLine.innerHTML = `⚔ ${totalProfitLabel} | <span style="display:inline-block; margin-right:0.25em;">⏱</span> ${timeEstimate} ${hidden ? '▾' : '▸'}`;
         });
 
         container.appendChild(mainLine);
@@ -2083,13 +2108,18 @@ class TaskProfitDisplay {
                 ratingLine.title = ratingError || '';
                 ratingLine.textContent = `⚡ -- ⚠ ${unitLabel}`;
             } else {
-                ratingLine.dataset.ratingValue = `${ratingValue}`;
+                const isPartialRating = ratingMode === RATING_MODE_GOLD && Boolean(rewardValue.isPartial);
+                if (isPartialRating) {
+                    ratingLine.dataset.ratingPartial = 'true';
+                } else {
+                    ratingLine.dataset.ratingValue = `${ratingValue}`;
+                }
                 ratingLine.dataset.ratingMode = ratingMode;
                 // The span the rate was computed over, so anything amortising a
                 // cost against it uses the same basis the rate has
                 ratingLine.dataset.ratingHours = `${totalHours}`;
                 ratingLine.style.color = config.COLOR_ACCENT;
-                ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
+                ratingLine.textContent = `⚡ ${isPartialRating ? '≥ ' : ''}${formatKMB(ratingValue)} ${unitLabel}`;
             }
             container.appendChild(ratingLine);
 
@@ -2230,7 +2260,7 @@ class TaskProfitDisplay {
             `;
             const totalProfitLabel = profitData.hasMissingPrices
                 ? '-- ⚠'
-                : formatKMB(Math.round(profitData.totalProfit));
+                : `${profitData.isPartial ? '≥ ' : ''}${formatKMB(Math.round(profitData.totalProfit))}`;
             profitLine.innerHTML = `💰 ${totalProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ▸`;
 
             const breakdownSection = document.createElement('div');
@@ -2270,7 +2300,7 @@ class TaskProfitDisplay {
                 breakdownSection.style.display = isHidden ? 'block' : 'none';
                 const updatedProfitLabel = profitData.hasMissingPrices
                     ? '-- ⚠'
-                    : formatKMB(Math.round(profitData.totalProfit));
+                    : `${profitData.isPartial ? '≥ ' : ''}${formatKMB(Math.round(profitData.totalProfit))}`;
                 profitLine.innerHTML = `💰 ${updatedProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ${isHidden ? '▾' : '▸'}`;
             };
             profitLine.addEventListener('click', profitLineListener);
@@ -2337,11 +2367,17 @@ class TaskProfitDisplay {
                 ratingLine.textContent = `⚡ --${warningText} ${ratingData?.unitLabel || ''}`.trim();
             } else {
                 const ratingValue = formatKMB(ratingData.value);
-                ratingLine.dataset.ratingValue = `${ratingData.value}`;
+                if (ratingData.isPartial) {
+                    // Auto-reroll ranks only complete rates; this remains visible
+                    // to the player as a floor, not a firm comparison value.
+                    ratingLine.dataset.ratingPartial = 'true';
+                } else {
+                    ratingLine.dataset.ratingValue = `${ratingData.value}`;
+                }
                 ratingLine.dataset.ratingMode = ratingMode;
                 if (ratingData.hours > 0) ratingLine.dataset.ratingHours = `${ratingData.hours}`;
                 ratingLine.style.color = config.COLOR_ACCENT;
-                ratingLine.textContent = `⚡ ${ratingValue} ${ratingData.unitLabel}`;
+                ratingLine.textContent = `⚡ ${ratingData.isPartial ? '≥ ' : ''}${ratingValue} ${ratingData.unitLabel}`;
             }
 
             profitContainer.appendChild(ratingLine);
@@ -2357,7 +2393,11 @@ class TaskProfitDisplay {
     updateEfficiencyGradientColors() {
         const ratingMode = getRatingMode();
         const ratingLines = Array.from(document.querySelectorAll('.mwi-task-profit-rating')).filter((line) => {
-            return line.dataset.ratingMode === ratingMode && line.dataset.ratingValue;
+            return (
+                line.dataset.ratingMode === ratingMode &&
+                line.dataset.ratingValue &&
+                line.dataset.ratingPartial !== 'true'
+            );
         });
 
         if (ratingLines.length === 0) {
@@ -2444,24 +2484,32 @@ class TaskProfitDisplay {
         lines.push(`<div style="margin-left: 10px;">Coins: ${formatKMB(profitData.rewards.coins)}</div>`);
 
         if (!profitData.rewards.error) {
+            const tokenPartial = {
+                isPartial: profitData.rewards.tokenRewardIsPartial,
+                partialDrops: profitData.rewards.tokenPartialDrops,
+            };
+            const giftPartial = {
+                isPartial: profitData.rewards.giftRewardIsPartial,
+                partialDrops: profitData.rewards.giftPartialDrops,
+            };
             lines.push(
-                `<div style="margin-left: 10px;">Task Tokens: ${formatKMB(profitData.rewards.taskTokens)}</div>`
+                `<div style="margin-left: 10px;">Task Tokens: ${formatTokenFigure(profitData.rewards.taskTokens, tokenPartial, formatKMB)}</div>`
             );
             lines.push(
                 `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.rewards.breakdown.tokensReceived} tokens @ ${formatKMB(Math.round(profitData.rewards.breakdown.tokenValue))} each)</div>`
             );
             lines.push(
-                `<div style="margin-left: 10px;">Purple's Gift: ${formatKMB(profitData.rewards.purpleGift)}</div>`
+                `<div style="margin-left: 10px;">Purple's Gift: ${formatTokenFigure(profitData.rewards.purpleGift, giftPartial, formatKMB)}</div>`
             );
             lines.push(
-                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${formatKMB(Math.round(profitData.rewards.breakdown.giftPerTask))} per task)</div>`
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${formatKMB(Math.round(profitData.rewards.breakdown.giftPerTaskPoint))} per Task Point)</div>`
             );
         } else {
             lines.push(
-                `<div style="margin-left: 10px; color: #888; font-style: italic;">Task Tokens: Loading...</div>`
+                `<div style="margin-left: 10px; color: #888; font-style: italic;">Task Tokens: Unavailable</div>`
             );
             lines.push(
-                `<div style="margin-left: 10px; color: #888; font-style: italic;">Purple's Gift: Loading...</div>`
+                `<div style="margin-left: 10px; color: #888; font-style: italic;">Purple's Gift: Unavailable</div>`
             );
         }
         // Action profit section
@@ -2738,8 +2786,11 @@ class TaskProfitDisplay {
             : profitData.totalProfit >= 0
               ? '#4ade80'
               : config.COLOR_LOSS;
+        const totalProfitLabel = profitData.hasMissingPrices
+            ? '-- ⚠'
+            : `${profitData.isPartial ? '≥ ' : ''}${formatKMB(profitData.totalProfit)}`;
         lines.push(
-            `<div style="font-weight: bold; color: ${totalProfitColor};">Total Profit: ${formatTotalValue(profitData.totalProfit)}</div>`
+            `<div style="font-weight: bold; color: ${totalProfitColor};">Total Profit: ${totalProfitLabel}</div>`
         );
 
         // Secondary figure: what the task is worth over spending the same hours

@@ -6,13 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Self-use alchemy lines in item tooltips
+### Task rewards use earned Task Points
 
-- A new tooltip setting (off by default) adds untaxed self-use lines under Alternative Actions: decompose once, decompose the whole gear chain down (listing the gear it collects for the collection log), and transmute an item you hold against selling it after tax.
+- Purple's Gift value now accrues per Task Token rewarded, matching the game's Task Point rule. Incomplete reward prices stay marked or unavailable and do not enter automatic reroll comparisons.
 
 ### Captured loadouts use the correct player's profile
 
 - Opening a captured loadout in the simulator now matches an explicit character ID without borrowing a different same-name player's levels or buffs. Name matching remains available for older captures without an ID.
+
+### Self-use alchemy lines in item tooltips
+
+- A new tooltip setting (off by default) adds untaxed self-use lines under Alternative Actions: decompose once, decompose the whole gear chain down (listing the gear it collects for the collection log), and transmute an item you hold against selling it after tax.
 
 ### Enhancement stock and purchase hints stay usable
 
