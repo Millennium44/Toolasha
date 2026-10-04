@@ -23,7 +23,7 @@ import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
-import { heldInInventory } from '../../utils/inventory-reservations.js';
+import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
@@ -895,7 +895,8 @@ export function protectSweepHTML({
         // +0, the cautious reading — it can only hide one spare, never invent one
         const benchAtZero = !(currentLevel > 0);
         const holdingsOf = (hrid) => {
-            const held = heldInInventory(hrid, 0);
+            // Copies a crafting or goal plan has claimed are not spare
+            const held = effectiveInventory(hrid, 0);
             return hrid === itemDetails.hrid && benchAtZero ? Math.max(0, held - 1) : held;
         };
         const { options, selectedIsMirror } = chooseProtectionOptions({

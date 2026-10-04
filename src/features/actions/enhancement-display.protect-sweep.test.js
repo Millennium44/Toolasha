@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
     actions: [],
     // What a copy would sell for (the profit sell side); the buy side reads `prices`
     sellPrices: {},
+    // Copies claimed by other plans in the reservation ledger
+    reservedElsewhere: {},
     prices: {
         '/items/cheese': 500,
         '/items/mirror_of_protection': 20_000,
@@ -48,6 +50,14 @@ vi.mock('../../core/config.js', () => ({
         COLOR_XP_RATE: '#ffdd88',
     },
 }));
+vi.mock('../../utils/inventory-reservations.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        effectiveInventory: (hrid, level = 0) =>
+            Math.max(0, actual.heldInInventory(hrid, level) - (state.reservedElsewhere[hrid] || 0)),
+    };
+});
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ itemDetailMap: state.items }),
@@ -103,6 +113,7 @@ beforeEach(() => {
     state.settings = { enhanceSim: true, enhanceSim_autoDetect: false };
     state.inventory = [];
     state.actions = [];
+    state.reservedElsewhere = {};
     state.sellPrices = {};
     state.prices = { ...BASE_PRICES };
 });
@@ -277,6 +288,15 @@ describe('protect-from sweep spending held protection', () => {
         expect(swordHeader.textContent).toContain('(held, 3 held, 1 spare @45.00K, then @50.00K)');
         expect(rowsFor(stats, SWORD).map((row) => row.dataset.protectFrom)).toEqual(['2', '3', '4', '5']);
         expect(stats.textContent).toContain('beyond 2 of each are used first');
+    });
+
+    test('copies claimed by other plans are not spare protection', async () => {
+        stockOn(2);
+        state.sellPrices = { [PROTECTOR]: 3_000 };
+        state.inventory = [stack(PROTECTOR, 10)];
+        state.reservedElsewhere = { [PROTECTOR]: 7 };
+        const stats = await render();
+        expect(groupHeader(stats, 'Cheese Sword Protector').textContent).toContain('3 held, 1 spare');
     });
 
     test('an enhanced copy on the bench is not one of the +0 spares', async () => {
