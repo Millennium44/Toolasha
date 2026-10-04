@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task drink lines and enhancement value respect what is known
+
+- The task tooltip's itemized drink costs now use the task speed bonus like its total, and an enhancement session's value-vs-cost net is hidden whenever an input had no price, as its luck line already was.
+
 <!-- shipped in 3.64.0 -->
 
 ### Enhancing panel reads the level of the item you put in
