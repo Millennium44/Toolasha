@@ -127,6 +127,29 @@ describe('route options', () => {
         expect(option.goldPerPoint).toBeCloseTo(50 / 3);
     });
 
+    test('a route with an unpriced kept output is left out of the ranking', () => {
+        const counts = collectionCounts(ROWS);
+        const index = indexRoutes({ craft: [], sources: [{ ...cheeseSword(), partlyUnpriced: true }] });
+        expect(index.get('/items/cheese')).toBeUndefined();
+        expect(bestOptions(counts, index)).toEqual([]);
+    });
+
+    test('a crafted source collects itself and pays its making time', () => {
+        const counts = collectionCounts(ROWS);
+        const route = {
+            ...cheeseSword('craftDecompose', 30),
+            seconds: 36 + 20,
+            yields: new Map([
+                ['/items/cheese', 18],
+                ['/items/cheese_sword', 1],
+            ]),
+        };
+        const option = evaluateOption('/items/cheese_sword', counts, route);
+        // The sword itself goes 0 -> 1 for a point, and its 18 cheese take 5 -> 23 for 2 more
+        expect(option.points).toBe(3);
+        expect(option.seconds).toBe(56);
+    });
+
     test('no Buy route ever appears, only the ones handed in', () => {
         const counts = collectionCounts(ROWS);
         const index = indexRoutes({

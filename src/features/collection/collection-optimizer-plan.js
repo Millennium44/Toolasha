@@ -25,7 +25,12 @@
 import { pointsFromCount, nextPointCount } from '../../utils/points-from-count.js';
 
 /** The display name of each route */
-export const ROUTE_LABELS = { craft: 'Craft', decompose: 'Decompose', shop: 'Shop gear' };
+export const ROUTE_LABELS = {
+    craft: 'Craft',
+    decompose: 'Decompose',
+    craftDecompose: 'Craft + decompose',
+    shop: 'Shop gear',
+};
 
 /**
  * The alchemy-wide bonus drops. They roll on every alchemy action whatever the
@@ -143,6 +148,9 @@ export function indexRoutes(routes) {
     }
     for (const route of routes?.sources || []) {
         if (!Number.isFinite(route?.cost) || !(route.yields instanceof Map)) continue;
+        // A kept output with no price would count as worth nothing, under-crediting the route
+        // against an exact one; such a route is left out rather than ranked as if exact
+        if (route.partlyUnpriced) continue;
         for (const [hrid, expected] of route.yields) {
             // A bonus drop is credited as a by-product, never targeted
             if (ALCHEMY_BONUS_DROPS.has(hrid) || route.bonus?.has?.(hrid)) continue;

@@ -12,7 +12,12 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ setting: true, collections: null, characterId: 'char-1' }));
+const game = vi.hoisted(() => ({
+    setting: true,
+    collections: null,
+    characterId: 'char-1',
+    craftable: new Set(['/items/cheese']),
+}));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
 const bus = vi.hoisted(() => ({ handlers: {} }));
@@ -65,6 +70,8 @@ const BUY = vi.hoisted(() => ({
     '/items/gobo_leather': 50,
     '/items/cheese': 10,
     '/items/cheese_sword': 2000,
+    // The bonus drop every alchemy action rolls has a market in the game
+    '/items/alchemy_essence': 100,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -111,7 +118,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 // Only Cheese is made at a bench here, at 4 gold a unit and 360 an hour
 vi.mock('../market/profit-calculator.js', () => ({
     default: {
-        findProductionAction: (hrid) => (hrid === '/items/cheese' ? { actionHrid: '/actions/cheesesmithing/x' } : null),
+        findProductionAction: (hrid) => (game.craftable.has(hrid) ? { actionHrid: '/actions/cheesesmithing/x' } : null),
         calculateProfit: async (hrid) => ({ itemHrid: hrid, actionHrid: '/actions/x', totalItemsPerHour: 360 }),
     },
 }));
@@ -193,6 +200,7 @@ beforeEach(() => {
     scoped.gate = null;
     bus.handlers = {};
     observer.handlers = [];
+    game.craftable = new Set(['/items/cheese']);
 });
 
 afterEach(() => {
@@ -221,6 +229,25 @@ describe('the routes', () => {
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
         // No route ever yields the source it starts from
         for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+    });
+});
+
+describe('a source made at a bench', () => {
+    test('is a craft + decompose route that collects itself and pays its making time', async () => {
+        game.craftable = new Set(['/items/cheese', '/items/cheese_sword']);
+        const routes = await buildCollectionRoutes();
+        const crafted = routes.sources.find(
+            (s) => s.sourceHrid === '/items/cheese_sword' && s.route === 'craftDecompose'
+        );
+        expect(crafted.yields.get('/items/cheese_sword')).toBe(1);
+        expect(crafted.yields.get('/items/cheese')).toBe(18);
+        // Made at 4 a unit and 360 an hour (10 s), then decomposed at 100 an hour (36 s)
+        expect(crafted.cost).toBe(4);
+        expect(crafted.seconds).toBeCloseTo(46, 6);
+        // The bought route is still there, at the buy price, and collects no sword
+        const bought = routes.sources.find((s) => s.sourceHrid === '/items/cheese_sword' && s.route === 'decompose');
+        expect(bought.cost).toBe(2000);
+        expect(bought.yields.has('/items/cheese_sword')).toBe(false);
     });
 });
 

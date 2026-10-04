@@ -21,12 +21,13 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import profitCalculator from '../market/profit-calculator.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
-import { ownUseUnitCost, selfUseDecomposeChain } from '../../utils/self-use-alchemy.js';
+import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import {
@@ -97,6 +98,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
 
     const craft = [];
     const makeCost = new Map();
+    const makeSeconds = new Map();
     // Yield by elapsed time, not item count: scheduler.yield where the browser has it, which a
     // background tab does not stall the way it does a setTimeout(0) chain
     let sliceStart = performance.now();
@@ -116,6 +118,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             const perHour = Number(profitData.totalItemsPerHour);
             if (!comparison || !(perHour > 0)) continue;
             makeCost.set(hrid, comparison.make);
+            makeSeconds.set(hrid, 3600 / perHour);
             craft.push({ route: 'craft', itemHrid: hrid, unitCost: comparison.make, unitSeconds: 3600 / perHour });
         } catch (error) {
             console.error('[CollectionOptimizer] Craft route failed for', hrid, error);
@@ -141,6 +144,21 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
     };
 
+    // A crate with no order book is worth its contents, untaxed at the buy side, as in the tooltip
+    const crateValues = new Map();
+    const containerValue = (hrid) => {
+        if (!crateValues.has(hrid)) {
+            crateValues.set(
+                hrid,
+                untaxedContainerValue(hrid, {
+                    containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
+                    priceOf: (h) => expectedValueCalculator.resolveBuySideValue?.(h)?.value ?? priceOf(h),
+                })
+            );
+        }
+        return crateValues.get(hrid);
+    };
+
     const sources = [];
     for (const [hrid, details] of Object.entries(itemDetailMap)) {
         if (!details?.alchemyDetail?.decomposeItems?.length) continue;
@@ -151,6 +169,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             isChainable,
             priceOf,
             ownUseCost: 0,
+            containerValue,
         });
         if (!chain) continue;
 
@@ -181,8 +200,22 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             partlyUnpriced: chain.partlyUnpriced,
         };
 
-        const ownUse = ownUseUnitCost({ make: makeCost.get(hrid) ?? null, buy: priceOf(hrid) });
-        if (ownUse !== null) sources.push({ ...shared, route: 'decompose', cost: ownUse + chain.overheadCost });
+        // Bought sources are not collected; a crafted one is, and its making takes time — two
+        // routes, each priced and timed for how the source is actually got
+        const buy = priceOf(hrid);
+        if (buy > 0) sources.push({ ...shared, route: 'decompose', cost: buy + chain.overheadCost });
+        const make = makeCost.get(hrid);
+        if (make > 0) {
+            const withSource = new Map(yields);
+            withSource.set(hrid, (withSource.get(hrid) || 0) + 1);
+            sources.push({
+                ...shared,
+                route: 'craftDecompose',
+                yields: withSource,
+                cost: make + chain.overheadCost,
+                seconds: chain.seconds + (makeSeconds.get(hrid) || 0),
+            });
+        }
         const shopPrice = getShopCoinCost(hrid);
         if (shopPrice > 0) sources.push({ ...shared, route: 'shop', cost: shopPrice + chain.overheadCost });
     }
