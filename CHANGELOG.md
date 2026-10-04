@@ -8,6 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Opened chest profit
 
+- Gathering and production forecasts, queued action totals, and tea comparisons now avoid taxing chest bonus values twice. Their profit and cost breakdowns agree with the contents' expected value.
 - Loot & XP Log profit now uses chest contents' expected value once, avoiding a second market tax on contents that were already valued after tax and on coins inside chests.
 
 ### Loot luck with party shares

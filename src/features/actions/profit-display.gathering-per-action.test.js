@@ -85,6 +85,19 @@ function labelStartingWith(root, prefix) {
 }
 
 describe('buildGatheringPerActionBreakdown', () => {
+    test('already-net container bonuses keep revenue intact and reduce the shown tax', () => {
+        const data = profitData();
+        data.bonusRevenue.taxExemptBonusRevenue = 600;
+        data.profitPerHour += 1200 * MARKET_TAX;
+        data.profitPerAction = data.profitPerHour / 1200;
+        const section = buildGatheringPerActionBreakdown(data);
+        const [revenue, costs] = labelStartingWith(section, 'Revenue:').textContent.split('|');
+
+        expect(valueBefore(revenue)).toBe(101);
+        expect(valueBefore(costs)).toBe(14);
+        expect(valueBefore(labelStartingWith(section, 'Market Tax:').textContent)).toBe(4);
+    });
+
     test('Revenue − Costs equals the Net Profit shown, with efficiency above zero', () => {
         const data = profitData();
         const section = buildGatheringPerActionBreakdown(data);

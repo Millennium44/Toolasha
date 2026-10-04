@@ -217,9 +217,10 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     const marketTaxMissing = revenueMissing;
     const netMissing = profitData.hasMissingPrices;
     const efficiencyMultiplier = profitData.efficiencyMultiplier || 1;
-    // Revenue is now gross (pre-tax)
+    // Market outputs are gross; container bonus EV already includes contents tax.
     const revenue = Math.round(profitData.revenuePerHour);
-    const marketTax = Math.round(revenue * displayMarketTaxRate());
+    const netContainerRevenue = (profitData.bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+    const marketTax = Math.round((revenue - netContainerRevenue) * displayMarketTaxRate());
     const costs = Math.round(profitData.drinkCostPerHour + marketTax);
     // No "| Total profit: 0" here: whether the clause even appears, and what it says, is
     // decided below once we know if there is a Repeat input to read or a running action to
@@ -881,7 +882,8 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             bonusRevenueTotal * efficiencyMultiplier
     );
     // Calculate market tax
-    const marketTax = Math.round(revenue * displayMarketTaxRate());
+    const netContainerRevenue = (profitData.bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+    const marketTax = Math.round((revenue - netContainerRevenue) * displayMarketTaxRate());
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
     // No "| Total profit: 0" here: see the matching comment in renderGatheringProfit above.
     const summary = netMissing ? '-- ⚠' : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
@@ -1497,7 +1499,8 @@ export function buildGatheringPerActionBreakdown(profitData) {
 
     const revenuePerHour = profitData.revenuePerHour;
     const revenuePerAction = revenuePerHour / actionsPerHour;
-    const marketTaxPerHour = revenuePerHour * displayMarketTaxRate();
+    const netContainerRevenue = (profitData.bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+    const marketTaxPerHour = (revenuePerHour - netContainerRevenue) * displayMarketTaxRate();
     const marketTaxPerAction = marketTaxPerHour / actionsPerHour;
     const drinkCostPerAction = profitData.drinkCostPerHour / actionsPerHour;
     const costsPerAction = drinkCostPerAction + marketTaxPerAction;
@@ -1793,7 +1796,8 @@ export function buildProductionPerActionBreakdown(profitData) {
     const gourmetRevenuePerAction = gourmetItemsPerAction * profitData.outputPrice;
     const bonusRevenuePerAction = bonusRevenueTotal / actionsPerHour;
     const revenuePerAction = baseRevenuePerAction + gourmetRevenuePerAction + bonusRevenuePerAction;
-    const marketTaxPerAction = revenuePerAction * displayMarketTaxRate();
+    const netContainerRevenuePerAction = (profitData.bonusRevenue?.taxExemptBonusRevenue || 0) / actionsPerHour;
+    const marketTaxPerAction = (revenuePerAction - netContainerRevenuePerAction) * displayMarketTaxRate();
     const materialCostPerAction = profitData.totalMaterialCost; // per-action cost is fixed, unaffected by efficiency
     const completedActionsPerHour = actionsPerHour * (profitData.efficiencyMultiplier ?? 1);
     const teaCostPerAction = profitData.totalTeaCostPerHour / completedActionsPerHour;
