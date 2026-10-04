@@ -53,6 +53,32 @@ describe('guild work pool simulation', () => {
     test('includes an action on the exact deadline', () => {
         expect(simulateGuildSkilling(scenario({ seconds: 2 })).medianHighestTier).toBe(1);
     });
+    test('includes a decimal action schedule whose 15th action lands on the exact deadline', () => {
+        const result = simulateGuildSkilling(
+            scenario({ seconds: 1.5, baseWork: 1400, members: [{ ...member, actionSeconds: 0.1 }] })
+        );
+        expect(result.medianHighestTier).toBe(1);
+        expect(result.tiers[0].meanClearSeconds).toBeCloseTo(1.5, 10);
+    });
+    test('includes the 119th recorded 4.464-second action at its exact deadline', () => {
+        // The captured guild_skilling_updated message records actionTimeMs: 4464.
+        const result = simulateGuildSkilling(
+            scenario({
+                seconds: 531.216,
+                baseWork: 40000,
+                members: [{ ...member, workPower: 340, actionSeconds: 4.464 }],
+            })
+        );
+        expect(result.medianHighestTier).toBe(1);
+        expect(result.tiers[0].meanClearSeconds).toBeCloseTo(531.216, 10);
+    });
+    test('includes a count-derived 4.464-second action at its millisecond deadline', () => {
+        const result = simulateGuildSkilling(
+            scenario({ seconds: 13.392, baseWork: 100, members: [{ ...member, workPower: 34, actionSeconds: 4.464 }] })
+        );
+        expect(result.medianHighestTier).toBe(1);
+        expect(result.tiers[0].meanClearSeconds).toBeCloseTo(13.392, 10);
+    });
     test('stops at tier 21, with an hour cap shared across tiers', () => {
         const result = simulateGuildSkilling(scenario({ baseWork: 1, seconds: 3600 }));
         expect(result.medianHighestTier).toBe(21);

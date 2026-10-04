@@ -126,6 +126,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Experimental Guild Trial Simulator
 
+- Skilling actions that land exactly on the simulation deadline now count correctly, including recorded fractional action times such as 4.464 seconds. This prevents a missed action from turning an exact-deadline clear into an unfinished tier.
 - The simulator now ignores late skilling readings from a departed character's connection, so changing characters cannot replace the active character's trial inputs.
 - A capture checklist restored after refreshing now listens for profile replies before requesting one, preventing a false timeout after a successful capture.
 - The input checklist now sends the numeric member ID expected by the game's View Loadout handler, so combat and skilling captures receive a reply instead of timing out.
