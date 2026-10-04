@@ -405,6 +405,27 @@ describe('full decompose chain, self-use', () => {
         ]);
     });
 
+    test('lists every kept output with its expected units and value', () => {
+        const chain = selfUseDecomposeChain('/items/umbral_hood', {
+            getDecompose,
+            getItemDetails,
+            isChainable,
+            priceOf,
+            ownUseCost: 0,
+        });
+        const byHrid = Object.fromEntries(chain.terminals.map((t) => [t.itemHrid, t]));
+        expect(Object.keys(byHrid).sort()).toEqual([
+            '/items/beast_leather',
+            '/items/gobo_leather',
+            '/items/umbral_leather',
+        ]);
+        expect(byHrid['/items/umbral_leather'].expected).toBeCloseTo(0.6 * 90, 9);
+        expect(byHrid['/items/umbral_leather'].value).toBeCloseTo(0.6 * 90 * 1000, 6);
+        expect(byHrid['/items/gobo_leather'].expected).toBeCloseTo(0.3 * 0.8 * 30, 9);
+        const summed = chain.terminals.reduce((sum, t) => sum + t.value, 0);
+        expect(summed).toBeCloseTo(chain.terminalValue, 6);
+    });
+
     test('a chain whose outputs are only materials collects no gear', () => {
         const chain = selfUseDecomposeChain('/items/cheese_sword', {
             getDecompose: (hrid) => result({ itemHrid: hrid, successRate: 0.6 }),

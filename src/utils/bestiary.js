@@ -36,40 +36,14 @@
  * weighting entirely, per fact 2 below, not pass it a corrected tier.
  */
 
+import { pointsFromCount, nextPointCount } from './points-from-count.js';
+
 /** The prefix the simulator's monster units carry in `deaths` */
 const MONSTER_PREFIX = '/monsters/';
 
-/**
- * Points a kill count has earned: one per power of ten reached, weighted by
- * its rank — 1 for the first kill, +2 at 10, +3 at 100, +4 at 1,000 …
- * @param {number} count - Monsters defeated
- * @returns {number}
- */
-export function pointsFromCount(count) {
-    const n = Math.floor(Number(count) + 1e-9);
-    if (!(n >= 1)) return 0;
-    let points = 0;
-    let threshold = 1;
-    let step = 1;
-    while (n >= threshold && threshold < 1e14) {
-        points += step;
-        threshold *= 10;
-        step += 1;
-    }
-    return points;
-}
-
-/**
- * The next kill count worth a point: the first power of ten past `count`.
- * @param {number} count - Monsters defeated
- * @returns {number} 1 for an unmet monster, else 10, 100, …
- */
-export function nextPointCount(count) {
-    const n = Math.max(0, Math.floor(Number(count) || 0));
-    let threshold = 1;
-    while (threshold <= n && threshold < 1e14) threshold *= 10;
-    return threshold;
-}
+// The ladder is the Collections log's too, so it lives in one shared module;
+// re-exported here so every Bestiary caller keeps importing it from this file.
+export { pointsFromCount, nextPointCount };
 
 /**
  * The Bestiary's current total points: {@link pointsFromCount} summed over

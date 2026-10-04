@@ -286,7 +286,8 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
  *   A crate's untaxed opened value
  * @param {number} [deps.maxDepth=CHAIN_MAX_DEPTH]
  * @returns {Object|null} `{net, netPerHour, terminalValue, cost, ownUseCost, overheadCost, seconds,
- *   collected: [{itemHrid, expected}], steps, unpriced, partlyUnpriced, truncated}`, or null
+ *   collected: [{itemHrid, expected}], terminals: [{itemHrid, expected, value}], steps, unpriced,
+ *   partlyUnpriced, truncated}`, or null
  *   when the top item cannot be decomposed at all
  */
 export function selfUseDecomposeChain(topHrid, deps) {
@@ -312,10 +313,20 @@ export function selfUseDecomposeChain(topHrid, deps) {
     const collected = new Map();
     const steps = [];
 
+    // Every kept output per top item, with its value where priced: what a
+    // collector credits beyond the gear in between (`collected`)
+    const terminals = new Map();
+    const keepTerminal = (hrid, expected, value) => {
+        const entry = terminals.get(hrid) || { itemHrid: hrid, expected: 0, value: 0 };
+        entry.expected += expected;
+        entry.value = entry.value === null || value === null ? null : entry.value + value;
+        terminals.set(hrid, entry);
+    };
     const valueTerminal = (hrid, expected) => {
         const unit = usablePrice(priceOf(hrid));
         if (unit === null) unpriced.add(hrid);
         else terminalValue += expected * unit;
+        keepTerminal(hrid, expected, unit === null ? null : expected * unit);
     };
 
     const walk = (hrid, reach, depth, path) => {
@@ -353,9 +364,11 @@ export function selfUseDecomposeChain(topHrid, deps) {
             const units = Number(drop.dropsPerHour) || 0;
             if (units <= 0) continue;
             const unit = bonusUnitPrice(drop, priceOf, containerValue);
+            const expected = (reach * units) / unitsPerHour;
             if (unit.value === null) unpriced.add(drop.itemHrid);
-            else terminalValue += ((reach * units) / unitsPerHour) * unit.value;
+            else terminalValue += expected * unit.value;
             if (unit.partlyUnpriced) unpriced.add(drop.itemHrid);
+            keepTerminal(drop.itemHrid, expected, unit.value === null ? null : expected * unit.value);
         }
     };
 
@@ -375,6 +388,7 @@ export function selfUseDecomposeChain(topHrid, deps) {
         overheadCost,
         seconds,
         collected: [...collected].map(([itemHrid, expected]) => ({ itemHrid, expected })),
+        terminals: [...terminals.values()],
         steps,
         unpriced: [...unpriced],
         partlyUnpriced,
