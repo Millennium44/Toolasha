@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Toolasha tab section totals keep up with item values
+
+- A section header's total in the Toolasha inventory tab could stay at the value it had when the tab was drawn, before prices arrived, until the section was collapsed and reopened; it now redraws when the item values land or change.
+
 <!-- shipped in 3.64.0 -->
 
 ### Enhancing panel reads the level of the item you put in
