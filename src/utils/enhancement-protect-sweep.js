@@ -99,6 +99,115 @@ export function spareStock(held, reserve) {
 }
 
 /**
+ * Invert a small square matrix (Gauss–Jordan with partial pivoting).
+ * @param {number[][]} matrix - n×n, not modified
+ * @returns {number[][]|null} The inverse, or null when singular
+ */
+function invertSmall(matrix) {
+    const n = matrix.length;
+    const a = matrix.map((row, i) => [...row, ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))]);
+    for (let col = 0; col < n; col++) {
+        let pivot = col;
+        for (let r = col + 1; r < n; r++) if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r;
+        if (!(Math.abs(a[pivot][col]) > 1e-15)) return null;
+        [a[col], a[pivot]] = [a[pivot], a[col]];
+        const scale = a[col][col];
+        for (let c = 0; c < 2 * n; c++) a[col][c] /= scale;
+        for (let r = 0; r < n; r++) {
+            if (r === col || a[r][col] === 0) continue;
+            const factor = a[r][col];
+            for (let c = 0; c < 2 * n; c++) a[r][c] -= factor * a[col][c];
+        }
+    }
+    return a.map((row) => row.slice(n));
+}
+
+/**
+ * How many protections a run is expected to draw from a stock of `stock` copies: E[min(stock, N)],
+ * N being the protections the run consumes.
+ *
+ * `protectionCount` is E[N], and min(stock, E[N]) is not the same thing: a level with a 50%
+ * success rate expects one failure, yet one held copy is spent in only half of runs. Since
+ * min(·) is concave the shortcut always overstates what stock covers, and so understates the
+ * bill whenever stock is cheaper than buying.
+ *
+ * Exactly, E[min(s, N)] = Σ_{k=1..s} P(N ≥ k). Let g_k(i) be the chance a run standing at +i
+ * consumes at least k more protections before reaching the target. g_0 = 1, and g_k solves the
+ * chain with the protected failures taken out as transitions and put back as the source term:
+ * g_k = (I − Q′)⁻¹ · b_k, b_k(i) = P(protected failure at i) · g_{k−1}(i − 1). Q′ is the transient
+ * block of the same chain `buildEnhancementMarkov` builds (Blessed Tea included), minus those
+ * failures. That makes g_k = Lᵏ·1 for one fixed matrix L, so the whole tail sums in closed form:
+ * with h = (I − L)⁻¹·1, E[N] = h(start) − 1 and Σ_{k>s} P(N ≥ k) = (L^{s+1}·h)(start). Two small
+ * inversions and log₂(s) squarings, exact for any stock.
+ *
+ * @param {Object} args - Inputs
+ * @param {number[]} args.successChances - Success chance per level 0..target−1, as decimals
+ * @param {number} args.targetLevel - Absorbing level
+ * @param {number} [args.startLevel=0] - Level the run starts from
+ * @param {number} args.protectFrom - Protect-from level (0 = none)
+ * @param {boolean} [args.blessedTea=false] - Whether Blessed Tea can double-jump
+ * @param {number} [args.guzzlingBonus=1] - Drink concentration multiplier
+ * @param {number} [args.blessedTeaBonus=0.01] - Blessed Tea double-jump chance as a decimal
+ * @param {number} args.stock - Copies on hand
+ * @returns {number|null} E[min(stock, N)], or null when the chain is not described well enough
+ *   to solve (the caller then falls back to min(stock, E[N]))
+ */
+export function expectedProtectionsFromStock({
+    successChances,
+    targetLevel,
+    startLevel = 0,
+    protectFrom,
+    blessedTea = false,
+    guzzlingBonus = 1,
+    blessedTeaBonus = 0.01,
+    stock,
+}) {
+    const s = Math.max(0, Math.floor(Number(stock) || 0));
+    if (s === 0 || !(protectFrom > 0)) return 0;
+    const T = Math.floor(Number(targetLevel) || 0);
+    if (!(T >= 1) || !Array.isArray(successChances) || successChances.length < T) return null;
+    const start = Math.max(0, Math.min(T - 1, Math.floor(Number(startLevel) || 0)));
+
+    const jump = blessedTea ? (Number(blessedTeaBonus) || 0) * (Number(guzzlingBonus) || 1) : 0;
+    const A = Array.from({ length: T }, (_, i) => Array.from({ length: T }, (__, j) => (i === j ? 1 : 0)));
+    const protectedFail = new Array(T).fill(0);
+    for (let i = 0; i < T; i++) {
+        const p = Math.min(1, Math.max(0, Number(successChances[i]) || 0));
+        const skip = p * jump;
+        // Landing on or past the target is absorbed, so those moves leave the transient block
+        if (i + 1 < T) A[i][i + 1] -= p - skip;
+        if (i + 2 < T) A[i][i + 2] -= skip;
+        if (i >= protectFrom) protectedFail[i] = 1 - p;
+        else A[i][0] -= 1 - p;
+    }
+    const inverse = invertSmall(A);
+    if (!inverse) return null;
+
+    // L maps g_{k−1} to g_k: L[i][j] = (I − Q′)⁻¹[i][j + 1] · P(protected failure at j + 1)
+    const L = inverse.map((row) => row.map((_, j) => (j + 1 < T ? row[j + 1] * protectedFail[j + 1] : 0)));
+    // h = Σ_{k≥0} Lᵏ·1 = (I − L)⁻¹·1, so h(start) = 1 + E[N]
+    const minusL = L.map((row, i) => row.map((value, j) => (i === j ? 1 : 0) - value));
+    const resolvent = invertSmall(minusL);
+    if (!resolvent) return null;
+    const h = resolvent.map((row) => row.reduce((sum, value) => sum + value, 0));
+    const meanUses = h[start] - 1;
+
+    // Σ_{k>s} P(N ≥ k) = (L^{s+1}·h)(start); square-and-multiply, since stock can run to thousands
+    const matVec = (m, v) => m.map((row) => row.reduce((sum, value, j) => sum + value * v[j], 0));
+    const matMul = (a, b) =>
+        a.map((row) => b[0].map((_, j) => row.reduce((sum, value, k) => sum + value * b[k][j], 0)));
+    let beyond = h;
+    let power = L;
+    for (let e = s + 1; e > 0; e = Math.floor(e / 2)) {
+        if (e % 2 === 1) beyond = matVec(power, beyond);
+        if (e > 1) power = matMul(power, power);
+    }
+    const fromStock = meanUses - beyond[start];
+    if (!Number.isFinite(fromStock)) return null;
+    return Math.max(0, Math.min(s, meanUses, fromStock));
+}
+
+/**
  * The protection items worth pricing for an item: what is in the slot, and the cheapest other
  * thing that would work. The Philosopher's Mirror is not among them — it guarantees the attempt
  * instead of softening the fall, so the protect-from chain says nothing about it.
@@ -223,7 +332,9 @@ export function chooseProtectionOptions({
  *   "no protection" row first, then for each protection option every protect-from level from 2
  *   to the target. Each row: protectFrom, itemHrid (null for none), name, attempts,
  *   attemptsStdDev, protections, expectedCost, costStdDev, p10, p90, spreadApprox, xp,
- *   goldPerXp, time. `spreadApprox` marks the rows whose p10–p90 is only approximate.
+ *   goldPerXp, time, and the stock split protectionsFromStock (E[min(stock, N)]),
+ *   protectionsToBuy, stockPrice, stockSplitApprox. `spreadApprox` marks the rows whose p10–p90
+ *   is only approximate; `stockSplitApprox` the rows whose split fell back to min(stock, E[N]).
  *   The index fields point at the cheapest expected cost and the lowest gold per XP
  */
 export function sweepProtectFrom({
@@ -253,15 +364,45 @@ export function sweepProtectFrom({
             protectFrom,
         });
 
+    // E[min(stock, N)] per protect-from level and stock size; options sharing a stock share it
+    const fromStockCache = new Map();
+    const expectedFromStock = (calc, protectFrom, stock, protections) => {
+        const key = `${protectFrom}:${stock}`;
+        if (!fromStockCache.has(key)) {
+            const exact = expectedProtectionsFromStock({
+                successChances: Array.isArray(calc.successRates)
+                    ? calc.successRates.map((rate) => (Number(rate?.actualRate) || 0) / 100)
+                    : null,
+                targetLevel: target,
+                startLevel: start,
+                protectFrom,
+                blessedTea: Boolean(chain?.blessedTea),
+                guzzlingBonus: chain?.guzzlingBonus ?? 1,
+                blessedTeaBonus: chain?.blessedTeaBonus ?? 0.01,
+                stock,
+            });
+            fromStockCache.set(key, exact);
+        }
+        const exact = fromStockCache.get(key);
+        // No exact figure (a calculator result without per-level success rates): the mean-count
+        // shortcut, which overstates what stock covers, and the row says so
+        if (exact === null) return { value: Math.min(stock, protections), approx: true };
+        return { value: Math.min(protections, exact), approx: false };
+    };
+
     const buildRow = (calc, protectFrom, option) => {
         const protections = protectFrom > 0 ? calc.protectionCount || 0 : 0;
         const protectionPrice = option?.price || 0;
         // Spare copies in the bag go first, at what they would have sold for; the rest are bought.
-        // On the expected count: a run that needs fewer leaves stock unspent and one that needs
-        // more buys the difference, so this is the mean bill, not any one run's
+        // The split is E[min(stock, N)] over the run's protection uses N — not min(stock, E[N]),
+        // which spends a held copy in every run that merely expects to need one
         const stockPrice = option?.stockPrice > 0 ? option.stockPrice : 0;
-        const stock = stockPrice > 0 ? Math.max(0, option?.stock || 0) : 0;
-        const protectionsFromStock = Math.min(stock, protections);
+        const stock = stockPrice > 0 ? Math.max(0, Math.floor(option?.stock || 0)) : 0;
+        const split =
+            stock > 0 && protections > 0
+                ? expectedFromStock(calc, protectFrom, stock, protections)
+                : { value: 0, approx: false };
+        const protectionsFromStock = split.value;
         const protectionsToBuy = protections - protectionsFromStock;
         const protectionCost = protectionsFromStock * stockPrice + protectionsToBuy * protectionPrice;
         // Protection is consumed on protected failures, whose expected count scales with the
@@ -282,6 +423,7 @@ export function sweepProtectFrom({
             protectionPrice,
             protectionsFromStock,
             protectionsToBuy,
+            stockSplitApprox: split.approx,
             stockPrice,
             expectedCost: stats.expected,
             costStdDev: stats.stdDev,

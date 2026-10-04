@@ -264,8 +264,9 @@ describe('protect-from sweep spending held protection', () => {
         expect(protectorHeader.textContent).toContain('3 held, 1 spare @3.00K, then @4.00K');
         const protectorRows = rowsFor(stats, PROTECTOR);
         const split = protectorRows.find((row) => row.querySelector('.mwi-protsweep-stock'));
+        // One spare copy is spent only in the runs that need a protection at all: under one
         expect(split.querySelector('.mwi-protsweep-stock').textContent).toMatch(
-            /^1\.00 from stock \+ \d[\d,]*\.\d\d to buy$/
+            /^0\.\d\d from stock \+ \d[\d,]*\.\d\d to buy$/
         );
 
         // The item itself is held beyond the reserve once the bench copy is set aside: 4 − 1 = 3
@@ -328,14 +329,17 @@ describe('protect-from sweep spending held protection', () => {
         expect(groupHeader(before, 'Cheese Sword Protector').textContent).toContain('1 spare');
         // Protect from +2: the row that spends the most protections, so every spare copy counts
         const beforeRow = rowsFor(before, PROTECTOR)[0];
-        expect(beforeRow.querySelector('.mwi-protsweep-stock').textContent).toMatch(/^1\.00 from stock/);
+        const fromStock = (row) => parseFloat(row.querySelector('.mwi-protsweep-stock').textContent);
+        expect(fromStock(beforeRow)).toBeGreaterThan(0);
+        expect(fromStock(beforeRow)).toBeLessThan(1);
         const beforeCost = beforeRow.children[1].textContent;
 
         state.inventory = [stack(PROTECTOR, 6)];
         const after = await render();
         expect(groupHeader(after, 'Cheese Sword Protector').textContent).toContain('4 spare');
         const afterRow = rowsFor(after, PROTECTOR)[0];
-        expect(afterRow.querySelector('.mwi-protsweep-stock').textContent).toMatch(/^4\.00 from stock/);
+        expect(fromStock(afterRow)).toBeGreaterThan(fromStock(beforeRow));
+        expect(fromStock(afterRow)).toBeLessThan(4);
         expect(afterRow.children[1].textContent).not.toBe(beforeCost);
     });
 });

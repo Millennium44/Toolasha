@@ -980,8 +980,9 @@ export function protectSweepHTML({
                     cell(formatAttempts(row.attempts)) +
                     (row.protectionsFromStock > 0
                         ? `<td class="mwi-protsweep-stock" style="padding:2px 8px 2px 0; text-align:right; color:#ffa500; white-space:nowrap;" ` +
-                          `title="${formatAttempts(row.protections)} expected: spare copies @${coins(row.stockPrice)} first, the rest bought @${coins(row.protectionPrice)}">` +
-                          `${formatAttempts(row.protectionsFromStock)} from stock + ${formatAttempts(row.protectionsToBuy)} to buy</td>`
+                          `title="${formatAttempts(row.protections)} expected: spare copies @${coins(row.stockPrice)} first, the rest bought @${coins(row.protectionPrice)}` +
+                          `${row.stockSplitApprox ? '. Approximate: split on the expected count, which overstates what the stock covers' : ''}">` +
+                          `${formatAttempts(row.protectionsFromStock)} from stock + ${formatAttempts(row.protectionsToBuy)} to buy${row.stockSplitApprox ? ' ≈' : ''}</td>`
                         : cell(
                               row.protections > 0 ? formatAttempts(row.protections) : '-',
                               row.protections > 0 ? '#ffa500' : '#888'

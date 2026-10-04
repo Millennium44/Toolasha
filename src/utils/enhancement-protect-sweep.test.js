@@ -20,6 +20,7 @@ import {
     NO_PROTECTION,
     MIN_PROTECT_FROM,
     spareStock,
+    expectedProtectionsFromStock,
 } from './enhancement-protect-sweep.js';
 
 beforeAll(() => {
@@ -343,7 +344,7 @@ describe('protection from stock', () => {
         expect(inverted.every((o) => o.stockPrice === o.price)).toBe(true);
     });
 
-    test('held 3, keep 2: one protection from stock at the sell price, the rest bought at the ask', () => {
+    test('held 3, keep 2: the one spare copy is spent only in runs that need a protection at all', () => {
         const plain = sweep({ protectionOptions: [cape] });
         const stocked = sweep({ protectionOptions: [{ ...cape, held: 3, reserve: 2, stock: 1, stockPrice: 5_000 }] });
         const index = plain.rows.findIndex((row) => row.protections > 1);
@@ -351,10 +352,13 @@ describe('protection from stock', () => {
         const before = plain.rows[index];
         const after = stocked.rows[index];
         expect(after.protections).toBe(before.protections);
-        expect(after.protectionsFromStock).toBe(1);
-        expect(after.protectionsToBuy).toBeCloseTo(before.protections - 1, 10);
-        // One copy that would have cost the ask now costs what it would have sold for
-        expect(after.expectedCost).toBeCloseTo(before.expectedCost - (6_000 - 5_000), 6);
+        // E[min(1, N)] = P(N ≥ 1): below one even though the run expects more than one
+        expect(after.protectionsFromStock).toBeGreaterThan(0.5);
+        expect(after.protectionsFromStock).toBeLessThan(1);
+        expect(after.stockSplitApprox).toBe(false);
+        expect(after.protectionsToBuy).toBeCloseTo(before.protections - after.protectionsFromStock, 10);
+        // Each copy drawn from stock costs what it would have sold for instead of the ask
+        expect(after.expectedCost).toBeCloseTo(before.expectedCost - after.protectionsFromStock * (6_000 - 5_000), 6);
         // Never more from stock than the run expects to use
         for (const row of stocked.rows) {
             expect(row.protectionsFromStock).toBeLessThanOrEqual(row.protections);
@@ -367,9 +371,12 @@ describe('protection from stock', () => {
         const keep2 = sweep({ protectionOptions: [{ ...cape, held: 3, reserve: 2, stock: 1, stockPrice: 5_000 }] });
         const index = keep0.rows.findIndex((row) => row.protections > 3);
         expect(index).toBeGreaterThan(0);
-        expect(keep0.rows[index].protectionsFromStock).toBe(3);
-        expect(keep2.rows[index].protectionsFromStock).toBe(1);
-        expect(keep2.rows[index].expectedCost - keep0.rows[index].expectedCost).toBeCloseTo(2 * 1_000, 6);
+        const three = keep0.rows[index].protectionsFromStock;
+        const one = keep2.rows[index].protectionsFromStock;
+        expect(three).toBeGreaterThan(one);
+        expect(three).toBeLessThan(3);
+        expect(one).toBeLessThan(1);
+        expect(keep2.rows[index].expectedCost - keep0.rows[index].expectedCost).toBeCloseTo((three - one) * 1_000, 6);
     });
 
     test('no spare stock leaves every row exactly as it was', () => {
@@ -410,5 +417,164 @@ describe('protection from stock', () => {
         // Protect from +2 to +6 spends more than two protections, so the extra copy shows
         expect(bought.rows[1].protectionsFromStock).toBeGreaterThan(first.rows[1].protectionsFromStock);
         expect(sweepProtectFromMemo(args(3, 0))).not.toBe(first);
+    });
+});
+
+describe('stock split is E[min(stock, N)], not min(stock, E[N])', () => {
+    const cape = () => ({ itemHrid: '/items/other_cape', name: 'Cape', price: 6_000, selected: false });
+
+    // A run from +2 to +3, protected from +2. +1 → +2 always succeeds, +2 → +3 succeeds with p.
+    // A protected failure drops to +1, which climbs straight back, so N is geometric:
+    // P(N > k) = (1 − p)^(k + 1), E[N] = (1 − p) / p, and E[min(s, N)] = Σ_{k<s} (1 − p)^(k + 1)
+    const geometric = (p) => {
+        const q = 1 - p;
+        const calc = (protectFrom) => ({
+            // From +2 every failure costs two attempts: the failure and the climb back
+            attempts: 1 + 2 * (q / p),
+            attemptsVariance: 0,
+            minAttempts: 1,
+            protectionCount: protectFrom === 2 ? q / p : 0,
+            perActionTime: 10,
+            successRates: [{ actualRate: 100 }, { actualRate: 100 }, { actualRate: p * 100 }],
+            visitCounts: [0, q / p, 1 / p],
+        });
+        return (stock, stockPrice = 1_000, price = 4_000) =>
+            sweepProtectFrom({
+                chain: { blessedTea: false, guzzlingBonus: 1 },
+                targetLevel: 3,
+                startLevel: 2,
+                protectionOptions: [
+                    { itemHrid: '/items/cape', name: 'Cape', price, selected: false, stock, stockPrice },
+                ],
+                calculate: ({ protectFrom }) => calc(protectFrom),
+            }).rows.find((row) => row.protectFrom === 2);
+    };
+
+    test('hand-checked: p = 0.5 expects one protection, but one held copy covers half of one', () => {
+        const row = geometric(0.5);
+        expect(row(1).protections).toBeCloseTo(1, 12);
+        expect(row(1).protectionsFromStock).toBeCloseTo(0.5, 10);
+        expect(row(1).protectionsToBuy).toBeCloseTo(0.5, 10);
+        expect(row(2).protectionsFromStock).toBeCloseTo(0.75, 10);
+        expect(row(3).protectionsFromStock).toBeCloseTo(0.875, 10);
+        // The bill: half a copy at the stock price, half at the ask — not one whole copy from stock
+        expect(row(1).expectedCost).toBeCloseTo(0.5 * 1_000 + 0.5 * 4_000, 6);
+        // p = 0.25: E[N] = 3, yet one copy is spent only in the 75% of runs that fail at all
+        expect(geometric(0.25)(1).protectionsFromStock).toBeCloseTo(0.75, 10);
+        expect(geometric(0.25)(1).protectionsToBuy).toBeCloseTo(2.25, 10);
+    });
+
+    test('the helper agrees with the closed form', () => {
+        for (const p of [0.2, 0.5, 0.9]) {
+            for (const stock of [1, 2, 5, 12]) {
+                const exact = expectedProtectionsFromStock({
+                    successChances: [1, 1, p],
+                    targetLevel: 3,
+                    startLevel: 2,
+                    protectFrom: 2,
+                    stock,
+                });
+                const q = 1 - p;
+                expect(exact).toBeCloseTo((q * (1 - q ** stock)) / (1 - q), 10);
+            }
+        }
+    });
+
+    test('with no stock every row is unchanged', () => {
+        const plain = sweep({ protectionOptions: [cape()] });
+        const zero = sweep({ protectionOptions: [{ ...cape(), stock: 0, stockPrice: 5_000 }] });
+        expect(zero.rows.map((row) => row.expectedCost)).toEqual(plain.rows.map((row) => row.expectedCost));
+        expect(zero.rows.every((row) => row.protectionsFromStock === 0)).toBe(true);
+        expect(zero.rows.every((row) => row.protectionsToBuy === row.protections)).toBe(true);
+    });
+
+    test('with very deep stock every protection comes from stock, Blessed Tea included', () => {
+        for (const blessedTea of [false, true]) {
+            const deep = sweep({
+                chain: { ...chain, blessedTea, blessedTeaBonus: 0.05 },
+                targetLevel: 8,
+                protectionOptions: [{ ...cape(), stock: 100_000, stockPrice: 5_000 }],
+            });
+            for (const row of deep.rows.filter((r) => r.protectFrom > 0)) {
+                expect(row.stockSplitApprox).toBe(false);
+                expect(row.protectionsFromStock).toBeCloseTo(row.protections, 8);
+                expect(row.protectionsToBuy).toBeCloseTo(0, 8);
+            }
+        }
+    });
+
+    test('never more than the mean-count shortcut, and strictly less wherever a run may need none', () => {
+        const { rows } = sweep({ targetLevel: 8, protectionOptions: [{ ...cape(), stock: 2, stockPrice: 5_000 }] });
+        const used = rows.filter((r) => r.protectFrom > 0 && r.protections > 0);
+        expect(used.length).toBeGreaterThan(0);
+        for (const row of used) {
+            expect(row.protectionsFromStock).toBeLessThan(Math.min(2, row.protections));
+        }
+    });
+
+    test('a chain the calculator does not describe falls back to the shortcut and says so', () => {
+        const { rows } = sweepProtectFrom({
+            chain,
+            targetLevel: 3,
+            protectionOptions: [{ ...cape(), stock: 1, stockPrice: 5_000 }],
+            calculate: ({ protectFrom }) => ({
+                attempts: 5,
+                attemptsVariance: 1,
+                minAttempts: 3,
+                protectionCount: protectFrom === 2 ? 2 : 0,
+            }),
+        });
+        const row = rows.find((r) => r.protectFrom === 2);
+        expect(row.stockSplitApprox).toBe(true);
+        expect(row.protectionsFromStock).toBe(1);
+    });
+
+    test('a forward walk of the run agrees, Blessed Tea and deep stock included', () => {
+        // Independent of the closed form: push probability mass attempt by attempt through
+        // (level, protections used capped at the stock) and read min(stock, N) off what absorbs
+        const walk = ({ successChances, targetLevel, protectFrom, jump, stock }) => {
+            const T = targetLevel;
+            let mass = Array.from({ length: T }, () => new Array(stock + 1).fill(0));
+            mass[0][0] = 1;
+            let expected = 0;
+            // Returns what absorbs at the target, weighted by the protections it used
+            const land = (next, level, used, share) => {
+                if (level >= T) return share * used;
+                next[level][used] += share;
+                return 0;
+            };
+            for (let step = 0; step < 200_000; step++) {
+                const next = Array.from({ length: T }, () => new Array(stock + 1).fill(0));
+                let alive = 0;
+                for (let i = 0; i < T; i++) {
+                    const p = successChances[i];
+                    for (let u = 0; u <= stock; u++) {
+                        const m = mass[i][u];
+                        if (!m) continue;
+                        expected += land(next, i + 1, u, m * p * (1 - jump));
+                        expected += land(next, i + 2, u, m * p * jump);
+                        if (i >= protectFrom) expected += land(next, i - 1, Math.min(stock, u + 1), m * (1 - p));
+                        else expected += land(next, 0, u, m * (1 - p));
+                    }
+                }
+                mass = next;
+                for (const row of mass) for (const m of row) alive += m;
+                if (alive < 1e-13) break;
+            }
+            return expected;
+        };
+        const successChances = [0.9, 0.7, 0.6, 0.5, 0.45, 0.4];
+        for (const jump of [0, 0.05]) {
+            for (const stock of [1, 3, 10, 60]) {
+                const args = { successChances, targetLevel: 6, protectFrom: 2, stock };
+                const exact = expectedProtectionsFromStock({
+                    ...args,
+                    blessedTea: jump > 0,
+                    blessedTeaBonus: jump,
+                    guzzlingBonus: 1,
+                });
+                expect(exact).toBeCloseTo(walk({ ...args, jump }), 8);
+            }
+        }
     });
 });
