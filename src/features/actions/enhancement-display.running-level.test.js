@@ -137,10 +137,24 @@ describe('the success-rate line level', () => {
         expect(line.slice(1, 3)).toEqual(['0', '1']);
     });
 
-    test('an enhance running on the panel item itself still gives its level', async () => {
+    test('the panel shows the running copy: its level', async () => {
+        state.actions = running('/items/brie_sword', 7);
+        const line = await successLine('Brie Sword +7', '/items/brie_sword');
+        expect(line).toBeTruthy();
+        expect(line.slice(1, 3)).toEqual(['7', '8']);
+    });
+
+    test('a +7 copy running while another +0 copy of the same item is shown quotes +0', async () => {
         state.actions = running('/items/brie_sword', 7);
         const line = await successLine('Brie Sword', '/items/brie_sword');
         expect(line).toBeTruthy();
-        expect(line.slice(1, 3)).toEqual(['7', '8']);
+        expect(line.slice(1, 3)).toEqual(['0', '1']);
+    });
+
+    test('a +0 copy draws an empty level badge, and a +4 one a badge', async () => {
+        state.actions = running('/items/brie_sword', 7);
+        const badge = (text) => `Brie Sword</div><div class="Item_enhancementLevel__19g-e">${text}</div><div>`;
+        expect((await successLine(badge(''), '/items/brie_sword')).slice(1, 3)).toEqual(['0', '1']);
+        expect((await successLine(badge('+4'), '/items/brie_sword')).slice(1, 3)).toEqual(['4', '5']);
     });
 });

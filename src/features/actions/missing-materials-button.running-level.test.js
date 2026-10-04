@@ -92,12 +92,14 @@ const running = (itemHrid, level) => [
 ];
 
 /** Mount an Enhance panel for Brie Sword and return the level the plan started from. */
-async function planStartLevel() {
+async function planStartLevel(shown = 'Brie Sword') {
     state.startLevels = [];
     document.body.innerHTML =
         '<div class="SkillActionDetail_enhancingComponent__17bOx" data-mwi-item-hrid="/items/brie_sword">' +
         '<div><span>Target Level</span><input type="number" value="10"></div>' +
-        '<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">Brie Sword</div></div></div>';
+        '<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">' +
+        shown +
+        '</div></div></div>';
     missingMaterials.initialize();
     await vi.advanceTimersByTimeAsync(700);
     missingMaterials.cleanup();
@@ -119,8 +121,13 @@ describe('the Missing Mats plan start level', () => {
         expect(await planStartLevel()).toBe(0);
     });
 
-    test('an enhance running on the panel item itself gives its level', async () => {
+    test('the panel shows the running copy: its level', async () => {
         state.actions = running('/items/brie_sword', 7);
-        expect(await planStartLevel()).toBe(7);
+        expect(await planStartLevel('Brie Sword +7')).toBe(7);
+    });
+
+    test('a +7 copy running while another +0 copy of the same item is shown plans from +0', async () => {
+        state.actions = running('/items/brie_sword', 7);
+        expect(await planStartLevel('Brie Sword')).toBe(0);
     });
 });

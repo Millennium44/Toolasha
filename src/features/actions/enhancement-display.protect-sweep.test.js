@@ -101,7 +101,7 @@ vi.mock('../../utils/tester-shop.js', () => ({
 vi.mock('../../utils/bundle-bridge.js', () => ({ missingMaterialsButton: () => null }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 
-import { displayEnhancementStats, protectSweepHTML } from './enhancement-display.js';
+import { displayEnhancementStats, mirrorSummaryLine, protectSweepHTML } from './enhancement-display.js';
 import { clearProtectSweepMemo } from '../../utils/enhancement-protect-sweep.js';
 
 beforeAll(() => {
@@ -344,8 +344,13 @@ describe('protect-from sweep spending held protection', () => {
             { ...state.actions[0], primaryItemHash: '1234::/item_locations/inventory::/items/cheese_sword::7' },
         ];
         clearProtectSweepMemo();
-        const own = await render({ itemName: 'Cheese Sword' });
+        const own = await render({ itemName: 'Cheese Sword +7' });
         expect(groupHeader(own, 'Cheese Sword (').textContent).toContain('4 held, 2 spare');
+
+        // A second, +0 copy of the same item prepared while the +7 one runs is the bench copy
+        clearProtectSweepMemo();
+        const other = await render({ itemName: 'Cheese Sword' });
+        expect(groupHeader(other, 'Cheese Sword (').textContent).toContain('3 held, 1 spare');
     });
 
     test('reserve 0 spends every spare copy', async () => {
@@ -433,6 +438,21 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
         };
         // An empty slot protects nothing, so the setting must not change the comparison
         expect(await lineFor(3)).toBe(await lineFor(0));
+    });
+
+    test('mirror levels that are not one run are listed, not summed up as a start level', () => {
+        const coins = (value) => String(value);
+        const split = mirrorSummaryLine(
+            { priced: true, cheaperLevels: [5, 7, 8, 9], mirrorStartLevel: 5, totalSavings: 100 },
+            coins
+        );
+        expect(split).toContain('mirrors are cheaper at <strong>+5, +7–+9</strong>');
+        expect(split).not.toContain('starting at');
+        const run = mirrorSummaryLine(
+            { priced: true, cheaperLevels: [6, 7, 8], mirrorStartLevel: 6, totalSavings: 100 },
+            coins
+        );
+        expect(run).toContain('use mirrors starting at <strong>+6</strong>');
     });
 
     test('an unpriced mirror is no quote, not a saving', async () => {

@@ -411,6 +411,9 @@ function generateCostsByLevelTable(
     const totalSavings = column.totalSavings;
     const mirrorSummary = {
         priced: basePrice > 0 && mirrorPrice > 0,
+        // Not always one run from the start level: a protect-from threshold or a success-rate
+        // bracket can make the mirror dearer at a level between two where it is cheaper
+        cheaperLevels: column.levels.flatMap((entry, index) => (entry?.isMirrorCheaper ? [index + 1] : [])),
         mirrorStartLevel,
         totalSavings,
         isPhilosopherMirror,
@@ -607,6 +610,24 @@ export function isRepeatUnlimitedFromUI(panel) {
 }
 
 /**
+ * The level of the copy the panel shows, off its level badge or its name ("… +5").
+ * @param {HTMLElement} panel - Enhancing panel element
+ * @returns {number|null} The level, or null when the panel shows no item to read
+ */
+function panelItemLevel(panel) {
+    const item = panel.querySelector('.SkillActionDetail_item__2vEAz');
+    if (!item) return null;
+    const badge = item.querySelector('[class*="Item_enhancementLevel"]');
+    const badgeLevel = badge?.textContent.trim().match(/^\+(\d+)$/);
+    if (badgeLevel) return parseInt(badgeLevel[1], 10);
+    const name = item.querySelector('.Item_name__2C42x');
+    const nameLevel = name?.textContent.trim().match(/\+(\d+)$/);
+    if (nameLevel) return parseInt(nameLevel[1], 10);
+    // A +0 copy draws an empty badge, or a name with no level
+    return badge || name ? 0 : null;
+}
+
+/**
  * The enhancement level the item on the panel is currently at: the queued/running enhance
  * action's own hash when there is one (authoritative — several items can be queued, and this
  * is the one actually running, via `runningAction`), falling back to the level parsed off the
@@ -620,6 +641,12 @@ export function isRepeatUnlimitedFromUI(panel) {
  * @returns {number|null} Current enhancement level, or null when nothing says otherwise
  */
 export function getCurrentEnhancementLevel(panel, itemHrid = null) {
+    // The panel's own copy first: the running enhance can be on another copy of the same item
+    // (a +7 running while a second +0 is prepared), and its hash cannot say which copy is shown
+    if (itemHrid) {
+        const shown = panelItemLevel(panel);
+        if (shown !== null) return shown;
+    }
     let currentLevel = null;
 
     const currentActions = dataManager.getCurrentActions();
@@ -827,12 +854,28 @@ function protectStockSettings() {
 }
 
 /**
+ * Levels as runs: [5, 7, 8, 9] → "+5, +7–+9".
+ * @param {number[]} levels - Ascending levels
+ * @returns {string} The runs
+ */
+function levelRanges(levels) {
+    const runs = [];
+    for (const level of levels) {
+        const last = runs[runs.length - 1];
+        if (last && level === last[1] + 1) last[1] = level;
+        else runs.push([level, level]);
+    }
+    return runs.map(([from, to]) => (from === to ? `+${from}` : `+${from}–+${to}`)).join(', ');
+}
+
+/**
  * The Philosopher's Mirror line set beside the protect-from plans.
- * @param {{priced: boolean, mirrorStartLevel: number|null, totalSavings: number}|null} summary
+ * @param {{priced: boolean, cheaperLevels?: number[], mirrorStartLevel: number|null,
+ *   totalSavings: number}|null} summary
  * @param {function(number): string} coins - Coin formatter
  * @returns {string} HTML, '' without a summary
  */
-function mirrorSummaryLine(summary, coins) {
+export function mirrorSummaryLine(summary, coins) {
     if (!summary) return '';
     let text;
     if (!summary.priced) {
@@ -840,9 +883,13 @@ function mirrorSummaryLine(summary, coins) {
     } else if (summary.mirrorStartLevel === null) {
         text = "Philosopher's Mirror: never cheaper than enhancing up to +20.";
     } else {
-        text =
-            `Philosopher's Mirror: use mirrors starting at <strong>+${summary.mirrorStartLevel}</strong>` +
-            ` — saves <strong>${coins(summary.totalSavings)}</strong> to +20.`;
+        const levels = summary.cheaperLevels || [];
+        const contiguous = levels.length > 0 && levels.every((level, i) => level === levels[0] + i);
+        const where =
+            contiguous || levels.length === 0
+                ? `use mirrors starting at <strong>+${summary.mirrorStartLevel}</strong>`
+                : `mirrors are cheaper at <strong>${levelRanges(levels)}</strong>`;
+        text = `Philosopher's Mirror: ${where} — saves <strong>${coins(summary.totalSavings)}</strong> to +20.`;
     }
     return (
         '<div class="mwi-protsweep-mirror" style="color:#FFD700; font-size:0.8em; margin-top:2px;" ' +
