@@ -233,15 +233,17 @@ export function getItemHridFromName(itemName) {
  * @returns {number} Coin cost, or 0 if not available in shop
  */
 /**
- * The coin price of one unit of an item in the in-game shop when coins are its whole price: 0 when
+ * The coin price of an item's in-game shop offer when coins are its whole price: `coins` is 0 when
  * it is not sold there or the offer also asks for another currency, which a coin figure would
- * understate. An offer handing over several units (`outputCount`) is priced per unit received.
+ * understate. An offer handing over several units (`outputCount`) is bought whole, so `coins` is
+ * the price of one purchase and `units` what that purchase delivers.
  * @param {string} itemHrid
- * @returns {number} Coins per unit, or 0
+ * @returns {{coins: number, units: number}} Coins per purchase and units per purchase
  */
 export function getShopCoinOnlyCost(itemHrid) {
+    const none = { coins: 0, units: 1 };
     const gameData = dataManager.getInitClientData();
-    if (!gameData?.shopItemDetailMap) return 0;
+    if (!gameData?.shopItemDetailMap) return none;
     const testerOn = testerShopEnabled();
     for (const [key, shopItem] of Object.entries(gameData.shopItemDetailMap)) {
         if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
@@ -249,10 +251,10 @@ export function getShopCoinOnlyCost(itemHrid) {
         if (shopItem.costs.every((cost) => cost.itemHrid === '/items/coin')) {
             const coins = shopItem.costs.reduce((sum, cost) => sum + (Number(cost.count) || 0), 0);
             const units = Number(shopItem.outputCount) > 0 ? Number(shopItem.outputCount) : 1;
-            return coins / units;
+            return { coins, units };
         }
     }
-    return 0;
+    return none;
 }
 
 export function getShopCoinCost(itemHrid) {

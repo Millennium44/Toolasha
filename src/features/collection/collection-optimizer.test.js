@@ -18,6 +18,7 @@ const game = vi.hoisted(() => ({
     characterId: 'char-1',
     craftable: new Set(['/items/cheese']),
     profitExtra: {},
+    shopUnits: 1,
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
@@ -56,7 +57,7 @@ const ITEMS = vi.hoisted(() => ({
     '/items/cheese_sword': {
         name: 'Cheese Sword',
         equipmentDetail: {},
-        alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
+        alchemyDetail: { bulkMultiplier: 2, decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
     },
     '/items/cheese': { name: 'Cheese' },
     '/items/coin': { name: 'Coin' },
@@ -167,7 +168,10 @@ vi.mock('../../utils/market-data.js', () => ({
     getPricingMode: () => 'ask',
 }));
 vi.mock('../../utils/game-lookups.js', () => ({
-    getShopCoinOnlyCost: (hrid) => (hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0),
+    getShopCoinOnlyCost: (hrid) => ({
+        coins: hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0,
+        units: game.shopUnits,
+    }),
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price }));
@@ -212,6 +216,7 @@ beforeEach(() => {
     observer.handlers = [];
     game.craftable = new Set(['/items/cheese']);
     game.profitExtra = {};
+    game.shopUnits = 1;
     game.estimated = new Set();
     game.mixedShop = false;
     game.ironCow = false;
@@ -245,6 +250,26 @@ describe('the routes', () => {
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
         // No route ever yields the source it starts from
         for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+    });
+});
+
+describe('whole actions for sources', () => {
+    test('a decompose action eats its bulk of sources; a shop bundle is bought whole', async () => {
+        game.craftable = new Set(['/items/cheese', '/items/cheese_sword']);
+        game.shopUnits = 3;
+        const routes = await buildCollectionRoutes();
+        const sword = (route) =>
+            routes.sources.find((s) => s.sourceHrid === '/items/cheese_sword' && s.route === route);
+        // Bulk 2 for decompose and craft + decompose; a 3-unit bundle with bulk 2 is a run of 6
+        expect(sword('decompose').batch).toBe(2);
+        expect(sword('craftDecompose').batch).toBe(2);
+        expect(sword('shop').batch).toBe(6);
+        // Priced per unit received
+        expect(sword('shop').cost).toBeCloseTo(50 / 3, 9);
+        // A source with no bulk is a batch of one
+        expect(routes.sources.find((s) => s.sourceHrid === '/items/umbral_hood' && s.route === 'decompose').batch).toBe(
+            1
+        );
     });
 });
 

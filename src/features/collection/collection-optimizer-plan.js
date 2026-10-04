@@ -134,7 +134,7 @@ export function nextAchievementTarget(targets, total) {
  * @param {{craft?: Iterable<Object>, sources?: Iterable<Object>}} routes
  *   craft: `{route: 'craft', itemHrid, unitCost, unitSeconds}`;
  *   sources: `{route: 'decompose'|'shop', sourceHrid, cost, seconds, yields: Map, kept: Map,
- *   bonus?: Set}` — `bonus` names yields that are alchemy-wide bonus drops
+ *   batch?: number, bonus?: Set}` — `bonus` names yields that are alchemy-wide bonus drops
  * @returns {Map<string, Array<Object>>}
  */
 export function indexRoutes(routes) {
@@ -166,7 +166,8 @@ export function indexRoutes(routes) {
  * Craft: units = needed; gold = units × unitCost; time = units × unitSeconds.
  *
  * Decompose / shop, with y_X the expected units of the target per source item:
- *   sources n = ⌈needed / y_X⌉
+ *   sources n = ⌈needed / y_X⌉, rounded up to a multiple of `route.batch` (the bulk of one
+ *               alchemy action, or the units one shop purchase delivers)
  *   gold      = n × (cost − Σ_{Y≠X} kept value of Y)
  *   time      = n × chain seconds
  *   points    = the target's step + Σ_{Y≠X} points the other yields cross
@@ -207,7 +208,10 @@ export function evaluateOption(itemHrid, counts, route) {
 
     const perSource = route.yields.get(itemHrid) || 0;
     if (!(perSource > 0)) return null;
-    const units = Math.ceil(step.needed / perSource - 1e-9);
+    // Whole actions (and whole shop bundles): the sources round up to a multiple of the batch, and
+    // every one of them is charged and credited
+    const batch = Math.max(1, Math.floor(Number(route.batch)) || 1);
+    const units = Math.ceil(step.needed / perSource / batch - 1e-9) * batch;
     let keptOthers = 0;
     let collateral = 0;
     const credits = new Map();

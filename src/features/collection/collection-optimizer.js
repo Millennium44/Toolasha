@@ -224,8 +224,11 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
             }
         }
+        // One alchemy action eats `bulkMultiplier` sources, whole
+        const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
         const shared = {
             sourceHrid: hrid,
+            batch: bulk,
             seconds: chain.seconds,
             yields,
             kept,
@@ -249,11 +252,33 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 seconds: chain.seconds + (makeSeconds.get(hrid) || 0),
             });
         }
-        const shopPrice = getShopCoinOnlyCost(hrid);
-        if (shopPrice > 0) sources.push({ ...shared, route: 'shop', cost: shopPrice + chain.overheadCost });
+        // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
+        const offer = getShopCoinOnlyCost(hrid);
+        if (offer?.coins > 0) {
+            const units = Math.max(1, Math.floor(Number(offer.units)) || 1);
+            sources.push({
+                ...shared,
+                route: 'shop',
+                batch: leastCommonMultiple(units, bulk),
+                cost: offer.coins / units + chain.overheadCost,
+            });
+        }
     }
     if (cancelled()) return null;
     return { craft, sources };
+}
+
+/**
+ * The smallest count that is a whole number of both sizes.
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
+function leastCommonMultiple(a, b) {
+    let x = a;
+    let y = b;
+    while (y) [x, y] = [y, x % y];
+    return (a / x) * b;
 }
 
 /**

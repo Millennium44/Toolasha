@@ -99,20 +99,20 @@ describe('getShopCoinOnlyCost', () => {
     });
 
     test('a coin-only offer is its coin price', () => {
-        expect(getShopCoinOnlyCost('/items/bag')).toBe(500);
+        expect(getShopCoinOnlyCost('/items/bag')).toEqual({ coins: 500, units: 1 });
     });
 
-    test('an offer handing over several units is priced per unit received', () => {
+    test('an offer handing over several units reports the purchase price and its unit count', () => {
         state.gameData.shopItemDetailMap['/shop_items/bundle'] = {
             itemHrid: '/items/bundle',
             outputCount: 5,
             costs: [{ itemHrid: '/items/coin', count: 500 }],
         };
-        expect(getShopCoinOnlyCost('/items/bundle')).toBe(100);
+        expect(getShopCoinOnlyCost('/items/bundle')).toEqual({ coins: 500, units: 5 });
     });
 
     test('an offer that also asks for another currency is not a coin price', () => {
-        expect(getShopCoinOnlyCost('/items/mixed')).toBe(0);
+        expect(getShopCoinOnlyCost('/items/mixed').coins).toBe(0);
         // The coin component alone is still what getShopCoinCost reports
         expect(getShopCoinCost('/items/mixed')).toBe(100);
     });
