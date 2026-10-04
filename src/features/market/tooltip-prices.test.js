@@ -12,16 +12,19 @@ const observerState = vi.hoisted(() => ({ handler: null }));
 const settings = vi.hoisted(() => ({
     hideInEnhanceSelector: false,
     loadoutMarksEnabled: true,
+    selfUseAlchemy: false,
     patientTickBuy: false,
     patientTickSell: false,
 }));
 const characterState = vi.hoisted(() => ({ data: null }));
+const alchemyState = vi.hoisted(() => ({ profits: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (id) => {
             if (id === 'itemTooltip_hideInEnhanceSelector') return settings.hideInEnhanceSelector;
             if (id === 'itemTooltip_loadoutMarks') return settings.loadoutMarksEnabled;
+            if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
             return true;
         },
         getSettingValue: (id, fallback) => {
@@ -49,6 +52,11 @@ vi.mock('../../core/data-manager.js', () => {
         '/items/cheese': { name: 'Cheese' },
         '/items/griffin_bulwark': { name: 'Griffin Bulwark', equipmentDetail: {} },
         '/items/wisdom_tea': { name: 'Wisdom Tea', consumableDetail: {} },
+        '/items/cheese_sword': {
+            name: 'Cheese Sword',
+            equipmentDetail: {},
+            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
+        },
     };
     return {
         default: {
@@ -69,8 +77,15 @@ vi.mock('../../core/data-manager.js', () => {
 vi.mock('../../api/marketplace.js', () => ({
     default: { isLoaded: () => true, fetch: async () => {}, getPrice: () => null },
 }));
-vi.mock('./profit-calculator.js', () => ({ default: { calculateProfit: async () => null } }));
-vi.mock('./alchemy-profit-calculator.js', () => ({ default: { calculateAllProfits: async () => ({}) } }));
+vi.mock('./profit-calculator.js', () => ({
+    default: { calculateProfit: async () => null, findProductionAction: () => null },
+}));
+vi.mock('./alchemy-profit-calculator.js', () => ({
+    default: {
+        calculateAllProfits: () => alchemyState.profits,
+        calculateDecomposeProfit: () => null,
+    },
+}));
 vi.mock('./expected-value-calculator.js', () => ({ default: { calculateExpectedValue: () => null } }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: () => null,
@@ -82,7 +97,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParamsFor: () => null }));
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 10, bid: 9 }) }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrices: () => ({ ask: 10, bid: 9 }),
+    getItemPrice: () => 10,
+}));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityCost: () => ({ total: 1234, books: 3 }),
 }));
@@ -149,6 +167,8 @@ beforeEach(async () => {
     document.body.innerHTML = '';
     settings.hideInEnhanceSelector = false;
     settings.loadoutMarksEnabled = true;
+    settings.selfUseAlchemy = false;
+    alchemyState.profits = {};
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -707,5 +727,61 @@ describe('loadout marks — on the tooltip itself', () => {
         observerState.handler(el);
         await settle();
         expect(el.querySelector('.mwi-loadout-marks')).toBeNull();
+    });
+});
+
+describe('self-use alchemy lines', () => {
+    // The calculator's decompose result for a Cheese Sword, cut to what is read
+    const cheeseSwordDecompose = () => ({
+        actionType: 'decompose',
+        itemHrid: '/items/cheese_sword',
+        profitPerHour: -500,
+        profitPerAction: -5,
+        actionsPerHour: 100,
+        successRate: 0.6,
+        requirementCosts: [{ itemHrid: '/items/cheese_sword', count: 1, price: 50 }],
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        dropRevenues: [],
+    });
+
+    const blockFor = async (hrid) => {
+        const el = itemTooltip('Cheese Sword');
+        await tooltipPrices.injectMultiActionProfitDisplay(el, hrid, 0);
+        return el.querySelector('.market-multi-action-injected');
+    };
+
+    test('the setting off leaves the alternative actions exactly as they were', async () => {
+        alchemyState.profits = { decompose: cheeseSwordDecompose() };
+        const block = await blockFor('/items/cheese_sword');
+        expect(block.textContent).toContain('Decompose: ');
+        expect(block.textContent).not.toMatch(/self-use/i);
+        expect(block.innerHTML).toBe(
+            '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' +
+                '<div style="font-weight: bold; margin-bottom: 4px;">Profits:</div>' +
+                '<div style="font-size: 0.9em; margin-left: 8px;">' +
+                '<div style="color: #f00;">• Decompose: -500/hr ' +
+                '<span style="opacity: 0.7; color: #f00;">(-5/action)</span></div></div></div>'
+        );
+    });
+
+    test('the setting on adds the labelled self-use line and its footnote', async () => {
+        settings.selfUseAlchemy = true;
+        alchemyState.profits = { decompose: cheeseSwordDecompose() };
+        const block = await blockFor('/items/cheese_sword');
+        // 18 cheese x 10 x 0.6 x 100/hr = 10,800 kept, against 100 swords x 50 (not craftable
+        // here, so the own-use cost is the buy side) = 5,000
+        expect(block.textContent).toContain('Decompose (self-use): 5.8K/hr');
+        expect(block.textContent).toContain('(58/action)');
+        expect(block.textContent).toContain('Self-use: untaxed');
+        // The ordinary taxed line is still there, unchanged
+        expect(block.textContent).toContain('Decompose: -500/hr');
+        // No gear comes out of a cheese sword, so no chain line repeats the step
+        expect(block.textContent).not.toContain('Full decompose chain');
+    });
+
+    test('nothing to say about an item no alchemy applies to', async () => {
+        settings.selfUseAlchemy = true;
+        expect(await blockFor('/items/cheese_sword')).toBeNull();
     });
 });

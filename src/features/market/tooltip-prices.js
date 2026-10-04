@@ -26,8 +26,9 @@ import {
     networthFormatter,
     formatPercentage,
     isAbbreviationEnabled,
+    timeReadable,
 } from '../../utils/formatters.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -40,6 +41,12 @@ import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
+import {
+    ownUseUnitCost,
+    selfUseDecompose,
+    selfUseDecomposeChain,
+    selfUseTransmuteHeld,
+} from '../../utils/self-use-alchemy.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
@@ -61,6 +68,7 @@ const TOOLTIP_FEATURE_SETTINGS = [
     'itemTooltip_expectedValue',
     'itemTooltip_profit',
     'itemTooltip_multiActionProfit',
+    'itemTooltip_selfUseAlchemy',
     'itemTooltip_gathering',
     'itemTooltip_gatheringRareDrops',
     'itemTooltip_abilityStatus',
@@ -69,6 +77,15 @@ const TOOLTIP_FEATURE_SETTINGS = [
     'itemTooltip_enhancementMilestones',
     'itemTooltip_loadoutMarks',
 ];
+
+/** Hover text on every self-use alchemy line. */
+const SELF_USE_TITLE =
+    'Self-use: you keep the outputs instead of selling them, so no sales tax is taken and each output is ' +
+    'valued at what you would pay to buy it under your pricing mode. Decompose costs the item at the cheaper ' +
+    'of making or buying it; a held item being transmuted costs what selling it would bring after tax.';
+
+/** Footnote under the self-use lines. */
+const SELF_USE_FOOTNOTE = 'Self-use: untaxed, outputs at what you would pay for them.';
 
 /** Whether any tooltip-injection feature is enabled. */
 function anyTooltipFeatureEnabled() {
@@ -626,20 +643,27 @@ class TooltipPrices {
         }
 
         // Always show detailed craft profit if enabled
+        // Kept for the self-use alchemy lines, whose own-use cost reads the same figure
+        let craftProfitData;
         if (config.getSetting('itemTooltip_profit') && enhancementLevel === 0) {
             // Original single-action craft profit display
             // Only run for base items (enhancementLevel = 0), not enhanced items
             // Enhanced items show their cost in the enhancement path section instead
             const profitData = await profitCalculator.calculateProfit(itemHrid);
+            craftProfitData = profitData ?? null;
             if (profitData) {
                 this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip);
             }
         }
 
-        // Optionally show alternative alchemy actions below craft profit
-        if (config.getSetting('itemTooltip_multiActionProfit')) {
+        // Optionally show alternative alchemy actions below craft profit. The
+        // self-use lines live in the same block but have their own switch, so
+        // either one on draws it.
+        if (config.getSetting('itemTooltip_multiActionProfit') || config.getSetting('itemTooltip_selfUseAlchemy')) {
             // Multi-action profit display (alchemy actions only - craft shown above)
-            await this.injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip);
+            await this.injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip, {
+                craftProfitData,
+            });
         }
 
         // Check for gathering sources (Foraging, Woodcutting, Milking)
@@ -1476,8 +1500,17 @@ class TooltipPrices {
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
+     * @param {Object} [options]
+     * @param {Object|null} [options.craftProfitData] - The craft profit already computed for
+     *   this tooltip (undefined when it was not), reused for the self-use own-use cost
      */
-    async injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip = false) {
+    async injectMultiActionProfitDisplay(
+        tooltipElement,
+        itemHrid,
+        enhancementLevel,
+        isCollectionTooltip = false,
+        { craftProfitData } = {}
+    ) {
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
             : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
@@ -1496,18 +1529,26 @@ class TooltipPrices {
         // Try alchemy profits (coinify, decompose, transmute)
         const alchemyProfits = alchemyProfitCalculator.calculateAllProfits(itemHrid, enhancementLevel);
 
-        if (alchemyProfits.coinify) {
-            allProfits.push(alchemyProfits.coinify);
-        }
-        if (alchemyProfits.decompose) {
-            allProfits.push(alchemyProfits.decompose);
-        }
-        if (alchemyProfits.transmute) {
-            allProfits.push(alchemyProfits.transmute);
+        if (config.getSetting('itemTooltip_multiActionProfit')) {
+            if (alchemyProfits.coinify) {
+                allProfits.push(alchemyProfits.coinify);
+            }
+            if (alchemyProfits.decompose) {
+                allProfits.push(alchemyProfits.decompose);
+            }
+            if (alchemyProfits.transmute) {
+                allProfits.push(alchemyProfits.transmute);
+            }
         }
 
+        // Self-use lines: base items only, like every other own-use figure
+        const selfUseLines =
+            config.getSetting('itemTooltip_selfUseAlchemy') && enhancementLevel === 0
+                ? await this.buildSelfUseAlchemyLines(itemHrid, alchemyProfits, craftProfitData)
+                : [];
+
         // If no profitable actions found, return
-        if (allProfits.length === 0) {
+        if (allProfits.length === 0 && selfUseLines.length === 0) {
             return;
         }
 
@@ -1528,7 +1569,8 @@ class TooltipPrices {
         let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
 
         // Show heading based on whether item is craftable
-        const heading = isCraftable ? 'Alternative Actions:' : 'Profits:';
+        const heading =
+            allProfits.length === 0 ? 'Self-use alchemy:' : isCraftable ? 'Alternative Actions:' : 'Profits:';
         html += `<div style="font-weight: bold; margin-bottom: 4px;">${heading}</div>`;
         html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
@@ -1563,12 +1605,141 @@ class TooltipPrices {
             html += '</div>';
         }
 
+        for (const line of selfUseLines) {
+            html += `<div style="color: ${line.color};" title="${SELF_USE_TITLE}">• ${line.text}`;
+            if (line.detail) {
+                html += ` <span style="opacity: 0.7;">${line.detail}</span>`;
+            }
+            html += '</div>';
+            if (line.note) {
+                html += `<div style="opacity: 0.7; margin-left: 10px;">${line.note}</div>`;
+            }
+        }
+        if (selfUseLines.length > 0) {
+            html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${SELF_USE_FOOTNOTE}</div>`;
+        }
+
         html += '</div>';
 
         html += '</div>';
 
         profitDiv.innerHTML = html;
         tooltipText.appendChild(profitDiv);
+    }
+
+    /**
+     * The self-use alchemy lines for one base item: decompose once, the whole
+     * decompose chain, and transmuting a held copy. Each is built only where
+     * the matching calculator result exists.
+     * @param {string} itemHrid
+     * @param {Object} alchemyProfits - From `calculateAllProfits(itemHrid, 0)`
+     * @param {Object|null|undefined} craftProfitData - Craft profit already computed, if any
+     * @returns {Promise<Array<{text: string, color: string, detail?: string, note?: string}>>}
+     */
+    async buildSelfUseAlchemyLines(itemHrid, alchemyProfits, craftProfitData) {
+        const lines = [];
+        try {
+            const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' });
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            const decompose = alchemyProfits?.decompose;
+            const lineColor = (value) => (value >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS);
+            const unpricedTag = (partly) => (partly ? ', partly unpriced' : '');
+
+            if (decompose && itemDetails) {
+                const ownUseCost = await this.selfUseOwnUseCost(itemHrid, decompose, craftProfitData);
+
+                const step = selfUseDecompose(decompose, itemDetails, { ownUseCost, priceOf });
+                if (step) {
+                    lines.push({
+                        text: `Decompose (self-use): ${formatKMB(step.netPerHour)}/hr`,
+                        detail: `(${formatKMB(step.netPerAction)}/action${unpricedTag(step.partlyUnpriced)})`,
+                        color: lineColor(step.netPerHour),
+                    });
+                }
+
+                const chain = selfUseDecomposeChain(itemHrid, {
+                    getDecompose: (hrid) =>
+                        hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid),
+                    getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
+                    isChainable: (hrid) => {
+                        const details = dataManager.getItemDetails(hrid);
+                        return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
+                    },
+                    priceOf,
+                    ownUseCost,
+                });
+                // A chain that yields no gear is the one-step line again; say it once
+                if (chain && chain.collected.length > 0) {
+                    const names = chain.collected
+                        .map(({ itemHrid: hrid }) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop())
+                        .join(', ');
+                    const time = timeReadable(chain.seconds);
+                    if (chain.net !== null) {
+                        lines.push({
+                            text: `Full decompose chain (self-use): ${formatKMB(chain.net)}/item`,
+                            detail: `(${time}, ${formatKMB(chain.netPerHour)}/hr)`,
+                            note: `collects ${names}`,
+                            color: lineColor(chain.net),
+                        });
+                    } else {
+                        // Some step or output has no price: show what is known, not a net
+                        // that silently leaves a branch out
+                        lines.push({
+                            text:
+                                `Full decompose chain (self-use): materials ≥${formatKMB(chain.terminalValue)} ` +
+                                `vs cost ${formatKMB(chain.cost)}`,
+                            detail: `(${time}, partly unpriced)`,
+                            note: `collects ${names}`,
+                            color: config.COLOR_TOOLTIP_INFO,
+                        });
+                    }
+                }
+            }
+
+            const transmute = alchemyProfits?.transmute;
+            if (transmute && itemDetails) {
+                const held = selfUseTransmuteHeld(transmute, itemDetails, {
+                    sellPrice: getItemPrice(itemHrid, { context: 'profit', side: 'sell' }),
+                    priceOf,
+                });
+                if (held) {
+                    lines.push({
+                        text: `Transmute held item (self-use): ${formatKMB(held.netPerHour)}/hr`,
+                        detail: `(${formatKMB(held.netPerAction)}/action${unpricedTag(held.partlyUnpriced)})`,
+                        color: lineColor(held.netPerHour),
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('[TooltipPrices] Self-use alchemy lines failed:', error);
+        }
+        return lines;
+    }
+
+    /**
+     * One unit's own-use cost: the cheaper of making it at your bench (the
+     * own-use line's make figure, {@link ownUseCompare}) and buying it under
+     * your pricing mode.
+     * @param {string} itemHrid
+     * @param {Object} decompose - The decompose result, whose input price is the buy side
+     * @param {Object|null|undefined} craftProfitData - Craft profit already computed, if any
+     * @returns {Promise<number|null>}
+     */
+    async selfUseOwnUseCost(itemHrid, decompose, craftProfitData) {
+        let profitData = craftProfitData;
+        if (profitData === undefined) {
+            profitData = profitCalculator.findProductionAction?.(itemHrid)
+                ? await profitCalculator.calculateProfit(itemHrid)
+                : null;
+        }
+        const comparison = profitData
+            ? ownUseCompare(profitData, dataManager.getActionDetails?.(profitData.actionHrid) ?? null)
+            : null;
+        const buyCandidates = [comparison?.buy, decompose?.requirementCosts?.[0]?.price].filter((v) => v > 0);
+        return ownUseUnitCost({
+            make: comparison?.make ?? null,
+            buy: buyCandidates.length > 0 ? Math.min(...buyCandidates) : null,
+        });
     }
 
     /**
