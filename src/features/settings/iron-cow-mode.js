@@ -202,9 +202,13 @@ class IronCowMode {
     async reconcile() {
         if (!this.isEnabled()) return;
         const key = this._snapshotKey();
-        const stored = await storage.getJSON(key, 'settings', null);
+        // tryGet, not getJSON: an unreadable snapshot must not look absent, or it would be
+        // rebuilt from the forced values and the player's originals lost
+        const read = await storage.tryGet(key, 'settings');
+        if (!read) return;
         // A character switch during the read makes this the wrong character's snapshot
         if (this._snapshotKey() !== key) return;
+        const stored = read.found ? storage.parseJSON(read.value, key, null) : null;
         const snapshot = stored && typeof stored === 'object' ? { ...stored } : {};
         let added = false;
         for (const id of IRON_COW_SETTINGS) {
@@ -219,6 +223,8 @@ class IronCowMode {
         }
         if (!added) return;
         await storage.setJSON(key, snapshot, 'settings', true);
+        // The arriving character's settings are not this snapshot's; its own load reconciles them
+        if (this._snapshotKey() !== key) return;
         this.reapply();
     }
 

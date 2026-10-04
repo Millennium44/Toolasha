@@ -31,6 +31,14 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../core/storage.js', () => ({
     default: {
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            const k = `${store}::${key}`;
+            if (world.readFails) return null;
+            const found = world.store.has(k);
+            if (world.switchOnRead) world.characterId = 'char2';
+            return { found, value: found ? world.store.get(k) : null };
+        }),
+        parseJSON: (raw, key, fallback = null) => (raw == null ? fallback : raw),
         getJSON: vi.fn(async (key, store = 'settings', fallback = null) => {
             const k = `${store}::${key}`;
             // The read is where the switch lands: the player clicked the toggle
@@ -41,6 +49,7 @@ vi.mock('../../core/storage.js', () => ({
         }),
         setJSON: vi.fn(async (key, value, store = 'settings') => {
             world.store.set(`${store}::${key}`, value);
+            if (world.switchOnWrite) world.characterId = 'char2';
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -205,6 +214,8 @@ describe('iron cow mode already on when a setting joins its list', () => {
         world.deleted = [];
         world.restored = [];
         world.switchOnRead = false;
+        world.switchOnWrite = false;
+        world.readFails = false;
     });
 
     test('startup records the new setting as the player left it and forces it off', async () => {
@@ -240,5 +251,30 @@ describe('iron cow mode already on when a setting joins its list', () => {
 
         expect(world.restored).toEqual([]);
         expect(world.store.get('settings::toolasha_ironCowSnapshot_char1')).toEqual({});
+    });
+
+    test('an unreadable snapshot is left alone, not rebuilt from the forced values', async () => {
+        world.readFails = true;
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', { invWorth: { type: 'checkbox', value: false } });
+
+        await ironCowMode.reconcile();
+
+        expect(world.store.get('settings::toolasha_ironCowSnapshot_char1')).toEqual({
+            invWorth: { type: 'checkbox', value: false },
+        });
+        expect(world.restored).toEqual([]);
+    });
+
+    test('a character switch while the snapshot is written forces nothing on the arriving character', async () => {
+        world.switchOnWrite = true;
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', {});
+
+        await ironCowMode.reconcile();
+
+        expect(world.store.get('settings::toolasha_ironCowSnapshot_char1').itemTooltip_selfUseAlchemy).toEqual({
+            type: 'checkbox',
+            value: true,
+        });
+        expect(world.restored).toEqual([]);
     });
 });
