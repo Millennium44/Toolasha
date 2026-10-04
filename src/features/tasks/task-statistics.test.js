@@ -473,13 +473,13 @@ describe('the realized-payout-by-type card', () => {
      * @param {Array<Object>} [params.items] - Item rewards on each claim
      * @returns {Array<Object>} Completion entries
      */
-    function claims({ category, n, coins, startId = 1, items = [] }) {
+    function claims({ category, n, coins, startId = 1, items = [], tokens = 1 }) {
         return Array.from({ length: n }, (_, index) => ({
             questId: startId + index,
             name: 'Task',
             category,
             taskHrid: '/actions/foraging/egg',
-            tokens: 1,
+            tokens,
             coins,
             items,
             goalCount: 100,
@@ -589,6 +589,34 @@ describe('the realized-payout-by-type card', () => {
 
         const stats = await taskStatistics.calculateAllStatistics();
         expect(cardText(stats)).toContain('Cooking / Combat');
+    });
+
+    test('labels partial Gift valuations as floors and withholds category ranking', async () => {
+        // This is the producer shape returned by calculateTaskTokenValue when
+        // the Gift EV has two drops that could not be priced.
+        game.valuation = {
+            tokenValue: 2000,
+            giftPerTaskPoint: 8000,
+            giftIsPartial: true,
+            giftPartialDrops: 2,
+            error: null,
+        };
+        game.claimLog = [
+            ...claims({ category: 'combat', n: 6, coins: 1000, startId: 1 }),
+            ...claims({ category: 'cooking', n: 6, coins: 90000, startId: 100, tokens: 0 }),
+        ];
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        const combat = stats.payouts.rows.find((row) => row.category === 'combat');
+        expect(combat.isPartial).toBe(true);
+        expect(stats.payouts.rankingWithheld).toBe(true);
+        expect(stats.payouts.best).toBeNull();
+        expect(stats.payouts.worst).toBeNull();
+
+        const text = cardText(stats);
+        expect(text).toContain('≥');
+        expect(text).toContain('Ranking withheld');
+        expect(text).not.toContain('Best / worst payer');
     });
 
     test('an unpriceable token drops the whole card rather than reporting zeroes', async () => {

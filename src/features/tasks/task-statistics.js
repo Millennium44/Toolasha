@@ -209,7 +209,16 @@ class TaskStatistics {
                 completions,
                 rerollHistory,
                 cowbellValue: getCowbellValue(),
-                valueRewards: (rewards) => valueTaskRewards(tokenValue, rewards),
+                valueRewards: (rewards) => {
+                    const value = valueTaskRewards(tokenValue, rewards);
+                    if (value === null || value === undefined) return null;
+
+                    const hasTokens = rewards.tokens > 0;
+                    return {
+                        value,
+                        isPartial: hasTokens && Boolean(tokenValue.isPartial || tokenValue.giftIsPartial),
+                    };
+                },
                 priceItem: (itemHrid) => {
                     if (priceCache.has(itemHrid)) return priceCache.get(itemHrid);
                     const price = valueOfRewardItem(itemHrid);
@@ -699,14 +708,18 @@ class TaskStatistics {
 
         for (const row of payouts.rows) {
             section.appendChild(
-                this.createRow(`${row.label} (${row.claims})`, roundedKMB(row.medianPayout), config.COLOR_GOLD)
+                this.createRow(
+                    `${row.label} (${row.claims})`,
+                    `${row.isPartial ? '≥ ' : ''}${roundedKMB(row.medianPayout)}`,
+                    config.COLOR_GOLD
+                )
             );
 
             if (row.netMedian !== null) {
                 section.appendChild(
                     this.createRow(
                         `  net of rerolls (${row.attributed} of ${row.claims})`,
-                        roundedKMB(row.netMedian),
+                        `${row.netIsPartial ? '≥ ' : ''}${roundedKMB(row.netMedian)}`,
                         row.netMedian >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS
                     )
                 );
@@ -716,7 +729,7 @@ class TaskStatistics {
                 section.appendChild(
                     this.createRow(
                         `  ${band.label} (${band.claims})`,
-                        roundedKMB(band.medianPayout),
+                        `${band.isPartial ? '≥ ' : ''}${roundedKMB(band.medianPayout)}`,
                         config.COLOR_TEXT_SECONDARY
                     )
                 );
@@ -732,6 +745,16 @@ class TaskStatistics {
                     'Best / worst payer',
                     `${payouts.best.label} / ${payouts.worst.label}`,
                     config.COLOR_ACCENT
+                )
+            );
+        }
+
+        if (payouts.rankingWithheld) {
+            section.appendChild(
+                this.createRow(
+                    'Ranking withheld',
+                    `${payouts.partialClaims} claim${payouts.partialClaims === 1 ? '' : 's'} have incomplete reward values`,
+                    config.COLOR_TEXT_SECONDARY
                 )
             );
         }

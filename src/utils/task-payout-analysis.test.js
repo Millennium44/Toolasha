@@ -89,7 +89,11 @@ describe('claimValue', () => {
     it('adds coins, tokens, the prorated gift and the priced items', () => {
         const entry = completion({ coins: 1000, tokens: 2, items: [{ itemHrid: '/items/cheese', count: 3 }] });
         // 1000 + 2*1000 + 500 gift + 3*200 items
-        expect(claimValue(entry, { valueRewards, priceItem })).toEqual({ value: 4100, unpricedStacks: 0 });
+        expect(claimValue(entry, { valueRewards, priceItem })).toEqual({
+            value: 4100,
+            unpricedStacks: 0,
+            isPartial: false,
+        });
     });
 
     it('prorates the gift once per claim, not once per token', () => {
@@ -124,6 +128,7 @@ describe('claimValue', () => {
         expect(claimValue(completion(), { valueRewards: () => null, priceItem })).toEqual({
             value: null,
             unpricedStacks: 0,
+            isPartial: false,
         });
     });
 
@@ -188,8 +193,8 @@ describe('goalBands', () => {
         ]);
         const bands = goalBands(claimList, 5);
         expect(bands).toHaveLength(2);
-        expect(bands[0]).toEqual({ label: 'goal ≤ 105', claims: 5, medianPayout: 100 });
-        expect(bands[1]).toEqual({ label: 'goal > 105', claims: 5, medianPayout: 900 });
+        expect(bands[0]).toEqual({ label: 'goal ≤ 105', claims: 5, medianPayout: 100, isPartial: false });
+        expect(bands[1]).toEqual({ label: 'goal > 105', claims: 5, medianPayout: 900, isPartial: false });
     });
 
     it('returns no bands when one half is too thin to stand on its own', () => {
@@ -236,6 +241,32 @@ describe('analyzeTaskPayouts', () => {
             ['cooking', 5, 6500],
             ['combat', 5, 2500],
         ]);
+    });
+
+    it('carries partial reward values and withholds comparative rankings', () => {
+        const completions = [
+            ...claims({ category: 'combat', n: 5, coins: 1000, startId: 1 }),
+            ...claims({ category: 'cooking', n: 5, coins: 90000, startId: 100 }).map((entry) => ({
+                ...entry,
+                tokens: 0,
+            })),
+        ];
+        const producerShapedValue = ({ coins, tokens }) => ({
+            value: coins + tokens * 10000,
+            // The task-token Gift EV was $400,000 with two missing drops;
+            // the actual per-claim floor reaches this analyzer via this flag.
+            isPartial: tokens > 0,
+        });
+
+        const result = analyzeTaskPayouts({ completions, valueRewards: producerShapedValue, priceItem });
+
+        expect(result.partialClaims).toBe(5);
+        expect(result.rankingWithheld).toBe(true);
+        expect(result.rows.find((row) => row.category === 'combat').isPartial).toBe(true);
+        expect(result.rows.find((row) => row.category === 'cooking').isPartial).toBe(false);
+        expect(result.rows.map((row) => row.category)).toEqual(['combat', 'cooking']);
+        expect(result.best).toBeNull();
+        expect(result.worst).toBeNull();
     });
 
     it('gates a thin category out of the rows but keeps its claim count', () => {

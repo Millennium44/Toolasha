@@ -87,15 +87,16 @@ export function median(values) {
  *
  * @param {Object} entry - Completion entry `{coins, tokens, items}`
  * @param {Object} pricing - Valuation hooks
- * @param {Function} pricing.valueRewards - `({coins, tokens, taskCount}) => number|null`
+ * @param {Function} pricing.valueRewards - `({coins, tokens, taskCount}) => number|null|{value, isPartial}`
  * @param {Function} pricing.priceItem - `(itemHrid) => number|null`, per unit
- * @returns {{value: number|null, unpricedStacks: number}} Claim value and how many stacks were skipped
+ * @returns {{value: number|null, unpricedStacks: number, isPartial: boolean}} Claim value and completeness
  */
 export function claimValue(entry, { valueRewards, priceItem } = {}) {
-    const base = valueRewards
+    const rewardValue = valueRewards
         ? valueRewards({ coins: entry?.coins || 0, tokens: entry?.tokens || 0, taskCount: 1 })
         : null;
-    if (base === null || base === undefined) return { value: null, unpricedStacks: 0 };
+    const base = typeof rewardValue === 'number' ? rewardValue : rewardValue?.value;
+    if (base === null || base === undefined) return { value: null, unpricedStacks: 0, isPartial: false };
 
     let items = 0;
     let unpricedStacks = 0;
@@ -108,7 +109,7 @@ export function claimValue(entry, { valueRewards, priceItem } = {}) {
         }
     }
 
-    return { value: base + items, unpricedStacks };
+    return { value: base + items, unpricedStacks, isPartial: Boolean(rewardValue?.isPartial || unpricedStacks > 0) };
 }
 
 /**
@@ -141,9 +142,9 @@ export function spendByQuest(history, cowbellValue = 0) {
  * and the split actually separates something; a category whose goals are all
  * the same number has no bands to show, and neither does a thin one.
  *
- * @param {Array<Object>} claims - `{goalCount, value, net}` for one category
+ * @param {Array<Object>} claims - `{goalCount, value, net, isPartial}` for one category
  * @param {number} [minClaims=MIN_CLAIMS] - Gate each half must clear
- * @returns {Array<Object>} Zero or two bands, each `{label, claims, medianPayout}`
+ * @returns {Array<Object>} Zero or two bands, each `{label, claims, medianPayout, isPartial}`
  */
 export function goalBands(claims, minClaims = MIN_CLAIMS) {
     const goals = claims.map((claim) => claim.goalCount).filter((goal) => Number.isFinite(goal));
@@ -156,10 +157,12 @@ export function goalBands(claims, minClaims = MIN_CLAIMS) {
     const high = claims.filter((claim) => claim.goalCount > split);
     if (low.length < minClaims || high.length < minClaims) return [];
 
-    return [
-        { label: `goal ≤ ${split}`, claims: low.length, medianPayout: median(low.map((claim) => claim.value)) },
-        { label: `goal > ${split}`, claims: high.length, medianPayout: median(high.map((claim) => claim.value)) },
-    ];
+    return [low, high].map((bandClaims, index) => ({
+        label: index === 0 ? `goal ≤ ${split}` : `goal > ${split}`,
+        claims: bandClaims.length,
+        medianPayout: median(bandClaims.map((claim) => claim.value)),
+        isPartial: bandClaims.some((claim) => claim.isPartial),
+    }));
 }
 
 /**
@@ -169,13 +172,15 @@ export function goalBands(claims, minClaims = MIN_CLAIMS) {
  * @param {Array<Object>} params.completions - Completion entries from the tracker
  * @param {Array<Object>} [params.rerollHistory] - Retired-task reroll records
  * @param {number} [params.cowbellValue=0] - Coins per cowbell, for the spend join
- * @param {Function} params.valueRewards - `({coins, tokens, taskCount}) => number|null`
+ * @param {Function} params.valueRewards - `({coins, tokens, taskCount}) => number|null|{value, isPartial}`
  * @param {Function} params.priceItem - `(itemHrid) => number|null`, per unit
  * @param {number} [params.minClaims=MIN_CLAIMS] - Per-row gate
  * @returns {{rows: Array<Object>, thin: Array<Object>, totalClaims: number, valuedClaims: number,
- *   unpricedStacks: number, unpricedClaims: number, best: Object|null, worst: Object|null}}
- *   `rows` are the categories that cleared the gate, richest first, each
- *   `{category, label, claims, medianPayout, netMedian, attributed, bands}`.
+ *   unpricedStacks: number, unpricedClaims: number, partialClaims: number, rankingWithheld: boolean,
+ *   best: Object|null, worst: Object|null}}
+ *   `rows` are the categories that cleared the gate, richest first when complete and by label
+ *   when a ranking is withheld, each
+ *   `{category, label, claims, medianPayout, netMedian, attributed, isPartial, netIsPartial, bands}`.
  */
 export function analyzeTaskPayouts({
     completions,
@@ -192,17 +197,19 @@ export function analyzeTaskPayouts({
     let valuedClaims = 0;
     let unpricedStacks = 0;
     let unpricedClaims = 0;
+    let partialClaims = 0;
 
     for (const entry of Array.isArray(completions) ? completions : []) {
         if (!entry) continue;
         totalClaims += 1;
 
-        const { value, unpricedStacks: skipped } = claimValue(entry, { valueRewards, priceItem });
+        const { value, unpricedStacks: skipped, isPartial = false } = claimValue(entry, { valueRewards, priceItem });
         unpricedStacks += skipped;
         if (skipped > 0) unpricedClaims += 1;
         // A claim the token valuation could not price at all is not a zero-payer
         if (value === null) continue;
         valuedClaims += 1;
+        if (isPartial) partialClaims += 1;
 
         const category = entry.category || 'unknown';
         const claims = byCategory.get(category);
@@ -211,6 +218,7 @@ export function analyzeTaskPayouts({
             goalCount: entry.goalCount,
             value,
             net: attributedSpend === null ? null : value - attributedSpend,
+            isPartial,
         };
         if (claims) claims.push(claim);
         else byCategory.set(category, [claim]);
@@ -233,11 +241,14 @@ export function analyzeTaskPayouts({
             // absent spend record is not a zero, so it must not average as one
             netMedian: attributed.length >= minClaims ? median(attributed.map((claim) => claim.net)) : null,
             attributed: attributed.length,
+            isPartial: claims.some((claim) => claim.isPartial),
+            netIsPartial: attributed.some((claim) => claim.isPartial),
             bands: goalBands(claims, minClaims),
         });
     }
 
-    rows.sort((a, b) => b.medianPayout - a.medianPayout);
+    const rankingWithheld = rows.some((row) => row.isPartial);
+    rows.sort((a, b) => (rankingWithheld ? a.label.localeCompare(b.label) : b.medianPayout - a.medianPayout));
     thin.sort((a, b) => b.claims - a.claims);
 
     // Only worth naming a best and a worst when there are two rows to compare;
@@ -251,7 +262,9 @@ export function analyzeTaskPayouts({
         valuedClaims,
         unpricedStacks,
         unpricedClaims,
-        best: comparable ? rows[0] : null,
-        worst: comparable ? rows[rows.length - 1] : null,
+        partialClaims,
+        rankingWithheld,
+        best: comparable && !rankingWithheld ? rows[0] : null,
+        worst: comparable && !rankingWithheld ? rows[rows.length - 1] : null,
     };
 }

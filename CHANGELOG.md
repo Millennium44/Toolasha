@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Historical task payouts show incomplete values
+
+- Historical task payout summaries mark missing reward values as lower bounds and withhold best/worst rankings until the qualifying categories are fully priced.
+
 ### Task rewards use earned Task Points
 
 - Purple's Gift value now accrues per Task Token rewarded, matching the game's Task Point rule. Incomplete reward prices stay marked or unavailable and do not enter automatic reroll comparisons.
