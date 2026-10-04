@@ -82,6 +82,16 @@ function findLabel(root, startsWith) {
 }
 
 describe('buildProductionPerActionBreakdown', () => {
+    test('already-net container bonuses reduce the shown production tax once', () => {
+        const data = profitData();
+        data.bonusRevenue.taxExemptBonusRevenue = 1500;
+        const section = buildProductionPerActionBreakdown(data);
+
+        expect(perActionValue(findLabel(section, 'Market Tax:').textContent)).toBe(40.6);
+        const netLine = [...section.querySelectorAll('div')].find((el) => el.textContent.startsWith('Net Profit:'));
+        expect(perActionValue(netLine.textContent)).toBe(579.4);
+    });
+
     test('essence and rare-find subsection totals sum to the header bonus revenue, even with efficiency > 1', () => {
         const data = profitData();
         const section = buildProductionPerActionBreakdown(data);

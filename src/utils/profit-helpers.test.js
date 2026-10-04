@@ -394,6 +394,36 @@ describe('calculateGatheringActionTotalsFromBase', () => {
     });
 });
 
+describe('already-net container bonuses in action totals', () => {
+    test.each(['gathering', 'production'])('%s taxes only the raw market portion', (kind) => {
+        const shared = {
+            actionsCount: 10,
+            actionsPerHour: 100,
+            efficiencyMultiplier: 2,
+            bonusDrops: [{ revenuePerAction: 20, taxExempt: true }, { revenuePerAction: 5 }],
+        };
+        const result =
+            kind === 'gathering'
+                ? calculateGatheringActionTotalsFromBase({
+                      ...shared,
+                      baseOutputs: [{ revenuePerAction: 100 }],
+                      drinkCostPerHour: 0,
+                  })
+                : calculateProductionActionTotalsFromBase({
+                      ...shared,
+                      outputAmount: 1,
+                      outputPrice: 100,
+                      gourmetBonus: 0,
+                      totalTeaCostPerHour: 0,
+                  });
+
+        expect(result.totalRevenue).toBe(1250);
+        expect(result.totalBonusRevenue).toBe(250);
+        expect(result.totalMarketTax).toBeCloseTo(1050 * MARKET_TAX, 10);
+        expect(result.totalProfit).toBeCloseTo(1250 - 1050 * MARKET_TAX, 10);
+    });
+});
+
 describe('Real-world profit scenarios', () => {
     test('Cheese production with 150% efficiency', () => {
         // Scenario:

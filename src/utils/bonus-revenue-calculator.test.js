@@ -17,6 +17,7 @@ vi.mock('../api/marketplace.js', () => ({
 vi.mock('../features/market/expected-value-calculator.js', () => ({
     default: {
         getCachedValue: vi.fn(),
+        calculateSingleContainer: vi.fn(),
     },
 }));
 
@@ -51,6 +52,32 @@ describe('calculateBonusRevenue', () => {
         calculateHouseRareFind.mockReturnValue(0);
         marketAPI.getPrice.mockReturnValue({ ask: 60, bid: 50 });
         expectedValueCalculator.getCachedValue.mockReturnValue(200);
+        expectedValueCalculator.calculateSingleContainer.mockReturnValue(200);
+    });
+
+    test.each([
+        ['essenceDropTable', true],
+        ['essenceDropTable', false],
+        ['rareDropTable', true],
+        ['rareDropTable', false],
+    ])('marks already-net container revenue from %s (cached: %s)', (table, cached) => {
+        expectedValueCalculator.getCachedValue.mockReturnValue(cached ? 200 : null);
+        const action = {
+            type: '/action_types/milking',
+            [table]: [
+                { itemHrid: '/items/small_meteorite_cache', minCount: 1, maxCount: 1, dropRate: 0.05 },
+                { itemHrid: '/items/milking_essence', minCount: 1, maxCount: 3, dropRate: 0.1 },
+            ],
+        };
+        const items = {
+            '/items/small_meteorite_cache': { name: 'Small Meteorite Cache', isOpenable: true },
+            '/items/milking_essence': { name: 'Milking Essence', isOpenable: false },
+        };
+        const result = calculateBonusRevenue(action, 100, new Map(), items);
+
+        expect(result.totalBonusRevenue).toBe(2000);
+        expect(result.taxExemptBonusRevenue).toBe(1000);
+        expect(result.bonusDrops.map((drop) => drop.taxExempt)).toEqual([true, false]);
     });
 
     test('calculates bonus drops from base actions per hour', () => {

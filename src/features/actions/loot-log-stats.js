@@ -845,6 +845,17 @@ class LootLogStats {
                 bidRevenue += count;
                 continue;
             }
+            // Container EV already taxes its market contents and keeps coins at
+            // face value. It is net revenue, so do not tax it a second time.
+            const itemDetails = dataManager.getItemDetails(baseHrid);
+            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+                const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
+                if (evData?.expectedValue > 0) {
+                    askRevenue += evData.expectedValue * count;
+                    bidRevenue += evData.expectedValue * count;
+                    continue;
+                }
+            }
             const { askTotal, bidTotal } = this.calculateTotalValue({ [hrid]: count });
             askRevenue += askTotal * taxKeep;
             bidRevenue += bidTotal * taxKeep;

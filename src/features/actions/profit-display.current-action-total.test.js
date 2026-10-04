@@ -216,6 +216,20 @@ describe.each([
         document.body.innerHTML = '';
     });
 
+    test('already-net container bonuses are excluded from hourly tax shown in the panel', async () => {
+        const reading = data();
+        reading.efficiencyMultiplier = 2;
+        reading.bonusRevenue = { bonusDrops: [], totalBonusRevenue: 200, taxExemptBonusRevenue: 100 };
+        reading.revenuePerHour = 1600;
+        calc.mockResolvedValue(reading);
+        const panel = makePanel();
+
+        await display(panel, actionHrid, '.drop-table');
+
+        expect(panel.querySelector(`#${id}`).textContent).toMatch(/→ 56(?:\.00)?\/hr/);
+        expect(panel.querySelector(`#${id}`).textContent).toContain('1.60K/hr');
+    });
+
     test('a running action with a real derivable total shows it, not a fabricated 0', async () => {
         calc.mockResolvedValue(data());
         formatRunningActionProfitTextMock.mockReturnValue('8.00T · mat: 51.48K');

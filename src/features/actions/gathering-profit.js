@@ -265,7 +265,8 @@ export async function calculateGatheringProfit(actionHrid) {
     // Calculate market tax — an Iron Cow character never pays it: it cannot use the
     // market at all, so its revenue (vendor sale, coinify, or the value-map fallback
     // for an item with neither) is never actually taxed.
-    const marketTax = isIronCowCharacter() ? 0 : revenuePerHour * MARKET_TAX;
+    const netContainerRevenue = (bonusRevenue.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+    const marketTax = isIronCowCharacter() ? 0 : (revenuePerHour - netContainerRevenue) * MARKET_TAX;
 
     // Calculate net profit (revenue - market tax - drink costs)
     const profitPerHour = revenuePerHour - marketTax - drinkCostPerHour;

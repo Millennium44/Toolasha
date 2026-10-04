@@ -453,7 +453,8 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
     const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
     totalRevenue += efficiencyBoostedBonusRevenue;
 
-    const profitPerHour = totalRevenue * (1 - outputTaxRate());
+    const netContainerRevenue = (bonusRevenue.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+    const profitPerHour = totalRevenue - (totalRevenue - netContainerRevenue) * outputTaxRate();
 
     return profitPerHour;
 }
@@ -559,9 +560,10 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
     const bonusRevenue = calculateBonusRevenue(actionDetails, actionsPerHour, equipment, itemDetailMap);
     const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
 
-    // Apply market tax to the revenue portion only (including bonus revenue)
+    // Container bonus EV has already paid its contents' market tax.
     const revenuePerHour = actionsPerHour * outputRevenue * efficiencyMultiplier;
-    const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * outputTaxRate();
+    const netContainerRevenue = (bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+    const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue - netContainerRevenue) * outputTaxRate();
     const netProfitPerHour = grossProfitPerHour + efficiencyBoostedBonusRevenue - marketTax;
 
     return netProfitPerHour;

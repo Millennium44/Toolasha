@@ -245,9 +245,12 @@ class ProfitCalculator {
         // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
         const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
 
-        // Calculate market tax of gross revenue including bonus revenue — zero for
+        // Tax raw market revenue; container bonus EV already includes contents tax.
+        // The rate is zero for
         // an Iron Cow character, which never has real market access to pay it on
-        const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * outputTaxRate(MARKET_TAX);
+        const netContainerRevenue = (bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
+        const marketTax =
+            (revenuePerHour + efficiencyBoostedBonusRevenue - netContainerRevenue) * outputTaxRate(MARKET_TAX);
 
         // Total costs per hour (materials + teas + market tax)
         const totalCostPerHour = materialCostPerHour + totalTeaCostPerHour + marketTax;

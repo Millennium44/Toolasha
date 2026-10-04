@@ -443,6 +443,18 @@ describe('calculateGatheringProfit — Processing Tea', () => {
 });
 
 describe('calculateGatheringProfit — bonus revenue and edge cases', () => {
+    test('already-net container bonuses keep their value after efficiency scaling', async () => {
+        buffs.bonusRevenue = { ...noBonusRevenue(), totalBonusRevenue: 1000, taxExemptBonusRevenue: 600 };
+        buffs.context = efficiencyContext({ efficiencyMultiplier: 2 });
+
+        const result = await calculateGatheringProfit(COW);
+
+        expect(result.revenuePerHour).toBe(74000);
+        expect(result.profitPerHour).toBeCloseTo(72800 * (1 - MARKET_TAX) + 1200, 6);
+        expect(result.bonusRevenue.totalBonusRevenue).toBe(1000);
+        expect(result.bonusRevenue.taxExemptBonusRevenue).toBe(600);
+    });
+
     test('essence/rare-find revenue is scaled by efficiency', async () => {
         buffs.bonusRevenue = { ...noBonusRevenue(), totalBonusRevenue: 1000 };
         buffs.context = efficiencyContext({
