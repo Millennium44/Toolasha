@@ -67,6 +67,7 @@ import {
     parseBestiaryZoneKey,
 } from '../../utils/bestiary-plan.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
+import { getBestiaryTarget, setBestiaryTarget, requestBestiary } from '../../utils/bestiary-target.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
@@ -3862,20 +3863,7 @@ class CombatSimUI {
             };
             dataManager.on?.('monsters_updated', this._bestiaryListener);
         }
-        try {
-            const rootEl = document.getElementById('root');
-            const rootFiber =
-                rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
-            const find = (fiber, depth = 0) => {
-                if (!fiber || depth > 4000) return null;
-                if (typeof fiber.stateNode?.handleGetMonsters === 'function') return fiber.stateNode;
-                return find(fiber.child, depth + 1) || find(fiber.sibling, depth + 1);
-            };
-            const game = find(rootFiber);
-            game?.handleGetMonsters?.();
-        } catch (error) {
-            console.error('[CombatSimUI] Requesting the Bestiary failed:', error);
-        }
+        requestBestiary();
     }
 
     async _displayAllZonesResults(
@@ -5087,7 +5075,12 @@ class CombatSimUI {
                 singleOpen ? this._bestiaryDetailBoxHtml(plan.bestSingle.zoneHrid) : ''
             }</div>
             ${shortfall}
+            <div style="margin-top:6px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
+                <button id="mwi-csim-bestiary-plan-notify" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;"></button>
+                <span id="mwi-csim-bestiary-plan-notify-note" style="color:#888; font-size:10px;"></span>
+            </div>
         `;
+        this._wireBestiaryNotify(out);
 
         // Disclosure: toggle in place (no redraw, so keyboard focus stays on the row)
         const activate = (el, handler) => {
@@ -5122,6 +5115,64 @@ class CombatSimUI {
                 });
             });
         });
+    }
+
+    /**
+     * The total this plan ends at, as the figure a "notify me" alert should wait for.
+     * Total mode: the total the player asked for. Points mode: now + the points asked for.
+     * Hours mode: now + what the route earns in that time.
+     * @param {Object} plan - From {@link _currentBestiaryPlan}
+     * @returns {number|null} Total points, or null when it would not be above the current total
+     * @private
+     */
+    _bestiaryAlertGoal(plan) {
+        if (!plan || !this._bestiaryPlanCounts) return null;
+        const current = totalBestiaryPoints(this._bestiaryPlanCounts);
+        let goal;
+        if (this._bestiaryPlanMode === 'total') goal = this._bestiaryTotalGap()?.wanted;
+        else if (this._bestiaryPlanMode === 'points') goal = current + (plan.targetPoints || 0);
+        else goal = current + (plan.totalPoints || 0);
+        goal = Math.floor(Number(goal));
+        return goal > current ? goal : null;
+    }
+
+    /**
+     * Fill in and wire the plan's "Notify me at N points" button and its progress note.
+     * Sets this character's Bestiary target and turns the alert on; see `utils/bestiary-target.js`.
+     * @param {HTMLElement} out - The plan's output slot
+     * @private
+     */
+    _wireBestiaryNotify(out) {
+        const button = out.querySelector('#mwi-csim-bestiary-plan-notify');
+        const note = out.querySelector('#mwi-csim-bestiary-plan-notify-note');
+        if (!button || !note) return;
+        const current = totalBestiaryPoints(this._bestiaryPlanCounts || {});
+        const goal = this._bestiaryAlertGoal(this._currentBestiaryPlan());
+        const showProgress = async () => {
+            const who = dataManager.getCurrentCharacterId?.();
+            const target = await getBestiaryTarget();
+            if (!note.isConnected || dataManager.getCurrentCharacterId?.() !== who) return;
+            note.textContent = target
+                ? `alert target ${formatWithSeparator(target)} · you have ${formatWithSeparator(current)}`
+                : '';
+        };
+        if (goal === null) {
+            button.style.display = 'none';
+        } else {
+            button.textContent = `Notify me at ${formatWithSeparator(goal)} points`;
+            button.title = "Sets this character's Bestiary points target to that total and turns the alert on.";
+            button.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                const ok = await setBestiaryTarget(goal);
+                if (!note.isConnected) return;
+                if (!ok) {
+                    note.textContent = 'could not set the alert';
+                    return;
+                }
+                note.textContent = `alert set: ${formatWithSeparator(goal)} points · you have ${formatWithSeparator(current)} · tracks kills from this reading; open Achievements to refresh`;
+            });
+        }
+        showProgress().catch((error) => console.error('[CombatSimUI] Reading the Bestiary target failed:', error));
     }
 
     /**
