@@ -1976,6 +1976,8 @@ export default class CustomTabsUI {
 
             this._lastRebuildTileCount = allTiles.length;
             this._lastRebuildConfigItemCount = configItemCount;
+            // What the headers' totals were summed from, so a later price write can tell they are stale
+            this._headerTotalsSignature = this._tileValueSignature(invContainer);
         } else {
             // Lightweight update: headers already exist, just re-apply tile order/visibility
             this._updateTileVisibility(invContainer, tileMap);
@@ -2095,10 +2097,45 @@ export default class CustomTabsUI {
                 inventoryBadgeManager.lastRenderTime = 0;
                 inventoryBadgeManager.lastCalculationTime = 0;
                 await inventoryBadgeManager.renderAllBadges();
+                this._refreshStaleHeaderTotals(invContainer);
             }
         } finally {
             this._badgeRefreshRunning = false;
         }
+    }
+
+    /**
+     * Fingerprint of the values the section header totals are summed from: the sorted side's key plus
+     * every tile's ask and bid value. Headers are summed from tile datasets at layout time, and the
+     * badge render that writes those datasets runs after the layout, so a header built before it
+     * carries whatever the previous render left (zero on a first open).
+     * @param {HTMLElement} invContainer
+     * @returns {string}
+     */
+    _tileValueSignature(invContainer) {
+        let ask = 0;
+        let bid = 0;
+        let count = 0;
+        for (const tile of invContainer.querySelectorAll('[class*="Item_itemContainer"]')) {
+            ask += parseFloat(tile.dataset.askValue) || 0;
+            bid += parseFloat(tile.dataset.bidValue) || 0;
+            count++;
+        }
+        return `${totalValueKey(inventorySort.currentMode)}|${count}|${ask}|${bid}`;
+    }
+
+    /**
+     * Redraw the headers when a badge render has changed the values their totals were summed from.
+     * The headers are built once per full rebuild and the lightweight pass leaves them alone, so
+     * without this a total drawn before the prices arrived stays wrong until a collapse and reopen
+     * forces another rebuild. Converges: the redraw's own badge refresh finds the signature equal.
+     * @param {HTMLElement} invContainer
+     */
+    _refreshStaleHeaderTotals(invContainer) {
+        if (!this._isActive || this._headerTotalsSignature == null || this._invContainer !== invContainer) return;
+        if (this._tileValueSignature(invContainer) === this._headerTotalsSignature) return;
+        this._removeInjectedEls();
+        this._applyLayout();
     }
 
     /**
