@@ -1661,7 +1661,10 @@ class TooltipPrices {
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const decompose = alchemyProfits?.decompose;
             const lineColor = (value) => (value >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS);
-            const unpricedTag = (partly) => (partly ? ', partly unpriced' : '');
+            const unpricedTag = (partly, optimized = true) => {
+                if (!partly) return '';
+                return optimized ? ', partly unpriced' : ', partly unpriced, setup not optimized';
+            };
 
             // The calculator picks its catalyst/tea for the taxed sell-side profit. Each self-use
             // line scores every candidate it weighs on its own objective instead; the seller's
@@ -1680,16 +1683,18 @@ class TooltipPrices {
             if (decompose && itemDetails) {
                 const ownUseCost = await this.selfUseOwnUseCost(itemHrid, decompose, craftProfitData);
 
-                const step = bestSelfUseCandidate(
+                const stepPick = bestSelfUseCandidate(
                     candidatesFor('decompose', itemHrid, () => decompose),
                     (result) => selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, containerValue }),
                     'netPerHour'
-                )?.evaluation;
+                );
+                const step = stepPick?.evaluation;
                 if (step) {
+                    const lowerBound = step.partlyUnpriced ? '≥' : '';
                     lines.push({
-                        text: `Decompose (self-use): ${formatKMB(step.netPerHour)}/hr`,
-                        detail: `(${formatKMB(step.netPerAction)}/action${unpricedTag(step.partlyUnpriced)})`,
-                        color: lineColor(step.netPerHour),
+                        text: `Decompose (self-use): ${lowerBound}${formatKMB(step.netPerHour)}/hr`,
+                        detail: `(${lowerBound}${formatKMB(step.netPerAction)}/action${unpricedTag(step.partlyUnpriced, stepPick.optimized)})`,
+                        color: step.partlyUnpriced ? config.COLOR_TOOLTIP_INFO : lineColor(step.netPerHour),
                     });
                 }
 
@@ -1763,7 +1768,7 @@ class TooltipPrices {
                             text:
                                 `Full decompose chain (self-use): materials ≥${formatKMB(chain.terminalValue)} ` +
                                 `vs cost ${formatKMB(chain.cost)}`,
-                            detail: `(${time}, partly unpriced)`,
+                            detail: `(${time}, partly unpriced, setup not optimized)`,
                             note: `collects ${names}`,
                             color: config.COLOR_TOOLTIP_INFO,
                         });
@@ -1774,16 +1779,18 @@ class TooltipPrices {
             const transmute = alchemyProfits?.transmute;
             if (transmute && itemDetails) {
                 const sellPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
-                const held = bestSelfUseCandidate(
+                const heldPick = bestSelfUseCandidate(
                     candidatesFor('transmute', itemHrid, () => transmute),
                     (result) => selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, containerValue }),
                     'netPerHour'
-                )?.evaluation;
+                );
+                const held = heldPick?.evaluation;
                 if (held) {
+                    const lowerBound = held.partlyUnpriced ? '≥' : '';
                     lines.push({
-                        text: `Transmute held item (self-use): ${formatKMB(held.netPerHour)}/hr`,
-                        detail: `(${formatKMB(held.netPerAction)}/action${unpricedTag(held.partlyUnpriced)})`,
-                        color: lineColor(held.netPerHour),
+                        text: `Transmute held item (self-use): ${lowerBound}${formatKMB(held.netPerHour)}/hr`,
+                        detail: `(${lowerBound}${formatKMB(held.netPerAction)}/action${unpricedTag(held.partlyUnpriced, heldPick.optimized)})`,
+                        color: held.partlyUnpriced ? config.COLOR_TOOLTIP_INFO : lineColor(held.netPerHour),
                     });
                 }
             }

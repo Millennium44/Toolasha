@@ -18,6 +18,7 @@ const settings = vi.hoisted(() => ({
 }));
 const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
+const openableState = vi.hoisted(() => ({ drops: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -73,6 +74,7 @@ vi.mock('../../core/data-manager.js', () => {
         default: {
             getInitClientData: () => ({
                 itemDetailMap,
+                openableLootDropMap: openableState.drops,
                 abilityDetailMap: { '/abilities/berserk': { name: 'Berserk' } },
             }),
             getItemDetails: (hrid) => itemDetailMap[hrid] || null,
@@ -98,7 +100,13 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
         calculateCandidateResults: (type, hrid) => alchemyState.candidates[`${type}|${hrid}`] ?? [],
     },
 }));
-vi.mock('./expected-value-calculator.js', () => ({ default: { calculateExpectedValue: () => null } }));
+vi.mock('./expected-value-calculator.js', () => ({
+    default: {
+        calculateExpectedValue: () => null,
+        resolveBuySideValue: (hrid) =>
+            hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' ? null : { value: 10 },
+    },
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: () => null,
     buildEnhancementTooltipHTML: () => '',
@@ -111,7 +119,7 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParam
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({ ask: 10, bid: 9 }),
-    getItemPrice: () => 10,
+    getItemPrice: (hrid) => (hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' ? null : 10),
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityCost: () => ({ total: 1234, books: 3 }),
@@ -183,6 +191,7 @@ beforeEach(async () => {
     alchemyState.profits = {};
     alchemyState.candidates = {};
     alchemyState.decompose = {};
+    openableState.drops = {};
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -792,6 +801,29 @@ describe('self-use alchemy lines', () => {
         expect(block.textContent).toContain('Decompose: -500/hr');
         // No gear comes out of a cheese sword, so no chain line repeats the step
         expect(block.textContent).not.toContain('Full decompose chain');
+    });
+
+    test('a crate with unresolved contents keeps its lower bound but marks the line partly unpriced', async () => {
+        settings.selfUseAlchemy = true;
+        openableState.drops = {
+            '/items/small_artisans_crate': [
+                { itemHrid: '/items/cheese', dropRate: 0.5, minCount: 100, maxCount: 100 },
+                { itemHrid: '/items/missing_material', dropRate: 1, minCount: 100, maxCount: 100 },
+            ],
+        };
+        alchemyState.profits = {
+            decompose: {
+                ...cheeseSwordDecompose(),
+                dropRevenues: [{ itemHrid: '/items/small_artisans_crate', dropsPerHour: 1, isRare: true }],
+            },
+        };
+        const block = await blockFor('/items/cheese_sword');
+        // 18 cheese x 10 x 0.6 x 100 = 10,800; crate's known cheese subtotal adds 500,
+        // less 5,000 of input cost. The unresolved drop must not erase that lower bound.
+        expect(block.textContent).toContain('Decompose (self-use): ≥6.3K/hr');
+        expect(block.textContent).toContain('partly unpriced');
+        expect(block.textContent).toContain('setup not optimized');
+        expect(block.textContent).toContain('Self-use: untaxed');
     });
 
     // The same decompose on a prime catalyst: the seller passed it over (at a taxed bid

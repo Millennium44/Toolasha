@@ -230,6 +230,69 @@ describe('decompose once, self-use', () => {
         expect(chain.terminalValue).toBeCloseTo(18 * 10 + (0.5 / 100) * contents, 6);
     });
 
+    test('a direct buy quote takes precedence over opened contents', () => {
+        const bonus = [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 1 }];
+        const directQuote = (hrid) => (hrid === '/items/small_artisans_crate' ? 300 : priceOf(hrid));
+        const step = selfUseDecompose(
+            result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 1, bonus }),
+            ITEMS['/items/cheese_sword'],
+            {
+                ownUseCost: 0,
+                priceOf: directQuote,
+                containerValue: () => ({ value: 200, partlyUnpriced: true }),
+            }
+        );
+        expect(step.outputValuePerHour).toBeCloseTo(18 * 10 * 100 + 300, 6);
+        expect(step.partlyUnpriced).toBe(false);
+    });
+
+    test('a partial crate subtotal remains visible and makes its net a lower bound', () => {
+        const bonus = [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 1 }];
+        const step = selfUseDecompose(
+            result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 1, bonus }),
+            ITEMS['/items/cheese_sword'],
+            {
+                ownUseCost: 0,
+                priceOf,
+                containerValue: () => ({ value: 200, partlyUnpriced: true }),
+            }
+        );
+        expect(step.outputValuePerHour).toBeCloseTo(18 * 10 * 100 + 200, 6);
+        expect(step.netPerHour).toBeCloseTo(18 * 10 * 100 + 200, 6);
+        expect(step.partlyUnpriced).toBe(true);
+    });
+
+    test('a partial bonus container makes the full decompose chain net unstated', () => {
+        const bonus = [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 1 }];
+        const chain = selfUseDecomposeChain('/items/cheese_sword', {
+            getDecompose: (hrid) => result({ itemHrid: hrid, actionsPerHour: 100, successRate: 1, bonus }),
+            getItemDetails,
+            isChainable,
+            priceOf,
+            ownUseCost: 0,
+            containerValue: () => ({ value: 200, partlyUnpriced: true }),
+        });
+        expect(chain.terminalValue).toBeCloseTo(18 * 10 + 2, 6);
+        expect(chain.net).toBeNull();
+        expect(chain.partlyUnpriced).toBe(true);
+    });
+
+    test('a partial bonus container remains a lower bound for held-item transmute', () => {
+        const transmute = result({
+            itemHrid: '/items/revive',
+            actionsPerHour: 100,
+            successRate: 1,
+            bonus: [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 1 }],
+        });
+        const held = selfUseTransmuteHeld(transmute, ITEMS['/items/revive'], {
+            sellPrice: 0,
+            priceOf,
+            containerValue: () => ({ value: 200, partlyUnpriced: true }),
+        });
+        expect(held.outputValuePerHour).toBeCloseTo(1100 * 100 + 200, 6);
+        expect(held.partlyUnpriced).toBe(true);
+    });
+
     test('a missing buy quote does not borrow the producer sell-side bonus price', () => {
         // Shape emitted by calculateAlchemyBonusDrops for its non-openable Alchemy Essence
         // output: price is populated from getItemPrice(... side: 'sell').
@@ -517,6 +580,49 @@ describe('picking the catalyst for self-use', () => {
         expect(best.evaluation.netPerHour).toBeCloseTo(13_500 - 2000 - 5000, 6);
     });
 
+    test('does not rank a partial lower bound against complete candidate values', () => {
+        const partial = { id: 'partial' };
+        const complete = { id: 'complete' };
+        const best = bestSelfUseCandidate(
+            [partial, complete],
+            (candidate) =>
+                candidate.id === 'partial'
+                    ? { netPerHour: 10000, partlyUnpriced: true }
+                    : { netPerHour: 5000, partlyUnpriced: false },
+            'netPerHour'
+        );
+        expect(best.result).toBe(complete);
+        expect(best.optimized).toBe(true);
+    });
+
+    test('a partial crate lower bound cannot win catalyst selection over a complete game-shaped result', () => {
+        const partial = result({
+            itemHrid: '/items/cheese_sword',
+            actionsPerHour: 100,
+            successRate: 1,
+            bonus: [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 1 }],
+        });
+        const complete = result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 0.9 });
+        const evaluate = (candidate) =>
+            selfUseDecompose(candidate, ITEMS['/items/cheese_sword'], {
+                ownUseCost: 0,
+                priceOf,
+                containerValue: (hrid) =>
+                    hrid === '/items/small_artisans_crate' ? { value: 10000, partlyUnpriced: true } : null,
+            });
+
+        const best = bestSelfUseCandidate([partial, complete], evaluate, 'netPerHour');
+        expect(best.result).toBe(complete);
+        expect(best.evaluation.partlyUnpriced).toBe(false);
+    });
+
+    test('keeps the first candidate as an unoptimized display fallback when every candidate is partial', () => {
+        const partial = { id: 'partial' };
+        const best = bestSelfUseCandidate([partial], () => ({ netPerHour: 10000, partlyUnpriced: true }), 'netPerHour');
+        expect(best.result).toBe(partial);
+        expect(best.optimized).toBe(false);
+    });
+
     test('keeps the cheaper setup when the catalyst does not pay for self-use either', () => {
         const dear = { ...prime, catalystCostPerHour: 5000 };
         expect(bestSelfUseCandidate([dear, plain], evaluate, 'netPerHour').result).toBe(plain);
@@ -547,29 +653,37 @@ describe('a container opened for keeps', () => {
 
     test('is the untaxed buy-side sum of its contents, a nested container opened too', () => {
         // 20 cheese × 10 + 0.5 × 2 × 300 + 0.25 × (4 × 50)
-        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf })).toBeCloseTo(
-            200 + 300 + 50,
-            6
-        );
+        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf })).toEqual({
+            value: 200 + 300 + 50,
+            partlyUnpriced: false,
+        });
     });
 
     test('is the same for an Iron Cow — nothing is sold', () => {
         state.gameMode = 'ironcow';
-        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf })).toBeCloseTo(550, 6);
+        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf })).toEqual({
+            value: 550,
+            partlyUnpriced: false,
+        });
     });
 
-    test('skips unpriced contents, and is null when nothing is priced or it is no container', () => {
+    test('retains a known lower bound and marks unpriced contents, including nested drops', () => {
         const onlyCheese = (hrid) => (hrid === '/items/cheese' ? 10 : null);
-        expect(
-            untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf: onlyCheese })
-        ).toBeCloseTo(200, 6);
-        expect(
-            untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf: () => null })
-        ).toBeNull();
+        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf: onlyCheese })).toEqual({
+            value: 200,
+            partlyUnpriced: true,
+        });
+        expect(untaxedContainerValue('/items/small_artisans_crate', { containerDrops, priceOf: () => null })).toEqual({
+            value: null,
+            partlyUnpriced: true,
+        });
         expect(untaxedContainerValue('/items/cheese', { containerDrops, priceOf })).toBeNull();
     });
 
     test('a container that holds itself does not recurse forever', () => {
-        expect(untaxedContainerValue('/items/loop_a', { containerDrops, priceOf })).toBeCloseTo(10, 6);
+        expect(untaxedContainerValue('/items/loop_a', { containerDrops, priceOf })).toEqual({
+            value: 10,
+            partlyUnpriced: true,
+        });
     });
 });

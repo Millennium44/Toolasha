@@ -94,15 +94,20 @@ export function alchemyRunBasis(result) {
 export function bestSelfUseCandidate(candidates, evaluate, objective) {
     let best = null;
     let bestScore = -Infinity;
+    let firstPartial = null;
     for (const result of Array.isArray(candidates) ? candidates : []) {
         if (!result) continue;
         const evaluation = evaluate(result);
+        if (evaluation?.partlyUnpriced) {
+            if (!firstPartial) firstPartial = { result, evaluation, optimized: false };
+            continue;
+        }
         const score = Number(evaluation?.[objective]);
         if (!Number.isFinite(score) || score <= bestScore) continue;
-        best = { result, evaluation };
+        best = { result, evaluation, optimized: true };
         bestScore = score;
     }
-    return best;
+    return best ?? firstPartial;
 }
 
 /**
@@ -126,15 +131,15 @@ function bonusDrops(result) {
  * market tax off every tradable content — so it cannot stand in here.
  *
  * A content that is itself a container is valued as opened, the same way; a
- * cycle contributes nothing. Unpriced contents are skipped, so the figure is a
- * lower bound, as the calculator's is.
+ * cycle contributes nothing. Unpriced contents are skipped, so the known
+ * subtotal is a lower bound and `partlyUnpriced` carries that fact to callers.
  * @param {string} containerHrid
  * @param {Object} deps
  * @param {(hrid: string) => Array|null} deps.containerDrops - The container's drop table
  *   (`openableLootDropMap[hrid]`: `{itemHrid, dropRate, minCount, maxCount}`), null when not a container
  * @param {(hrid: string) => number|null} deps.priceOf - Untaxed buy-side price of a content
  * @param {Set<string>} [path] - Recursion guard
- * @returns {number|null} Null when it is not a container or nothing in it is priced
+ * @returns {{value: number|null, partlyUnpriced: boolean}|null} Null when it is not a container
  */
 export function untaxedContainerValue(containerHrid, { containerDrops, priceOf }, path = new Set()) {
     const table = containerDrops(containerHrid);
@@ -142,18 +147,25 @@ export function untaxedContainerValue(containerHrid, { containerDrops, priceOf }
     const inner = new Set([...path, containerHrid]);
     let total = 0;
     let priced = false;
+    let partlyUnpriced = false;
     for (const drop of table) {
         const rate = Number(drop?.dropRate) || 0;
         const average = ((Number(drop?.minCount) || 0) + (Number(drop?.maxCount) || 0)) / 2;
         if (!(rate > 0 && average > 0)) continue;
-        const unit =
-            untaxedContainerValue(drop.itemHrid, { containerDrops, priceOf }, inner) ??
-            usablePrice(priceOf(drop.itemHrid));
-        if (unit === null) continue;
+        const nested = untaxedContainerValue(drop.itemHrid, { containerDrops, priceOf }, inner);
+        const market = usablePrice(priceOf(drop.itemHrid));
+        const unit = nested?.value !== null && nested?.value !== undefined ? nested.value : market;
+        const itemPartlyUnpriced =
+            nested?.value !== null && nested?.value !== undefined && Boolean(nested.partlyUnpriced);
+        if (unit === null) {
+            partlyUnpriced = true;
+            continue;
+        }
         total += rate * average * unit;
         priced = true;
+        partlyUnpriced ||= itemPartlyUnpriced;
     }
-    return priced ? total : null;
+    return { value: priced ? total : null, partlyUnpriced };
 }
 
 /**
@@ -164,21 +176,27 @@ export function untaxedContainerValue(containerHrid, { containerDrops, priceOf }
  * @param {Object} drop - A bonus entry of `dropRevenues`
  * @param {(hrid: string) => number|null} priceOf
  * @param {((hrid: string) => number|null)|undefined} containerValue - Untaxed opened value
- * @returns {number|null}
+ * @returns {{value: number|null, partlyUnpriced: boolean}}
  */
 function bonusUnitPrice(drop, priceOf, containerValue) {
-    return usablePrice(priceOf(drop.itemHrid)) ?? usablePrice(containerValue?.(drop.itemHrid));
+    const market = usablePrice(priceOf(drop.itemHrid));
+    if (market !== null) return { value: market, partlyUnpriced: false };
+    const resolved = containerValue?.(drop.itemHrid);
+    if (resolved && typeof resolved === 'object') {
+        return { value: usablePrice(resolved.value), partlyUnpriced: Boolean(resolved.partlyUnpriced) };
+    }
+    return { value: usablePrice(resolved), partlyUnpriced: false };
 }
 
 /**
  * Value one bonus drop per hour, untaxed.
- * @returns {number|null} Value per hour, or null when unpriced
+ * @returns {{value: number|null, partlyUnpriced: boolean}} Value per hour and whether it is a lower bound
  */
 function bonusValuePerHour(drop, priceOf, containerValue) {
     const units = Number(drop.dropsPerHour) || 0;
-    if (units <= 0) return 0;
+    if (units <= 0) return { value: 0, partlyUnpriced: false };
     const unit = bonusUnitPrice(drop, priceOf, containerValue);
-    return unit === null ? null : units * unit;
+    return { value: unit.value === null ? null : units * unit.value, partlyUnpriced: unit.partlyUnpriced };
 }
 
 /**
@@ -195,7 +213,8 @@ function bonusValuePerHour(drop, priceOf, containerValue) {
  * @param {Object} opts
  * @param {number|null} opts.ownUseCost - One unit's own-use cost (cheaper of make or buy)
  * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price
- * @param {(hrid: string) => number|null} [opts.containerValue] - A crate's untaxed opened value
+ * @param {(hrid: string) => number|{value: number|null, partlyUnpriced?: boolean}|null} [opts.containerValue]
+ *   A crate's untaxed opened value
  * @returns {Object|null} `{netPerHour, netPerAction, outputValuePerHour, costPerHour,
  *   actionsPerHour, successRate, unpriced, partlyUnpriced}`, or null when the step cannot run
  */
@@ -207,6 +226,7 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
 
     const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
     const unpriced = [];
+    let partlyUnpriced = false;
     let outputValuePerHour = 0;
     for (const output of outputs) {
         const unit = usablePrice(priceOf(output.itemHrid));
@@ -218,8 +238,10 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
     }
     for (const drop of bonusDrops(result)) {
         const value = bonusValuePerHour(drop, priceOf, containerValue);
-        if (value === null) unpriced.push(drop.itemHrid);
-        else outputValuePerHour += value;
+        if (value.value === null) unpriced.push(drop.itemHrid);
+        else outputValuePerHour += value.value;
+        if (value.partlyUnpriced && value.value !== null) unpriced.push(drop.itemHrid);
+        partlyUnpriced ||= value.partlyUnpriced;
     }
 
     const costPerHour = cost * bulk * actionsPerHour + overheadPerHour;
@@ -232,7 +254,7 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
         actionsPerHour,
         successRate,
         unpriced,
-        partlyUnpriced: unpriced.length > 0,
+        partlyUnpriced: unpriced.length > 0 || partlyUnpriced,
     };
 }
 
@@ -260,7 +282,8 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
  * @param {(hrid: string) => boolean} deps.isChainable - Gear that can itself be decomposed
  * @param {(hrid: string) => number|null} deps.priceOf - Untaxed buy-side price
  * @param {number|null} deps.ownUseCost - The top item's own-use cost
- * @param {(hrid: string) => number|null} [deps.containerValue] - A crate's untaxed opened value
+ * @param {(hrid: string) => number|{value: number|null, partlyUnpriced?: boolean}|null} [deps.containerValue]
+ *   A crate's untaxed opened value
  * @param {number} [deps.maxDepth=CHAIN_MAX_DEPTH]
  * @returns {Object|null} `{net, netPerHour, terminalValue, cost, ownUseCost, overheadCost, seconds,
  *   collected: [{itemHrid, expected}], steps, unpriced, partlyUnpriced, truncated}`, or null
@@ -330,8 +353,9 @@ export function selfUseDecomposeChain(topHrid, deps) {
             const units = Number(drop.dropsPerHour) || 0;
             if (units <= 0) continue;
             const unit = bonusUnitPrice(drop, priceOf, containerValue);
-            if (unit === null) unpriced.add(drop.itemHrid);
-            else terminalValue += ((reach * units) / unitsPerHour) * unit;
+            if (unit.value === null) unpriced.add(drop.itemHrid);
+            else terminalValue += ((reach * units) / unitsPerHour) * unit.value;
+            if (unit.partlyUnpriced) unpriced.add(drop.itemHrid);
         }
     };
 
@@ -378,7 +402,8 @@ export function selfUseDecomposeChain(topHrid, deps) {
  * @param {Object} opts
  * @param {number|null} opts.sellPrice - The input's sell-side price, before tax
  * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price
- * @param {(hrid: string) => number|null} [opts.containerValue] - A crate's untaxed opened value
+ * @param {(hrid: string) => number|{value: number|null, partlyUnpriced?: boolean}|null} [opts.containerValue]
+ *   A crate's untaxed opened value
  * @returns {Object|null} `{netPerHour, netPerAction, inputValue, outputValuePerHour, costPerHour,
  *   actionsPerHour, successRate, unpriced, partlyUnpriced}`
  */
@@ -392,6 +417,7 @@ export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, 
     const selfHrid = result.itemHrid;
     const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
     const unpriced = [];
+    let partlyUnpriced = false;
     let outputValuePerHour = 0;
     for (const drop of table) {
         const average = (Number(drop.minCount) + Number(drop.maxCount)) / 2;
@@ -406,8 +432,10 @@ export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, 
     }
     for (const drop of bonusDrops(result)) {
         const value = bonusValuePerHour(drop, priceOf, containerValue);
-        if (value === null) unpriced.push(drop.itemHrid);
-        else outputValuePerHour += value;
+        if (value.value === null) unpriced.push(drop.itemHrid);
+        else outputValuePerHour += value.value;
+        if (value.partlyUnpriced && value.value !== null) unpriced.push(drop.itemHrid);
+        partlyUnpriced ||= value.partlyUnpriced;
     }
 
     const costPerHour = inputValue * bulk * actionsPerHour + overheadPerHour;
@@ -421,6 +449,6 @@ export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, 
         actionsPerHour,
         successRate,
         unpriced,
-        partlyUnpriced: unpriced.length > 0,
+        partlyUnpriced: unpriced.length > 0 || partlyUnpriced,
     };
 }

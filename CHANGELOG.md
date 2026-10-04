@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Self-use crate values disclose missing prices
+
+- Self-use alchemy now labels partly priced crate contents as lower bounds and keeps incomplete values out of automatic setup comparisons. If every setup is incomplete, its displayed estimate is marked as unoptimized.
+
 ### Production rankings show complete quotes first
 
 - Production Arbitrage now ranks recipes with complete quotes ahead of rows with stale or missing price data, so missing inputs cannot inflate the board's top results.
