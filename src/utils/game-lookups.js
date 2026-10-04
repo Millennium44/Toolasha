@@ -233,10 +233,11 @@ export function getItemHridFromName(itemName) {
  * @returns {number} Coin cost, or 0 if not available in shop
  */
 /**
- * The coin price of an item in the in-game shop when coins are its whole price: 0 when it is not
- * sold there or the offer also asks for another currency, which a coin figure would understate.
+ * The coin price of one unit of an item in the in-game shop when coins are its whole price: 0 when
+ * it is not sold there or the offer also asks for another currency, which a coin figure would
+ * understate. An offer handing over several units (`outputCount`) is priced per unit received.
  * @param {string} itemHrid
- * @returns {number} Coins, or 0
+ * @returns {number} Coins per unit, or 0
  */
 export function getShopCoinOnlyCost(itemHrid) {
     const gameData = dataManager.getInitClientData();
@@ -246,7 +247,9 @@ export function getShopCoinOnlyCost(itemHrid) {
         if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
         if (shopItem.itemHrid !== itemHrid || !shopItem.costs?.length) continue;
         if (shopItem.costs.every((cost) => cost.itemHrid === '/items/coin')) {
-            return shopItem.costs.reduce((sum, cost) => sum + (Number(cost.count) || 0), 0);
+            const coins = shopItem.costs.reduce((sum, cost) => sum + (Number(cost.count) || 0), 0);
+            const units = Number(shopItem.outputCount) > 0 ? Number(shopItem.outputCount) : 1;
+            return coins / units;
         }
     }
     return 0;
