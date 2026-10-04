@@ -1149,7 +1149,7 @@ function formatEnhancementDisplay(
         lines.push('<div id="mwi-enh-success" style="display: none;">');
 
         // Show base rate and final rate for current enhancement level
-        const currentLevel = getCurrentEnhancementLevel(panel);
+        const currentLevel = getCurrentEnhancementLevel(panel, itemDetails.hrid);
 
         if (currentLevel !== null && currentLevel >= 0 && currentLevel < BASE_SUCCESS_RATES.length) {
             const baseRate = BASE_SUCCESS_RATES[currentLevel];
