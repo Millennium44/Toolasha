@@ -11,6 +11,12 @@ import Monster from './monster.js';
 import * as rng from './rng.js';
 import { RECORDED_TRIAL_BOSSES } from '../guild-trial-rebalance.fixture.js';
 import { validateTrialScenario } from '../guild-trial-model.js';
+import CheckBuffExpirationEvent from './events/check-buff-expiration-event.js';
+import StunExpirationEvent from './events/stun-expiration-event.js';
+import BlindExpirationEvent from './events/blind-expiration-event.js';
+import SilenceExpirationEvent from './events/silence-expiration-event.js';
+
+const SECOND = 1e9;
 
 const build = () => ({
     staminaLevel: 100,
@@ -187,6 +193,209 @@ describe('trial participants and lifecycle', () => {
         player.updateCombatDetails();
         expect(player.combatDetails.combatStats.abilityHaste).toBe(10);
         expect(dto).toEqual(before);
+    });
+    test('revives a downed player and restores lost timed statuses in carry mode', () => {
+        const combatBuild = () => ({
+            ...build(),
+            abilities: [{ hrid: '/abilities/precision', level: 1 }],
+        });
+        const members = [
+            { name: 'Downed', dto: combatBuild() },
+            { name: 'Survivor', dto: combatBuild() },
+        ];
+        const players = createTrialPlayers(members);
+        for (const player of players) {
+            player.generatePermanentBuffs();
+            player.reset(0);
+        }
+        const [downed, survivor] = players;
+        const now = 30 * SECOND;
+        const stunAt = now + SECOND;
+        const blindAt = now + 2 * SECOND;
+        const silenceAt = now + 3 * SECOND;
+        const carryBuff = {
+            uniqueHrid: '/buff_uniques/carry_state_test',
+            typeHrid: '/buff_types/attack_speed',
+            flatBoost: 0,
+            flatBoostLevelBonus: 0,
+            ratioBoost: 0.1,
+            ratioBoostLevelBonus: 0,
+            duration: 20 * SECOND,
+        };
+        survivor.addBuff(carryBuff, 25 * SECOND);
+        survivor.abilities[0].lastUsed = 12 * SECOND;
+        downed.combatDetails.currentHitpoints = 0;
+        downed.combatDetails.currentManapoints = 0;
+        downed.isStunned = true;
+        downed.stunExpireTime = stunAt;
+        downed.isBlinded = true;
+        downed.blindExpireTime = blindAt;
+        downed.isSilenced = true;
+        downed.silenceExpireTime = silenceAt;
+        survivor.combatDetails.currentHitpoints = 500;
+        survivor.combatDetails.currentManapoints = 400;
+        const sim = new GuildCombatSimulator(players, scenario({ resetBetweenTiers: false }), [
+            '/monsters/trial_badger',
+        ]);
+        sim.tiers.push({ tier: 1, cleared: true, seconds: 30, progressFraction: 1 });
+        sim.simulationTime = now;
+        const lostEvents = [
+            new StunExpirationEvent(stunAt, downed),
+            new BlindExpirationEvent(blindAt, downed),
+            new SilenceExpirationEvent(silenceAt, downed),
+            new CheckBuffExpirationEvent(45 * SECOND, downed),
+        ];
+        for (const event of lostEvents) sim.eventQueue.addEvent(event);
+
+        // A real death clears every queued event that names the player.
+        sim.eventQueue.clearEventsForUnit(downed);
+        expect(lostEvents.every((event) => !sim.eventQueue.getMatching((queued) => queued === event))).toBe(true);
+
+        sim.processCombatStartEvent({ time: sim.simulationTime });
+
+        expect(downed.combatDetails.currentHitpoints).toBe(downed.combatDetails.maxHitpoints);
+        expect(downed.combatDetails.currentManapoints).toBe(downed.combatDetails.maxManapoints);
+        expect(survivor.combatDetails.currentHitpoints).toBe(500);
+        expect(survivor.combatDetails.currentManapoints).toBe(400);
+        expect(survivor.abilities[0].lastUsed).toBe(12 * SECOND);
+        expect(survivor.combatBuffs['/buff_uniques/carry_state_test']).toBeDefined();
+        expect(downed.isStunned).toBe(true);
+        expect(downed.isBlinded).toBe(true);
+        expect(downed.isSilenced).toBe(true);
+        for (const [type, time] of [
+            [StunExpirationEvent.type, stunAt],
+            [BlindExpirationEvent.type, blindAt],
+            [SilenceExpirationEvent.type, silenceAt],
+        ]) {
+            expect(sim.eventQueue.getMatching((event) => event.type === type && event.source === downed)?.time).toBe(
+                time
+            );
+        }
+        expect(
+            sim.eventQueue.getMatching((event) => event.type === 'autoAttack' && event.source === downed)
+        ).toBeNull();
+
+        while (downed.isStunned) {
+            const event = sim.eventQueue.getNextEvent();
+            expect(event).toBeTruthy();
+            sim.processEvent(event);
+        }
+        expect(downed.isStunned).toBe(false);
+        expect(
+            sim.eventQueue.getMatching((event) => event.type === 'autoAttack' && event.source === downed)
+        ).toBeNull();
+
+        while (downed.isBlinded) {
+            const event = sim.eventQueue.getNextEvent();
+            expect(event).toBeTruthy();
+            sim.processEvent(event);
+        }
+        expect(downed.isBlinded).toBe(false);
+        while (downed.isSilenced) {
+            const event = sim.eventQueue.getNextEvent();
+            expect(event).toBeTruthy();
+            sim.processEvent(event);
+        }
+        expect(downed.isSilenced).toBe(false);
+
+        for (let events = 0; !sim.simResult.attacks[downed.hrid] && events < 100; events++) {
+            const event = sim.eventQueue.getNextEvent();
+            expect(event).toBeTruthy();
+            sim.processEvent(event);
+        }
+        expect(sim.simResult.attacks[downed.hrid]).toBeDefined();
+        const nextCast = sim.eventQueue.getMatching(
+            (event) => event.type === 'abilityCastEndEvent' && event.source === downed
+        );
+        expect(nextCast).toBeTruthy();
+        for (let events = 0; !downed.combatBuffs['/buff_uniques/precision'] && events < 100; events++) {
+            const event = sim.eventQueue.getNextEvent();
+            expect(event).toBeTruthy();
+            sim.processEvent(event);
+        }
+        expect(downed.combatBuffs['/buff_uniques/precision']).toBeDefined();
+    });
+    test('fills a revived player after expired maximum-pool buffs are removed', () => {
+        const [downed] = createTrialPlayers([{ name: 'Downed', dto: build() }]);
+        downed.generatePermanentBuffs();
+        downed.reset(0);
+        const baseMaxHp = downed.combatDetails.maxHitpoints;
+        const baseMaxMp = downed.combatDetails.maxManapoints;
+        const expiration = 29 * SECOND;
+        downed.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/expired_max_hp_test',
+                typeHrid: '/buff_types/max_hitpoints',
+                flatBoost: 0,
+                flatBoostLevelBonus: 0,
+                ratioBoost: 0.5,
+                ratioBoostLevelBonus: 0,
+                duration: expiration,
+            },
+            0
+        );
+        downed.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/expired_max_mp_test',
+                typeHrid: '/buff_types/max_manapoints',
+                flatBoost: 0,
+                flatBoostLevelBonus: 0,
+                ratioBoost: 0.5,
+                ratioBoostLevelBonus: 0,
+                duration: expiration,
+            },
+            0
+        );
+        downed.combatDetails.currentHitpoints = 0;
+        downed.combatDetails.currentManapoints = 0;
+        const sim = new GuildCombatSimulator([downed], scenario({ resetBetweenTiers: false }), [
+            '/monsters/trial_badger',
+        ]);
+        sim.tiers.push({ tier: 1, cleared: true, seconds: 30, progressFraction: 1 });
+        sim.simulationTime = 30 * SECOND;
+        const lostBuffExpiry = new CheckBuffExpirationEvent(expiration, downed);
+        sim.eventQueue.addEvent(lostBuffExpiry);
+        sim.eventQueue.clearEventsForUnit(downed);
+        expect(sim.eventQueue.getMatching((event) => event === lostBuffExpiry)).toBeNull();
+
+        sim.processCombatStartEvent({ time: sim.simulationTime });
+
+        expect(downed.combatDetails.maxHitpoints).toBe(baseMaxHp);
+        expect(downed.combatDetails.maxManapoints).toBe(baseMaxMp);
+        expect(downed.combatDetails.currentHitpoints).toBe(baseMaxHp);
+        expect(downed.combatDetails.currentManapoints).toBe(baseMaxMp);
+        expect(downed.combatBuffs['/buff_uniques/expired_max_hp_test']).toBeUndefined();
+        expect(downed.combatBuffs['/buff_uniques/expired_max_mp_test']).toBeUndefined();
+    });
+    test('clears downed-player CC flags whose stored deadlines passed before the next tier', () => {
+        const [downed] = createTrialPlayers([{ name: 'Downed', dto: build() }]);
+        downed.generatePermanentBuffs();
+        downed.reset(0);
+        downed.combatDetails.currentHitpoints = 0;
+        downed.isStunned = true;
+        downed.stunExpireTime = 29 * SECOND;
+        downed.isBlinded = true;
+        downed.blindExpireTime = 29 * SECOND;
+        downed.isSilenced = true;
+        downed.silenceExpireTime = 29 * SECOND;
+        const sim = new GuildCombatSimulator([downed], scenario({ resetBetweenTiers: false }), [
+            '/monsters/trial_badger',
+        ]);
+        sim.tiers.push({ tier: 1, cleared: true, seconds: 30, progressFraction: 1 });
+        sim.simulationTime = 30 * SECOND;
+        for (const EventClass of [StunExpirationEvent, BlindExpirationEvent, SilenceExpirationEvent]) {
+            sim.eventQueue.addEvent(new EventClass(29 * SECOND, downed));
+        }
+        sim.eventQueue.clearEventsForUnit(downed);
+
+        sim.processCombatStartEvent({ time: sim.simulationTime });
+
+        expect(downed.isStunned).toBe(false);
+        expect(downed.stunExpireTime).toBeNull();
+        expect(downed.isBlinded).toBe(false);
+        expect(downed.blindExpireTime).toBeNull();
+        expect(downed.isSilenced).toBe(false);
+        expect(downed.silenceExpireTime).toBeNull();
     });
     test('ends on defeat and does not respawn or start a later tier', () => {
         const players = createTrialPlayers(scenario().members);

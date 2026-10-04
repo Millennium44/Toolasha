@@ -9,6 +9,9 @@ import { resetSimWarnings, getSimWarnings } from './sim-warnings.js';
 import CombatStartEvent from './events/combat-start-event.js';
 import EnrageTickEvent from './events/enrage-tick-event.js';
 import RegenTickEvent from './events/regen-tick-event.js';
+import StunExpirationEvent from './events/stun-expiration-event.js';
+import BlindExpirationEvent from './events/blind-expiration-event.js';
+import SilenceExpirationEvent from './events/silence-expiration-event.js';
 import { levelFromTier, TRIAL_MAX_TIER } from '../../guild/guild-trials-math.js';
 import { summarizeTrialRuns, validateTrialScenario } from '../guild-trial-model.js';
 
@@ -121,6 +124,38 @@ export class GuildCombatSimulator extends CombatSimulator {
                 player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
             }
             this.eventQueue.addEvent(new RegenTickEvent(event.time + 10 * SECOND));
+        } else {
+            // Carry the survivors' pools, buffs and cooldowns, but a tier
+            // transition still revives anyone who went down during the clear.
+            // Death removed that player's queued buff expirations, so restore
+            // the checks for buffs that remain active after pruning expired ones.
+            for (const player of this.players) {
+                if (player.combatDetails.currentHitpoints > 0) continue;
+                player.removeExpiredBuffs(event.time);
+                this._rescheduleBuffExpirations(player);
+
+                // Death removed the unit's CC expiration events too. Preserve
+                // each timed status only until its recorded deadline.
+                const statuses = [
+                    ['isStunned', 'stunExpireTime', StunExpirationEvent],
+                    ['isBlinded', 'blindExpireTime', BlindExpirationEvent],
+                    ['isSilenced', 'silenceExpireTime', SilenceExpirationEvent],
+                ];
+                for (const [activeKey, deadlineKey, EventClass] of statuses) {
+                    const deadline = player[deadlineKey];
+                    if (!player[activeKey] || !Number.isFinite(deadline) || deadline <= event.time) {
+                        player[activeKey] = false;
+                        player[deadlineKey] = null;
+                    } else {
+                        this.eventQueue.addEvent(new EventClass(deadline, player));
+                    }
+                }
+
+                // Pruning can lower max HP/MP. Fill only after the final maxima
+                // have been recomputed so a removed buff cannot leave surplus.
+                player.combatDetails.currentHitpoints = player.combatDetails.maxHitpoints;
+                player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
+            }
         }
         this.startNewEncounter();
     }
