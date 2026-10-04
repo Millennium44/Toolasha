@@ -41,6 +41,20 @@ beforeEach(() => {
 });
 afterEach(() => stopTrialSimulationCapture?.());
 describe('trial simulation export inputs', () => {
+    test('exports a collected guild profile even when its loadout is still missing', async () => {
+        startTrialSimulationCapture();
+        game.ws.profile_shared({
+            profile: {
+                sharableCharacter: { id: 2, name: 'Ada' },
+                characterSkills: [{ characterID: 2, skillHrid: '/skills/attack', level: 100 }],
+            },
+        });
+        game.profileRead.mockResolvedValue([]);
+        const result = await captureTrialSimulationInputs('1', [{ characterID: 2, name: 'Ada' }]);
+        expect(result.viewLoadouts).toEqual([]);
+        expect(result.profiles).toHaveLength(1);
+        expect(result.profiles[0].profile.characterSkills[0].level).toBe(100);
+    });
     test('an unavailable roster cannot export captures from an earlier guild', async () => {
         game.entries = [{ context: 'guild_trial', ownerCharacterId: '1', characterId: '2', name: 'Former guildmate' }];
         game.profileRead.mockResolvedValue([]);
@@ -48,7 +62,7 @@ describe('trial simulation export inputs', () => {
     });
     test('keeps opened profiles for a full guild after the general cache evicts its earliest members', async () => {
         startTrialSimulationCapture?.();
-        const roster = Array.from({ length: 21 }, (_, i) => ({ characterID: i + 10, name: `Member ${i + 1}` }));
+        const roster = Array.from({ length: 125 }, (_, i) => ({ characterID: i + 10, name: `Member ${i + 1}` }));
         const profiles = roster.map((member) => ({
             characterID: member.characterID,
             characterName: member.name,
@@ -69,9 +83,9 @@ describe('trial simulation export inputs', () => {
             loadout: { wearableItemMap: {}, equippedAbilities: [], abilityCombatTriggersMap: {} },
         }));
         for (const profile of profiles) game.ws.profile_shared?.({ type: 'profile_shared', profile: profile.profile });
-        game.profileRead.mockResolvedValue(profiles.slice(1));
+        game.profileRead.mockResolvedValue(profiles.slice(-20));
         const result = await captureTrialSimulationInputs('1', roster);
-        expect(result.profiles).toHaveLength(21);
+        expect(result.profiles).toHaveLength(125);
         expect(
             result.profiles.find((profile) => Number(profile.characterID) === 10).profile.characterSkills[0].level
         ).toBe(100);

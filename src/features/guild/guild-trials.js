@@ -153,6 +153,7 @@ import guildMemberSkills from './guild-member-skills.js';
 import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
+import { openTrialInputCapture, closeTrialInputCapture } from './guild-trial-input-capture.js';
 import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
@@ -4830,6 +4831,12 @@ class GuildTrials {
                           'unless that is switched off in settings.'
             ) +
             button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
+            button(
+                'capture-inputs',
+                'Capture inputs',
+                ACCENT,
+                'Collect trial loadouts and profiles for combat and skilling, one click at a time.'
+            ) +
             (config.getSetting('guildTrialDiagnosticTrace', false)
                 ? button(
                       'trace',
@@ -4900,6 +4907,7 @@ class GuildTrials {
         on('trace', async () => {
             await guildTrialTrace.exportTrace();
         });
+        on('capture-inputs', () => openTrialInputCapture());
         on('abilities', () => {
             // The roster and tier feed happens at open — the panel keeps itself
             // current from capture events after that. Only a roster that exists
@@ -5509,6 +5517,7 @@ export default {
     // makes `_restore()` short-circuit and the two characters share one trace.
     cleanup: async () => {
         try {
+            closeTrialInputCapture();
             guildTrials.cleanup();
             await guildTrialTrace.disable?.();
         } catch (error) {

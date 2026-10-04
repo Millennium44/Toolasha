@@ -4,10 +4,16 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { getLoadouts, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 
-const MAX_TRIAL_PROFILES = 100;
+const MAX_TRIAL_PROFILES = 300;
 const openedProfiles = new Map();
 let profileHandler = null;
 let profileOwner = null;
+
+/** Session profiles available to the capture helper. Treat their contents as read-only. */
+export function trialSimulationProfiles() {
+    const owner = dataManager.getCurrentCharacterId();
+    return owner != null && String(owner) === profileOwner ? [...openedProfiles.values()] : [];
+}
 
 /** Forget the departing character/guild's in-memory profile copies. */
 export function clearTrialSimulationProfiles() {
@@ -106,13 +112,7 @@ export async function captureTrialSimulationInputs(characterId, roster = []) {
             combined.set(key, profile);
     }
     snapshot.profiles = structuredClone(
-        [...combined.values()].filter((profile) =>
-            viewLoadouts.some((entry) =>
-                entry.characterId != null
-                    ? String(profile?.characterID) === String(entry.characterId)
-                    : String(entry.name || '').toLowerCase() === String(profile?.characterName || '').toLowerCase()
-            )
-        )
+        [...combined.values()].filter((profile) => roster.length > 0 && memberIds.has(String(profile.characterID)))
     );
     return snapshot;
 }
