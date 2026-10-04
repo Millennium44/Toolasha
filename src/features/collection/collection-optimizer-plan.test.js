@@ -118,6 +118,15 @@ describe('route options', () => {
         expect(option.gold).toBe(50);
     });
 
+    test('a batch that crosses several rungs is scored for all of them', () => {
+        // Uncollected cheese, 18 per sword: one sword takes it past 1 and 10 at once, 3 points
+        const option = evaluateOption('/items/cheese', new Map(), cheeseSword());
+        expect(option.units).toBe(1);
+        expect(option.gain).toBe(3);
+        expect(option.points).toBe(3);
+        expect(option.goldPerPoint).toBeCloseTo(50 / 3);
+    });
+
     test('no Buy route ever appears, only the ones handed in', () => {
         const counts = collectionCounts(ROWS);
         const index = indexRoutes({

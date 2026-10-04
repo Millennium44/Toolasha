@@ -207,9 +207,13 @@ export function evaluateOption(itemHrid, counts, route) {
         collateral += pointsFromCount(before + added) - pointsFromCount(before);
     }
     const gold = units * (route.cost - keptOthers);
-    const points = step.gain + collateral;
+    // The whole batch counts: a yield of 18 takes an uncollected item past 1 and 10 at once
+    const before = counts.get(itemHrid) || 0;
+    const targetGain = pointsFromCount(before + units * perSource) - pointsFromCount(before);
+    const points = targetGain + collateral;
     return {
         ...base,
+        gain: targetGain,
         sourceHrid: route.sourceHrid,
         needed: step.needed,
         units,
