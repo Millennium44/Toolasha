@@ -172,6 +172,8 @@ async function requestStep(row, kind) {
     // A stale button cannot ask for a member who left the current signup roster.
     const current = rowsNow().find((entry) => entry.characterId === row.characterId);
     if (!current || (kind !== 'profile' && !current.trials[kind])) return;
+    // The standard panel shell can restore directly through show(), bypassing the manual opener.
+    listenForInputs();
     const request = { scope, row: current, kind };
     pending = request;
     skipped.delete(stepKey(row, kind));
@@ -378,10 +380,9 @@ export const trialInputCapturePanel = createPanel({
     draw,
 });
 
-/** Open the checklist; listeners record responses, never send requests by themselves. */
-export function openTrialInputCapture() {
+/** Attach the response listeners for either a manually opened or restored checklist. */
+function listenForInputs() {
     startTrialSimulationCapture();
-    adoptScope();
     if (!offLoadout) offLoadout = onLoadoutCaptured(() => trialInputCapturePanel.render());
     if (!profileHandler) {
         profileHandler = (message) => {
@@ -404,6 +405,12 @@ export function openTrialInputCapture() {
         };
         webSocketHook.on('profile_shared', profileHandler);
     }
+}
+
+/** Open the checklist; listeners record responses, never send requests by themselves. */
+export function openTrialInputCapture() {
+    adoptScope();
+    listenForInputs();
     trialInputCapturePanel.show();
 }
 

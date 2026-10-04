@@ -97,7 +97,7 @@ import {
     closeTrialInputCapture,
     buildTrialInputExport,
 } from './guild-trial-input-capture.js';
-import { stopTrialSimulationCapture } from './guild-trial-simulation-inputs.js';
+import { startTrialSimulationCapture, stopTrialSimulationCapture } from './guild-trial-simulation-inputs.js';
 
 const NOW = 1_800_000_000_000;
 const member = (id, name, extra = {}) => ({
@@ -263,6 +263,20 @@ describe('trial input capture helper', () => {
         await settle();
         expect(text()).toContain('2/2 loadouts');
         expect(game.fetch.mock.calls.map(([row]) => row.characterId)).toEqual([2, 2]);
+    });
+    test('a restored panel completes profile capture without a false timeout', async () => {
+        // The recorder starts passive capture; the panel shell restores via show(), not openTrialInputCapture().
+        startTrialSimulationCapture();
+        trialInputCapturePanel.show();
+        body().querySelector('[aria-label="Alice: capture profile"]').click();
+        expect(game.openProfile).toHaveBeenCalledTimes(1);
+        sendProfile(2);
+        trialInputCapturePanel.render();
+        expect(text()).toContain('Profile: Captured');
+        expect(text()).toContain('Profile captured. Close the game popup to continue.');
+        await vi.advanceTimersByTimeAsync(8000);
+        expect(text()).not.toContain('No profile reply');
+        expect(game.openProfile).toHaveBeenCalledTimes(1);
     });
     test('trial filtering captures only that kind and shares one profile between both trials', () => {
         openTrialInputCapture();

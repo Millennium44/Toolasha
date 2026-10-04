@@ -126,6 +126,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Experimental Guild Trial Simulator
 
+- A capture checklist restored after refreshing now listens for profile replies before requesting one, preventing a false timeout after a successful capture.
 - The input checklist now sends the numeric member ID expected by the game's View Loadout handler, so combat and skilling captures receive a reply instead of timing out.
 - Trial profile capture and the simulator now share one session store in the production build, so profiles collected for a larger guild remain available when adding its trial builds.
 - Imported trial setups now check combat stat types and normalize personal buff values before simulation, preventing text-valued inputs from inflating HP or damage.
