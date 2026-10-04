@@ -2846,12 +2846,10 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
      * `labyrinth-rush-floor-verdict.js` holds every rule, including the three
      * refusals, so this method only supplies the data and paints the result.
      *
-     * The current gear fingerprint is deliberately not supplied. Computing it
-     * needs the loadout hasher that lives on the labyrinth clear-rate singleton
-     * in another bundle, and `gearChangedSince` abstains on a missing current
-     * fingerprint by design — "nothing to compare against" is not "unchanged".
-     * The refusal that matters here still fires: a fight pool spanning more than
-     * one gear fingerprint is a boundary whether or not today's gear is known.
+     * The loadout snapshot bridge exposes readiness and the clear-rate singleton
+     * owns the current fingerprint method. Read the method through its instance
+     * so its `this` binding stays intact; when either bridge is unavailable, the
+     * verdict refuses current-build advice while keeping the burn summary above.
      *
      * @returns {HTMLElement|null} The line, or null when there is nothing to read
      * @private
@@ -2874,7 +2872,14 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             if (!attempts.length && !runs.length) return null;
 
             const torchCap = Number(dataManager.characterData?.characterInfo?.labyrinthTorchCap) || 0;
-            const result = rushFloorVerdict({ attempts, runs, torchCap });
+            const combat = window.Toolasha?.Combat;
+            const snapshotsReady = combat?.loadoutSnapshot?.snapshotsReady === true;
+            const clearRate = combat?.labyrinthClearRate;
+            const currentFingerprint =
+                snapshotsReady && typeof clearRate?._snapshotContentFingerprint === 'function'
+                    ? clearRate._snapshotContentFingerprint()
+                    : null;
+            const result = rushFloorVerdict({ attempts, runs, torchCap, currentFingerprint, snapshotsReady });
 
             const line = document.createElement('div');
             line.style.cssText = 'margin-top:3px; font-size:0.9em;';

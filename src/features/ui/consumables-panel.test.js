@@ -1573,4 +1573,113 @@ describe('the labyrinth burn trend', () => {
 
         expect(consumablesPanel.bodyEl.textContent).not.toContain('Rush floor:');
     });
+
+    test('the rush-floor verdict refuses one stale gear cohort against current snapshots', async () => {
+        const previousBridge = window.Toolasha;
+        window.Toolasha = {
+            Combat: {
+                loadoutSnapshot: { snapshotsReady: true },
+                labyrinthClearRate: { _snapshotContentFingerprint: () => 'gear-b' },
+            },
+        };
+        try {
+            consumablesPanel._labFightAttempts = Array.from({ length: 14 }, () => ({
+                outcome: 'death',
+                complete: true,
+                monsterMaxHp: 100,
+                monsterHpEnd: 8,
+                fingerprint: 'gear-a',
+            }));
+            consumablesPanel._labFightAttemptsOwner = 'char1';
+
+            const text = await draw([
+                ledgerRun({ key: 'a', torch: 20 }),
+                ledgerRun({ key: 'b', torch: 20 }),
+                ledgerRun({ key: 'c', torch: 20 }),
+            ]);
+
+            expect(text).toContain('Rush floor:');
+            expect(text).toContain('gear you are no longer wearing');
+            expect(text).toContain('Burn per run:');
+        } finally {
+            if (previousBridge === undefined) delete window.Toolasha;
+            else window.Toolasha = previousBridge;
+        }
+    });
+
+    test('the rush-floor verdict uses the current fingerprint through its Combat bridge', async () => {
+        const previousBridge = window.Toolasha;
+        const fingerprint = vi.fn(function () {
+            return this.currentGear;
+        });
+        window.Toolasha = {
+            Combat: {
+                loadoutSnapshot: { snapshotsReady: true },
+                labyrinthClearRate: { currentGear: 'gear-a', _snapshotContentFingerprint: fingerprint },
+            },
+        };
+        try {
+            consumablesPanel._labFightAttempts = Array.from({ length: 14 }, () => ({
+                outcome: 'death',
+                complete: true,
+                monsterMaxHp: 100,
+                monsterHpEnd: 8,
+                fingerprint: 'gear-a',
+            }));
+            consumablesPanel._labFightAttemptsOwner = 'char1';
+
+            const text = await draw([
+                ledgerRun({ key: 'a', torch: 20 }),
+                ledgerRun({ key: 'b', torch: 20 }),
+                ledgerRun({ key: 'c', torch: 20 }),
+            ]);
+
+            expect(fingerprint).toHaveBeenCalled();
+            expect(text).toContain('lowering the rush floor is supported');
+        } finally {
+            if (previousBridge === undefined) delete window.Toolasha;
+            else window.Toolasha = previousBridge;
+        }
+    });
+
+    test.each([
+        ['no Combat bridge', undefined],
+        ['no fingerprint method', { Combat: { loadoutSnapshot: { snapshotsReady: true }, labyrinthClearRate: {} } }],
+        [
+            'snapshots still loading',
+            {
+                Combat: {
+                    loadoutSnapshot: { snapshotsReady: false },
+                    labyrinthClearRate: { _snapshotContentFingerprint: () => 'gear-b' },
+                },
+            },
+        ],
+    ])('the rush-floor verdict refuses unverified gear when %s', async (_case, bridge) => {
+        const previousBridge = window.Toolasha;
+        if (bridge === undefined) delete window.Toolasha;
+        else window.Toolasha = bridge;
+        try {
+            consumablesPanel._labFightAttempts = Array.from({ length: 14 }, () => ({
+                outcome: 'death',
+                complete: true,
+                monsterMaxHp: 100,
+                monsterHpEnd: 8,
+                fingerprint: 'gear-a',
+            }));
+            consumablesPanel._labFightAttemptsOwner = 'char1';
+
+            const text = await draw([
+                ledgerRun({ key: 'a', torch: 20 }),
+                ledgerRun({ key: 'b', torch: 20 }),
+                ledgerRun({ key: 'c', torch: 20 }),
+            ]);
+
+            expect(text).toContain('current gear could not be checked');
+            expect(text).not.toContain('lowering the rush floor is supported');
+            expect(text).toContain('Burn per run:');
+        } finally {
+            if (previousBridge === undefined) delete window.Toolasha;
+            else window.Toolasha = previousBridge;
+        }
+    });
 });

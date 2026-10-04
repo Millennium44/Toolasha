@@ -314,6 +314,35 @@ describe('the ring survives a failed read and a second tab', () => {
         game.characterId = 'char1';
         labyrinthRunLedger.ledgerOwner = null;
         labyrinthRunLedger.recorded.clear();
+        labyrinthRunLedger.state = { phase: 'unknown', run: null };
+        labyrinthRunLedger.stateOwner = null;
+    });
+
+    test('the active producer state is not persisted until the actual end transition', async () => {
+        labyrinthRunLedger.observe({
+            isActive: true,
+            startedAt: 'S10',
+            currentFloor: 1,
+            torchCount: 100,
+            shroudCount: 4,
+            beaconCount: 5,
+        });
+        expect(stored()).toBeUndefined();
+
+        labyrinthRunLedger.observe({
+            isActive: true,
+            startedAt: 'S10',
+            currentFloor: 2,
+            torchCount: 90,
+            shroudCount: 4,
+            beaconCount: 5,
+        });
+        labyrinthRunLedger.observe({ isActive: false });
+        for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(stored()).toHaveLength(1);
+        expect(stored()[0]).toMatchObject({ key: 'S10', endedAt: expect.any(Number), spent: { torch: 10 } });
+        expect(observedUse(stored(), 'torch')).toEqual([10]);
     });
 
     test('an ending is appended newest first under the character key', async () => {

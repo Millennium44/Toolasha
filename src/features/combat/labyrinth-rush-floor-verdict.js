@@ -126,10 +126,11 @@ export function attemptFingerprints(attempts) {
  *   headroom: number|null}}
  */
 export function rushFloorVerdict(
-    { attempts, runs, torchCap, currentFingerprint = null, snapshotsReady = true } = {},
+    { attempts, runs, torchCap, currentFingerprint = null, snapshotsReady = false } = {},
     { minLosses = MIN_LAB_FIGHTS, minRuns = MIN_TRUSTED_RUNS, closeMedian = CLOSE_MEDIAN } = {}
 ) {
-    const nearMiss = nearMissRemainder(attempts, minLosses);
+    const sourceAttempts = Array.isArray(attempts) ? attempts : [];
+    let nearMiss = nearMissRemainder(sourceAttempts, minLosses);
     const burn = burnSummary(runs, 'torch');
     const cap = Number(torchCap) || 0;
     const headroom = burn && cap > 0 ? cap - burn.average : null;
@@ -147,11 +148,27 @@ export function rushFloorVerdict(
                 'nothing about the new gear, so there is no rush-floor verdict to give until the pool is one build again'
         );
     }
+    if (sourceAttempts.length && (!snapshotsReady || !currentFingerprint)) {
+        return refuse(
+            'gear-unknown',
+            'the current gear could not be checked against these fights — wait for loadout snapshots to load ' +
+                'before judging the rush floor'
+        );
+    }
     if (fingerprints.length === 1 && snapshotsReady && gearChangedSince(fingerprints[0], currentFingerprint, true)) {
         return refuse(
             'gear-changed',
             'every recorded fight was fought in gear you are no longer wearing — data from the old gear says ' +
                 'nothing about the new gear, so the rush floor cannot be judged from it'
+        );
+    }
+
+    if (sourceAttempts.length) {
+        // The recorder retains history across gear changes. Only fights stamped
+        // with the current fingerprint can describe today's near misses.
+        nearMiss = nearMissRemainder(
+            sourceAttempts.filter((attempt) => String(attempt?.fingerprint || '') === String(currentFingerprint)),
+            minLosses
         );
     }
 

@@ -45,6 +45,11 @@ function run(torches) {
     return { startTrusted: true, floor: 7, spent: { torch: torches } };
 }
 
+/** Normal current-build input for tests that are not checking fingerprint guards. */
+function verdict(input, options) {
+    return rushFloorVerdict({ currentFingerprint: 'gear-a', snapshotsReady: true, ...input }, options);
+}
+
 describe('attemptFingerprints', () => {
     test('collects the distinct gear the fights were fought in', () => {
         expect(attemptFingerprints([loss(0.1), loss(0.1, { fingerprint: 'gear-b' }), loss(0.1)]).sort()).toEqual([
@@ -62,7 +67,7 @@ describe('attemptFingerprints', () => {
 
 describe('rushFloorVerdict — the verdicts', () => {
     test('close losses and spare torches: supported', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(14, 0.08),
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
@@ -76,7 +81,7 @@ describe('rushFloorVerdict — the verdicts', () => {
     });
 
     test('distant losses: not close, and the headroom is not quoted at it', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(14, 0.47),
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
@@ -88,7 +93,7 @@ describe('rushFloorVerdict — the verdicts', () => {
     });
 
     test('close losses but no spare torches: not supported, and it says which half failed', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(14, 0.08),
             runs: [run(500), run(505), run(510)],
             torchCap: 500,
@@ -101,14 +106,12 @@ describe('rushFloorVerdict — the verdicts', () => {
 
     test('the close/not-close boundary sits at CLOSE_MEDIAN, inclusive', () => {
         const runs = [run(300), run(290), run(310)];
-        expect(rushFloorVerdict({ attempts: losses(9, CLOSE_MEDIAN), runs, torchCap: 510 }).verdict).toBe('supported');
-        expect(rushFloorVerdict({ attempts: losses(9, CLOSE_MEDIAN + 0.01), runs, torchCap: 510 }).verdict).toBe(
-            'not-close'
-        );
+        expect(verdict({ attempts: losses(9, CLOSE_MEDIAN), runs, torchCap: 510 }).verdict).toBe('supported');
+        expect(verdict({ attempts: losses(9, CLOSE_MEDIAN + 0.01), runs, torchCap: 510 }).verdict).toBe('not-close');
     });
 
     test('a zero torch capacity is no headroom rather than infinite headroom', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(14, 0.05),
             runs: [run(10), run(10), run(10)],
             torchCap: 0,
@@ -120,7 +123,7 @@ describe('rushFloorVerdict — the verdicts', () => {
 
 describe('rushFloorVerdict — the refusals', () => {
     test('refuses below the near-miss minimum, naming the shortfall', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(MIN_LAB_FIGHTS - 1, 0.05),
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
@@ -133,7 +136,7 @@ describe('rushFloorVerdict — the refusals', () => {
     });
 
     test('an incomplete loss is not a usable loss, so it does not lift the count', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: [...losses(4, 0.05), ...losses(6, 0.05, { complete: false })],
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
@@ -142,7 +145,7 @@ describe('rushFloorVerdict — the refusals', () => {
     });
 
     test('refuses across a gear-fingerprint boundary before it looks at anything else', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             // Plenty of losses and plenty of headroom — and it still refuses
             attempts: [...losses(20, 0.05), ...losses(20, 0.05, { fingerprint: 'gear-b' })],
             runs: [run(300), run(290), run(310)],
@@ -156,7 +159,7 @@ describe('rushFloorVerdict — the refusals', () => {
     });
 
     test('refuses when every fight was fought in gear that is no longer worn', () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(20, 0.05),
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
@@ -167,29 +170,45 @@ describe('rushFloorVerdict — the refusals', () => {
         expect(result.text).toContain('no longer wearing');
     });
 
-    test('an unknown current fingerprint abstains rather than refusing', () => {
-        const result = rushFloorVerdict({
+    test('an unknown current fingerprint refuses current-build advice', () => {
+        const result = verdict({
             attempts: losses(20, 0.05),
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
             currentFingerprint: null,
         });
-        expect(result.verdict).toBe('supported');
+        expect(result.verdict).toBe('refused');
+        expect(result.reason).toBe('gear-unknown');
     });
 
-    test('snapshots that have not landed cannot make the pool look stale', () => {
-        const result = rushFloorVerdict({
+    test('snapshots that have not landed refuse current-build advice', () => {
+        const result = verdict({
             attempts: losses(20, 0.05),
             runs: [run(300), run(290), run(310)],
             torchCap: 510,
             currentFingerprint: 'gear-b',
             snapshotsReady: false,
         });
-        expect(result.verdict).toBe('supported');
+        expect(result.verdict).toBe('refused');
+        expect(result.reason).toBe('gear-unknown');
+    });
+
+    test('an unready snapshot store cannot endorse a single old gear cohort', () => {
+        const result = verdict({
+            attempts: losses(20, 0.05),
+            runs: [run(300), run(290), run(310)],
+            torchCap: 510,
+            currentFingerprint: null,
+            snapshotsReady: false,
+        });
+
+        expect(result.verdict).toBe('refused');
+        expect(result.reason).toBe('gear-unknown');
+        expect(result.text).toContain('current gear could not be checked');
     });
 
     test(`refuses under ${MIN_TRUSTED_RUNS} trusted runs of supply data`, () => {
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(14, 0.05),
             runs: [run(300), run(290)],
             torchCap: 510,
@@ -202,7 +221,7 @@ describe('rushFloorVerdict — the refusals', () => {
 
     test('untrusted runs do not count towards the supply minimum', () => {
         const untrusted = { startTrusted: false, floor: 7, spent: { torch: 300 } };
-        const result = rushFloorVerdict({
+        const result = verdict({
             attempts: losses(14, 0.05),
             runs: [run(300), untrusted, untrusted],
             torchCap: 510,
@@ -213,13 +232,13 @@ describe('rushFloorVerdict — the refusals', () => {
     });
 
     test('no runs at all is the same refusal, not a crash', () => {
-        const result = rushFloorVerdict({ attempts: losses(14, 0.05), runs: [], torchCap: 510 });
+        const result = verdict({ attempts: losses(14, 0.05), runs: [], torchCap: 510 });
         expect(result.reason).toBe('too-few-runs');
         expect(result.burn).toBeNull();
     });
 
     test('nothing recorded at all refuses on the losses, which is the first thing missing', () => {
-        const result = rushFloorVerdict({});
+        const result = verdict({});
         expect(result.verdict).toBe('refused');
         expect(result.reason).toBe('too-few-losses');
     });
@@ -227,8 +246,6 @@ describe('rushFloorVerdict — the refusals', () => {
     test('the minimums are injectable', () => {
         const attempts = losses(2, 0.05);
         const runs = [run(300)];
-        expect(rushFloorVerdict({ attempts, runs, torchCap: 510 }, { minLosses: 2, minRuns: 1 }).verdict).toBe(
-            'supported'
-        );
+        expect(verdict({ attempts, runs, torchCap: 510 }, { minLosses: 2, minRuns: 1 }).verdict).toBe('supported');
     });
 });
