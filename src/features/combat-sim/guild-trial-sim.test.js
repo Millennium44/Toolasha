@@ -206,6 +206,23 @@ describe('trial simulator controls and ownership', () => {
         expect(success.querySelector('input').value).toBe('8');
         expect(feature.skillingMembers[0].successRate).toBe(GUILD_SKILLING_TICKS[0].successRate);
     });
+    test('uses multiple recorded tiers to calibrate the success bend, and forgets it for the next run', () => {
+        feature.kind = 'skilling';
+        for (const [tier, successRate] of [
+            [1, 0.828],
+            [2, 0.776],
+        ]) {
+            harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0], tier, successRate });
+        }
+        feature.addReading();
+        expect(feature.skillingMembers[0].effectiveLevel).toBeCloseTo(107);
+        expect(feature.skillingMembers[0].successBonus).toBeCloseTo(0);
+        feature.panel.render();
+        expect(text()).toContain('Effective skill level');
+        harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0], tier: 1, successRate: 0.84 });
+        feature.addReading();
+        expect(feature.skillingMembers[0].effectiveLevel).toBeUndefined();
+    });
     test('imports a setup atomically and preserves its captured buffs on round-trip', () => {
         feature.addCurrentBuild();
         const scenario = feature.makeScenario();

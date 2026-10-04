@@ -147,6 +147,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Skilling and combat trial scenarios can now be simulated locally with editable rosters, per-tier clear odds, payout estimates, and setup import and export. The experimental tool is off by default and labels rules still awaiting comparison with recorded trials.
 - Imported skilling percentages now display cleanly while retaining their full precision in simulations and exports.
+- Post-rebalance trial recordings now calibrate the skilling success curve and boss scaling; estimates include proportional rewards from the unfinished tier and the guild's combat building buffs.
+- Trial exports now keep collected View Loadout gear and triggers, matching dated profiles, and building/buff context, so those simulator inputs can be saved before refreshing the game.
 
 ### Labyrinth dates and scroll names
 

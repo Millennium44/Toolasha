@@ -4,6 +4,8 @@ import {
     TRIAL_SKILLS,
     levelFromTier,
     tierPoolWork,
+    tierMarginalPoints,
+    partialTierCredit,
     trialBankedBasePoints,
 } from '../guild/guild-trials-math.js';
 
@@ -52,16 +54,32 @@ export function validateTrialScenario(input) {
         if (!TRIAL_SKILLS.includes(String(input.trialHrid || '').replace('/guild_skilling/', '')))
             throw new Error('Choose a skilling trial.');
         result.baseWork = numberIn(input.baseWork, 1, 1e9, 'Tier 1 work before participants');
-        result.members = members.map((member, i) => ({
-            ...member,
-            name: String(member.name || `Member ${i + 1}`).slice(0, 80),
-            referenceTier: numberIn(member.referenceTier ?? 1, 1, TRIAL_MAX_TIER, 'Reference tier', true),
-            successRate: numberIn(member.successRate, 0.05, 1, 'Success rate'),
-            successLossPerTier: numberIn(member.successLossPerTier ?? 0.08, 0, 1, 'Success loss per tier'),
-            workPower: numberIn(member.workPower, 0, 1e7, 'Work power'),
-            actionSeconds: numberIn(member.actionSeconds, 0.1, 3600, 'Work time'),
-            doubleChance: numberIn(member.doubleChance ?? 0, 0, 1, 'Double progress chance'),
-        }));
+        result.members = members.map((member, i) => {
+            const curve =
+                member.effectiveLevel == null
+                    ? {}
+                    : {
+                          effectiveLevel: numberIn(member.effectiveLevel, 1, 1000, 'Effective skill level'),
+                          successBonus: numberIn(member.successBonus ?? 0, -1, 10, 'Success bonus'),
+                      };
+            const referenceTier = numberIn(member.referenceTier ?? 1, 1, TRIAL_MAX_TIER, 'Reference tier', true);
+            return {
+                ...member,
+                ...curve,
+                name: String(member.name || `Member ${i + 1}`).slice(0, 80),
+                referenceTier,
+                successRate: numberIn(
+                    member.successRate ?? skillingSuccessAtTier(curve, referenceTier),
+                    0.05,
+                    1,
+                    'Success rate'
+                ),
+                successLossPerTier: numberIn(member.successLossPerTier ?? 0.08, 0, 1, 'Success loss per tier'),
+                workPower: numberIn(member.workPower, 0, 1e7, 'Work power'),
+                actionSeconds: numberIn(member.actionSeconds, 0.1, 3600, 'Work time'),
+                doubleChance: numberIn(member.doubleChance ?? 0, 0, 1, 'Double progress chance'),
+            };
+        });
         if (result.members.every((member) => member.workPower === 0))
             throw new Error('At least one member needs work power.');
         // Bound the worker's worst case. Normal trial work times are several seconds.
@@ -101,9 +119,54 @@ export function validateTrialScenario(input) {
     return result;
 }
 
-/** Success at a tier, using a stated reference reading and an editable decline. */
+/** Recorded game curve, or a reference-based estimate when the level/bonus are unknown. */
 export function skillingSuccessAtTier(member, tier) {
+    if (member.effectiveLevel != null) {
+        const gap = member.effectiveLevel - levelFromTier(tier);
+        return Math.max(0.05, Math.min(1, 0.8 * (1 + gap * (gap >= 0 ? 0.005 : 0.01) + (member.successBonus ?? 0))));
+    }
     return Math.max(0.05, Math.min(1, member.successRate - (tier - member.referenceTier) * member.successLossPerTier));
+}
+
+/** Infer level and success bonus only when uncapped readings identify the curve's bend. */
+export function fitSkillingSuccessCurve(readings) {
+    const rows = [
+        ...new Map(
+            (readings || [])
+                .filter(
+                    (r) =>
+                        Number.isInteger(r?.tier) &&
+                        r.tier >= 1 &&
+                        r.tier <= TRIAL_MAX_TIER &&
+                        Number.isFinite(r.successRate) &&
+                        r.successRate >= 0.05 &&
+                        r.successRate <= 1
+                )
+                .map((r) => [r.tier, r])
+        ).values(),
+    ].sort((a, b) => a.tier - b.tier);
+    const uncapped = rows.filter((r) => r.successRate > 0.05 && r.successRate < 1);
+    for (let i = 0; i < uncapped.length; i++) {
+        for (let j = i + 1; j < uncapped.length; j++) {
+            const left = uncapped[i],
+                right = uncapped[j];
+            const levelGap = levelFromTier(right.tier) - levelFromTier(left.tier);
+            const decline = left.successRate - right.successRate;
+            if (decline <= 0.004 * levelGap + 1e-9 || decline >= 0.008 * levelGap - 1e-9) continue;
+            const effectiveLevel = levelFromTier(left.tier) + (0.008 * levelGap - decline) / 0.004;
+            const successBonus = left.successRate / 0.8 - 1 - 0.005 * (effectiveLevel - levelFromTier(left.tier));
+            const curve = { effectiveLevel, successBonus };
+            if (
+                effectiveLevel >= 1 &&
+                effectiveLevel <= 1000 &&
+                successBonus >= -1 &&
+                successBonus <= 10 &&
+                rows.every((r) => Math.abs(skillingSuccessAtTier(curve, r.tier) - r.successRate) <= 0.00051)
+            )
+                return curve;
+        }
+    }
+    return null;
 }
 
 /** Expected work per second; useful beside the simulated distribution. */
@@ -154,13 +217,28 @@ export function summarizeTrialRuns(scenario, attempts) {
             meanAttemptSeconds: observed.length
                 ? observed.reduce((sum, row) => sum + row.seconds, 0) / observed.length
                 : null,
+            meanProgressFraction: observed.length
+                ? observed.reduce((sum, row) => sum + (row.cleared ? 1 : row.progressFraction || 0), 0) /
+                  observed.length
+                : null,
         });
     }
-    const meanBasePoints =
+    const meanBankedBasePoints =
         attempts.reduce(
             (sum, a) => sum + trialBankedBasePoints({ type: scenario.kind, bankedTiers: a.highestTier }).basePoints,
             0
         ) / count;
+    const meanPartialBasePoints =
+        attempts.reduce((sum, attempt) => {
+            const unfinished = attempt.tiers.find((row) => !row.cleared);
+            return (
+                sum +
+                (unfinished
+                    ? (tierMarginalPoints(scenario.kind, unfinished.tier) ?? 0) *
+                      partialTierCredit(unfinished.progressFraction)
+                    : 0)
+            );
+        }, 0) / count;
     return {
         kind: scenario.kind,
         trialHrid: scenario.trialHrid,
@@ -173,7 +251,9 @@ export function summarizeTrialRuns(scenario, attempts) {
         lowHighestTier: percentile(highest, 0.1),
         highHighestTier: percentile(highest, 0.9),
         meanSeconds: attempts.reduce((sum, a) => sum + a.seconds, 0) / count,
-        meanBasePoints,
+        meanBasePoints: meanBankedBasePoints + meanPartialBasePoints,
+        meanBankedBasePoints,
+        meanPartialBasePoints,
         outcomes: Object.fromEntries(
             ['defeat', 'timeout', 'max-tier'].map((key) => [key, attempts.filter((a) => a.reason === key).length])
         ),

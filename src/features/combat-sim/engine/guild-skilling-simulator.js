@@ -31,14 +31,20 @@ export function simulateGuildSkilling(input, onProgress = () => {}) {
             }
             queue.addEvent({ time: event.time + member.actionSeconds, index: event.index });
             if (work >= skillingPool(scenario, tier)) {
-                tiers.push({ tier, cleared: true, seconds: event.time - tierStart });
+                tiers.push({ tier, cleared: true, seconds: event.time - tierStart, progressFraction: 1 });
                 tier++;
                 tierStart = event.time;
                 work = 0; // The completing action's surplus is not another tier's work.
             }
         }
         const complete = tier > TRIAL_MAX_TIER;
-        if (!complete) tiers.push({ tier, cleared: false, seconds: scenario.seconds - tierStart });
+        if (!complete)
+            tiers.push({
+                tier,
+                cleared: false,
+                seconds: scenario.seconds - tierStart,
+                progressFraction: Math.min(1, work / skillingPool(scenario, tier)),
+            });
         attempts.push({
             highestTier: tier - 1,
             seconds: complete ? lastTime : scenario.seconds,

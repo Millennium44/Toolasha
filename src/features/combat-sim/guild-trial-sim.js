@@ -20,7 +20,7 @@ import {
     baseWorkFromSkillingReading,
 } from './guild-trial-adapter.js';
 import { validateTrialScenario, skillingWorkPerSecond } from './guild-trial-model.js';
-import { COMBAT_ENCOUNTERS, TRIAL_SKILLS } from '../guild/guild-trials-math.js';
+import { COMBAT_ENCOUNTERS, TRIAL_SKILLS, levelFromTier } from '../guild/guild-trials-math.js';
 
 const ACCENT = '#b9a6ff';
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
@@ -124,6 +124,7 @@ export class GuildTrialSim {
         this.skillingMembers = [];
         this.settings = { startTier: 1, seconds: 3600, runs: 50, seed: 1, baseWork: 40000, resetBetweenTiers: true };
         this.readings = {};
+        this.successReadings = {};
         this.extra = {};
         this.includeHouses = true;
         this.hallLevel = 0;
@@ -165,8 +166,14 @@ export class GuildTrialSim {
         this.handlers.push(domObserver.onClass('GuildTrialSimulator', 'GuildPanel_', inject));
         this.handlers.push(domObserver.onReady('GuildTrialSimulatorCatchUp', inject));
         const capture = (data) => {
-            if (data?.trialHrid?.startsWith('/guild_skilling/'))
-                this.readings[data.trialHrid] = { ...data, at: Date.now() };
+            if (!data?.trialHrid?.startsWith('/guild_skilling/')) return;
+            const previous = this.readings[data.trialHrid];
+            if (previous && data.tier < previous.tier) delete this.successReadings[data.trialHrid];
+            this.readings[data.trialHrid] = { ...data, at: Date.now() };
+            if (Number.isInteger(data.tier) && data.tier >= 1 && data.tier <= 21 && Number.isFinite(data.successRate)) {
+                const readings = (this.successReadings[data.trialHrid] ||= {});
+                readings[data.tier] = { tier: data.tier, successRate: data.successRate };
+            }
         };
         webSocketHook.on('guild_skilling_updated', capture);
         this.handlers.push(() => webSocketHook.off('guild_skilling_updated', capture));
@@ -336,7 +343,8 @@ export class GuildTrialSim {
         const reading = this.readings[this.skillingTrial];
         const member = memberFromSkillingReading(
             reading,
-            dataManager.characterData?.character?.name || 'Current character'
+            dataManager.characterData?.character?.name || 'Current character',
+            Object.values(this.successReadings[this.skillingTrial] || {})
         );
         const base = baseWorkFromSkillingReading(reading);
         if (!member || base === null) {
@@ -649,7 +657,7 @@ export class GuildTrialSim {
         );
         rules.appendChild(
             panelNote(
-                'Tier reset behavior, boss stat scaling beyond level 100, enrage cadence and parry selection still need a recorded-trial comparison. Enrage currently follows the combat engine.'
+                'Post-rebalance recordings confirm boss stat scaling, initial ability cooldowns, HP/MP refills and revivals between tiers, and enrage beginning at 600 seconds. Later enrage stacks, status resets and parry selection still need replay validation. Carry mode is a hypothetical comparison.'
             )
         );
         rules.appendChild(
@@ -692,7 +700,7 @@ export class GuildTrialSim {
         );
         body.appendChild(
             panelNote(
-                '40,000 is an editable Crafting observation, not a verified default for every skill. Use a trial reading to calibrate the pool and your personal stats.'
+                '40,000 base work matches recorded Milking, Alchemy, Cheesesmithing and Enhancing pools. Use a trial reading to calibrate other skills and your personal stats.'
             )
         );
         const roster = panelCard(
@@ -712,6 +720,8 @@ export class GuildTrialSim {
                     referenceTier: 1,
                     successRate: 0.8,
                     successLossPerTier: 0.08,
+                    effectiveLevel: 100,
+                    successBonus: 0,
                     workPower: 0,
                     actionSeconds: 10,
                     doubleChance: 0,
@@ -755,13 +765,43 @@ export class GuildTrialSim {
                 busy
             );
             const stats = row(card);
+            select(
+                row(card),
+                'Success model',
+                member.effectiveLevel == null ? 'reading' : 'curve',
+                [
+                    ['curve', 'Game success curve'],
+                    ['reading', 'Measured linear estimate'],
+                ],
+                (value) => {
+                    if (value === 'curve') {
+                        member.effectiveLevel = levelFromTier(member.referenceTier);
+                        member.successBonus = 0;
+                    } else {
+                        delete member.effectiveLevel;
+                        delete member.successBonus;
+                    }
+                    this.changed();
+                    this.panel?.render();
+                },
+                busy
+            );
+            const successFields =
+                member.effectiveLevel == null
+                    ? [
+                          ['referenceTier', 'Reference tier', 1, 1, 21],
+                          ['successRate', 'Success at reference (%)', 100, 5, 100],
+                          ['successLossPerTier', 'Success loss / tier (pp)', 100, 0, 100],
+                      ]
+                    : [
+                          ['effectiveLevel', 'Effective skill level', 1, 1, 1000],
+                          ['successBonus', 'Success bonus (%)', 100, -100, 1000],
+                      ];
             for (const [key, label, factor, min, max] of [
                 ['workPower', 'Work power', 1, 0, 1e7],
                 ['actionSeconds', 'Work time (s)', 1, 0.1, 3600],
-                ['referenceTier', 'Reference tier', 1, 1, 21],
-                ['successRate', 'Success at reference (%)', 100, 5, 100],
                 ['doubleChance', 'Double progress (%)', 100, 0, 100],
-                ['successLossPerTier', 'Success loss / tier (pp)', 100, 0, 100],
+                ...successFields,
             ]) {
                 field(
                     stats,
@@ -778,7 +818,7 @@ export class GuildTrialSim {
         }
         roster.appendChild(
             panelNote(
-                'Use Work Power and Work Time from the trial footer; Work Power already includes efficiency. The default 8 percentage-point success loss per tier is measured below the skill level, clamped to 5–100%. Change it when observations differ. A reading at the 5% or 100% cap cannot determine earlier uncapped success.'
+                'Use Work Power and Work Time from the trial footer; Work Power already includes efficiency. Effective skill level includes equipment and building levels. Success falls 4 percentage points per tier while the trial level is below your effective level, and 8 above it, clamped to 5–100%. Success bonuses apply before the 80% base factor. Multiple uncapped readings spanning the slope change can calibrate the curve; a single reading uses an editable linear estimate.'
             )
         );
         roster.appendChild(
@@ -797,6 +837,7 @@ export class GuildTrialSim {
         card.appendChild(panelLine('10th–90th percentile', `T${result.lowHighestTier}–T${result.highHighestTier}`));
         card.appendChild(panelLine('Mean highest banked tier', format(result.meanHighestTier, 2)));
         card.appendChild(panelLine('Mean Guild Points', format(result.meanBasePoints * (1 + 0.02 * this.hallLevel))));
+        card.appendChild(panelLine('Mean base points from unfinished tier', format(result.meanPartialBasePoints)));
         card.appendChild(
             panelLine(
                 'Eligible member token contribution',
@@ -811,7 +852,7 @@ export class GuildTrialSim {
         );
         card.appendChild(
             panelNote(
-                'Token figures are this trial’s contribution to the weekly payout, including earlier banked tiers when starting above tier 1. The participation bonus applies once to the whole week.'
+                'Point and token estimates include up to 50% of the unfinished tier’s rewards, proportional to progress. Token figures are this trial’s contribution to the weekly payout, including earlier banked tiers when starting above tier 1. Every eligible member gets the same base payout; the participation bonus applies once to the whole week.'
             )
         );
         card.appendChild(

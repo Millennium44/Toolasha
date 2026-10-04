@@ -46,6 +46,7 @@ import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildTrialTrace from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
+import { captureTrialSimulationInputs } from './guild-trial-simulation-inputs.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -1138,6 +1139,10 @@ export async function buildTrialExport({ guildName = null } = {}) {
     const trialDamage = guildTrialDamage.breakdown?.() ?? null;
     const session = await guildTrialRecorder.loadSession();
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
+    const simulationInputs = await captureTrialSimulationInputs(characterId, guildXPTracker.getMemberList?.() || []);
+    if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId) {
+        throw new Error('Character changed during export. Export again on the current character.');
+    }
 
     return {
         // Which reader this bundle is for, which script produced it, and
@@ -1179,6 +1184,9 @@ export async function buildTrialExport({ guildName = null } = {}) {
         traceId: guildTrialTrace.activeTraceId?.() ?? null,
         // Coverage-aware: a partial session lists unknownAuras, never missingAuras
         trialAbilities: guildTrialAbilities.exportSnapshot?.() ?? null,
+        // Dated raw View Loadout gear/triggers, matching profile levels/houses/shrines,
+        // and current building context, kept before memory-only captures disappear.
+        simulationInputs,
     };
 }
 
@@ -1190,15 +1198,16 @@ export async function buildTrialExport({ guildName = null } = {}) {
  * session rather than as an error. That is right for the file — a reader can
  * tell "we recorded nothing" from a bundle and cannot tell it from a missing
  * one — but it means a caller wanting to *say* whether there was anything has
- * to look. Three sources, because a week can have any one of them without the
+ * to look. Four sources, because a week can have any one of them without the
  * others: a recorder session, the ladder's per-tile samples, and the finished
- * trials in its history.
+ * trials in its history, and newly collected trial loadouts before a run starts.
  *
  * @param {Object} bundle - From {@link buildTrialExport}
  * @returns {boolean} Whether nothing at all was recorded this week
  */
 export function trialExportIsEmpty(bundle) {
     if (bundle?.session) return false;
+    if (bundle?.simulationInputs?.viewLoadouts?.length) return false;
     const record = bundle?.record;
     if (!record) return true;
     if (Object.keys(record.tiles || {}).length) return false;

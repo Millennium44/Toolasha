@@ -35,17 +35,20 @@ describe('trial inputs from the game', () => {
         const data = {
             guildBuildingDetailMap: {
                 room: {
-                    actionBuffs: [
+                    buffs: [
                         {
                             typeHrid: '/buff_types/attack_level',
                             flatBoost: 1,
                             flatBoostLevelBonus: 1,
                             ratioBoost: 0,
-                            usableInActionTypeMap: { '/action_types/combat': true },
                         },
                         { typeHrid: '/buff_types/crafting_level', flatBoost: 1 },
                     ],
                 },
+            },
+            buffTypeDetailMap: {
+                '/buff_types/attack_level': { isCombat: true },
+                '/buff_types/crafting_level': { isCombat: false },
             },
         };
         const before = structuredClone(data);

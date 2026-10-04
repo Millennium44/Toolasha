@@ -1,5 +1,6 @@
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload } from './combat-sim-adapter.js';
+import { fitSkillingSuccessCurve } from './guild-trial-model.js';
 
 /** The trial worker uses the same game maps, plus the game's encounter rosters. */
 export function buildTrialGameData() {
@@ -15,8 +16,8 @@ export function trialBuildingBuffs(clientData, levels) {
         if (!(level > 0)) continue;
         // Shrine purchases are already carried by each player DTO. Non-trial
         // buildings supply points, capacity or guild XP, rather than combat buffs.
-        for (const buff of detail.actionBuffs || []) {
-            if (buff?.usableInActionTypeMap?.['/action_types/combat'] !== true) continue;
+        for (const buff of detail.buffs || []) {
+            if (clientData.buffTypeDetailMap?.[buff?.typeHrid]?.isCombat !== true) continue;
             buffs.push({
                 ...buff,
                 uniqueHrid: `${hrid}:${buff.typeHrid}`,
@@ -31,7 +32,7 @@ export function trialBuildingBuffs(clientData, levels) {
 }
 
 /** Normalize one real personal trial footer, never inventing other members' stats. */
-export function memberFromSkillingReading(data, name = 'Current character') {
+export function memberFromSkillingReading(data, name = 'Current character', readings = []) {
     const values = ['tier', 'successRate', 'progressPerAction', 'actionTimeMs', 'doubleProgressChance'];
     if (!values.every((key) => Number.isFinite(Number(data?.[key])))) return null;
     if (!(data.tier >= 1 && data.tier <= 21 && data.actionTimeMs > 0 && data.progressPerAction >= 0)) return null;
@@ -44,6 +45,7 @@ export function memberFromSkillingReading(data, name = 'Current character') {
         actionSeconds: Number(data.actionTimeMs) / 1000,
         doubleChance: Number(data.doubleProgressChance),
         source: `Trial reading at tier ${data.tier}`,
+        ...fitSkillingSuccessCurve(readings),
     };
 }
 

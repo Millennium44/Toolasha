@@ -24,7 +24,26 @@ export class GuildTrialMonster extends Monster {
     updateCombatDetails() {
         super.updateCombatDetails();
         const n = this.participants;
-        this.combatDetails.maxHitpoints = Math.floor(this.combatDetails.maxHitpoints * (1 + 0.01 * n));
+        // Tier 14's 230/100 multiplier can put an integer pool a few floating-point
+        // units below itself. Stabilize flooring locally, retaining active HP/MP buffs.
+        const floorPool = (value) => Math.floor(value + Number.EPSILON * Math.max(1, Math.abs(value)) * 4);
+        const pool = (level, stat, ratio, type) => {
+            const boost = this.getBuffBoost(type);
+            return floorPool(
+                (10 * (10 + level) + this.combatDetails.combatStats[stat] + boost.flatBoost) *
+                    (1 + (this.combatDetails.combatStats[ratio] || 0) + boost.ratioBoost)
+            );
+        };
+        this.combatDetails.maxHitpoints = floorPool(
+            pool(this.combatDetails.staminaLevel, 'maxHitpoints', 'maxHitpointsRatio', '/buff_types/max_hitpoints') *
+                (1 + 0.01 * n)
+        );
+        this.combatDetails.maxManapoints = pool(
+            this.combatDetails.intelligenceLevel,
+            'maxManapoints',
+            'maxManapointsRatio',
+            '/buff_types/max_manapoints'
+        );
         this.combatDetails.combatStats.attackInterval /= 1 + 0.02 * n;
         this.combatDetails.combatStats.castSpeed += 0.02 * n;
         this.combatDetails.combatStats.abilityHaste += 2 * n;
@@ -139,12 +158,28 @@ export class GuildCombatSimulator extends CombatSimulator {
         if (!this.finished) super.checkTriggers();
     }
 
+    /** Net HP removed from all monsters, including defeated members of the encounter. */
+    tierProgress() {
+        const total = (this.enemies || []).reduce((sum, monster) => sum + (monster.combatDetails.maxHitpoints || 0), 0);
+        if (!(total > 0)) return 0;
+        const remaining = this.enemies.reduce(
+            (sum, monster) => sum + Math.max(0, monster.combatDetails.currentHitpoints),
+            0
+        );
+        return Math.max(0, Math.min(1, 1 - remaining / total));
+    }
+
     checkEncounterEnd() {
         if (this.finished || !this.enemies) return this.finished;
         const allDown = this.players.every((p) => p.combatDetails.currentHitpoints <= 0);
         const cleared = this.enemies.every((m) => m.combatDetails.currentHitpoints <= 0) && !allDown;
         if (!allDown && !cleared) return false;
-        this.tiers.push({ tier: this.tier, cleared, seconds: (this.simulationTime - this.tierStartedAt) / SECOND });
+        this.tiers.push({
+            tier: this.tier,
+            cleared,
+            seconds: (this.simulationTime - this.tierStartedAt) / SECOND,
+            progressFraction: cleared ? 1 : this.tierProgress(),
+        });
         for (const enemy of this.enemies) this.eventQueue.clearEventsForUnit(enemy);
         this.enemies = null;
         if (allDown || this.tier === TRIAL_MAX_TIER) {
@@ -176,7 +211,12 @@ export class GuildCombatSimulator extends CombatSimulator {
                 throw new Error('This roster exceeds the trial event limit. Reduce the time budget.');
         }
         if (!this.finished)
-            this.tiers.push({ tier: this.tier, cleared: false, seconds: (limit - this.tierStartedAt) / SECOND });
+            this.tiers.push({
+                tier: this.tier,
+                cleared: false,
+                seconds: (limit - this.tierStartedAt) / SECOND,
+                progressFraction: this.tierProgress(),
+            });
         return {
             highestTier: this.tiers.filter((row) => row.cleared).at(-1)?.tier ?? this.scenario.startTier - 1,
             seconds: this.simulationTime / SECOND,

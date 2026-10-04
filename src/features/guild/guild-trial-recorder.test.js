@@ -27,6 +27,7 @@ const game = vi.hoisted(() => ({
     currentWeek: null,
     /** Whether this is the test server, where a week runs several cycles */
     testServer: false,
+    viewLoadouts: [],
 }));
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
@@ -50,6 +51,7 @@ vi.mock('../../core/storage.js', () => ({
             game.store[key] = value;
             return true;
         },
+        getJSON: async (key, _store, fallback) => game.store[key] ?? fallback,
     },
 }));
 vi.mock('./guild-trial-damage.js', () => ({
@@ -71,6 +73,10 @@ vi.mock('./guild-member-skills.js', () => ({
 }));
 vi.mock('./guild-trial-trace.js', () => ({
     default: { activeTraceId: () => game.traceId },
+}));
+vi.mock('../../utils/view-loadout.js', () => ({
+    getLoadouts: () => game.viewLoadouts,
+    VIEW_LOADOUT_CONTEXT: { GuildTrial: 'guild_trial' },
 }));
 vi.mock('./guild-trial-abilities.js', () => ({
     default: { exportSnapshot: () => game.abilitiesSnapshot },
@@ -110,6 +116,33 @@ const {
 } = await import('./guild-trial-recorder.js');
 
 const now = Date.parse('2026-08-05T15:00:00Z');
+
+test('trial export preserves the saved trial gear and triggers captured through View Loadout', async () => {
+    const capture = {
+        characterId: '2',
+        name: 'Ada',
+        ownerCharacterId: String(game.characterId),
+        context: 'guild_trial',
+        kind: 'combat',
+        hasLoadout: true,
+        capturedAt: now,
+        loadout: {
+            wearableItemMap: { '/item_locations/main_hand': { itemHrid: '/items/iron_sword', enhancementLevel: 7 } },
+            equippedAbilities: [{ abilityHrid: '/abilities/cleave', level: 50 }],
+            abilityCombatTriggersMap: { '/abilities/cleave': [] },
+        },
+    };
+    game.viewLoadouts = [capture, { ...capture, context: 'party' }];
+    try {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+        expect(bundle.simulationInputs.viewLoadouts).toEqual([capture]);
+        expect(bundle.simulationInputs.ownerCharacterId).toBe(String(game.characterId));
+        capture.loadout.equippedAbilities[0].level = 1;
+        expect(bundle.simulationInputs.viewLoadouts[0].loadout.equippedAbilities[0].level).toBe(50);
+    } finally {
+        game.viewLoadouts = [];
+    }
+});
 
 // As `guild_trial_stats_updated` is surfaced on the breakdown: per name
 const reported = {
@@ -1329,6 +1362,9 @@ describe('the export bundle', () => {
  * useless to a caller that wants to say whether there was anything.
  */
 describe('trialExportIsEmpty', () => {
+    test('saved trial loadouts make a pre-trial export worth keeping', () => {
+        expect(trialExportIsEmpty({ simulationInputs: { viewLoadouts: [{ hasLoadout: true }] } })).toBe(false);
+    });
     test('a bundle with a session is not empty, whatever the record says', () => {
         expect(trialExportIsEmpty({ session: { startedAt: 1 }, record: { tiles: {}, history: [] } })).toBe(false);
     });

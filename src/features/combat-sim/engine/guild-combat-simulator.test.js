@@ -9,6 +9,7 @@ import {
 } from './guild-combat-simulator.js';
 import Monster from './monster.js';
 import * as rng from './rng.js';
+import { RECORDED_TRIAL_BOSSES } from '../guild-trial-rebalance.fixture.js';
 
 const build = () => ({
     staminaLevel: 100,
@@ -48,6 +49,35 @@ afterEach(() => {
 });
 
 describe('current game trial boss data', () => {
+    test.each(RECORDED_TRIAL_BOSSES)(
+        'matches $hrid T$tier with $participants participants on $recordedOn',
+        (recorded) => {
+            const boss = new GuildTrialMonster(recorded.hrid, recorded.tier, recorded.participants);
+            boss.reset(0);
+            for (const [key, value] of Object.entries(recorded.combatDetails)) {
+                if (key === 'combatStats') {
+                    expect(boss.combatDetails.combatStats.abilityHaste).toBe(value.abilityHaste);
+                } else if (key === 'attackInterval') {
+                    expect(Math.abs(boss.combatDetails.combatStats.attackInterval - value)).toBeLessThanOrEqual(2);
+                } else if (key === 'totalCastSpeed') {
+                    expect(boss.combatDetails.combatStats.castSpeed).toBeCloseTo(value, 10);
+                } else if (key === 'maxHitpoints' || key === 'maxManapoints') {
+                    expect(boss.combatDetails[key]).toBe(value);
+                } else {
+                    expect(boss.combatDetails[key]).toBeCloseTo(value, 8);
+                }
+            }
+            for (const [i, ability] of recorded.combatAbilities.entries()) {
+                const simulated = boss.abilities[i];
+                expect(simulated.hrid).toBe(ability.abilityHrid);
+                expect(simulated.level).toBe(ability.level);
+                const cooldown = simulated.cooldownDuration / (1 + 0.01 * boss.combatDetails.combatStats.abilityHaste);
+                expect(Math.abs((simulated.lastUsed + cooldown) / 1e9 - ability.availableAfterSeconds)).toBeLessThan(
+                    0.002
+                );
+            }
+        }
+    );
     test('keeps both Badgers and every Swarm monster', () => {
         expect(TRIAL_GAME_DATA.guildTrialDetailMap['/guild_combat/badger'].monsterHrids).toEqual([
             '/monsters/trial_badger',
@@ -88,6 +118,26 @@ describe('current game trial boss data', () => {
 });
 
 describe('trial participants and lifecycle', () => {
+    test('keeps net progress across the whole boss roster when defeat ends a tier', () => {
+        const players = createTrialPlayers(scenario().members);
+        const sim = new GuildCombatSimulator(players, scenario(), ['/monsters/trial_badger', '/monsters/trial_badger']);
+        sim.simulationTime = 5e9;
+        sim.enemies = [
+            { combatDetails: { currentHitpoints: 0, maxHitpoints: 100 } },
+            { combatDetails: { currentHitpoints: 50, maxHitpoints: 100 } },
+        ];
+        players[0].combatDetails.currentHitpoints = 0;
+        sim.checkEncounterEnd();
+        expect(sim.tiers[0].progressFraction).toBe(0.75);
+    });
+    test('keeps remaining boss HP when the time budget expires', () => {
+        const players = createTrialPlayers(scenario().members);
+        const sim = new GuildCombatSimulator(players, scenario({ seconds: 1 }), ['/monsters/trial_badger']);
+        vi.spyOn(sim, 'processEvent').mockImplementation(() => {
+            sim.enemies = [{ combatDetails: { currentHitpoints: 75, maxHitpoints: 100 } }];
+        });
+        expect(sim.simulateTrial().tiers[0].progressFraction).toBe(0.25);
+    });
     test('removes consumables, scrolls and level penalties without changing the build', () => {
         const dto = {
             ...build(),
