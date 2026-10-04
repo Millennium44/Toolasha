@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement stock and purchase hints stay usable
+
+- Protection comparisons no longer treat an unknown purchase price as free. Valued spare copies can still cover modeled expected uses without a buy quote, with that limitation shown in the table.
+- Enhancement purchase hints now keep the +0 item on the bench out of spare protection stock and honor other plans' material reservations. An opened bill excludes its own reservation when its hints refresh.
+
 ### Labyrinth rush advice checks current gear
 
 - Rush-floor advice now waits for loadout data and checks that recorded fights match your current gear, preventing old-build losses from recommending a lower rush floor. Historical supply and burn summaries remain available.

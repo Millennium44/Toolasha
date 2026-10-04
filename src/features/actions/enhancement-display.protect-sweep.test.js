@@ -290,6 +290,8 @@ describe('protect-from sweep spending held protection', () => {
             stack(SWORD, 4),
             // An equipped copy and an enhanced one are not protection stock
             stack(SWORD, 1, { location: '/item_locations/main_hand' }),
+            // A listed copy is unavailable too, even if it appears in characterItems
+            stack(SWORD, 2, { location: '/item_locations/marketplace' }),
             stack(SWORD, 1, { level: 2 }),
             stack(PROTECTOR, 3),
         ];
@@ -321,6 +323,22 @@ describe('protect-from sweep spending held protection', () => {
         state.inventory = [stack(PROTECTOR, 3)];
         const stats = await render();
         expect(groupHeader(stats, 'Cheese Sword Protector').textContent).toContain('1 spare @2.88K, then @4.00K');
+    });
+
+    test('a missing buy quote still shows valued stock only when it covers expected protection use', async () => {
+        stockOn(2);
+        state.prices['/items/mirror_of_protection'] = 0;
+        state.sellPrices = { '/items/mirror_of_protection': 3_000 };
+        state.inventory = [stack('/items/mirror_of_protection', 10_000)];
+        const stats = await render();
+
+        const header = groupHeader(stats, 'Mirror Of Protection');
+        expect(header.textContent).toContain('no buy quote; stock covers expected uses');
+        const rows = rowsFor(stats, '/items/mirror_of_protection');
+        expect(rows.length).toBeGreaterThan(0);
+        expect(
+            rows.some((row) => row.querySelector('.mwi-protsweep-stock')?.title.includes('no buy quote is needed'))
+        ).toBe(true);
     });
 
     test('copies claimed by other plans are not spare protection', async () => {

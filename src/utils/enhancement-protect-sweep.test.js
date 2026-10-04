@@ -192,6 +192,87 @@ describe('chooseProtectionOptions', () => {
         expect(options).toHaveLength(1);
     });
 
+    test('unpriced protection rows need valuable spare stock and no expected purchases', () => {
+        const noStock = chooseProtectionOptions({
+            itemHrid: '/items/sword',
+            itemDetails: { protectionItemHrids: [] },
+            selectedHrid: '/items/unpriced_protection',
+            priceOf: () => 0,
+        });
+        expect(noStock.options).toEqual([]);
+
+        const heldOnly = chooseProtectionOptions({
+            itemHrid: '/items/sword',
+            itemDetails: { protectionItemHrids: [] },
+            selectedHrid: '/items/unpriced_protection',
+            priceOf: () => 0,
+            holdingsOf: (hrid) => (hrid === '/items/unpriced_protection' ? 3 : 0),
+            reserve: 2,
+            sellPriceOf: () => 1500,
+        });
+        expect(heldOnly.options).toEqual([
+            expect.objectContaining({ price: 0, stock: 1, stockPrice: 1500, role: 'slot' }),
+        ]);
+
+        const short = sweep({
+            materialCostPerAttempt: 1000,
+            protectionOptions: heldOnly.options,
+        });
+        const shortRows = short.rows.filter((row) => row.itemHrid === '/items/unpriced_protection');
+        expect(shortRows.length).toBeGreaterThan(0);
+        expect(shortRows.every((row) => row.protectionsToBuy <= 1e-12)).toBe(true);
+        const pricedShortfall = sweep({
+            materialCostPerAttempt: 1000,
+            protectionOptions: [{ ...heldOnly.options[0], price: 1500, buyPriceUnknown: false }],
+        }).rows.find((row) => row.itemHrid === '/items/unpriced_protection' && row.protectFrom === 2);
+        expect(pricedShortfall.protectionsToBuy).toBeGreaterThan(0);
+        expect(short.rows.some((row) => row.itemHrid === '/items/unpriced_protection' && row.protectFrom === 2)).toBe(
+            false
+        );
+
+        const reserveOnly = chooseProtectionOptions({
+            itemHrid: '/items/sword',
+            itemDetails: { protectionItemHrids: [] },
+            selectedHrid: '/items/unpriced_protection',
+            priceOf: () => 0,
+            holdingsOf: () => 2,
+            reserve: 2,
+            sellPriceOf: () => 1500,
+        });
+        expect(reserveOnly.options).toEqual([]);
+
+        const deepHeld = chooseProtectionOptions({
+            itemHrid: '/items/sword',
+            itemDetails: { protectionItemHrids: ['/items/unpriced_protection'] },
+            priceOf: () => 0,
+            holdingsOf: (hrid) => (hrid === '/items/unpriced_protection' ? 100_000 : 0),
+            reserve: 2,
+            sellPriceOf: () => 1500,
+        });
+        expect(deepHeld.options).toEqual([
+            expect.objectContaining({ price: 0, stock: 99_998, stockPrice: 1500, role: 'held' }),
+        ]);
+        const covered = sweep({ protectionOptions: deepHeld.options });
+        const coveredRows = covered.rows.filter((row) => row.itemHrid === '/items/unpriced_protection');
+        expect(coveredRows.length).toBeGreaterThan(0);
+        expect(coveredRows.every((row) => row.protectionsToBuy <= 1e-12)).toBe(true);
+    });
+
+    test('a selected unpriced protection with only one spare copy cannot make the purchase shortfall free', () => {
+        const { options } = chooseProtectionOptions({
+            itemHrid: '/items/sword',
+            itemDetails: { protectionItemHrids: [] },
+            selectedHrid: '/items/unpriced_protection',
+            priceOf: () => 0,
+            holdingsOf: (hrid) => (hrid === '/items/unpriced_protection' ? 3 : 0),
+            reserve: 2,
+            sellPriceOf: () => 1500,
+        });
+        const { rows } = sweep({ protectionOptions: options });
+
+        expect(rows.some((row) => row.itemHrid === '/items/unpriced_protection' && row.protectFrom === 2)).toBe(false);
+    });
+
     test("a Philosopher's Mirror in the slot is not a protect-from item; the sweep prices the cheapest", () => {
         const { options, selectedIsMirror } = chooseProtectionOptions({
             itemHrid: '/items/sword',

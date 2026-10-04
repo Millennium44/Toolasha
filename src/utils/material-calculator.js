@@ -8,7 +8,7 @@ import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
 import { getEnhancingParams } from './enhancement-config.js';
 import { calculateEnhancement } from './enhancement-calculator.js';
 import { resolveActionContext } from './action-context.js';
-import { INVENTORY_LOCATION, reservedElsewhere, shortfallNote } from './inventory-reservations.js';
+import { effectiveInventory, INVENTORY_LOCATION, reservedElsewhere, shortfallNote } from './inventory-reservations.js';
 import { artisanInputTotal as calculateTotalRequired, getArtisanMaterialMode } from './artisan-material-mode.js';
 
 export { ARTISAN_MATERIAL_MODE } from './artisan-material-mode.js';
@@ -388,6 +388,8 @@ export function isArtisanTeaOutOfStock(actionHrid) {
  * @param {number} targetLevel - Target enhancement level (1-20)
  * @param {string|null} protectionItemHrid - Protection item HRID or null
  * @param {number} protectFromLevel - Level at which protection begins (0 = never)
+ * @param {number} [repeatCount] - Optional explicit repeat count
+ * @param {string|null} [ownerId] - Reservation owner whose claims should not reduce availability
  * @returns {Array<Object>} Array of material requirement objects (same format as calculateMaterialRequirements)
  */
 export function calculateEnhancementMaterialRequirements(
@@ -396,7 +398,8 @@ export function calculateEnhancementMaterialRequirements(
     targetLevel,
     protectionItemHrid,
     protectFromLevel,
-    repeatCount
+    repeatCount,
+    ownerId = null
 ) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) {
@@ -448,7 +451,13 @@ export function calculateEnhancementMaterialRequirements(
 
         const totalQuantity = Math.ceil(cost.count * (repeatCount ?? calc.attempts));
         const have = unclaimedBoughtCount(cost.itemHrid) + heldInBag(inventory, cost.itemHrid);
-        const missing = Math.max(0, totalQuantity - have);
+        const available = ownerId ? effectiveInventory(cost.itemHrid, 0, { excludeOwner: ownerId, held: have }) : have;
+        const missing = Math.max(0, totalQuantity - available);
+        const reserved = ownerId ? reservedElsewhere(cost.itemHrid, 0, { excludeOwner: ownerId }) : 0;
+        const reservedNote =
+            missing > 0 && have >= totalQuantity
+                ? shortfallNote(missing, cost.itemHrid, 0, { excludeOwner: ownerId })
+                : '';
 
         materials.push({
             itemHrid: cost.itemHrid,
@@ -456,8 +465,10 @@ export function calculateEnhancementMaterialRequirements(
             required: totalQuantity,
             have: have,
             queued: 0,
-            available: have,
+            available: available,
             missing: missing,
+            ...(reserved > 0 ? { reserved } : {}),
+            ...(reservedNote ? { reservedNote } : {}),
             isTradeable: matDetails.isTradable === true,
             isUpgradeItem: false,
         });
@@ -470,8 +481,20 @@ export function calculateEnhancementMaterialRequirements(
         const protDetails = gameData.itemDetailMap[protectionItemHrid];
 
         if (protDetails) {
-            const have = unclaimedBoughtCount(protectionItemHrid) + heldInBag(inventory, protectionItemHrid);
-            const missing = Math.max(0, totalProtection - have);
+            const held = unclaimedBoughtCount(protectionItemHrid) + heldInBag(inventory, protectionItemHrid);
+            // When this item is the +0 copy on the enhancement bench, that copy cannot also be
+            // consumed as protection. Keep protection inventory separate from its target copy.
+            const benchCopy = protectionItemHrid === itemHrid && startLevel === 0 ? 1 : 0;
+            const have = Math.max(0, held - benchCopy);
+            const available = ownerId
+                ? effectiveInventory(protectionItemHrid, 0, { excludeOwner: ownerId, held: have })
+                : have;
+            const missing = Math.max(0, totalProtection - available);
+            const reserved = ownerId ? reservedElsewhere(protectionItemHrid, 0, { excludeOwner: ownerId }) : 0;
+            const reservedNote =
+                missing > 0 && have >= totalProtection
+                    ? shortfallNote(missing, protectionItemHrid, 0, { excludeOwner: ownerId })
+                    : '';
 
             materials.push({
                 itemHrid: protectionItemHrid,
@@ -479,8 +502,10 @@ export function calculateEnhancementMaterialRequirements(
                 required: totalProtection,
                 have: have,
                 queued: 0,
-                available: have,
+                available: available,
                 missing: missing,
+                ...(reserved > 0 ? { reserved } : {}),
+                ...(reservedNote ? { reservedNote } : {}),
                 isTradeable: protDetails.isTradable === true,
                 isUpgradeItem: false,
             });

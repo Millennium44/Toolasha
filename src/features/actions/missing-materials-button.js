@@ -479,7 +479,8 @@ function updateEnhancementButton(panel) {
         targetLevel,
         resolvedProtectionItem,
         resolvedProtectFrom,
-        repeatCount
+        repeatCount,
+        RESERVATION_OWNER
     );
 
     const disabled = missingMaterials.length === 0;
@@ -628,11 +629,15 @@ async function handleEnhancementMissingMaterialsClick(
         targetLevel,
         protectionItemHrid,
         protectFromLevel,
-        repeatCount
+        repeatCount,
+        RESERVATION_OWNER
     );
 
     // Open the marketplace, or the Tester shop, with a tab per material
     if (!(await openWhereBought(freshMaterials, strategyInfo))) return;
+
+    // Enhancement bills use the same short-lived reservation as action bills.
+    await claimOpenBill(freshMaterials);
 
     // Setup inventory listener for live updates
     setupInventoryListener();
@@ -1447,7 +1452,8 @@ function updateTabsOnInventoryChange() {
             ctx.targetLevel,
             ctx.protectionItemHrid,
             ctx.protectFromLevel,
-            ctx.repeatCount
+            ctx.repeatCount,
+            RESERVATION_OWNER
         );
     } else if (storedActionHrid && storedNumActions > 0) {
         // Production mode

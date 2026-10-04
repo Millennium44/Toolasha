@@ -216,7 +216,8 @@ export function expectedProtectionsFromStock({
  * priced too, and each option carries what it can draw from the bag: `held`, `reserve`,
  * `stock` (the spare copies), `stockPrice` (what one would sell for — the run spends that, not
  * the ask) and `role` ('slot', 'cheapest' or 'held'). Without it the options are exactly what
- * they always were.
+ * they always were. A candidate with no buy quote can still be listed when its spare copies
+ * have a sell value; the sweep keeps only rows whose expected uses those copies cover completely.
  *
  * @param {Object} args - Inputs
  * @param {string} args.itemHrid - The item being enhanced (it protects itself)
@@ -265,7 +266,15 @@ export function chooseProtectionOptions({
             stockPrice = sell > 0 ? (option.price > 0 ? Math.min(sell, option.price) : sell) : option.price;
         }
         // Stock nothing can value is left in the bag rather than spent for free
-        return { ...option, role, held, reserve: keep, stock: stockPrice > 0 ? spare : 0, stockPrice };
+        return {
+            ...option,
+            ...(option.price > 0 ? {} : { buyPriceUnknown: true }),
+            role,
+            held,
+            reserve: keep,
+            stock: stockPrice > 0 ? spare : 0,
+            stockPrice,
+        };
     };
 
     const candidates = [itemHrid, MIRROR_OF_PROTECTION_HRID, ...(itemDetails?.protectionItemHrids || [])];
@@ -273,28 +282,34 @@ export function chooseProtectionOptions({
 
     const options = [];
     if (selected) {
-        options.push(
-            withStock(
-                { itemHrid: selected, name: name(selected), price: priceOf(selected) || 0, selected: true },
-                'slot'
-            )
+        const selectedOption = withStock(
+            { itemHrid: selected, name: name(selected), price: priceOf(selected) || 0, selected: true },
+            'slot'
         );
+        if (selectedOption.price > 0 || selectedOption.stock > 0) {
+            options.push(selectedOption);
+        }
     }
 
     let cheapest = null;
     const priced = [];
+    const unpricedHeld = [];
     for (const hrid of new Set(candidates)) {
         if (!hrid || hrid === selected || hrid === PHILOSOPHERS_MIRROR_HRID) continue;
         const price = priceOf(hrid) || 0;
-        if (!(price > 0)) continue;
         const option = { itemHrid: hrid, name: name(hrid), price, selected: false };
-        priced.push(option);
-        if (!cheapest || price < cheapest.price) cheapest = option;
+        if (price > 0) {
+            priced.push(option);
+            if (!cheapest || price < cheapest.price) cheapest = option;
+        } else if (useStock) {
+            const heldOption = withStock(option, 'held');
+            if (heldOption.stock > 0) unpricedHeld.push(heldOption);
+        }
     }
     // The alternative earns its column when there is nothing selected, the selected item has
     // no price, or it is genuinely cheaper than what is in the slot
     const showCheapest = Boolean(
-        cheapest && (!selected || !(options[0].price > 0) || cheapest.price < options[0].price)
+        cheapest && (!selected || !(options[0]?.price > 0) || cheapest.price < options[0].price)
     );
     if (showCheapest) options.push(withStock(cheapest, 'cheapest'));
 
@@ -306,6 +321,7 @@ export function chooseProtectionOptions({
             .filter((option) => !(showCheapest && option === cheapest))
             .map((option) => withStock(option, 'held'))
             .filter((option) => option.stock > 0)
+            .concat(unpricedHeld)
             .sort((a, b) => a.stockPrice - b.stockPrice);
         options.push(...held);
     }
@@ -444,10 +460,8 @@ export function sweepProtectFrom({
 
     const rows = [buildRow(solve(NO_PROTECTION), NO_PROTECTION, null)];
 
-    // Protected rows exist only when there is a protection item with a price.
-    // Pricing an unpriceable protection at zero would make every protected
-    // strategy free by construction and win every comparison on a quote nobody
-    // has a basis for — see chooseProtectionOptions, which drops unpriced options.
+    // Protected rows need either a buy quote or stock whose expected uses cover the whole run.
+    // An unknown buy quote on the remaining amount must not create a free route.
     if (target >= MIN_PROTECT_FROM && protectionOptions.length > 0) {
         const levels = protectFromLevels(target);
         const solves = new Map();
@@ -456,7 +470,10 @@ export function sweepProtectFrom({
         }
         for (const option of protectionOptions) {
             for (const protectFrom of levels) {
-                rows.push(buildRow(solves.get(protectFrom), protectFrom, option));
+                const row = buildRow(solves.get(protectFrom), protectFrom, option);
+                // A known stock value prices only the copies the run expects to use from the
+                // bag. Do not turn an unknown buy quote for the shortfall into a free route.
+                if (!option.buyPriceUnknown || row.protectionsToBuy <= 1e-12) rows.push(row);
             }
         }
     }

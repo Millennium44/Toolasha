@@ -1001,7 +1001,11 @@ export function protectSweepHTML({
                 const label = row.selected ? 'in the slot' : option?.role === 'held' ? 'held' : 'cheapest alternative';
                 let priceNote = row.protectionPrice > 0 ? `@${coins(row.protectionPrice)}` : 'no price';
                 if (option?.stock > 0) {
-                    priceNote = `${option.held.toLocaleString()} held, ${option.stock.toLocaleString()} spare @${coins(option.stockPrice)}, then ${priceNote}`;
+                    const buyNote =
+                        row.protectionPrice > 0
+                            ? `, then @${coins(row.protectionPrice)}`
+                            : ' (no buy quote; stock covers expected uses)';
+                    priceNote = `${option.held.toLocaleString()} held, ${option.stock.toLocaleString()} spare @${coins(option.stockPrice)}${buyNote}`;
                 }
                 rows.push(
                     `<tr><td colspan="9" style="padding:6px 0 2px; color:#9bd; font-weight:bold;">${row.name} ` +
@@ -1023,6 +1027,10 @@ export function protectSweepHTML({
             if (current) rowStyle += ' outline:1px solid rgba(255,165,0,0.6);';
 
             const level = row.protectFrom === 0 ? 'none' : `+${row.protectFrom}`;
+            const stockTitle =
+                row.protectionPrice > 0
+                    ? `${formatAttempts(row.protections)} expected: spare copies @${coins(row.stockPrice)} first, the rest bought @${coins(row.protectionPrice)}`
+                    : `${formatAttempts(row.protections)} expected: valued spare copies cover expected uses; no buy quote is needed`;
             rows.push(
                 `<tr class="mwi-protsweep-row" data-protect-from="${row.protectFrom}" data-item="${row.itemHrid || ''}" ` +
                     `style="${rowStyle}">` +
@@ -1038,7 +1046,7 @@ export function protectSweepHTML({
                     cell(formatAttempts(row.attempts)) +
                     (row.protectionsFromStock > 0
                         ? `<td class="mwi-protsweep-stock" style="padding:2px 8px 2px 0; text-align:right; color:#ffa500; white-space:nowrap;" ` +
-                          `title="${formatAttempts(row.protections)} expected: spare copies @${coins(row.stockPrice)} first, the rest bought @${coins(row.protectionPrice)}` +
+                          `title="${stockTitle}` +
                           `${row.stockSplitApprox ? '. Approximate: split on the expected count, which overstates what the stock covers' : ''}">` +
                           `${formatAttempts(row.protectionsFromStock)} from stock + ${formatAttempts(row.protectionsToBuy)} to buy${row.stockSplitApprox ? ' ≈' : ''}</td>`
                         : cell(

@@ -61,6 +61,14 @@ vi.mock('./inventory-reservations.js', () => ({
         }
         return total;
     },
+    effectiveInventory: (itemHrid, level, { excludeOwner, held } = {}) => {
+        let reserved = 0;
+        for (const [owner, byItem] of Object.entries(ledger.claims)) {
+            if (owner === excludeOwner) continue;
+            reserved += byItem[itemHrid] || 0;
+        }
+        return Math.max(0, held - reserved);
+    },
     shortfallNote: (short, itemHrid) => `${short} short — reserved elsewhere (${itemHrid})`,
 }));
 
@@ -411,6 +419,90 @@ describe('calculateEnhancementMaterialRequirements', () => {
         const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/protection_scroll', 2);
         const protection = result.find((m) => m.itemHrid === '/items/protection_scroll');
         expect(protection.required).toBe(3); // ceil(2.5)
+    });
+
+    test('does not count the unenhanced item on the bench as spare self-protection stock', () => {
+        state.enhancementResult = { attempts: 10, protectionCount: 1 };
+        state.gameData.itemDetailMap['/items/sword'].isTradable = true;
+        state.inventory = [
+            {
+                itemLocationHrid: '/item_locations/inventory',
+                itemHrid: '/items/sword',
+                enhancementLevel: 0,
+                count: 1,
+            },
+        ];
+
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/sword', 2);
+        const protection = result.find((material) => material.itemHrid === '/items/sword');
+
+        expect(protection.have).toBe(0);
+        expect(protection.missing).toBe(1);
+    });
+
+    test('keeps protection have as owned stock and applies other claims to available only for an owner', () => {
+        state.enhancementResult = { attempts: 10, protectionCount: 1 };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        state.inventory = [
+            {
+                itemLocationHrid: '/item_locations/inventory',
+                itemHrid: '/items/protection_scroll',
+                enhancementLevel: 0,
+                count: 1,
+            },
+        ];
+        ledger.claims = { 'goal:other': { '/items/protection_scroll': 1 } };
+
+        const withoutOwner = calculateEnhancementMaterialRequirements(
+            '/items/sword',
+            0,
+            5,
+            '/items/protection_scroll',
+            2
+        );
+        const unclaimed = withoutOwner.find((material) => material.itemHrid === '/items/protection_scroll');
+        expect(unclaimed).toMatchObject({ have: 1, available: 1, missing: 0 });
+
+        const result = calculateEnhancementMaterialRequirements(
+            '/items/sword',
+            0,
+            5,
+            '/items/protection_scroll',
+            2,
+            undefined,
+            'missingMats'
+        );
+        const protection = result.find((material) => material.itemHrid === '/items/protection_scroll');
+        expect(protection).toMatchObject({ have: 1, available: 0, missing: 1, reserved: 1 });
+        expect(protection.reservedNote).toContain('reserved elsewhere');
+    });
+
+    test('does not deduct the current owner’s open enhancement bill from its own available stock', () => {
+        state.enhancementResult = { attempts: 10, protectionCount: 1 };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        state.inventory = [
+            {
+                itemLocationHrid: '/item_locations/inventory',
+                itemHrid: '/items/protection_scroll',
+                enhancementLevel: 0,
+                count: 1,
+            },
+        ];
+        ledger.claims = { missingMats: { '/items/protection_scroll': 1 } };
+
+        const result = calculateEnhancementMaterialRequirements(
+            '/items/sword',
+            0,
+            5,
+            '/items/protection_scroll',
+            2,
+            undefined,
+            'missingMats'
+        );
+        const protection = result.find((material) => material.itemHrid === '/items/protection_scroll');
+
+        expect(protection).toMatchObject({ have: 1, available: 1, missing: 0 });
+        expect(protection.reserved).toBeUndefined();
     });
 
     test("never lists Philosopher's Mirror as a consumed protection item", () => {

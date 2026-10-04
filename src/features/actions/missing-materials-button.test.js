@@ -16,6 +16,9 @@ const state = vi.hoisted(() => ({
     inventory: [],
     items: {},
     unclaimed: {},
+    enhancementMaterials: [],
+    enhancementCalls: [],
+    settingsEnabled: false,
     // What `calculateMaterialRequirements` hands back to the click handlers —
     // a test sets this before driving `openMissingMaterials`.
     actionMaterials: [],
@@ -39,7 +42,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => state.items[hrid] || null,
     },
 }));
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => state.settingsEnabled } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/websocket.js', () => ({
     default: { on: (...args) => state.wsOn(...args), off: (...args) => state.wsOff(...args) },
@@ -60,7 +63,10 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
 }));
 vi.mock('../../utils/material-calculator.js', () => ({
     calculateMaterialRequirements: () => state.actionMaterials,
-    calculateEnhancementMaterialRequirements: () => [],
+    calculateEnhancementMaterialRequirements: (...args) => {
+        state.enhancementCalls.push(args);
+        return state.enhancementMaterials;
+    },
     unclaimedBoughtCount: (itemHrid) => state.unclaimed?.[itemHrid] || 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
@@ -78,7 +84,7 @@ vi.mock('./enhancement-display.js', () => ({
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: () => null }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
-vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => ({ disconnect: () => {} }) }));
+vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/game-lookups.js', () => ({
     getActionHridFromName: () => null,
     getActionHridFromFiber: () => null,
@@ -119,16 +125,20 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
     shortfallNote: (short) => `${short} short — reserved by "Goal: Cheese sword"`,
     reserve: async (ownerId, lines) => {
         ledger.reserved.push({ ownerId, lines });
+        ledger.claims[ownerId] = Object.fromEntries(
+            lines.map((line) => [`${line.itemHrid}|${line.enhancementLevel || 0}`, line.count])
+        );
         return true;
     },
     release: (ownerId) => {
         ledger.released.push(ownerId);
+        delete ledger.claims[ownerId];
         return Promise.resolve(true);
     },
 }));
 
-const { materialsFromList, openBillOwner, openMaterialsList, openMissingMaterials } =
-    await import('./missing-materials-button.js');
+const missingMaterials = await import('./missing-materials-button.js');
+const { materialsFromList, openBillOwner, openMaterialsList, openMissingMaterials } = missingMaterials;
 
 describe('a bill of materials against the inventory', () => {
     test('each line is what is needed less the unenhanced copies held', () => {
@@ -260,6 +270,85 @@ describe('a bill of materials against the inventory', () => {
     });
 });
 
+describe('enhancement missing-material reservation handoff', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        state.settingsEnabled = true;
+        state.enhancementCalls = [];
+        state.enhancementMaterials = [
+            {
+                itemHrid: '/items/protection_scroll',
+                itemName: 'Protection Scroll',
+                required: 1,
+                have: 1,
+                queued: 0,
+                available: 0,
+                missing: 1,
+                reserved: 1,
+                reservedNote: '1 short — reserved by "Goal: Cheese sword"',
+                isTradeable: true,
+                isUpgradeItem: false,
+            },
+        ];
+        ledger.claims = { 'goal:cheese-sword': { '/items/protection_scroll|0': 1 } };
+        buildMarketplaceDom();
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            '<div class="SkillActionDetail_enhancingComponent__17bOx" data-mwi-item-hrid="/items/sword">' +
+                '<div><span>Target Level</span><input type="number" value="5"></div>' +
+                '</div>'
+        );
+    });
+
+    afterEach(() => {
+        missingMaterials.cleanup?.();
+        vi.useRealTimers();
+        state.settingsEnabled = false;
+        ledger.claims = {};
+    });
+
+    test('renders the external-claim shortfall, recalculates fresh on click, claims its bill, and keeps its own claim out of the live shortfall', async () => {
+        missingMaterials.initialize();
+        await vi.advanceTimersByTimeAsync(600);
+
+        const button = document.querySelector('#mwi-missing-mats-button');
+        expect(button).not.toBeNull();
+        expect(button.disabled).toBe(false);
+        expect(state.enhancementCalls.at(-1)).toHaveLength(7);
+        expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
+
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+
+        const tab = document.querySelector('[data-item-hrid="/items/protection_scroll"]');
+        expect(tab?.getAttribute('data-missing-quantity')).toBe('1');
+        expect(ledger.reserved.at(-1)).toMatchObject({ ownerId: 'missingMats' });
+        expect(ledger.claims.missingMats['/items/protection_scroll|0']).toBe(1);
+        expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
+
+        // The calculator returns an updated value based on external claims only;
+        // the own bill claim must not increase this material's missing count.
+        state.enhancementMaterials = [
+            {
+                ...state.enhancementMaterials[0],
+                available: 1,
+                missing: 0,
+                reserved: undefined,
+                reservedNote: undefined,
+            },
+        ];
+        const update = state.wsOn.mock.calls.find(([type]) => type === '*')?.[1];
+        expect(update).toBeTypeOf('function');
+        const priorCalls = state.enhancementCalls.length;
+        update({ type: 'items_updated' });
+        expect(state.enhancementCalls.length).toBe(priorCalls + 1);
+        expect(ledger.claims.missingMats['/items/protection_scroll|0']).toBe(1);
+        expect(tab.getAttribute('data-missing-quantity')).toBe('0');
+        expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
+    });
+});
+
 /** A navbar marketplace button plus a visible tab strip carrying the two
  * native tabs ("My Listings" is the clone template, "Market Listings" is
  * where a clear-all should land the player). happy-dom does no real layout,
@@ -281,9 +370,15 @@ function buildMarketplaceDom() {
     const myListings = document.createElement('button');
     myListings.setAttribute('role', 'tab');
     myListings.textContent = 'My Listings';
+    const myListingsBadge = document.createElement('span');
+    myListingsBadge.className = 'TabsComponent_badge';
+    myListings.appendChild(myListingsBadge);
     const marketListings = document.createElement('button');
     marketListings.setAttribute('role', 'tab');
     marketListings.textContent = 'Market Listings';
+    const marketListingsBadge = document.createElement('span');
+    marketListingsBadge.className = 'TabsComponent_badge';
+    marketListings.appendChild(marketListingsBadge);
     container.append(myListings, marketListings);
     document.body.appendChild(container);
     Object.defineProperty(container, 'offsetParent', { get: () => document.body, configurable: true });
