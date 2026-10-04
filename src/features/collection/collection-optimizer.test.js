@@ -325,6 +325,8 @@ describe('the panel', () => {
         drawCollectionsTab();
         optimizer.initialize();
         await optimizer.prefsLoaded;
+        // The route build yields by time, so the panel can land a task later
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-maxstep')).not.toBeNull());
         expect(document.querySelector('.toolasha-collopt-maxstep').value).toBe('0.01');
         optimizer.disable();
         game.characterId = 'char-2';

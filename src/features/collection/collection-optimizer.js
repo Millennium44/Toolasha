@@ -28,6 +28,7 @@ import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ownUseUnitCost, selfUseDecomposeChain } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import {
     DEFAULT_MAX_STEP_SECONDS,
     ROUTE_LABELS,
@@ -66,17 +67,11 @@ function validHours(value) {
 /** Rows shown in the ranking */
 const MAX_ROWS = 40;
 
-/** Items priced between yields to the browser while the routes are built */
-const YIELD_EVERY = 25;
+/** Milliseconds of route pricing between yields to the browser */
+const SLICE_MS = 12;
 
 /** Items that are never a collection entry */
 const SKIP_ITEMS = new Set(['/items/coin']);
-
-/**
- * Hand the event loop back so a long build never freezes the page.
- * @returns {Promise<void>}
- */
-const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * Price every route the game data allows, for the current character's bench.
@@ -102,13 +97,18 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
 
     const craft = [];
     const makeCost = new Map();
-    let done = 0;
+    // Yield by elapsed time, not item count: scheduler.yield where the browser has it, which a
+    // background tab does not stall the way it does a setTimeout(0) chain
+    let sliceStart = performance.now();
+    const pause = async () => {
+        if (performance.now() - sliceStart <= SLICE_MS) return false;
+        await yieldToBrowser();
+        sliceStart = performance.now();
+        return cancelled();
+    };
     for (const hrid of Object.keys(itemDetailMap)) {
         if (SKIP_ITEMS.has(hrid) || !profitCalculator.findProductionAction?.(hrid)) continue;
-        if (++done % YIELD_EVERY === 0) {
-            await yieldToBrowser();
-            if (cancelled()) return null;
-        }
+        if (await pause()) return null;
         try {
             const profitData = await profitCalculator.calculateProfit(hrid);
             if (!profitData) continue;
@@ -142,13 +142,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     };
 
     const sources = [];
-    done = 0;
     for (const [hrid, details] of Object.entries(itemDetailMap)) {
         if (!details?.alchemyDetail?.decomposeItems?.length) continue;
-        if (++done % YIELD_EVERY === 0) {
-            await yieldToBrowser();
-            if (cancelled()) return null;
-        }
+        if (await pause()) return null;
         const chain = selfUseDecomposeChain(hrid, {
             getDecompose,
             getItemDetails,
