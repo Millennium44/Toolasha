@@ -68,6 +68,7 @@ export const IRON_COW_SETTINGS = new Set([
     'itemTooltip_profit',
     'itemTooltip_detailedProfit',
     'itemTooltip_multiActionProfit',
+    'itemTooltip_selfUseAlchemy',
     'taskProfitCalculator',
     'profitCalc_keyPricingMode', // Prices in tooltips / UI
     'itemTooltip_prices',
@@ -189,6 +190,43 @@ class IronCowMode {
                 config.setSettingValue(id, val);
             }
         }
+    }
+
+    /**
+     * Bring a mode switched on by an older build up to the current list. A setting added to
+     * {@link IRON_COW_SETTINGS} after the mode was enabled is in no snapshot and was never
+     * forced, so its row would read locked while it stays on. Record its current value — still
+     * the player's own — then force the list again. Settings already snapshotted are untouched.
+     * @returns {Promise<void>}
+     */
+    async reconcile() {
+        if (!this.isEnabled()) return;
+        const key = this._snapshotKey();
+        // tryGet, not getJSON: an unreadable snapshot must not look absent, or it would be
+        // rebuilt from the forced values and the player's originals lost
+        const read = await storage.tryGet(key, 'settings');
+        if (!read) return;
+        // A character switch during the read makes this the wrong character's snapshot
+        if (this._snapshotKey() !== key) return;
+        const stored = read.found ? storage.parseJSON(read.value, key, null) : null;
+        const snapshot = stored && typeof stored === 'object' ? { ...stored } : {};
+        let added = false;
+        for (const id of IRON_COW_SETTINGS) {
+            if (Object.prototype.hasOwnProperty.call(snapshot, id)) continue;
+            const entry = config.settingsMap[id];
+            if (!entry) continue;
+            snapshot[id] =
+                entry.type === 'checkbox'
+                    ? { type: 'checkbox', value: entry.isTrue ?? false }
+                    : { type: entry.type, value: entry.value };
+            added = true;
+        }
+        if (!added) return;
+        // Forcing a setting the stored snapshot does not hold would lose the player's value
+        if ((await storage.setJSON(key, snapshot, 'settings', true)) === false) return;
+        // The arriving character's settings are not this snapshot's; its own load reconciles them
+        if (this._snapshotKey() !== key) return;
+        this.reapply();
     }
 
     /**

@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => ({
     /** Which panels the utility buttons asked to open or close */
     toggled: [],
     censusCalls: [],
+    /** Callbacks registered for each per-character settings load */
+    settingsLoaded: [],
     /** What the pointer looks like to auto-detection */
     coarsePointer: false,
     /** Held open to keep `loadSettings` in flight while the test moves the DOM */
@@ -327,6 +329,10 @@ vi.mock('../../core/config.js', () => ({
             mocks.written.push([id, value]);
             if (mocks.settingsMap[id]) mocks.settingsMap[id].value = value;
             fireSettingChange(id);
+        },
+        onSettingsLoaded: (callback) => {
+            mocks.settingsLoaded.push(callback);
+            return () => {};
         },
         onSettingChange: (key, callback) => {
             (mocks.listeners[key] ||= []).push(callback);
@@ -1397,6 +1403,27 @@ describe("switching tabs only touches this panel's own tab list", () => {
         expect(selectedTab.getAttribute('aria-selected')).toBe('true');
         expect(selectedTab.getAttribute('tabindex')).toBe('0');
         expect(selectedTab.classList.contains('Mui-selected')).toBe(true);
+    });
+});
+
+describe('Iron Cow catches up with settings it came to manage later', () => {
+    test('a later character settings load reconciles the mode again, hooked once', async () => {
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const reconcile = vi.spyOn(ironCowMode, 'reconcile').mockResolvedValue();
+        try {
+            await settingsUI.initialize();
+            await settingsUI.initialize();
+            expect(reconcile).toHaveBeenCalled();
+            const hooks = mocks.settingsLoaded.length;
+            expect(hooks).toBe(1);
+            reconcile.mockClear();
+            // A character switch loads the arriving character's settings
+            mocks.settingsLoaded[0]();
+            expect(reconcile).toHaveBeenCalledTimes(1);
+        } finally {
+            reconcile.mockRestore();
+            settingsUI.cleanup();
+        }
     });
 });
 
