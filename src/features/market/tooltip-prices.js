@@ -42,6 +42,7 @@ import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-
 import { findProducingAction } from '../../utils/production-index.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
 import {
+    bestSelfUseCandidate,
     ownUseUnitCost,
     selfUseDecompose,
     selfUseDecomposeChain,
@@ -1662,10 +1663,28 @@ class TooltipPrices {
             const lineColor = (value) => (value >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS);
             const unpricedTag = (partly) => (partly ? ', partly unpriced' : '');
 
+            // The calculator picks its catalyst/tea for the taxed sell-side profit. Each self-use
+            // line scores every candidate it weighs on its own objective instead; the seller's
+            // result stands in only when the calculator offers no candidate list.
+            // Cached per tooltip, since the chain can reach the same gear by more than one branch.
+            const candidateCache = new Map();
+            const candidatesFor = (actionType, hrid, sellerPick) => {
+                const key = `${actionType}|${hrid}`;
+                if (!candidateCache.has(key)) {
+                    const listed = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
+                    candidateCache.set(key, listed.length > 0 ? listed : [sellerPick()].filter(Boolean));
+                }
+                return candidateCache.get(key);
+            };
+
             if (decompose && itemDetails) {
                 const ownUseCost = await this.selfUseOwnUseCost(itemHrid, decompose, craftProfitData);
 
-                const step = selfUseDecompose(decompose, itemDetails, { ownUseCost, priceOf, containerValue });
+                const step = bestSelfUseCandidate(
+                    candidatesFor('decompose', itemHrid, () => decompose),
+                    (result) => selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, containerValue }),
+                    'netPerHour'
+                )?.evaluation;
                 if (step) {
                     lines.push({
                         text: `Decompose (self-use): ${formatKMB(step.netPerHour)}/hr`,
@@ -1674,9 +1693,27 @@ class TooltipPrices {
                     });
                 }
 
+                // Each chain step picks its own candidate. Steps run one after another, so given
+                // the units that reach a step, its setup is independent of the others'; it is
+                // scored per action (per item reaching it), as the chain is valued per item.
+                // The input's cost is the same under every candidate, so it is left at 0 here.
+                const chainSteps = new Map();
+                const bestChainStep = (hrid) => {
+                    if (!chainSteps.has(hrid)) {
+                        const details = dataManager.getItemDetails(hrid);
+                        const pick = bestSelfUseCandidate(
+                            candidatesFor('decompose', hrid, () =>
+                                hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid)
+                            ),
+                            (result) => selfUseDecompose(result, details, { ownUseCost: 0, priceOf, containerValue }),
+                            'netPerAction'
+                        );
+                        chainSteps.set(hrid, pick?.result ?? null);
+                    }
+                    return chainSteps.get(hrid);
+                };
                 const chain = selfUseDecomposeChain(itemHrid, {
-                    getDecompose: (hrid) =>
-                        hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid),
+                    getDecompose: bestChainStep,
                     getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
                     isChainable: (hrid) => {
                         const details = dataManager.getItemDetails(hrid);
@@ -1716,11 +1753,12 @@ class TooltipPrices {
 
             const transmute = alchemyProfits?.transmute;
             if (transmute && itemDetails) {
-                const held = selfUseTransmuteHeld(transmute, itemDetails, {
-                    sellPrice: getItemPrice(itemHrid, { context: 'profit', side: 'sell' }),
-                    priceOf,
-                    containerValue,
-                });
+                const sellPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+                const held = bestSelfUseCandidate(
+                    candidatesFor('transmute', itemHrid, () => transmute),
+                    (result) => selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, containerValue }),
+                    'netPerHour'
+                )?.evaluation;
                 if (held) {
                     lines.push({
                         text: `Transmute held item (self-use): ${formatKMB(held.netPerHour)}/hr`,

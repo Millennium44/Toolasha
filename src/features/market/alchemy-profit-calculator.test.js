@@ -1205,6 +1205,68 @@ describe('official alchemy rules', () => {
         expect(result.dropRevenues.find((drop) => drop.itemHrid === '/items/cheese').revenuePerHour).toBeGreaterThan(0);
         expect(result.estimatedOutputs).toEqual(['/items/cheese']);
     });
+
+    describe('the candidate list a different objective picks from', () => {
+        test.each([
+            [
+                'decompose',
+                '/items/cheese_hat',
+                '/items/catalyst_of_decomposition',
+                (calc) => calc.calculateDecomposeProfit('/items/cheese_hat'),
+            ],
+            [
+                'transmute',
+                '/items/milk',
+                '/items/catalyst_of_transmutation',
+                (calc) => calc.calculateTransmuteProfit('/items/milk'),
+            ],
+        ])(
+            '%s: one full result per catalyst/tea candidate; the default search is unchanged',
+            (type, hrid, typeCatalyst, run) => {
+                mocks.itemPrices = {
+                    [hrid]: 100,
+                    '/items/cheese': 500,
+                    [typeCatalyst]: 50,
+                    '/items/prime_catalyst': 80,
+                };
+                const before = run(alchemyProfitCalculator);
+
+                const candidates = alchemyProfitCalculator.calculateCandidateResults(type, hrid);
+
+                // The search's own candidates: no / type-specific / prime catalyst, each with and without drinks
+                expect(candidates.map((r) => r.winningCatalystHrid)).toEqual([
+                    null,
+                    null,
+                    typeCatalyst,
+                    typeCatalyst,
+                    '/items/prime_catalyst',
+                    '/items/prime_catalyst',
+                ]);
+                // The seller's pick is the best of them on the seller's terms
+                expect(before.profitPerHour).toBeCloseTo(Math.max(...candidates.map((r) => r.profitPerHour)), 8);
+                // And listing them leaves the default search exactly as it was
+                expect(run(alchemyProfitCalculator)).toEqual(before);
+                expect(alchemyProfitCalculator._comboFilter).toBeNull();
+            }
+        );
+
+        test('an unpriced catalyst is no candidate, as it is no option in the search', () => {
+            mocks.itemPrices = {
+                '/items/cheese_hat': 100,
+                '/items/cheese': 500,
+                '/items/catalyst_of_decomposition': null,
+                '/items/prime_catalyst': null,
+            };
+            const candidates = alchemyProfitCalculator.calculateCandidateResults('decompose', '/items/cheese_hat');
+            expect(candidates.map((r) => r.winningCatalystHrid)).toEqual([null, null]);
+        });
+
+        test('an action that does not apply has no candidates', () => {
+            mocks.itemPrices = { '/items/milk': 100 };
+            expect(alchemyProfitCalculator.calculateCandidateResults('decompose', '/items/milk')).toEqual([]);
+            expect(alchemyProfitCalculator.calculateCandidateResults('coinify', '/items/cheese')).toEqual([]);
+        });
+    });
 });
 
 describe('success rates the game panel showed (2026-09-23, level 130 alchemist)', () => {

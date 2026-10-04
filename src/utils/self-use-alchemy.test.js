@@ -28,8 +28,14 @@ vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPric
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
 
-const { ownUseUnitCost, selfUseDecompose, selfUseDecomposeChain, selfUseTransmuteHeld, untaxedContainerValue } =
-    await import('./self-use-alchemy.js');
+const {
+    bestSelfUseCandidate,
+    ownUseUnitCost,
+    selfUseDecompose,
+    selfUseDecomposeChain,
+    selfUseTransmuteHeld,
+    untaxedContainerValue,
+} = await import('./self-use-alchemy.js');
 
 beforeEach(() => {
     state.gameMode = 'standard';
@@ -457,6 +463,38 @@ describe('transmute a held item, self-use', () => {
 
     test('no sell price means no line — the opportunity cost is the whole question', () => {
         expect(selfUseTransmuteHeld(revive(), ITEMS['/items/revive'], { sellPrice: null, priceOf })).toBeNull();
+    });
+});
+
+describe('picking the catalyst for self-use', () => {
+    // Cheese Sword: 18 cheese at 10 (buy side). The seller values cheese at a taxed bid of
+    // ~6, where a prime catalyst at 2,000/hr does not pay; at the buy side it does.
+    const plain = result({ itemHrid: '/items/cheese_sword', actionsPerHour: 100, successRate: 0.6 });
+    const prime = result({
+        itemHrid: '/items/cheese_sword',
+        actionsPerHour: 100,
+        successRate: 0.75,
+        catalystCostPerHour: 2000,
+    });
+    const evaluate = (r) => selfUseDecompose(r, ITEMS['/items/cheese_sword'], { ownUseCost: 50, priceOf });
+
+    test('takes the candidate that is best on the self-use objective, not the seller pick', () => {
+        // Seller, cheese at a taxed 6: plain 18 × 6 × 0.6 × 100 = 6,480; prime 8,100 − 2,000 = 6,100
+        // Self-use, cheese at 10:      plain 10,800;                    prime 13,500 − 2,000 = 11,500
+        const best = bestSelfUseCandidate([plain, prime], evaluate, 'netPerHour');
+        expect(best.result).toBe(prime);
+        expect(best.evaluation.netPerHour).toBeCloseTo(13_500 - 2000 - 5000, 6);
+    });
+
+    test('keeps the cheaper setup when the catalyst does not pay for self-use either', () => {
+        const dear = { ...prime, catalystCostPerHour: 5000 };
+        expect(bestSelfUseCandidate([dear, plain], evaluate, 'netPerHour').result).toBe(plain);
+    });
+
+    test('skips candidates that cannot be valued, and is null when none can', () => {
+        expect(bestSelfUseCandidate([null, plain], evaluate, 'netPerHour').result).toBe(plain);
+        expect(bestSelfUseCandidate([plain], () => null, 'netPerHour')).toBeNull();
+        expect(bestSelfUseCandidate([], evaluate, 'netPerHour')).toBeNull();
     });
 });
 

@@ -380,6 +380,10 @@ class AlchemyProfitCalculator {
     constructor() {
         // Cache for item detail map
         this._itemDetailMap = null;
+        // Set only for the duration of one synchronous calculateCandidateResults() call: narrows
+        // _bestCatalystCombo to a single candidate. Null everywhere else, so every other
+        // caller gets the full search.
+        this._comboFilter = null;
     }
 
     /**
@@ -682,7 +686,10 @@ class AlchemyProfitCalculator {
                     { teaBonus: liveTeaBonus, usesTea: true },
                     { teaBonus: 0, usesTea: false },
                 ];
-        const combinations = catalystChoices.flatMap((catalyst) => teaChoices.map((tea) => ({ ...catalyst, ...tea })));
+        const allCombinations = catalystChoices.flatMap((catalyst) =>
+            teaChoices.map((tea) => ({ ...catalyst, ...tea }))
+        );
+        const combinations = this._comboFilter ? allCombinations.filter(this._comboFilter) : allCombinations;
 
         let best = null;
         let bestProfitPerHour = -Infinity;
@@ -2206,6 +2213,38 @@ class AlchemyProfitCalculator {
             console.error('[AlchemyProfitCalculator] Failed to calculate unrefine profit:', error);
             return null;
         }
+    }
+
+    /**
+     * Every catalyst/tea candidate the tooltip search weighs for one action, each as the
+     * full result that candidate gives — so a caller with a different objective than the
+     * taxed profit per hour (the self-use lines) can pick its own best. The candidates are
+     * exactly _bestCatalystCombo's: no / type-specific / prime catalyst × live drinks / no
+     * drinks, less any it leaves out (an unpriced catalyst, unpriced drinks). The default
+     * search and every other caller are untouched.
+     * @param {'decompose'|'transmute'} actionType
+     * @param {string} itemHrid - A base item (enhancement level 0)
+     * @returns {Array<Object>} One result per available candidate; empty when the action does not apply
+     */
+    calculateCandidateResults(actionType, itemHrid) {
+        let run = null;
+        if (actionType === 'decompose') run = () => this.calculateDecomposeProfit(itemHrid);
+        else if (actionType === 'transmute') run = () => this.calculateTransmuteProfit(itemHrid);
+        if (!run) return [];
+
+        const results = [];
+        for (const catalystHrid of [null, CATALYST_HRIDS[actionType], CATALYST_HRIDS.prime]) {
+            for (const usesTea of [true, false]) {
+                this._comboFilter = (combo) => combo.catalystHrid === catalystHrid && combo.usesTea === usesTea;
+                try {
+                    const result = run();
+                    if (result) results.push(result);
+                } finally {
+                    this._comboFilter = null;
+                }
+            }
+        }
+        return results;
     }
 
     /**

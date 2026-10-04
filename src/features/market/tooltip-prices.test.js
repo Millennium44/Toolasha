@@ -17,7 +17,7 @@ const settings = vi.hoisted(() => ({
     patientTickSell: false,
 }));
 const characterState = vi.hoisted(() => ({ data: null }));
-const alchemyState = vi.hoisted(() => ({ profits: {} }));
+const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -57,6 +57,17 @@ vi.mock('../../core/data-manager.js', () => {
             equipmentDetail: {},
             alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
         },
+        // Gear that decomposes into more gear, for the chain
+        '/items/twin_sword': {
+            name: 'Twin Sword',
+            equipmentDetail: {},
+            alchemyDetail: {
+                decomposeItems: [
+                    { itemHrid: '/items/cheese', count: 5 },
+                    { itemHrid: '/items/cheese_sword', count: 1 },
+                ],
+            },
+        },
     };
     return {
         default: {
@@ -83,7 +94,8 @@ vi.mock('./profit-calculator.js', () => ({
 vi.mock('./alchemy-profit-calculator.js', () => ({
     default: {
         calculateAllProfits: () => alchemyState.profits,
-        calculateDecomposeProfit: () => null,
+        calculateDecomposeProfit: (hrid) => alchemyState.decompose[hrid] ?? null,
+        calculateCandidateResults: (type, hrid) => alchemyState.candidates[`${type}|${hrid}`] ?? [],
     },
 }));
 vi.mock('./expected-value-calculator.js', () => ({ default: { calculateExpectedValue: () => null } }));
@@ -169,6 +181,8 @@ beforeEach(async () => {
     settings.loadoutMarksEnabled = true;
     settings.selfUseAlchemy = false;
     alchemyState.profits = {};
+    alchemyState.candidates = {};
+    alchemyState.decompose = {};
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -778,6 +792,49 @@ describe('self-use alchemy lines', () => {
         expect(block.textContent).toContain('Decompose: -500/hr');
         // No gear comes out of a cheese sword, so no chain line repeats the step
         expect(block.textContent).not.toContain('Full decompose chain');
+    });
+
+    // The same decompose on a prime catalyst: the seller passed it over (at a taxed bid
+    // it does not pay), but at the buy side its extra 15 points of success do
+    const cheeseSwordPrime = () => ({
+        ...cheeseSwordDecompose(),
+        profitPerHour: -900,
+        successRate: 0.75,
+        catalystCostPerHour: 2000,
+    });
+
+    test('the self-use line takes the catalyst that is best for self-use, not the seller pick', async () => {
+        settings.selfUseAlchemy = true;
+        alchemyState.profits = { decompose: cheeseSwordDecompose() };
+        alchemyState.candidates = {
+            'decompose|/items/cheese_sword': [cheeseSwordDecompose(), cheeseSwordPrime()],
+        };
+        const block = await blockFor('/items/cheese_sword');
+        // 18 x 10 x 0.75 x 100 = 13,500 kept, less 5,000 of swords and 2,000 of catalyst
+        expect(block.textContent).toContain('Decompose (self-use): 6.5K/hr');
+        expect(block.textContent).toContain('(65/action)');
+        // The seller's line keeps the seller's pick
+        expect(block.textContent).toContain('Decompose: -500/hr');
+    });
+
+    test('each chain step takes its own best candidate for self-use', async () => {
+        settings.selfUseAlchemy = true;
+        const twin = {
+            ...cheeseSwordDecompose(),
+            itemHrid: '/items/twin_sword',
+            successRate: 1,
+            requirementCosts: [{ itemHrid: '/items/twin_sword', count: 1, price: 100 }],
+        };
+        alchemyState.profits = { decompose: twin };
+        // What the seller's search hands back for the sword step
+        alchemyState.decompose = { '/items/cheese_sword': cheeseSwordDecompose() };
+        alchemyState.candidates = {
+            'decompose|/items/cheese_sword': [cheeseSwordDecompose(), cheeseSwordPrime()],
+        };
+        const block = await blockFor('/items/twin_sword');
+        // Per twin sword: 5 cheese (50) + one sword decomposed on prime: 18 x 0.75 cheese (135)
+        // less 2,000/100 = 20 of catalyst; cost 100. The seller's sword setup would give 58.
+        expect(block.textContent).toContain('Full decompose chain (self-use): 65/item');
     });
 
     test('nothing to say about an item no alchemy applies to', async () => {

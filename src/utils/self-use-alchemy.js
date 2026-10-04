@@ -80,6 +80,32 @@ export function alchemyRunBasis(result) {
 }
 
 /**
+ * Pick the catalyst/tea candidate that is best for keeping the outputs.
+ *
+ * The calculator's own pick maximizes the seller's figure (outputs at the sell
+ * side, taxed). A catalyst that only pays off at buy-side prices — or one that
+ * only pays off on the seller's terms — then leaves the self-use line on the
+ * wrong setup, so each line scores every candidate on its own objective.
+ * @param {Array<Object>} candidates - Calculator results, one per catalyst/tea candidate
+ * @param {(result: Object) => Object|null} evaluate - The self-use valuation of one result
+ * @param {string} objective - The evaluation field to maximize (e.g. `netPerHour`)
+ * @returns {{result: Object, evaluation: Object}|null} The best candidate, null when none evaluates
+ */
+export function bestSelfUseCandidate(candidates, evaluate, objective) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const result of Array.isArray(candidates) ? candidates : []) {
+        if (!result) continue;
+        const evaluation = evaluate(result);
+        const score = Number(evaluation?.[objective]);
+        if (!Number.isFinite(score) || score <= bestScore) continue;
+        best = { result, evaluation };
+        bestScore = score;
+    }
+    return best;
+}
+
+/**
  * The alchemy-wide bonus drops (Alchemy Essence, Artisan's Crate) in a
  * calculator result. They roll on every action regardless of the item, and
  * the calculator flags them `isEssence` / `isRare`; at enhancement level 0 no
