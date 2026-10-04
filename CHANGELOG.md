@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial history keeps the game's tier timestamps
+
+- Guild trial exports and saved history now use the game's tier start timestamps, so delayed messages or reopening a fight no longer shift recorded start times.
+
 ### Alchemy estimates disclose unpriced outputs
 
 - Alchemy queue totals and action-bar profit now show when an output cannot be priced, preventing a partial result from appearing complete.
