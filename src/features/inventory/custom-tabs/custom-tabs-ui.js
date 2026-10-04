@@ -2075,12 +2075,15 @@ export default class CustomTabsUI {
      */
     async _refreshBadgesWhenSettled(invContainer) {
         this._badgeRefreshWanted = true;
+        // A folded request may come from a container that replaced the one the running loop began on
+        this._badgeRefreshContainer = invContainer;
         if (this._badgeRefreshRunning) return;
         this._badgeRefreshRunning = true;
         try {
             while (this._badgeRefreshWanted) {
+                const container = this._badgeRefreshContainer;
                 if (!inventoryBadgeManager.currentInventoryElem) {
-                    inventoryBadgeManager.currentInventoryElem = invContainer;
+                    inventoryBadgeManager.currentInventoryElem = container;
                 }
                 // Deadline-capped wait — if the badge manager's guard flags ever stick
                 // (e.g. an uncaught throw), give up instead of spinning forever.
@@ -2097,10 +2100,11 @@ export default class CustomTabsUI {
                 inventoryBadgeManager.lastRenderTime = 0;
                 inventoryBadgeManager.lastCalculationTime = 0;
                 await inventoryBadgeManager.renderAllBadges();
-                this._refreshStaleHeaderTotals(invContainer);
+                this._refreshStaleHeaderTotals(this._badgeRefreshContainer);
             }
         } finally {
             this._badgeRefreshRunning = false;
+            this._badgeRefreshContainer = null;
         }
     }
 

@@ -152,6 +152,30 @@ describe('section header totals after the prices arrive', () => {
         expect(layout).toHaveBeenCalledTimes(1);
     });
 
+    test('a container swapped in while a render runs gets its headers checked', async () => {
+        const { container, tiles, layout } = await setup();
+        await ui._applyLayout();
+        layout.mockClear();
+
+        // The game replaces the inventory grid mid-render; its own refresh request is folded in
+        const fresh = document.createElement('div');
+        for (const t of tiles) fresh.appendChild(t);
+        document.body.appendChild(fresh);
+        let firstRender = true;
+        badgeMock.renderAllBadges.mockImplementation(async () => {
+            if (firstRender) {
+                firstRender = false;
+                ui._invContainer = fresh;
+                ui._refreshBadgesWhenSettled(fresh);
+            }
+            tiles[0].dataset.askValue = '2000000';
+        });
+        await ui._refreshBadgesWhenSettled(container);
+        badgeMock.renderAllBadges.mockReset();
+
+        expect(layout).toHaveBeenCalled();
+    });
+
     test('does not redraw when the render left the values alone, so the refresh settles', async () => {
         const { container, tiles, layout } = await setup();
         tiles[0].dataset.askValue = '1000';
