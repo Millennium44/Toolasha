@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Protect-from sweep uses the protection you hold, and always compares mirrors
+
+- An opt-in setting lets the enhancing protect-from sweep spend protection items you hold above a keep-N reserve (default 2), valued at their sell price before buying the rest, and the Philosopher's Mirror start level and savings now show whatever is in the protection slot.
+
 ### Labyrinth dates and scroll names
 
 - The Labyrinth entry forecast treats any pre-1970 date as unset, so no spelling of the game's "never set" date can bring back a false "entry ready" alert.
