@@ -4605,6 +4605,16 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays your collection count on skilling actions (open Collections once to populate counts)',
             },
+            collectionOptimizer: {
+                id: 'collectionOptimizer',
+                label: 'Collection Points Optimizer: cheapest next collection points on the Collections tab',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Ranks each item’s next collection-points rung by gold per point across crafting, ' +
+                    'decompose chains and shop gear decomposed (buying on the market does not collect), ' +
+                    'and plans the cheapest route to +N points. Appears once the Collections tab has loaded.',
+            },
         },
     },
 

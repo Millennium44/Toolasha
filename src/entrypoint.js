@@ -1942,6 +1942,16 @@ function registerFeatures() {
                 config.isFeatureEnabled('collectionFavorites') ||
                 config.getSetting('collectionFilters_skillingBadges'),
         },
+        {
+            key: 'collectionOptimizer',
+            name: 'Collection Points Optimizer',
+            category: 'Collection',
+            module: Market.collectionOptimizer,
+            async: false,
+            // Its disable() removes the panel and drops the priced routes, so a
+            // live setting change can stop it the same way a character switch does.
+            liveStop: true,
+        },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
         {
             key: 'chatProfileLink',

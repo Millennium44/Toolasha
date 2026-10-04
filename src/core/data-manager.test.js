@@ -2121,3 +2121,49 @@ describe('the party roster', () => {
         });
     });
 });
+
+/**
+ * The Collections log arrives as `collections_updated` when the Achievements →
+ * Collections tab is opened: one row per collected item, an uncollected item
+ * absent. It belongs to the character that fetched it.
+ */
+describe('collections_updated', () => {
+    const payload = {
+        type: 'collections_updated',
+        collections: [{ characterID: 1, itemHrid: '/items/umbral_hood', count: 331, enhancementData: '{}' }],
+    };
+
+    test('is stored, timestamped and re-emitted', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const listener = vi.fn();
+        dataManager.on('collections_updated', listener);
+        webSocketHandlers.get('collections_updated')(payload);
+        // Wait for deferred emit (setTimeout in emit())
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        dataManager.off('collections_updated', listener);
+
+        expect(dataManager.getCharacterCollections()).toEqual(payload.collections);
+        expect(dataManager.characterCollectionsAt).toBeGreaterThan(0);
+        expect(listener).toHaveBeenCalledWith(payload);
+    });
+
+    test('a message without a collections list is ignored', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterCollections = null;
+        webSocketHandlers.get('collections_updated')({ type: 'collections_updated' });
+        expect(dataManager.getCharacterCollections()).toBeNull();
+    });
+
+    test("a character switch clears the previous character's collections", async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.lastCharacterSwitchTime = 0;
+        await webSocketHandlers.get('init_character_data')(initPayload({ character: { id: 'char-A', name: 'Alpha' } }));
+        webSocketHandlers.get('collections_updated')(payload);
+        expect(dataManager.getCharacterCollections()).toHaveLength(1);
+
+        await webSocketHandlers.get('init_character_data')(initPayload({ character: { id: 'char-B', name: 'Beta' } }));
+        expect(dataManager.getCurrentCharacterId()).toBe('char-B');
+        expect(dataManager.getCharacterCollections()).toBeNull();
+        dataManager.lastCharacterSwitchTime = 0;
+    });
+});

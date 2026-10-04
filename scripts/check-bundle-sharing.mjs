@@ -103,6 +103,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/points-from-count.js',
+        // The game's count-to-points ladder: two pure functions, no imports and
+        // no module state. The utils bundle (the Bestiary, through bestiary.js)
+        // and the market bundle (the Collection Points optimizer) both score with it.
+        'stateless points ladder; no module state to share',
+    ],
+    [
         'src/utils/dungeon-run-result.js',
         // Run-result constants and pure predicates/summaries over stored runs,
         // no imports and no module state. The combat bundle (dungeon tracker)

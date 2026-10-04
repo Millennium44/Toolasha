@@ -1182,6 +1182,8 @@ class DataManager {
             // Clear old character data
             this.characterData = null;
             this.characterMonsters = null;
+            this.characterCollections = null;
+            this.characterCollectionsAt = null;
             this.characterSkills = null;
             this.characterItems = null;
             this._itemIndexById = null;
@@ -1508,6 +1510,17 @@ class DataManager {
             this.characterMonsters = data.monsters;
             this.characterMonstersAt = Date.now();
             this.emit('monsters_updated', data);
+        });
+
+        // The Collections log, as the Achievements tab fetches it: one row per
+        // collected item with its count. An item never collected is absent
+        // (count 0). Like the Bestiary, it arrives only when the tab is opened
+        this.webSocketHook.on('collections_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+            if (!Array.isArray(data?.collections)) return;
+            this.characterCollections = data.collections;
+            this.characterCollectionsAt = Date.now();
+            this.emit('collections_updated', data);
         });
 
         // Handle items_updated (inventory/equipment changes)
@@ -2919,6 +2932,15 @@ class DataManager {
      */
     getCharacterMonsters() {
         return this.characterMonsters || null;
+    }
+
+    /**
+     * The Collections log as last fetched: one row per collected item with its count.
+     * @returns {Array<{characterID?: number, itemHrid: string, count: number, enhancementData?: string}>|null}
+     *   Null until the Achievements → Collections tab has loaded it this session
+     */
+    getCharacterCollections() {
+        return this.characterCollections || null;
     }
 
     getInventory() {

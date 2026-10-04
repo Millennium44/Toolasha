@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collection points optimizer
+
+- A new panel on Achievements → Collections (off by default) ranks the cheapest next collection point per item by gold per point — crafting, decompose chains that collect each lower piece, and shop gear decomposed — with a "+N points" planner and a max time per step; it uses only the counts the game sends when the tab opens.
+
 ### Trial history keeps the game's tier timestamps
 
 - Guild trial exports and saved history now use the game's tier start timestamps, so delayed messages or reopening a fight no longer shift recorded start times.

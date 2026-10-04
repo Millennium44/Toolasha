@@ -18,6 +18,7 @@ const {
     getActionHridFromName,
     getItemHridFromName,
     getShopCoinCost,
+    getShopCoinOnlyCost,
     getActionHridFromIconHref,
     getSkillHridFromIconHref,
     getItemHridFromIconHref,
@@ -78,6 +79,42 @@ describe('getItemHridFromName', () => {
 
     test('returns null when no exact or variant match exists', () => {
         expect(getItemHridFromName('Nothing Here')).toBeNull();
+    });
+});
+
+describe('getShopCoinOnlyCost', () => {
+    beforeEach(() => {
+        state.gameData = {
+            shopItemDetailMap: {
+                '/shop_items/bag': { itemHrid: '/items/bag', costs: [{ itemHrid: '/items/coin', count: 500 }] },
+                '/shop_items/mixed': {
+                    itemHrid: '/items/mixed',
+                    costs: [
+                        { itemHrid: '/items/coin', count: 100 },
+                        { itemHrid: '/items/chimerical_token', count: 20 },
+                    ],
+                },
+            },
+        };
+    });
+
+    test('a coin-only offer is its coin price', () => {
+        expect(getShopCoinOnlyCost('/items/bag')).toBe(500);
+    });
+
+    test('an offer handing over several units is priced per unit received', () => {
+        state.gameData.shopItemDetailMap['/shop_items/bundle'] = {
+            itemHrid: '/items/bundle',
+            outputCount: 5,
+            costs: [{ itemHrid: '/items/coin', count: 500 }],
+        };
+        expect(getShopCoinOnlyCost('/items/bundle')).toBe(100);
+    });
+
+    test('an offer that also asks for another currency is not a coin price', () => {
+        expect(getShopCoinOnlyCost('/items/mixed')).toBe(0);
+        // The coin component alone is still what getShopCoinCost reports
+        expect(getShopCoinCost('/items/mixed')).toBe(100);
     });
 });
 
