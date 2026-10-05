@@ -484,6 +484,25 @@ describe('the panel', () => {
         expect(optimizer.maxStepHours).toBe(8);
     });
 
+    test('a panel opened while the routes are still pricing is finished by that build', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        // The tab is left and reopened before the build lands: the game draws a new panel
+        drawCollectionsTab();
+        for (const handler of bus.handlers.collections_updated || []) handler({ collections: COLLECTIONS });
+        expect(panel().textContent).toContain('Pricing routes');
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+    });
+
+    test('a character switched mid-build still gets its panel priced', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        game.characterId = 'char-2';
+        for (const handler of bus.handlers.collections_updated || []) handler({ collections: COLLECTIONS });
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        expect(optimizer.routesFor).toBe('char-2');
+    });
+
     test('disable removes the panel and stops listening', () => {
         drawCollectionsTab();
         optimizer.initialize();

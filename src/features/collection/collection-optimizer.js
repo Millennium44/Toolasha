@@ -543,16 +543,25 @@ class CollectionOptimizer {
         this.building = (async () => {
             try {
                 const routes = await buildCollectionRoutes({ cancelled });
-                if (!routes || cancelled()) return;
-                this.routes = routes;
-                this.routesFor = characterId;
-                this.index = indexRoutes(routes);
+                if (routes && !cancelled()) {
+                    this.routes = routes;
+                    this.routesFor = characterId;
+                    this.index = indexRoutes(routes);
+                }
             } catch (error) {
                 console.error('[CollectionOptimizer] Pricing routes failed:', error);
             } finally {
                 if (generation === this.generation) this.building = null;
             }
-            if (!cancelled() && root.isConnected && this.index) this.render(root);
+            if (generation !== this.generation) return;
+            // A panel opened while this build ran found it pending and drew "Pricing routes…" for
+            // itself: it is the panel to finish, not the (possibly gone) one that started the build.
+            // A character switched mid-build left no routes; drawing the panel starts the new one.
+            // A build that simply failed is left alone, or it would retry in a loop.
+            const switched = (dataManager.getCurrentCharacterId?.() ?? null) !== characterId;
+            if (!this.index && !switched) return;
+            const target = root.isConnected ? root : document.querySelector(`.${PANEL_CLASS}`);
+            if (target) this.render(target);
         })();
     }
 
