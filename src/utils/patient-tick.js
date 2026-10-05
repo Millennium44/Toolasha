@@ -75,6 +75,8 @@ export function isPatientTickOn(side) {
  * @param {Object} [book] - The rest of the book, for the no-crossing check and the band
  * @param {number|null} [book.ask] - Best ask (a buy never ticks up to it)
  * @param {number|null} [book.bid] - Best bid (a sell never ticks down to it)
+ * @param {boolean} [book.askEstimated] - The ask is a value-map stand-in, not a listing: no bound
+ * @param {boolean} [book.bidEstimated] - The bid is a value-map stand-in, not a listing: no bound
  * @param {string} [book.itemHrid] - Item HRID, to clamp into the tradable range
  * @param {number} [book.enhancementLevel=0] - Enhancement level; sets the tick size and the band
  * @returns {number|null} The improved price, or `price` unchanged
@@ -86,7 +88,10 @@ export function patientTickPrice(price, side, basis, book = {}) {
     if (!buyAtBid && !sellAtAsk) return price;
     if (!isPatientTickOn(side)) return price;
 
-    const { ask = null, bid = null, itemHrid = null, enhancementLevel = 0 } = book;
+    // Only a real listing on the other side can be filled against; an estimated one is no bound
+    const { itemHrid = null, enhancementLevel = 0 } = book;
+    const ask = book.askEstimated ? null : (book.ask ?? null);
+    const bid = book.bidEstimated ? null : (book.bid ?? null);
     let improved;
     if (buyAtBid) {
         improved = nextPriceUp(price, enhancementLevel);

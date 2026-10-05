@@ -113,6 +113,12 @@ describe('patientTickPrice', () => {
         expect(patientTickPrice(1000, 'sell', 'ask', { bid: 992 })).toBe(996);
     });
 
+    test('an estimated other side is no listing to fill against', () => {
+        // Live bid 1050, no ask: the value map's 1000 stands in, but nothing can be bought there
+        expect(patientTickPrice(1050, 'buy', 'bid', { ask: 1000, askEstimated: true })).toBe(1052);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 1100, bidEstimated: true })).toBe(996);
+    });
+
     test('Steady Shot: a 141,500 bid one tick under a 142,000 ask buys at 142,000, not 141,500', () => {
         expect(patientTickPrice(141_500, 'buy', 'bid', { ask: 142_000 })).toBe(142_000);
     });
