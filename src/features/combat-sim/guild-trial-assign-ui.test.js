@@ -562,6 +562,20 @@ describe('the Assign skilling view', () => {
         expect(text(shell.querySelector('tr[data-member-id="900005"]'))).toContain('Milking');
     });
 
+    test('an update held back while typing is drawn once the field loses focus', async () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        const input = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        input.focus();
+        META[900003] = { ...META[900003], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: CRAFTING };
+        planner.inputsChanged();
+        const now = () => shell.querySelector('tr[data-member-id="900003"]').children[1].textContent;
+        expect(now()).toBe('—');
+        input.blur();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(now()).toBe('Crafting');
+    });
+
     test('a changed input redraws the view; an unchanged one does not', () => {
         const { planner, shell, sim } = makeSim();
         sim.panel.render();

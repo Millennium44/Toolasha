@@ -318,6 +318,7 @@ export class TrialAssignPlanner {
     reset() {
         this.controller?.abort();
         this.controller = null;
+        this.pendingBlurRedraw = false;
         this.mode = ASSIGN_MODES.Bench;
         this.trialOverrides = null;
         this.cap = null;
@@ -634,7 +635,23 @@ export class TrialAssignPlanner {
         const active = typeof document === 'undefined' ? null : document.activeElement;
         const typing =
             active?.closest?.('[data-trial-assign-root]') && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
-        if (!typing) this.sim.panel?.render();
+        if (!typing) {
+            this.sim.panel?.render();
+            return;
+        }
+        // Catch up once the player leaves the field; a tick later, so focus moving to another field in
+        // the view is seen as still typing
+        if (this.pendingBlurRedraw) return;
+        this.pendingBlurRedraw = true;
+        active.addEventListener(
+            'blur',
+            () =>
+                setTimeout(() => {
+                    this.pendingBlurRedraw = false;
+                    this.inputsChanged();
+                }, 0),
+            { once: true }
+        );
     }
 
     /**
