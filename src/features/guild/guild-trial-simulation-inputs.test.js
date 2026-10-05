@@ -305,6 +305,29 @@ describe('reusable trial capture library', () => {
         expect(() => validateTrialInputBundle(loaded)).not.toThrow();
     });
 
+    test('saved captures are size-checked once on the way in, not again on every load and save', async () => {
+        for (let day = 1; day <= 3; day++) {
+            const date = `2026-10-0${day}T00:00:00Z`;
+            await saveTrialInputBundle(bundle({ weekStartAt: date, exportedAt: date }));
+        }
+        const encode = vi.spyOn(TextEncoder.prototype, 'encode');
+        try {
+            expect(await loadSavedTrialInputBundles()).toHaveLength(3);
+            expect(encode).not.toHaveBeenCalled();
+
+            await saveTrialInputBundle(
+                bundle({ weekStartAt: '2026-10-04T00:00:00Z', exportedAt: '2026-10-04T00:00:00Z' })
+            );
+            // The incoming capture only, not the three already in the library
+            expect(encode).toHaveBeenCalledOnce();
+        } finally {
+            encode.mockRestore();
+        }
+        // Still validated structurally on the way out
+        game.stored.set('guild_trial_inputs_1', [{ format: 'bad' }]);
+        expect(await loadSavedTrialInputBundles()).toEqual([]);
+    });
+
     test('reports failed writes and remains usable for the next save', async () => {
         game.save.mockResolvedValueOnce(null);
         await expect(saveTrialInputBundle(bundle())).rejects.toThrow('could not save');

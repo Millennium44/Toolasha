@@ -200,8 +200,21 @@ export async function captureTrialSimulationInputs(characterId, roster = []) {
     return snapshot;
 }
 
-/** Validate a capture export before it can enter the local library or simulator. */
-export function validateTrialInputBundle(value, { owner = dataManager.getCurrentCharacterId(), host } = {}) {
+/**
+ * Validate a capture export before it can enter the local library or simulator.
+ * @param {*} value - The candidate capture
+ * @param {Object} [options]
+ * @param {string|number} [options.owner] - The exporting character it must belong to
+ * @param {string|null} [options.host] - The game server it must come from
+ * @param {boolean} [options.trusted=false] - Read back from this library, which admits
+ *   nothing unvalidated: the 20 MB size check (a full JSON serialization) was made on
+ *   the way in, and storage hands back a fresh copy, so neither is repeated
+ * @returns {Object} The capture, as a copy
+ */
+export function validateTrialInputBundle(
+    value,
+    { owner = dataManager.getCurrentCharacterId(), host, trusted = false } = {}
+) {
     if (host === undefined) host = typeof location === 'undefined' ? null : location.hostname;
     if (!record(value) || value.format !== 'toolasha-guild-trial-inputs' || value.version !== 1)
         throw new Error('Choose a Trial Input Capture JSON export (version 1).');
@@ -297,9 +310,9 @@ export function validateTrialInputBundle(value, { owner = dataManager.getCurrent
     ]) {
         if (!record(inputs[key])) throw new Error(`The capture is missing ${key}.`);
     }
-    if (new TextEncoder().encode(JSON.stringify(value)).length > MAX_TRIAL_INPUT_BYTES)
+    if (!trusted && new TextEncoder().encode(JSON.stringify(value)).length > MAX_TRIAL_INPUT_BYTES)
         throw new Error('Capture JSON must be smaller than 20 MB.');
-    const checked = structuredClone(value);
+    const checked = trusted ? { ...value } : structuredClone(value);
     if (checked.guildID == null && inputs.profiles.length) {
         const guildIds = new Set(inputs.profiles.map((entry) => String(entry.profile.guildId)));
         if (
@@ -375,7 +388,7 @@ function checkedSavedBundles(saved, owner) {
     const result = [];
     for (const bundle of saved.slice(0, MAX_SAVED_CAPTURES)) {
         try {
-            result.push(validateTrialInputBundle(bundle, { owner }));
+            result.push(validateTrialInputBundle(bundle, { owner, trusted: true }));
         } catch {
             // An unrelated/corrupt stored record cannot become a simulation input.
         }
