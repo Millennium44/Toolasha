@@ -678,7 +678,16 @@ export class TrialAssignPlanner {
             'Slots per trial',
             context.cap,
             (value) => {
-                this.cap = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : null;
+                // Out of 0–100 (a cleared field reads as 0 too) is refused visibly; the last valid cap stays
+                const input = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
+                const raw = input?.value;
+                const valid = raw !== '' && Number.isFinite(value) && value >= 0 && value <= 100;
+                if (input) {
+                    input.style.borderColor = valid ? '' : '#ff6b6b';
+                    input.title = valid ? '' : 'Must be between 0 and 100; the last valid value is used';
+                }
+                if (!valid) return;
+                this.cap = Math.floor(value);
                 this.edited();
             },
             { min: 0, max: 100, step: 1, disabled: busy }

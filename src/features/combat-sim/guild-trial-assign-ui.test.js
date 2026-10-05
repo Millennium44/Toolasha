@@ -344,6 +344,19 @@ describe('the Assign skilling view', () => {
             expect(baseWork.style.borderColor).not.toBe('');
         }
 
+        const cap = inputFor('Slots per trial');
+        const capBefore = planner.cap;
+        cap.focus();
+        for (const bad of ['', '-2', '150']) {
+            cap.value = bad;
+            cap.dispatchEvent(new Event('input'));
+            expect(planner.cap).toBe(capBefore);
+            expect(cap.style.borderColor).not.toBe('');
+        }
+        cap.value = '12';
+        cap.dispatchEvent(new Event('input'));
+        expect(planner.cap).toBe(12);
+
         const level = shell.querySelector('[aria-label="Unknown Crafting level"]');
         level.value = '-5';
         level.dispatchEvent(new Event('input'));
