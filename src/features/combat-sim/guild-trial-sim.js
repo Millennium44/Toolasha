@@ -107,6 +107,28 @@ function select(parent, label, value, options, change, disabled = false) {
     parent.appendChild(wrapper);
 }
 
+/** Payout buildings, matched by letters as the trials store does (`/guild_buildings/builders_hall`). */
+const PAYOUT_BUILDINGS = { hall: 'buildershall', treasury: 'treasury' };
+
+function clampBuildingLevel(value) {
+    const level = Math.floor(Number(value));
+    return Number.isFinite(level) ? Math.max(0, Math.min(20, level)) : 0;
+}
+
+/** A payout building's level from a `guildBuildingLevelMap`, 0 when the guild has not built it. */
+function payoutBuildingLevel(levelMap, letters) {
+    for (const [hrid, level] of Object.entries(levelMap || {})) {
+        if (
+            hrid
+                .toLowerCase()
+                .replace(/[^a-z]/g, '')
+                .endsWith(letters)
+        )
+            return clampBuildingLevel(level);
+    }
+    return 0;
+}
+
 /** Skilling inputs that replace a capped reading's lower-bound curve once edited. */
 const SUCCESS_INPUTS = new Set([
     'effectiveLevel',
@@ -146,8 +168,9 @@ export class GuildTrialSim {
         this.successReadings = {};
         this.extra = {};
         this.includeHouses = true;
-        this.hallLevel = 0;
-        this.treasuryLevel = 0;
+        // null follows the current guild's buildings; a number is a typed, captured or imported level.
+        this.hallLevel = null;
+        this.treasuryLevel = null;
         this.result = null;
         this.resultScenario = null;
         this.error = '';
@@ -162,6 +185,15 @@ export class GuildTrialSim {
         this.selectedSavedCapture = '-1';
         this.participantCount = null;
         this.skillingParticipantCount = null;
+    }
+
+    /** Builder's Hall and Treasury levels for payouts: an entered level, else the current guild's. */
+    payoutLevels() {
+        const levels = dataManager.guildBuildingLevelMap;
+        return {
+            hall: this.hallLevel ?? payoutBuildingLevel(levels, PAYOUT_BUILDINGS.hall),
+            treasury: this.treasuryLevel ?? payoutBuildingLevel(levels, PAYOUT_BUILDINGS.treasury),
+        };
     }
 
     /** Signups that scale skilling work: the recorded signup count, never fewer than the roster. */
@@ -472,8 +504,8 @@ export class GuildTrialSim {
             };
             this.extra = {};
             this.includeHouses = true;
-            this.hallLevel = Number(inputs.guildBuildingLevelMap['/guild_buildings/builders_hall']) || 0;
-            this.treasuryLevel = Number(inputs.guildBuildingLevelMap['/guild_buildings/treasury']) || 0;
+            this.hallLevel = payoutBuildingLevel(inputs.guildBuildingLevelMap, PAYOUT_BUILDINGS.hall);
+            this.treasuryLevel = payoutBuildingLevel(inputs.guildBuildingLevelMap, PAYOUT_BUILDINGS.treasury);
             this.changed();
             this.notice = `${members.length}/${signedUp.length} signup members loaded for this boss. ${noLoadout} have no selected trial loadout; ${missing} lack a usable combat capture or profile. All ${signedUp.length} signups count toward boss scaling; only loaded builds contribute damage and healing. Captured guild building buffs and current community buffs are used.`;
         } catch (error) {
@@ -625,8 +657,8 @@ export class GuildTrialSim {
                 };
                 this.extra = {};
                 this.includeHouses = true;
-                this.hallLevel = Number(input.hallLevel) || 0;
-                this.treasuryLevel = Number(input.treasuryLevel) || 0;
+                this.hallLevel = input.hallLevel == null ? null : clampBuildingLevel(input.hallLevel);
+                this.treasuryLevel = input.treasuryLevel == null ? null : clampBuildingLevel(input.treasuryLevel);
                 this.notice = 'Setup imported with its saved buff context. Check the snapshot dates before using it.';
             } else {
                 const imported = parseShykaiImport(text);
@@ -666,8 +698,8 @@ export class GuildTrialSim {
             download('toolasha-trial-sim-setup.json', {
                 toolashaGuildTrialSimulation: 1,
                 scenario: this.makeScenario(),
-                hallLevel: this.hallLevel,
-                treasuryLevel: this.treasuryLevel,
+                hallLevel: this.payoutLevels().hall,
+                treasuryLevel: this.payoutLevels().treasury,
             });
         } catch (error) {
             this.error = error.message;
@@ -830,21 +862,22 @@ export class GuildTrialSim {
             button(row(body), 'Apply import', () => this.importSetup(this.importText), busy);
         }
         const payout = row(body);
+        const levels = this.payoutLevels();
         const hallInput = field(
             payout,
             'Builder’s Hall level',
-            this.hallLevel,
+            levels.hall,
             (v) => {
-                this.hallLevel = Math.max(0, Math.min(20, Math.floor(v)));
+                this.hallLevel = clampBuildingLevel(v);
             },
             { min: 0, max: 20, disabled: busy }
         );
         const treasuryInput = field(
             payout,
             'Treasury level',
-            this.treasuryLevel,
+            levels.treasury,
             (v) => {
-                this.treasuryLevel = Math.max(0, Math.min(20, Math.floor(v)));
+                this.treasuryLevel = clampBuildingLevel(v);
             },
             { min: 0, max: 20, disabled: busy }
         );
@@ -1177,6 +1210,7 @@ export class GuildTrialSim {
         card.dataset.trialSimResults = 'true';
         const format = (n, digits = 1) => Number(n).toLocaleString('en-US', { maximumFractionDigits: digits });
         const bound = result.lowerBound ? ' (lower bound)' : '';
+        const { hall, treasury } = this.payoutLevels();
         if (result.lowerBound) {
             const note = panelNote(
                 'Lower bound: a capped reading. A 100% success reading only shows success is at least 100% at that tier, so the curve uses the lowest effective level consistent with it. Tiers and points may be higher; enter the effective level or add a reading below 100% to tighten it.'
@@ -1190,20 +1224,14 @@ export class GuildTrialSim {
         );
         card.appendChild(panelLine('Mean highest banked tier', `${format(result.meanHighestTier, 2)}${bound}`));
         card.appendChild(
-            panelLine('Mean Guild Points', `${format(result.meanBasePoints * (1 + 0.02 * this.hallLevel))}${bound}`)
+            panelLine('Mean Guild Points', `${format(result.meanBasePoints * (1 + 0.02 * hall))}${bound}`)
         );
         card.appendChild(panelLine('Mean base points from unfinished tier', format(result.meanPartialBasePoints)));
         card.appendChild(
-            panelLine(
-                'Eligible member token contribution',
-                format(result.meanBasePoints * 0.5 * (1 + 0.02 * this.treasuryLevel))
-            )
+            panelLine('Eligible member token contribution', format(result.meanBasePoints * 0.5 * (1 + 0.02 * treasury)))
         );
         card.appendChild(
-            panelLine(
-                'With weekly participation bonus',
-                format(result.meanBasePoints * 0.75 * (1 + 0.02 * this.treasuryLevel))
-            )
+            panelLine('With weekly participation bonus', format(result.meanBasePoints * 0.75 * (1 + 0.02 * treasury)))
         );
         card.appendChild(
             panelNote(
@@ -1258,8 +1286,8 @@ export class GuildTrialSim {
                 toolashaGuildTrialSimulation: 1,
                 scenario: this.resultScenario,
                 result,
-                hallLevel: this.hallLevel,
-                treasuryLevel: this.treasuryLevel,
+                hallLevel: this.payoutLevels().hall,
+                treasuryLevel: this.payoutLevels().treasury,
             })
         );
     }

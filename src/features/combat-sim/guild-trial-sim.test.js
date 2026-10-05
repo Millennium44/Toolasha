@@ -107,6 +107,7 @@ vi.mock('./combat-sim-runner.js', () => ({
     runWorkerChunk: (...args) => harness.worker(...args),
 }));
 vi.mock('./guild-trial-runner.js', () => ({ runGuildTrialSimulation: (...args) => harness.worker(...args) }));
+import dataManager from '../../core/data-manager.js';
 import { GuildTrialSim } from './guild-trial-sim.js';
 import { GUILD_SKILLING_TICKS } from '../guild/guild-trial-messages.fixture.js';
 
@@ -539,6 +540,55 @@ describe('trial simulator controls and ownership', () => {
         level.value = '200';
         level.dispatchEvent(new Event('input'));
         expect(feature.makeScenario().members[0].successLowerBound).toBe(false);
+    });
+    test('pre-fills Builder’s Hall and Treasury from the guild, keeping a typed level', async () => {
+        dataManager.guildBuildingLevelMap = {
+            '/guild_buildings/builders_hall': 7,
+            '/guild_buildings/treasury': 4,
+            '/guild_buildings/shrine': 9,
+        };
+        try {
+            feature.addCurrentBuild();
+            harness.worker.mockResolvedValue({
+                kind: 'combat',
+                seed: 1,
+                runs: 1,
+                participants: 1,
+                bossParticipants: 1,
+                startTier: 1,
+                medianHighestTier: 4,
+                lowHighestTier: 4,
+                highHighestTier: 4,
+                meanHighestTier: 4,
+                meanBasePoints: 400,
+                meanPartialBasePoints: 0,
+                outcomes: { defeat: 1, timeout: 0, 'max-tier': 0 },
+                tiers: [],
+                warnings: [],
+            });
+            await feature.run();
+            const input = (name) =>
+                Array.from(document.querySelectorAll('label'))
+                    .find((label) => label.textContent.includes(name))
+                    .querySelector('input');
+            expect(input('Builder’s Hall level').value).toBe('7');
+            expect(input('Treasury level').value).toBe('4');
+            expect(text()).toContain('Mean Guild Points: 456'); // 400 x (1 + 0.02 x 7)
+            expect(text()).toContain('Eligible member token contribution: 216'); // 400 x 0.5 x 1.08
+            const hall = input('Builder’s Hall level');
+            hall.value = '2';
+            hall.dispatchEvent(new Event('input'));
+            dataManager.guildBuildingLevelMap = {
+                '/guild_buildings/builders_hall': 9,
+                '/guild_buildings/treasury': 5,
+            };
+            feature.panel.render();
+            expect(input('Builder’s Hall level').value).toBe('2');
+            expect(input('Treasury level').value).toBe('5');
+            expect(text()).toContain('Mean Guild Points: 416');
+        } finally {
+            dataManager.guildBuildingLevelMap = {};
+        }
     });
     test('ignores personal readings from a departed character socket', () => {
         const currentSocket = {};
