@@ -263,6 +263,8 @@ class GuildTrialRecorder {
         this.characterId = null;
         this.exportScopeVersion = 0;
         this.pendingGuildAdoption = null;
+        /** Drops the `guildTrialSim` watch that starts and stops the passive profile capture */
+        this.unwatchSimSetting = null;
         /** Last moment anything said a trial was happening */
         this.lastActivityAt = 0;
         /** Where the guild panel says the cycle is; null until one has been read */
@@ -304,7 +306,7 @@ class GuildTrialRecorder {
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         if (this.initialized) return;
         this.initialized = true;
-        startTrialSimulationCapture();
+        this._followSimulatorSetting();
 
         this.watcherId = setInterval(() => this._tick(), SNAPSHOT_MS);
         this.timers.registerInterval(this.watcherId, 'guildTrialRecorder.tick');
@@ -317,10 +319,31 @@ class GuildTrialRecorder {
     cleanup() {
         this.exportScopeVersion++;
         this.pendingGuildAdoption = null;
+        this.unwatchSimSetting?.();
+        this.unwatchSimSetting = null;
         stopTrialSimulationCapture();
         this.timers.clearAll();
         this.watcherId = null;
         this.initialized = false;
+    }
+
+    /**
+     * Keep opened profiles in memory only while the Trial Simulator is on.
+     *
+     * The passive copy feeds the simulator and its capture helper and nothing
+     * else, so with the simulator off every `profile_shared` would be cloned
+     * into a map no reader looks at. The capture helper still starts it lazily
+     * when its panel is opened.
+     * @private
+     */
+    _followSimulatorSetting() {
+        this.unwatchSimSetting?.();
+        if (config.getSetting('guildTrialSim') === true) startTrialSimulationCapture();
+        this.unwatchSimSetting =
+            config.onSettingChange?.('guildTrialSim', (enabled) => {
+                if (enabled === true) startTrialSimulationCapture();
+                else stopTrialSimulationCapture();
+            }) ?? null;
     }
 
     /** Block exports while the arriving guild's history and capture scope are being adopted. */

@@ -29,7 +29,17 @@ const game = vi.hoisted(() => ({
     testServer: false,
     viewLoadouts: [],
     profileRead: null,
+    settingWatchers: [],
+    socketHandlers: [],
 }));
+
+/** Flip a setting the way config does: store it, then tell its watchers */
+function changeSetting(key, value) {
+    game.settings[key] = value;
+    for (const watcher of game.settingWatchers.filter((entry) => entry.key === key)) watcher.callback(value);
+}
+
+const profileListeners = () => game.socketHandlers.filter((entry) => entry.type === 'profile_shared').length;
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
 
@@ -37,6 +47,24 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key, fallback) => (key in game.settings ? game.settings[key] : fallback),
         getSettingValue: (key, fallback) => fallback,
+        onSettingChange: (key, callback) => {
+            const entry = { key, callback };
+            game.settingWatchers.push(entry);
+            return () => {
+                game.settingWatchers = game.settingWatchers.filter((watcher) => watcher !== entry);
+            };
+        },
+    },
+}));
+// Only the passive profile capture listens here; what is under test is whether it is listening
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => game.socketHandlers.push({ type, handler }),
+        off: (type, handler) => {
+            game.socketHandlers = game.socketHandlers.filter(
+                (entry) => entry.type !== type || entry.handler !== handler
+            );
+        },
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -254,6 +282,34 @@ afterEach(() => {
     guildTrialRecorder.cleanup();
     guildTrialRecorder.session = null;
     vi.useRealTimers();
+});
+
+describe('the passive profile capture for the Trial Simulator', () => {
+    test('does not listen while the simulator is off', () => {
+        expect(profileListeners()).toBe(0);
+    });
+
+    test('starts with the simulator, stops when it is turned off, and goes with cleanup', () => {
+        changeSetting('guildTrialSim', true);
+        expect(profileListeners()).toBe(1);
+
+        changeSetting('guildTrialSim', false);
+        expect(profileListeners()).toBe(0);
+
+        changeSetting('guildTrialSim', true);
+        guildTrialRecorder.cleanup();
+        expect(profileListeners()).toBe(0);
+        // The watch went with the cleanup, so a later toggle starts nothing
+        changeSetting('guildTrialSim', true);
+        expect(profileListeners()).toBe(0);
+    });
+
+    test('is listening from the start when the simulator is already on', () => {
+        guildTrialRecorder.cleanup();
+        game.settings.guildTrialSim = true;
+        guildTrialRecorder.initialize(null);
+        expect(profileListeners()).toBe(1);
+    });
 });
 
 describe('thinBreakdown', () => {
