@@ -61,6 +61,7 @@ import {
 } from './guild-trial-assign-ui.js';
 import { GUILD_SKILLING_TICKS, CURRENT_TRIALS_DATA_SKILLING } from '../guild/guild-trial-messages.fixture.js';
 import { optimizeTrialAssignment } from './guild-trial-assign.js';
+import dataManager from '../../core/data-manager.js';
 
 /** A Friday 00:00 UTC, as the game's currentWeekStartMs computes it */
 const WEEK = '2026-10-02T00:00:00.000Z';
@@ -293,6 +294,24 @@ describe('the Assign skilling view', () => {
         const { shell, sim } = makeSim();
         sim.panel.render();
         expect(text(shell)).toContain('Slots: 20 (Encampment data unavailable)');
+    });
+
+    test('an Encampment level not loaded yet blocks a recommendation until a cap is known', () => {
+        const levels = dataManager.guildBuildingLevelMap;
+        dataManager.guildBuildingLevelMap = {};
+        try {
+            const { planner, shell, sim } = makeSim();
+            sim.panel.render();
+            expect(text(shell)).toContain('Skilling Encampment level has not loaded yet');
+            const recommend = () =>
+                [...shell.querySelectorAll('button')].find((b) => b.textContent === 'Recommend sign-ups');
+            expect(recommend().disabled).toBe(true);
+            planner.cap = 30;
+            sim.panel.render();
+            expect(recommend().disabled).toBe(false);
+        } finally {
+            dataManager.guildBuildingLevelMap = levels;
+        }
     });
 
     test('a pin and a typed level change the inputs', async () => {

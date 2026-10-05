@@ -366,6 +366,8 @@ export class TrialAssignPlanner {
             (detail) => Number(detail?.skillingTrialSlotsPerLevel) > 0
         );
         const derivedCap = skillingSlotCap(clientData?.guildBuildingDetailMap, dataManager.guildBuildingLevelMap);
+        // An empty level map on a fresh login means "not loaded yet", not a level-0 Encampment
+        const levelsKnown = Object.keys(dataManager.guildBuildingLevelMap || {}).length > 0;
         const ownLevels = ownBaseLevels();
         const defaults = defaultAssumptions(trials, this.sim.readings, {
             ownBaseLevels: ownLevels,
@@ -404,6 +406,7 @@ export class TrialAssignPlanner {
             cap: this.cap ?? derivedCap,
             derivedCap,
             encampment,
+            capUnknown: encampment && !levelsKnown && this.cap == null,
             assumed,
             minLevels,
             members,
@@ -719,7 +722,7 @@ export class TrialAssignPlanner {
             );
         setup.appendChild(
             panelNote(
-                `${context.encampment ? `Slots: ${context.derivedCap} from the Skilling Encampment.` : `Slots: ${BASE_SKILLING_SLOTS} (Encampment data unavailable).`} Base work 40,000 matches every recorded skilling pool (Milking, Alchemy, Cheesesmithing, Crafting).`
+                `${context.capUnknown ? 'Slots: the Skilling Encampment level has not loaded yet — open the Guild panel, or set Slots per trial here.' : context.encampment ? `Slots: ${context.derivedCap} from the Skilling Encampment.` : `Slots: ${BASE_SKILLING_SLOTS} (Encampment data unavailable).`} Base work 40,000 matches every recorded skilling pool (Milking, Alchemy, Cheesesmithing, Crafting).`
             )
         );
 
@@ -826,7 +829,7 @@ export class TrialAssignPlanner {
             actions,
             this.controller && !this.check ? 'Searching…' : 'Recommend sign-ups',
             () => this.recommend(),
-            busy || !context.trials.length
+            busy || !context.trials.length || context.capUnknown
         );
         button(actions, 'Check with simulator', () => this.checkWithSimulator(), busy || !this.result);
         if (this.controller) button(actions, 'Cancel', () => this.controller?.abort());
