@@ -168,7 +168,7 @@ async function saveCurrentCapture(automatic = false) {
         if (
             scope !== expected ||
             roundVersion !== version ||
-            (automatic && config.getSetting('guildTrialKeepInputs') !== true)
+            (automatic && (config.getSetting('guildTrialKeepInputs') !== true || !captureAllowed()))
         )
             return;
         await saveTrialInputBundle(bundle);
@@ -629,7 +629,10 @@ export function closeTrialInputCapture({ remember = false } = {}) {
 
 /** Close the panel for good when a setting it needs is off. */
 function closeIfDisallowed() {
-    if (!captureAllowed() && trialInputCapturePanel.isOpen()) closeTrialInputCapture({ remember: true });
+    if (captureAllowed()) return;
+    if (trialInputCapturePanel.isOpen()) closeTrialInputCapture({ remember: true });
+    // A panel closed with its X keeps the response listeners; they must not autosave once the feature is off.
+    else if (offLoadout || profileHandler || saveTimer) closeTrialInputCapture();
 }
 
 // Page-lifetime, like the panel itself: a panel left open is reopened by the

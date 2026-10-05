@@ -451,5 +451,9 @@ export async function saveTrialInputBundle(bundle) {
         'combatExport'
     );
     if (!outcome?.written) throw new Error('The browser could not save the capture. Keep your exported JSON backup.');
-    return expandFromStorage(structuredClone(outcome.value.find((entry) => sameCaptureSet(entry, checked))));
+    const kept = outcome.value.find((entry) => sameCaptureSet(entry, checked));
+    // A capture older than all eight kept sets is trimmed by the retention limit it was just merged under
+    if (!kept)
+        throw new Error(`This capture is older than the ${MAX_SAVED_CAPTURES} newest saved sets, so it was not kept.`);
+    return expandFromStorage(structuredClone(kept));
 }

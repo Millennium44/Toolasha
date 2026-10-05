@@ -241,6 +241,18 @@ describe('the capture panel with its settings off', () => {
         expect(game.openStates.at(-1)).toEqual({ id: 'trialInputCapture', open: false });
     });
 
+    test('a panel closed with its X stops autosaving when the simulator is switched off', async () => {
+        game.keepInputs = true;
+        openTrialInputCapture();
+        trialInputCapturePanel.hide();
+        fireSetting('guildTrialSim', false);
+
+        sendProfile(2);
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(game.save).not.toHaveBeenCalled();
+    });
+
     test('a reopen before the character’s settings arrive waits for them, then closes', async () => {
         game.characterSettingsLoaded = false;
         game.settings.guildTrialSim = false;
