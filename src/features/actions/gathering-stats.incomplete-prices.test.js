@@ -97,4 +97,41 @@ describe('gathering stats with incomplete prices', () => {
         competitorPanel.remove();
         vi.restoreAllMocks();
     });
+
+    test('drops a stale blended effective XP once no action is profitable to recover the loss', async () => {
+        const appleHrid = '/actions/foraging/apple';
+        const competitorHrid = '/actions/foraging/berries';
+        const applePanel = document.createElement('div');
+        const competitorPanel = document.createElement('div');
+        const appleDisplay = document.createElement('div');
+        const competitorDisplay = document.createElement('div');
+        document.body.append(applePanel, competitorPanel);
+        state.profitByAction = {
+            [appleHrid]: { profitPerHour: -100, hasMissingPrices: false },
+            [competitorHrid]: { profitPerHour: 100, hasMissingPrices: false },
+        };
+        stats.actionElements.set(applePanel, { actionHrid: appleHrid, displayElement: appleDisplay });
+        stats.actionElements.set(competitorPanel, { actionHrid: competitorHrid, displayElement: competitorDisplay });
+        vi.spyOn(stats, 'fitLineFontSizes').mockImplementation(() => {});
+
+        await stats.updateStats(applePanel);
+        await stats.updateStats(competitorPanel);
+        stats.addBestActionIndicators();
+        expect(appleDisplay.textContent).toContain('Eff. XP/hr: 75');
+
+        // The only profitable action loses its prices, so nothing can recover the apple loss
+        state.profitByAction[competitorHrid] = { profitPerHour: 100, hasMissingPrices: true };
+        await stats.updateStats(competitorPanel, { skipRender: true });
+        stats.renderIndicators(competitorPanel, stats.actionElements.get(competitorPanel));
+        stats.addBestActionIndicators();
+
+        expect(stats.actionElements.get(applePanel).effectiveXpPerHour).toBeNull();
+        expect(appleDisplay.textContent).not.toContain('Eff. XP/hr: 75');
+        expect(appleDisplay.textContent).toContain('Eff. XP/hr: 50');
+
+        stats.actionElements.clear();
+        applePanel.remove();
+        competitorPanel.remove();
+        vi.restoreAllMocks();
+    });
 });
