@@ -508,6 +508,31 @@ class LeaderboardXPTracker {
     }
 
     /**
+     * When each category's board of one type (e.g. `steam_standard`) was last recorded, read off the rank
+     * readings (the value series are per category only, so they cannot tell a Steam board from a global one).
+     * A reading is added when the rank moved or a refresh has passed, so a time can trail the last open by
+     * up to one board refresh. Empty while the tracker is off or has loaded nothing.
+     * @param {string} type - A board type as it appears in a message's `leaderboardType`
+     * @returns {Object<string, number>} category -> latest reading timestamp (ms)
+     */
+    getBoardRecordTimes(type) {
+        const times = {};
+        if (!this.initialized || !type) return times;
+        for (const [key, readings] of Object.entries(this.playerXPHistory)) {
+            if (!key.startsWith(RANK_PREFIX) || !Array.isArray(readings) || !readings.length) continue;
+            const split = key.indexOf('|', RANK_PREFIX.length);
+            if (split < 0) continue;
+            const category = key.slice(RANK_PREFIX.length, split);
+            const rest = key.slice(split + 1);
+            // The filter part is the type alone, or the type joined to other filters with "/"
+            if (!rest.startsWith(`${type}_`) && !rest.includes(`/${type}_`)) continue;
+            const t = readings[readings.length - 1]?.t;
+            if (Number.isFinite(t) && t > (times[category] ?? 0)) times[category] = t;
+        }
+        return times;
+    }
+
+    /**
      * Get the most recently seen leaderboard category.
      * @returns {string|null}
      */

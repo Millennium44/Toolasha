@@ -1129,7 +1129,8 @@ class PinnedActionsPage {
             if (pinnedItemHrid && actionHrid.startsWith('/actions/alchemy/')) {
                 const alchemyType = actionHrid.replace('/actions/alchemy/', '');
                 const profitData = this._computeAlchemyStats(alchemyType, pinnedItemHrid);
-                profitPerHour = profitData?.profitPerHour ?? null;
+                hasMissingPrices = Boolean(profitData?.hasMissingPrices);
+                profitPerHour = hasMissingPrices ? null : (profitData?.profitPerHour ?? null);
                 expPerHour = profitData?.expPerHour ?? null;
                 sells = profitData?.sells ?? [];
             } else {
@@ -1178,7 +1179,7 @@ class PinnedActionsPage {
      * Compute profit/hr and XP/hr for an alchemy action + item combo
      * @param {string} alchemyType - 'coinify', 'decompose', 'transmute', or 'unrefine'
      * @param {string} itemHrid - Item HRID
-     * @returns {Object|null} { profitPerHour, expPerHour }
+     * @returns {Object|null} { profitPerHour, expPerHour, sells, hasMissingPrices }
      */
     _computeAlchemyStats(alchemyType, itemHrid) {
         try {
@@ -1205,7 +1206,13 @@ class PinnedActionsPage {
             const expectedXP = calcXpPerAction(alchemyType, itemLevel, profitData.successRate);
             const expPerHour = profitData.actionsPerHour * expectedXP;
 
-            return { profitPerHour: profitData.profitPerHour, expPerHour, sells: sellsFromProfitData(profitData) };
+            return {
+                profitPerHour: profitData.profitPerHour,
+                expPerHour,
+                sells: sellsFromProfitData(profitData),
+                // An output the market could not price counted as worth nothing: the figure is a floor
+                hasMissingPrices: Boolean(profitData.hasMissingPrices || profitData.unpricedOutputs?.length > 0),
+            };
         } catch (error) {
             console.error('[PinnedActionsPage] Failed to compute alchemy stats:', error);
             return null;

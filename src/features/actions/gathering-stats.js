@@ -407,6 +407,9 @@ class GatheringStats {
                 const recoveryRatio = loss / bestProfit;
                 effectiveXp = (expPerHour + recoveryRatio * (bestProfitExp || 0)) / (1 + recoveryRatio);
             } else {
+                // No profitable action to recover the loss with: there is no gold-neutral figure,
+                // and the one from an earlier pass is no longer true
+                data.effectiveXpPerHour = null;
                 continue;
             }
 
@@ -459,7 +462,7 @@ class GatheringStats {
                     ? 'Eff. XP/hr: -- ⚠'
                     : effXp != null
                       ? `Eff. XP/hr: ${formatKMB(effXp)}`
-                      : stripEmoji(overallSpan.textContent);
+                      : `Eff. XP/hr: ${formatKMB(data.expPerHour)}`;
                 overallSpan.textContent = label + (isBestOverall ? ' 🏆' : '');
 
                 if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {

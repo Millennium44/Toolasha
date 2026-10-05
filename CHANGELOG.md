@@ -10,9 +10,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
 
+### Leaderboard Next board shows how stale the oldest board is
+
+- The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
+
 ### Audit round: Trial Sim
 
 - A capped (100%) Enhancing success reading is now a true lower bound — the old anchor ignored Enhancing's success bonus and could overstate later tiers; trial input autosave stops when the simulator is switched off with its panel closed; and importing a capture older than every kept set says so instead of failing.
+
+### Audit round: collection optimizer and unpriced rows
+
+- The Collection optimizer no longer stays stuck on "Pricing routes…" when the Collections tab is reopened or the character switches mid-pricing; pinned alchemy rows withhold profit instead of ranking an unpriced output or tea as worth 0, and Unrefine no longer picks a tea it cannot price; and gathering stats stop showing a stale blended XP/hr once no profitable action can cover the loss.
 
 ### Trial Sim stays off until switched on, and estimates closer to the game
 
