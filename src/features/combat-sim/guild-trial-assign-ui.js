@@ -705,13 +705,13 @@ export class TrialAssignPlanner {
                 // Out of 0–100 (a cleared field reads as 0 too) is refused visibly; the last valid cap stays
                 const input = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
                 const raw = input?.value;
-                const valid = raw !== '' && Number.isFinite(value) && value >= 0 && value <= 100;
+                const valid = raw !== '' && Number.isInteger(value) && value >= 0 && value <= 100;
                 if (input) {
                     input.style.borderColor = valid ? '' : '#ff6b6b';
-                    input.title = valid ? '' : 'Must be between 0 and 100; the last valid value is used';
+                    input.title = valid ? '' : 'Must be a whole number from 0 to 100; the last valid value is used';
                 }
                 if (!valid) return;
-                this.cap = Math.floor(value);
+                this.cap = value;
                 this.edited();
             },
             { min: 0, max: 100, step: 1, disabled: busy }

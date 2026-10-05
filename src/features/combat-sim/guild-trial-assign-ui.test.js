@@ -366,7 +366,7 @@ describe('the Assign skilling view', () => {
         const cap = inputFor('Slots per trial');
         const capBefore = planner.cap;
         cap.focus();
-        for (const bad of ['', '-2', '150']) {
+        for (const bad of ['', '-2', '150', '2.5']) {
             cap.value = bad;
             cap.dispatchEvent(new Event('input'));
             expect(planner.cap).toBe(capBefore);
