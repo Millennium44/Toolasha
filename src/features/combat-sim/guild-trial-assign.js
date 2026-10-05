@@ -170,16 +170,21 @@ function prepare(problem) {
         if (!id || seen.has(id)) continue;
         seen.add(id);
         const rates = trials.map((hrid) => (raw.rates?.[hrid] ? memberTierRates(raw.rates[hrid]) : null));
-        const pin = raw.pin === BENCH_PIN ? -1 : trials.indexOf(raw.pin);
+        // A pin to a trial that was not drawn is no pin at all; a pin to a drawn trial the member
+        // has no rate for still counts them as a participant
+        const pinned = raw.pin === BENCH_PIN ? -1 : trials.indexOf(raw.pin);
         const current = trials.indexOf(raw.current);
+        const inCombat = raw.inCombat === true;
         members.push({
             id,
             name: String(raw.name || id),
             rates,
-            // A pin to a trial with no rate still counts the member as a participant
-            pin: raw.pin == null || raw.pin === '' ? null : pin,
+            pin: raw.pin === BENCH_PIN || pinned >= 0 ? pinned : null,
             current: current >= 0 ? current : -1,
-            inCombat: raw.inCombat === true,
+            inCombat,
+            // Leaving skilling costs the weekly participation bonus unless the member is in combat,
+            // so only combat sign-ups are benched for points; anyone else is benched only for slots
+            mustPlace: mode === ASSIGN_MODES.Fill || !inCombat,
         });
     }
     return {
@@ -305,7 +310,7 @@ function greedy(state, order = null) {
         }
         return pick;
     };
-    const accept = (pick) => pick && (state.mode === ASSIGN_MODES.Fill || pick.gain > EPSILON);
+    const accept = (pick) => pick && (state.members[pick.m].mustPlace || pick.gain > EPSILON);
     if (order) {
         for (const m of order) {
             if (!free.has(m)) continue;
@@ -318,7 +323,7 @@ function greedy(state, order = null) {
         let pick = null;
         for (const m of free) {
             const candidate = best(m);
-            if (candidate && (!pick || candidate.gain > pick.gain + EPSILON)) pick = candidate;
+            if (accept(candidate) && (!pick || candidate.gain > pick.gain + EPSILON)) pick = candidate;
         }
         if (!accept(pick)) break;
         sheet.move(pick.m, pick.t);
@@ -336,8 +341,8 @@ function improve(state, sheet) {
         let pick = null;
         for (let t = -1; t < state.trials.length; t++) {
             if (t === from || !canPlace(state, m, t)) continue;
-            // Fill mode keeps everyone placed; a full trial is reached by a swap instead
-            if (t < 0 && state.mode === ASSIGN_MODES.Fill) continue;
+            // A member who must be placed stays placed; a full trial is reached by a swap instead
+            if (t < 0 && state.members[m].mustPlace) continue;
             if (t >= 0 && sheet.counts[t] >= state.caps[t]) continue;
             const gain = sheet.moveGain(m, t);
             if (gain > EPSILON && (!pick || gain > pick.gain)) pick = { t, gain };
@@ -354,6 +359,11 @@ function improve(state, sheet) {
             const ta = sheet.assignment[a];
             const tb = sheet.assignment[b];
             if (ta === tb || !canPlace(state, a, tb) || !canPlace(state, b, ta)) continue;
+            // Benching a member who must be placed is only a trade for another such member
+            // left out for want of slots
+            const benched = tb < 0 ? a : ta < 0 ? b : null;
+            const joining = tb < 0 ? b : ta < 0 ? a : null;
+            if (benched != null && state.members[benched].mustPlace && !state.members[joining].mustPlace) continue;
             if (sheet.swapGain(a, b) > EPSILON) {
                 sheet.move(a, -1);
                 sheet.move(b, ta);
@@ -407,6 +417,7 @@ function describe(state, sheet) {
             pinned: member.pin != null,
             inCombat: member.inCombat,
             hasRate: t >= 0 ? member.rates[t] != null : null,
+            losesBonus: t < 0 && !member.inCombat,
         };
     });
     const moves = members
@@ -554,9 +565,10 @@ export function signupMessages(groups, { maxBytes = 400, prefix = 'Skilling sign
             if (bytes(current + opener + names[index]) > maxBytes) {
                 if (empty) {
                     // A single name past the limit is cut rather than dropped or looped on
-                    let name = names[index];
-                    while (name.length && bytes(current + opener + name) > maxBytes) name = name.slice(0, -1);
-                    messages.push(current + opener + name);
+                    // Cut by code point so a surrogate pair is never split
+                    const points = [...names[index]];
+                    while (points.length && bytes(current + opener + points.join('')) > maxBytes) points.pop();
+                    messages.push(current + opener + points.join(''));
                     index++;
                     head = `${group.label} (cont.): `;
                     continue;

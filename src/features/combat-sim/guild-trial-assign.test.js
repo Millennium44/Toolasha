@@ -100,10 +100,10 @@ describe('optimizeTrialAssignment', () => {
         expect(result.totalPoints).toBeGreaterThan(0);
     });
 
-    test('bench mode leaves out a member who only adds to the pool; fill mode places them', () => {
+    test('bench mode leaves out a combat member who only adds to the pool; fill mode places them', () => {
         const members = [
             member('1', { [CRAFTING]: strong }),
-            member('2', { [CRAFTING]: { ...weak, workPower: 1, effectiveLevel: 1 } }),
+            member('2', { [CRAFTING]: { ...weak, workPower: 1, effectiveLevel: 1 } }, { inCombat: true }),
         ];
         const bench = optimizeTrialAssignment({ trials: [CRAFTING], baseWork: 40000, members });
         expect(bench.members.find((m) => m.id === '2').trialHrid).toBeNull();
@@ -165,11 +165,16 @@ describe('optimizeTrialAssignment', () => {
             [95, 105],
             [170, 90],
         ];
+        // In combat, so the bench is open to every member and the search space is the full 3^6
         const members = levels.map(([c, m], i) =>
-            member(String(i), {
-                [CRAFTING]: { effectiveLevel: c, workPower: c * 1.5, actionSeconds: 6, doubleChance: 0 },
-                [MILKING]: { effectiveLevel: m, workPower: m * 1.5, actionSeconds: 6, doubleChance: 0 },
-            })
+            member(
+                String(i),
+                {
+                    [CRAFTING]: { effectiveLevel: c, workPower: c * 1.5, actionSeconds: 6, doubleChance: 0 },
+                    [MILKING]: { effectiveLevel: m, workPower: m * 1.5, actionSeconds: 6, doubleChance: 0 },
+                },
+                { inCombat: true }
+            )
         );
         const options = { trials, baseWork: 40000, caps: { [CRAFTING]: 3, [MILKING]: 3 } };
         const result = optimizeTrialAssignment({ ...options, members });
@@ -271,5 +276,58 @@ describe('signupMessages', () => {
         const text = messages.join(' ');
         for (const name of names) expect(text).toMatch(new RegExp(`(: |, )${name}(,| \\||$| )`));
         expect(text).toContain('(cont.)');
+    });
+});
+
+describe('review fixes', () => {
+    const strong = { effectiveLevel: 160, workPower: 250, actionSeconds: 5, doubleChance: 0 };
+    const idle = { effectiveLevel: 1, workPower: 1, actionSeconds: 5, doubleChance: 0 };
+
+    test('a pin to a trial that was not drawn is Auto, not the bench', () => {
+        const result = optimizeTrialAssignment({
+            trials: [CRAFTING],
+            baseWork: 40000,
+            members: [{ id: '1', name: 'A', rates: { [CRAFTING]: strong }, pin: '/guild_skilling/brewing' }],
+        });
+        expect(result.members[0]).toMatchObject({ trialHrid: CRAFTING, pinned: false });
+    });
+
+    test('bench mode benches only members in combat; anyone else benched is flagged', () => {
+        const result = optimizeTrialAssignment({
+            trials: [CRAFTING],
+            baseWork: 40000,
+            members: [
+                { id: '1', name: 'A', rates: { [CRAFTING]: strong } },
+                { id: '2', name: 'Idle', rates: { [CRAFTING]: idle } },
+                { id: '3', name: 'Fighter', rates: { [CRAFTING]: idle }, inCombat: true },
+                { id: '4', name: 'Pinned out', rates: { [CRAFTING]: strong }, pin: BENCH_PIN },
+            ],
+        });
+        const byName = Object.fromEntries(result.members.map((m) => [m.name, m]));
+        expect(byName.Idle.trialHrid).toBe(CRAFTING);
+        expect(byName.Fighter.trialHrid).toBeNull();
+        expect(byName.Fighter.losesBonus).toBe(false);
+        expect(byName['Pinned out'].losesBonus).toBe(true);
+    });
+
+    test('a member without combat benched for want of slots is flagged', () => {
+        const result = optimizeTrialAssignment({
+            trials: [CRAFTING],
+            baseWork: 40000,
+            cap: 1,
+            members: [
+                { id: '1', name: 'A', rates: { [CRAFTING]: strong } },
+                { id: '2', name: 'B', rates: { [CRAFTING]: idle } },
+            ],
+        });
+        const b = result.members.find((m) => m.name === 'B');
+        expect(b.trialHrid).toBeNull();
+        expect(b.losesBonus).toBe(true);
+    });
+
+    test('a name cut to fit never splits a surrogate pair', () => {
+        const [message] = signupMessages([{ label: 'C', names: ['😀'.repeat(200)] }]);
+        expect(new TextEncoder().encode(message).length).toBeLessThanOrEqual(400);
+        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(message)).toBe(false);
     });
 });
