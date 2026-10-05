@@ -314,6 +314,37 @@ describe('the Assign skilling view', () => {
         );
     });
 
+    test('out-of-range assumptions, base work and typed levels are refused, not scored', () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        const inputFor = (caption) => shell.querySelector(`input[aria-label="${caption}"]`);
+        const workTime = inputFor('Work time (s)');
+        workTime.focus();
+        workTime.value = '0';
+        workTime.dispatchEvent(new Event('input'));
+        expect(Object.values(planner.assumed).some((a) => 'actionSeconds' in a)).toBe(false);
+        expect(workTime.style.borderColor).not.toBe('');
+        workTime.value = '-3';
+        workTime.dispatchEvent(new Event('input'));
+        expect(Object.values(planner.assumed).some((a) => 'actionSeconds' in a)).toBe(false);
+        workTime.value = '6';
+        workTime.dispatchEvent(new Event('input'));
+        expect(Object.values(planner.assumed).some((a) => a.actionSeconds === 6)).toBe(true);
+        expect(workTime.style.borderColor).toBe('');
+
+        const baseWork = inputFor('Tier 1 base work');
+        const before = planner.baseWork;
+        baseWork.value = '0';
+        baseWork.dispatchEvent(new Event('input'));
+        expect(planner.baseWork).toBe(before);
+
+        const level = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        level.value = '-5';
+        level.dispatchEvent(new Event('input'));
+        sim.panel.render();
+        expect(markers(shell, '900005')[1]).not.toBe('manual');
+    });
+
     test('a pin to a trial that is no longer drawn is dropped and shows Auto', async () => {
         const { planner, shell, sim } = makeSim();
         sim.panel.render();

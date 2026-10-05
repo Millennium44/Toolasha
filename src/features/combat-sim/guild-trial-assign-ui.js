@@ -254,7 +254,9 @@ export function memberRates(
         const skill = trialSkillHrid(trial, clientData);
         const own = member.id === ownId;
         const typedRaw = manual?.[trial];
-        const typed = typedRaw === '' || typedRaw == null ? NaN : Number(typedRaw);
+        const typedNumber = typedRaw === '' || typedRaw == null ? NaN : Number(typedRaw);
+        // A typed level outside any skill's range is ignored rather than scored
+        const typed = typedNumber >= 1 && typedNumber <= 500 ? typedNumber : NaN;
         let base = Number.isFinite(typed) ? typed : own ? ownLevels?.[skill] : levelFor?.(member.name, skill);
         if (!Number.isFinite(base)) base = null;
         const min = minLevels?.[trial] || 0;
@@ -685,6 +687,8 @@ export class TrialAssignPlanner {
             'Tier 1 base work',
             this.baseWork,
             (value) => {
+                // A zero or negative pool would make every tier instant; keep the last valid figure
+                if (!Number.isFinite(value) || value < 1) return;
                 this.baseWork = value;
                 this.edited();
             },
@@ -750,36 +754,51 @@ export class TrialAssignPlanner {
             for (const trial of context.trials) {
                 const line = row(assumptions);
                 const assumed = context.assumed[trial];
-                const update = (key, value) => {
-                    this.assumed[trial] = { ...(this.assumed[trial] || {}), [key]: value };
+                // min/max attributes do not stop the input event, so an out-of-range value is refused here and
+                // the last valid one stays in use, with the field marked
+                const bounded = (key, min, max, scale) => (v) => {
+                    const input = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
+                    const valid = Number.isFinite(v) && v >= min && v <= max;
+                    if (input) {
+                        input.style.borderColor = valid ? '' : '#ff6b6b';
+                        input.title = valid ? '' : `Must be between ${min} and ${max}; the last valid value is used`;
+                    }
+                    if (!valid) return;
+                    this.assumed[trial] = { ...(this.assumed[trial] || {}), [key]: v * scale };
                     this.edited();
                 };
                 field(
                     line,
                     `${label(trial)} efficiency (%)`,
                     assumed.efficiency * 100,
-                    (v) => update('efficiency', v / 100),
+                    bounded('efficiency', 0, 1000, 1 / 100),
                     {
                         min: 0,
                         max: 1000,
                         disabled: busy,
                     }
                 );
-                field(line, 'Level bonus', assumed.levelBonus, (v) => update('levelBonus', v), {
+                field(line, 'Level bonus', assumed.levelBonus, bounded('levelBonus', -100, 200, 1), {
                     min: -100,
                     max: 200,
                     disabled: busy,
                 });
-                field(line, 'Work time (s)', assumed.actionSeconds, (v) => update('actionSeconds', v), {
+                field(line, 'Work time (s)', assumed.actionSeconds, bounded('actionSeconds', 0.1, 3600, 1), {
                     min: 0.1,
                     max: 3600,
                     disabled: busy,
                 });
-                field(line, 'Double progress (%)', assumed.doubleChance * 100, (v) => update('doubleChance', v / 100), {
-                    min: 0,
-                    max: 100,
-                    disabled: busy,
-                });
+                field(
+                    line,
+                    'Double progress (%)',
+                    assumed.doubleChance * 100,
+                    bounded('doubleChance', 0, 100, 1 / 100),
+                    {
+                        min: 0,
+                        max: 100,
+                        disabled: busy,
+                    }
+                );
                 line.appendChild(panelNote(this.assumed[trial] ? 'edited' : assumed.source));
             }
             this.drawRoster(body, context, ui, busy);
