@@ -1564,8 +1564,13 @@ class TooltipPrices {
             return;
         }
 
-        // Sort by profitPerHour descending
-        allProfits.sort((a, b) => b.profitPerHour - a.profitPerHour);
+        // A profit with an unpriced output or tea is a floor, not a figure: complete rows sort first
+        // by profit, partial rows after them
+        const isPartialProfit = (p) => Boolean(p.hasMissingPrices) || (p.unpricedOutputs?.length ?? 0) > 0;
+        allProfits.sort((a, b) => {
+            const partialDiff = Number(isPartialProfit(a)) - Number(isPartialProfit(b));
+            return partialDiff !== 0 ? partialDiff : b.profitPerHour - a.profitPerHour;
+        });
 
         // Check if item is craftable (has a production action)
         const isCraftable = profitCalculator.findProductionAction(itemHrid) !== null;
@@ -1590,7 +1595,11 @@ class TooltipPrices {
             const profit = allProfits[i];
             const label = profit.actionType.charAt(0).toUpperCase() + profit.actionType.slice(1);
             const color = profit.profitPerHour >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS;
-            html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
+            if (isPartialProfit(profit)) {
+                html += `<div style="color: ${color};" title="An output or tea has no market price, so this is a floor">• ${label}: ≥ ${formatKMB(profit.profitPerHour)}/hr (unpriced output)`;
+            } else {
+                html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
+            }
 
             // Show profit per action for alchemy actions
             if (profit.profitPerAction !== undefined) {

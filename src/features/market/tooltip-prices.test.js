@@ -858,6 +858,26 @@ describe('self-use alchemy lines', () => {
         );
     });
 
+    test('a partial alchemy profit is a floor and sorts after complete rows', async () => {
+        alchemyState.profits = {
+            decompose: { ...cheeseSwordDecompose(), profitPerHour: 9000, unpricedOutputs: ['/items/cheese'] },
+            coinify: { ...cheeseSwordDecompose(), actionType: 'coinify', profitPerHour: 100 },
+            transmute: {
+                ...cheeseSwordDecompose(),
+                actionType: 'transmute',
+                profitPerHour: 50,
+                hasMissingPrices: true,
+            },
+        };
+        const text = (await blockFor('/items/cheese_sword')).textContent;
+        expect(text).toContain('Decompose: ≥ 9.0K/hr');
+        expect(text).toContain('Transmute: ≥ 50/hr');
+        expect(text).toContain('Coinify: 100/hr');
+        expect(text).not.toContain('Coinify: ≥');
+        expect(text.indexOf('Coinify')).toBeLessThan(text.indexOf('Decompose'));
+        expect(text.indexOf('Decompose')).toBeLessThan(text.indexOf('Transmute'));
+    });
+
     test('the setting on adds the labelled self-use line and its footnote', async () => {
         settings.selfUseAlchemy = true;
         alchemyState.profits = { decompose: cheeseSwordDecompose() };
