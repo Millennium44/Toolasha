@@ -654,6 +654,9 @@ export class GuildTrialSim {
     }
 
     draw(body) {
+        // Let setup sections keep their content height; the panel body handles scrolling.
+        body.style.display = 'block';
+        body.style.backgroundColor = '#0e1016';
         const busy = Boolean(this.controller || this.loading);
         body.appendChild(
             panelNote(
@@ -841,6 +844,7 @@ export class GuildTrialSim {
             body.appendChild(note);
         }
         if (this.result) this.drawResult(body);
+        for (const section of body.children) section.style.marginBottom = '7px';
     }
 
     drawCombat(body, busy) {
@@ -851,6 +855,7 @@ export class GuildTrialSim {
         );
         roster.style.maxHeight = '260px';
         roster.style.overflowY = 'auto';
+        roster.style.display = 'block';
         const add = row(roster);
         button(
             add,
@@ -997,6 +1002,7 @@ export class GuildTrialSim {
         );
         roster.style.maxHeight = '300px';
         roster.style.overflowY = 'auto';
+        roster.style.display = 'block';
         const add = row(roster);
         button(
             add,

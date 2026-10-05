@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Sim setup stays readable
+
+- Combat and skilling rosters now keep their full content height and scroll instead of collapsing into clipped strips. The simulator's content background is opaque so game text behind it no longer shows through.
+
 ### Trial Sim matches the Guild tabs
 
 - The Trial Sim button now uses the Guild tabs' sizing, typography, and background so it aligns with the surrounding controls.
