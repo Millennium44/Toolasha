@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltip marks partly priced alchemy profits
+
+- In the item tooltip's Coinify/Decompose/Transmute list, a profit that counts an unpriced output or tea as worth nothing now shows as a floor ("≥ 9.0K/hr (unpriced output)") and sorts after fully priced rows instead of ranking as if complete.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
