@@ -3,6 +3,7 @@ import {
     skillingPool,
     skillingSuccessAtTier,
     trialRandom,
+    trialRunSeed,
     summarizeTrialRuns,
     validateTrialScenario,
 } from '../guild-trial-model.js';
@@ -16,7 +17,7 @@ export function simulateGuildSkilling(input, onProgress = () => {}, returnAttemp
     const deadlineNs = Math.round(scenario.seconds * SECOND_NANOSECONDS);
     const attempts = [];
     for (let run = 0; run < scenario.runs; run++) {
-        const random = trialRandom((scenario.seed + run * 0x9e3779b9) >>> 0);
+        const random = trialRandom(trialRunSeed(scenario.seed, run));
         const queue = new EventQueue();
         scenario.members.forEach((member, index) =>
             queue.addEvent({ time: Math.round(member.actionSeconds * SECOND_NANOSECONDS), index, actionNumber: 1 })

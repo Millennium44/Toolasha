@@ -243,6 +243,23 @@ export function skillingPool(scenario, tier) {
     });
 }
 
+/**
+ * The seed for one attempt. `seed + run × 0x9e3779b9` keeps it independent of how runs
+ * are split across workers; the result is then mixed with the same murmur3 finalizer
+ * `seedSimRng` applies (`mixSeed(seed, 0)` in engine/rng.js). Raw mulberry32 seeds that
+ * differ by a multiple of its increment walk one stream at an offset: runs 7 apart did,
+ * only 819,059 draws apart.
+ * @param {number} seed - Scenario seed
+ * @param {number} run - Zero-based attempt index
+ * @returns {number} 32-bit seed for {@link trialRandom}
+ */
+export function trialRunSeed(seed, run) {
+    let h = (((seed + run * 0x9e3779b9) >>> 0) ^ 0x9e3779b9) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+    return (h ^ (h >>> 16)) >>> 0;
+}
+
 /** Deterministic local RNG; no shared combat-engine random state. */
 export function trialRandom(seed) {
     let state = seed >>> 0;
