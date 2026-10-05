@@ -506,6 +506,29 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.skillingMembers[0].effectiveLevel).toBeCloseTo(107);
         expect(feature.skillingMembers[0].successBonus).toBe(0);
     });
+    test('switching a capped Enhancing reading to the game curve keeps it a lower bound', () => {
+        feature.kind = 'skilling';
+        feature.skillingTrial = '/guild_skilling/enhancing';
+        feature.skillingMembers = [
+            {
+                name: 'Capped',
+                referenceTier: 1,
+                successRate: 1,
+                successLossPerTier: 0,
+                workPower: 100,
+                actionSeconds: 5,
+                doubleChance: 0,
+            },
+        ];
+        feature.panel.render();
+        const model = Array.from(document.querySelectorAll('label'))
+            .find((label) => label.textContent.includes('Success model'))
+            .querySelector('select');
+        model.value = 'curve';
+        model.dispatchEvent(new Event('change'));
+        expect(feature.skillingMembers[0].successBonus).toBeGreaterThan(0);
+        expect(feature.skillingMembers[0].successLowerBound).toBe(true);
+    });
     test('marks tiers and points as a lower bound after a capped reading', async () => {
         feature.kind = 'skilling';
         harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0], tier: 2, successRate: 1 });
