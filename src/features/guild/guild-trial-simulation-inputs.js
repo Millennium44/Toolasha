@@ -320,6 +320,55 @@ export function parseTrialInputBundle(text) {
     return validateTrialInputBundle(JSON.parse(text));
 }
 
+/**
+ * Game-data maps a capture carries for its file but the simulator never reads
+ * back out of one. A saved copy leaves them empty and is given the client's
+ * current maps again on load.
+ */
+const UNREAD_GAME_MAPS = ['guildBuffDetailMap', 'guildTrialDetailMap'];
+
+/**
+ * The stored form of a capture: no repeated copies of static game data.
+ *
+ * `guildBuildingDetailMap` stays whole, because the simulator turns it into the
+ * guild's building buffs and its values are what the game said on the capture's
+ * date. `buffTypeDetailMap` is read only for those buffs' `isCombat` flags, so
+ * it keeps just the buff types the buildings name, still as dated.
+ * @param {Object} bundle - A validated capture
+ * @returns {Object} A shallow copy holding the compacted inputs
+ */
+function compactForStorage(bundle) {
+    const inputs = bundle.simulationInputs;
+    const used = new Set();
+    for (const detail of Object.values(inputs.guildBuildingDetailMap || {})) {
+        for (const buff of detail?.buffs || []) if (buff?.typeHrid) used.add(buff.typeHrid);
+    }
+    const compact = {
+        ...inputs,
+        buffTypeDetailMap: Object.fromEntries(
+            Object.entries(inputs.buffTypeDetailMap || {}).filter(([hrid]) => used.has(hrid))
+        ),
+    };
+    for (const key of UNREAD_GAME_MAPS) compact[key] = {};
+    return { ...bundle, simulationInputs: compact };
+}
+
+/**
+ * A stored capture as the simulator expects one: the maps left out on save come
+ * from the client's current game data, and the dated buff types win over it.
+ * @param {Object} bundle - A capture read back from storage
+ * @returns {Object} A shallow copy with the game-data maps filled in
+ */
+function expandFromStorage(bundle) {
+    const clientData = dataManager.getInitClientData?.() || {};
+    const inputs = { ...bundle.simulationInputs };
+    for (const key of UNREAD_GAME_MAPS) {
+        if (!Object.keys(inputs[key] || {}).length) inputs[key] = clientData[key] || {};
+    }
+    inputs.buffTypeDetailMap = { ...(clientData.buffTypeDetailMap || {}), ...(inputs.buffTypeDetailMap || {}) };
+    return { ...bundle, simulationInputs: inputs };
+}
+
 /** Read up to eight locally saved guild/week captures for the current exporting character. */
 function checkedSavedBundles(saved, owner) {
     if (!Array.isArray(saved)) return [];
@@ -337,7 +386,9 @@ function checkedSavedBundles(saved, owner) {
 /** Read up to eight locally saved guild/week captures for the current exporting character. */
 export async function loadSavedTrialInputBundles(owner = dataManager.getCurrentCharacterId()) {
     if (!validId(owner)) return [];
-    return checkedSavedBundles(await storage.getJSON(storageKey(owner), 'combatExport', []), owner);
+    return checkedSavedBundles(await storage.getJSON(storageKey(owner), 'combatExport', []), owner).map(
+        expandFromStorage
+    );
 }
 
 function mergeCapture(previous, incoming) {
@@ -381,10 +432,11 @@ export async function saveTrialInputBundle(bundle) {
             );
             return [merged, ...saved.filter((entry) => !sameCaptureSet(entry, checked))]
                 .sort((a, b) => Date.parse(b.exportedAt) - Date.parse(a.exportedAt))
-                .slice(0, MAX_SAVED_CAPTURES);
+                .slice(0, MAX_SAVED_CAPTURES)
+                .map(compactForStorage);
         },
         'combatExport'
     );
     if (!outcome?.written) throw new Error('The browser could not save the capture. Keep your exported JSON backup.');
-    return structuredClone(outcome.value.find((entry) => sameCaptureSet(entry, checked)));
+    return expandFromStorage(structuredClone(outcome.value.find((entry) => sameCaptureSet(entry, checked))));
 }

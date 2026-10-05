@@ -270,6 +270,41 @@ describe('reusable trial capture library', () => {
         game.stored.set('guild_trial_inputs_1', [{ format: 'bad' }, saved[0]]);
         expect(await loadSavedTrialInputBundles()).toEqual([saved[0]]);
     });
+    test('a saved capture does not repeat static game data, and loads with it filled back in', async () => {
+        const input = bundle();
+        Object.assign(input.simulationInputs, {
+            guildBuildingDetailMap: {
+                '/guild_buildings/stamina': { buffs: [{ typeHrid: '/buff_types/stamina_level', flatBoost: 3 }] },
+            },
+            buffTypeDetailMap: {
+                '/buff_types/stamina_level': { isCombat: true, dated: true },
+                '/buff_types/gathering': { isCombat: false },
+            },
+            guildBuffDetailMap: { '/guild_buffs/force_combat': { levelCosts: {} } },
+            guildTrialDetailMap: { '/guild_combat/badger': { name: 'Badger' } },
+        });
+        await saveTrialInputBundle(input);
+
+        const [stored] = game.stored.get('guild_trial_inputs_1');
+        expect(stored.simulationInputs.guildBuffDetailMap).toEqual({});
+        expect(stored.simulationInputs.guildTrialDetailMap).toEqual({});
+        // Dated: the building values and the flags of the buff types they name
+        expect(stored.simulationInputs.guildBuildingDetailMap).toEqual(input.simulationInputs.guildBuildingDetailMap);
+        expect(stored.simulationInputs.buffTypeDetailMap).toEqual({
+            '/buff_types/stamina_level': { isCombat: true, dated: true },
+        });
+
+        const [loaded] = await loadSavedTrialInputBundles();
+        expect(loaded.simulationInputs.guildBuildingDetailMap).toEqual(input.simulationInputs.guildBuildingDetailMap);
+        // The dated flag wins over the client's current one
+        expect(loaded.simulationInputs.buffTypeDetailMap['/buff_types/stamina_level']).toEqual({
+            isCombat: true,
+            dated: true,
+        });
+        expect(loaded.simulationInputs.guildBuffDetailMap).toEqual({});
+        expect(() => validateTrialInputBundle(loaded)).not.toThrow();
+    });
+
     test('reports failed writes and remains usable for the next save', async () => {
         game.save.mockResolvedValueOnce(null);
         await expect(saveTrialInputBundle(bundle())).rejects.toThrow('could not save');
