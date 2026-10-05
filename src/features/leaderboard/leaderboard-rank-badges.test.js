@@ -739,6 +739,23 @@ describe('next board button', () => {
         expect(bar().children[0].textContent).toBe(`Next board ▸ ${categoryLabelForTest(oldestCategory)}`);
     });
 
+    test('with Steam badges on, a Steam tab counts the persisted badge cache like the global bar', async () => {
+        game.mode = 'local';
+        game.steam = true;
+        buildPanel();
+        game.saved.rankBoards = {
+            'steam_standard|milking': { at: Date.now() - 42 * 3600000, source: 'local', rows: [['A', 1]] },
+            'standard|foraging': { at: Date.now() - 3600000, source: 'local', rows: [['A', 1]] },
+        };
+        game.recorded = { steam_standard: { cooking: Date.now() - 1000 } };
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
+        await flush();
+        // milking (cache) + total_level (opened and cached now); the tracker is not consulted
+        expect(bar().children[1].textContent).toBe('2/24 Steam boards cached · oldest 1d 18h');
+        game.steam = false;
+    });
+
     test('the Steam status says EXP tracking is off when the XP tracker setting is off', async () => {
         game.mode = 'local';
         buildPanel();

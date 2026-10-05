@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leaderboard Next board shows how stale the oldest board is
+
+- The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
+
 ### Audit round: Trial Sim
 
 - A capped (100%) Enhancing success reading is now a true lower bound — the old anchor ignored Enhancing's success bonus and could overstate later tiers; trial input autosave stops when the simulator is switched off with its panel closed; and importing a capture older than every kept set says so instead of failing.
