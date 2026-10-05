@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Sim stays off until switched on, and estimates closer to the game
+
+- With the simulator off, trial input capture, its button and the export's new section stay out entirely, saved captures stay on this browser (out of sync and backups), and turning it off removes it at once; skilling work now scales with every signup, a single reading follows the game's two-slope success curve (a capped one is marked a lower bound), Builder's Hall and Treasury start from your guild, and starting a combat or lab sim no longer cancels a trial run.
+
 ### Faster Trial Sim runs
 
 - Independent trial attempts now run in parallel, using the simulator's thread limit: automatic mode uses up to four workers, and higher configured limits use additional available cores. Progress updates keep the roster and controls in place instead of rebuilding the whole panel.
