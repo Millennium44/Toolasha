@@ -17,6 +17,9 @@ const game = vi.hoisted(() => ({
     collections: null,
     characterId: 'char-1',
     craftable: new Set(['/items/cheese']),
+    profitExtra: {},
+    shopUnits: 1,
+    actionDetails: null,
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
@@ -55,7 +58,7 @@ const ITEMS = vi.hoisted(() => ({
     '/items/cheese_sword': {
         name: 'Cheese Sword',
         equipmentDetail: {},
-        alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
+        alchemyDetail: { bulkMultiplier: 2, decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
     },
     '/items/cheese': { name: 'Cheese' },
     '/items/coin': { name: 'Coin' },
@@ -92,7 +95,7 @@ vi.mock('../../core/data-manager.js', () => ({
             },
         }),
         getItemDetails: (hrid) => ITEMS[hrid] || null,
-        getActionDetails: () => null,
+        getActionDetails: () => game.actionDetails ?? null,
         getCurrentCharacterGameMode: () => 'standard',
         on: (event, handler) => {
             (bus.handlers[event] ||= []).push(handler);
@@ -119,7 +122,16 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../market/profit-calculator.js', () => ({
     default: {
         findProductionAction: (hrid) => (game.craftable.has(hrid) ? { actionHrid: '/actions/cheesesmithing/x' } : null),
-        calculateProfit: async (hrid) => ({ itemHrid: hrid, actionHrid: '/actions/x', totalItemsPerHour: 360 }),
+        calculateProfit: async (hrid, options = {}) =>
+            options.actionHrid === '/actions/alt'
+                ? { itemHrid: hrid, actionHrid: '/actions/alt', totalItemsPerHour: 360, ...game.altProfit }
+                : {
+                      itemHrid: hrid,
+                      actionHrid: '/actions/x',
+                      totalItemsPerHour: 360,
+                      productionCandidates: game.altProfit ? ['/actions/x', '/actions/alt'] : ['/actions/x'],
+                      ...game.profitExtra,
+                  },
     },
 }));
 vi.mock('../market/tooltip-prices.js', () => ({
@@ -161,7 +173,10 @@ vi.mock('../../utils/market-data.js', () => ({
     getPricingMode: () => 'ask',
 }));
 vi.mock('../../utils/game-lookups.js', () => ({
-    getShopCoinOnlyCost: (hrid) => (hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0),
+    getShopCoinOnlyCost: (hrid) => ({
+        coins: hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0,
+        units: game.shopUnits,
+    }),
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price }));
@@ -205,7 +220,11 @@ beforeEach(() => {
     bus.handlers = {};
     observer.handlers = [];
     game.craftable = new Set(['/items/cheese']);
+    game.profitExtra = {};
+    game.shopUnits = 1;
+    game.actionDetails = null;
     game.estimated = new Set();
+    game.altProfit = null;
     game.mixedShop = false;
     game.ironCow = false;
 });
@@ -238,6 +257,63 @@ describe('the routes', () => {
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
         // No route ever yields the source it starts from
         for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+    });
+});
+
+describe('whole actions for sources', () => {
+    test('a decompose action eats its bulk of sources; a shop bundle is bought whole', async () => {
+        game.craftable = new Set(['/items/cheese', '/items/cheese_sword']);
+        game.shopUnits = 3;
+        const routes = await buildCollectionRoutes();
+        const sword = (route) =>
+            routes.sources.find((s) => s.sourceHrid === '/items/cheese_sword' && s.route === route);
+        // Bulk 2 for decompose and craft + decompose; a 3-unit bundle with bulk 2 is a run of 6
+        expect(sword('decompose').batch).toBe(2);
+        expect(sword('craftDecompose').batch).toBe(2);
+        expect(sword('shop').batch).toBe(6);
+        // Priced per unit received
+        expect(sword('shop').cost).toBeCloseTo(50 / 3, 9);
+        // A source with no bulk is a batch of one
+        expect(routes.sources.find((s) => s.sourceHrid === '/items/umbral_hood' && s.route === 'decompose').batch).toBe(
+            1
+        );
+    });
+});
+
+describe('Gourmet and a craft batch', () => {
+    test('the batch is the expected output per action, base count times one plus the Gourmet chance', async () => {
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese', count: 2 }] };
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft[0].batch).toBeCloseTo(2.5, 9);
+        // Without Gourmet it is the recipe's own count
+        game.profitExtra = {};
+        expect((await buildCollectionRoutes()).craft[0].batch).toBe(2);
+    });
+});
+
+describe('a recipe the character cannot start', () => {
+    test('above their level gives no craft or craft + decompose route', async () => {
+        game.craftable = new Set(['/items/cheese', '/items/cheese_sword']);
+        game.profitExtra = { baseRequirement: 50, skillLevel: 40, teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft).toEqual([]);
+        expect(routes.sources.filter((s) => s.route === 'craftDecompose')).toEqual([]);
+    });
+
+    test('a locked best-margin recipe does not hide another recipe the character can start', async () => {
+        game.profitExtra = { baseRequirement: 50, skillLevel: 40, teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+        game.altProfit = { baseRequirement: 30, skillLevel: 40, teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft).toHaveLength(1);
+        expect(routes.craft[0].itemHrid).toBe('/items/cheese');
+    });
+
+    test('an Action Level tea that raises the requirement past the level blocks it too', async () => {
+        game.profitExtra = { baseRequirement: 40, skillLevel: 42, teaSkillLevelBonus: 0, actionLevelBonus: 5 };
+        expect((await buildCollectionRoutes()).craft).toEqual([]);
+        game.profitExtra = { baseRequirement: 40, skillLevel: 45, teaSkillLevelBonus: 0, actionLevelBonus: 5 };
+        expect((await buildCollectionRoutes()).craft).toHaveLength(1);
     });
 });
 

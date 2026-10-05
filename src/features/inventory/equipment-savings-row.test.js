@@ -132,7 +132,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid, enhancementLevel = 0) => game.navigations.push({ itemHrid, enhancementLevel }),
 }));
-vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: () => null }));
+vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getItemHridFromName: () => null }));
 // Kept rather than discarded, so the tile's own `version()` — which is what
 // spares the overlay this module's whole render sixty times a minute — can be
 // tested against the same fixtures the arithmetic is

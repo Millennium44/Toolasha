@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
+import { pointsFromCount } from '../../utils/points-from-count.js';
 import {
     ALCHEMY_BONUS_DROPS,
     bestOptions,
@@ -127,6 +128,18 @@ describe('route options', () => {
         expect(option.goldPerPoint).toBeCloseTo(50 / 3);
     });
 
+    test('a bulk action or shop bundle rounds the sources up to whole batches and credits every output', () => {
+        // 5 → 10 cheese needs one sword, but an action eats 10 swords: all 10 are charged and credited
+        const option = evaluateOption('/items/cheese', collectionCounts(ROWS), { ...cheeseSword(), batch: 10 });
+        expect(option.units).toBe(10);
+        expect(option.gold).toBe(10 * 50);
+        expect(option.credits.get('/items/cheese')).toBe(180);
+        // 5 + 180 crosses 10 and 100 as well: the target gain is for the whole batch
+        expect(option.gain).toBe(pointsFromCount(185) - pointsFromCount(5));
+        // A batch already covering the need adds nothing extra
+        expect(evaluateOption('/items/cheese', collectionCounts(ROWS), { ...cheeseSword(), batch: 1 }).units).toBe(1);
+    });
+
     test('a recipe making 15 at a time crafts whole actions and collects all 15', () => {
         // Uncollected: one action makes 15, past 1 and 10 at once, for 3 points
         const option = evaluateOption('/items/crushed_amber', new Map(), {
@@ -140,6 +153,20 @@ describe('route options', () => {
         expect(option.gold).toBe(30);
         expect(option.points).toBe(3);
         expect(option.credits.get('/items/crushed_amber')).toBe(15);
+    });
+
+    test('a Gourmet batch charges and credits the expected output of the whole action', () => {
+        // 15 base copies at +20% Gourmet is 18 expected per action; 0 → 1 needs one action
+        const option = evaluateOption('/items/crushed_amber', new Map(), {
+            route: 'craft',
+            itemHrid: '/items/crushed_amber',
+            unitCost: 2,
+            unitSeconds: 1,
+            batch: 18,
+        });
+        expect(option.units).toBe(18);
+        expect(option.gold).toBe(36);
+        expect(option.credits.get('/items/crushed_amber')).toBe(18);
     });
 
     test('a route with an unpriced kept output is left out of the ranking', () => {

@@ -58,6 +58,7 @@ vi.mock('../../utils/timer-registry.js', () => ({
 }));
 vi.mock('./action-filter.js', () => ({ default: { initialize: vi.fn(), cleanup: vi.fn(), registerPanel: vi.fn() } }));
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getActionHridFromName: vi.fn(),
     getItemHridFromName: vi.fn(() => '/items/gator_vest'),
     getActionHridFromFiber: vi.fn(() => null),

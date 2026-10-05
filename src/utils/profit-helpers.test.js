@@ -23,7 +23,7 @@ vi.mock('./market-data.js', () => ({
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPrice: () => chain.custom,
 }));
-vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => chain.shop }));
+vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => chain.shop }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: (itemHrid, mode) => {
         chain.productionCostModes.push(mode);

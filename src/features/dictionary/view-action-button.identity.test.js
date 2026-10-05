@@ -30,6 +30,7 @@ vi.mock('../../utils/material-calculator.js', () => ({
     },
 }));
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getItemHridFromName: (name) => lookups.itemsByName[name] ?? null,
     getActionHridFromName: (name) => (name === 'Cheese' ? '/actions/cheesesmithing/cheese' : null),
     getActionHridFromFiber: () => lookups.fiberAction,

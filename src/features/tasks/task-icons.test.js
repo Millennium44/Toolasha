@@ -53,6 +53,7 @@ vi.mock('./task-icon-filters.js', () => ({ default: { shouldShowDungeonBadge: ()
 // The name→hrid lookup lives in game data the real helper reads from a store
 // this test has no business standing up
 vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
     getActionHridFromName: (name) =>
         ({ Cow: '/actions/milking/cow', Cheese: '/actions/cheesesmithing/cheese' })[name] || null,
 }));

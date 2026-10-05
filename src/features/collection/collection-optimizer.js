@@ -27,6 +27,7 @@ import { ownUseCompare } from '../market/tooltip-prices.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
+import { canStartAction } from '../../utils/efficiency.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -123,16 +124,43 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (SKIP_ITEMS.has(hrid) || !profitCalculator.findProductionAction?.(hrid)) continue;
         if (await pause()) return null;
         try {
-            const profitData = await profitCalculator.calculateProfit(hrid);
-            if (!profitData) continue;
-            const actionDetails = dataManager.getActionDetails?.(profitData.actionHrid) ?? null;
-            const comparison = ownUseCompare(profitData, actionDetails);
-            const perHour = Number(profitData.totalItemsPerHour);
-            if (!comparison || !(perHour > 0)) continue;
+            const preferred = await profitCalculator.calculateProfit(hrid);
+            if (!preferred) continue;
+            // The calculator picks the best-margin recipe without asking whether the character can
+            // start it; a locked pick must not hide another recipe for the same item that is open.
+            // An Action Level tea raises the requirement, which canStartAction counts
+            const startable = (data) =>
+                canStartAction({
+                    requiredLevel: data.baseRequirement,
+                    skillLevel: data.skillLevel,
+                    teaSkillLevelBonus: data.teaSkillLevelBonus,
+                    actionLevelBonus: data.actionLevelBonus,
+                });
+            const recipes = [preferred];
+            for (const actionHrid of preferred.productionCandidates || []) {
+                if (actionHrid === preferred.actionHrid) continue;
+                const alternative = await profitCalculator.calculateProfit(hrid, { actionHrid });
+                if (alternative) recipes.push(alternative);
+            }
+            let chosen = null;
+            for (const data of recipes) {
+                if (!startable(data)) continue;
+                const details = dataManager.getActionDetails?.(data.actionHrid) ?? null;
+                const comparison = ownUseCompare(data, details);
+                const perHour = Number(data.totalItemsPerHour);
+                if (!comparison || !(perHour > 0)) continue;
+                if (!chosen || comparison.make < chosen.comparison.make) {
+                    chosen = { profitData: data, actionDetails: details, comparison, perHour };
+                }
+            }
+            if (!chosen) continue;
+            const { profitData, actionDetails, comparison, perHour } = chosen;
             makeCost.set(hrid, comparison.make);
             makeSeconds.set(hrid, 3600 / perHour);
-            // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15
-            const batch = Math.max(1, Number(actionDetails?.outputItems?.[0]?.count) || 1);
+            // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15.
+            // Gourmet adds expected copies from the same inputs, counted as profitData counts items
+            const gourmet = Math.max(0, Number(profitData.gourmetBonus) || 0);
+            const batch = Math.max(1, (Number(actionDetails?.outputItems?.[0]?.count) || 1) * (1 + gourmet));
             craft.push({
                 route: 'craft',
                 itemHrid: hrid,
@@ -211,8 +239,11 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
             }
         }
+        // One alchemy action eats `bulkMultiplier` sources, whole
+        const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
         const shared = {
             sourceHrid: hrid,
+            batch: bulk,
             seconds: chain.seconds,
             yields,
             kept,
@@ -236,11 +267,33 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 seconds: chain.seconds + (makeSeconds.get(hrid) || 0),
             });
         }
-        const shopPrice = getShopCoinOnlyCost(hrid);
-        if (shopPrice > 0) sources.push({ ...shared, route: 'shop', cost: shopPrice + chain.overheadCost });
+        // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
+        const offer = getShopCoinOnlyCost(hrid);
+        if (offer?.coins > 0) {
+            const units = Math.max(1, Math.floor(Number(offer.units)) || 1);
+            sources.push({
+                ...shared,
+                route: 'shop',
+                batch: leastCommonMultiple(units, bulk),
+                cost: offer.coins / units + chain.overheadCost,
+            });
+        }
     }
     if (cancelled()) return null;
     return { craft, sources };
+}
+
+/**
+ * The smallest count that is a whole number of both sizes.
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
+function leastCommonMultiple(a, b) {
+    let x = a;
+    let y = b;
+    while (y) [x, y] = [y, x % y];
+    return (a / x) * b;
 }
 
 /**
