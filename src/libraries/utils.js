@@ -168,6 +168,7 @@ import * as numberParser from '../utils/number-parser.js';
 import * as partyLint from '../utils/party-lint.js';
 import * as profileCommand from '../utils/profile-command.js';
 import * as viewLoadout from '../utils/view-loadout.js';
+import * as guildTrialSimulationInputs from '../features/guild/guild-trial-simulation-inputs.js';
 import * as chatFill from '../utils/chat-fill.js';
 import * as progressEta from '../utils/progress-eta.js';
 // Risk of Ruin: the panel is in the ui bundle and market-depth-cap.js (market) reads its last
@@ -336,6 +337,7 @@ toolashaRoot.Utils = {
     partyLint,
     profileCommand,
     viewLoadout,
+    guildTrialSimulationInputs,
     chatFill,
     progressEta,
     optimalBankrollShare,

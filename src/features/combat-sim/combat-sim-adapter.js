@@ -503,33 +503,44 @@ export function buildPlayerDTOFromProfile(profileData) {
  * one player in the sim.
  *
  * The loadout has the gear, abilities, consumables and triggers; skill levels,
- * house rooms and buffs come from that player's cached shared profile when
- * Toolasha has one (matched by character id, falling back to name only when the loadout has no id). Without one the
+ * house rooms and buffs come from that player's newest shared profile across
+ * the general cache and supplied session captures (matched by character id,
+ * with name fallback only when the loadout has no id). Without one the
  * levels are left at 1 and `levelsFrom` is null, for the caller to say so.
  *
  * @param {Object} entry - A capture from `view-loadout.js` (`getLoadout`)
+ * @param {Array<Object>} additionalProfiles - Optional session-only profile captures
+ * @param {Object} options - Set onlyProvidedProfiles for a dated capture import, excluding newer cached profiles
  * @returns {Promise<{dto: Object, levelsFrom: 'profile'|null, profileCapturedAt: number|null}|null>}
  *   Null when there is no loadout to use or game data is not loaded
  */
-export async function buildPlayerDTOFromLoadout(entry) {
+export async function buildPlayerDTOFromLoadout(entry, additionalProfiles = [], { onlyProvidedProfiles = false } = {}) {
     if (!entry?.loadout || entry.hasLoadout === false) return null;
     const clientData = dataManager.getInitClientData();
     if (!clientData) return null;
 
     let profileList = [];
-    try {
-        profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
-    } catch (error) {
-        console.error('[CombatSimAdapter] Failed to load profile list:', error);
+    if (!onlyProvidedProfiles) {
+        try {
+            profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
+        } catch (error) {
+            console.error('[CombatSimAdapter] Failed to load profile list:', error);
+        }
     }
     if (!Array.isArray(profileList)) profileList = [];
 
     const id = entry.characterId == null ? null : String(entry.characterId);
     const name = String(entry.name || '').toLowerCase();
-    const profile =
-        (id
-            ? profileList.find((p) => String(p?.characterID) === id)
-            : profileList.find((p) => name && String(p?.characterName || '').toLowerCase() === name)) || null;
+    const profiles = [...profileList, ...(Array.isArray(additionalProfiles) ? additionalProfiles : [])];
+    const matches = id
+        ? profiles.filter((p) => String(p?.characterID) === id)
+        : profiles.filter((p) => name && String(p?.characterName || '').toLowerCase() === name);
+    const profile = matches.reduce((newest, candidate) => {
+        if (!candidate?.profile) return newest;
+        const timestamp = Number.isFinite(candidate.timestamp) ? candidate.timestamp : 0;
+        const newestTimestamp = Number.isFinite(newest?.timestamp) ? newest.timestamp : 0;
+        return !newest || timestamp >= newestTimestamp ? candidate : newest;
+    }, null);
 
     const dto = buildPartyMemberDTO(profile?.profile ? profile : { profile: {} }, clientData, null);
     applySharedLoadoutToDTO(dto, entry.loadout, clientData);

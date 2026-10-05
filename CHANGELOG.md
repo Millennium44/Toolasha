@@ -6,6 +6,31 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Sim stays off until switched on, and estimates closer to the game
+
+- With the simulator off, trial input capture, its button and the export's new section stay out entirely, saved captures stay on this browser (out of sync and backups), and turning it off removes it at once; skilling work now scales with every signup, a single reading follows the game's two-slope success curve (a capped one is marked a lower bound), Builder's Hall and Treasury start from your guild, and starting a combat or lab sim no longer cancels a trial run.
+
+### Faster Trial Sim runs
+
+- Independent trial attempts now run in parallel, using the simulator's thread limit: automatic mode uses up to four workers, and higher configured limits use additional available cores. Progress updates keep the roster and controls in place instead of rebuilding the whole panel.
+
+### Trial Sim setup stays readable
+
+- Combat and skilling rosters now keep their full content height and scroll instead of collapsing into clipped strips. The simulator's content background is opaque so game text behind it no longer shows through.
+
+### Trial Sim matches the Guild tabs
+
+- The Trial Sim button now uses the Guild tabs' sizing, typography, and background so it aligns with the surrounding controls.
+
+### Paste trial captures into the simulator
+
+- Trial Input Capture JSON can also be pasted into Trial Sim, using the same saved capture library and signup checks as file import.
+
+### Reuse trial captures in the simulator
+
+- Trial Sim now appears beside the Guild tabs and imports Trial Input Capture JSON, loading only the selected boss’s signups. Members without usable builds remain explicit and still count toward boss scaling.
+- Trial captures can be saved and reimported, with an optional setting to keep the latest eight guild/week sets on this browser. Saved profiles retain their dates and restore after a refresh.
+
 ### Collection points optimizer
 
 - A new panel on Achievements → Collections (off by default) ranks the cheapest next collection point per item by gold per point — crafting, decompose chains that collect each lower piece, and shop gear decomposed — with a "+N points" planner and a max time per step; it uses only the counts the game sends when the tab opens.
@@ -85,6 +110,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Rush-floor advice now waits for loadout data and checks that recorded fights match your current gear, preventing old-build losses from recommending a lower rush floor. Historical supply and burn summaries remain available.
 
+### Trial input exports match guild members
+
+- Trial input exports now exclude saved loadouts whose character ID is outside the current roster, even when the name matches. Captures stay with the correct member after a rename.
+
 ### Bestiary target alerts follow the current battle
 
 - Bestiary target alerts now ignore updates from an earlier battle, preventing a new wave's reused monster slots from falsely counting kills.
@@ -123,6 +152,29 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Loot luck with party shares
 
 - Combat loot luck now handles a rare item split among party members as a possible whole-item payout, so expensive drops cannot wrap into the wrong luck percentile.
+
+### Experimental Guild Trial Simulator
+
+- Imported skilling readings now reject incomplete values and invalid participant IDs, preventing misleading base-work and member estimates. Success-curve readings reset when the trial deadline changes, so a new attempt cannot inherit the previous attempt's calibration.
+- Carry mode now revives downed members for the next tier using their current HP and MP caps. Expired buffs are removed before refilling, and timed stun, blind and silence effects expire correctly so revived members can resume contributing.
+- Skilling actions that land exactly on the simulation deadline now count correctly, including recorded fractional action times such as 4.464 seconds. This prevents a missed action from turning an exact-deadline clear into an unfinished tier.
+- The simulator now ignores late skilling readings from a departed character's connection, so changing characters cannot replace the active character's trial inputs.
+- A capture checklist restored after refreshing now listens for profile replies before requesting one, preventing a false timeout after a successful capture.
+- The input checklist now sends the numeric member ID expected by the game's View Loadout handler, so combat and skilling captures receive a reply instead of timing out.
+- Trial profile capture and the simulator now share one session store in the production build, so profiles collected for a larger guild remain available when adding its trial builds.
+- Imported trial setups now check combat stat types and normalize personal buff values before simulation, preventing text-valued inputs from inflating HP or damage.
+- Adding captured trial builds now uses the full session's profiles, including members evicted from the general 20-profile cache, and uses the newest profile when several captures exist.
+- A Capture inputs checklist now guides combat and skilling trial loadout and profile collection, shows missing inputs, and exports the collected data before a trial starts. Each press requests one input; skipped steps remain marked as missing.
+- The input checklist closes on character switches and waits for guild data to finish updating, so exports cannot carry over the previous guild's roster.
+- Guild changes now clear old signup metadata as soon as the arriving guild ID is known, preventing stale trial input exports while its roster or history is loading.
+- Trial input capture also waits for the guild identity and member roster to agree when their messages arrive separately, including while initial history is loading.
+- Skilling and combat trial scenarios can now be simulated locally with editable rosters, per-tier clear odds, payout estimates, and setup import and export. The experimental tool is off by default and labels rules still awaiting comparison with recorded trials.
+- Imported skilling percentages now display cleanly while retaining their full precision in simulations and exports.
+- Post-rebalance trial recordings now calibrate the skilling success curve and boss scaling; estimates include proportional rewards from the unfinished tier and the guild's combat building buffs.
+- Trial exports now keep collected View Loadout gear and triggers, matching dated profiles, and building/buff context, so those simulator inputs can be saved before refreshing the game.
+- Opening more than 20 guild profiles keeps their simulator inputs for the current session; exports require a known roster and reject a character or guild switch during collection.
+- A failed trial export now says so on its button and offers a retry.
+- Trial exports wait for a new guild's history to load, including when the Guild page is closed, so a guild switch cannot download the previous guild's data during that read.
 
 <!-- shipped in 3.64.0 -->
 

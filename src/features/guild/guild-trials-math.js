@@ -490,13 +490,13 @@ export function tierMarginalPoints(type, tier) {
 }
 
 /**
- * The fraction of a tier's points an *incomplete* tier is worth, under the test
- * server's partial-tier rule: 0.5% credit per 1% of progress, capped at 50%
- * (reached at 99.99%). A fully cleared tier is worth its whole self and is not
+ * The fraction of a tier's points an *incomplete* tier is worth, under the
+ * August 13, 2026 rule: 0.5% credit per 1% of progress, capped at 50%.
+ * A fully cleared tier is worth its whole self and is not
  * this — this is only the leftover progress a trial carries when it ends.
  *
  * Returns a multiplier in [0, 0.5] to apply to {@link tierMarginalPoints}. The
- * caller decides whether the rule is in force (it is a test-server mechanic);
+ * caller decides whether the rule is in force for the recorded game version;
  * this is only the arithmetic.
  *
  * @param {number} progressFraction - Progress into the tier, 0..1 (current/max)

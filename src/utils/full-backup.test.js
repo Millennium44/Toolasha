@@ -231,6 +231,14 @@ describe('stripExcludedKeys', () => {
         expect(entries).toEqual({ trialTraceManifest_1: {}, keep: 1 });
     });
 
+    test('keeps saved trial input captures on this browser but syncs the rest of combatExport', () => {
+        const kept = stripExcludedKeys('combatExport', {
+            guild_trial_inputs_603281: [{ format: 'toolasha-guild-trial-inputs', blob: 'x'.repeat(1000) }],
+            profile_list: [{ characterID: 1 }],
+        });
+        expect(kept).toEqual({ profile_list: [{ characterID: 1 }] });
+    });
+
     test('drops the labyrinth tick capture autosave but keeps the rest of the labyrinth store', () => {
         const kept = stripExcludedKeys('labyrinth', {
             labyrinthTickCaptureAutosave_char1: { ticks: new Array(8000).fill({}) },

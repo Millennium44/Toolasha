@@ -1193,6 +1193,13 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(entry.liveStop).toBe(true);
     });
 
+    test('the Guild Trial Simulator is live-stopped, so clearing its setting removes its tab button and panel', () => {
+        const entry = registered.find((e) => e.key === 'guildTrialSim');
+
+        expect(entry, 'guildTrialSim is no longer registered').toBeTruthy();
+        expect(entry.liveStop).toBe(true);
+    });
+
     test('two concurrent features run through the real registry overlap', async () => {
         probe.active = 0;
         probe.peak = 0;

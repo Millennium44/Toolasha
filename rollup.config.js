@@ -293,6 +293,12 @@ const utilsExternalGlobals = new Map([
     // One store of captured loadouts: the entrypoint starts the capture and the sim (and the
     // trial checker) read it, so a copy per bundle would read an empty store
     [normalize(join(__dirname, 'src/utils/view-loadout.js')), 'Toolasha.Utils.viewLoadout'],
+    // Combat records opened trial profiles and Sim consumes the same session store.
+    // Utils loads before both, so the captures stay shared in production too.
+    [
+        normalize(join(__dirname, 'src/features/guild/guild-trial-simulation-inputs.js')),
+        'Toolasha.Utils.guildTrialSimulationInputs',
+    ],
     // Filled from the combat bundle (Statistics popup) and the ui bundle (loot log)
     [normalize(join(__dirname, 'src/utils/chat-fill.js')), 'Toolasha.Utils.chatFill'],
     [normalize(join(__dirname, 'src/utils/progress-eta.js')), 'Toolasha.Utils.progressEta'],

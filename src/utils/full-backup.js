@@ -66,9 +66,18 @@ export const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
  * crash or a cancelled Save dialog, not history worth keeping in a backup or
  * syncing to a gist. It is also the same reasoning `trialTraceChunk_` above
  * already established for this list: large, transient, single-device.
+ *
+ * `combatExport`'s `guild_trial_inputs_` holds the Trial Input Capture library
+ * (`features/guild/guild-trial-simulation-inputs.js`): up to eight saved
+ * guild/week captures per character, each allowed up to 20 MB of opened
+ * profiles and trial loadouts. Its setting promises to keep them on this
+ * browser, and `combatExport` otherwise syncs whole, so one large capture
+ * could push the gist past its size cap and fail every push. The capture panel
+ * has its own JSON export and import for moving a capture to another device.
  */
 export const EXCLUDED_STORE_KEY_PREFIXES = {
     guildHistory: ['trialTraceManifest', 'trialTraceChunk_'],
+    combatExport: ['guild_trial_inputs_'],
     labyrinth: ['labyrinthTickCaptureAutosave_'],
     settings: [...DEVICE_LOCAL_KEY_PREFIXES],
 };

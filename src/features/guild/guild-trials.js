@@ -153,6 +153,7 @@ import guildMemberSkills from './guild-member-skills.js';
 import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
+import { openTrialInputCapture, closeTrialInputCapture } from './guild-trial-input-capture.js';
 import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
@@ -2587,9 +2588,10 @@ class GuildTrials {
             kind: 'verb',
             run: async () => {
                 const bundle = await buildTrialExport({ guildName: this.guildName });
-                // The builder never refuses — an empty week is a well-formed
-                // bundle — so handing the player a file full of nulls and
-                // calling it a success would be the wrong answer twice over
+                // An empty week is a well-formed bundle (the builder refuses
+                // only mid guild/character switch, which the palette reports),
+                // so handing the player a file full of nulls and calling it a
+                // success would be the wrong answer twice over
                 if (trialExportIsEmpty(bundle)) return 'nothing recorded this week';
 
                 const filename = downloadTrialExport(bundle);
@@ -2655,6 +2657,9 @@ class GuildTrials {
 
         this._refresh = (data) => {
             this._noteGuildName(data);
+            // Adoption starts even with the Guild page closed, so exports stop
+            // using the old scope before the history's storage read completes.
+            this._adoptGuildName().catch(() => {});
             this._noteCurrentTrials(data);
             this._render(findTrialsRoot());
         };
@@ -2674,6 +2679,9 @@ class GuildTrials {
         // recognised without the tab having been opened this session.
         if (config.getSetting('guildTrialTracking', true)) guildTrialDamage.initialize();
         this._followTracking();
+        // The Capture inputs button follows the Trial Simulator setting at once,
+        // not on the next sample
+        this.unregister.push(config.onSettingChange('guildTrialSim', () => this._render(findTrialsRoot())));
         guildTrialBossDebuffsUI.initialize();
         guildTrialSkilling.initialize();
         guildTrialStatsModal.initialize();
@@ -2819,6 +2827,7 @@ class GuildTrials {
      */
     _forgetCharacter(newId = null) {
         try {
+            closeTrialInputCapture();
             this.record = null;
             this.guildName = null;
             this.socketGuildName = null;
@@ -3301,6 +3310,7 @@ class GuildTrials {
         if (!name || name === this.guildName || this.adopting) return;
 
         this.adopting = true;
+        const exportToken = guildTrialRecorder.beginGuildAdoption?.();
         try {
             const changing = this.guildName !== null;
             const characterId = this.characterId;
@@ -3340,6 +3350,7 @@ class GuildTrials {
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
         } finally {
+            guildTrialRecorder.endGuildAdoption?.(exportToken);
             this.adopting = false;
         }
     }
@@ -4825,6 +4836,15 @@ class GuildTrials {
                           'unless that is switched off in settings.'
             ) +
             button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
+            // The captured inputs feed only the Trial Simulator, so the helper is offered with it
+            (config.getSetting('guildTrialSim') === true
+                ? button(
+                      'capture-inputs',
+                      'Capture inputs',
+                      ACCENT,
+                      'Collect trial loadouts and profiles for combat and skilling, one click at a time.'
+                  )
+                : '') +
             (config.getSetting('guildTrialDiagnosticTrace', false)
                 ? button(
                       'trace',
@@ -4881,12 +4901,21 @@ class GuildTrials {
             this._render(findTrialsRoot());
         });
         on('export', async () => {
-            const bundle = await buildTrialExport({ guildName: this.guildName });
-            downloadTrialExport(bundle);
+            try {
+                const bundle = await buildTrialExport({ guildName: this.guildName });
+                if (!downloadTrialExport(bundle)) throw new Error('The download could not be started.');
+            } catch (error) {
+                const control = block.querySelector('[data-action="export"]');
+                if (control) {
+                    control.textContent = 'Export failed — try again';
+                    control.title = error.message;
+                }
+            }
         });
         on('trace', async () => {
             await guildTrialTrace.exportTrace();
         });
+        on('capture-inputs', () => openTrialInputCapture());
         on('abilities', () => {
             // The roster and tier feed happens at open — the panel keeps itself
             // current from capture events after that. Only a roster that exists
@@ -5496,6 +5525,7 @@ export default {
     // makes `_restore()` short-circuit and the two characters share one trace.
     cleanup: async () => {
         try {
+            closeTrialInputCapture();
             guildTrials.cleanup();
             await guildTrialTrace.disable?.();
         } catch (error) {

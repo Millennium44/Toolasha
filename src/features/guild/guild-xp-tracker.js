@@ -494,6 +494,8 @@ class GuildXPTracker {
         this.initialized = false;
         this.ownGuildName = null;
         this.ownGuildID = null;
+        /** Guild object identity, separate from the member-derived ID while messages catch up. */
+        this.guildSnapshotID = null;
         this.ownGuildLevel = null;
         this.guildCreatedAt = null;
         this.guildType = null;
@@ -777,6 +779,8 @@ class GuildXPTracker {
         // A character switch tears this down while the reads below are in flight; resuming afterwards would put the
         // departed character's guild, roster and history into a tracker that now belongs to somebody else
         const epoch = this._epoch;
+        const snapshotID = data.guild?.id ?? Object.values(data.guildCharacterMap || {})[0]?.guildID ?? null;
+        this.guildSnapshotID = snapshotID == null ? null : String(snapshotID);
         // The leaderboard series belongs to the account, not to a guild: a
         // player with no guild reads the same ranking and keeps the same history
         if (this._recordsHistory()) await this._loadLeaderboardHistory();
@@ -948,9 +952,18 @@ class GuildXPTracker {
      * @param {Object} data - guild_updated message
      */
     async _onGuildUpdated(data) {
-        if (this._loadsPending > 0) await this.whenReady();
         const guild = data.guild;
         if (!guild) return;
+
+        // Mark the incoming identity before waiting for history, so readers can reject mixed guild/member data.
+        if (guild.id != null) this.guildSnapshotID = String(guild.id);
+
+        // Guild identity may arrive before the member update. Keep the old ID until that update can load its
+        // history, but stop exposing the departed guild's roster under the arriving guild's name.
+        if (guild.id != null && this.ownGuildID != null && String(guild.id) !== String(this.ownGuildID)) {
+            this.memberMeta = {};
+        }
+        if (this._loadsPending > 0) await this.whenReady();
 
         const name = guild.name;
         const previous = this.ownGuildName;
@@ -992,16 +1005,21 @@ class GuildXPTracker {
      * @param {Object} data - guild_characters_updated message
      */
     async _onMembersUpdated(data) {
-        if (this._loadsPending > 0) await this.whenReady();
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
-        this.rawSharableMap = sharableMap;
 
         // Detect guild change (same character, different guild)
         const charIds = Object.keys(guildCharacterMap);
         const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
 
+        // An initial history load may still be pending. Invalidate outgoing signups immediately on receipt.
+        if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) this.memberMeta = {};
+        if (this._loadsPending > 0) await this.whenReady();
+        this.rawSharableMap = sharableMap;
+
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
+            // Readers must not pair the arriving guild ID with the departed guild's signups while history loads.
+            this.memberMeta = {};
             // Guild switched — drop the old guild's member data and load the new
             // guild's record. A read that fails here starts the new record empty
             // rather than carrying the old guild's members into it; nothing is
@@ -1023,7 +1041,6 @@ class GuildXPTracker {
             } else {
                 this.memberXPHistory = {};
             }
-            this.memberMeta = {};
         } else if (newGuildID) {
             this.ownGuildID = newGuildID;
         }
@@ -1223,6 +1240,11 @@ class GuildXPTracker {
         return this.ownGuildID;
     }
 
+    /** Guild identity from the latest guild object, for checking that its member roster has caught up. */
+    getOwnGuildSnapshotID() {
+        return this.guildSnapshotID;
+    }
+
     /**
      * Get guild creation date.
      * @returns {string|null}
@@ -1408,6 +1430,7 @@ class GuildXPTracker {
 
         this.ownGuildName = null;
         this.ownGuildID = null;
+        this.guildSnapshotID = null;
         this.ownGuildLevel = null;
         this.guildCreatedAt = null;
         this.guildXPHistory = {};

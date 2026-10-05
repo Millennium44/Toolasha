@@ -46,6 +46,13 @@ import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildTrialTrace from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
+import {
+    captureTrialSimulationInputs,
+    startTrialSimulationCapture,
+    stopTrialSimulationCapture,
+    clearTrialSimulationProfiles,
+    trialSignupRoster,
+} from './guild-trial-simulation-inputs.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -255,6 +262,10 @@ class GuildTrialRecorder {
         this.session = null;
         this.guildName = null;
         this.characterId = null;
+        this.exportScopeVersion = 0;
+        this.pendingGuildAdoption = null;
+        /** Drops the `guildTrialSim` watch that starts and stops the passive profile capture */
+        this.unwatchSimSetting = null;
         /** Last moment anything said a trial was happening */
         this.lastActivityAt = 0;
         /** Where the guild panel says the cycle is; null until one has been read */
@@ -290,10 +301,13 @@ class GuildTrialRecorder {
      * @param {string|null} guildName - The key sessions are stored under
      */
     initialize(guildName = null) {
+        if (this.guildName !== guildName || this.characterId !== (dataManager.getCurrentCharacterId?.() ?? null))
+            this.exportScopeVersion++;
         this.guildName = guildName;
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         if (this.initialized) return;
         this.initialized = true;
+        this._followSimulatorSetting();
 
         this.watcherId = setInterval(() => this._tick(), SNAPSHOT_MS);
         this.timers.registerInterval(this.watcherId, 'guildTrialRecorder.tick');
@@ -304,9 +318,46 @@ class GuildTrialRecorder {
     }
 
     cleanup() {
+        this.exportScopeVersion++;
+        this.pendingGuildAdoption = null;
+        this.unwatchSimSetting?.();
+        this.unwatchSimSetting = null;
+        stopTrialSimulationCapture();
         this.timers.clearAll();
         this.watcherId = null;
         this.initialized = false;
+    }
+
+    /**
+     * Keep opened profiles in memory only while the Trial Simulator is on.
+     *
+     * The passive copy feeds the simulator and its capture helper and nothing
+     * else, so with the simulator off every `profile_shared` would be cloned
+     * into a map no reader looks at. The capture helper still starts it lazily
+     * when its panel is opened.
+     * @private
+     */
+    _followSimulatorSetting() {
+        this.unwatchSimSetting?.();
+        if (config.getSetting('guildTrialSim') === true) startTrialSimulationCapture();
+        this.unwatchSimSetting =
+            config.onSettingChange?.('guildTrialSim', (enabled) => {
+                if (enabled === true) startTrialSimulationCapture();
+                else stopTrialSimulationCapture();
+            }) ?? null;
+    }
+
+    /** Block exports while the arriving guild's history and capture scope are being adopted. */
+    beginGuildAdoption() {
+        this.pendingGuildAdoption = ++this.exportScopeVersion;
+        return this.pendingGuildAdoption;
+    }
+
+    /** An older storage read cannot unblock a newer adoption. */
+    endGuildAdoption(token) {
+        if (this.pendingGuildAdoption !== token) return;
+        this.pendingGuildAdoption = null;
+        this.exportScopeVersion++;
     }
 
     /**
@@ -322,6 +373,7 @@ class GuildTrialRecorder {
      */
     setGuildName(guildName) {
         const next = guildName || null;
+        if (this.guildName !== next) this.exportScopeVersion++;
         if (this.guildName && next && this.guildName !== next) this.forget();
         this.guildName = next;
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
@@ -343,6 +395,9 @@ class GuildTrialRecorder {
      * ledger at all.
      */
     forget() {
+        this.exportScopeVersion++;
+        this.pendingGuildAdoption = null;
+        clearTrialSimulationProfiles();
         if (this.recording) this.stop('character switched');
         // The damage module is reset right after this; any totals arriving
         // later belong to the next character's trial
@@ -1133,11 +1188,31 @@ const guildTrialRecorder = new GuildTrialRecorder();
  */
 export async function buildTrialExport({ guildName = null } = {}) {
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    const scopeVersion = guildTrialRecorder.exportScopeVersion;
+    // The simulator's inputs ride along only while it is on, and only for this
+    // week's signups: the rest of the guild's cached profiles are no part of the trial
+    const signups =
+        config.getSetting('guildTrialSim') === true
+            ? trialSignupRoster(guildXPTracker).map((row) => ({ characterID: row.characterId, name: row.name }))
+            : null;
+    if (
+        guildTrialRecorder.pendingGuildAdoption !== null ||
+        (guildName && guildTrialRecorder.guildName && guildName !== guildTrialRecorder.guildName)
+    )
+        throw new Error('Guild or character changed during export. Export again on the current guild.');
     const record = await loadTrialRecord(guildName, Date.now(), characterId);
     const loadouts = characterId ? await loadLoadouts(characterId) : null;
     const trialDamage = guildTrialDamage.breakdown?.() ?? null;
     const session = await guildTrialRecorder.loadSession();
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
+    const simulationInputs = signups ? await captureTrialSimulationInputs(characterId, signups) : null;
+    if (
+        (dataManager.getCurrentCharacterId?.() ?? null) !== characterId ||
+        guildTrialRecorder.exportScopeVersion !== scopeVersion ||
+        guildTrialRecorder.pendingGuildAdoption !== null
+    ) {
+        throw new Error('Guild or character changed during export. Export again on the current guild.');
+    }
 
     return {
         // Which reader this bundle is for, which script produced it, and
@@ -1179,26 +1254,30 @@ export async function buildTrialExport({ guildName = null } = {}) {
         traceId: guildTrialTrace.activeTraceId?.() ?? null,
         // Coverage-aware: a partial session lists unknownAuras, never missingAuras
         trialAbilities: guildTrialAbilities.exportSnapshot?.() ?? null,
+        // Only with the Trial Simulator on: dated raw View Loadout gear/triggers and
+        // matching profile levels/houses/shrines for this week's signups, plus the
+        // building context, kept before memory-only captures disappear.
+        ...(simulationInputs ? { simulationInputs } : {}),
     };
 }
 
 /**
  * Whether a bundle has nothing in it worth keeping.
  *
- * `buildTrialExport` never refuses: it always returns a well-formed bundle, and
- * a week with nothing in it comes back as a fresh empty record and a null
- * session rather than as an error. That is right for the file — a reader can
+ * An empty week returns a well-formed bundle with a fresh empty record and a null
+ * session; a guild/character switch during the read requires a retry. A reader can
  * tell "we recorded nothing" from a bundle and cannot tell it from a missing
  * one — but it means a caller wanting to *say* whether there was anything has
- * to look. Three sources, because a week can have any one of them without the
+ * to look. Four sources, because a week can have any one of them without the
  * others: a recorder session, the ladder's per-tile samples, and the finished
- * trials in its history.
+ * trials in its history, and newly collected trial loadouts before a run starts.
  *
  * @param {Object} bundle - From {@link buildTrialExport}
  * @returns {boolean} Whether nothing at all was recorded this week
  */
 export function trialExportIsEmpty(bundle) {
     if (bundle?.session) return false;
+    if (bundle?.simulationInputs?.viewLoadouts?.length) return false;
     const record = bundle?.record;
     if (!record) return true;
     if (Object.keys(record.tiles || {}).length) return false;

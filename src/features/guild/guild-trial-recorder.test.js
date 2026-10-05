@@ -27,7 +27,19 @@ const game = vi.hoisted(() => ({
     currentWeek: null,
     /** Whether this is the test server, where a week runs several cycles */
     testServer: false,
+    viewLoadouts: [],
+    profileRead: null,
+    settingWatchers: [],
+    socketHandlers: [],
 }));
+
+/** Flip a setting the way config does: store it, then tell its watchers */
+function changeSetting(key, value) {
+    game.settings[key] = value;
+    for (const watcher of game.settingWatchers.filter((entry) => entry.key === key)) watcher.callback(value);
+}
+
+const profileListeners = () => game.socketHandlers.filter((entry) => entry.type === 'profile_shared').length;
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
 
@@ -35,6 +47,24 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key, fallback) => (key in game.settings ? game.settings[key] : fallback),
         getSettingValue: (key, fallback) => fallback,
+        onSettingChange: (key, callback) => {
+            const entry = { key, callback };
+            game.settingWatchers.push(entry);
+            return () => {
+                game.settingWatchers = game.settingWatchers.filter((watcher) => watcher !== entry);
+            };
+        },
+    },
+}));
+// Only the passive profile capture listens here; what is under test is whether it is listening
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => game.socketHandlers.push({ type, handler }),
+        off: (type, handler) => {
+            game.socketHandlers = game.socketHandlers.filter(
+                (entry) => entry.type !== type || entry.handler !== handler
+            );
+        },
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -50,6 +80,8 @@ vi.mock('../../core/storage.js', () => ({
             game.store[key] = value;
             return true;
         },
+        getJSON: async (key, _store, fallback) =>
+            game.profileRead ? game.profileRead() : (game.store[key] ?? fallback),
     },
 }));
 vi.mock('./guild-trial-damage.js', () => ({
@@ -71,6 +103,10 @@ vi.mock('./guild-member-skills.js', () => ({
 }));
 vi.mock('./guild-trial-trace.js', () => ({
     default: { activeTraceId: () => game.traceId },
+}));
+vi.mock('../../utils/view-loadout.js', () => ({
+    getLoadouts: () => game.viewLoadouts,
+    VIEW_LOADOUT_CONTEXT: { GuildTrial: 'guild_trial' },
 }));
 vi.mock('./guild-trial-abilities.js', () => ({
     default: { exportSnapshot: () => game.abilitiesSnapshot },
@@ -110,6 +146,128 @@ const {
 } = await import('./guild-trial-recorder.js');
 
 const now = Date.parse('2026-08-05T15:00:00Z');
+
+test('trial export preserves the saved trial gear and triggers captured through View Loadout', async () => {
+    const capture = {
+        characterId: '2',
+        name: 'Ada',
+        ownerCharacterId: String(game.characterId),
+        context: 'guild_trial',
+        kind: 'combat',
+        hasLoadout: true,
+        capturedAt: now,
+        loadout: {
+            wearableItemMap: { '/item_locations/main_hand': { itemHrid: '/items/iron_sword', enhancementLevel: 7 } },
+            equippedAbilities: [{ abilityHrid: '/abilities/cleave', level: 50 }],
+            abilityCombatTriggersMap: { '/abilities/cleave': [] },
+        },
+    };
+    game.viewLoadouts = [capture, { ...capture, context: 'party' }];
+    game.settings.guildTrialSim = true;
+    game.currentWeek = '2026-08-03T00:00:00Z';
+    game.members = [
+        {
+            characterID: '2',
+            name: 'Ada',
+            signupWeekStartAt: game.currentWeek,
+            signedUpCombatTrialHrid: '/guild_combat/badger',
+        },
+    ];
+    try {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+        expect(bundle.simulationInputs.viewLoadouts).toEqual([capture]);
+        expect(bundle.simulationInputs.ownerCharacterId).toBe(String(game.characterId));
+        capture.loadout.equippedAbilities[0].level = 1;
+        expect(bundle.simulationInputs.viewLoadouts[0].loadout.equippedAbilities[0].level).toBe(50);
+    } finally {
+        game.viewLoadouts = [];
+        game.members = [];
+        delete game.settings.guildTrialSim;
+        game.currentWeek = null;
+    }
+});
+
+test('the trial export carries no simulator inputs while the simulator is off', async () => {
+    game.members = [{ characterID: '2', name: 'Ada' }];
+    game.store.profile_list = [{ characterID: '2', timestamp: now, profile: { characterSkills: [] } }];
+    try {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+        expect(bundle).not.toHaveProperty('simulationInputs');
+        expect(bundle.format).toBe('toolasha-guild-trial');
+    } finally {
+        game.members = [];
+    }
+});
+
+test('the simulator inputs in a trial export cover this week’s signups, not the whole guild', async () => {
+    game.settings.guildTrialSim = true;
+    game.currentWeek = '2026-08-03T00:00:00Z';
+    const signedUp = (id, name) => ({
+        characterID: id,
+        name,
+        signupWeekStartAt: game.currentWeek,
+        signedUpSkillingTrialHrid: '/guild_skilling/milking',
+    });
+    game.members = [
+        signedUp('2', 'Ada'),
+        // A member from last week's sheet and one who never signed up
+        { ...signedUp('3', 'Bob'), signupWeekStartAt: '2026-07-27T00:00:00Z' },
+        { characterID: '4', name: 'Cy' },
+    ];
+    game.store.profile_list = ['2', '3', '4'].map((id) => ({
+        characterID: id,
+        timestamp: now,
+        profile: { characterSkills: [] },
+    }));
+    try {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+        expect(bundle.simulationInputs.profiles.map((entry) => entry.characterID)).toEqual(['2']);
+    } finally {
+        game.members = [];
+        delete game.settings.guildTrialSim;
+        game.currentWeek = null;
+    }
+});
+test('export rejects an unresolved guild adoption and an old completion cannot resume it', async () => {
+    const first = guildTrialRecorder.beginGuildAdoption();
+    const second = guildTrialRecorder.beginGuildAdoption();
+    guildTrialRecorder.endGuildAdoption(first);
+    await expect(buildTrialExport()).rejects.toThrow('Guild or character changed');
+    guildTrialRecorder.endGuildAdoption(second);
+    await expect(buildTrialExport()).resolves.toHaveProperty('format', 'toolasha-guild-trial');
+});
+
+test('export rejects a same-character guild switch during a delayed profile read', async () => {
+    game.settings.guildTrialSim = true;
+    game.currentWeek = '2026-08-03T00:00:00Z';
+    game.members = [
+        { characterID: '2', name: 'Ada', signupWeekStartAt: game.currentWeek, signedUpCombatTrialHrid: '/x' },
+    ];
+    guildTrialRecorder.setGuildName('Milky Way');
+    let markStarted, finish;
+    const started = new Promise((resolve) => {
+        markStarted = resolve;
+    });
+    const pending = new Promise((resolve) => {
+        finish = resolve;
+    });
+    game.profileRead = () => {
+        markStarted();
+        return pending;
+    };
+    try {
+        const exporting = buildTrialExport({ guildName: 'Milky Way' });
+        await started;
+        guildTrialRecorder.setGuildName('Other guild');
+        finish([]);
+        await expect(exporting).rejects.toThrow('Guild or character changed');
+    } finally {
+        game.profileRead = null;
+        game.members = [];
+        delete game.settings.guildTrialSim;
+        game.currentWeek = null;
+    }
+});
 
 // As `guild_trial_stats_updated` is surfaced on the breakdown: per name
 const reported = {
@@ -185,6 +343,34 @@ afterEach(() => {
     guildTrialRecorder.cleanup();
     guildTrialRecorder.session = null;
     vi.useRealTimers();
+});
+
+describe('the passive profile capture for the Trial Simulator', () => {
+    test('does not listen while the simulator is off', () => {
+        expect(profileListeners()).toBe(0);
+    });
+
+    test('starts with the simulator, stops when it is turned off, and goes with cleanup', () => {
+        changeSetting('guildTrialSim', true);
+        expect(profileListeners()).toBe(1);
+
+        changeSetting('guildTrialSim', false);
+        expect(profileListeners()).toBe(0);
+
+        changeSetting('guildTrialSim', true);
+        guildTrialRecorder.cleanup();
+        expect(profileListeners()).toBe(0);
+        // The watch went with the cleanup, so a later toggle starts nothing
+        changeSetting('guildTrialSim', true);
+        expect(profileListeners()).toBe(0);
+    });
+
+    test('is listening from the start when the simulator is already on', () => {
+        guildTrialRecorder.cleanup();
+        game.settings.guildTrialSim = true;
+        guildTrialRecorder.initialize(null);
+        expect(profileListeners()).toBe(1);
+    });
 });
 
 describe('thinBreakdown', () => {
@@ -1329,6 +1515,9 @@ describe('the export bundle', () => {
  * useless to a caller that wants to say whether there was anything.
  */
 describe('trialExportIsEmpty', () => {
+    test('saved trial loadouts make a pre-trial export worth keeping', () => {
+        expect(trialExportIsEmpty({ simulationInputs: { viewLoadouts: [{ hasLoadout: true }] } })).toBe(false);
+    });
     test('a bundle with a session is not empty, whatever the record says', () => {
         expect(trialExportIsEmpty({ session: { startedAt: 1 }, record: { tiles: {}, history: [] } })).toBe(false);
     });

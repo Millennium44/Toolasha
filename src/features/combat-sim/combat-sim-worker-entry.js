@@ -15,10 +15,26 @@ import Labyrinth from './engine/labyrinth.js';
 import Player from './engine/player.js';
 import { seedSimRng } from './engine/rng.js';
 import Zone from './engine/zone.js';
+import { simulateGuildCombat } from './engine/guild-combat-simulator.js';
+import { simulateGuildSkilling } from './engine/guild-skilling-simulator.js';
 
 onmessage = function (event) {
     const { type, taskId } = event.data;
 
+    if (type === 'start_guild_trial_simulation') {
+        try {
+            if (event.data.gameData) setGameData(event.data.gameData);
+            const progress = (value) => postMessage({ type: 'progress', taskId, progress: value });
+            const simResult =
+                event.data.scenario.kind === 'combat'
+                    ? simulateGuildCombat(event.data.scenario, progress, event.data.returnAttempts === true)
+                    : simulateGuildSkilling(event.data.scenario, progress, event.data.returnAttempts === true);
+            postMessage({ type: 'result', taskId, simResult });
+        } catch (error) {
+            postMessage({ type: 'error', taskId, error: error.message || String(error) });
+        }
+        return;
+    }
     if (type !== 'start_simulation') return;
 
     try {

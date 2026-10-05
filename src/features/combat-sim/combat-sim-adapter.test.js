@@ -466,6 +466,64 @@ describe('a party member with a shared party loadout', () => {
         expect(built.levelsFrom).toBe('profile');
         expect(built.dto.magicLevel).toBe(95);
     });
+
+    test('a trial session profile supplies a member evicted from the general 20-profile cache', async () => {
+        mocks.profileList = Array.from({ length: 20 }, (_, index) => ({
+            ...allyProfile(),
+            characterID: `other-${index}`,
+            characterName: `Other ${index}`,
+        }));
+        const captured = { ...allyProfile(), timestamp: 1234 };
+        const entry = { characterId: 'ally', name: 'Ally', hasLoadout: true, loadout: sharedLoadout('ally') };
+
+        const built = await buildPlayerDTOFromLoadout(entry, [captured]);
+
+        expect(built.levelsFrom).toBe('profile');
+        expect(built.dto.magicLevel).toBe(95);
+        expect(built.dto.houseRooms).toEqual({ '/house_rooms/library': 6 });
+        expect(built.dto.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(10);
+        expect(built.dto.equipment['/equipment_types/two_hand']).toBeUndefined();
+        expect(built.profileCapturedAt).toBe(1234);
+    });
+
+    test('uses the newest matching profile across the session and general cache', async () => {
+        mocks.profileList = [{ ...allyProfile(), timestamp: 200 }];
+        const sessionProfile = {
+            ...allyProfile(),
+            timestamp: 100,
+            profile: { characterSkills: [{ skillHrid: '/skills/magic', level: 110 }] },
+        };
+        const entry = { characterId: 'ally', name: 'Ally', hasLoadout: true, loadout: sharedLoadout('ally') };
+        const older = await buildPlayerDTOFromLoadout(entry, [sessionProfile]);
+        expect(older.dto.magicLevel).toBe(95);
+        expect(older.profileCapturedAt).toBe(200);
+
+        sessionProfile.timestamp = 300;
+        const newer = await buildPlayerDTOFromLoadout(entry, [sessionProfile]);
+        expect(newer.dto.magicLevel).toBe(110);
+        expect(newer.profileCapturedAt).toBe(300);
+    });
+    test('an explicit loadout id never borrows a different same-name profile', async () => {
+        mocks.profileList = [{ ...allyProfile(), characterID: 23, characterName: 'Ally' }];
+        const entry = { characterId: '42', name: 'Ally', hasLoadout: true, loadout: sharedLoadout(42) };
+        const built = await buildPlayerDTOFromLoadout(entry);
+        expect(built.levelsFrom).toBeNull();
+        expect(built.dto.magicLevel).toBe(1);
+        expect(built.dto.equipment['/equipment_types/main_hand'].hrid).toBe('/items/rippling_trident');
+    });
+    test('a capture import uses only the provided dated profile, even when the general cache is newer', async () => {
+        mocks.profileList = [{ ...allyProfile(), timestamp: 200 }];
+        const profile = {
+            ...allyProfile(),
+            timestamp: 100,
+            profile: { characterSkills: [{ skillHrid: '/skills/magic', level: 110 }] },
+        };
+        const entry = { characterId: 'ally', name: 'Ally', hasLoadout: true, loadout: sharedLoadout('ally') };
+        const built = await buildPlayerDTOFromLoadout(entry, [profile], { onlyProvidedProfiles: true });
+        expect(built.dto.magicLevel).toBe(110);
+        expect(built.profileCapturedAt).toBe(100);
+        expect(mocks.profileList[0].timestamp).toBe(200);
+    });
 });
 
 const FORCE = {
