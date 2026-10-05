@@ -17,7 +17,7 @@ vi.mock('../../utils/tester-shop.js', () => ({
     testerGearPrice: () => null,
     MIRROR_HRID: '/items/philosophers_mirror',
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ missingMaterialsButton: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, missingMaterialsButton: () => null }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 
 import { mirrorCostColumn } from './enhancement-display.js';

@@ -32,7 +32,7 @@ vi.mock('../../../core/data-manager.js', () => ({ default: { getInitClientData: 
 vi.mock('../inventory-sort.js', () => ({ default: {} }));
 vi.mock('../inventory-badge-manager.js', () => ({ default: {} }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: {} }));
-vi.mock('../../../utils/bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
+vi.mock('../../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, loadoutSnapshot: () => null }));
 
 const { default: CustomTabsUI } = await import('./custom-tabs-ui.js');
 const { totalValueKey, stackBadgeValueKey } = await import('../inventory-badge-mode.js');
