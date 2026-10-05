@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Faster Trial Sim runs
 
-- Independent trial attempts now run across up to four workers, using the simulator's thread limit. Progress updates keep the roster and controls in place instead of rebuilding the whole panel.
+- Independent trial attempts now run in parallel, using the simulator's thread limit: automatic mode uses up to four workers, and higher configured limits use additional available cores. Progress updates keep the roster and controls in place instead of rebuilding the whole panel.
 
 ### Trial Sim setup stays readable
 

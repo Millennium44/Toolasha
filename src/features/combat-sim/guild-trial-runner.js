@@ -9,7 +9,7 @@ export async function runGuildTrialSimulation(message, onProgress = () => {}, { 
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal?.addEventListener('abort', abort, { once: true });
-    const workerCount = Math.max(1, Math.min(4, Math.floor(getMaxWorkers()), scenario.runs));
+    const workerCount = Math.max(1, Math.min(Math.floor(getMaxWorkers()), scenario.runs));
     const chunks = Array.from({ length: workerCount }, (_, index) => {
         const first = Math.floor((index * scenario.runs) / workerCount);
         const end = Math.floor(((index + 1) * scenario.runs) / workerCount);

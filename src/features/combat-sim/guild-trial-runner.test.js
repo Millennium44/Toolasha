@@ -109,11 +109,18 @@ describe('parallel guild trials', () => {
         expect(await running).toEqual(summarizeTrialRuns(validateTrialScenario(skilling), all.flat()));
         expect(progress.mock.calls.at(-1)).toEqual([100]);
     });
-    test('caps workers at four and never creates more chunks than runs', async () => {
+    test('never creates more chunks than runs', async () => {
         harness.workers = 32;
         harness.run.mockImplementation(async (chunk) => simulateGuildSkilling(chunk.scenario, undefined, true));
         await runGuildTrialSimulation(message({ ...skilling, runs: 2 }));
         expect(harness.run).toHaveBeenCalledTimes(2);
+    });
+    test('honors configured thread limits above four and preserves the seeded result', async () => {
+        harness.workers = 8;
+        const scenario = { ...skilling, runs: 17 };
+        harness.run.mockImplementation(async (chunk) => simulateGuildSkilling(chunk.scenario, undefined, true));
+        expect(await runGuildTrialSimulation(message(scenario))).toEqual(simulateGuildSkilling(scenario));
+        expect(harness.run).toHaveBeenCalledTimes(8);
     });
     test('validates the whole event budget before splitting', async () => {
         const expensive = {
