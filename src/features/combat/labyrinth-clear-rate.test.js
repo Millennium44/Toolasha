@@ -5189,4 +5189,35 @@ describe('floor calculation and rooms revealed mid-pass', () => {
         expect(pathSpy).not.toHaveBeenCalled();
         expect(labyrinthClearRate._pathQueued).toBe(true);
     });
+
+    test('a queued Path runs at once when Auto-calc was switched off before the deferred pass', async () => {
+        makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc').mockImplementation(() => {});
+        const pathSpy = vi.spyOn(labyrinthClearRate, 'runPathCalculation').mockImplementation(() => {});
+
+        const pass = labyrinthClearRate.runTileCalculation({ auto: true });
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        labyrinthClearRate._pathQueued = true;
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        configMock.getSetting.mockImplementation((key) => key !== 'labyrinthAutoCalcTiles');
+        try {
+            release({ clearChance: 0.9, expectedSeconds: 10 });
+            await pass;
+        } finally {
+            configMock.getSetting.mockImplementation(() => true);
+        }
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+    });
 });

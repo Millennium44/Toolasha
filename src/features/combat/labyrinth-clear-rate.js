@@ -3427,7 +3427,9 @@ class LabyrinthClearRate {
                 // judge the rooms the retry is about to settle on assumptions.
                 // A deferred auto trigger (rooms revealed mid-pass) is a pass about
                 // to run, exactly like a scheduled retry, and keeps the wait too.
-                const deferred = this._autoCalcDeferred;
+                // Only a pass that can actually be scheduled holds the wait: with
+                // Auto-calc switched off mid-pass nothing would drain a queued Path.
+                const deferred = this._autoCalcDeferred && Boolean(config.getSetting('labyrinthAutoCalcTiles'));
                 this._autoCalcDeferred = false;
                 const followUp = retryScheduled || (deferred && !cancelled);
                 const wantsPath = this._pathQueued && !followUp;
