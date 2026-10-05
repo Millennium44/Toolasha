@@ -265,7 +265,9 @@ export class GuildTrialSim {
         const trialSet = (data, context) => {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (Array.isArray(data?.guildWeeklyTrialSet?.skillHrids))
-                this.assign.weeklyTrialSet = data.guildWeeklyTrialSet;
+                this.assign.setWeeklyTrialSet(data.guildWeeklyTrialSet);
+            if (typeof data?.guild?.trialMinLevelsData === 'string')
+                this.assign.trialMinLevelsData = data.guild.trialMinLevelsData;
         };
         webSocketHook.on('guild_updated', trialSet);
         this.handlers.push(() => webSocketHook.off('guild_updated', trialSet));
@@ -722,7 +724,8 @@ export class GuildTrialSim {
         // Let setup sections keep their content height; the panel body handles scrolling.
         body.style.display = 'block';
         body.style.backgroundColor = '#0e1016';
-        const busy = Boolean(this.controller || this.loading);
+        // The planner's search or check counts too: switching mode mid-run would orphan it
+        const busy = Boolean(this.controller || this.loading || this.assign.controller);
         body.appendChild(
             panelNote(
                 'Experimental planning model. Results depend on the entered roster and the assumptions below. Runs are local and do not sign up members or change loadouts.'

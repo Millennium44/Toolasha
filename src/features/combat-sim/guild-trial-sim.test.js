@@ -780,3 +780,21 @@ describe('Assign skilling view', () => {
         expect(feature.assign.weeklyTrialSet).toBeNull();
     });
 });
+
+describe('Assign skilling view while the planner runs', () => {
+    test('the mode select is disabled while a search or check is running', () => {
+        feature.kind = 'assign';
+        feature.assign.controller = new AbortController();
+        harness.initializedPanel.render();
+        const mode = Array.from(document.querySelectorAll('select')).find((s) =>
+            Array.from(s.options).some((o) => o.value === 'assign')
+        );
+        expect(mode.disabled).toBe(true);
+        feature.assign.controller = null;
+    });
+
+    test('a guild update carries the trial minimum levels to the planner', () => {
+        harness.ws.guild_updated({ guild: { trialMinLevelsData: '{"/guild_skilling/crafting":120}' } });
+        expect(feature.assign.trialMinLevelsData).toBe('{"/guild_skilling/crafting":120}');
+    });
+});

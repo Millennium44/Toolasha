@@ -329,6 +329,15 @@ export function guildXpTracker() {
 }
 
 /**
+ * Guild members' captured skill levels (`guild-member-skills.js`), combat-owned. Initialized only
+ * while Guild Trials is on; check `initialized` before reading an empty store as "no levels".
+ * @returns {Object|null} The store, or null when the combat bundle is absent
+ */
+export function guildMemberSkills() {
+    return toolashaRoot()?.Combat?.guildMemberSkills || null;
+}
+
+/**
  * The guild-trial export builder module (buildTrialExport/downloadTrialExport);
  * its data-gathering reads the trial singletons live only in the combat bundle.
  * @returns {Object|null} The module namespace, or null when combat is absent
