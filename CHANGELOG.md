@@ -12,7 +12,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit round: collection optimizer and unpriced rows
 
-- The Collection optimizer no longer stays stuck on "Pricing routes…" when the Collections tab is reopened or the character switches mid-pricing; pinned alchemy rows withhold profit instead of ranking an unpriced output as worth 0; and gathering stats stop showing a stale blended XP/hr once no profitable action can cover the loss.
+- The Collection optimizer no longer stays stuck on "Pricing routes…" when the Collections tab is reopened or the character switches mid-pricing; pinned alchemy rows withhold profit instead of ranking an unpriced output or tea as worth 0, and Unrefine no longer picks a tea it cannot price; and gathering stats stop showing a stale blended XP/hr once no profitable action can cover the loss.
 
 ### Trial Sim stays off until switched on, and estimates closer to the game
 
