@@ -388,7 +388,20 @@ function trialName(hrid) {
     return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+/** The helper serves the Trial Simulator from inside Guild Trials, so it needs both. */
+function captureAllowed() {
+    return config.getSetting('guildTrialsInfo') === true && config.getSetting('guildTrialSim') === true;
+}
+
 function draw(body) {
+    if (!captureAllowed()) {
+        // A panel restored from a page left with it open, after either setting
+        // was switched off. Nothing is read or started for it, and once this
+        // character's settings are in hand it is closed for good.
+        body.appendChild(panelNote('Trial Input Capture needs Guild Trials and the Guild Trial Simulator turned on.'));
+        if (config.characterSettingsLoaded) queueMicrotask(closeIfDisallowed);
+        return;
+    }
     const allRows = rowsNow();
     void restoreSavedCapture();
     const trials = [...new Set(allRows.flatMap((row) => Object.values(row.trials)))];
@@ -572,8 +585,13 @@ export function openTrialInputCapture() {
     trialInputCapturePanel.show();
 }
 
-/** Release the helper when Guild Trials is disabled or the character changes. */
-export function closeTrialInputCapture() {
+/**
+ * Release the helper when Guild Trials is disabled or the character changes.
+ * @param {Object} [options]
+ * @param {boolean} [options.remember=false] - Record the panel as closed, so a reload
+ *   does not bring it back; for a setting being switched off, not a character switch
+ */
+export function closeTrialInputCapture({ remember = false } = {}) {
     cancelPending();
     cancelSave();
     roundVersion++;
@@ -586,5 +604,17 @@ export function closeTrialInputCapture() {
     scope = null;
     since = 0;
     skipped.clear();
-    trialInputCapturePanel.hide({ remember: false });
+    trialInputCapturePanel.hide({ remember });
 }
+
+/** Close the panel for good when a setting it needs is off. */
+function closeIfDisallowed() {
+    if (!captureAllowed() && trialInputCapturePanel.isOpen()) closeTrialInputCapture({ remember: true });
+}
+
+// Page-lifetime, like the panel itself: a panel left open is reopened by the
+// shell on load and on every character switch, before or after that
+// character's settings arrive, and either setting can be switched off while it
+// is open.
+for (const key of ['guildTrialSim', 'guildTrialsInfo']) config.onSettingChange?.(key, closeIfDisallowed);
+config.onSettingsLoaded?.(closeIfDisallowed);

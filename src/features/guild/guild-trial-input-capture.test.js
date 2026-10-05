@@ -20,12 +20,23 @@ const game = vi.hoisted(() => ({
     keepInputs: false,
     stored: new Map(),
     save: vi.fn(),
+    settings: { guildTrialSim: true, guildTrialsInfo: true },
+    settingWatchers: [],
+    settingsLoaded: [],
+    characterSettingsLoaded: true,
+    openStates: [],
 }));
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: (key) => key === 'guildTrialKeepInputs' && game.keepInputs,
+        getSetting: (key) =>
+            key === 'guildTrialKeepInputs' ? game.keepInputs : key in game.settings ? game.settings[key] : false,
         setSetting: (key, value) => {
             if (key === 'guildTrialKeepInputs') game.keepInputs = value;
+        },
+        onSettingChange: (key, callback) => game.settingWatchers.push({ key, callback }),
+        onSettingsLoaded: (callback) => game.settingsLoaded.push(callback),
+        get characterSettingsLoaded() {
+            return game.characterSettingsLoaded;
         },
     },
 }));
@@ -47,7 +58,9 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => {},
     saveGeometry: () => {},
-    saveOpenState: async () => {},
+    saveOpenState: async (id, open) => {
+        game.openStates.push({ id, open });
+    },
     reopenIfLeftOpen: async () => {},
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
@@ -176,6 +189,9 @@ beforeEach(() => {
     game.fetch.mockReset();
     game.openProfile.mockReset().mockReturnValue(true);
     game.keepInputs = false;
+    game.settings = { guildTrialSim: true, guildTrialsInfo: true };
+    game.characterSettingsLoaded = true;
+    game.openStates = [];
     game.stored.clear();
     game.save.mockReset().mockImplementation(async (key, mutate) => {
         const value = mutate(structuredClone(game.stored.get(key)));
@@ -191,6 +207,55 @@ afterEach(() => {
     stopTrialSimulationCapture();
     document.body.replaceChildren();
     vi.useRealTimers();
+});
+
+describe('the capture panel with its settings off', () => {
+    const panelOpen = () => Boolean(document.getElementById('toolasha-trialInputCapture-panel'));
+    const fireSetting = (key, value) => {
+        game.settings[key] = value;
+        for (const watcher of game.settingWatchers.filter((entry) => entry.key === key)) watcher.callback(value);
+    };
+
+    test.each(['guildTrialSim', 'guildTrialsInfo'])(
+        'a panel the shell reopens with %s off reads nothing, starts no capture, and stays closed',
+        async (key) => {
+            game.settings[key] = false;
+            // What `reopenIfLeftOpen` does on load: show, without the manual opener
+            trialInputCapturePanel.show({ remember: false });
+            await Promise.resolve();
+
+            expect(panelOpen()).toBe(false);
+            expect(game.openStates.at(-1)).toEqual({ id: 'trialInputCapture', open: false });
+            expect(game.handlers.get('profile_shared')?.size ?? 0).toBe(0);
+            expect(game.profileRead).not.toHaveBeenCalled();
+        }
+    );
+
+    test('switching the simulator off closes an open panel and remembers it closed', () => {
+        openTrialInputCapture();
+        expect(panelOpen()).toBe(true);
+
+        fireSetting('guildTrialSim', false);
+
+        expect(panelOpen()).toBe(false);
+        expect(game.openStates.at(-1)).toEqual({ id: 'trialInputCapture', open: false });
+    });
+
+    test('a reopen before the character’s settings arrive waits for them, then closes', async () => {
+        game.characterSettingsLoaded = false;
+        game.settings.guildTrialSim = false;
+        trialInputCapturePanel.show({ remember: false });
+        await Promise.resolve();
+        // Schema defaults are no evidence the player turned it off
+        expect(panelOpen()).toBe(true);
+        expect(game.profileRead).not.toHaveBeenCalled();
+
+        game.characterSettingsLoaded = true;
+        for (const callback of game.settingsLoaded) callback();
+
+        expect(panelOpen()).toBe(false);
+        expect(game.openStates.at(-1)).toEqual({ id: 'trialInputCapture', open: false });
+    });
 });
 
 describe('trial input capture helper', () => {
