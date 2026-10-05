@@ -729,6 +729,7 @@ class LabyrinthClearRate {
                 // restores nothing once fenced, so hand back the flag and button
                 // here.
                 this._tileGen = (this._tileGen || 0) + 1;
+                this._autoCalcDeferred = false;
                 if (this.tileCalcRunning) {
                     this.tileCalcRunning = false;
                     this._pathQueued = false;
@@ -3160,7 +3161,14 @@ class LabyrinthClearRate {
         // manual press it is the strip's own Uncapped toggle. Never for an auto
         // pass — those fire off DOM re-renders and must stay bounded.
         const uncapped = options.uncapped === true || (!auto && this.tileCalcUncapped());
-        if (this.tileCalcRunning) return;
+        if (this.tileCalcRunning) {
+            // An auto trigger that lands mid-pass (a beacon or a delta revealing
+            // rooms while sims are awaited) used to vanish here, and the pass in
+            // flight only covers the rooms it gathered at its start. Remember it
+            // so the pass hands over to one more auto run when it settles.
+            if (auto) this._autoCalcDeferred = true;
+            return;
+        }
         // A pass that finds nothing to calculate still settles a path queued
         // while it was pending, or the wait would never be released
         const settledIdle = () => {
@@ -3283,6 +3291,7 @@ class LabyrinthClearRate {
         // An auto pass that schedules a retry is not settled: a queued path waits for the retry
         let retryScheduled = false;
         let simmed = 0;
+        let sawDisconnected = false;
         const barFraction = (failed = 0) => Math.min(1, Math.max(0, (doneUpFront + simmed - failed) / eligible));
         this.setTileProgress(barFraction());
 
@@ -3330,6 +3339,11 @@ class LabyrinthClearRate {
                     continue;
                 }
                 if (!target.cell.isConnected) {
+                    // The game repainted the grid under the pass. Keep the result
+                    // so the restore below paints it onto the fresh cell instead
+                    // of leaving the tile bare under a "settled" fingerprint.
+                    this._tileResults.set(target.tileKey, result);
+                    sawDisconnected = true;
                     step();
                     continue;
                 }
@@ -3345,6 +3359,8 @@ class LabyrinthClearRate {
                 }
                 step();
             }
+
+            if (sawDisconnected && !cancelled && !epochGone() && !floorGone()) this.restoreTileBadgesFromCache();
 
             if (cancelled) {
                 // Torn down rather than stopped: the status line and the
@@ -3406,6 +3422,12 @@ class LabyrinthClearRate {
                 if (!retryScheduled || cancelled) this._pathQueued = false;
                 this.setPathButtonRunning(false);
                 if (wantsPath && !cancelled) this.runPathCalculation();
+                // An auto trigger swallowed while this pass ran: rooms revealed since
+                // it gathered its targets are still unbadged. A retry already
+                // scheduled covers them; a user cancel withdraws the request.
+                const deferred = this._autoCalcDeferred;
+                this._autoCalcDeferred = false;
+                if (deferred && !retryScheduled && !cancelled) this.scheduleAutoTileCalc();
             } else {
                 this._pathQueued = false;
             }
