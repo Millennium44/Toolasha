@@ -317,7 +317,7 @@ function pinnedStart(state) {
  * Greedy insertion. Without `order`, each step places the (member, trial) pair with the largest
  * marginal points; with it, members are placed one at a time in that order at their best trial.
  */
-function greedy(state, order = null) {
+function* greedy(state, order = null) {
     const sheet = new Sheet(state, pinnedStart(state));
     const free = new Set(freeMembers(state));
     const room = (t) => sheet.counts[t] < state.caps[t];
@@ -336,6 +336,7 @@ function greedy(state, order = null) {
             if (!free.has(m)) continue;
             const pick = best(m);
             if (accept(pick)) sheet.move(m, pick.t);
+            yield;
         }
         return sheet;
     }
@@ -348,12 +349,65 @@ function greedy(state, order = null) {
         if (!accept(pick)) break;
         sheet.move(pick.m, pick.t);
         free.delete(pick.m);
+        yield;
+    }
+    return sheet;
+}
+
+/**
+ * Place every member who must be placed wherever any placement can, before points decide anything.
+ *
+ * Greedy insertion can fill the one trial a member is eligible for with somebody who could have
+ * gone elsewhere, and no single move or swap that loses points undoes it. This is a maximum
+ * bipartite matching with capacities (Kuhn's augmenting paths): for each benched must-place
+ * member, look for a trial with room, a trial holding an optional member who can be benched, or
+ * a trial whose must-place occupant can itself be moved on along such a path. A member who fails
+ * once cannot succeed later, so one try each gives the most members placed. Pinned members stay.
+ */
+function* placeEveryone(state, sheet) {
+    const occupants = (t) => {
+        const out = [];
+        for (const [m, at] of sheet.assignment.entries()) if (at === t && state.members[m].pin == null) out.push(m);
+        return out;
+    };
+    const augment = (m, visited) => {
+        const eligible = [];
+        for (let t = 0; t < state.trials.length; t++) {
+            if (!visited.has(t) && canPlace(state, m, t)) eligible.push(t);
+        }
+        for (const t of eligible) visited.add(t);
+        for (const t of eligible) {
+            if (sheet.counts[t] < state.caps[t]) {
+                sheet.move(m, t);
+                return true;
+            }
+            const optional = occupants(t).find((x) => !state.members[x].mustPlace);
+            if (optional != null) {
+                sheet.move(optional, -1);
+                sheet.move(m, t);
+                return true;
+            }
+        }
+        for (const t of eligible) {
+            for (const x of occupants(t)) {
+                if (augment(x, visited)) {
+                    sheet.move(m, t);
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    for (const m of freeMembers(state)) {
+        if (!state.members[m].mustPlace || sheet.assignment[m] >= 0) continue;
+        augment(m, new Set());
+        yield;
     }
     return sheet;
 }
 
 /** One improving pass of single moves then swaps; true when anything changed */
-function improve(state, sheet) {
+function* improve(state, sheet) {
     const free = freeMembers(state);
     let changed = false;
     for (const m of free) {
@@ -371,8 +425,10 @@ function improve(state, sheet) {
             sheet.move(m, pick.t);
             changed = true;
         }
+        yield;
     }
     for (let i = 0; i < free.length; i++) {
+        yield;
         for (let j = i + 1; j < free.length; j++) {
             const a = free[i];
             const b = free[j];
@@ -505,31 +561,35 @@ function runSearch(problem, pause) {
         result.currentPoints = currentSheet(state).total();
         return result;
     };
-    const attempt = (order) => {
-        const sheet = greedy(state, order);
-        for (let pass = 0; pass < MAX_PASSES; pass++) if (!improve(state, sheet)) break;
-        return sheet;
-    };
-    if (!pause) {
-        let best = attempt(null);
-        for (let r = 0; r < restarts; r++) {
-            const sheet = attempt(shuffled(free, random));
-            if (sheet.total() > best.total() + EPSILON) best = sheet;
-        }
-        return finish(best);
-    }
-    return (async () => {
+    // One search as a sequence of steps; each `yield` is a point the async path may hand the
+    // browser a frame, so both paths do exactly the same work in the same order
+    function* search() {
         let best = null;
         for (let r = 0; r <= restarts; r++) {
-            await pause();
-            const sheet = greedy(state, r === 0 ? null : shuffled(free, random));
+            yield;
+            const sheet = yield* greedy(state, r === 0 ? null : shuffled(free, random));
+            yield* placeEveryone(state, sheet);
             for (let pass = 0; pass < MAX_PASSES; pass++) {
-                await pause();
-                if (!improve(state, sheet)) break;
+                yield;
+                if (!(yield* improve(state, sheet))) break;
             }
             if (!best || sheet.total() > best.total() + EPSILON) best = sheet;
         }
-        return finish(best);
+        return best;
+    }
+    const steps = search();
+    if (!pause) {
+        let step = steps.next();
+        while (!step.done) step = steps.next();
+        return finish(step.value);
+    }
+    return (async () => {
+        let step = steps.next();
+        while (!step.done) {
+            await pause();
+            step = steps.next();
+        }
+        return finish(step.value);
     })();
 }
 

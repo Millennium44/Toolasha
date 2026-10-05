@@ -1,4 +1,14 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+
+const yields = vi.hoisted(() => ({ count: 0, onYield: null }));
+vi.mock('../../utils/yield-to-browser.js', () => ({
+    yieldToBrowser: () => {
+        yields.count++;
+        yields.onYield?.(yields.count);
+        // A microtask stands in for a frame; a real timer per yield makes a hundred-member run slow
+        return Promise.resolve();
+    },
+}));
 import {
     ASSIGN_MODES,
     BENCH_PIN,
@@ -355,5 +365,110 @@ describe('pins past a trial’s slots', () => {
         const byName = Object.fromEntries(result.members.map((m) => [m.name, m]));
         expect(byName.B).toMatchObject({ trialHrid: CRAFTING, pinned: true, pinDropped: false });
         expect(byName.A).toMatchObject({ pinned: false, pinDropped: true, trialHrid: MILKING });
+    });
+});
+
+describe('must-place members and feasibility', () => {
+    const flexible = {
+        id: 'F',
+        name: 'Flexible',
+        rates: {
+            [CRAFTING]: { effectiveLevel: 200, workPower: 400, actionSeconds: 4, doubleChance: 0 },
+            [MILKING]: { effectiveLevel: 90, workPower: 100, actionSeconds: 6, doubleChance: 0 },
+        },
+    };
+    const craftingOnly = (id) => ({
+        id,
+        name: `Only ${id}`,
+        rates: { [CRAFTING]: { effectiveLevel: 120, workPower: 150, actionSeconds: 6, doubleChance: 0 } },
+    });
+
+    for (const mode of [ASSIGN_MODES.Fill, ASSIGN_MODES.Bench]) {
+        test(`${mode}: a chain of moves frees the only slot a member can take`, () => {
+            const result = optimizeTrialAssignment({
+                trials: [CRAFTING, MILKING],
+                baseWork: 40000,
+                cap: 1,
+                mode,
+                members: [flexible, craftingOnly('G')],
+            });
+            const byId = Object.fromEntries(result.members.map((m) => [m.id, m]));
+            expect(byId.G.trialHrid).toBe(CRAFTING);
+            expect(byId.F.trialHrid).toBe(MILKING);
+            expect(result.members.filter((m) => m.losesBonus)).toEqual([]);
+        });
+    }
+
+    test('when there are too few slots, exactly the overflow is left out and flagged', () => {
+        const result = optimizeTrialAssignment({
+            trials: [CRAFTING, MILKING],
+            baseWork: 40000,
+            cap: 1,
+            members: [flexible, craftingOnly('G'), craftingOnly('H'), craftingOnly('I')],
+        });
+        const out = result.members.filter((m) => !m.trialHrid);
+        expect(out).toHaveLength(2);
+        expect(out.every((m) => m.losesBonus)).toBe(true);
+        expect(result.members.find((m) => m.id === 'F').trialHrid).toBe(MILKING);
+    });
+
+    test('a combat member is benched to make room for one who must be placed', () => {
+        const result = optimizeTrialAssignment({
+            trials: [CRAFTING],
+            baseWork: 40000,
+            cap: 1,
+            members: [{ ...flexible, inCombat: true }, craftingOnly('G')],
+        });
+        expect(result.members.find((m) => m.id === 'G').trialHrid).toBe(CRAFTING);
+        expect(result.members.find((m) => m.id === 'F').trialHrid).toBeNull();
+    });
+});
+
+describe('the async search hands the browser frames inside a pass', () => {
+    const trials = [CRAFTING, MILKING, ALCHEMY, COOKING];
+    const big = () => ({
+        trials,
+        baseWork: 40000,
+        cap: 25,
+        restarts: 1,
+        members: Array.from({ length: 100 }, (_, i) => ({
+            id: String(i),
+            name: `M${i}`,
+            inCombat: i % 3 === 0,
+            rates: Object.fromEntries(
+                trials.map((hrid, t) => [
+                    hrid,
+                    rateInputFromLevel(80 + ((i * 37 + t * 53) % 90), { efficiency: 0.4, actionSeconds: 5 }),
+                ])
+            ),
+        })),
+    });
+
+    afterEach(() => {
+        yields.count = 0;
+        yields.onYield = null;
+        vi.restoreAllMocks();
+    });
+
+    test('a hundred members: async matches sync and yields many times', async () => {
+        const sync = optimizeTrialAssignment(big());
+        let clock = 0;
+        vi.spyOn(performance, 'now').mockImplementation(() => (clock += 13));
+        const async = await optimizeTrialAssignmentAsync(big());
+        expect(async.totalPoints).toBeCloseTo(sync.totalPoints, 9);
+        expect(async.members.map((m) => m.trialHrid)).toEqual(sync.members.map((m) => m.trialHrid));
+        // One per outer step of the scans, not one per pass
+        expect(yields.count).toBeGreaterThan(100);
+    });
+
+    test('an abort during a pass rejects at the next frame', async () => {
+        let clock = 0;
+        vi.spyOn(performance, 'now').mockImplementation(() => (clock += 13));
+        const controller = new AbortController();
+        yields.onYield = (count) => {
+            if (count === 40) controller.abort();
+        };
+        await expect(optimizeTrialAssignmentAsync(big(), { signal: controller.signal })).rejects.toThrow(/canceled/);
+        expect(yields.count).toBe(40);
     });
 });
