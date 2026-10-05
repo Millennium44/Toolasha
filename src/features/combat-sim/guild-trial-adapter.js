@@ -1,6 +1,6 @@
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload } from './combat-sim-adapter.js';
-import { fitSkillingSuccessCurve } from './guild-trial-model.js';
+import { anchorSkillingSuccessCurve, fitSkillingSuccessCurve } from './guild-trial-model.js';
 
 /** The trial worker uses the same game maps, plus the game's encounter rosters. */
 export function buildTrialGameData() {
@@ -49,6 +49,15 @@ export function memberFromSkillingReading(data, name = 'Current character', read
         data.doubleProgressChance > 1
     )
         return null;
+    // Two uncapped readings either side of the bend fix level and bonus; otherwise
+    // anchor the game curve on this reading rather than a flat 8-point decline.
+    const fitted = fitSkillingSuccessCurve(readings);
+    const curve = fitted || anchorSkillingSuccessCurve(data);
+    const how = fitted
+        ? 'success curve fitted to readings'
+        : curve?.successLowerBound
+          ? 'capped 100% success: least effective level consistent with it (lower bound)'
+          : 'success curve anchored on this reading, assuming no success bonus';
     return {
         name,
         referenceTier: data.tier,
@@ -57,8 +66,8 @@ export function memberFromSkillingReading(data, name = 'Current character', read
         workPower: data.progressPerAction,
         actionSeconds: data.actionTimeMs / 1000,
         doubleChance: data.doubleProgressChance,
-        source: `Trial reading at tier ${data.tier}`,
-        ...fitSkillingSuccessCurve(readings),
+        source: `Trial reading at tier ${data.tier}${curve ? ` · ${how}` : ''}`,
+        ...curve,
     };
 }
 

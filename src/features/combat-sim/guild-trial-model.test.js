@@ -5,6 +5,7 @@ import {
     skillingWorkPerSecond,
     skillingPool,
     fitSkillingSuccessCurve,
+    anchorSkillingSuccessCurve,
     summarizeTrialRuns,
 } from './guild-trial-model.js';
 import { simulateGuildSkilling } from './engine/guild-skilling-simulator.js';
@@ -131,6 +132,40 @@ describe('guild work pool simulation', () => {
         const curve = fitSkillingSuccessCurve(recorded.readings);
         expect(curve.effectiveLevel).toBeCloseTo(recorded.effectiveLevel, 8);
         expect(curve.successBonus).toBeCloseTo(recorded.successBonus, 8);
+    });
+    test.each(RECORDED_SKILLING_CURVES.filter((curve) => curve.successBonus === 0))(
+        'one uncapped $skill reading ($recordedOn) anchors the two-slope game curve, not a flat decline',
+        (recorded) => {
+            for (const reading of recorded.readings.filter((r) => r.successRate > 0.05 && r.successRate < 1)) {
+                const curve = anchorSkillingSuccessCurve(reading);
+                expect(curve.effectiveLevel).toBeCloseTo(recorded.effectiveLevel, 8);
+                expect(curve.successLowerBound).toBe(false);
+                const m = { ...member, ...curve };
+                for (const other of recorded.readings)
+                    expect(skillingSuccessAtTier(m, other.tier)).toBeCloseTo(other.successRate, 10);
+            }
+        }
+    );
+    test('a reading below the effective level declines 4 points a tier until the bend, then 8', () => {
+        // Alchemy, effective level 107: tier 1 (level 100) reads 82.8%.
+        const m = validateTrialScenario(
+            scenario({ members: [{ ...member, ...anchorSkillingSuccessCurve({ tier: 1, successRate: 0.828 }) }] })
+        ).members[0];
+        expect(m.effectiveLevel).toBeCloseTo(107);
+        expect(skillingSuccessAtTier(m, 2)).toBeCloseTo(0.776, 10); // flat -8 would give 0.748
+        expect(skillingSuccessAtTier(m, 3)).toBeCloseTo(0.696, 10);
+    });
+    test('a capped reading anchors the least consistent level and marks results as a lower bound', () => {
+        const curve = anchorSkillingSuccessCurve({ tier: 3, successRate: 1 });
+        expect(curve).toEqual({ effectiveLevel: 170, successBonus: 0, successLowerBound: true });
+        const m = { ...member, ...curve };
+        expect(skillingSuccessAtTier(m, 3)).toBe(1);
+        expect(skillingSuccessAtTier(m, 4)).toBeCloseTo(0.96, 10); // -4 per tier up to level 170
+        expect(skillingSuccessAtTier(m, 8)).toBeCloseTo(0.8, 10);
+        expect(skillingSuccessAtTier(m, 9)).toBeCloseTo(0.72, 10); // -8 per tier above it
+        expect(simulateGuildSkilling(scenario({ members: [m] })).lowerBound).toBe(true);
+        expect(simulateGuildSkilling(scenario()).lowerBound).toBe(false);
+        expect(anchorSkillingSuccessCurve({ tier: 3, successRate: 1.2 })).toBeNull();
     });
     test('does not claim to calibrate capped, linear, or inconsistent success readings', () => {
         expect(

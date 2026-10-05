@@ -92,6 +92,7 @@ export function validateTrialScenario(input) {
                 workPower: numberIn(member.workPower, 0, 1e7, 'Work power'),
                 actionSeconds: numberIn(member.actionSeconds, 0.1, 3600, 'Work time'),
                 doubleChance: numberIn(member.doubleChance ?? 0, 0, 1, 'Double progress chance'),
+                successLowerBound: member.successLowerBound === true,
             };
         });
         if (result.members.every((member) => member.workPower === 0))
@@ -155,6 +156,32 @@ export function skillingSuccessAtTier(member, tier) {
         return Math.max(0.05, Math.min(1, 0.8 * (1 + gap * (gap >= 0 ? 0.005 : 0.01) + (member.successBonus ?? 0))));
     }
     return Math.max(0.05, Math.min(1, member.successRate - (tier - member.referenceTier) * member.successLossPerTier));
+}
+
+/**
+ * Anchor the game's two-slope curve on a single reading when no bend has been observed.
+ *
+ * One reading cannot separate effective level from success bonus, so this assumes no
+ * success bonus (every recorded curve but Enhancing had none) and places the bend where
+ * the reading puts it: `rate / 0.8 - 1 = gap * (0.005 when gap >= 0, else 0.01)` with
+ * `gap = effectiveLevel - trialLevel`, i.e. -4 percentage points per tier while the trial level is below
+ * the effective level and -8 above it. A capped 100% reading only says the gap is at
+ * least 50 levels, so it returns the least effective level consistent with it and flags
+ * the curve as a lower bound.
+ *
+ * @param {{tier: number, successRate: number}} reading - The reading to anchor on
+ * @param {number} [successBonus] - Assumed success bonus
+ * @returns {{effectiveLevel: number, successBonus: number, successLowerBound: boolean}|null} The curve
+ */
+export function anchorSkillingSuccessCurve(reading, successBonus = 0) {
+    const tier = reading?.tier;
+    const rate = reading?.successRate;
+    if (!Number.isInteger(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
+    if (!Number.isFinite(rate) || rate < 0.05 || rate > 1) return null;
+    const excess = rate / 0.8 - 1 - successBonus;
+    const effectiveLevel = levelFromTier(tier) + excess / (excess >= 0 ? 0.005 : 0.01);
+    if (!(effectiveLevel >= 1 && effectiveLevel <= 1000)) return null;
+    return { effectiveLevel, successBonus, successLowerBound: rate >= 1 };
 }
 
 /** Infer level and success bonus only when uncapped readings identify the curve's bend. */
@@ -294,6 +321,8 @@ export function summarizeTrialRuns(scenario, attempts) {
             ['defeat', 'timeout', 'max-tier'].map((key) => [key, attempts.filter((a) => a.reason === key).length])
         ),
         tiers: rows,
+        // A capped reading only bounds success from below, so tiers and points do too.
+        lowerBound: scenario.kind === 'skilling' && scenario.members.some((m) => m.successLowerBound),
         warnings: [...new Set(attempts.flatMap((a) => a.warnings || []))],
     };
 }

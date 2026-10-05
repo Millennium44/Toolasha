@@ -458,10 +458,12 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.skillingMembers[0].actionSeconds).toBe(4.464);
         expect(feature.notice).toContain('17 participants');
         feature.panel.render();
-        const success = Array.from(document.querySelectorAll('label')).find((label) =>
-            label.textContent.includes('Success at reference')
+        // 8% at tier 10 (level 190) anchors the game curve at effective level 100, no bonus.
+        const level = Array.from(document.querySelectorAll('label')).find((label) =>
+            label.textContent.includes('Effective skill level')
         );
-        expect(success.querySelector('input').value).toBe('8');
+        expect(level.querySelector('input').value).toBe('100');
+        expect(feature.skillingMembers[0].successBonus).toBe(0);
         expect(feature.skillingMembers[0].successRate).toBe(GUILD_SKILLING_TICKS[0].successRate);
     });
     test('scales skilling work by the reading’s signups, editable beside the roster', () => {
@@ -480,6 +482,63 @@ describe('trial simulator controls and ownership', () => {
         input.value = '9';
         input.dispatchEvent(new Event('input'));
         expect(feature.makeScenario().participantCount).toBe(9);
+    });
+    test('switching to the game curve keeps the measured success instead of resetting to 80%', () => {
+        feature.kind = 'skilling';
+        feature.skillingMembers = [
+            {
+                name: 'Linear',
+                referenceTier: 1,
+                successRate: 0.828,
+                successLossPerTier: 0.08,
+                workPower: 100,
+                actionSeconds: 5,
+                doubleChance: 0,
+            },
+        ];
+        feature.panel.render();
+        const model = Array.from(document.querySelectorAll('label'))
+            .find((label) => label.textContent.includes('Success model'))
+            .querySelector('select');
+        model.value = 'curve';
+        model.dispatchEvent(new Event('change'));
+        expect(feature.skillingMembers[0].effectiveLevel).toBeCloseTo(107);
+        expect(feature.skillingMembers[0].successBonus).toBe(0);
+    });
+    test('marks tiers and points as a lower bound after a capped reading', async () => {
+        feature.kind = 'skilling';
+        harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0], tier: 2, successRate: 1 });
+        feature.addReading();
+        expect(feature.skillingMembers[0].successLowerBound).toBe(true);
+        harness.worker.mockResolvedValue({
+            kind: 'skilling',
+            seed: 1,
+            runs: 1,
+            participants: 1,
+            workParticipants: 17,
+            startTier: 2,
+            medianHighestTier: 4,
+            lowHighestTier: 4,
+            highHighestTier: 4,
+            meanHighestTier: 4,
+            meanBasePoints: 400,
+            meanPartialBasePoints: 0,
+            outcomes: { defeat: 0, timeout: 1, 'max-tier': 0 },
+            tiers: [],
+            warnings: [],
+            lowerBound: true,
+        });
+        await feature.run();
+        expect(text()).toContain('Lower bound: a capped reading');
+        expect(text()).toContain('Median highest banked tier: T4 (lower bound)');
+        expect(text()).toMatch(/Mean Guild Points: [\d,.]+ \(lower bound\)/);
+        // Entering the effective level replaces the bound.
+        const level = Array.from(document.querySelectorAll('label'))
+            .find((label) => label.textContent.includes('Effective skill level'))
+            .querySelector('input');
+        level.value = '200';
+        level.dispatchEvent(new Event('input'));
+        expect(feature.makeScenario().members[0].successLowerBound).toBe(false);
     });
     test('ignores personal readings from a departed character socket', () => {
         const currentSocket = {};
@@ -515,7 +574,9 @@ describe('trial simulator controls and ownership', () => {
         expect(text()).toContain('Effective skill level');
         harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0], tier: 1, successRate: 0.84 });
         feature.addReading();
-        expect(feature.skillingMembers[0].effectiveLevel).toBeUndefined();
+        // The lower tier starts a new run: only its own reading anchors the curve.
+        expect(feature.skillingMembers[0].effectiveLevel).toBeCloseTo(110);
+        expect(feature.skillingMembers[0].successBonus).toBe(0);
     });
     test('clears the curve cache when the trial deadline changes between observed tiers', () => {
         feature.kind = 'skilling';
@@ -534,8 +595,9 @@ describe('trial simulator controls and ownership', () => {
 
         feature.addReading();
 
-        expect(feature.skillingMembers[0].effectiveLevel).toBeUndefined();
-        expect(feature.skillingMembers[0].successBonus).toBeUndefined();
+        // Only the new deadline's tier-2 reading anchors the curve; the stale tier 1 is not fitted.
+        expect(feature.skillingMembers[0].effectiveLevel).toBeCloseTo(106);
+        expect(feature.skillingMembers[0].successBonus).toBe(0);
         expect(Object.keys(feature.successReadings[GUILD_SKILLING_TICKS[0].trialHrid])).toEqual(['2']);
     });
     test('imports a setup atomically and preserves its captured buffs on round-trip', () => {

@@ -24,6 +24,17 @@ describe('trial inputs from the game', () => {
         expect(member.successRate).toBeCloseTo(0.08);
         expect(baseWorkFromSkillingReading(GUILD_SKILLING_UPDATED)).toBeCloseTo(40000);
     });
+    test('anchors the game curve on a single reading and flags a capped one as a lower bound', () => {
+        const below = memberFromSkillingReading({ ...GUILD_SKILLING_UPDATED, tier: 1, successRate: 0.828 });
+        expect(below.effectiveLevel).toBeCloseTo(107);
+        expect(below.successBonus).toBe(0);
+        expect(below.successLowerBound).toBe(false);
+        expect(below.source).toContain('anchored on this reading');
+        const capped = memberFromSkillingReading({ ...GUILD_SKILLING_UPDATED, tier: 2, successRate: 1 });
+        expect(capped.effectiveLevel).toBe(160);
+        expect(capped.successLowerBound).toBe(true);
+        expect(capped.source).toContain('lower bound');
+    });
     test('does not infer a pool without the full participant count', () => {
         expect(baseWorkFromSkillingReading({ ...GUILD_SKILLING_UPDATED, participantIds: [] })).toBeNull();
         expect(memberFromSkillingReading({ successRate: 0.8 })).toBeNull();

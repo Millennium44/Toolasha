@@ -20,7 +20,7 @@ import {
     memberFromSkillingReading,
     baseWorkFromSkillingReading,
 } from './guild-trial-adapter.js';
-import { validateTrialScenario, skillingWorkPerSecond } from './guild-trial-model.js';
+import { validateTrialScenario, skillingWorkPerSecond, anchorSkillingSuccessCurve } from './guild-trial-model.js';
 import { COMBAT_ENCOUNTERS, TRIAL_SKILLS, levelFromTier } from '../guild/guild-trials-math.js';
 import {
     trialSimulationProfiles,
@@ -106,6 +106,15 @@ function select(parent, label, value, options, change, disabled = false) {
     wrapper.appendChild(input);
     parent.appendChild(wrapper);
 }
+
+/** Skilling inputs that replace a capped reading's lower-bound curve once edited. */
+const SUCCESS_INPUTS = new Set([
+    'effectiveLevel',
+    'successBonus',
+    'referenceTier',
+    'successRate',
+    'successLossPerTier',
+]);
 
 function download(name, value) {
     const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
@@ -1081,8 +1090,19 @@ export class GuildTrialSim {
                 ],
                 (value) => {
                     if (value === 'curve') {
-                        member.effectiveLevel = levelFromTier(member.referenceTier);
-                        member.successBonus = 0;
+                        // Keep the curve through the member's measured success, not a flat 80%.
+                        const anchored = anchorSkillingSuccessCurve({
+                            tier: member.referenceTier,
+                            successRate: member.successRate,
+                        });
+                        Object.assign(
+                            member,
+                            anchored ?? {
+                                effectiveLevel: levelFromTier(member.referenceTier),
+                                successBonus: 0,
+                                successLowerBound: false,
+                            }
+                        );
                     } else {
                         delete member.effectiveLevel;
                         delete member.successBonus;
@@ -1115,6 +1135,8 @@ export class GuildTrialSim {
                     member[key] * factor,
                     (v) => {
                         member[key] = v / factor;
+                        // An entered success input replaces the capped-reading bound.
+                        if (SUCCESS_INPUTS.has(key)) member.successLowerBound = false;
                         this.changed();
                     },
                     { min, max, disabled: busy }
@@ -1124,7 +1146,7 @@ export class GuildTrialSim {
         }
         roster.appendChild(
             panelNote(
-                'Use Work Power and Work Time from the trial footer; Work Power already includes efficiency. Effective skill level includes equipment and building levels. Success falls 4 percentage points per tier while the trial level is below your effective level, and 8 above it, clamped to 5–100%. Success bonuses apply before the 80% base factor. Multiple uncapped readings spanning the slope change can calibrate the curve; a single reading uses an editable linear estimate.'
+                'Use Work Power and Work Time from the trial footer; Work Power already includes efficiency. Effective skill level includes equipment and building levels. Success falls 4 percentage points per tier while the trial level is below your effective level, and 8 above it, clamped to 5–100%. Success bonuses apply before the 80% base factor. Multiple uncapped readings spanning the slope change calibrate the curve; a single reading anchors it on that reading, assuming no success bonus. A capped 100% reading only bounds success from below, so its results are lower bounds.'
             )
         );
         field(
@@ -1154,10 +1176,22 @@ export class GuildTrialSim {
         const card = panelCard(body, 'Simulation results', ACCENT);
         card.dataset.trialSimResults = 'true';
         const format = (n, digits = 1) => Number(n).toLocaleString('en-US', { maximumFractionDigits: digits });
-        card.appendChild(panelLine('Median highest banked tier', `T${result.medianHighestTier}`));
-        card.appendChild(panelLine('10th–90th percentile', `T${result.lowHighestTier}–T${result.highHighestTier}`));
-        card.appendChild(panelLine('Mean highest banked tier', format(result.meanHighestTier, 2)));
-        card.appendChild(panelLine('Mean Guild Points', format(result.meanBasePoints * (1 + 0.02 * this.hallLevel))));
+        const bound = result.lowerBound ? ' (lower bound)' : '';
+        if (result.lowerBound) {
+            const note = panelNote(
+                'Lower bound: a capped reading. A 100% success reading only shows success is at least 100% at that tier, so the curve uses the lowest effective level consistent with it. Tiers and points may be higher; enter the effective level or add a reading below 100% to tighten it.'
+            );
+            note.style.color = '#ffd27a';
+            card.appendChild(note);
+        }
+        card.appendChild(panelLine('Median highest banked tier', `T${result.medianHighestTier}${bound}`));
+        card.appendChild(
+            panelLine('10th–90th percentile', `T${result.lowHighestTier}–T${result.highHighestTier}${bound}`)
+        );
+        card.appendChild(panelLine('Mean highest banked tier', `${format(result.meanHighestTier, 2)}${bound}`));
+        card.appendChild(
+            panelLine('Mean Guild Points', `${format(result.meanBasePoints * (1 + 0.02 * this.hallLevel))}${bound}`)
+        );
         card.appendChild(panelLine('Mean base points from unfinished tier', format(result.meanPartialBasePoints)));
         card.appendChild(
             panelLine(
