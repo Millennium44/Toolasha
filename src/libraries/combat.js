@@ -106,7 +106,7 @@ import characterCardButton from '../features/profile/character-card-button.js';
 import eliteAchievementReminder from '../features/profile/elite-achievement-reminder.js';
 
 // Guild
-import guildXPTracker from '../features/guild/guild-xp-tracker.js';
+import guildXPTracker, { guildXPTracker as guildXPTrackerInstance } from '../features/guild/guild-xp-tracker.js';
 // Namespace-imported for the ui bundle's chat commands, which used to inline a
 // private copy of the whole guild graph through these five roots — the
 // externals map (rollup.config.js) now points its imports here instead
@@ -196,6 +196,8 @@ toolashaRoot.Combat = {
     combatSim,
     labSim,
     guildXPTracker,
+    // The live tracker (roster, sign-ups, week): guildXPTracker above is only its registration record
+    guildXPTrackerInstance,
     guildXPDisplay,
     guildCreditValue,
     // Shared so guild-token-value (runs live in the sim and ui bundles) reads

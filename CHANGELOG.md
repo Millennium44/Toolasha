@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Trial Sim recommends skilling trial sign-ups
 
 - A new "Assign skilling" mode in the Trial Sim suggests which member should join which skilling trial for the most guild points, honoring slot caps, eligibility, the guild's trial minimum levels and pins, with copyable sign-up messages and an optional simulator check. Other members' work rates are estimated from their skill levels and your own readings, and are labeled as estimates.
+- In the split (GreasyFork) build, the Session Briefing's trial sign-up line and the trial alerts' "signed-up members only" audience read the guild tracker's registration record instead of the tracker, so the briefing never knew your sign-up and the alerts never filtered; both now read the live tracker.
 
 ### Leaderboard Next board shows how stale the oldest board is
 

@@ -881,7 +881,7 @@ describe('roster changes come from the guild XP tracker', () => {
         const off = vi.fn();
         window.Toolasha = {
             Combat: {
-                guildXPTracker: {
+                guildXPTrackerInstance: {
                     onMetaChanged: (callback) => {
                         listener = callback;
                         return off;

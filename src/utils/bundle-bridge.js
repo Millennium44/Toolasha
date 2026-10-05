@@ -325,7 +325,9 @@ export function guildTrialsStore() {
  * @returns {Object|null} The tracker, or null when the combat bundle is absent
  */
 export function guildXpTracker() {
-    return toolashaRoot()?.Combat?.guildXPTracker || null;
+    // The live singleton; Combat.guildXPTracker is the feature registration record, which has none of
+    // the tracker's readers (getMemberMeta, getMemberList, getCurrentWeekStartAt, onMetaChanged)
+    return toolashaRoot()?.Combat?.guildXPTrackerInstance || null;
 }
 
 /**
