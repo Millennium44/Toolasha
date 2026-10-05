@@ -1,5 +1,9 @@
 /** @vitest-environment happy-dom */
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+    RANK_CATEGORIES as RANK_CATEGORIES_FOR_TEST,
+    categoryLabel as categoryLabelForTest,
+} from '../../utils/rank-badge-data.js';
 
 const game = vi.hoisted(() => ({
     mode: 'off',
@@ -15,8 +19,13 @@ const game = vi.hoisted(() => ({
     requests: [],
     // Set to a pending promise to hold the sprite sheets unresolved
     spriteGate: null,
+    // Steam board type -> {category: last recorded ms}, what the XP tracker reports
+    recorded: {},
 }));
 
+vi.mock('./leaderboard-xp-tracker.js', () => ({
+    leaderboardXPTracker: { getBoardRecordTimes: (type) => game.recorded[type] ?? {} },
+}));
 vi.mock('../../core/websocket.js', () => ({
     default: {
         on: (event, handler) => {
@@ -124,6 +133,7 @@ describe('leaderboard rank badges', () => {
         game.classHandlers = [];
         game.requests = [];
         game.spriteGate = null;
+        game.recorded = {};
         game.response = { status: 200, text: serverBody('standard', [{ characterName: 'Alice', rank: 3 }]) };
         document.body.innerHTML = '';
         document.head.innerHTML = '';
@@ -602,6 +612,7 @@ describe('next board button', () => {
     });
 
     beforeEach(() => {
+        game.recorded = {};
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
         game.steam = false;
@@ -683,6 +694,66 @@ describe('next board button', () => {
         await flush();
         expect(bar().style.display).toBe('flex');
         expect(bar().textContent).toContain('boards cached');
+    });
+
+    test('the global bar shows the oldest board age inline', async () => {
+        game.mode = 'local';
+        buildPanel();
+        game.saved.rankBoards = {
+            'standard|milking': { at: Date.now() - 42 * 3600000, source: 'local', rows: [['A', 1]] },
+            'standard|foraging': { at: Date.now() - 3600000, source: 'local', rows: [['A', 1]] },
+        };
+        await leaderboardRankBadges.initialize();
+        expect(bar().children[1].textContent).toBe('2/24 boards cached · oldest 1d 18h');
+        expect(bar().children[1].title).toContain('1d 18h ago');
+    });
+
+    test('a Steam tab counts what the tracker recorded in earlier sessions, with the oldest age', async () => {
+        game.mode = 'local';
+        buildPanel();
+        game.recorded = {
+            steam_standard: {
+                milking: Date.now() - 3 * 3600000,
+                foraging: Date.now() - 30 * 3600000,
+            },
+        };
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
+        await flush();
+        expect(bar().children[1].textContent).toBe('3/24 Steam boards recorded · oldest 1d 6h');
+        // Missing boards come before the oldest recorded one (Foraging is the oldest recorded)
+        expect(bar().children[0].textContent).toBe('Next board ▸ Woodcutting');
+    });
+
+    test('with every Steam board recorded, Next board targets the oldest one', async () => {
+        game.mode = 'local';
+        buildPanel();
+        const recorded = {};
+        RANK_CATEGORIES_FOR_TEST.forEach((c, i) => (recorded[c] = Date.now() - (i + 1) * 3600000));
+        game.recorded = { steam_standard: recorded };
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
+        await flush();
+        const oldestCategory = RANK_CATEGORIES_FOR_TEST[RANK_CATEGORIES_FOR_TEST.length - 1];
+        expect(bar().children[1].textContent).toContain('24/24 Steam boards recorded');
+        expect(bar().children[0].textContent).toBe(`Next board ▸ ${categoryLabelForTest(oldestCategory)}`);
+    });
+
+    test('with Steam badges on, a Steam tab counts the persisted badge cache like the global bar', async () => {
+        game.mode = 'local';
+        game.steam = true;
+        buildPanel();
+        game.saved.rankBoards = {
+            'steam_standard|milking': { at: Date.now() - 42 * 3600000, source: 'local', rows: [['A', 1]] },
+            'standard|foraging': { at: Date.now() - 3600000, source: 'local', rows: [['A', 1]] },
+        };
+        game.recorded = { steam_standard: { cooking: Date.now() - 1000 } };
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
+        await flush();
+        // milking (cache) + total_level (opened and cached now); the tracker is not consulted
+        expect(bar().children[1].textContent).toBe('2/24 Steam boards cached · oldest 1d 18h');
+        game.steam = false;
     });
 
     test('the Steam status says EXP tracking is off when the XP tracker setting is off', async () => {
