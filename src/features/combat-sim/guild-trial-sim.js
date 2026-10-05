@@ -1127,6 +1127,7 @@ export class GuildTrialSim {
                         const anchored = anchorSkillingSuccessCurve({
                             tier: member.referenceTier,
                             successRate: member.successRate,
+                            trialHrid: this.skillingTrial,
                         });
                         Object.assign(
                             member,
