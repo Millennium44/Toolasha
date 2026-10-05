@@ -481,12 +481,14 @@ describe('tea speed is applied on every alchemy path', () => {
         );
     });
 
-    test.each(paths.slice(0, 3))('%s: an unpriced tea cannot win the optional tooltip search', (_name, run) => {
+    test.each(paths)('%s: an unpriced tea cannot win the optional tooltip search', (_name, run) => {
         mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
         mocks.itemPrices['/items/alchemy_tea'] = null;
         mocks.itemPrices['/items/cheese'] = 100;
         mocks.itemPrices['/items/cheese_hat'] = 100;
         mocks.itemPrices['/items/milk'] = 100;
+        mocks.itemPrices['/items/cheese_hat_refined'] = 100;
+        mocks.itemPrices['/items/refinement_shard'] = 100;
 
         const result = run(alchemyProfitCalculator);
 
@@ -494,6 +496,28 @@ describe('tea speed is applied on every alchemy path', () => {
         expect(result.winningTeaUsed).toBe(false);
         expect(result.actionSpeedBreakdown.tea).toBe(0);
         expect(result.consumableCosts).toEqual([]);
+        expect(result.hasMissingPrices).toBe(false);
+    });
+
+    test.each(fixedDrinkPaths)('%s: a fixed unpriced tea marks the result incomplete', (_name, run) => {
+        mocks.itemPrices['/items/alchemy_tea'] = null;
+        mocks.itemPrices['/items/cheese'] = 100;
+        mocks.itemPrices['/items/cheese_hat'] = 100;
+        mocks.itemPrices['/items/milk'] = 100;
+        mocks.itemPrices['/items/cheese_hat_refined'] = 100;
+        mocks.itemPrices['/items/refinement_shard'] = 100;
+        const context = {
+            equipment: new Map(),
+            drinks: [{ itemHrid: '/items/alchemy_tea' }],
+            skills: [],
+            fixedTeaSelection: true,
+        };
+
+        const result = run(alchemyProfitCalculator, context);
+
+        expect(result).not.toBeNull();
+        expect(result.winningTeaUsed).toBe(true);
+        expect(result.hasMissingPrices).toBe(true);
     });
 
     test.each(paths.slice(0, 3))('%s: a no-tea tooltip winner does not retain tea efficiency', (_name, run) => {

@@ -1171,6 +1171,8 @@ class AlchemyProfitCalculator {
                 // Winning catalyst/tea combo indicators (for tooltip icons)
                 winningCatalystHrid: combo.catalystHrid,
                 winningTeaUsed: combo.usesTea !== false && teaCostData.costs.length > 0,
+                hasMissingPrices:
+                    combo.usesTea !== false && teaCostData.costs.length > 0 && teaCostData.hasMissingPrices,
 
                 // Pricing info
                 pricingMode,
@@ -1556,6 +1558,8 @@ class AlchemyProfitCalculator {
                 // Winning catalyst/tea combo indicators (for tooltip icons)
                 winningCatalystHrid: combo.catalystHrid,
                 winningTeaUsed: combo.usesTea !== false && teaCostData.costs.length > 0,
+                hasMissingPrices:
+                    combo.usesTea !== false && teaCostData.costs.length > 0 && teaCostData.hasMissingPrices,
 
                 // Pricing info
                 pricingMode,
@@ -1965,6 +1969,8 @@ class AlchemyProfitCalculator {
                 // Winning catalyst/tea combo indicators (for tooltip icons)
                 winningCatalystHrid: combo.catalystHrid,
                 winningTeaUsed: combo.usesTea !== false && teaCostData.costs.length > 0,
+                hasMissingPrices:
+                    combo.usesTea !== false && teaCostData.costs.length > 0 && teaCostData.hasMissingPrices,
 
                 // Pricing info
                 pricingMode,
@@ -2112,7 +2118,10 @@ class AlchemyProfitCalculator {
             const noTeaProfit = noTeaEconomics
                 ? netProfitPerAttempt * noTeaEconomics.actionsPerHour + noTeaEconomics.alchemyBonusRevenue
                 : -Infinity;
-            const usesTea = teaCosts.costs.length > 0 && teaProfit >= noTeaProfit;
+            // An unpriced tea would be charged at 0, so it may only stand when it is not optional
+            const usesTea =
+                teaCosts.costs.length > 0 &&
+                (!noTeaEconomics || (!teaCosts.hasMissingPrices && teaProfit >= noTeaProfit));
             if (!usesTea && noTeaEconomics) {
                 actionTime = noTeaEconomics.actionTime;
                 actionSpeedBreakdown = noTeaEconomics.actionSpeedBreakdown;
@@ -2207,6 +2216,7 @@ class AlchemyProfitCalculator {
                 essenceFindBreakdown: alchemyBonus.essenceFindBreakdown,
                 winningCatalystHrid: null,
                 winningTeaUsed: usesTea,
+                hasMissingPrices: usesTea && teaCosts.hasMissingPrices,
                 pricingMode: config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
             };
         } catch (error) {
