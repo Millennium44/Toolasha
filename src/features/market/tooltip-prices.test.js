@@ -890,6 +890,8 @@ describe('self-use alchemy lines', () => {
         };
         const text = (await blockFor('/items/cheese_sword')).textContent;
         expect(text).toContain('Decompose: ~ 9.0K/hr (unpriced output and tea)');
+        // The per-action figure comes from the same incomplete total and is qualified the same way
+        expect(text).toContain('(~ -5/action)');
         expect(text).not.toContain('≥');
     });
 

@@ -1595,6 +1595,8 @@ class TooltipPrices {
             const profit = allProfits[i];
             const label = profit.actionType.charAt(0).toUpperCase() + profit.actionType.slice(1);
             const color = profit.profitPerHour >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS;
+            // The per-action figure comes from the same incomplete total, so it carries the same mark
+            let boundMark = '';
             if (isPartialProfit(profit)) {
                 // An unpriced output counts as 0 revenue (a floor); an unpriced tea counts as 0 cost (a ceiling);
                 // with both, no bound holds
@@ -1610,6 +1612,7 @@ class TooltipPrices {
                         : missingTea
                           ? ['≤ ', 'unpriced tea', 'A tea has no market price, so its cost is left out: a ceiling']
                           : ['≥ ', 'unpriced output', 'An output has no market price, so this is a floor'];
+                boundMark = mark;
                 html += `<div style="color: ${color};" title="${title}">• ${label}: ${mark}${formatKMB(profit.profitPerHour)}/hr (${note})`;
             } else {
                 html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
@@ -1618,7 +1621,7 @@ class TooltipPrices {
             // Show profit per action for alchemy actions
             if (profit.profitPerAction !== undefined) {
                 const perActionColor = profit.profitPerAction >= 0 ? 'inherit' : config.COLOR_TOOLTIP_LOSS;
-                html += ` <span style="opacity: 0.7; color: ${perActionColor};">(${formatKMB(profit.profitPerAction)}/action)</span>`;
+                html += ` <span style="opacity: 0.7; color: ${perActionColor};">(${boundMark}${formatKMB(profit.profitPerAction)}/action)</span>`;
             }
 
             // Show item icons for the winning catalyst and/or tea (silence = no modifiers needed)
