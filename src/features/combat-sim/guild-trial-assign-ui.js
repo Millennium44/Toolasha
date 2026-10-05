@@ -294,6 +294,12 @@ async function copyText(text, area) {
     }
 }
 
+/** Remove any drawn recommendation from the page */
+function removeResultCards() {
+    if (typeof document === 'undefined') return;
+    for (const card of document.querySelectorAll('[data-trial-assign="result"]')) card.remove();
+}
+
 /** Whether a member's pin still means something for these trials */
 function pinApplies(pin, member, trials) {
     if (pin === BENCH_PIN) return true;
@@ -572,6 +578,28 @@ export class TrialAssignPlanner {
         this.result = null;
         this.check = null;
         this.error = '';
+        // Taken off the page now rather than on the next draw, which would also take the caret
+        // out of the input being typed into
+        removeResultCards();
+    }
+
+    /**
+     * Sign-ups or the roster changed (a `guild_trial_signup_updated` or `guild_characters_updated`,
+     * once the tracker has read it). A recommendation built on the old sign-ups is dropped, and
+     * the view redraws unless the player is typing into it.
+     */
+    signupsChanged() {
+        if (this.controller) return;
+        if (this.result && this.result.signature !== this.context().signature) {
+            this.result = null;
+            this.check = null;
+            this.status = 'The sign-ups changed since the last recommendation.';
+            removeResultCards();
+        }
+        const active = typeof document === 'undefined' ? null : document.activeElement;
+        const typing =
+            active?.closest?.('[data-trial-assign-root]') && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
+        if (!typing && this.sim.kind === 'assign') this.sim.panel?.render();
     }
 
     /**
@@ -582,6 +610,7 @@ export class TrialAssignPlanner {
     draw(body, ui) {
         const { button, row, field, select } = ui;
         const busy = Boolean(this.controller);
+        body.dataset.trialAssignRoot = 'true';
         const context = this.context();
         const label = (trial) => trialLabel(trial, context.clientData);
         const rerender = () => this.sim.panel?.render();
@@ -903,6 +932,7 @@ export class TrialAssignPlanner {
                         : `was ${label(member.currentTrialHrid)}`;
             if (!member.trialHrid)
                 change += member.losesBonus ? ' — loses participation bonus unless in combat' : ' (stays in combat)';
+            if (member.pinDropped) change += ' — pin dropped: trial full';
             for (const text of [
                 member.name + (member.pinned ? ' (pinned)' : ''),
                 member.trialHrid ? label(member.trialHrid) : 'Not in skilling',

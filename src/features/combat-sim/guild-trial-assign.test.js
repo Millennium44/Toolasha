@@ -331,3 +331,29 @@ describe('review fixes', () => {
         expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(message)).toBe(false);
     });
 });
+
+describe('pins past a trial’s slots', () => {
+    test('pins beyond the cap are dropped, current sign-ups kept first, and reported', () => {
+        const strong = { effectiveLevel: 160, workPower: 250, actionSeconds: 5, doubleChance: 0 };
+        const result = optimizeTrialAssignment({
+            trials: [CRAFTING, MILKING],
+            baseWork: 40000,
+            caps: { [CRAFTING]: 1, [MILKING]: 5 },
+            members: [
+                { id: '1', name: 'A', rates: { [CRAFTING]: strong, [MILKING]: strong }, pin: CRAFTING },
+                {
+                    id: '2',
+                    name: 'B',
+                    rates: { [CRAFTING]: strong, [MILKING]: strong },
+                    pin: CRAFTING,
+                    current: CRAFTING,
+                },
+            ],
+        });
+        const crafting = result.trials.find((t) => t.trialHrid === CRAFTING);
+        expect(crafting.signups).toBe(1);
+        const byName = Object.fromEntries(result.members.map((m) => [m.name, m]));
+        expect(byName.B).toMatchObject({ trialHrid: CRAFTING, pinned: true, pinDropped: false });
+        expect(byName.A).toMatchObject({ pinned: false, pinDropped: true, trialHrid: MILKING });
+    });
+});

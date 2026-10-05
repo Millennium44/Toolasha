@@ -148,7 +148,7 @@ const ui = {
 function makeSim() {
     const shell = document.createElement('section');
     document.body.appendChild(shell);
-    const sim = { generation: 0, readings: {}, successReadings: {}, panel: null };
+    const sim = { kind: 'assign', generation: 0, readings: {}, successReadings: {}, panel: null };
     const planner = new TrialAssignPlanner(sim);
     sim.panel = {
         render: () => {
@@ -440,5 +440,49 @@ describe('the Assign skilling view', () => {
         expect(planner.check).toBeNull();
         expect(text(shell)).toContain('Canceled.');
         expect(shell.querySelector('[role="alert"]')).toBeNull();
+    });
+
+    test('an edit removes the shown recommendation at once and keeps the caret in the input', async () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        await recommend(planner, shell);
+        expect(shell.querySelector('[data-trial-assign="result"]')).not.toBeNull();
+        const input = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        input.focus();
+        input.value = '15';
+        input.dispatchEvent(new Event('input'));
+        expect(shell.querySelector('[data-trial-assign="result"]')).toBeNull();
+        expect(document.activeElement).toBe(input);
+        expect(input.isConnected).toBe(true);
+    });
+
+    test('a two-pin overflow says which pin was dropped', async () => {
+        const { planner, shell, sim } = makeSim();
+        planner.cap = 1;
+        planner.pins = { 900003: CRAFTING, 900005: CRAFTING };
+        planner.manual = { 900005: { [CRAFTING]: '150' } };
+        sim.panel.render();
+        await recommend(planner, shell);
+        const crafting = planner.result.result.trials.find((t) => t.trialHrid === CRAFTING);
+        expect(crafting.signups).toBe(1);
+        expect(text(shell.querySelector('[data-trial-assign="result"]'))).toContain('pin dropped: trial full');
+    });
+
+    test('a sign-up change drops a recommendation built on the old sign-ups without stealing focus', async () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        await recommend(planner, shell);
+        const input = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        input.focus();
+        META[900003] = { ...META[900003], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: CRAFTING };
+        planner.signupsChanged();
+        expect(planner.result).toBeNull();
+        expect(shell.querySelector('[data-trial-assign="result"]')).toBeNull();
+        expect(document.activeElement).toBe(input);
+        // Nothing focused: the view redraws with the new sign-up
+        input.blur();
+        META[900005] = { ...META[900005], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: MILKING };
+        planner.signupsChanged();
+        expect(text(shell.querySelector('tr[data-member-id="900005"]'))).toContain('Milking');
     });
 });

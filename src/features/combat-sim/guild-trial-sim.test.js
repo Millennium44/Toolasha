@@ -798,3 +798,28 @@ describe('Assign skilling view while the planner runs', () => {
         expect(feature.assign.trialMinLevelsData).toBe('{"/guild_skilling/crafting":120}');
     });
 });
+
+describe('Assign skilling view and sign-up changes', () => {
+    test('a sign-up update reaches the planner after the tracker has read it, active socket only', () => {
+        vi.useFakeTimers();
+        try {
+            const changed = vi.spyOn(feature.assign, 'signupsChanged').mockImplementation(() => {});
+            harness.activeSocket = 'live';
+            harness.ws.guild_trial_signup_updated({ characterId: 2 }, { socket: 'old' });
+            vi.runAllTimers();
+            expect(changed).not.toHaveBeenCalled();
+            harness.ws.guild_trial_signup_updated({ characterId: 2 }, { socket: 'live' });
+            expect(changed).not.toHaveBeenCalled(); // deferred a tick
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+            harness.ws.guild_characters_updated({}, { socket: 'live' });
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(2);
+            feature.disable();
+            expect(harness.ws.guild_trial_signup_updated).toBeUndefined();
+            expect(harness.ws.guild_characters_updated).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});

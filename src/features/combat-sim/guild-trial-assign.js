@@ -187,6 +187,7 @@ function prepare(problem) {
             mustPlace: mode === ASSIGN_MODES.Fill || !inCombat,
         });
     }
+    dropOverflowPins(members, caps);
     return {
         trials,
         caps,
@@ -195,6 +196,25 @@ function prepare(problem) {
         members,
         zero: new Float64Array(TRIAL_MAX_TIER + 1),
     };
+}
+
+/**
+ * Pins past a trial's slots cannot all be honored: keep members already signed up there first,
+ * then the rest in roster order, and let the others be placed freely, marked `pinDropped`.
+ */
+function dropOverflowPins(members, caps) {
+    const order = members
+        .map((member, index) => ({ member, index }))
+        .filter(({ member }) => member.pin != null && member.pin >= 0)
+        .sort((a, b) => (b.member.current === b.member.pin) - (a.member.current === a.member.pin) || a.index - b.index);
+    const used = caps.map(() => 0);
+    for (const { member } of order) {
+        if (used[member.pin] < caps[member.pin]) used[member.pin]++;
+        else {
+            member.pin = null;
+            member.pinDropped = true;
+        }
+    }
 }
 
 /** Per-trial running sums for one assignment */
@@ -415,6 +435,7 @@ function describe(state, sheet) {
             currentTrialHrid: member.current >= 0 ? state.trials[member.current] : null,
             marginalPoints: t >= 0 ? sheet.scores[t] - sheet.score(t, m) : 0,
             pinned: member.pin != null,
+            pinDropped: member.pinDropped === true,
             inCombat: member.inCombat,
             hasRate: t >= 0 ? member.rates[t] != null : null,
             losesBonus: t < 0 && !member.inCombat,

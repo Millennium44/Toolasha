@@ -271,6 +271,22 @@ export class GuildTrialSim {
         };
         webSocketHook.on('guild_updated', trialSet);
         this.handlers.push(() => webSocketHook.off('guild_updated', trialSet));
+        // Sign-ups and roster changes; the guild XP tracker reads the same messages, so the planner
+        // looks a tick later, once the tracker's handler has run whatever order they were added in
+        let pendingSignups = null;
+        const signups = (_data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            clearTimeout(pendingSignups);
+            pendingSignups = setTimeout(() => {
+                pendingSignups = null;
+                this.assign.signupsChanged();
+            }, 0);
+        };
+        for (const type of ['guild_trial_signup_updated', 'guild_characters_updated']) {
+            webSocketHook.on(type, signups);
+            this.handlers.push(() => webSocketHook.off(type, signups));
+        }
+        this.handlers.push(() => clearTimeout(pendingSignups));
         const switched = () => {
             this.generation++;
             this.controller?.abort();
