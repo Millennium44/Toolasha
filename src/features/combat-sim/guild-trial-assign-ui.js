@@ -688,8 +688,15 @@ export class TrialAssignPlanner {
             'Tier 1 base work',
             this.baseWork,
             (value) => {
-                // A zero or negative pool would make every tier instant; keep the last valid figure
-                if (!Number.isFinite(value) || value < 1) return;
+                // A zero or negative pool would make every tier instant: refuse it visibly and keep the last
+                // valid figure
+                const input = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
+                const valid = Number.isFinite(value) && value >= 1 && value <= 1e9;
+                if (input) {
+                    input.style.borderColor = valid ? '' : '#ff6b6b';
+                    input.title = valid ? '' : 'Must be between 1 and 1,000,000,000; the last valid value is used';
+                }
+                if (!valid) return;
                 this.baseWork = value;
                 this.edited();
             },

@@ -336,9 +336,13 @@ describe('the Assign skilling view', () => {
 
         const baseWork = inputFor('Tier 1 base work');
         const before = planner.baseWork;
-        baseWork.value = '0';
-        baseWork.dispatchEvent(new Event('input'));
-        expect(planner.baseWork).toBe(before);
+        baseWork.focus();
+        for (const bad of ['0', '-1', '', '2e9']) {
+            baseWork.value = bad;
+            baseWork.dispatchEvent(new Event('input'));
+            expect(planner.baseWork).toBe(before);
+            expect(baseWork.style.borderColor).not.toBe('');
+        }
 
         const level = shell.querySelector('[aria-label="Unknown Crafting level"]');
         level.value = '-5';
