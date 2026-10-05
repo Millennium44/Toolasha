@@ -584,22 +584,28 @@ export class TrialAssignPlanner {
     }
 
     /**
-     * Sign-ups or the roster changed (a `guild_trial_signup_updated` or `guild_characters_updated`,
-     * once the tracker has read it). A recommendation built on the old sign-ups is dropped, and
-     * the view redraws unless the player is typing into it.
+     * Something the view reads changed: sign-ups, the roster, the draw, minimums, building levels,
+     * captured skill levels, the player's own levels or readings. The one entry point for all of
+     * them, called by the simulator a tick after the message (see its `notifyInputs`).
+     *
+     * A recommendation built on other inputs is dropped, and the view redraws when what it would
+     * show changed — unless the player is typing into it; the next notification or draw catches up.
+     * A running search or check is left alone; its own redraw checks the inputs when it ends.
      */
-    signupsChanged() {
-        if (this.controller) return;
-        if (this.result && this.result.signature !== this.context().signature) {
+    inputsChanged() {
+        if (this.controller || (this.sim.kind !== 'assign' && !this.result)) return;
+        const signature = this.context().signature;
+        if (this.result && this.result.signature !== signature) {
             this.result = null;
             this.check = null;
-            this.status = 'The sign-ups changed since the last recommendation.';
+            this.status = 'The roster, sign-ups, levels or readings changed since the last recommendation.';
             removeResultCards();
         }
+        if (this.sim.kind !== 'assign' || signature === this.drawnSignature) return;
         const active = typeof document === 'undefined' ? null : document.activeElement;
         const typing =
             active?.closest?.('[data-trial-assign-root]') && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
-        if (!typing && this.sim.kind === 'assign') this.sim.panel?.render();
+        if (!typing) this.sim.panel?.render();
     }
 
     /**
@@ -612,6 +618,7 @@ export class TrialAssignPlanner {
         const busy = Boolean(this.controller);
         body.dataset.trialAssignRoot = 'true';
         const context = this.context();
+        this.drawnSignature = context.signature;
         const label = (trial) => trialLabel(trial, context.clientData);
         const rerender = () => this.sim.panel?.render();
         if (this.result && !busy && this.result.signature !== context.signature) {

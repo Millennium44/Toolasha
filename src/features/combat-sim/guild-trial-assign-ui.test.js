@@ -475,14 +475,49 @@ describe('the Assign skilling view', () => {
         const input = shell.querySelector('[aria-label="Unknown Crafting level"]');
         input.focus();
         META[900003] = { ...META[900003], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: CRAFTING };
-        planner.signupsChanged();
+        planner.inputsChanged();
         expect(planner.result).toBeNull();
         expect(shell.querySelector('[data-trial-assign="result"]')).toBeNull();
         expect(document.activeElement).toBe(input);
         // Nothing focused: the view redraws with the new sign-up
         input.blur();
         META[900005] = { ...META[900005], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: MILKING };
-        planner.signupsChanged();
+        planner.inputsChanged();
         expect(text(shell.querySelector('tr[data-member-id="900005"]'))).toContain('Milking');
+    });
+
+    test('a changed input redraws the view; an unchanged one does not', () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        const render = vi.spyOn(sim.panel, 'render');
+        planner.inputsChanged();
+        expect(render).not.toHaveBeenCalled();
+
+        // A guild update that changes only the minimums
+        planner.trialMinLevelsData = JSON.stringify({ [CRAFTING]: 130 });
+        planner.inputsChanged();
+        expect(render).toHaveBeenCalledTimes(1);
+        expect(text(shell)).toContain('Crafting min 130');
+
+        // A new profile capture
+        LEVELS.milker['/skills/milking'] = 160;
+        planner.inputsChanged();
+        expect(render).toHaveBeenCalledTimes(2);
+        expect(shell.querySelector('[aria-label="Milker Milking level"]').placeholder).toBe('160');
+        LEVELS.milker['/skills/milking'] = 150;
+
+        // A new own reading
+        sim.readings[CRAFTING] = { ...GUILD_SKILLING_TICKS[0], at: 2 };
+        planner.inputsChanged();
+        expect(render).toHaveBeenCalledTimes(3);
+        expect(markers(shell, '900001')[1]).toBe('reading');
+    });
+
+    test('outside the Assign view nothing is computed or drawn', () => {
+        const { planner, sim } = makeSim();
+        sim.kind = 'skilling';
+        const context = vi.spyOn(planner, 'context');
+        planner.inputsChanged();
+        expect(context).not.toHaveBeenCalled();
     });
 });

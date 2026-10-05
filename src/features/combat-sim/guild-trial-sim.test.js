@@ -803,7 +803,7 @@ describe('Assign skilling view and sign-up changes', () => {
     test('a sign-up update reaches the planner after the tracker has read it, active socket only', () => {
         vi.useFakeTimers();
         try {
-            const changed = vi.spyOn(feature.assign, 'signupsChanged').mockImplementation(() => {});
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
             harness.activeSocket = 'live';
             harness.ws.guild_trial_signup_updated({ characterId: 2 }, { socket: 'old' });
             vi.runAllTimers();
@@ -818,6 +818,56 @@ describe('Assign skilling view and sign-up changes', () => {
             feature.disable();
             expect(harness.ws.guild_trial_signup_updated).toBeUndefined();
             expect(harness.ws.guild_characters_updated).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('every input the Assign view reads notifies it', () => {
+    test('guild updates, profiles, readings, skills and building levels each reach inputsChanged a tick later', () => {
+        vi.useFakeTimers();
+        try {
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            const fire = (send) => {
+                changed.mockClear();
+                send();
+                expect(changed).not.toHaveBeenCalled();
+                vi.runAllTimers();
+                expect(changed).toHaveBeenCalledTimes(1);
+            };
+            fire(() => harness.ws.guild_updated({ guild: { trialMinLevelsData: '{"/guild_skilling/crafting":130}' } }));
+            fire(() =>
+                harness.ws.guild_updated({
+                    guildWeeklyTrialSet: { skillHrids: ['/guild_skilling/crafting'] },
+                    guildBuildingLevelMap: { '/guild_buildings/skilling_encampment': 3 },
+                })
+            );
+            fire(() => harness.ws.profile_shared({ profile: { characterSkills: [] } }));
+            fire(() => harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0] }));
+            fire(() => harness.listeners.skills_updated({}));
+            fire(() => harness.listeners.guild_shrine_levels_updated({}));
+            fire(() => harness.ws.action_completed({ endCharacterSkills: [] }));
+            // Several in one tick are one notification
+            changed.mockClear();
+            harness.ws.profile_shared({});
+            harness.ws.guild_trial_signup_updated({});
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('messages from an inactive socket do not notify', () => {
+        vi.useFakeTimers();
+        try {
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            harness.activeSocket = 'live';
+            for (const type of ['guild_updated', 'profile_shared', 'guild_skilling_updated', 'action_completed'])
+                harness.ws[type]({ trialHrid: '/guild_skilling/crafting' }, { socket: 'old' });
+            vi.runAllTimers();
+            expect(changed).not.toHaveBeenCalled();
         } finally {
             vi.useRealTimers();
         }

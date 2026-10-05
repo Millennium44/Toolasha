@@ -244,6 +244,18 @@ export class GuildTrialSim {
         };
         this.handlers.push(domObserver.onClass('GuildTrialSimulator', 'GuildPanel_', inject));
         this.handlers.push(domObserver.onReady('GuildTrialSimulatorCatchUp', inject));
+        // Every input the Assign view reads tells it here. Deferred a tick and coalesced: other
+        // modules (the guild XP tracker, the member skill store) read the same messages, and the
+        // view must look after they have, whatever order the handlers were added in.
+        let pendingInputs = null;
+        const notifyInputs = () => {
+            clearTimeout(pendingInputs);
+            pendingInputs = setTimeout(() => {
+                pendingInputs = null;
+                this.assign.inputsChanged();
+            }, 0);
+        };
+        this.handlers.push(() => clearTimeout(pendingInputs));
         const capture = (data, context) => {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (!data?.trialHrid?.startsWith('/guild_skilling/')) return;
@@ -258,6 +270,7 @@ export class GuildTrialSim {
                 const readings = (this.successReadings[data.trialHrid] ||= {});
                 readings[data.tier] = { tier: data.tier, successRate: data.successRate };
             }
+            notifyInputs();
         };
         webSocketHook.on('guild_skilling_updated', capture);
         this.handlers.push(() => webSocketHook.off('guild_skilling_updated', capture));
@@ -268,25 +281,31 @@ export class GuildTrialSim {
                 this.assign.setWeeklyTrialSet(data.guildWeeklyTrialSet);
             if (typeof data?.guild?.trialMinLevelsData === 'string')
                 this.assign.trialMinLevelsData = data.guild.trialMinLevelsData;
+            // Minimums, the draw, the week and the building levels behind the slot cap all ride here
+            notifyInputs();
         };
         webSocketHook.on('guild_updated', trialSet);
         this.handlers.push(() => webSocketHook.off('guild_updated', trialSet));
-        // Sign-ups and roster changes; the guild XP tracker reads the same messages, so the planner
-        // looks a tick later, once the tracker's handler has run whatever order they were added in
-        let pendingSignups = null;
-        const signups = (_data, context) => {
+        // Sign-ups and the roster (read by the guild XP tracker), opened profiles (read by the member
+        // skill store, which updates its in-memory captures synchronously) and level-ups
+        const relayed = (_data, context) => {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
-            clearTimeout(pendingSignups);
-            pendingSignups = setTimeout(() => {
-                pendingSignups = null;
-                this.assign.signupsChanged();
-            }, 0);
+            notifyInputs();
         };
-        for (const type of ['guild_trial_signup_updated', 'guild_characters_updated']) {
-            webSocketHook.on(type, signups);
-            this.handlers.push(() => webSocketHook.off(type, signups));
+        for (const type of [
+            'guild_trial_signup_updated',
+            'guild_characters_updated',
+            'profile_shared',
+            'action_completed',
+        ]) {
+            webSocketHook.on(type, relayed);
+            this.handlers.push(() => webSocketHook.off(type, relayed));
         }
-        this.handlers.push(() => clearTimeout(pendingSignups));
+        // The player's own base levels and the guild's building levels, as the data manager holds them
+        for (const event of ['skills_updated', 'guild_shrine_levels_updated']) {
+            dataManager.on(event, notifyInputs);
+            this.handlers.push(() => dataManager.off(event, notifyInputs));
+        }
         const switched = () => {
             this.generation++;
             this.controller?.abort();
