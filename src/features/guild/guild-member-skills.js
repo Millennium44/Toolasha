@@ -429,6 +429,29 @@ class GuildMemberSkills {
         this.unitRequests = {};
         /** Captures taken at or before this are due again; see {@link redoAll} */
         this.dueBefore = 0;
+        /** Told after a stored load lands and after a profile is captured; see {@link onChanged} */
+        this.changeListeners = new Set();
+    }
+
+    /**
+     * Subscribe to the captures changing: a stored load landing (initialize, a guild change) or a
+     * profile being captured. Called after the in-memory captures are updated.
+     * @param {function(): void} callback - Called with no arguments
+     * @returns {function(): void} Unsubscribe
+     */
+    onChanged(callback) {
+        this.changeListeners.add(callback);
+        return () => this.changeListeners.delete(callback);
+    }
+
+    _notifyChanged() {
+        for (const callback of [...this.changeListeners]) {
+            try {
+                callback();
+            } catch (error) {
+                console.error('[GuildMemberSkills] Change listener failed:', error);
+            }
+        }
     }
 
     /** @returns {Object} name → capture, the live in-memory map */
@@ -544,6 +567,7 @@ class GuildMemberSkills {
         } catch (error) {
             console.error('[GuildMemberSkills] Failed to read captured profiles:', error);
         }
+        this._notifyChanged();
         return this.captures;
     }
 
@@ -581,6 +605,7 @@ class GuildMemberSkills {
             const pruned = pruneRenamedEntries(this.captures, capture, key);
             const renamed = pruned !== this.captures;
             this.captures = { ...pruned, [key]: capture };
+            this._notifyChanged();
             const saved = renamed ? this.record.save({ overwrite: true }) : this.record.save();
             saved.catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
         } catch (error) {

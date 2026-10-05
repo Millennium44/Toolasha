@@ -908,3 +908,36 @@ describe('roster changes come from the guild XP tracker', () => {
         }
     });
 });
+
+describe('captured skill levels come from the member skill store', () => {
+    test('with the store reachable, its change hook notifies and profile_shared is not relayed', () => {
+        vi.useFakeTimers();
+        let listener = null;
+        const off = vi.fn();
+        window.Toolasha = {
+            Combat: {
+                guildMemberSkills: {
+                    onChanged: (callback) => {
+                        listener = callback;
+                        return off;
+                    },
+                },
+            },
+        };
+        try {
+            feature.disable();
+            feature = new GuildTrialSim();
+            feature.initialize();
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            expect(harness.ws.profile_shared).toBeUndefined();
+            listener();
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+            feature.disable();
+            expect(off).toHaveBeenCalled();
+        } finally {
+            delete window.Toolasha;
+            vi.useRealTimers();
+        }
+    });
+});

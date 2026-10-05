@@ -18,12 +18,15 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     loadouts: [],
     capturedListeners: [],
+    /** When set, storage reads wait for it, as a slow IndexedDB would */
+    hold: null,
 }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (key in game.store ? game.store[key] : fallback),
         tryGet: async (key) => {
+            if (game.hold) await game.hold;
             if (game.unavailable) return null;
             return key in game.store
                 ? { found: true, value: structuredClone(game.store[key]) }
@@ -782,5 +785,36 @@ describe('merging two devices captured profiles', () => {
         expect(mergeMemberSkillCaptures(null, { a: capture('A', 1) })).toEqual({ a: capture('A', 1) });
         expect(mergeMemberSkillCaptures({ a: capture('A', 1) }, null)).toEqual({ a: capture('A', 1) });
         expect(mergeMemberSkillCaptures(undefined, undefined)).toEqual({});
+    });
+});
+
+describe('onChanged — subscribers to the captures', () => {
+    test('hear about a stored load only once it has landed, and about each captured profile', async () => {
+        game.store[memberSkillsStorageKey('Other Guild')] = {
+            ada: extractProfileSkills(profile('Ada', { '/skills/alchemy': 123 }), now),
+        };
+        let release;
+        game.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const seen = [];
+        const off = guildMemberSkills.onChanged(() => seen.push(guildMemberSkills.levelFor('Ada', '/skills/alchemy')));
+        try {
+            const loading = guildMemberSkills.setGuildName('Other Guild');
+            await vi.advanceTimersByTimeAsync(0);
+            expect(seen).toEqual([]);
+            release();
+            game.hold = null;
+            await loading;
+            expect(seen).toEqual([123]);
+
+            game.wsHandlers.profile_shared(profile('Ada', { '/skills/alchemy': 124 }));
+            expect(seen).toEqual([123, 124]);
+        } finally {
+            off();
+            game.hold = null;
+        }
+        game.wsHandlers.profile_shared(profile('Ada', { '/skills/alchemy': 125 }));
+        expect(seen).toEqual([123, 124]);
     });
 });

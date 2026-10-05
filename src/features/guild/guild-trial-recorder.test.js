@@ -99,7 +99,10 @@ vi.mock('./guild-trials-store.js', () => ({
     loadTrialRecord: async () => game.record,
 }));
 vi.mock('./guild-member-skills.js', () => ({
-    default: { all: () => ({ ada: { name: 'Ada', skills: { '/skills/alchemy': 90 } } }) },
+    default: {
+        all: () => ({ ada: { name: 'Ada', skills: { '/skills/alchemy': 90 } } }),
+        onChanged: () => () => {},
+    },
 }));
 vi.mock('./guild-trial-trace.js', () => ({
     default: { activeTraceId: () => game.traceId },

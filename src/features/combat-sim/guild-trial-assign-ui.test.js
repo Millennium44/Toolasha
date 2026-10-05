@@ -532,4 +532,30 @@ describe('the Assign skilling view', () => {
         expect(text(shell)).toContain('Crafter2');
         delete LEVELS.crafter2;
     });
+
+    test('a member below the minimum of the trial they signed up for is not kept there, and is told', async () => {
+        game.characterData.guild = { trialMinLevelsData: JSON.stringify({ [CRAFTING]: 120, [MILKING]: 120 }) };
+        LEVELS.unknown = { '/skills/crafting': 50, '/skills/milking': 50 };
+        META[900005] = { ...META[900005], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: CRAFTING };
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        try {
+            await recommend(planner, shell);
+            expect(placedBy(planner).Unknown).toBeUndefined();
+            expect(text(shell.querySelector('[data-trial-assign="result"]'))).toContain(
+                'below the trial minimum: must change sign-up'
+            );
+            expect(text(shell.querySelector('[data-trial-assign="result"]'))).toContain('Unknown');
+        } finally {
+            delete LEVELS.unknown;
+        }
+    });
+
+    test('a signed-up member with no data at all is still kept where they signed up', async () => {
+        META[900005] = { ...META[900005], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: CRAFTING };
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        await recommend(planner, shell);
+        expect(placedBy(planner).Unknown).toBe(CRAFTING);
+    });
 });

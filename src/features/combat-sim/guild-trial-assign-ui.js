@@ -434,12 +434,18 @@ export class TrialAssignPlanner {
     /** The optimizer's problem from a context */
     problem(context) {
         const members = [];
+        const belowMinimum = [];
         let unplaced = 0;
         for (const member of context.members) {
             const anyRate = context.trials.some((trial) => member.rates[trial]);
             let pin = member.pin || null;
             if (!anyRate && !pin) {
-                // No data: keep a current sign-up (it still adds to the pool), otherwise leave them out
+                // No data: keep a current sign-up (it still adds to the pool), otherwise leave them out.
+                // A sign-up the member's known level is below the minimum for cannot stand.
+                if (member.current && member.coverage[member.current]?.kind === 'below-min') {
+                    belowMinimum.push(member.name);
+                    continue;
+                }
                 if (!member.current || !context.trials.includes(member.current)) {
                     unplaced++;
                     continue;
@@ -467,6 +473,7 @@ export class TrialAssignPlanner {
                 restarts: 4,
             },
             unplaced,
+            belowMinimum,
         };
     }
 
@@ -493,12 +500,12 @@ export class TrialAssignPlanner {
         try {
             const context = this.context();
             if (!context.trials.length) throw new Error('Choose the cycle’s skilling trials first.');
-            const { problem, unplaced } = this.problem(context);
+            const { problem, unplaced, belowMinimum } = this.problem(context);
             if (!problem.members.length) throw new Error('No eligible member has a skill level or reading yet.');
             const result = await optimizeTrialAssignmentAsync(problem, { signal: controller.signal });
             if (controller.signal.aborted) throw new Error('Assignment canceled.');
             if (!this.stillOwner(owner)) return;
-            this.result = { result, unplaced, context, problem, signature: context.signature };
+            this.result = { result, unplaced, belowMinimum, context, problem, signature: context.signature };
             this.status = '';
         } catch (error) {
             if (!this.stillOwner(owner)) return;
@@ -879,7 +886,7 @@ export class TrialAssignPlanner {
 
     drawResult(body, ui) {
         const { button, row } = ui;
-        const { result, context, unplaced } = this.result;
+        const { result, context, unplaced, belowMinimum = [] } = this.result;
         const label = (trial) => trialLabel(trial, context.clientData);
         const format = (n, digits = 0) => Number(n).toLocaleString('en-US', { maximumFractionDigits: digits });
         const card = panelCard(body, 'Recommended sign-ups', ACCENT);
@@ -956,6 +963,12 @@ export class TrialAssignPlanner {
             members.appendChild(tr);
         }
         card.appendChild(members);
+        if (belowMinimum.length)
+            card.appendChild(
+                panelNote(
+                    `${belowMinimum.join(', ')}: below the trial minimum: must change sign-up. Their level is under the minimum of the trial they signed up for, and no other drawn trial is open to them on known data.`
+                )
+            );
         if (unplaced)
             card.appendChild(
                 panelNote(
