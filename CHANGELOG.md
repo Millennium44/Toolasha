@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Item tooltip marks partly priced alchemy profits
 
-- In the item tooltip's Coinify/Decompose/Transmute list, a profit that counts an unpriced output or tea as worth nothing now shows as a floor ("≥ 9.0K/hr (unpriced output)") and sorts after fully priced rows instead of ranking as if complete.
+- In the item tooltip's Coinify/Decompose/Transmute list, a profit with an unpriced output now shows as a floor ("≥ 9.0K/hr (unpriced output)"), one with an unpriced tea as a ceiling ("≤"), and both sort after fully priced rows instead of ranking as if complete.
 
 ### Leaderboard Next board shows how stale the oldest board is
 

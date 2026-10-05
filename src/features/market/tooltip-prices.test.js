@@ -870,12 +870,27 @@ describe('self-use alchemy lines', () => {
             },
         };
         const text = (await blockFor('/items/cheese_sword')).textContent;
-        expect(text).toContain('Decompose: ≥ 9.0K/hr');
-        expect(text).toContain('Transmute: ≥ 50/hr');
+        expect(text).toContain('Decompose: ≥ 9.0K/hr (unpriced output)');
+        // An unpriced tea is left out as a cost, so its profit is a ceiling, not a floor
+        expect(text).toContain('Transmute: ≤ 50/hr (unpriced tea)');
         expect(text).toContain('Coinify: 100/hr');
         expect(text).not.toContain('Coinify: ≥');
         expect(text.indexOf('Coinify')).toBeLessThan(text.indexOf('Decompose'));
         expect(text.indexOf('Decompose')).toBeLessThan(text.indexOf('Transmute'));
+    });
+
+    test('an alchemy profit missing both an output and a tea price claims no bound', async () => {
+        alchemyState.profits = {
+            decompose: {
+                ...cheeseSwordDecompose(),
+                profitPerHour: 9000,
+                unpricedOutputs: ['/items/cheese'],
+                hasMissingPrices: true,
+            },
+        };
+        const text = (await blockFor('/items/cheese_sword')).textContent;
+        expect(text).toContain('Decompose: ~ 9.0K/hr (unpriced output and tea)');
+        expect(text).not.toContain('≥');
     });
 
     test('the setting on adds the labelled self-use line and its footnote', async () => {

@@ -1596,7 +1596,21 @@ class TooltipPrices {
             const label = profit.actionType.charAt(0).toUpperCase() + profit.actionType.slice(1);
             const color = profit.profitPerHour >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS;
             if (isPartialProfit(profit)) {
-                html += `<div style="color: ${color};" title="An output or tea has no market price, so this is a floor">• ${label}: ≥ ${formatKMB(profit.profitPerHour)}/hr (unpriced output)`;
+                // An unpriced output counts as 0 revenue (a floor); an unpriced tea counts as 0 cost (a ceiling);
+                // with both, no bound holds
+                const missingOutput = (profit.unpricedOutputs?.length ?? 0) > 0;
+                const missingTea = Boolean(profit.hasMissingPrices);
+                const [mark, note, title] =
+                    missingOutput && missingTea
+                        ? [
+                              '~ ',
+                              'unpriced output and tea',
+                              'An output and a tea have no market price, so this is rough',
+                          ]
+                        : missingTea
+                          ? ['≤ ', 'unpriced tea', 'A tea has no market price, so its cost is left out: a ceiling']
+                          : ['≥ ', 'unpriced output', 'An output has no market price, so this is a floor'];
+                html += `<div style="color: ${color};" title="${title}">• ${label}: ${mark}${formatKMB(profit.profitPerHour)}/hr (${note})`;
             } else {
                 html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
             }
