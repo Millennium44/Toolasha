@@ -3,6 +3,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { getLoadouts, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import { COMBAT_ENCOUNTERS, TRIAL_SKILLS } from './guild-trials-math.js';
 
 const MAX_TRIAL_PROFILES = 300;
@@ -34,6 +35,31 @@ function newest(entries, key, time) {
         if (!result.has(id) || time(entry) >= time(result.get(id))) result.set(id, entry);
     }
     return [...result.values()];
+}
+
+/**
+ * The current week's trial signups, with the trial each one signed up for per kind.
+ *
+ * Takes the guild XP tracker as an argument rather than importing it: this module
+ * is shared through the utils bundle, the tracker lives in the combat bundle.
+ * @param {Object} tracker - The guild XP tracker (member list, member metas, current week)
+ * @returns {Array<{characterId: string, name: string, trials: {combat?: string, skilling?: string}}>}
+ *   Sorted by name; empty until the tracker knows the week
+ */
+export function trialSignupRoster(tracker) {
+    const week = tracker?.getCurrentWeekStartAt?.();
+    if (!week) return [];
+    const roster = [];
+    for (const member of tracker.getMemberList?.() || []) {
+        const meta = tracker.getMemberMeta?.(member.characterID) || member;
+        if (meta.signupWeekStartAt !== week || !VALID_PLAYER_NAME_RE.test(meta.name || '')) continue;
+        const trials = {};
+        if (meta.signedUpCombatTrialHrid) trials.combat = meta.signedUpCombatTrialHrid;
+        if (meta.signedUpSkillingTrialHrid) trials.skilling = meta.signedUpSkillingTrialHrid;
+        if (Object.keys(trials).length && member.characterID != null)
+            roster.push({ characterId: String(member.characterID), name: meta.name, trials });
+    }
+    return roster.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Trial captures restored explicitly from this character's saved input set, plus newer live responses. */

@@ -51,6 +51,7 @@ import {
     startTrialSimulationCapture,
     stopTrialSimulationCapture,
     clearTrialSimulationProfiles,
+    trialSignupRoster,
 } from './guild-trial-simulation-inputs.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
@@ -1188,7 +1189,12 @@ const guildTrialRecorder = new GuildTrialRecorder();
 export async function buildTrialExport({ guildName = null } = {}) {
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
     const scopeVersion = guildTrialRecorder.exportScopeVersion;
-    const roster = structuredClone(guildXPTracker.getMemberList?.() || []);
+    // The simulator's inputs ride along only while it is on, and only for this
+    // week's signups: the rest of the guild's cached profiles are no part of the trial
+    const signups =
+        config.getSetting('guildTrialSim') === true
+            ? trialSignupRoster(guildXPTracker).map((row) => ({ characterID: row.characterId, name: row.name }))
+            : null;
     if (
         guildTrialRecorder.pendingGuildAdoption !== null ||
         (guildName && guildTrialRecorder.guildName && guildName !== guildTrialRecorder.guildName)
@@ -1199,7 +1205,7 @@ export async function buildTrialExport({ guildName = null } = {}) {
     const trialDamage = guildTrialDamage.breakdown?.() ?? null;
     const session = await guildTrialRecorder.loadSession();
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
-    const simulationInputs = await captureTrialSimulationInputs(characterId, roster);
+    const simulationInputs = signups ? await captureTrialSimulationInputs(characterId, signups) : null;
     if (
         (dataManager.getCurrentCharacterId?.() ?? null) !== characterId ||
         guildTrialRecorder.exportScopeVersion !== scopeVersion ||
@@ -1248,9 +1254,10 @@ export async function buildTrialExport({ guildName = null } = {}) {
         traceId: guildTrialTrace.activeTraceId?.() ?? null,
         // Coverage-aware: a partial session lists unknownAuras, never missingAuras
         trialAbilities: guildTrialAbilities.exportSnapshot?.() ?? null,
-        // Dated raw View Loadout gear/triggers, matching profile levels/houses/shrines,
-        // and current building context, kept before memory-only captures disappear.
-        simulationInputs,
+        // Only with the Trial Simulator on: dated raw View Loadout gear/triggers and
+        // matching profile levels/houses/shrines for this week's signups, plus the
+        // building context, kept before memory-only captures disappear.
+        ...(simulationInputs ? { simulationInputs } : {}),
     };
 }
 

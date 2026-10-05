@@ -163,7 +163,16 @@ test('trial export preserves the saved trial gear and triggers captured through 
         },
     };
     game.viewLoadouts = [capture, { ...capture, context: 'party' }];
-    game.members = [{ characterID: '2', name: 'Ada' }];
+    game.settings.guildTrialSim = true;
+    game.currentWeek = '2026-08-03T00:00:00Z';
+    game.members = [
+        {
+            characterID: '2',
+            name: 'Ada',
+            signupWeekStartAt: game.currentWeek,
+            signedUpCombatTrialHrid: '/guild_combat/badger',
+        },
+    ];
     try {
         const bundle = await buildTrialExport({ guildName: 'Milky Way' });
         expect(bundle.simulationInputs.viewLoadouts).toEqual([capture]);
@@ -173,6 +182,50 @@ test('trial export preserves the saved trial gear and triggers captured through 
     } finally {
         game.viewLoadouts = [];
         game.members = [];
+        delete game.settings.guildTrialSim;
+        game.currentWeek = null;
+    }
+});
+
+test('the trial export carries no simulator inputs while the simulator is off', async () => {
+    game.members = [{ characterID: '2', name: 'Ada' }];
+    game.store.profile_list = [{ characterID: '2', timestamp: now, profile: { characterSkills: [] } }];
+    try {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+        expect(bundle).not.toHaveProperty('simulationInputs');
+        expect(bundle.format).toBe('toolasha-guild-trial');
+    } finally {
+        game.members = [];
+    }
+});
+
+test('the simulator inputs in a trial export cover this week’s signups, not the whole guild', async () => {
+    game.settings.guildTrialSim = true;
+    game.currentWeek = '2026-08-03T00:00:00Z';
+    const signedUp = (id, name) => ({
+        characterID: id,
+        name,
+        signupWeekStartAt: game.currentWeek,
+        signedUpSkillingTrialHrid: '/guild_skilling/milking',
+    });
+    game.members = [
+        signedUp('2', 'Ada'),
+        // A member from last week's sheet and one who never signed up
+        { ...signedUp('3', 'Bob'), signupWeekStartAt: '2026-07-27T00:00:00Z' },
+        { characterID: '4', name: 'Cy' },
+    ];
+    game.store.profile_list = ['2', '3', '4'].map((id) => ({
+        characterID: id,
+        timestamp: now,
+        profile: { characterSkills: [] },
+    }));
+    try {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+        expect(bundle.simulationInputs.profiles.map((entry) => entry.characterID)).toEqual(['2']);
+    } finally {
+        game.members = [];
+        delete game.settings.guildTrialSim;
+        game.currentWeek = null;
     }
 });
 test('export rejects an unresolved guild adoption and an old completion cannot resume it', async () => {
@@ -185,6 +238,11 @@ test('export rejects an unresolved guild adoption and an old completion cannot r
 });
 
 test('export rejects a same-character guild switch during a delayed profile read', async () => {
+    game.settings.guildTrialSim = true;
+    game.currentWeek = '2026-08-03T00:00:00Z';
+    game.members = [
+        { characterID: '2', name: 'Ada', signupWeekStartAt: game.currentWeek, signedUpCombatTrialHrid: '/x' },
+    ];
     guildTrialRecorder.setGuildName('Milky Way');
     let markStarted, finish;
     const started = new Promise((resolve) => {
@@ -205,6 +263,9 @@ test('export rejects a same-character guild switch during a delayed profile read
         await expect(exporting).rejects.toThrow('Guild or character changed');
     } finally {
         game.profileRead = null;
+        game.members = [];
+        delete game.settings.guildTrialSim;
+        game.currentWeek = null;
     }
 });
 

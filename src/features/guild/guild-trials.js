@@ -2588,9 +2588,10 @@ class GuildTrials {
             kind: 'verb',
             run: async () => {
                 const bundle = await buildTrialExport({ guildName: this.guildName });
-                // The builder never refuses — an empty week is a well-formed
-                // bundle — so handing the player a file full of nulls and
-                // calling it a success would be the wrong answer twice over
+                // An empty week is a well-formed bundle (the builder refuses
+                // only mid guild/character switch, which the palette reports),
+                // so handing the player a file full of nulls and calling it a
+                // success would be the wrong answer twice over
                 if (trialExportIsEmpty(bundle)) return 'nothing recorded this week';
 
                 const filename = downloadTrialExport(bundle);

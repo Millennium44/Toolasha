@@ -178,7 +178,17 @@ export function exposeShrineDebug() {
             const xpTracker = guildXpTracker() || bundledGuildXPTracker;
             const exporter = guildTrialExport() || bundledTrialExport;
             const guildName = trials?.guildName || xpTracker.getOwnGuildName?.() || null;
-            const bundle = await exporter.buildTrialExport({ guildName });
+            // The builder refuses while a guild or character switch is being
+            // adopted rather than mix two guilds' data in one file. Said here,
+            // as the panel's button says it, instead of escaping as an unhandled
+            // rejection from a console call.
+            let bundle;
+            try {
+                bundle = await exporter.buildTrialExport({ guildName });
+            } catch (error) {
+                console.error('[Toolasha] Trial data export failed:', error?.message || error);
+                return null;
+            }
             exporter.downloadTrialExport(bundle);
             console.log('[Toolasha] Trial data exported', bundle);
             return bundle;

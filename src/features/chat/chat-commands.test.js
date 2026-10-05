@@ -416,6 +416,34 @@ describe('/shrines', () => {
     });
 });
 
+describe('Toolasha.debug.exportTrialData', () => {
+    test('a refused export is reported and answers null instead of rejecting', async () => {
+        const downloadTrialExport = vi.fn();
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        window.Toolasha = {
+            Combat: {
+                guildTrialsStore: { guildName: 'Milky Way' },
+                guildXPTracker: {},
+                guildTrialExport: {
+                    buildTrialExport: async () => {
+                        throw new Error('Guild or character changed during export. Export again on the current guild.');
+                    },
+                    downloadTrialExport,
+                },
+            },
+        };
+        try {
+            expect(exposeShrineDebug()).toBe(true);
+            await expect(window.Toolasha.debug.exportTrialData()).resolves.toBeNull();
+            expect(downloadTrialExport).not.toHaveBeenCalled();
+            expect(error.mock.calls[0].join(' ')).toContain('Guild or character changed');
+        } finally {
+            error.mockRestore();
+            delete window.Toolasha;
+        }
+    });
+});
+
 describe('Toolasha.debug.tokenExchange', () => {
     beforeEach(async () => {
         game.setting = true;

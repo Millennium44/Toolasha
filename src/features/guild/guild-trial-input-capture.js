@@ -13,10 +13,11 @@ import {
     loadSavedTrialInputBundles,
     saveTrialInputBundle,
     parseTrialInputBundle,
+    trialSignupRoster,
     MAX_TRIAL_INPUT_BYTES,
 } from './guild-trial-simulation-inputs.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
-import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { openPlayerProfile } from '../../utils/profile-command.js';
 import { fetchLoadout, onLoadoutCaptured, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { isTestServer } from '../../utils/game-server.js';
@@ -26,19 +27,7 @@ const PROFILE_TIMEOUT_MS = 8000;
 
 /** The current week's participants, with one loadout request per signed-up kind. */
 export function trialInputRoster(tracker = guildXPTracker) {
-    const week = tracker.getCurrentWeekStartAt?.();
-    if (!week) return [];
-    const roster = [];
-    for (const member of tracker.getMemberList?.() || []) {
-        const meta = tracker.getMemberMeta?.(member.characterID) || member;
-        if (meta.signupWeekStartAt !== week || !VALID_PLAYER_NAME_RE.test(meta.name || '')) continue;
-        const trials = {};
-        if (meta.signedUpCombatTrialHrid) trials.combat = meta.signedUpCombatTrialHrid;
-        if (meta.signedUpSkillingTrialHrid) trials.skilling = meta.signedUpSkillingTrialHrid;
-        if (Object.keys(trials).length && member.characterID != null)
-            roster.push({ characterId: String(member.characterID), name: meta.name, trials });
-    }
-    return roster.sort((a, b) => a.name.localeCompare(b.name));
+    return trialSignupRoster(tracker);
 }
 
 /** Join fresh captures to the signup roster; unrelated or unknown-kind loadouts never satisfy a step. */
