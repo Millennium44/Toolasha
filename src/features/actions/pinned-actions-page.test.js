@@ -355,6 +355,27 @@ describe('gathering prices', () => {
     });
 });
 
+describe('alchemy prices', () => {
+    test('a pinned alchemy row whose outputs are partly unpriced is withheld from the ranking', async () => {
+        mockAlchemyCalculator.decompose.mockReturnValue({
+            profitPerHour: 9000,
+            actionsPerHour: 100,
+            successRate: 0.5,
+            unpricedOutputs: ['/items/mystery'],
+        });
+        mockDataManager.itemDetails = { '/items/cheese_sword': { itemLevel: 10 } };
+
+        const stats = await page.computeStats(
+            '/actions/alchemy/decompose',
+            { type: '/action_types/alchemy' },
+            '/items/cheese_sword'
+        );
+
+        expect(stats.profitPerHour).toBeNull();
+        expect(stats.hasMissingPrices).toBe(true);
+    });
+});
+
 describe('loadActions', () => {
     const ACTION_HRID = '/actions/tailoring/artificer_cape_refined';
     const ITEM_HRID = '/items/artificer_cape';
