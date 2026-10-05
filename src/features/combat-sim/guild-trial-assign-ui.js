@@ -442,8 +442,18 @@ export class TrialAssignPlanner {
             if (!anyRate && !pin) {
                 // No data: keep a current sign-up (it still adds to the pool), otherwise leave them out.
                 // A sign-up the member's known level is below the minimum for cannot stand.
+                // Kept out of the recommendation, but still counted where they signed up in the
+                // current sheet's score, where their zero-work sign-up adds 1% to that pool
                 if (member.current && member.coverage[member.current]?.kind === 'below-min') {
                     belowMinimum.push(member.name);
+                    members.push({
+                        id: member.id,
+                        name: member.name,
+                        rates: member.rates,
+                        pin: BENCH_PIN,
+                        current: member.current,
+                        inCombat: member.inCombat,
+                    });
                     continue;
                 }
                 if (!member.current || !context.trials.includes(member.current)) {
@@ -950,7 +960,8 @@ export class TrialAssignPlanner {
                 change += member.losesBonus ? ' — loses participation bonus unless in combat' : ' (stays in combat)';
             if (member.pinDropped) change += ' — pin dropped: trial full';
             for (const text of [
-                member.name + (member.pinned ? ' (pinned)' : ''),
+                member.name +
+                    (belowMinimum.includes(member.name) ? ' (below minimum)' : member.pinned ? ' (pinned)' : ''),
                 member.trialHrid ? label(member.trialHrid) : 'Not in skilling',
                 member.trialHrid ? format(member.marginalPoints, 1) : '—',
                 change,

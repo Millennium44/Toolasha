@@ -60,6 +60,7 @@ import {
     parseTrialMinLevels,
 } from './guild-trial-assign-ui.js';
 import { GUILD_SKILLING_TICKS, CURRENT_TRIALS_DATA_SKILLING } from '../guild/guild-trial-messages.fixture.js';
+import { optimizeTrialAssignment } from './guild-trial-assign.js';
 
 /** A Friday 00:00 UTC, as the game's currentWeekStartMs computes it */
 const WEEK = '2026-10-02T00:00:00.000Z';
@@ -541,7 +542,7 @@ describe('the Assign skilling view', () => {
         sim.panel.render();
         try {
             await recommend(planner, shell);
-            expect(placedBy(planner).Unknown).toBeUndefined();
+            expect(placedBy(planner).Unknown ?? null).toBeNull();
             expect(text(shell.querySelector('[data-trial-assign="result"]'))).toContain(
                 'below the trial minimum: must change sign-up'
             );
@@ -557,5 +558,29 @@ describe('the Assign skilling view', () => {
         sim.panel.render();
         await recommend(planner, shell);
         expect(placedBy(planner).Unknown).toBe(CRAFTING);
+    });
+
+    test('the current sign-ups score still counts a below-minimum sign-up in its trial’s pool', async () => {
+        game.characterData.guild = { trialMinLevelsData: JSON.stringify({ [CRAFTING]: 120 }) };
+        LEVELS.unknown = { '/skills/crafting': 50 };
+        META[900002] = { ...META[900002], signedUpSkillingTrialHrid: CRAFTING };
+        META[900005] = { ...META[900005], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: CRAFTING };
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        try {
+            await recommend(planner, shell);
+            const { problem, result } = planner.result;
+            const unknown = problem.members.find((m) => m.name === 'Unknown');
+            expect(unknown).toMatchObject({ current: CRAFTING });
+            expect(result.members.find((m) => m.name === 'Unknown').trialHrid).toBeNull();
+            // Without that zero-work sign-up the Crafting pool would be 1% smaller
+            const without = optimizeTrialAssignment({
+                ...problem,
+                members: problem.members.filter((m) => m.name !== 'Unknown'),
+            });
+            expect(result.currentPoints).toBeLessThan(without.currentPoints);
+        } finally {
+            delete LEVELS.unknown;
+        }
     });
 });

@@ -941,3 +941,41 @@ describe('captured skill levels come from the member skill store', () => {
         }
     });
 });
+
+describe('trial readings belong to one guild', () => {
+    test('a guild update for the same guild keeps them; another guild drops them and tells the planner', () => {
+        vi.useFakeTimers();
+        try {
+            harness.ws.guild_updated({ guild: { id: 11, name: 'One' } });
+            harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0] });
+            expect(feature.readings['/guild_skilling/crafting']).toBeTruthy();
+            harness.ws.guild_updated({ guild: { id: 11, name: 'One' } });
+            expect(feature.readings['/guild_skilling/crafting']).toBeTruthy();
+
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            harness.ws.guild_updated({ guild: { id: 22, name: 'Two' } });
+            expect(feature.readings).toEqual({});
+            expect(feature.successReadings).toEqual({});
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the login payload’s guild is the baseline', () => {
+        dataManager.characterData.guild = { id: 11 };
+        try {
+            feature.disable();
+            feature = new GuildTrialSim();
+            feature.initialize();
+            harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0] });
+            harness.ws.guild_updated({ guild: { id: 11 } });
+            expect(feature.readings['/guild_skilling/crafting']).toBeTruthy();
+            harness.ws.guild_updated({ guild: { id: 33 } });
+            expect(feature.readings).toEqual({});
+        } finally {
+            delete dataManager.characterData.guild;
+        }
+    });
+});

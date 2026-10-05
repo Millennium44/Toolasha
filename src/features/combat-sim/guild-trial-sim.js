@@ -276,8 +276,20 @@ export class GuildTrialSim {
         webSocketHook.on('guild_skilling_updated', capture);
         this.handlers.push(() => webSocketHook.off('guild_skilling_updated', capture));
         // The cycle's drawn trials, for the assignment view; the login payload covers the time before one arrives
+        // Readings belong to the guild they were taken in; a different guild id (a leave and a join
+        // in one session) drops them, as the guild XP tracker drops its roster. The login payload's
+        // guild is the baseline; a character switch resets everything anyway.
+        let guildId = dataManager.characterData?.guild?.id ?? null;
         const trialSet = (data, context) => {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
+            const arriving = data?.guild?.id;
+            if (arriving != null) {
+                if (guildId != null && String(arriving) !== String(guildId)) {
+                    this.readings = {};
+                    this.successReadings = {};
+                }
+                guildId = arriving;
+            }
             if (Array.isArray(data?.guildWeeklyTrialSet?.skillHrids))
                 this.assign.setWeeklyTrialSet(data.guildWeeklyTrialSet);
             if (typeof data?.guild?.trialMinLevelsData === 'string')
@@ -315,6 +327,7 @@ export class GuildTrialSim {
             this.handlers.push(() => dataManager.off(event, notifyInputs));
         }
         const switched = () => {
+            guildId = null;
             this.generation++;
             this.controller?.abort();
             this.controller = null;
