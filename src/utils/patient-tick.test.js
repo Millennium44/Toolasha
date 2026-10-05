@@ -142,6 +142,14 @@ describe('patientTickPrice', () => {
         expect(patientTickPrice(1000, 'sell', 'ask', {})).toBe(996);
     });
 
+    test('an instant fill against a stale out-of-band listing is pulled into the band', () => {
+        mocks.band = { min: 900, max: 1000 };
+        // Bid at the band max; its tick reaches a stale 1004 ask above the band
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1004, itemHrid: '/items/x' })).toBe(1000);
+        mocks.band = { min: 1000, max: 1200 };
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 996, itemHrid: '/items/x' })).toBe(1000);
+    });
+
     test('an unpriced quote passes straight through', () => {
         expect(patientTickPrice(null, 'buy', 'bid')).toBeNull();
         expect(patientTickPrice(0, 'buy', 'bid')).toBe(0);

@@ -95,11 +95,12 @@ export function patientTickPrice(price, side, basis, book = {}) {
     let improved;
     if (buyAtBid) {
         improved = nextPriceUp(price, enhancementLevel);
-        if (typeof ask === 'number' && ask > 0 && improved >= ask) return ask;
+        // The instant fill, still pulled into the band below: a stale raw-book ask can sit outside it
+        if (typeof ask === 'number' && ask > 0 && improved >= ask) improved = ask;
     } else {
         improved = nextPriceDown(price, enhancementLevel);
         if (improved >= price) return price;
-        if (typeof bid === 'number' && bid > 0 && improved <= bid) return bid;
+        if (typeof bid === 'number' && bid > 0 && improved <= bid) improved = bid;
     }
 
     if (itemHrid) {
