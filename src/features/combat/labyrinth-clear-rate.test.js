@@ -5142,4 +5142,51 @@ describe('floor calculation and rooms revealed mid-pass', () => {
         expect(live).not.toBe(cell);
         expect(live.querySelector('.mwi-labyrinth-tile-badge')).not.toBeNull();
     });
+
+    test('an auto 0% for a repainted cell is retried, not cached, painted, or settled', async () => {
+        const [cell] = makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            const fresh = document.createElement('div');
+            fresh.className = 'LabyrinthPanel_roomCell_abc';
+            cell.replaceWith(fresh);
+            return { clearChance: 0, expectedSeconds: Infinity };
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(document.querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
+        expect(labyrinthClearRate._tileResults.size).toBe(0);
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+        expect(labyrinthClearRate.autoTileRetryCount).toBe(1);
+    });
+
+    test('a Path queued during a pass waits for the deferred pass instead of pathing at once', async () => {
+        makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc').mockImplementation(() => {});
+        const pathSpy = vi.spyOn(labyrinthClearRate, 'runPathCalculation').mockImplementation(() => {});
+
+        const pass = labyrinthClearRate.runTileCalculation({ auto: true });
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        labyrinthClearRate._pathQueued = true;
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        release({ clearChance: 0.9, expectedSeconds: 10 });
+        await pass;
+
+        expect(pathSpy).not.toHaveBeenCalled();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
 });

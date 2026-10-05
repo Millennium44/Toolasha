@@ -3342,8 +3342,15 @@ class LabyrinthClearRate {
                     // The game repainted the grid under the pass. Keep the result
                     // so the restore below paints it onto the fresh cell instead
                     // of leaving the tile bare under a "settled" fingerprint.
-                    this._tileResults.set(target.tileKey, result);
-                    sawDisconnected = true;
+                    // The same retry rule as a connected cell: an auto 0% may just
+                    // be loadout snapshots still loading, so it is neither cached
+                    // nor painted as final, and the pass is not settled over it.
+                    if (auto && !(result.clearChance > 0)) {
+                        combatRetryNeeded++;
+                    } else {
+                        this._tileResults.set(target.tileKey, result);
+                        sawDisconnected = true;
+                    }
                     step();
                     continue;
                 }
@@ -3418,15 +3425,17 @@ class LabyrinthClearRate {
                 // withdraws the wait too: the rooms it skipped are unjudged.
                 // A pass that scheduled a retry keeps the wait: pathing now would
                 // judge the rooms the retry is about to settle on assumptions.
-                const wantsPath = this._pathQueued && !retryScheduled;
-                if (!retryScheduled || cancelled) this._pathQueued = false;
-                this.setPathButtonRunning(false);
-                if (wantsPath && !cancelled) this.runPathCalculation();
-                // An auto trigger swallowed while this pass ran: rooms revealed since
-                // it gathered its targets are still unbadged. A retry already
-                // scheduled covers them; a user cancel withdraws the request.
+                // A deferred auto trigger (rooms revealed mid-pass) is a pass about
+                // to run, exactly like a scheduled retry, and keeps the wait too.
                 const deferred = this._autoCalcDeferred;
                 this._autoCalcDeferred = false;
+                const followUp = retryScheduled || (deferred && !cancelled);
+                const wantsPath = this._pathQueued && !followUp;
+                if (!followUp || cancelled) this._pathQueued = false;
+                this.setPathButtonRunning(false);
+                if (wantsPath && !cancelled) this.runPathCalculation();
+                // A retry already scheduled covers the new rooms; a user cancel
+                // withdraws the request.
                 if (deferred && !retryScheduled && !cancelled) this.scheduleAutoTileCalc();
             } else {
                 this._pathQueued = false;
