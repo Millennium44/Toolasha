@@ -17,6 +17,7 @@ const harness = vi.hoisted(() => ({
     gameDataSet: [],
     captureCalls: [],
     simulateThrows: false,
+    trialCalls: [],
 }));
 
 vi.mock('./engine/labyrinth.js', () => ({
@@ -57,8 +58,18 @@ vi.mock('./engine/combat-simulator.js', () => ({
 
 vi.mock('./engine/game-data.js', () => ({ setGameData: (data) => harness.gameDataSet.push(data) }));
 vi.mock('./engine/rng.js', () => ({ seedSimRng: () => {} }));
-vi.mock('./engine/guild-combat-simulator.js', () => ({ simulateGuildCombat: () => ({ kind: 'combat' }) }));
-vi.mock('./engine/guild-skilling-simulator.js', () => ({ simulateGuildSkilling: () => ({ kind: 'skilling' }) }));
+vi.mock('./engine/guild-combat-simulator.js', () => ({
+    simulateGuildCombat: (...args) => {
+        harness.trialCalls.push(args);
+        return { kind: 'combat' };
+    },
+}));
+vi.mock('./engine/guild-skilling-simulator.js', () => ({
+    simulateGuildSkilling: (...args) => {
+        harness.trialCalls.push(args);
+        return { kind: 'skilling' };
+    },
+}));
 vi.mock('./engine/extra-buffs.js', () => ({ buildPlayerExtraBuffs: () => [] }));
 vi.mock('./engine/combat-unit.js', () => ({
     setBuffCapture: (on) => harness.captureCalls.push(['buffs', on]),
@@ -88,6 +99,7 @@ beforeEach(async () => {
     harness.gameDataSet = [];
     harness.captureCalls = [];
     harness.simulateThrows = false;
+    harness.trialCalls = [];
     vi.stubGlobal('postMessage', (message) => harness.posted.push(message));
     vi.stubGlobal('onmessage', null);
     vi.resetModules();
@@ -104,6 +116,14 @@ function fullAbilitiesArg() {
 }
 
 describe('the labyrinth monster the worker builds', () => {
+    test.each(['combat', 'skilling'])('returns individual %s attempts only when explicitly requested', (kind) => {
+        for (const returnAttempts of [undefined, false, true]) {
+            globalThis.onmessage({
+                data: { type: 'start_guild_trial_simulation', taskId: 'trial', scenario: { kind }, returnAttempts },
+            });
+            expect(harness.trialCalls.at(-1)[2]).toBe(returnAttempts === true);
+        }
+    });
     test.each(['combat', 'skilling'])('routes the %s trial request separately from normal combat', (kind) => {
         globalThis.onmessage({
             data: { type: 'start_guild_trial_simulation', taskId: 'trial', gameData: {}, scenario: { kind } },

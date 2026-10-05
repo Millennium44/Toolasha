@@ -27,8 +27,8 @@ onmessage = function (event) {
             const progress = (value) => postMessage({ type: 'progress', taskId, progress: value });
             const simResult =
                 event.data.scenario.kind === 'combat'
-                    ? simulateGuildCombat(event.data.scenario, progress)
-                    : simulateGuildSkilling(event.data.scenario, progress);
+                    ? simulateGuildCombat(event.data.scenario, progress, event.data.returnAttempts === true)
+                    : simulateGuildSkilling(event.data.scenario, progress, event.data.returnAttempts === true);
             postMessage({ type: 'result', taskId, simResult });
         } catch (error) {
             postMessage({ type: 'error', taskId, error: error.message || String(error) });

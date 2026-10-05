@@ -11,7 +11,7 @@ import { TRIAL_MAX_TIER } from '../../guild/guild-trials-math.js';
 const SECOND_NANOSECONDS = 1e9;
 
 /** Simulate a shared work pool, individual action clocks and success/double rolls. */
-export function simulateGuildSkilling(input, onProgress = () => {}) {
+export function simulateGuildSkilling(input, onProgress = () => {}, returnAttempts = false) {
     const scenario = validateTrialScenario(input);
     const deadlineNs = Math.round(scenario.seconds * SECOND_NANOSECONDS);
     const attempts = [];
@@ -67,5 +67,5 @@ export function simulateGuildSkilling(input, onProgress = () => {}) {
         });
         onProgress(Math.round(((run + 1) / scenario.runs) * 100));
     }
-    return summarizeTrialRuns(scenario, attempts);
+    return returnAttempts ? attempts : summarizeTrialRuns(scenario, attempts);
 }

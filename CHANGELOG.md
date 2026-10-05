@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Faster Trial Sim runs
+
+- Independent trial attempts now run across up to four workers, using the simulator's thread limit. Progress updates keep the roster and controls in place instead of rebuilding the whole panel.
+
 ### Trial Sim setup stays readable
 
 - Combat and skilling rosters now keep their full content height and scroll instead of collapsing into clipped strips. The simulator's content background is opaque so game text behind it no longer shows through.

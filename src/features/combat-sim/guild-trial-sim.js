@@ -12,7 +12,8 @@ import {
     parseShykaiImport,
     getCommunityBuffs,
 } from './combat-sim-adapter.js';
-import { buildExtraBuffs, runWorkerChunk } from './combat-sim-runner.js';
+import { buildExtraBuffs } from './combat-sim-runner.js';
+import { runGuildTrialSimulation } from './guild-trial-runner.js';
 import {
     buildTrialGameData,
     trialBuildingBuffs,
@@ -143,6 +144,7 @@ export class GuildTrialSim {
         this.error = '';
         this.notice = '';
         this.progress = 0;
+        this.runButton = null;
         this.importText = null;
         this.contextOverrides = null;
         this.loading = false;
@@ -284,7 +286,7 @@ export class GuildTrialSim {
             this.progress = 0;
             this.result = null;
             this.panel?.render();
-            const result = await runWorkerChunk(
+            const result = await runGuildTrialSimulation(
                 {
                     type: 'start_guild_trial_simulation',
                     taskId: `guild-trial-${Date.now()}-${generation}`,
@@ -294,7 +296,7 @@ export class GuildTrialSim {
                 (progress) => {
                     if (generation !== this.generation || controller.signal.aborted) return;
                     this.progress = progress;
-                    this.panel?.render();
+                    if (this.runButton) this.runButton.textContent = `Simulating… ${progress}%`;
                 },
                 { signal: controller.signal }
             );
@@ -829,7 +831,7 @@ export class GuildTrialSim {
         hallInput.addEventListener('change', () => this.panel?.render());
         treasuryInput.addEventListener('change', () => this.panel?.render());
         const actions = row(body);
-        button(
+        this.runButton = button(
             actions,
             this.loading ? 'Loading builds…' : busy ? `Simulating… ${this.progress}%` : 'Simulate trial',
             () => this.run(),

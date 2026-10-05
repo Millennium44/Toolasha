@@ -267,7 +267,7 @@ export class GuildCombatSimulator extends CombatSimulator {
 }
 
 /** Repeated independent full trials, ready for later roster comparison consumers. */
-export function simulateGuildCombat(input, onProgress = () => {}) {
+export function simulateGuildCombat(input, onProgress = () => {}, returnAttempts = false) {
     const scenario = validateTrialScenario(input);
     const gameData = getGameData();
     const trial = gameData?.guildTrialDetailMap?.[scenario.trialHrid];
@@ -285,5 +285,5 @@ export function simulateGuildCombat(input, onProgress = () => {}) {
         attempts.push(simulator.simulateTrial());
         onProgress(Math.round(((run + 1) / scenario.runs) * 100));
     }
-    return summarizeTrialRuns(scenario, attempts);
+    return returnAttempts ? attempts : summarizeTrialRuns(scenario, attempts);
 }

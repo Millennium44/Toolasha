@@ -106,6 +106,7 @@ vi.mock('./combat-sim-runner.js', () => ({
     buildExtraBuffs: () => [],
     runWorkerChunk: (...args) => harness.worker(...args),
 }));
+vi.mock('./guild-trial-runner.js', () => ({ runGuildTrialSimulation: (...args) => harness.worker(...args) }));
 import { GuildTrialSim } from './guild-trial-sim.js';
 import { GUILD_SKILLING_TICKS } from '../guild/guild-trial-messages.fixture.js';
 
@@ -551,6 +552,40 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.result).toBeNull();
         expect(feature.combatMembers).toEqual([]);
         expect(feature.contextOverrides).toBeNull();
+    });
+    test('updates progress without replacing inputs, losing focus or resetting roster scroll', async () => {
+        feature.addCurrentBuild();
+        let progress;
+        let finish;
+        harness.worker.mockImplementation((_message, notify) => {
+            progress = notify;
+            return new Promise((resolve) => (finish = resolve));
+        });
+        const running = feature.run();
+        const renders = vi.spyOn(feature.panel, 'render');
+        const input = Array.from(document.querySelectorAll('label'))
+            .find((label) => label.textContent === 'Member 1 name')
+            .querySelector('input');
+        const roster = input.closest('[style*="max-height"]');
+        roster.scrollTop = 45;
+        const cancel = Array.from(document.querySelectorAll('button')).find(
+            (button) => button.textContent === 'Cancel'
+        );
+        cancel.focus();
+        progress(25);
+        progress(50);
+        expect(renders).not.toHaveBeenCalled();
+        expect(input.isConnected).toBe(true);
+        expect(document.activeElement).toBe(cancel);
+        expect(roster.scrollTop).toBe(45);
+        expect(feature.runButton.textContent).toBe('Simulating… 50%');
+        feature.controller.abort();
+        progress(99);
+        expect(feature.runButton.textContent).toBe('Simulating… 50%');
+        finish(null);
+        await running;
+        expect(feature.runButton.textContent).toBe('Simulate trial');
+        expect(feature.result).toBeNull();
     });
     test('removes old result claims immediately when an input changes', () => {
         feature.panel.render();
