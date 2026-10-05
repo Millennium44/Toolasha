@@ -873,3 +873,38 @@ describe('every input the Assign view reads notifies it', () => {
         }
     });
 });
+
+describe('roster changes come from the guild XP tracker', () => {
+    test('with the tracker reachable, its change hook notifies and the socket relays are not used', () => {
+        vi.useFakeTimers();
+        let listener = null;
+        const off = vi.fn();
+        window.Toolasha = {
+            Combat: {
+                guildXPTracker: {
+                    onMetaChanged: (callback) => {
+                        listener = callback;
+                        return off;
+                    },
+                },
+            },
+        };
+        try {
+            feature.disable();
+            feature = new GuildTrialSim();
+            feature.initialize();
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            expect(harness.ws.guild_trial_signup_updated).toBeUndefined();
+            expect(harness.ws.guild_characters_updated).toBeUndefined();
+            // Fires after the tracker's own (possibly awaited) write
+            listener();
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+            feature.disable();
+            expect(off).toHaveBeenCalled();
+        } finally {
+            delete window.Toolasha;
+            vi.useRealTimers();
+        }
+    });
+});

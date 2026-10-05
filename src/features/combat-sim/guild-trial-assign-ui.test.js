@@ -520,4 +520,16 @@ describe('the Assign skilling view', () => {
         planner.inputsChanged();
         expect(context).not.toHaveBeenCalled();
     });
+
+    test('a rename drops the recommendation and its chat text, and redraws', async () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        await recommend(planner, shell);
+        META[900002] = { ...META[900002], name: 'Crafter2' };
+        LEVELS.crafter2 = LEVELS.crafter;
+        planner.inputsChanged();
+        expect(planner.result).toBeNull();
+        expect(text(shell)).toContain('Crafter2');
+        delete LEVELS.crafter2;
+    });
 });

@@ -420,6 +420,8 @@ export class TrialAssignPlanner {
             }),
             members.map((m) => [
                 m.id,
+                // Names go into the chat text, so a rename makes the sheet stale
+                m.name,
                 m.current,
                 m.inCombat,
                 m.pin,

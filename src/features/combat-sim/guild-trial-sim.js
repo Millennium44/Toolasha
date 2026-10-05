@@ -6,6 +6,7 @@ import webSocketHook from '../../core/websocket.js';
 import { createPanel, panelCard, panelNote, panelLine } from '../../utils/simple-panel.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { guildXpTracker } from '../../utils/bundle-bridge.js';
 import {
     buildPlayerDTO,
     buildPlayerDTOFromLoadout,
@@ -286,15 +287,18 @@ export class GuildTrialSim {
         };
         webSocketHook.on('guild_updated', trialSet);
         this.handlers.push(() => webSocketHook.off('guild_updated', trialSet));
-        // Sign-ups and the roster (read by the guild XP tracker), opened profiles (read by the member
-        // skill store, which updates its in-memory captures synchronously) and level-ups
+        // The roster, sign-ups and week, once the guild XP tracker has written them — after any storage
+        // read it waits on, which a tick-later look at its messages could beat. Without the tracker
+        // (its bundle absent) its messages are watched instead.
+        const offTracker = guildXpTracker()?.onMetaChanged?.(notifyInputs);
+        if (offTracker) this.handlers.push(offTracker);
+        // Opened profiles (the member skill store updates its in-memory captures synchronously) and level-ups
         const relayed = (_data, context) => {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             notifyInputs();
         };
         for (const type of [
-            'guild_trial_signup_updated',
-            'guild_characters_updated',
+            ...(offTracker ? [] : ['guild_trial_signup_updated', 'guild_characters_updated']),
             'profile_shared',
             'action_completed',
         ]) {
