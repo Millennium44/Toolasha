@@ -60,6 +60,14 @@ export function validateTrialScenario(input) {
         if (!TRIAL_SKILLS.some((skill) => input.trialHrid === `/guild_skilling/${skill}`))
             throw new Error('Choose a skilling trial.');
         result.baseWork = numberIn(input.baseWork, 1, 1e9, 'Tier 1 work before participants');
+        // Every signup adds 1% to each tier's work, including members without a reading.
+        result.participantCount = numberIn(
+            input.participantCount ?? members.length,
+            members.length,
+            MAX_TRIAL_MEMBERS,
+            'Participants for work scaling',
+            true
+        );
         result.members = members.map((member, i) => {
             const curve =
                 member.effectiveLevel == null
@@ -199,9 +207,13 @@ export function skillingWorkPerSecond(members, tier) {
     );
 }
 
-/** Required pool with the same ladder the live trial forecast uses. */
+/** Required pool with the same ladder the live trial forecast uses, scaled by every signup. */
 export function skillingPool(scenario, tier) {
-    return tierPoolWork({ baseWork: scenario.baseWork, tier, participants: scenario.members.length });
+    return tierPoolWork({
+        baseWork: scenario.baseWork,
+        tier,
+        participants: scenario.participantCount ?? scenario.members.length,
+    });
 }
 
 /** Deterministic local RNG; no shared combat-engine random state. */
@@ -268,7 +280,7 @@ export function summarizeTrialRuns(scenario, attempts) {
         participants: scenario.members.length,
         ...(scenario.kind === 'combat'
             ? { bossParticipants: scenario.participantCount ?? scenario.members.length }
-            : {}),
+            : { workParticipants: scenario.participantCount ?? scenario.members.length }),
         startTier: scenario.startTier,
         meanHighestTier: highest.reduce((sum, tier) => sum + tier, 0) / count,
         medianHighestTier: percentile(highest, 0.5),

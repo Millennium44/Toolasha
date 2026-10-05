@@ -464,6 +464,23 @@ describe('trial simulator controls and ownership', () => {
         expect(success.querySelector('input').value).toBe('8');
         expect(feature.skillingMembers[0].successRate).toBe(GUILD_SKILLING_TICKS[0].successRate);
     });
+    test('scales skilling work by the reading’s signups, editable beside the roster', () => {
+        feature.kind = 'skilling';
+        const reading = { ...GUILD_SKILLING_TICKS[0], participantIds: [1, 2, 3, 4, 5, 6] };
+        reading.targetWorkValue = 40000 * 1.9 * 1.06;
+        harness.ws.guild_skilling_updated(reading);
+        feature.addReading();
+        expect(feature.skillingMembers).toHaveLength(1);
+        expect(feature.makeScenario().participantCount).toBe(6);
+        feature.panel.render();
+        const input = Array.from(document.querySelectorAll('label'))
+            .find((label) => label.textContent.includes('Participants for work scaling'))
+            .querySelector('input');
+        expect(input.value).toBe('6');
+        input.value = '9';
+        input.dispatchEvent(new Event('input'));
+        expect(feature.makeScenario().participantCount).toBe(9);
+    });
     test('ignores personal readings from a departed character socket', () => {
         const currentSocket = {};
         const previousSocket = {};

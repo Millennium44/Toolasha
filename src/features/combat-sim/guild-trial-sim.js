@@ -152,6 +152,12 @@ export class GuildTrialSim {
         this.savedCaptures = [];
         this.selectedSavedCapture = '-1';
         this.participantCount = null;
+        this.skillingParticipantCount = null;
+    }
+
+    /** Signups that scale skilling work: the recorded signup count, never fewer than the roster. */
+    skillingParticipants() {
+        return Math.max(Number(this.skillingParticipantCount) || 0, this.skillingMembers.length);
     }
 
     initialize() {
@@ -263,7 +269,10 @@ export class GuildTrialSim {
             ...this.settings,
             kind: this.kind,
             trialHrid: this.kind === 'combat' ? this.combatTrial : this.skillingTrial,
-            ...(this.kind === 'combat' ? { participantCount: this.participantCount ?? this.combatMembers.length } : {}),
+            participantCount:
+                this.kind === 'combat'
+                    ? (this.participantCount ?? this.combatMembers.length)
+                    : this.skillingParticipants(),
             members: structuredClone(this.kind === 'combat' ? this.combatMembers : this.skillingMembers).map((m) => {
                 if (this.kind === 'combat' && !this.includeHouses) m.dto.houseRooms = {};
                 return m;
@@ -563,6 +572,7 @@ export class GuildTrialSim {
         this.skillingMembers = [...this.skillingMembers.filter((m) => m.id !== member.id), member];
         this.settings.baseWork = base;
         this.settings.startTier = member.referenceTier;
+        this.skillingParticipantCount = reading.participantIds.length;
         this.changed();
         this.notice = `One personal reading imported from ${new Date(reading.at).toLocaleString()}; observed with ${reading.participantIds.length} participants. Add the other members to simulate that roster.`;
     }
@@ -595,6 +605,7 @@ export class GuildTrialSim {
                 } else {
                     this.skillingTrial = scenario.trialHrid;
                     this.skillingMembers = scenario.members;
+                    this.skillingParticipantCount = scenario.participantCount;
                 }
                 for (const key of ['startTier', 'seconds', 'runs', 'seed', 'baseWork', 'resetBetweenTiers']) {
                     if (scenario[key] !== undefined) this.settings[key] = scenario[key];
@@ -1116,6 +1127,21 @@ export class GuildTrialSim {
                 'Use Work Power and Work Time from the trial footer; Work Power already includes efficiency. Effective skill level includes equipment and building levels. Success falls 4 percentage points per tier while the trial level is below your effective level, and 8 above it, clamped to 5–100%. Success bonuses apply before the 80% base factor. Multiple uncapped readings spanning the slope change can calibrate the curve; a single reading uses an editable linear estimate.'
             )
         );
+        field(
+            row(body),
+            'Participants for work scaling',
+            this.skillingParticipants(),
+            (value) => {
+                this.skillingParticipantCount = value;
+                this.changed();
+            },
+            { min: this.skillingMembers.length, max: 100, step: 1, disabled: busy }
+        );
+        body.appendChild(
+            panelNote(
+                'Every signed-up member adds 1% to each tier’s work, including members not in this roster. A trial reading sets this to the signups it observed.'
+            )
+        );
         roster.appendChild(
             panelNote(
                 'Action clocks continue between tiers; excess work on a clearing action is discarded. Double progress rolls independently on a success. These timing assumptions still need replay validation.'
@@ -1152,7 +1178,7 @@ export class GuildTrialSim {
         );
         card.appendChild(
             panelNote(
-                `${result.runs} runs · seed ${result.seed} · ${result.participants} ${result.participants === 1 ? 'member' : 'members'}${result.kind === 'combat' ? ` simulated / ${result.bossParticipants ?? result.participants} signups for boss scaling` : ''} · ${result.outcomes.defeat} defeats / ${result.outcomes.timeout} timeouts / ${result.outcomes['max-tier']} full clears. Percentiles describe simulation randomness, not model accuracy.`
+                `${result.runs} runs · seed ${result.seed} · ${result.participants} ${result.participants === 1 ? 'member' : 'members'}${result.kind === 'combat' ? ` simulated / ${result.bossParticipants ?? result.participants} signups for boss scaling` : ` simulated / ${result.workParticipants ?? result.participants} signups for work scaling`} · ${result.outcomes.defeat} defeats / ${result.outcomes.timeout} timeouts / ${result.outcomes['max-tier']} full clears. Percentiles describe simulation randomness, not model accuracy.`
             )
         );
         if (result.kind === 'skilling')

@@ -38,6 +38,18 @@ describe('guild work pool simulation', () => {
         expect(result.meanBasePoints).toBe(600);
         expect(result.outcomes.timeout).toBe(2);
     });
+    test('scales the work pool by every signup, not only the members with a reading', () => {
+        // 6 signups, 1 loaded reading: the game scales work by 1.06, not 1.01.
+        const sixSignups = validateTrialScenario(scenario({ baseWork: 40000, participantCount: 6 }));
+        expect(skillingPool(sixSignups, 1)).toBeCloseTo(42400, 6);
+        expect(skillingPool(sixSignups, 3)).toBeCloseTo(40000 * 1.2 * 1.06, 6);
+        expect(skillingPool(validateTrialScenario(scenario({ baseWork: 40000 })), 1)).toBeCloseTo(40400, 6);
+        // Six signups need 4.24 actions of 100 work at T1 with base 400, so five actions clear it.
+        const result = simulateGuildSkilling(scenario({ baseWork: 400, seconds: 5, participantCount: 6 }));
+        expect(result.tiers[0].meanClearSeconds).toBe(5);
+        expect(result.workParticipants).toBe(6);
+        expect(() => validateTrialScenario(scenario({ participantCount: 0 }))).toThrow(/work scaling/);
+    });
     test('double progress is rolled once on a successful action', () => {
         const result = simulateGuildSkilling(scenario({ seconds: 1, members: [{ ...member, doubleChance: 1 }] }));
         expect(result.medianHighestTier).toBe(1);
