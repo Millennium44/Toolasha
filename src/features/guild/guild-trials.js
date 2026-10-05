@@ -2678,6 +2678,9 @@ class GuildTrials {
         // recognised without the tab having been opened this session.
         if (config.getSetting('guildTrialTracking', true)) guildTrialDamage.initialize();
         this._followTracking();
+        // The Capture inputs button follows the Trial Simulator setting at once,
+        // not on the next sample
+        this.unregister.push(config.onSettingChange('guildTrialSim', () => this._render(findTrialsRoot())));
         guildTrialBossDebuffsUI.initialize();
         guildTrialSkilling.initialize();
         guildTrialStatsModal.initialize();
@@ -4832,12 +4835,15 @@ class GuildTrials {
                           'unless that is switched off in settings.'
             ) +
             button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
-            button(
-                'capture-inputs',
-                'Capture inputs',
-                ACCENT,
-                'Collect trial loadouts and profiles for combat and skilling, one click at a time.'
-            ) +
+            // The captured inputs feed only the Trial Simulator, so the helper is offered with it
+            (config.getSetting('guildTrialSim') === true
+                ? button(
+                      'capture-inputs',
+                      'Capture inputs',
+                      ACCENT,
+                      'Collect trial loadouts and profiles for combat and skilling, one click at a time.'
+                  )
+                : '') +
             (config.getSetting('guildTrialDiagnosticTrace', false)
                 ? button(
                       'trace',

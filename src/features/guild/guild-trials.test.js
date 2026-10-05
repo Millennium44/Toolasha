@@ -7223,6 +7223,40 @@ describe('the Trace button', () => {
     });
 });
 
+describe('the Capture inputs button', () => {
+    afterEach(() => {
+        delete game.settings.guildTrialSim;
+    });
+
+    test('is absent while the Trial Simulator is off', () => {
+        game.settings.guildTrialSim = false;
+        expect(guildTrials._controlsHTML()).not.toContain('data-action="capture-inputs"');
+    });
+
+    test('is offered with the Trial Simulator', () => {
+        game.settings.guildTrialSim = true;
+        expect(guildTrials._controlsHTML()).toContain('data-action="capture-inputs"');
+    });
+
+    test('redraws the controls as soon as the Trial Simulator is switched', async () => {
+        trialsFeature.cleanup();
+        await trialsFeature.initialize();
+        const render = vi.spyOn(guildTrials, '_render');
+        try {
+            flipSetting('guildTrialSim', true);
+            expect(render).toHaveBeenCalledOnce();
+        } finally {
+            render.mockRestore();
+            await trialsFeature.cleanup();
+        }
+        // The watch goes with the feature
+        const after = vi.spyOn(guildTrials, '_render');
+        flipSetting('guildTrialSim', false);
+        expect(after).not.toHaveBeenCalled();
+        after.mockRestore();
+    });
+});
+
 /**
  * Both trial verbs stand in for buttons that live under the trial cards on the
  * In Progress tab — which is to say, reachable only once you have already found
