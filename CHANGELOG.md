@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth badges cover rooms revealed mid-calculation
+
+- Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.
+
 ### Audit round: Trial Sim
 
 - A capped (100%) Enhancing success reading is now a true lower bound — the old anchor ignored Enhancing's success bonus and could overstate later tiers; trial input autosave stops when the simulator is switched off with its panel closed; and importing a capture older than every kept set says so instead of failing.
