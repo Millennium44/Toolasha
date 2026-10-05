@@ -34,6 +34,14 @@ describe('trial inputs from the game', () => {
         expect(capped.effectiveLevel).toBe(160);
         expect(capped.successLowerBound).toBe(true);
         expect(capped.source).toContain('lower bound');
+        const enhancing = memberFromSkillingReading({
+            ...GUILD_SKILLING_UPDATED,
+            trialHrid: '/guild_skilling/enhancing',
+            tier: 2,
+            successRate: 1,
+        });
+        expect(enhancing).toMatchObject({ effectiveLevel: 110, successBonus: 0.25, successLowerBound: true });
+        expect(enhancing.source).toContain('steepest decline');
     });
     test('does not infer a pool without the full participant count', () => {
         expect(baseWorkFromSkillingReading({ ...GUILD_SKILLING_UPDATED, participantIds: [] })).toBeNull();

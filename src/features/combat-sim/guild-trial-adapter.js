@@ -56,7 +56,9 @@ export function memberFromSkillingReading(data, name = 'Current character', read
     const how = fitted
         ? 'success curve fitted to readings'
         : curve?.successLowerBound
-          ? 'capped 100% success: least effective level consistent with it (lower bound)'
+          ? curve.successBonus > 0
+              ? 'capped 100% success: steepest decline consistent with it (lower bound)'
+              : 'capped 100% success: least effective level consistent with it (lower bound)'
           : 'success curve anchored on this reading, assuming no success bonus';
     return {
         name,
