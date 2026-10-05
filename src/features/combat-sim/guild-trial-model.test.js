@@ -167,6 +167,22 @@ describe('guild work pool simulation', () => {
         expect(simulateGuildSkilling(scenario()).lowerBound).toBe(false);
         expect(anchorSkillingSuccessCurve({ tier: 3, successRate: 1.2 })).toBeNull();
     });
+    test('a capped Enhancing reading stays a lower bound under the success bonus Enhancing carries', () => {
+        // Recorded Enhancing bonus 0.045; level 141 is the least that caps tier 1 with it.
+        const truth = { effectiveLevel: 141, successBonus: 0.045 };
+        expect(skillingSuccessAtTier(truth, 1)).toBe(1);
+        const curve = anchorSkillingSuccessCurve({ trialHrid: '/guild_skilling/enhancing', tier: 1, successRate: 1 });
+        expect(curve.successLowerBound).toBe(true);
+        for (let tier = 1; tier <= 21; tier++) {
+            expect(skillingSuccessAtTier(curve, tier)).toBeLessThanOrEqual(skillingSuccessAtTier(truth, tier) + 1e-12);
+        }
+        // A skill with no recorded bonus keeps the gentler no-bonus bound.
+        expect(anchorSkillingSuccessCurve({ trialHrid: '/guild_skilling/milking', tier: 1, successRate: 1 })).toEqual({
+            effectiveLevel: 150,
+            successBonus: 0,
+            successLowerBound: true,
+        });
+    });
     test('does not claim to calibrate capped, linear, or inconsistent success readings', () => {
         expect(
             fitSkillingSuccessCurve([

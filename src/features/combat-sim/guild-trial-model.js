@@ -158,6 +158,9 @@ export function skillingSuccessAtTier(member, tier) {
     return Math.max(0.05, Math.min(1, member.successRate - (tier - member.referenceTier) * member.successLossPerTier));
 }
 
+/** Skilling trials whose recorded success curve carries a success bonus. */
+const SUCCESS_BONUS_TRIALS = ['/guild_skilling/enhancing'];
+
 /**
  * Anchor the game's two-slope curve on a single reading when no bend has been observed.
  *
@@ -169,7 +172,12 @@ export function skillingSuccessAtTier(member, tier) {
  * least 50 levels, so it returns the least effective level consistent with it and flags
  * the curve as a lower bound.
  *
- * @param {{tier: number, successRate: number}} reading - The reading to anchor on
+ * That bound needs the no-bonus assumption: a bonus stands in for levels, moving the
+ * bend earlier. For a trial whose skill carries a bonus (Enhancing) a capped reading
+ * instead returns the steepest curve through it, -8 points a tier from the reading,
+ * which no level or non-negative bonus consistent with the reading can fall below.
+ *
+ * @param {{tier: number, successRate: number, trialHrid?: string}} reading - The reading to anchor on
  * @param {number} [successBonus] - Assumed success bonus
  * @returns {{effectiveLevel: number, successBonus: number, successLowerBound: boolean}|null} The curve
  */
@@ -178,6 +186,10 @@ export function anchorSkillingSuccessCurve(reading, successBonus = 0) {
     const rate = reading?.successRate;
     if (!Number.isInteger(tier) || tier < 1 || tier > TRIAL_MAX_TIER) return null;
     if (!Number.isFinite(rate) || rate < 0.05 || rate > 1) return null;
+    if (rate >= 1 && SUCCESS_BONUS_TRIALS.includes(reading.trialHrid)) {
+        // 0.8 * (1 + 0.25) = 1 at the reading's own level, then 0.01 * 0.8 per level above it.
+        return { effectiveLevel: levelFromTier(tier), successBonus: 0.25, successLowerBound: true };
+    }
     const excess = rate / 0.8 - 1 - successBonus;
     const effectiveLevel = levelFromTier(tier) + excess / (excess >= 0 ? 0.005 : 0.01);
     if (!(effectiveLevel >= 1 && effectiveLevel <= 1000)) return null;

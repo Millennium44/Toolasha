@@ -270,6 +270,17 @@ describe('reusable trial capture library', () => {
         game.stored.set('guild_trial_inputs_1', [{ format: 'bad' }, saved[0]]);
         expect(await loadSavedTrialInputBundles()).toEqual([saved[0]]);
     });
+    test('an import older than all eight kept sets says it was not kept instead of failing on a missing record', async () => {
+        for (let day = 10; day <= 17; day++) {
+            const date = `2026-10-${day}T00:00:00Z`;
+            await saveTrialInputBundle(bundle({ weekStartAt: date, exportedAt: date }));
+        }
+        const old = '2026-10-01T00:00:00Z';
+        await expect(saveTrialInputBundle(bundle({ weekStartAt: old, exportedAt: old }))).rejects.toThrow(
+            /older than the 8 newest/
+        );
+        expect(await loadSavedTrialInputBundles()).toHaveLength(8);
+    });
     test('a saved capture does not repeat static game data, and loads with it filled back in', async () => {
         const input = bundle();
         Object.assign(input.simulationInputs, {
