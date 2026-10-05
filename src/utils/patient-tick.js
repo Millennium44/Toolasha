@@ -59,9 +59,10 @@ export function isPatientTickOn(side) {
  *
  * Only a buy priced at the bid (moves up, under the buy setting) or a sell priced
  * at the ask (moves down, under the sell setting) changes; every other side/basis
- * pair comes back as given. The tick never crosses the spread — a bid that would
- * reach the ask, or an ask that would reach the bid, stays where it was, because
- * that order would fill instantly at the other side's price instead of queueing.
+ * pair comes back as given. The tick never crosses the spread: a bid that would
+ * reach the ask, or an ask that would reach the bid, has no queue left to jump —
+ * an order there fills instantly at the other side's price, so that price (the
+ * instant one) is what the quote becomes.
  * With an item hrid the result is pulled back into the item's tradable range.
  *
  * The caller decides whether the quote is a real listing: an estimate filled in
@@ -89,11 +90,11 @@ export function patientTickPrice(price, side, basis, book = {}) {
     let improved;
     if (buyAtBid) {
         improved = nextPriceUp(price, enhancementLevel);
-        if (typeof ask === 'number' && ask > 0 && improved >= ask) return price;
+        if (typeof ask === 'number' && ask > 0 && improved >= ask) return ask;
     } else {
         improved = nextPriceDown(price, enhancementLevel);
         if (improved >= price) return price;
-        if (typeof bid === 'number' && bid > 0 && improved <= bid) return price;
+        if (typeof bid === 'number' && bid > 0 && improved <= bid) return bid;
     }
 
     if (itemHrid) {

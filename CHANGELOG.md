@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Patient ±1 fills at the instant price when the spread is one tick
+
+- When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
+
 ### Trial Sim stays off until switched on, and estimates closer to the game
 
 - With the simulator off, trial input capture, its button and the export's new section stay out entirely, saved captures stay on this browser (out of sync and backups), and turning it off removes it at once; skilling work now scales with every signup, a single reading follows the game's two-slope success curve (a capped one is marked a lower bound), Builder's Hall and Treasury start from your guild, and starting a combat or lab sim no longer cancels a trial run.
