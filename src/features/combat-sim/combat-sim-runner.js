@@ -30,7 +30,12 @@ let activeWorkers = [];
  */
 let idleWorkers = [];
 let taskIdCounter = 0;
-let pendingRejects = []; // Track reject functions to abort on cancel
+/**
+ * Rejections to fire on cancel, each with whether its chunk was started with
+ * its own abort signal. Such a chunk (a Trial Sim run) is stopped by its owner
+ * through that signal, so the shared cancels leave it alone unless told otherwise.
+ */
+let pendingRejects = [];
 
 const MIN_HOURS_PER_WORKER = 20;
 const MAX_WORKERS = 4;
@@ -230,6 +235,7 @@ function releaseWorker(wrapper) {
     // Drop the finished run's closure too - it holds that run's message, and an
     // idle wrapper would otherwise keep the whole payload alive.
     wrapper.disarmStall = null;
+    wrapper.scoped = false;
 
     if (idleWorkers.length >= MAX_IDLE_WORKERS) {
         wrapper.worker.terminate();
@@ -264,8 +270,12 @@ export function runWorkerChunk(message, onProgress, { signal } = {}) {
         }
         const wrapper = acquireWorker(message.gameData);
         const worker = wrapper.worker;
+        // Cleared by `releaseWorker`, so a pooled worker is not still marked
+        // for the next chunk that borrows it
+        wrapper.scoped = Boolean(signal);
         activeWorkers.push(wrapper);
-        pendingRejects.push(reject);
+        const pending = { reject, scoped: Boolean(signal) };
+        pendingRejects.push(pending);
 
         let stallTimer = null;
         const disarmStall = () => {
@@ -279,7 +289,7 @@ export function runWorkerChunk(message, onProgress, { signal } = {}) {
             disarmStall();
             signal?.removeEventListener('abort', abort);
             activeWorkers = activeWorkers.filter((w) => w !== wrapper);
-            pendingRejects = pendingRejects.filter((r) => r !== reject);
+            pendingRejects = pendingRejects.filter((entry) => entry !== pending);
         };
 
         const abort = () => {
@@ -994,10 +1004,18 @@ export async function runPlayerStatProbe(params) {
  *
  * Callers that must not leave a thread holding a copy of the game data - a
  * feature teardown, a character switch - want `cancelSimulation` instead.
+ *
+ * @param {Object} [options]
+ * @param {boolean} [options.includeScoped=false] - Also stop chunks started with
+ *   their own abort signal, which are otherwise left to the caller that owns them
  */
-export function cancelActiveSimulations() {
-    const running = activeWorkers;
-    activeWorkers = [];
+export function cancelActiveSimulations({ includeScoped = false } = {}) {
+    // A chunk started with its own abort signal (a Trial Sim run) belongs to
+    // its owner, which stops it through that signal. Starting a combat or lab
+    // simulation here used to kill it as a side effect.
+    const stops = (scoped) => includeScoped || !scoped;
+    const running = activeWorkers.filter((wrapper) => stops(wrapper.scoped));
+    activeWorkers = activeWorkers.filter((wrapper) => !stops(wrapper.scoped));
     for (const wrapper of running) {
         // The chunk's stall deadline goes with its worker: left armed it would
         // fire minutes later against a wrapper that was dropped here.
@@ -1005,9 +1023,9 @@ export function cancelActiveSimulations() {
         wrapper.worker.terminate();
     }
 
-    const rejects = pendingRejects.slice();
-    pendingRejects = [];
-    for (const reject of rejects) {
+    const rejects = pendingRejects.filter((entry) => stops(entry.scoped));
+    pendingRejects = pendingRejects.filter((entry) => !stops(entry.scoped));
+    for (const { reject } of rejects) {
         reject(new Error('Cancelled'));
     }
 }
@@ -1019,8 +1037,13 @@ export function cancelActiveSimulations() {
  * has not thought about the distinction reaches for: a feature teardown and a
  * character switch must not leave a thread holding a copy of the game data - the
  * departing character's, in the switch case - so the next run builds fresh.
+ *
+ * Chunks started with their own abort signal keep running unless
+ * `includeScoped` is set; their owner stops them on its own teardown and switch.
+ * @param {Object} [options]
+ * @param {boolean} [options.includeScoped=false] - Also stop signal-owned chunks
  */
-export function cancelSimulation() {
-    cancelActiveSimulations();
+export function cancelSimulation({ includeScoped = false } = {}) {
+    cancelActiveSimulations({ includeScoped });
     terminateIdleWorkers();
 }

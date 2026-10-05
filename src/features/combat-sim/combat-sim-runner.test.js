@@ -80,7 +80,7 @@ beforeEach(() => {
     vi.stubGlobal('navigator', { hardwareConcurrency: 8 });
     // Workers now outlive the run that built them, so one test's warm pool is
     // the next one's confusing worker count unless it is emptied here.
-    cancelSimulation();
+    cancelSimulation({ includeScoped: true });
 });
 
 describe('how wide one simulation spreads itself', () => {
@@ -110,6 +110,66 @@ describe('how wide one simulation spreads itself', () => {
         workers[1].onmessage({ data: { taskId: 'normal', type: 'result', simResult: EMPTY_SIM_RESULT } });
         await expect(other).resolves.toEqual(EMPTY_SIM_RESULT);
     });
+    describe('the shared cancels and a chunk that owns its abort signal', () => {
+        let workers;
+        beforeEach(() => {
+            workers = [];
+            vi.stubGlobal(
+                'Worker',
+                class {
+                    constructor() {
+                        this.terminate = vi.fn();
+                        workers.push(this);
+                    }
+                    postMessage(message) {
+                        this.message = message;
+                    }
+                }
+            );
+            vi.stubGlobal('URL', { createObjectURL: () => 'blob:sim', revokeObjectURL: () => {} });
+        });
+
+        test.each([
+            ['starting a combat or lab simulation', () => cancelActiveSimulations()],
+            ['a combat sim teardown', () => cancelSimulation()],
+        ])('%s stops the ordinary chunk and leaves the trial chunk running', async (_name, cancel) => {
+            const controller = new AbortController();
+            const trial = runWorkerChunk({ taskId: 'trial', gameData: {} }, null, { signal: controller.signal });
+            const combat = runWorkerChunk({ taskId: 'combat', gameData: {} });
+
+            cancel();
+
+            await expect(combat).rejects.toThrow('Cancelled');
+            expect(workers[1].terminate).toHaveBeenCalled();
+            expect(workers[0].terminate).not.toHaveBeenCalled();
+            workers[0].onmessage({ data: { taskId: 'trial', type: 'result', simResult: EMPTY_SIM_RESULT } });
+            await expect(trial).resolves.toEqual(EMPTY_SIM_RESULT);
+        });
+
+        test('asked to, a cancel stops the trial chunk too', async () => {
+            const controller = new AbortController();
+            const trial = runWorkerChunk({ taskId: 'trial', gameData: {} }, null, { signal: controller.signal });
+
+            cancelSimulation({ includeScoped: true });
+
+            await expect(trial).rejects.toThrow('Cancelled');
+            expect(workers[0].terminate).toHaveBeenCalled();
+        });
+
+        test('a pooled worker a trial chunk used is an ordinary one for the next run', async () => {
+            const controller = new AbortController();
+            const trial = runWorkerChunk({ taskId: 'trial', gameData: {} }, null, { signal: controller.signal });
+            workers[0].onmessage({ data: { taskId: 'trial', type: 'result', simResult: EMPTY_SIM_RESULT } });
+            await trial;
+
+            const combat = runWorkerChunk({ taskId: 'combat', gameData: {} });
+            expect(workers).toHaveLength(1);
+            cancelActiveSimulations();
+            await expect(combat).rejects.toThrow('Cancelled');
+            expect(workers[0].terminate).toHaveBeenCalled();
+        });
+    });
+
     test('a short run stays in one worker', () => {
         // Splitting an hour four ways spends more on starting workers than the
         // simulation itself costs
