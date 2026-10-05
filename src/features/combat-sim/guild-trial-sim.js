@@ -173,11 +173,22 @@ export class GuildTrialSim {
                 document.querySelector('[class*="GuildPanel_tabsComponentContainer"] [role="tablist"]') ||
                 document.querySelector('[class*="GuildPanel_guildPanel"] [class*="GuildPanel_title"]');
             if (!root || root.querySelector(`.${BUTTON_CLASS}`)) return;
-            const control = button(root, 'Trial Sim', () => this.panel?.toggle());
+            const control = button(root, 'Trial Sim', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.panel?.toggle();
+            });
             control.className = BUTTON_CLASS;
-            control.style.alignSelf = 'center';
-            control.style.flexShrink = '0';
-            control.style.margin = '0 6px';
+            const tab = root.querySelector('[role="tab"]');
+            if (tab) {
+                // Use the game's tab styling while keeping this an independent panel button.
+                control.classList.add(...Array.from(tab.classList).filter((name) => name !== 'Mui-selected'));
+                control.style.cssText = 'flex-shrink:0;min-width:auto;cursor:pointer;';
+            } else {
+                control.style.alignSelf = 'center';
+                control.style.flexShrink = '0';
+                control.style.margin = '0 6px';
+            }
         };
         this.handlers.push(domObserver.onClass('GuildTrialSimulator', 'GuildPanel_', inject));
         this.handlers.push(domObserver.onReady('GuildTrialSimulatorCatchUp', inject));

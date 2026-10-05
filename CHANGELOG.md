@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Sim matches the Guild tabs
+
+- The Trial Sim button now uses the Guild tabs' sizing, typography, and background so it aligns with the surrounding controls.
+
 ### Paste trial captures into the simulator
 
 - Trial Input Capture JSON can also be pasted into Trial Sim, using the same saved capture library and signup checks as file import.
