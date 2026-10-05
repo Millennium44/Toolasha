@@ -587,6 +587,28 @@ describe('the Assign skilling view', () => {
         planner.inputsChanged();
         expect(render).toHaveBeenCalledTimes(3);
         expect(markers(shell, '900001')[1]).toBe('reading');
+
+        // A later reading that changes only work per action: same level and success, new rates
+        sim.readings[CRAFTING] = {
+            ...sim.readings[CRAFTING],
+            progressPerAction: sim.readings[CRAFTING].progressPerAction + 40,
+            at: 3,
+        };
+        planner.inputsChanged();
+        expect(render).toHaveBeenCalledTimes(4);
+
+        // Building levels hydrating for a guild with no Encampment built: the cap stays 20, Recommend unlocks
+        const levels = dataManager.guildBuildingLevelMap;
+        try {
+            dataManager.guildBuildingLevelMap = {};
+            planner.inputsChanged();
+            expect(render).toHaveBeenCalledTimes(5);
+            dataManager.guildBuildingLevelMap = { '/guild_buildings/treasury': 1 };
+            planner.inputsChanged();
+            expect(render).toHaveBeenCalledTimes(6);
+        } finally {
+            dataManager.guildBuildingLevelMap = levels;
+        }
     });
 
     test('outside the Assign view nothing is computed or drawn', () => {

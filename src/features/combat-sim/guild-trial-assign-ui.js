@@ -417,6 +417,8 @@ export class TrialAssignPlanner {
         context.signature = JSON.stringify([
             trials,
             context.cap,
+            // Whether Recommend is allowed yet: hydration can flip it without changing the cap
+            context.capUnknown,
             this.mode,
             this.baseWork,
             minLevels,
@@ -432,6 +434,8 @@ export class TrialAssignPlanner {
                 m.inCombat,
                 m.pin,
                 trials.map((t) => [m.coverage[t].kind, m.coverage[t].level]),
+                // The rates the optimizer consumes: a new reading can change them without changing the level
+                trials.map((t) => m.rates[t]),
             ]),
         ]);
         return context;
