@@ -2365,6 +2365,9 @@ function registerFeatures() {
             category: 'Guild',
             module: Sim.guildTrialSim,
             async: false,
+            // Its disable() removes the Trial Sim tab button, the panel and its
+            // command, and aborts a run, so turning it off takes effect live.
+            liveStop: true,
         },
         {
             key: 'insights_calibration',
