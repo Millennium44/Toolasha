@@ -121,6 +121,7 @@ import guildTrials, { guildTrials as guildTrialsStore } from '../features/guild/
 import * as guildTrialExport from '../features/guild/guild-trial-recorder.js';
 import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
 import guildTrialLedgerView from '../features/guild/guild-trial-ledger-view.js';
+import guildMemberSkills from '../features/guild/guild-member-skills.js';
 // Side-effect import: registers the Guild Trials overlay row
 import '../features/guild/guild-trials-row.js';
 
@@ -212,6 +213,8 @@ toolashaRoot.Combat = {
     guildTrialsModule,
     guildTrialScoreboard,
     guildTrialLedgerView,
+    // Read by the Trial Sim's skilling assignment (sim bundle) for members' captured skill levels
+    guildMemberSkills,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because

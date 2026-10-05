@@ -31,6 +31,7 @@ import {
     saveTrialInputBundle,
     MAX_TRIAL_INPUT_BYTES,
 } from '../guild/guild-trial-simulation-inputs.js';
+import { TrialAssignPlanner } from './guild-trial-assign-ui.js';
 
 const ACCENT = '#b9a6ff';
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
@@ -185,6 +186,8 @@ export class GuildTrialSim {
         this.selectedSavedCapture = '-1';
         this.participantCount = null;
         this.skillingParticipantCount = null;
+        if (this.assign) this.assign.reset();
+        else this.assign = new TrialAssignPlanner(this);
     }
 
     /** Builder's Hall and Treasury levels for payouts: an entered level, else the current guild's. */
@@ -258,6 +261,14 @@ export class GuildTrialSim {
         };
         webSocketHook.on('guild_skilling_updated', capture);
         this.handlers.push(() => webSocketHook.off('guild_skilling_updated', capture));
+        // The cycle's drawn trials, for the assignment view; the login payload covers the time before one arrives
+        const trialSet = (data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            if (Array.isArray(data?.guildWeeklyTrialSet?.skillHrids))
+                this.assign.weeklyTrialSet = data.guildWeeklyTrialSet;
+        };
+        webSocketHook.on('guild_updated', trialSet);
+        this.handlers.push(() => webSocketHook.off('guild_updated', trialSet));
         const switched = () => {
             this.generation++;
             this.controller?.abort();
@@ -725,6 +736,7 @@ export class GuildTrialSim {
             [
                 ['combat', 'Combat'],
                 ['skilling', 'Skilling'],
+                ['assign', 'Assign skilling'],
             ],
             (kind) => {
                 this.kind = kind;
@@ -733,6 +745,11 @@ export class GuildTrialSim {
             },
             busy
         );
+        if (this.kind === 'assign') {
+            this.assign.draw(body, { button, row, field, select });
+            for (const section of body.children) section.style.marginBottom = '7px';
+            return;
+        }
         const title = (name) => name[0].toUpperCase() + name.slice(1);
         const trials =
             this.kind === 'combat'

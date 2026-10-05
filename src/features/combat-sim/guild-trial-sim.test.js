@@ -750,3 +750,33 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.result).toBeNull();
     });
 });
+
+describe('Assign skilling view', () => {
+    test('draws the planner, follows the drawn trials off guild_updated, and resets on a switch', () => {
+        feature.kind = 'assign';
+        harness.ws.guild_updated({
+            guildWeeklyTrialSet: {
+                skillHrids: ['/guild_skilling/crafting', '/guild_skilling/milking'],
+                combatHrids: ['/guild_combat/badger'],
+            },
+        });
+        harness.initializedPanel.render();
+        expect(text()).toContain('Recommend sign-ups');
+        expect(text()).toContain('Trials from the guild update.');
+        expect(text()).not.toContain('Simulate trial');
+        feature.assign.pins['2'] = 'bench';
+        harness.listeners.character_switched();
+        expect(feature.assign.pins).toEqual({});
+        expect(feature.assign.weeklyTrialSet).toBeNull();
+        expect(feature.kind).toBe('combat');
+    });
+
+    test('ignores a trial set from an inactive socket', () => {
+        harness.activeSocket = 'live';
+        harness.ws.guild_updated(
+            { guildWeeklyTrialSet: { skillHrids: ['/guild_skilling/crafting'] } },
+            { socket: 'old' }
+        );
+        expect(feature.assign.weeklyTrialSet).toBeNull();
+    });
+});
