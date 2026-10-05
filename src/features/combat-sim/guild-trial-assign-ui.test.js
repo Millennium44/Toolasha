@@ -217,6 +217,8 @@ describe('cycle inputs', () => {
     test('only members who joined strictly before the week are eligible; this cycle’s sign-ups are read', () => {
         META[900006] = { name: 'OnTheDot', joinTime: WEEK };
         META[900007] = { name: 'Garbled', joinTime: 'not a time' };
+        // The tracker stores null when the game sends no join time; that is unreadable, not 1970
+        META[900008] = { name: 'NoJoin', joinTime: null };
         const roster = cycleRoster(game.tracker, { now: NOW, testServer: false });
         expect(roster.members.map((m) => m.name)).toEqual(['Crafter', 'Me', 'Milker', 'Unknown']);
         const crafter = roster.members.find((m) => m.name === 'Crafter');
@@ -343,6 +345,12 @@ describe('the Assign skilling view', () => {
         level.dispatchEvent(new Event('input'));
         sim.panel.render();
         expect(markers(shell, '900005')[1]).not.toBe('manual');
+        // Above the scoring range the cell says the value is not used instead of keeping it silently
+        const high = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        high.value = '600';
+        high.dispatchEvent(new Event('input'));
+        expect(high.style.borderColor).not.toBe('');
+        expect(high.max).toBe('500');
     });
 
     test('a pin to a trial that is no longer drawn is dropped and shows Auto', async () => {

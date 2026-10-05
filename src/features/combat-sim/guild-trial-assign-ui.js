@@ -150,7 +150,8 @@ export function cycleRoster(tracker, { now = Date.now(), testServer = isTestServ
     for (const entry of tracker?.getMemberList?.() || []) {
         const meta = tracker.getMemberMeta?.(entry.characterID) || entry;
         if (!meta?.name || entry.characterID == null) continue;
-        const joinedMs = new Date(meta.joinTime).getTime();
+        // A missing join time is unreadable, not 1970: new Date(null) would make it eligible
+        const joinedMs = meta.joinTime == null || meta.joinTime === '' ? NaN : new Date(meta.joinTime).getTime();
         if (!testServer && !(joinedMs < weekMs)) continue;
         const thisCycle = weekStartAt != null && meta.signupWeekStartAt === weekStartAt;
         members.push({
@@ -875,7 +876,7 @@ export class TrialAssignPlanner {
                 const input = document.createElement('input');
                 input.type = 'number';
                 input.min = '1';
-                input.max = '1000';
+                input.max = '500';
                 input.step = '1';
                 input.disabled = busy || coverage.kind === 'reading';
                 input.setAttribute('aria-label', `${member.name} ${label(trial)} level`);
@@ -884,7 +885,16 @@ export class TrialAssignPlanner {
                 const typed = this.manual[member.id]?.[trial];
                 input.value = typed ?? '';
                 input.placeholder = coverage.level != null ? String(Math.round(coverage.level * 10) / 10) : '—';
+                // The same 1–500 range memberRates scores; anything else is shown as not used
+                const markRange = () => {
+                    const raw = input.value;
+                    const outOfRange = raw !== '' && !(Number(raw) >= 1 && Number(raw) <= 500);
+                    input.style.borderColor = outOfRange ? '#ff6b6b' : '';
+                    input.title = outOfRange ? 'Level must be between 1 and 500; this value is not used' : '';
+                };
+                markRange();
                 input.addEventListener('input', () => {
+                    markRange();
                     this.manual[member.id] = { ...(this.manual[member.id] || {}), [trial]: input.value };
                     this.edited();
                 });
