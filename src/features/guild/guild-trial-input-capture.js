@@ -539,12 +539,32 @@ function draw(body) {
     }
 }
 
-export const trialInputCapturePanel = createPanel({
-    id: 'trialInputCapture',
-    title: 'Trial Input Capture',
-    size: { width: 620, height: 560 },
-    draw,
-});
+/**
+ * The panel shell, made on first need rather than at import: Guild Trials imports this module
+ * for every user, and creating the panel reads its saved open state and listens for character
+ * switches. It is made when the checklist is opened, or once the simulator's settings are known
+ * to allow it (so a checklist left open comes back) — never while the simulator is off.
+ */
+let panelShell = null;
+function shell() {
+    if (!panelShell) {
+        panelShell = createPanel({
+            id: 'trialInputCapture',
+            title: 'Trial Input Capture',
+            size: { width: 620, height: 560 },
+            draw,
+        });
+    }
+    return panelShell;
+}
+
+/** The checklist panel; until it is made, everything but show() is a no-op. */
+export const trialInputCapturePanel = {
+    show: (options) => shell().show(options),
+    hide: (options) => panelShell?.hide(options),
+    render: () => panelShell?.render(),
+    isOpen: () => Boolean(panelShell?.isOpen()),
+};
 
 /** Attach the response listeners for either a manually opened or restored checklist. */
 function listenForInputs() {
@@ -616,5 +636,10 @@ function closeIfDisallowed() {
 // shell on load and on every character switch, before or after that
 // character's settings arrive, and either setting can be switched off while it
 // is open.
-for (const key of ['guildTrialSim', 'guildTrialsInfo']) config.onSettingChange?.(key, closeIfDisallowed);
-config.onSettingsLoaded?.(closeIfDisallowed);
+/** Close the panel when its settings turn off; make it once they allow it, so a left-open one returns. */
+function followSettings() {
+    if (captureAllowed()) shell();
+    else closeIfDisallowed();
+}
+for (const key of ['guildTrialSim', 'guildTrialsInfo']) config.onSettingChange?.(key, followSettings);
+config.onSettingsLoaded?.(followSettings);

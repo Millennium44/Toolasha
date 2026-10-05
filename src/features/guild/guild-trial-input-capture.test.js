@@ -697,3 +697,28 @@ describe('trial input capture helper', () => {
         expect(text()).toContain('0/2 loadouts · 0/1 profiles');
     });
 });
+
+describe('the capture panel is only made while the simulator is on', () => {
+    test('importing with the simulator off makes no panel; switching it on makes one', async () => {
+        vi.resetModules();
+        const made = [];
+        vi.doMock('../../utils/simple-panel.js', () => ({
+            createPanel: (options) => {
+                made.push(options.id);
+                return { show: () => {}, hide: () => {}, render: () => {}, isOpen: () => false };
+            },
+        }));
+        game.settings = { guildTrialSim: false, guildTrialsInfo: true };
+        game.settingsLoaded = [];
+        game.settingWatchers = [];
+        await import('./guild-trial-input-capture.js');
+        for (const callback of game.settingsLoaded) callback();
+        expect(made).toEqual([]);
+
+        game.settings.guildTrialSim = true;
+        for (const { key, callback } of game.settingWatchers) if (key === 'guildTrialSim') callback(true);
+        expect(made).toEqual(['trialInputCapture']);
+        vi.doUnmock('../../utils/simple-panel.js');
+        vi.resetModules();
+    });
+});
