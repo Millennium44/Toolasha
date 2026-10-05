@@ -22,7 +22,7 @@
  * makes exactly one click on the game's own tab for the next uncached category (on the standard/
  * ironcow board already showing), so the cache can be filled by pressing it repeatedly. Nothing
  * advances on its own. On a Steam tab the button cycles that Steam board's categories instead,
- * judged by which ones were opened this session (the leaderboard XP tracker records them for EXP history).
+ * judged by what the leaderboard XP tracker has recorded across sessions (this session's opens when it has nothing).
  *
  * A second setting, `leaderboardRankBadgesSteam` (default off, Local only), files Steam boards
  * under their own slots (`steam_standard`, `steam_ironcow`) and lets badges use them, labelled Steam.
@@ -44,6 +44,7 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
+import { leaderboardXPTracker } from './leaderboard-xp-tracker.js';
 import {
     RANK_BADGE_ATTR,
     RANK_BOARD_TYPES,
@@ -542,21 +543,47 @@ class LeaderboardRankBadges {
     }
 
     /**
-     * What "next board" is judged against: the badge cache on a global view, but the session's opened map on a
-     * Steam view (Steam boards feed EXP history, not the global cache).
-     * @returns {Object} Boards keyed "type|category" with an `at`
+     * What "next board" is judged against: the badge cache on a global view, but on a Steam view (Steam boards
+     * feed EXP history, not the global cache) the times the leaderboard XP tracker recorded across sessions,
+     * merged with this session's opened map.
+     * @returns {{source: Object, recorded: boolean}} Boards keyed "type|category" with an `at`; `recorded` is
+     *   true when the tracker's history contributed (so the count is "recorded", not "opened this session")
      */
+    cycleSourceInfo() {
+        if (!isSteamBoardType(this.boardType)) return { source: this.boards, recorded: false };
+        let times = {};
+        if (config.getSettingValue(XP_TRACKER_KEY, true) !== false) {
+            try {
+                times = leaderboardXPTracker.getBoardRecordTimes(this.boardType) || {};
+            } catch (error) {
+                console.error('[LeaderboardRankBadges] Reading recorded Steam boards failed:', error);
+            }
+        }
+        const recorded = Object.keys(times).length > 0;
+        if (!recorded) return { source: this.opened, recorded: false };
+        const source = {};
+        for (const category of RANK_CATEGORIES) {
+            const key = boardKey(this.boardType, category);
+            const at = Math.max(times[category] ?? 0, this.opened[key]?.at ?? 0);
+            if (at) source[key] = { at };
+        }
+        return { source, recorded: true };
+    }
+
+    /** @returns {Object} The boards "next board" is judged against */
     cycleSource() {
-        return isSteamBoardType(this.boardType) ? this.opened : this.boards;
+        return this.cycleSourceInfo().source;
     }
 
     /** Redraw the label and the cached count of every bar. */
     refreshCycleBars() {
-        const source = this.cycleSource();
+        const { source, recorded } = this.cycleSourceInfo();
         const steam = isSteamBoardType(this.boardType);
         const target = nextBoardCategory(source, this.boardType, this.boardCategory);
         const cached = RANK_CATEGORIES.filter((c) => source[boardKey(this.boardType, c)]);
         const oldest = Math.min(...cached.map((c) => source[boardKey(this.boardType, c)].at));
+        const age = cached.length ? formatRelativeTime(Math.max(0, Date.now() - oldest)) : null;
+        const oldestText = age ? ` · oldest ${age === 'Just now' ? '<1m' : age}` : '';
         for (const bar of document.querySelectorAll(`[${BAR_ATTR}]`)) {
             // Player skill boards do not exist on the Guilds tab, so the button would hunt for a missing tab
             bar.style.display = this.playerBoardOpen ? 'flex' : 'none';
@@ -565,19 +592,24 @@ class LeaderboardRankBadges {
             if (steam) {
                 const tracking = config.getSettingValue(XP_TRACKER_KEY, true) !== false;
                 status.textContent =
-                    `${cached.length}/${RANK_CATEGORIES.length} Steam boards opened` +
+                    `${cached.length}/${RANK_CATEGORIES.length} Steam boards ${recorded ? 'recorded' : 'opened'}` +
+                    (recorded ? oldestText : '') +
                     (tracking ? '' : ' (EXP tracking is off)');
-                status.title =
-                    `${boardTypeLabel(this.boardType)} boards opened since the game loaded. ` +
-                    (tracking
-                        ? 'Each one you open is recorded by the leaderboard XP tracker, so this feeds EXP history.'
-                        : 'The leaderboard XP tracker setting is off, so opening them records no EXP history; ' +
-                          'they are only kept for badges when Steam badges are on.');
+                status.title = recorded
+                    ? `${boardTypeLabel(this.boardType)} boards the leaderboard XP tracker has recorded, including ` +
+                      'earlier sessions; each one feeds EXP history. Next board goes to the missing or oldest ' +
+                      `one first.${age ? ` The oldest was recorded ${age} ago.` : ''}`
+                    : `${boardTypeLabel(this.boardType)} boards opened since the game loaded. ` +
+                      (tracking
+                          ? 'Each one you open is recorded by the leaderboard XP tracker, so this feeds EXP history.'
+                          : 'The leaderboard XP tracker setting is off, so opening them records no EXP history; ' +
+                            'they are only kept for badges when Steam badges are on.');
                 continue;
             }
-            status.textContent = `${cached.length}/${RANK_CATEGORIES.length} boards cached`;
+            status.textContent = `${cached.length}/${RANK_CATEGORIES.length} boards cached${oldestText}`;
             status.title = cached.length
-                ? `Oldest ${this.boardType} board: ${formatRelativeTime(Math.max(0, Date.now() - oldest))} ago`
+                ? `Oldest ${this.boardType} board: ${age} ago. Next board goes to the missing or oldest one first, ` +
+                  'so pressing it repeatedly brings every board current.'
                 : 'Nothing cached yet';
         }
     }

@@ -524,6 +524,44 @@ describe('leaderboard XP tracker', () => {
         expect(leaderboardXPTracker.getPreviousRank('M', 'total_level')).toBeNull();
     });
 
+    test('getBoardRecordTimes reads the latest rank reading per category for one board type only', () => {
+        const steam = (category, rank) =>
+            game.handlers.leaderboard_updated({
+                leaderboardType: 'steam_standard',
+                leaderboardCategory: category,
+                guildTypeFilter: 'all',
+                gameModeFilter: 'all',
+                trialFilter: 'all',
+                leaderboard: { rows: [{ name: 'M', value1: 10, value2: 1, rank }] },
+            });
+        steam('milking', 5);
+        vi.setSystemTime(new Date('2026-01-01T03:00:00Z'));
+        steam('milking', 6);
+        steam('foraging', 7);
+        game.handlers.leaderboard_updated({
+            leaderboardType: 'standard',
+            leaderboardCategory: 'cooking',
+            guildTypeFilter: 'all',
+            gameModeFilter: 'all',
+            trialFilter: 'all',
+            leaderboard: { rows: [{ name: 'M', value1: 10, value2: 1, rank: 9 }] },
+        });
+
+        const later = Date.parse('2026-01-01T03:00:00Z');
+        expect(leaderboardXPTracker.getBoardRecordTimes('steam_standard')).toEqual({
+            milking: later,
+            foraging: later,
+        });
+        expect(leaderboardXPTracker.getBoardRecordTimes('steam_ironcow')).toEqual({});
+        expect(leaderboardXPTracker.getBoardRecordTimes('standard')).toEqual({ cooking: later });
+    });
+
+    test('getBoardRecordTimes is empty while the tracker is off', () => {
+        leaderboardXPTracker.playerXPHistory['rank|milking|steam_standard_M'] = [{ t: 5, r: 1 }];
+        leaderboardXPTracker.disable();
+        expect(leaderboardXPTracker.getBoardRecordTimes('steam_standard')).toEqual({});
+    });
+
     test('a board opened again after more than a week keeps its previous reading and has a rate', () => {
         const day = 24 * 60 * 60 * 1000;
         const read = (value) =>
