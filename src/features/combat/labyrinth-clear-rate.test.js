@@ -5233,6 +5233,42 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         }
     });
 
+    test('a zero-target auto pass over satisfied results records the new fingerprint, and only then', async () => {
+        // Codex P2 on #364: after a manual uncapped pass the hours ceiling changes
+        // the floor fingerprint but every tile still satisfies it, so the pass
+        // found nothing to run and left the fingerprint stale, repeating the full
+        // scan on every repaint
+        mountFloor();
+        settings.map.set('labyrinthSimCaps', 'precision');
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await labyrinthClearRate.runTileCalculation();
+            settings.map.set('labyrinthSimMaxHours', 77);
+            const changed = labyrinthClearRate._tileCalcFingerprint();
+            expect(labyrinthClearRate._autoCalcFingerprint).not.toBe(changed);
+
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+            expect(labyrinthClearRate._autoCalcFingerprint).toBe(changed);
+
+            // A pass that is zero for any other reason does not record: here a
+            // room whose inputs changed under it becomes a target again
+            labyrinthClearRate._autoCalcFingerprint = null;
+            labyrinthClearRate.calculatedTileKeys.clear();
+            sims.mockClear();
+            await runPassAndRetries();
+            expect(sims).toHaveBeenCalled();
+        } finally {
+            settings.map.delete('labyrinthSimCaps');
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
     test('a settled combat room is re-simmed when its assigned loadout changes, and not otherwise', async () => {
         // Codex P2 on #364: the loadout a monster is fought in is part of the
         // combat cache key, and was missing from both the tile's settled inputs

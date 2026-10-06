@@ -3415,6 +3415,13 @@ class LabyrinthClearRate {
 
         const total = skillingTargets.length + combatTargets.length;
         if (!total) {
+            // Nothing left to run because every calculable room is already
+            // badged and current (a pass still in flight returned at the top, and
+            // a room that is unready or needs a retry becomes a target): that is
+            // a settled floor. Record the fingerprint, or a changed setting the
+            // results still satisfy (the hours ceiling after an uncapped pass)
+            // repeats this whole scan on every repaint instead of the fast restore.
+            if (auto && eligible > 0 && doneUpFront === eligible) this._autoCalcFingerprint = fingerprint;
             if (!auto) this.setTileStatus('No calculable tiles');
             settledIdle();
             return;
