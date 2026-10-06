@@ -20,7 +20,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** The device at the keyboard: its database, its settings */
-const world = vi.hoisted(() => ({ device: null }));
+const world = vi.hoisted(() => ({ device: null, gzip: false }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -86,15 +86,15 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 }));
 
 vi.mock('./pull-summary-panel.js', () => ({ openPullSummaryPanel: () => {} }));
-vi.mock('./sync-compress.js', () => ({
-    compressionAvailable: () => false,
-    gzipText: async () => {
-        throw new Error('unreachable');
-    },
-    gunzipToText: async () => {
-        throw new Error('unreachable');
-    },
-}));
+// In the clear unless a test turns the real gzip on (`world.gzip`)
+vi.mock('./sync-compress.js', async (importOriginal) => {
+    const real = await importOriginal();
+    return {
+        compressionAvailable: () => Boolean(world.gzip) && real.compressionAvailable(),
+        gzipText: real.gzipText,
+        gunzipToText: real.gunzipToText,
+    };
+});
 
 /** The one gist both devices share */
 const gist = vi.hoisted(() => ({ state: null, etag: 0, writes: 0 }));
@@ -250,6 +250,7 @@ async function syncedPair(settingsA = {}, settingsB = {}) {
 }
 
 beforeEach(() => {
+    world.gzip = false;
     vi.useFakeTimers();
     gist.state = null;
     gist.etag = 0;
@@ -563,5 +564,34 @@ describe('an encrypted gist and a device without the passphrase', () => {
         expect(gist.writes).toBe(writes);
         expect(gist.state.manifest.encrypted).toBeTruthy();
         expect(toasts).toHaveLength(0);
+    });
+});
+
+describe('the merge path through gzip and encryption', () => {
+    test('an encrypted, compressed gist is read, merged and sent back sealed the same way', async () => {
+        // The real gzip and WebCrypto; fake timers would starve their promises
+        vi.useRealTimers();
+        world.gzip = true;
+        const { a, b } = await syncedPair({ sync_passphrase: 'pw' }, { sync_passphrase: 'pw' });
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+        expect(gist.state.manifest.compressed).toBe('gzip');
+
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        expect((await as(a, auto.push)).ok).toBe(true);
+
+        // Still sealed, and nothing readable in the gist
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+        expect(gist.state.manifest.compressed).toBe('gzip');
+        expect(gist.state.payload).not.toContain('a-sample');
+
+        // ...and it holds both sides: B's startup pull decrypts it and takes A's history
+        await as(b, auto.startup);
+        expect(b.db.xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
+        expect(b.db.settings[MAP].X.isTrue).toBe(true);
+        expect(a.latches).toBe(0);
     });
 });
