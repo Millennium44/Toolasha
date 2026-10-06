@@ -557,6 +557,19 @@ export function mergeSessions(sessions) {
     }
     agg.successRate = agg.totalAttempts > 0 ? agg.totalSuccesses / agg.totalAttempts : 0;
 
+    // Where the item stands now: the level of the most recently active session, so the
+    // per-level table marks the row being worked on, the way the single-session view does.
+    // Several items have no one level to mark.
+    const present = sessions.filter(Boolean);
+    agg.live = present.some((session) => session.state === SessionState.TRACKING);
+    if (agg.itemHrids.length === 1) {
+        const activity = (s) =>
+            Math.max(s.endTime || 0, s.lastAttempt?.timestamp || 0, s.lastUpdateTime || 0, s.startTime || 0);
+        const running = present.filter((session) => session.state === SessionState.TRACKING);
+        const latest = (running.length > 0 ? running : present).reduce((a, b) => (activity(b) >= activity(a) ? b : a));
+        agg.currentLevel = Number.isFinite(latest.currentLevel) ? latest.currentLevel : 0;
+    }
+
     return agg;
 }
 

@@ -1351,8 +1351,22 @@ class EnhancementUI {
         const chosen = sessions.filter((session) => this.mergeSelected.has(session.id));
         const merged = mergeSessions(chosen);
 
+        // This view is redrawn on every attempt while a picked session is live, so it keeps what
+        // the user had in hand: where the panel and the pick-list were scrolled to, and whether
+        // the cost breakdown was open
+        const listScroll = content.querySelector('.enh-merge-list')?.scrollTop || 0;
+        const contentScroll = content.scrollTop || 0;
+        const details = content.querySelector('#cost-details-merged');
+        const detailsOpen = Boolean(details) && details.style.display !== 'none';
+
         content.innerHTML = this.generateMergeListHTML(sessions) + this.generateMergedSummaryHTML(merged);
         this.wireMergeControls(content, sessions);
+
+        const list = content.querySelector('.enh-merge-list');
+        if (list) list.scrollTop = listScroll;
+        const newDetails = content.querySelector('#cost-details-merged');
+        if (detailsOpen && newDetails) newDetails.style.display = 'block';
+        content.scrollTop = contentScroll;
     }
 
     /**
@@ -1388,7 +1402,7 @@ class EnhancementUI {
                         <button class="enh-merge-none" style="${mergeChipStyle}">None</button>
                     </span>
                 </div>
-                <div style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
+                <div class="enh-merge-list" style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
                     ${rows}
                 </div>
             </div>`;
@@ -1424,7 +1438,7 @@ class EnhancementUI {
             <div style="border-top: 1px solid ${STYLE.colors.border}; padding-top: 8px;">
                 <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
                     <span>Combined:</span>
-                    <strong>${merged.count} session${merged.count === 1 ? '' : 's'}</strong>
+                    <strong>${merged.count} session${merged.count === 1 ? '' : 's'}${merged.live ? ` <span style="color: ${STYLE.colors.accent};" title="A picked session is in progress; this view updates as attempts land">· live</span>` : ''}</strong>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 13px;">
                     <span>Items:</span>
