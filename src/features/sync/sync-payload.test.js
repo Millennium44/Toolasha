@@ -1352,6 +1352,30 @@ describe('mergeForUpload, which writes nothing local', () => {
         off();
     });
 
+    test('a legacy custom-tab edit only this device made is uploaded, and the gist is not called in step', async () => {
+        // The real registration: unstamped tabs on both sides tie, and the tie
+        // must go to the side the upload chose to win — this device's
+        await import('../inventory/custom-tabs/custom-tabs-data.js');
+        const KEY = 'c1_inventoryTabs_config';
+        const config = (name, items) => ({
+            version: 1,
+            tabs: [{ id: 't1', name, items, children: [] }],
+            selectedTabId: 't1',
+        });
+        const gist = payloadOf({ settings: { [KEY]: config('Ores', ['/items/copper_ore']) } });
+        const local = payloadOf({ settings: { [KEY]: config('Metals', ['/items/copper_ore', '/items/iron_ore']) } });
+
+        const result = mergeForUpload(local, gist, wholeKeyHashes(gist));
+        const tab = JSON.parse(result.text).stores.settings[KEY].tabs[0];
+
+        expect(tab.name).toBe('Metals');
+        expect(tab.items).toContain('/items/iron_ore');
+        // The push decision: the upload changes the gist
+        expect(addsToRemote(result.text, gist)).toBe(true);
+        // And a pull of what was uploaded keeps this device's tab as it is
+        expect(result.remoteAdds).toBe(false);
+    });
+
     test("never uploads another device's token or another script's keys from the gist", () => {
         const local = payloadOf({ settings: { [MAP]: { A: { v: 1 } } } });
         const remote = payloadOf({

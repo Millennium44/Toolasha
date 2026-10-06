@@ -406,7 +406,7 @@ async function mergeLocalHistories(payload) {
                     continue;
                 }
                 if (!probed.found || probed.value == null) continue;
-                entries[key] = registration.merge(probed.value, entries[key]);
+                entries[key] = registration.mergeForPull(probed.value, entries[key]);
                 merged.push({ store: storeName, key, label: registration.label });
             } catch (error) {
                 console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
@@ -1235,7 +1235,11 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
             let folded = value;
             if (registration) {
                 try {
-                    folded = registration.merge(theirs[key], value, forUpload ? UPLOAD_CONTEXT : undefined);
+                    // Folded the way the gist takes an upload, or — asked of a
+                    // local apply — the way a pull here would fold it
+                    folded = forUpload
+                        ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
+                        : registration.mergeForPull(theirs[key], value);
                 } catch {
                     folded = value;
                 }

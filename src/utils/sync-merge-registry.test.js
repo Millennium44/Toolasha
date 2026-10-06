@@ -195,3 +195,23 @@ describe('overlapping matchers are a bug, and are reported as one', () => {
         warnSpy.mockRestore();
     });
 });
+
+describe('which side wins a tie', () => {
+    const second = (a, b) => b;
+
+    test('a merge is incoming-wins everywhere unless it declares otherwise', () => {
+        registerSyncMerge({ store: 'settings', key: 'plain', merge: second, label: 'plain' });
+        const registration = mergeForKey('settings', 'plain');
+
+        expect(registration.merge('local', 'incoming')).toBe('incoming');
+        expect(registration.mergeForPull('local', 'incoming')).toBe('incoming');
+    });
+
+    test('localWinsOnPull turns the pull round and leaves the upload fold incoming-wins', () => {
+        registerSyncMerge({ store: 'settings', key: 'tabs', merge: second, localWinsOnPull: true, label: 'tabs' });
+        const registration = mergeForKey('settings', 'tabs');
+
+        expect(registration.merge('local', 'incoming')).toBe('incoming');
+        expect(registration.mergeForPull('local', 'incoming')).toBe('local');
+    });
+});
