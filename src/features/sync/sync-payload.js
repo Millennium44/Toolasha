@@ -550,7 +550,10 @@ function dropUnownedFromPayload(payload) {
             continue;
         }
         const entries = stores[storeName];
-        if (!entries || typeof entries !== 'object') continue;
+        // A store this script owns in the wrong shape is left as it came, for
+        // assertApplicable to refuse: filtering an array's indices as foreign keys
+        // would turn it into an empty map that passes and applies nothing
+        if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
         const { owned } = partitionOwnedKeys(storeName, entries);
         if (owned !== entries) {
             stores[storeName] = owned;
