@@ -1139,6 +1139,8 @@ class ListingPriceDisplay {
     _getTopOrderPrice(itemHrid, enhancementLevel, isSell, priceCache, ownListingIds, ownPrice = null) {
         const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
         let bookPrice = null;
+        // The opened book was read and nobody but you is resting on this side
+        let bookHasNoCompetitor = false;
         const bookUpdated = cacheEntry?.lastUpdated ?? null;
         if (cacheEntry) {
             const orderBookData = cacheEntry.data || cacheEntry;
@@ -1152,6 +1154,7 @@ class ListingPriceDisplay {
                     // could reach it today. The other two sources come through
                     // marketAPI.getPrice, which already clamps.
                     if (topCompeting) bookPrice = clampToBand(topCompeting.price, itemHrid, enhancementLevel);
+                    else bookHasNoCompetitor = true;
                 }
             }
         }
@@ -1160,6 +1163,10 @@ class ListingPriceDisplay {
         const beat = this._freshMarketBeat(itemHrid, enhancementLevel, isSell, ownPrice, bookUpdated);
         if (beat) return beat.price;
         if (bookPrice !== null) return bookPrice;
+        // The snapshot cannot tell your order from a rival's, so with the book saying
+        // you are alone on this side it would only echo your own price back — and
+        // contradict the age cell beside it, which reads "None" for the same book
+        if (bookHasNoCompetitor) return null;
 
         const key = `${itemHrid}:${enhancementLevel}`;
         const marketPrice = priceCache.get(key);
