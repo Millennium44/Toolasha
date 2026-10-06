@@ -588,9 +588,15 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
     // Auto-resume (off by default): the most recent session ended short of its target, and this
     // run is the same item, target and protection setup and starts exactly where it ended — the
     // level read off the queue row before this attempt, never a guess. Continue that session.
+    //
+    // That baseline is only the run's start when this is the run's first attempt: on a page load
+    // after the new run has already done several, it is the level before the next one. The
+    // action's own count says which — currentCount is 1 after the first attempt, and the
+    // baseline was only taken when the row it came from counted one fewer (takeBaseline), i.e. 0.
+    const firstAttempt = action.currentCount === 1;
     const resumableId = enhancementTracker.findResumableSession?.({
         itemHrid,
-        startLevel: baselineLevel,
+        startLevel: firstAttempt ? baselineLevel : null,
         targetLevel,
         protectFrom,
         protectionItemHrid: configuredProtectionItem(action),

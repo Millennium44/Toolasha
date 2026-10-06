@@ -187,6 +187,36 @@ describe('auto-resume', () => {
         expect(getSessionDuration(resumed)).toBe(activeBefore + 10);
     });
 
+    test('a new run first seen several attempts in is not resumed, even at the ended level', async () => {
+        // The page comes up on run a2 already five attempts in, its copy back at +3: that +3 is
+        // where the sixth attempt starts, not where the run started
+        const first = await firstRunEndingAtThree();
+        advance(600_000);
+        const a2 = row('a2', 3, 5);
+        await queueRun(a2);
+        advance(10_000);
+        await attempt(a2, 4, 6);
+
+        expect(Object.keys(tracker.sessions)).toHaveLength(2);
+        expect(first.state).toBe(SessionState.COMPLETED);
+        expect(first.totalAttempts).toBe(5);
+        expect(tracker.currentSessionId).not.toBe(first.id);
+    });
+
+    test('the same pickup through the login snapshot is not resumed either', async () => {
+        const first = await firstRunEndingAtThree();
+        advance(600_000);
+        // A reload: the handlers come up with a2 already running, five attempts in
+        cleanupEnhancementHandlers();
+        state.actions = [row('a2', 3, 5)];
+        setupEnhancementHandlers();
+        advance(10_000);
+        await attempt(row('a2', 3, 5), 4, 6);
+
+        expect(Object.keys(tracker.sessions)).toHaveLength(2);
+        expect(first.totalAttempts).toBe(5);
+    });
+
     test('a run starting at a different level starts a new session', async () => {
         const first = await firstRunEndingAtThree();
         advance(600_000);
