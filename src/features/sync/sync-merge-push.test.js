@@ -961,6 +961,93 @@ describe('two devices writing at the same moment', () => {
         expect(a.db.settings.toolasha_sync_lastHash).toBe(lastHashBefore);
     });
 
+    test('a write in the clear that replaced an encrypted push it cannot read puts that push back', async () => {
+        // The real WebCrypto; fake timers would starve its promises
+        vi.useRealTimers();
+        const { a, b } = await syncedPair();
+        expect(gist.state.manifest.encrypted).toBeFalsy();
+        const other = new SyncManager();
+        // B turns encryption on; A, which has no passphrase, records a sample
+        b.settings.sync_passphrase = 'pw';
+        await as(b, () => changeSetting(b, 'X', true));
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+
+        // A lists the gist in the clear; B's encrypted push lands before A writes
+        gist.betweenListAndWrite = async () => {
+            world.device = b;
+            vi.stubGlobal('navigator', {});
+            try {
+                expect((await other.push({ silent: true, unattended: true })).ok).toBe(true);
+            } finally {
+                vi.unstubAllGlobals();
+                other.busy = false;
+                world.device = a;
+            }
+        };
+        const bSeq = () => b.db.settings.toolasha_sync_lastSyncedSeq;
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(false);
+        // B's push is the gist again, sealed, and numbered above A's write
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+        expect(gist.state.manifest.syncSeq).toBeGreaterThan(bSeq());
+        expect(gist.state.payload).not.toContain('a-sample');
+        // ...and A's next tick does not write in the clear over it again
+        const writes = gist.writes;
+        expect(await as(a, auto.push)).toEqual({ ok: false, reason: 'passphrase' });
+        expect(gist.writes).toBe(writes);
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+
+        // B's own push, put back under a higher counter, is nothing for B to apply
+        b.latches = 0;
+        toasts.length = 0;
+        expect((await as(b, auto.pull)).reason).toBe('in-step');
+        expect(b.latches).toBe(0);
+        expect(toasts).toHaveLength(0);
+    });
+
+    test('a replacement at the same counter with an earlier stamp is not taken as old news', async () => {
+        const { b } = await syncedPair();
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        // A listed before B wrote and wrote after it, at the same counter (it saw
+        // the one under B's) and with the stamp its payload was built at, before
+        // B's — as a write whose re-merge gave up leaves it
+        const replacing = JSON.parse(gist.state.payload);
+        // A never changed X: its old value, and no stamp for it
+        replacing.stores.settings[MAP].X = { id: 'X', isTrue: false };
+        delete replacing.stores.settings[STAMPS]?.X;
+        replacing.stores.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        gist.etag += 1;
+        gist.state = {
+            manifest: {
+                ...gist.state.manifest,
+                exportedAt: new Date(Date.parse(gist.state.manifest.exportedAt) - 30_000).toISOString(),
+                basedOn: gist.revisions.at(-2).version,
+                hash: undefined,
+                bytes: undefined,
+            },
+            payload: JSON.stringify(replacing),
+        };
+        gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+
+        b.latches = 0;
+        expect((await as(b, auto.pull)).reason).toBe('conflict');
+        expect(b.db.settings[MAP].X.isTrue).toBe(true);
+        expect(b.latches).toBe(0);
+
+        // B's next automatic push merges A's write rather than replacing it
+        await as(b, async () => {
+            b.db.xpHistory.testHistory_c1 = ['s1', 'b-sample'];
+            expect((await auto.push()).ok).toBe(true);
+        });
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(expect.arrayContaining(['a-sample', 'b-sample']));
+        expect(gistStores().settings[MAP].X.isTrue).toBe(true);
+    });
+
     test('a push nobody raced makes no extra request', async () => {
         const { a } = await syncedPair();
         a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
