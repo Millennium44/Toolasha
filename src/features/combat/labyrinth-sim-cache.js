@@ -423,7 +423,69 @@ export const simCacheMethods = {
         const upgrades = this.getLabyrinthCombatBuffs()
             .map((buff) => `${buff.typeHrid}=${buff.ratioBoost || 0}|${buff.flatBoost || 0}`)
             .join(',');
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}${this._combatBuffsPart()}${this._fallbackWornPart(loadoutId)}`;
+    },
+
+    /**
+     * The server-computed combat buffs the sim folds in: guild shrines and
+     * completed achievements, read the way `buildPlayerDTO` reads them
+     * (`guildCombatBuffs` / `achievementCombatBuffs`). Nothing else in the key
+     * marks them, so a shrine upgrade or an achievement unlock left every cached
+     * result, and every settled badge signature built on the key, answering for
+     * the old buffs. Standing state that changes on the scale of days, unlike
+     * consumables, so it belongs in the key.
+     *
+     * Sorted so array order never matters; hashed so the key stays short.
+     * @returns {string} '' when neither source has a buff, else ':cb=<hash>'
+     */
+    _combatBuffsPart() {
+        const guild = dataManager.characterData?.guildActionTypeBuffsMap?.['/action_types/combat'];
+        const achievement = dataManager.getAchievementBuffs?.('/action_types/combat');
+        const describe = (tag, buffs) =>
+            (Array.isArray(buffs) ? buffs : [])
+                .map(
+                    (b) =>
+                        `${tag}${b?.uniqueHrid || ''}/${b?.typeHrid || ''}/${b?.ratioBoost || 0}/${b?.flatBoost || 0}` +
+                        `/${b?.ratioBoostLevelBonus || 0}/${b?.flatBoostLevelBonus || 0}`
+                )
+                .sort();
+        const parts = [...describe('g', guild), ...describe('a', achievement)];
+        return parts.length ? `:cb=${this._hashString(parts.join(','))}` : '';
+    },
+
+    /**
+     * The worn equipment, for a room that sims it.
+     *
+     * A room with no loadout assigned, or one whose saved loadout no longer
+     * exists, sims whatever is worn (see buildLabyrinthPlayerDTO), and nothing
+     * else in the key or the build fingerprint covers worn gear — the
+     * fingerprint hashes saved loadouts. Without this a worn-gear change left
+     * the result under the same key and the tile's badge settled on the old
+     * gear. Rooms with an assigned loadout return '' so the lab's own per-room
+     * gear swaps never touch their keys.
+     * @param {number} loadoutId - From getLabyrinthLoadoutId
+     * @returns {string} '' or ':worn=<slot=item+level,...>'
+     */
+    _fallbackWornPart(loadoutId) {
+        if (Number(loadoutId) > 0) {
+            // Still loading: the DTO is not built at all, so nothing to describe
+            if (!loadoutSnapshot.snapshotsReady) return '';
+            if (loadoutSnapshot.snapshots?.[loadoutId]) return '';
+        }
+        const parts = [];
+        const equipment = dataManager.characterEquipment;
+        if (equipment?.size > 0) {
+            for (const [location, item] of equipment) {
+                if (item?.itemHrid) parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
+            }
+        } else {
+            for (const item of dataManager.characterData?.characterItems || []) {
+                const location = String(item?.itemLocationHrid || '');
+                if (!item?.itemHrid || !location || location.includes('/item_locations/inventory')) continue;
+                parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
+            }
+        }
+        return `:worn=${parts.sort().join(',')}`;
     },
 
     /**
