@@ -621,6 +621,59 @@ describe('attributeGoldSources', () => {
             expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 3500, '2026-08-20': 3500 });
         });
 
+        test('a merged or resumed run books each leg its own net, on its own days', () => {
+            // An hour on the 19th that spent 1,000 for no gain; an hour on the 20th that spent 100
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 0, cost: 1000 },
+                        ],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        segmentStartLevel: 0,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: d20Start + 11 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 0,
+                        totalCost: 1100,
+                    },
+                ],
+            });
+
+            // Not -550 each, the whole net shared out by duration
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': -1000, '2026-08-20': -100 });
+        });
+
+        test("a fresh resume's spending lands on the day it was spent, not on the old leg's days", () => {
+            // The 19th's leg climbed +0 → +5 for 1,000 (net 7,000). Resumed on the 20th, the new
+            // stretch has spent 500 before any attempt moved its clock: a zero-length stretch.
+            const resumedAt = d20Start + 10 * 3600_000;
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 5, cost: 1000 },
+                        ],
+                        segmentStartTime: resumedAt,
+                        segmentStartLevel: 5,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: resumedAt,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 5,
+                        totalCost: 1500,
+                    },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 7000, '2026-08-20': -500 });
+        });
+
         test('a legacy enhancement session without either stamp books to its start day, whole', () => {
             const result = attributeGoldSources({
                 ...base,

@@ -1189,7 +1189,7 @@ class EnhancementUI {
                 </div>
                 <div style="display: flex; justify-content: space-between;">
                     <span>Prot:</span>
-                    <span>+${session.protectFrom}</span>
+                    <span>+${session.protectFrom}${session.mixedProtection ? ' (merged runs differ)' : ''}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-top: 5px; color: ${statusColor};">
                     <span>Status:</span>
@@ -1313,6 +1313,13 @@ class EnhancementUI {
                 ${predictions.paramsNote}
             </div>`;
             }
+        } else if (session.mixedProtection) {
+            // Merged from runs protected from different levels: no one prediction covers them
+            html += `
+            <div class="enh-mixed-protection" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+                <span>Expected Attempts:</span>
+                <span title="The merged runs used different protect-from levels, so no one prediction covers them">— (mixed protection)</span>
+            </div>`;
         }
 
         html += `
@@ -1401,6 +1408,11 @@ class EnhancementUI {
             'and the originals are removed. This cannot be undone.';
         if (plan.settingsDiffer) {
             message += `\n\nThey do not share one target and protection setup; the merged session keeps the most recent one's (+${newest.targetLevel}, ${protect}).`;
+        }
+        if (plan.protectFromDiffers) {
+            message +=
+                '\n\nThey were protected from different levels, so the merged session shows no expected ' +
+                'attempts or protections and is not used for prediction calibration.';
         }
         if (plan.protectionItemsDiffer) {
             message +=

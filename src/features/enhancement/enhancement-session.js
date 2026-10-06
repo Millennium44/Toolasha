@@ -344,9 +344,30 @@ export function getActiveSpans(session) {
     const past = Array.isArray(session.pastActiveSpans) ? session.pastActiveSpans : [];
     const start = session.segmentStartTime || session.startTime;
     const end = session.endTime || session.lastUpdateTime || start;
-    const spans = past.map((span) => ({ start: span.start, end: Math.max(span.start, span.end) }));
-    if (Number.isFinite(start)) spans.push({ start, end: Math.max(start, end) });
+    const spans = past.map((span) => ({ ...span, end: Math.max(span.start, span.end) }));
+    if (Number.isFinite(start)) {
+        // The open stretch's own leg: from the level and spend it began at to where they stand
+        spans.push({
+            start,
+            end: Math.max(start, end),
+            startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
+            endLevel: session.currentLevel,
+            cost: (session.totalCost || 0) - (session.segmentStartCost || 0),
+        });
+    }
     return spans;
+}
+
+/**
+ * When a session's active history begins: the start of its earliest active stretch.
+ * @param {Object} session - Session object
+ * @returns {number} Epoch ms
+ */
+export function firstActiveTime(session) {
+    const starts = getActiveSpans(session)
+        .map((span) => span.start)
+        .filter(Number.isFinite);
+    return starts.length > 0 ? Math.min(...starts) : session?.startTime || 0;
 }
 
 /**
@@ -408,8 +429,11 @@ export function canResumeSession(session, run) {
  * @param {number} [now] - Epoch ms
  */
 export function resumeSession(session, now = Date.now()) {
+    // The stretch that ended closes with its own levels and spend; the new one starts from here
     session.pastActiveSpans = getActiveSpans(session);
     session.segmentStartTime = now;
+    session.segmentStartLevel = session.currentLevel;
+    session.segmentStartCost = session.totalCost || 0;
     session.state = SessionState.TRACKING;
     session.endTime = null;
     session.lastUpdateTime = now;
@@ -464,6 +488,16 @@ export function planSessionMerge(sessions, { labelOf = (session) => session.id }
                     `+${after.startLevel} — only runs that continue each other can merge.`,
             };
         }
+        // ...and in time: a run that was enhancing before the one ahead of it had finished
+        // cannot have been working on what that run produced, whatever its levels say
+        if (firstActiveTime(after) < lastActivityTime(before)) {
+            return {
+                ok: false,
+                reason:
+                    `${labelOf(after)} was already enhancing before ${labelOf(before)} finished — ` +
+                    'only runs that follow one another can merge.',
+            };
+        }
     }
     const newest = ordered[ordered.length - 1];
     const settingsDiffer = older.some(
@@ -473,7 +507,16 @@ export function planSessionMerge(sessions, { labelOf = (session) => session.id }
     const protectionItems = new Set(
         ordered.flatMap((session) => Object.keys(getProtectionBreakdown(session)).filter(Boolean))
     );
-    return { ok: true, ordered, settingsDiffer, protectionItemsDiffer: protectionItems.size > 1 };
+    const protectFromDiffers =
+        ordered.some((session) => session.mixedProtection === true) ||
+        older.some((session) => (session.protectFrom || 0) !== (newest.protectFrom || 0));
+    return {
+        ok: true,
+        ordered,
+        settingsDiffer,
+        protectFromDiffers,
+        protectionItemsDiffer: protectionItems.size > 1,
+    };
 }
 
 /**
@@ -526,6 +569,14 @@ export function foldSessions(ordered) {
     const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
     const segmentStartTime = newest.segmentStartTime || newest.startTime;
     const ownPast = Array.isArray(newest.pastActiveSpans) ? newest.pastActiveSpans : [];
+    // The survivor's open stretch keeps its own leg: the level it began at (its start level is
+    // about to become the chain's), and the spend before it, which now includes every folded run
+    const segmentStartLevel = Number.isFinite(newest.segmentStartLevel) ? newest.segmentStartLevel : newest.startLevel;
+    const segmentStartCost = (newest.segmentStartCost || 0) + older.reduce((sum, s) => sum + (s.totalCost || 0), 0);
+    // Legs run with different protect-from levels have no one prediction between them
+    const mixedProtection =
+        ordered.some((session) => session.mixedProtection === true) ||
+        older.some((session) => (session.protectFrom || 0) !== (newest.protectFrom || 0));
     // Targets whose completion calibration has already recorded under a folded-in session's id
     const recordedTargets = new Set();
     for (const session of ordered) {
@@ -598,7 +649,10 @@ export function foldSessions(ordered) {
     if (Number.isFinite(firstStartTime)) newest.startTime = firstStartTime;
     newest.pastActiveSpans = [...spans, ...ownPast].sort((a, b) => a.start - b.start);
     newest.segmentStartTime = segmentStartTime;
+    newest.segmentStartLevel = segmentStartLevel;
+    newest.segmentStartCost = segmentStartCost;
     newest.extensionBaseline = null;
+    if (mixedProtection) newest.mixedProtection = true;
     if (recordedTargets.size > 0) {
         newest.calibrationRecordedTargets = [...recordedTargets].sort((a, b) => a - b);
         // Reaching one of those targets again is the survivor's own leg finishing: calibration
@@ -625,6 +679,8 @@ export function foldSessions(ordered) {
  */
 export function calibrationObservation(session) {
     if (!session) return null;
+    // Legs protected from different levels are no draw from any one predicted distribution
+    if (session.mixedProtection === true && !session.extensionBaseline) return null;
     if (!session.calibrationRecordedTargets?.includes(session.targetLevel)) return session;
     const leg = session.calibrationOwnLeg;
     if (!leg || leg.targetLevel !== session.targetLevel || !leg.predictions) return null;

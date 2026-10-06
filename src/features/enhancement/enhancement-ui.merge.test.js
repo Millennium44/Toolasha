@@ -239,3 +239,22 @@ describe('runs protected by different items', () => {
         expect(rows[1]).toContain('Holy Spatula (2×)');
     });
 });
+
+describe('a merge of runs protected from different levels', () => {
+    test('shows no expected attempts, and the confirmation says why', async () => {
+        const { seven, eight } = spatulaRuns();
+        game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: true, protectFromDiffers: true };
+        const confirm = vi.fn(() => false);
+        vi.stubGlobal('confirm', confirm);
+        enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
+        await enhancementUI.commitMerge();
+        expect(confirm.mock.calls[0][0]).toContain('protected from different levels');
+
+        const merged = { ...eight, predictions: null, mixedProtection: true, totalAttempts: 467 };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(merged);
+        expect(box.querySelector('.enh-mixed-protection').textContent).toContain('— (mixed protection)');
+        expect(box.textContent).toContain('(merged runs differ)');
+        expect(box.textContent).not.toContain('Attempt Factor');
+    });
+});

@@ -542,40 +542,45 @@ describe('mergeSessions view marks where the item stands', () => {
 describe('merging picks the most recently active session as the survivor', () => {
     const HOUR = 3600_000;
     /**
-     * A: started 10:00 at +8, stopped 11:00, resumed 15:00, ended 16:00 at +12. B: 12:00-14:00,
-     * +0 to +8. By activity the chain is B then A, and its levels follow on (B ends where A starts);
-     * by start time it would be A then B, which neither survives nor chains.
+     * B climbed +0 → +8 from 08:00 to 09:00. A picked the copy up at +8 at 10:00, stopped at 11:00,
+     * was resumed at 15:00 and ended at +12 at 16:00. B then A, in levels and in time.
      */
-    function interleaved() {
+    function followOn() {
+        const b = createSession('/items/holy_spatula', 'Holy Spatula', 0, 8, 5);
+        Object.assign(b, {
+            id: 'session_b',
+            state: SessionState.COMPLETED,
+            startTime: 8 * HOUR,
+            lastUpdateTime: 9 * HOUR,
+            endTime: 9 * HOUR,
+            currentLevel: 8,
+            totalAttempts: 100,
+            coinCost: 10_000,
+            totalCost: 10_000,
+            lastAttempt: { attemptNumber: 100, level: 8, timestamp: 9 * HOUR, actionId: 'b1', currentCount: 100 },
+        });
         const a = createSession('/items/holy_spatula', 'Holy Spatula', 8, 15, 5);
         Object.assign(a, {
             id: 'session_a',
             state: SessionState.COMPLETED,
             startTime: 10 * HOUR,
-            pastActiveSpans: [{ start: 10 * HOUR, end: 11 * HOUR }],
+            pastActiveSpans: [{ start: 10 * HOUR, end: 11 * HOUR, startLevel: 8, endLevel: 9, cost: 3000 }],
             segmentStartTime: 15 * HOUR,
+            segmentStartLevel: 9,
+            segmentStartCost: 3000,
             lastUpdateTime: 16 * HOUR,
             endTime: 16 * HOUR,
             currentLevel: 12,
             totalAttempts: 300,
+            coinCost: 7000,
+            totalCost: 7000,
             lastAttempt: { attemptNumber: 300, level: 12, timestamp: 16 * HOUR, actionId: 'a2', currentCount: 120 },
-        });
-        const b = createSession('/items/holy_spatula', 'Holy Spatula', 0, 8, 5);
-        Object.assign(b, {
-            id: 'session_b',
-            state: SessionState.COMPLETED,
-            startTime: 12 * HOUR,
-            lastUpdateTime: 14 * HOUR,
-            endTime: 14 * HOUR,
-            currentLevel: 8,
-            totalAttempts: 100,
-            lastAttempt: { attemptNumber: 100, level: 8, timestamp: 14 * HOUR, actionId: 'b1', currentCount: 100 },
         });
         return { a, b };
     }
 
     test('a resumed session that ran last survives, keeping its level, last attempt and end', () => {
-        const { a, b } = interleaved();
+        const { a, b } = followOn();
         const plan = planSessionMerge([a, b]);
         expect(plan.ok).toBe(true);
         expect(plan.ordered.map((s) => s.id)).toEqual(['session_b', 'session_a']);
@@ -586,33 +591,81 @@ describe('merging picks the most recently active session as the survivor', () =>
         expect(merged.endTime).toBe(16 * HOUR);
         expect(merged.lastAttempt.actionId).toBe('a2');
         expect(merged.targetLevel).toBe(15);
-        expect(merged.startTime).toBe(10 * HOUR);
-        // The chain starts where its first run started
+        expect(merged.startTime).toBe(8 * HOUR);
         expect(merged.startLevel).toBe(0);
         expect(merged.totalAttempts).toBe(400);
-        // Three stretches of an hour, two hours and an hour — the gaps between them are not counted
+        expect(getSessionDuration(merged)).toBe(3 * 3600);
+        // Every stretch keeps its own leg, the open one included
         expect(getActiveSpans(merged)).toEqual([
-            { start: 10 * HOUR, end: 11 * HOUR },
-            { start: 12 * HOUR, end: 14 * HOUR },
-            { start: 15 * HOUR, end: 16 * HOUR },
+            { start: 8 * HOUR, end: 9 * HOUR, startLevel: 0, endLevel: 8, cost: 10_000 },
+            { start: 10 * HOUR, end: 11 * HOUR, startLevel: 8, endLevel: 9, cost: 3000 },
+            { start: 15 * HOUR, end: 16 * HOUR, startLevel: 9, endLevel: 12, cost: 4000 },
         ]);
-        expect(getSessionDuration(merged)).toBe(4 * 3600);
     });
 
-    test('a running session started before an ended one can still absorb it', () => {
-        const { a, b } = interleaved();
-        a.state = SessionState.TRACKING;
-        a.endTime = null;
-        const plan = planSessionMerge([a, b]);
-        expect(plan.ok).toBe(true);
-        expect(plan.ordered.at(-1)).toBe(a);
+    test('runs that overlap in time are refused, even when their levels chain', () => {
+        // B climbs +0 → +8 from 12:00 to 14:00, between A's two stretches at +8
+        const { a, b } = followOn();
+        Object.assign(b, {
+            startTime: 12 * HOUR,
+            lastUpdateTime: 14 * HOUR,
+            endTime: 14 * HOUR,
+            lastAttempt: { ...b.lastAttempt, timestamp: 14 * HOUR },
+        });
+        const plan = planSessionMerge([a, b], { labelOf: (s) => (s === a ? '#2' : '#1') });
+        expect(plan.ok).toBe(false);
+        expect(plan.reason).toBe(
+            '#2 was already enhancing before #1 finished — only runs that follow one another can merge.'
+        );
     });
 
     test('a running session is refused when another was active after it', () => {
-        const { a, b } = interleaved();
+        const { a, b } = followOn();
         b.state = SessionState.TRACKING;
         b.endTime = null;
+        b.lastAttempt.timestamp = 17 * HOUR;
         expect(planSessionMerge([a, b]).ok).toBe(false);
+    });
+
+    test('resuming closes the stretch with its own levels and spend', () => {
+        const { b } = followOn();
+        b.currentLevel = 6;
+        b.targetLevel = 10;
+        resumeSession(b, 12 * HOUR);
+        expect(b.pastActiveSpans).toEqual([
+            { start: 8 * HOUR, end: 9 * HOUR, startLevel: 0, endLevel: 6, cost: 10_000 },
+        ]);
+        b.totalCost += 500;
+        b.currentLevel = 7;
+        b.lastUpdateTime = 12.5 * HOUR;
+        expect(getActiveSpans(b).at(-1)).toEqual({
+            start: 12 * HOUR,
+            end: 12.5 * HOUR,
+            startLevel: 6,
+            endLevel: 7,
+            cost: 500,
+        });
+    });
+});
+
+describe('merging runs protected from different levels', () => {
+    test('marks the merge as mixed, so it is neither predicted nor calibrated', () => {
+        const { seven, eight } = spatulaRuns();
+        seven.protectFrom = 4;
+        const plan = planSessionMerge([seven, eight]);
+        expect(plan.protectFromDiffers).toBe(true);
+        const merged = foldSessions(plan.ordered);
+        expect(merged.mixedProtection).toBe(true);
+        merged.state = SessionState.COMPLETED;
+        merged.currentLevel = 8;
+        expect(calibrationObservation(merged)).toBeNull();
+    });
+
+    test('one protect-from level is not mixed', () => {
+        const { seven, eight } = spatulaRuns();
+        const plan = planSessionMerge([seven, eight]);
+        expect(plan.protectFromDiffers).toBe(false);
+        expect(foldSessions(plan.ordered).mixedProtection).toBeUndefined();
     });
 });
 

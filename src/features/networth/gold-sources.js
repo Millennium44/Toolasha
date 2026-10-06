@@ -585,6 +585,80 @@ export function enhancementSessionNet(session, price, basisPrice = price) {
 }
 
 /**
+ * Whether a stored span carries its own leg: the levels it began and ended at and what it spent.
+ * @param {Object} span - A `pastActiveSpans` entry
+ * @returns {boolean}
+ */
+function spanHasLeg(span) {
+    return (
+        Number.isFinite(span?.start) &&
+        Number.isFinite(span?.startLevel) &&
+        Number.isFinite(span?.endLevel) &&
+        Number.isFinite(span?.cost)
+    );
+}
+
+/**
+ * What a resumed or merged enhancement session added to the account, leg by leg, on the days
+ * each leg ran.
+ *
+ * Each closed stretch in `pastActiveSpans` keeps its own start and end level and its own spend,
+ * so it is valued on its own and booked to its own days; the open stretch is the rest (from the
+ * level and spend it began at to where the session stands now). Sharing one net out over every
+ * stretch by duration rewrote days already shown — a cheap new leg took on an old leg's loss, and
+ * a resume's empty stretch pulled new spending back onto the old days. A session without legs on
+ * its stretches (never resumed or merged, or stored before they were kept) gets null and stays
+ * on the single-span reading.
+ *
+ * @param {Object} session - A stored enhancement session
+ * @param {number} start - The session's start, epoch ms
+ * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @param {Function} [basisPrice] - Deeper cost-basis lookup, tried where the market is silent
+ * @returns {{entries: Array<{day: string, amount: number}>, days: Array<string>, priced: boolean}|null}
+ *   Per-day amounts, the days touched, and whether every leg could be valued (null: no legs)
+ */
+export function enhancementLegNets(session, start, price, basisPrice = price) {
+    const past = Array.isArray(session?.pastActiveSpans) ? session.pastActiveSpans : [];
+    if (past.length === 0 || !past.every(spanHasLeg) || !session?.itemHrid) return null;
+
+    const value = (level) => {
+        let v = price(session.itemHrid, level);
+        if (!Number.isFinite(v)) v = basisPrice(session.itemHrid, level);
+        return Number.isFinite(v) ? v : null;
+    };
+    const segmentStart = num(session.segmentStartTime) || start;
+    const legs = [
+        ...past.map((span) => ({ ...span, end: Math.max(span.start, num(span.end)) })),
+        {
+            start: segmentStart,
+            end: sessionSpanEnd(session, segmentStart),
+            startLevel: Number.isFinite(session.segmentStartLevel)
+                ? session.segmentStartLevel
+                : num(session.startLevel),
+            endLevel: num(session.currentLevel ?? session.startLevel),
+            cost: num(session.totalCost) - num(session.segmentStartCost),
+        },
+    ];
+
+    const entries = [];
+    const days = new Set();
+    let priced = true;
+    for (const leg of legs) {
+        const shares = daySharesOfSpan(leg.start, leg.end);
+        for (const { day } of shares) days.add(day);
+        const from = value(leg.startLevel);
+        const to = value(leg.endLevel);
+        if (from === null || to === null) {
+            priced = false;
+            continue;
+        }
+        const net = to - from - leg.cost;
+        for (const { day, share } of shares) entries.push({ day, amount: net * share });
+    }
+    return { entries, days: [...days], priced };
+}
+
+/**
  * What your own filled orders did to net worth, and the tax they paid, per local day.
  *
  * Every row here prices at today's market, and so does this: a fill is an
@@ -1689,6 +1763,16 @@ export function attributeGoldSources(input) {
     for (const session of enhancementSessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
+        // A resumed or merged run is valued leg by leg, each on its own days
+        const legs = enhancementLegNets(session, t, price, basisPrice);
+        if (legs) {
+            if (!legs.priced) {
+                if (legs.days.some((day) => inWindow.has(day))) unpricedEnhancementSessions += 1;
+                continue;
+            }
+            for (const { day, amount } of legs.entries) add(day, 'enhancement', amount);
+            continue;
+        }
         const shares = enhancementDayShares(session, t);
         const net = enhancementSessionNet(session, price, basisPrice);
         if (net === null) {

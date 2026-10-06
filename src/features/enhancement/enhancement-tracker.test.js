@@ -298,6 +298,21 @@ describe('merging sessions into one', () => {
         expect(enhancementTracker.getSession('session_8').predictions).toEqual({ expectedAttempts: 400 });
     });
 
+    test('runs protected from different levels get no prediction and no calibration', async () => {
+        const { seven, eight } = await loadSpatulaRuns();
+        seven.protectFrom = 4;
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 520 });
+        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+
+        expect(calculateEnhancementPredictions).not.toHaveBeenCalled();
+        expect(eight.predictions).toBeNull();
+        expect(eight.mixedProtection).toBe(true);
+
+        // Reaching the target records nothing
+        await enhancementTracker.recordSuccess(4, 8);
+        expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+    });
+
     test('an older session still in progress is refused and nothing changes', async () => {
         const { seven } = await loadSpatulaRuns();
         seven.state = SessionState.TRACKING;

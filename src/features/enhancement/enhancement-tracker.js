@@ -261,18 +261,23 @@ class EnhancementTracker {
         const merged = foldSessions(ordered);
         for (const session of ordered.slice(0, -1)) delete this.sessions[session.id];
 
-        let predictions = null;
-        try {
-            predictions = calculateEnhancementPredictions(
-                merged.itemHrid,
-                merged.startLevel,
-                merged.targetLevel,
-                merged.protectFrom
-            );
-        } catch (error) {
-            console.error('[EnhancementTracker] Recomputing the merged prediction failed:', error);
+        // Legs protected from different levels have no one prediction: none is shown or calibrated
+        if (merged.mixedProtection) {
+            merged.predictions = null;
+        } else {
+            let predictions = null;
+            try {
+                predictions = calculateEnhancementPredictions(
+                    merged.itemHrid,
+                    merged.startLevel,
+                    merged.targetLevel,
+                    merged.protectFrom
+                );
+            } catch (error) {
+                console.error('[EnhancementTracker] Recomputing the merged prediction failed:', error);
+            }
+            merged.predictions = predictions || earliestPredictions;
         }
-        merged.predictions = predictions || earliestPredictions;
 
         // The pointer only ever names a running session; a removed one cannot be current
         if (this.currentSessionId && !this.sessions[this.currentSessionId]) {
