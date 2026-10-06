@@ -856,3 +856,27 @@ describe('a merged session carries no combined prediction', () => {
         expect(calibrationObservation(eight)).toBe(eight);
     });
 });
+
+describe('extending a session starts a new stretch', () => {
+    test('the stretch that reached the target is banked, and the pause is not counted', () => {
+        const session = createSession('/items/sword', 'Sword', 0, 5, 0);
+        Object.assign(session, {
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            lastUpdateTime: 1_600_000,
+            endTime: 1_600_000,
+            currentLevel: 5,
+            coinCost: 900,
+            totalCost: 900,
+        });
+        extendSession(session, 8, 9_000_000);
+        expect(session.pastActiveSpans).toEqual([
+            { start: 1_000_000, end: 1_600_000, startLevel: 0, endLevel: 5, cost: 900 },
+        ]);
+        expect(session.segmentStartTime).toBe(9_000_000);
+        expect(session.segmentStartLevel).toBe(5);
+        expect(session.segmentStartCost).toBe(900);
+        session.lastUpdateTime = 9_100_000;
+        expect(getSessionDuration(session)).toBe(600 + 100);
+    });
+});

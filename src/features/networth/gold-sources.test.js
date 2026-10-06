@@ -18,6 +18,14 @@ import {
     taskCompletionValue,
     chestOpeningDayValue,
 } from './gold-sources.js';
+import {
+    createSession,
+    extendSession,
+    foldSessions,
+    getSessionDuration,
+    planSessionMerge,
+    SessionState,
+} from '../enhancement/enhancement-session.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -645,6 +653,52 @@ describe('attributeGoldSources', () => {
 
             // Not -550 each, the whole net shared out by duration
             expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': -1000, '2026-08-20': -100 });
+        });
+
+        test('a merged session extended after a pause keeps each leg on its own day', () => {
+            const HOUR = 3600_000;
+            // #7: 18:00-19:00 on the 19th, +0 → +0 for 1,000. #8: 20:00-21:00, +0 → +5 for 1,000,
+            // reaching its +5 target. Merged, then extended to +10 at 01:00 on the 20th — a
+            // four-hour pause — and spends 500 by 02:00 without moving off +5.
+            const seven = createSession('/items/sword', 'Sword', 0, 5, 0);
+            Object.assign(seven, {
+                id: 'session_7',
+                state: SessionState.COMPLETED,
+                startTime: spanStart,
+                lastUpdateTime: spanStart + HOUR,
+                endTime: spanStart + HOUR,
+                lastAttempt: { attemptNumber: 10, level: 0, timestamp: spanStart + HOUR, actionId: 'a7' },
+                currentLevel: 0,
+                coinCost: 1000,
+                totalCost: 1000,
+                totalAttempts: 10,
+            });
+            const eight = createSession('/items/sword', 'Sword', 0, 5, 0);
+            Object.assign(eight, {
+                id: 'session_8',
+                state: SessionState.COMPLETED,
+                startTime: spanStart + 2 * HOUR,
+                lastUpdateTime: spanStart + 3 * HOUR,
+                endTime: spanStart + 3 * HOUR,
+                lastAttempt: { attemptNumber: 10, level: 5, timestamp: spanStart + 3 * HOUR, actionId: 'a8' },
+                currentLevel: 5,
+                coinCost: 1000,
+                totalCost: 1000,
+                totalAttempts: 10,
+            });
+            const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+
+            extendSession(merged, 10, d20Start + HOUR);
+            merged.coinCost += 500;
+            merged.totalCost += 500;
+            merged.lastUpdateTime = d20Start + 2 * HOUR;
+
+            // Three hours of enhancing, not the seven from 20:00 on the 19th
+            expect(getSessionDuration(merged)).toBe(3 * 3600);
+
+            const result = attributeGoldSources({ ...base, enhancementSessions: [merged] });
+            // The 19th: -1,000 and 9,000 - 1,000 - 1,000; the 20th: the extension's 500
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 6000, '2026-08-20': -500 });
         });
 
         test("a fresh resume's spending lands on the day it was spent, not on the old leg's days", () => {

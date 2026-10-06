@@ -423,17 +423,29 @@ export function canResumeSession(session, run) {
 }
 
 /**
+ * Close the session's open stretch and start a new one now — for every path that sets an ended
+ * session running again (resume, extend). The stretch that ended is banked in `pastActiveSpans`
+ * with its own levels and spend; the new one starts from the level and spend in hand. Without
+ * this the reopened run's stretch reached back to the previous one's start: the idle gap counted
+ * as duration, and gold sources booked both runs' figures across the wrong days.
+ * @param {Object} session - Session reopened (mutated)
+ * @param {number} now - Epoch ms
+ */
+function startNewSegment(session, now) {
+    session.pastActiveSpans = getActiveSpans(session);
+    session.segmentStartTime = now;
+    session.segmentStartLevel = session.currentLevel;
+    session.segmentStartCost = session.totalCost || 0;
+}
+
+/**
  * Reopen an ended session so a new run's attempts are recorded against it. The time it spent
  * ended is not counted: its duration so far is banked and the clock restarts now.
  * @param {Object} session - Session to reopen (mutated)
  * @param {number} [now] - Epoch ms
  */
 export function resumeSession(session, now = Date.now()) {
-    // The stretch that ended closes with its own levels and spend; the new one starts from here
-    session.pastActiveSpans = getActiveSpans(session);
-    session.segmentStartTime = now;
-    session.segmentStartLevel = session.currentLevel;
-    session.segmentStartCost = session.totalCost || 0;
+    startNewSegment(session, now);
     session.state = SessionState.TRACKING;
     session.endTime = null;
     session.lastUpdateTime = now;
@@ -803,12 +815,15 @@ export function canExtendSession(session, itemHrid, currentLevel, action = null)
  *
  * @param {Object} session - Session object
  * @param {number} newTargetLevel - New target level
+ * @param {number} [now] - Epoch ms
  */
-export function extendSession(session, newTargetLevel) {
+export function extendSession(session, newTargetLevel, now = Date.now()) {
+    // A new run on this session: its stretch starts now, not at the session's start
+    startNewSegment(session, now);
     session.state = SessionState.TRACKING;
     session.targetLevel = newTargetLevel;
     session.endTime = null;
-    session.lastUpdateTime = Date.now();
+    session.lastUpdateTime = now;
     session.extensionBaseline = {
         totalAttempts: session.totalAttempts || 0,
         protectionCount: session.protectionCount || 0,
