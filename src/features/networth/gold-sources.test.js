@@ -18,6 +18,14 @@ import {
     taskCompletionValue,
     chestOpeningDayValue,
 } from './gold-sources.js';
+import {
+    createSession,
+    extendSession,
+    foldSessions,
+    getSessionDuration,
+    planSessionMerge,
+    SessionState,
+} from '../enhancement/enhancement-session.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -597,6 +605,181 @@ describe('attributeGoldSources', () => {
 
             // 9000 - 1000 - 1000 = 7000, quartered onto the 19th
             expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 1750, '2026-08-20': 5250 });
+        });
+
+        test('a resumed or merged enhancement run spreads over its active stretches, not the gap between them', () => {
+            // Four hours on the 19th, idle overnight, four more hours on the 20th (10:00-14:00)
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [{ start: spanStart, end: spanStart + 4 * 3600_000 }],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        lastUpdateTime: d20Start + 14 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 5,
+                        totalCost: 1000,
+                    },
+                ],
+            });
+
+            // 7000 net, half the active time on each day — not 6/22 of the start..end span on the 19th
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 3500, '2026-08-20': 3500 });
+        });
+
+        test('a merged or resumed run books each leg its own net, on its own days', () => {
+            // An hour on the 19th that spent 1,000 for no gain; an hour on the 20th that spent 100
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 0, cost: 1000 },
+                        ],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        segmentStartLevel: 0,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: d20Start + 11 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 0,
+                        totalCost: 1100,
+                    },
+                ],
+            });
+
+            // Not -550 each, the whole net shared out by duration
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': -1000, '2026-08-20': -100 });
+        });
+
+        test('a merged session extended after a pause keeps each leg on its own day', () => {
+            const HOUR = 3600_000;
+            // #7: 18:00-19:00 on the 19th, +0 → +0 for 1,000. #8: 20:00-21:00, +0 → +5 for 1,000,
+            // reaching its +5 target. Merged, then extended to +10 at 01:00 on the 20th — a
+            // four-hour pause — and spends 500 by 02:00 without moving off +5.
+            const seven = createSession('/items/sword', 'Sword', 0, 5, 0);
+            Object.assign(seven, {
+                id: 'session_7',
+                state: SessionState.COMPLETED,
+                startTime: spanStart,
+                lastUpdateTime: spanStart + HOUR,
+                endTime: spanStart + HOUR,
+                lastAttempt: { attemptNumber: 10, level: 0, timestamp: spanStart + HOUR, actionId: 'a7' },
+                currentLevel: 0,
+                coinCost: 1000,
+                totalCost: 1000,
+                totalAttempts: 10,
+            });
+            const eight = createSession('/items/sword', 'Sword', 0, 5, 0);
+            Object.assign(eight, {
+                id: 'session_8',
+                state: SessionState.COMPLETED,
+                startTime: spanStart + 2 * HOUR,
+                lastUpdateTime: spanStart + 3 * HOUR,
+                endTime: spanStart + 3 * HOUR,
+                lastAttempt: { attemptNumber: 10, level: 5, timestamp: spanStart + 3 * HOUR, actionId: 'a8' },
+                currentLevel: 5,
+                coinCost: 1000,
+                totalCost: 1000,
+                totalAttempts: 10,
+            });
+            const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+
+            extendSession(merged, 10, d20Start + HOUR);
+            merged.coinCost += 500;
+            merged.totalCost += 500;
+            merged.lastUpdateTime = d20Start + 2 * HOUR;
+
+            // Three hours of enhancing, not the seven from 20:00 on the 19th
+            expect(getSessionDuration(merged)).toBe(3 * 3600);
+
+            const result = attributeGoldSources({ ...base, enhancementSessions: [merged] });
+            // The 19th: -1,000 and 9,000 - 1,000 - 1,000; the 20th: the extension's 500
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 6000, '2026-08-20': -500 });
+        });
+
+        test('a leg that cannot be priced is left out alone; the valued legs are still booked', () => {
+            // The 19th's leg climbed +0 → +5 for 1,000 (net 7,000). The 20th's leg went on to +7,
+            // a level with no price: that leg alone is left out, and the session is partly valued.
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 5, cost: 1000 },
+                        ],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        segmentStartLevel: 5,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: d20Start + 11 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 7,
+                        totalCost: 1400,
+                    },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 7000, '2026-08-20': 0 });
+            expect(result.partlyPricedEnhancementSessions).toBe(1);
+            expect(result.unpricedEnhancementSessions).toBe(0);
+        });
+
+        test('a session none of whose legs can be priced is unpriced, as before', () => {
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 7, cost: 1000 },
+                        ],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        segmentStartLevel: 7,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: d20Start + 11 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 8,
+                        totalCost: 1400,
+                    },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 0, '2026-08-20': 0 });
+            expect(result.unpricedEnhancementSessions).toBe(1);
+            expect(result.partlyPricedEnhancementSessions).toBe(0);
+        });
+
+        test("a fresh resume's spending lands on the day it was spent, not on the old leg's days", () => {
+            // The 19th's leg climbed +0 → +5 for 1,000 (net 7,000). Resumed on the 20th, the new
+            // stretch has spent 500 before any attempt moved its clock: a zero-length stretch.
+            const resumedAt = d20Start + 10 * 3600_000;
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 5, cost: 1000 },
+                        ],
+                        segmentStartTime: resumedAt,
+                        segmentStartLevel: 5,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: resumedAt,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 5,
+                        totalCost: 1500,
+                    },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 7000, '2026-08-20': -500 });
         });
 
         test('a legacy enhancement session without either stamp books to its start day, whole', () => {

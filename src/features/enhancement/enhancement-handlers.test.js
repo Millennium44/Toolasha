@@ -22,6 +22,9 @@ const trackerMock = vi.hoisted(() => {
         pendingSessionStart: false,
         getCurrentSession: () => state.current,
         findExtendableSession: () => null,
+        // Auto-resume is off in these tests; enhancement-handlers.auto-resume.test.js covers it
+        findResumableSession: () => null,
+        resumeSessionById: vi.fn(async () => false),
         startSession: vi.fn(async (itemHrid, startLevel, targetLevel, protectFrom) => {
             state.calls.push(['start', itemHrid, startLevel, targetLevel, protectFrom]);
             state.current = { id: 's1', itemHrid, startLevel, targetLevel, protectFrom, totalXP: 0, lastAttempt: null };
