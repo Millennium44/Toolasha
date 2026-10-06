@@ -67,6 +67,24 @@ describe('mirrorCostColumn', () => {
         expect(column.totalSavings).toBe(0);
     });
 
+    test('the start level and the savings stop at the target level', () => {
+        // Mirrors pay off only from +10 on this climb, so a +8 target has none
+        const late = Array.from({ length: 20 }, (_, i) => (i < 9 ? (i + 1) * 100 : 1000 * 2 ** i));
+        const full = mirrorCostColumn(late, 10, 100);
+        expect(full.mirrorStartLevel).toBe(10);
+        const capped = mirrorCostColumn(late, 10, 100, 8);
+        expect(capped.mirrorStartLevel).toBeNull();
+        expect(capped.totalSavings).toBe(0);
+        expect(capped.toLevel).toBe(8);
+        // The per-level column is the same whatever the cap
+        expect(capped.levels).toEqual(full.levels);
+
+        const atTwelve = mirrorCostColumn(late, 10, 100, 12);
+        expect(atTwelve.mirrorStartLevel).toBe(10);
+        expect(atTwelve.totalSavings).toBe(late[11] - full.levels[11].mirrorCost);
+        expect(atTwelve.totalSavings).toBeLessThan(full.totalSavings);
+    });
+
     test('an unpriced mirror is not a free one', () => {
         const column = mirrorCostColumn(steep, 1000, 0);
         expect(column.levels[2].mirrorCost).toBeNull();

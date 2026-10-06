@@ -454,12 +454,13 @@ describe('protect-from sweep spending held protection', () => {
 describe("Philosopher's Mirror beside the protect-from sweep", () => {
     test('the mirror route is summarized whatever the slot holds, and the costs table keeps its columns', async () => {
         state.prices['/items/philosophers_mirror'] = 1;
-        const panel = buildPanel({ protection: 'mirror_of_protection' });
+        const panel = buildPanel({ target: 12, protection: 'mirror_of_protection' });
         await displayEnhancementStats(panel, '/items/cheese_sword');
         const stats = panel.querySelector('#mwi-enhancement-stats');
         const line = stats.querySelector('.mwi-protsweep-mirror');
         expect(line).not.toBeNull();
-        expect(line.textContent).toMatch(/use mirrors starting at \+\d+ — saves [\d.,]+[KMB]? to \+20/);
+        // Quoted to the panel's target, not to +20
+        expect(line.textContent).toMatch(/use mirrors starting at \+\d+ — saves [\d.,]+[KMB]? to \+12\./);
         // Visible with the sweep collapsed: it sits beside the toggle, not inside it
         expect(stats.querySelector('#mwi-enh-protsweep').contains(line)).toBe(false);
         // A non-mirror slot still draws today's costs table: no Mirror Cost column, no banner
@@ -470,7 +471,7 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
     test('with the slot empty, a protect-from setting does not hand the mirror comparison free protection', async () => {
         state.prices['/items/philosophers_mirror'] = 1;
         const lineFor = async (protectFrom) => {
-            const panel = buildPanel({ protection: null, protectFrom });
+            const panel = buildPanel({ target: 12, protection: null, protectFrom });
             await displayEnhancementStats(panel, '/items/cheese_sword');
             return panel.querySelector('.mwi-protsweep-mirror').textContent;
         };
@@ -501,7 +502,7 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
 
     test('with the mirror in the slot the banner and column stay, and the line agrees with the banner', async () => {
         state.prices['/items/philosophers_mirror'] = 1;
-        const panel = buildPanel({ protection: 'philosophers_mirror' });
+        const panel = buildPanel({ target: 12, protection: 'philosophers_mirror' });
         await displayEnhancementStats(panel, '/items/cheese_sword');
         const stats = panel.querySelector('#mwi-enhancement-stats');
         expect(stats.textContent).toContain('Mirror Cost');
@@ -509,5 +510,41 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
         const bannerStart = stats.textContent.match(/Use mirrors starting at \+(\d+)/)[1];
         const lineStart = stats.querySelector('.mwi-protsweep-mirror').textContent.match(/starting at \+(\d+)/)[1];
         expect(lineStart).toBe(bannerStart);
+        // The banner's total and the line's are both taken to the target
+        expect(stats.textContent).toContain('Total savings to +12:');
+        expect(stats.textContent).not.toContain('to +20');
+    });
+
+    test('below the level mirrors first pay off, the line and the banner are left out', async () => {
+        // Cheese Sword at these prices: mirrors are first cheaper at +10, so a +5 target has
+        // nothing to say about them — "saves X to +20" was a figure for a level nobody reaches
+        state.prices['/items/philosophers_mirror'] = 1;
+        const slotted = buildPanel({ target: 5, protection: 'philosophers_mirror' });
+        await displayEnhancementStats(slotted, '/items/cheese_sword');
+        const stats = slotted.querySelector('#mwi-enhancement-stats');
+        expect(stats.querySelector('.mwi-protsweep-mirror')).toBeNull();
+        expect(stats.textContent).not.toContain("Philosopher's Mirror Strategy");
+        // The per-level column still shows every level's mirror cost
+        expect(stats.textContent).toContain('Mirror Cost');
+
+        const other = buildPanel({ target: 5, protection: 'mirror_of_protection' });
+        await displayEnhancementStats(other, '/items/cheese_sword');
+        // Paying for protection makes the climb dearer, so mirrors pay off sooner — still quoted to +5
+        expect(other.querySelector('.mwi-protsweep-mirror').textContent).toMatch(/to \+5\.$/);
+    });
+
+    test('the summary line names the target it was taken to and is empty with no cheaper level', () => {
+        const coins = (value) => String(value);
+        const line = mirrorSummaryLine(
+            { priced: true, cheaperLevels: [6, 7, 8], mirrorStartLevel: 6, totalSavings: 100, targetLevel: 8 },
+            coins
+        );
+        expect(line).toContain('to +8.');
+        expect(
+            mirrorSummaryLine(
+                { priced: true, cheaperLevels: [], mirrorStartLevel: null, totalSavings: 0, targetLevel: 8 },
+                coins
+            )
+        ).toBe('');
     });
 });
