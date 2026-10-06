@@ -934,13 +934,6 @@ export async function writeSyncGist(
         // as *older* — skipped as "not newer", marked current, and never
         // downloaded again — while its contents are now the gist's. Lamport's
         // send rule is one above everything seen, and the listing just saw it.
-        // The counter is written above whatever the gist already carries.
-        // This device's own counter only knows the exchanges it took part in:
-        // a device that last took 5 and pushes 6 over a gist another device
-        // has since taken to 7 would write a payload every device at 7 reads
-        // as *older* — skipped as "not newer", marked current, and never
-        // downloaded again — while its contents are now the gist's. Lamport's
-        // send rule is one above everything seen, and the listing just saw it.
         const remoteSeq = listing?.syncSeq ?? null;
         const syncSeq =
             Number.isSafeInteger(manifest?.syncSeq) && remoteSeq !== null && remoteSeq >= manifest.syncSeq
