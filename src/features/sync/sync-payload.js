@@ -360,7 +360,10 @@ async function mergeLocalHistories(payload) {
  */
 export async function applyPayload(json) {
     const payload = JSON.parse(json);
+    // After the foreign stores are dropped: what another script keeps in a
+    // gist written by an older build is not this pull's to judge
     const droppedUnowned = dropUnownedFromPayload(payload);
+    assertApplicable(payload);
     const settingsStore = payload?.stores?.[SETTINGS_STORE];
 
     // Land the debounce queue before ANY local reads, including the settings
@@ -424,6 +427,38 @@ export async function applyPayload(json) {
         // otherwise leave every debounced write in the script held until the
         // unload flush. Ending an already-ended hold is a no-op.
         await storage.endRestore?.();
+    }
+}
+
+/**
+ * Refuse a payload `importEverything` would refuse, before anything is written.
+ *
+ * `importEverything` validates the format and every store's shape before its
+ * first write — but `applyPayload` writes before it gets there: it forgets the
+ * key-migration record of every settings map the payload carries
+ * (`reconcileKeyMigrationState`), on the understanding that those maps are
+ * about to land. A payload the import then rejects — a newer build's
+ * `formatVersion`, a store that is not a keyed object — left the local maps
+ * where they were with their records gone, and the next load replayed the
+ * reconciling migrations over choices the player had since made by hand.
+ *
+ * @param {*} payload - Parsed payload text
+ * @returns {void}
+ * @throws {Error} When the payload is not one this build can apply
+ */
+function assertApplicable(payload) {
+    if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) {
+        throw new Error(
+            `[Sync] The downloaded payload has format ${payload?.formatVersion ?? 'none'}; this build reads ` +
+                `${FORMAT_VERSION}. Update Toolasha on this device, or push from one whose data is good.`
+        );
+    }
+    const isRecordMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!isRecordMap(payload.stores)) throw new Error('[Sync] The downloaded payload has no stores to apply.');
+    for (const [storeName, entries] of Object.entries(payload.stores)) {
+        if (!isRecordMap(entries)) {
+            throw new Error(`[Sync] The downloaded payload's ${storeName} store is not a keyed object.`);
+        }
     }
 }
 

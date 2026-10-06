@@ -532,6 +532,37 @@ describe('applyPayload and the key-migration carry', () => {
 
         expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
     });
+
+    // The import refuses these before its first write; applyPayload used to
+    // forget the migration records first, so a refused pull still cost the
+    // maps their records and the next load replayed reconciling migrations
+    test.each([
+        ['a newer format', { formatVersion: 2, stores: { settings: { script_settingsMap_abc: {} } } }],
+        ['no format at all', { stores: { settings: { script_settingsMap_abc: {} } } }],
+        [
+            'a store that is not a keyed object',
+            { formatVersion: 1, stores: { settings: { script_settingsMap_abc: {} }, dungeonRuns: [1, 2] } },
+        ],
+        ['a settings store that is a string', { formatVersion: 1, stores: { settings: 'script_settingsMap_abc' } }],
+    ])('a payload with %s is refused before any record is forgotten or written', async (_label, body) => {
+        await expect(applyPayload(JSON.stringify(body))).rejects.toThrow();
+
+        expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
+        expect(importedPayloads).toHaveLength(0);
+        expect(flushLog).not.toContain('beginRestore');
+    });
+
+    test("another script's malformed store does not stop the pull", async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            stores: { settings: { script_settingsMap_abc: {} }, someoneElsesStore: 'not a map' },
+        });
+
+        await applyPayload(json);
+
+        expect(importedPayloads).toHaveLength(1);
+        expect(importedPayloads[0].stores.someoneElsesStore).toBeUndefined();
+    });
 });
 
 describe('hashPayload', () => {
