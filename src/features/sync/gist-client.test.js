@@ -760,6 +760,63 @@ describe('writeSyncGist', () => {
         expect(JSON.parse(JSON.parse(calls[1].data).files[MANIFEST_FILE].content).syncSeq).toBeUndefined();
     });
 
+    test('an unattended push never replaces an encrypted gist with one in the clear', async () => {
+        // The device whose passphrase was never entered: its pulls fail on the
+        // ciphertext, and its interval push used to quietly decrypt the gist
+        // for good by overwriting it with plaintext
+        const encryptedGist = {
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: {
+                        size: 90,
+                        content: JSON.stringify({ toolashaSync: 1, chunks: 1, syncSeq: 3, encrypted: { v: 1 } }),
+                    },
+                },
+            },
+        };
+        responses.push(encryptedGist);
+
+        const error = await writeSyncGist(
+            'tok',
+            'abc',
+            { toolashaSync: 1, chunks: 1, syncSeq: 4 },
+            ['plain'],
+            0,
+            null,
+            {
+                keepEncryption: true,
+            }
+        ).catch((caught) => caught);
+
+        expect(error).toBeInstanceOf(GistError);
+        expect(error.kind).toBe('passphrase');
+        // Listed, then refused — nothing written
+        expect(calls).toHaveLength(1);
+    });
+
+    test('an encrypted push, or one the player asked for, still goes up', async () => {
+        const encryptedGist = () => ({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: {
+                        size: 90,
+                        content: JSON.stringify({ toolashaSync: 1, chunks: 1, encrypted: {} }),
+                    },
+                },
+            },
+        });
+        responses.push(encryptedGist(), { status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1, encrypted: { v: 1 } }, ['sealed'], 0, null, {
+            keepEncryption: true,
+        });
+        responses.push(encryptedGist(), { status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain']);
+
+        expect(calls.map((call) => call.method)).toEqual(['GET', 'PATCH', 'GET', 'PATCH']);
+    });
+
     test('falls back to the remembered count when the gist cannot be listed', async () => {
         responses.push({ status: 500, body: {} });
         responses.push({ status: 200, body: { id: 'abc' } });

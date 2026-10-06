@@ -465,14 +465,29 @@ class SyncManager {
         // and a 304 against it would hide that counter from the write below,
         // which raises the manifest's counter above the gist's own.
         const known = await this._knownVersion(gistId);
-        const written = await writeSyncGist(
-            token,
-            gistId,
-            manifest,
-            chunks,
-            previousChunks,
-            known?.current ? known : null
-        );
+        let written;
+        try {
+            written = await writeSyncGist(
+                token,
+                gistId,
+                manifest,
+                chunks,
+                previousChunks,
+                known?.current ? known : null,
+                // A push nobody asked for must not switch encryption off for every
+                // device; one the player pressed is their call (see writeSyncGist)
+                { keepEncryption: silent }
+            );
+        } catch (error) {
+            // Quietly: this device's pulls of the same gist already fail on the
+            // missing passphrase and say so, and a second sticky toast every
+            // interval would add nothing but noise
+            if (silent && error instanceof GistError && error.kind === 'passphrase') {
+                console.warn('[Sync] Skipped an automatic push: the gist is encrypted and no passphrase is set here.');
+                return { ok: false, reason: 'passphrase' };
+            }
+            throw error;
+        }
 
         // The upload already landed — that part cannot be undone or is not
         // worth undoing, since the takeover's own more-recent write (if any)

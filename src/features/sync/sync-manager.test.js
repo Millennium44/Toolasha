@@ -129,11 +129,11 @@ vi.mock('./gist-client.js', () => ({
         if (options?.etag && options.etag === gist.remoteEtag) return { notModified: true, etag: options.etag };
         return gist.remoteEtag ? { ...gist.read, etag: gist.remoteEtag, files: gist.remoteFiles } : gist.read;
     },
-    writeSyncGist: async (_token, id, manifest, chunks, previous, known) => {
+    writeSyncGist: async (_token, id, manifest, chunks, previous, known, options) => {
         gist.writeAttempts += 1;
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
-        gist.writes.push({ id, manifest, chunks, previous, known });
+        gist.writes.push({ id, manifest, chunks, previous, known, options });
         return {
             id: id ?? 'created-id',
             updatedAt: 'now',
@@ -1503,6 +1503,32 @@ describe('the remembered gist version', () => {
         // Remembering 6 would leave this device reading its own push, at 8, as
         // newer than itself — and every later push of its own a step behind
         expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(8);
+    });
+
+    test('only an unattended push asks the write to keep an encrypted gist encrypted', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        await syncManager.push({ silent: true });
+        payload.text = '{"local":3}';
+        await syncManager.push();
+
+        expect(gist.writes.map((write) => write.options)).toEqual([
+            { keepEncryption: true },
+            { keepEncryption: false },
+        ]);
+    });
+
+    test('an unattended push refused for keeping encryption stays quiet; a pressed one is told', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError('passphrase', 'encrypted gist');
+
+        expect(await syncManager.push({ silent: true })).toEqual({ ok: false, reason: 'passphrase' });
+        expect(toasts).toHaveLength(0);
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
+
+        expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'passphrase' });
+        expect(toasts).toHaveLength(1);
     });
 
     test('a write that reports no ETag leaves no version behind', async () => {
