@@ -6,6 +6,7 @@ import webSocketHook from '../../core/websocket.js';
 import { createPanel, panelCard, panelNote, panelLine } from '../../utils/simple-panel.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { guildMemberSkills, guildXpTracker } from '../../utils/bundle-bridge.js';
 import {
     buildPlayerDTO,
     buildPlayerDTOFromLoadout,
@@ -31,6 +32,7 @@ import {
     saveTrialInputBundle,
     MAX_TRIAL_INPUT_BYTES,
 } from '../guild/guild-trial-simulation-inputs.js';
+import { TrialAssignPlanner } from './guild-trial-assign-ui.js';
 
 const ACCENT = '#b9a6ff';
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
@@ -185,6 +187,8 @@ export class GuildTrialSim {
         this.selectedSavedCapture = '-1';
         this.participantCount = null;
         this.skillingParticipantCount = null;
+        if (this.assign) this.assign.reset();
+        else this.assign = new TrialAssignPlanner(this);
     }
 
     /** Builder's Hall and Treasury levels for payouts: an entered level, else the current guild's. */
@@ -241,6 +245,18 @@ export class GuildTrialSim {
         };
         this.handlers.push(domObserver.onClass('GuildTrialSimulator', 'GuildPanel_', inject));
         this.handlers.push(domObserver.onReady('GuildTrialSimulatorCatchUp', inject));
+        // Every input the Assign view reads tells it here. Deferred a tick and coalesced: other
+        // modules (the guild XP tracker, the member skill store) read the same messages, and the
+        // view must look after they have, whatever order the handlers were added in.
+        let pendingInputs = null;
+        const notifyInputs = () => {
+            clearTimeout(pendingInputs);
+            pendingInputs = setTimeout(() => {
+                pendingInputs = null;
+                this.assign.inputsChanged();
+            }, 0);
+        };
+        this.handlers.push(() => clearTimeout(pendingInputs));
         const capture = (data, context) => {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (!data?.trialHrid?.startsWith('/guild_skilling/')) return;
@@ -255,10 +271,63 @@ export class GuildTrialSim {
                 const readings = (this.successReadings[data.trialHrid] ||= {});
                 readings[data.tier] = { tier: data.tier, successRate: data.successRate };
             }
+            notifyInputs();
         };
         webSocketHook.on('guild_skilling_updated', capture);
         this.handlers.push(() => webSocketHook.off('guild_skilling_updated', capture));
+        // The cycle's drawn trials, for the assignment view; the login payload covers the time before one arrives
+        // Readings belong to the guild they were taken in; a different guild id (a leave and a join
+        // in one session) drops them, as the guild XP tracker drops its roster. The login payload's
+        // guild is the baseline; a character switch resets everything anyway.
+        let guildId = dataManager.characterData?.guild?.id ?? null;
+        const trialSet = (data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            const arriving = data?.guild?.id;
+            if (arriving != null) {
+                if (guildId != null && String(arriving) !== String(guildId)) {
+                    this.readings = {};
+                    this.successReadings = {};
+                }
+                guildId = arriving;
+            }
+            if (Array.isArray(data?.guildWeeklyTrialSet?.skillHrids))
+                this.assign.setWeeklyTrialSet(data.guildWeeklyTrialSet);
+            if (typeof data?.guild?.trialMinLevelsData === 'string')
+                this.assign.trialMinLevelsData = data.guild.trialMinLevelsData;
+            // Minimums, the draw, the week and the building levels behind the slot cap all ride here
+            notifyInputs();
+        };
+        webSocketHook.on('guild_updated', trialSet);
+        this.handlers.push(() => webSocketHook.off('guild_updated', trialSet));
+        // The roster, sign-ups and week, once the guild XP tracker has written them — after any storage
+        // read it waits on, which a tick-later look at its messages could beat. Without the tracker
+        // (its bundle absent) its messages are watched instead.
+        const offTracker = guildXpTracker()?.onMetaChanged?.(notifyInputs);
+        if (offTracker) this.handlers.push(offTracker);
+        // Captured skill levels, after the member skill store's stored load lands or a profile is
+        // captured; without the store (its bundle absent) opened profiles are watched instead
+        const offSkills = guildMemberSkills()?.onChanged?.(notifyInputs);
+        if (offSkills) this.handlers.push(offSkills);
+        // Level-ups
+        const relayed = (_data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            notifyInputs();
+        };
+        for (const type of [
+            ...(offTracker ? [] : ['guild_trial_signup_updated', 'guild_characters_updated']),
+            ...(offSkills ? [] : ['profile_shared']),
+            'action_completed',
+        ]) {
+            webSocketHook.on(type, relayed);
+            this.handlers.push(() => webSocketHook.off(type, relayed));
+        }
+        // The player's own base levels and the guild's building levels, as the data manager holds them
+        for (const event of ['skills_updated', 'guild_shrine_levels_updated']) {
+            dataManager.on(event, notifyInputs);
+            this.handlers.push(() => dataManager.off(event, notifyInputs));
+        }
         const switched = () => {
+            guildId = null;
             this.generation++;
             this.controller?.abort();
             this.controller = null;
@@ -711,7 +780,8 @@ export class GuildTrialSim {
         // Let setup sections keep their content height; the panel body handles scrolling.
         body.style.display = 'block';
         body.style.backgroundColor = '#0e1016';
-        const busy = Boolean(this.controller || this.loading);
+        // The planner's search or check counts too: switching mode mid-run would orphan it
+        const busy = Boolean(this.controller || this.loading || this.assign.controller);
         body.appendChild(
             panelNote(
                 'Experimental planning model. Results depend on the entered roster and the assumptions below. Runs are local and do not sign up members or change loadouts.'
@@ -725,6 +795,7 @@ export class GuildTrialSim {
             [
                 ['combat', 'Combat'],
                 ['skilling', 'Skilling'],
+                ['assign', 'Assign skilling'],
             ],
             (kind) => {
                 this.kind = kind;
@@ -733,6 +804,11 @@ export class GuildTrialSim {
             },
             busy
         );
+        if (this.kind === 'assign') {
+            this.assign.draw(body, { button, row, field, select });
+            for (const section of body.children) section.style.marginBottom = '7px';
+            return;
+        }
         const title = (name) => name[0].toUpperCase() + name.slice(1);
         const trials =
             this.kind === 'combat'

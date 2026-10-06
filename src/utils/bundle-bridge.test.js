@@ -47,3 +47,22 @@ describe('bundle-bridge', () => {
         expect(bridge.loadoutSnapshot()).toBe(loadout);
     });
 });
+
+describe('guildXpTracker() reads the live tracker, not its registration record', () => {
+    test('the Combat key it reads is bound to the tracker singleton', async () => {
+        const { readFileSync } = await import('node:fs');
+        const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+        const bridgeSource = read('./bundle-bridge.js');
+        const key = bridgeSource.match(/guildXpTracker\(\)\s*\{[\s\S]*?Combat\?\.(\w+)/)[1];
+        const combat = read('../libraries/combat.js');
+        const importLine = combat.split('\n').find((line) => line.includes("'../features/guild/guild-xp-tracker.js'"));
+        // The default export is { name, initialize, cleanup, … } with none of getMemberMeta / getMemberList /
+        // getCurrentWeekStartAt / onMetaChanged; only the named singleton has them
+        expect(importLine).toContain(`{ guildXPTracker as ${key} }`);
+
+        const { guildXPTracker } = await import('../features/guild/guild-xp-tracker.js');
+        for (const method of ['getMemberMeta', 'getMemberList', 'getCurrentWeekStartAt', 'onMetaChanged']) {
+            expect(typeof guildXPTracker[method]).toBe('function');
+        }
+    });
+});

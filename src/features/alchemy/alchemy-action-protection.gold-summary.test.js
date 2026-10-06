@@ -23,7 +23,7 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 vi.mock('../actions/action-panel-sort.js', () => ({ default: {} }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ actionPanelSort: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, actionPanelSort: () => null }));
 vi.mock('../../utils/alchemy-fees.js', () => ({ getAlchemyCoinCost: () => 10 }));
 vi.mock('../../utils/formatters.js', () => ({ formatLargeNumber: (n) => String(n) }));
 vi.mock('../../utils/panel-z-index.js', () => ({

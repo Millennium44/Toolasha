@@ -39,7 +39,7 @@ vi.mock('../core/config.js', () => ({
 }));
 
 // settings-schema pulls these in for unrelated settings groups; neither matters here
-vi.mock('./bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
+vi.mock('./bundle-bridge.js', () => ({ guildMemberSkills: () => null, loadoutSnapshot: () => null }));
 vi.mock('./game-server.js', () => ({ isTestServer: () => false }));
 
 vi.mock('../core/data-manager.js', () => ({

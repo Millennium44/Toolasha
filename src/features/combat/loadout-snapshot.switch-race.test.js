@@ -53,7 +53,7 @@ vi.mock('../../core/storage.js', () => ({
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ webSocketHook: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, webSocketHook: () => null }));
 
 const loadoutSnapshot = (await import('./loadout-snapshot.js')).default;
 

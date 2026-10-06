@@ -100,7 +100,7 @@ vi.mock('../inventory-badge-manager.js', () => ({
 vi.mock('../../combat/loadout-snapshot.js', () => ({
     default: { snapshots: {}, onUpdate: vi.fn(), offUpdate: vi.fn(), updateEnhancementLevel: vi.fn() },
 }));
-vi.mock('../../../utils/bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
+vi.mock('../../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, loadoutSnapshot: () => null }));
 vi.mock('../../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async (id) => id,
     requestAdoptionConsent: () => Promise.resolve(null),

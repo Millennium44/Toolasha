@@ -76,7 +76,7 @@ vi.mock('../../api/marketplace.js', () => ({
     },
 }));
 
-vi.mock('../../utils/bundle-bridge.js', () => ({ missingMaterialsButton: null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, missingMaterialsButton: null }));
 vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: { observe: () => () => {}, onClass: () => () => {}, disconnect: () => {} },

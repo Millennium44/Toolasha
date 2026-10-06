@@ -9,6 +9,7 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true
 /** What the Risk of Ruin panel is currently offering; null means "no run to cost against" */
 const bridge = vi.hoisted(() => ({ context: null }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     riskOfRuinUI: () => ({ getDepthCapContext: () => bridge.context }),
 }));
 
