@@ -285,15 +285,24 @@ class LabyrinthClearRate {
         );
         this.unregisterHandlers.push(unregister);
 
-        const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () => {
-            this.seedFromCharacterData();
-            this.injectTileControls();
-            this.refreshAttemptBadges();
-            this.pruneClearedTileBadges();
-            this.pruneClearedPathOverlays();
-            this.pruneUsedBeaconOverlays();
-            this.scheduleAutoTileCalc();
-        });
+        // Debounced: the handler ignores the cell it is handed and rescans the
+        // whole grid, and a grid render inserts every room cell at once — up to
+        // 64 of them, each a separate call doing document-wide queries and
+        // computed-style reads. Collapsed to one call per burst of re-renders.
+        const unregisterTiles = domObserver.onClass(
+            'LabyrinthTileCalc',
+            'LabyrinthPanel_roomCell',
+            () => {
+                this.seedFromCharacterData();
+                this.injectTileControls();
+                this.refreshAttemptBadges();
+                this.pruneClearedTileBadges();
+                this.pruneClearedPathOverlays();
+                this.pruneUsedBeaconOverlays();
+                this.scheduleAutoTileCalc();
+            },
+            { debounce: true, debounceDelay: 150, debounceMaxWait: 1000 }
+        );
         this.unregisterHandlers.push(unregisterTiles);
         // @run-at document-start: both settle delays start from the shared observer's
         // actual-ready signal (immediate if it is already attached), not module init, so
@@ -3376,11 +3385,22 @@ class LabyrinthClearRate {
                     this.autoTileTimer = null;
                     this.runTileCalculation({ auto: true });
                 }, 2500);
-            } else if (combatRetryNeeded === 0) {
+            } else if (combatRetryNeeded === 0 || auto) {
+                // Settled: every calculable tile is badged from a full pass, or —
+                // for an auto pass — its retries are spent and what is left is a
+                // genuine 0% (never cached, see computeCombatClear) or a room
+                // whose sim could not run. Record the inputs either way, so
+                // further auto triggers restore from cache instead of re-simming.
+                // Without this a floor holding a single 0% room re-simmed it,
+                // and refilled the bar, on every grid re-render and every
+                // labyrinth_updated for as long as the floor map was open. A
+                // changed room, gear, loadout or precision changes the
+                // fingerprint and runs a fresh pass with fresh retries; a manual
+                // Calculate always re-sims everything.
                 this.autoTileRetryCount = 0;
-                // Every calculable tile is badged from a full pass — record the
-                // inputs so further auto triggers restore from cache instead of
-                // re-simming until a room, gear, or precision actually changes.
+                for (const target of combatTargets) {
+                    if (this._tileResults.has(target.tileKey)) this.calculatedTileKeys.add(target.tileKey);
+                }
                 this._autoCalcFingerprint = fingerprint;
             }
         } catch (error) {

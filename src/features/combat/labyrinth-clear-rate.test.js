@@ -4037,6 +4037,19 @@ describe('the recompute verb', () => {
         expect(verb().kind).toBe('verb');
     });
 
+    test('the room-cell watcher is debounced, so one grid render is one rescan', async () => {
+        // The handler rescans the whole grid whatever cell it is handed, and a
+        // render inserts every cell at once — undebounced, a 64-room floor was
+        // 64 document-wide rescans per game repaint
+        const { default: domObserver } = await import('../../core/dom-observer.js');
+        domObserver.onClass.mockClear();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+        const call = domObserver.onClass.mock.calls.find(([name]) => name === 'LabyrinthTileCalc');
+        expect(call).toBeDefined();
+        expect(call[3]).toMatchObject({ debounce: true });
+    });
+
     test('switching the feature off takes it out of the palette', () => {
         resetCommands();
         labyrinthClearRate.isInitialized = false;
@@ -4931,6 +4944,108 @@ describe('floor calculation progress bar across a retry', () => {
 
         expect(seq).not.toContain(1);
         for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1]);
+    });
+});
+
+/**
+ * A genuine 0% room is never cached (a 0% right after load is often a sim of
+ * gear that had not arrived yet), so an auto pass retries it — three times. Once
+ * those are spent the floor has to count as settled, or every grid re-render
+ * and every labyrinth_updated re-sims every 0% room and refills the bar for as
+ * long as the floor map is open.
+ */
+describe('a floor with a 0% room settles once its retries are spent', () => {
+    const IMP = '/monsters/imp';
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._tileResults?.clear();
+        if (labyrinthClearRate.autoTileTimer) clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.autoTileTimer = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        labyrinthClearRate._autoCalcFingerprint = null;
+        vi.restoreAllMocks();
+    });
+
+    const mountFloor = () => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [100, 110].map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false })),
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.autoTileRetryCount = 0;
+        return parent;
+    };
+
+    /** The first pass and each retry the pass schedules, run straight through */
+    const runPassAndRetries = async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        while (labyrinthClearRate.autoTileTimer) {
+            clearTimeout(labyrinthClearRate.autoTileTimer);
+            labyrinthClearRate.autoTileTimer = null;
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+        }
+    };
+
+    test('a genuine 0% room is not re-simmed by later auto triggers', async () => {
+        const parent = mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+
+        await runPassAndRetries();
+        const settledAfter = sims.mock.calls.length;
+        expect(labyrinthClearRate._autoCalcFingerprint).not.toBeNull();
+
+        // A game re-render wipes both badges; auto triggers keep arriving
+        parent.querySelectorAll('.mwi-labyrinth-tile-badge').forEach((el) => el.remove());
+        for (let i = 0; i < 5; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(sims.mock.calls.length).toBe(settledAfter);
+        // ...and both badges, the 0% one included, are restored from the last pass
+        expect(parent.querySelectorAll('.mwi-labyrinth-tile-badge').length).toBe(2);
+        expect(parent.children[1].textContent).toContain('0%');
+    });
+
+    test('a room whose sim cannot run stops being retried once its retries are spent', async () => {
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110
+                    ? { failed: true, clearChance: 0, expectedSeconds: Infinity }
+                    : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+
+        await runPassAndRetries();
+        const settledAfter = sims.mock.calls.length;
+        for (let i = 0; i < 5; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(sims.mock.calls.length).toBe(settledAfter);
+    });
+
+    test('a manual Calculate still re-sims the settled 0% room', async () => {
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        await runPassAndRetries();
+        const settledAfter = sims.mock.calls.length;
+        await labyrinthClearRate.runTileCalculation();
+        expect(sims.mock.calls.length).toBe(settledAfter + 2);
     });
 });
 
