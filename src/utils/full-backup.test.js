@@ -239,6 +239,18 @@ describe('stripExcludedKeys', () => {
         expect(kept).toEqual({ profile_list: [{ characterID: 1 }] });
     });
 
+    test("never carries another machine's sync bookkeeping, out or in", () => {
+        // Which gist, how far this device got, its merge baseline and whether
+        // the gist holds changes not applied here: true only where written
+        const kept = stripExcludedKeys('settings', {
+            toolasha_sync_lastSyncedSeq: 9,
+            toolasha_sync_baseline: { x: 'h' },
+            toolasha_sync_unapplied: { since: 'x' },
+            script_settingsMap_abc: { a: 1 },
+        });
+        expect(kept).toEqual({ script_settingsMap_abc: { a: 1 } });
+    });
+
     test('drops the labyrinth tick capture autosave but keeps the rest of the labyrinth store', () => {
         const kept = stripExcludedKeys('labyrinth', {
             labyrinthTickCaptureAutosave_char1: { ticks: new Array(8000).fill({}) },

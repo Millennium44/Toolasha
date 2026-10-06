@@ -239,6 +239,19 @@ describe('a settings file cannot plant someone else’s chat history', () => {
         expect(result.imported).toBe(1);
     });
 
+    test("importSettings never takes another machine's sync bookkeeping", async () => {
+        await settingsStorage.importSettings(
+            JSON.stringify({
+                script_settingsMap: JSON.stringify({ chatHistoryExtender: true }),
+                toolasha_sync_baseline: { x: 'h' },
+                toolasha_sync_lastSyncedSeq: 9,
+            })
+        );
+
+        expect(Object.keys(state.written.settings || {})).not.toContain('toolasha_sync_baseline');
+        expect(Object.keys(state.written.settings || {})).not.toContain('toolasha_sync_lastSyncedSeq');
+    });
+
     test('the repeated prefix list matches the shared one, in both directions', () => {
         // `settings-storage.js` is a Core module and Core loads before Utils, so
         // it repeats the literal rather than importing it. This is what keeps

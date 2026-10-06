@@ -352,8 +352,10 @@ const TASK_CHARACTER_SCOPED_PREFIXES = ['taskProtectedHrids', 'taskAutoRerollHri
  * key, and importing it would plant someone else's whispers on this machine
  * exactly as if they had been typed here — the same both-directions rule the
  * sync payload and the full backup already follow.
+ *
+ * `toolasha_sync_` is the sync's per-device bookkeeping (see full-backup.js).
  */
-const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
+const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_', 'toolasha_sync_'];
 
 /**
  * Where the settings that belong to the account rather than to a character live.
