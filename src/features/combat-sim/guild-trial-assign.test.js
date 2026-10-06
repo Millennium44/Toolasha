@@ -461,6 +461,24 @@ describe('the async search hands the browser frames inside a pass', () => {
         expect(yields.count).toBeGreaterThan(100);
     });
 
+    test('a hidden page is not yielded to (its timers may run once a second), and still cancels', async () => {
+        let clock = 0;
+        vi.spyOn(performance, 'now').mockImplementation(() => (clock += 13));
+        globalThis.document = { visibilityState: 'hidden' };
+        try {
+            const result = await optimizeTrialAssignmentAsync(big());
+            expect(yields.count).toBe(0);
+            expect(result.timing.yields).toBe(0);
+            const controller = new AbortController();
+            controller.abort();
+            await expect(optimizeTrialAssignmentAsync(big(), { signal: controller.signal })).rejects.toThrow(
+                /canceled/
+            );
+        } finally {
+            delete globalThis.document;
+        }
+    });
+
     test('an abort during a pass rejects at the next frame', async () => {
         let clock = 0;
         vi.spyOn(performance, 'now').mockImplementation(() => (clock += 13));
@@ -470,5 +488,43 @@ describe('the async search hands the browser frames inside a pass', () => {
         };
         await expect(optimizeTrialAssignmentAsync(big(), { signal: controller.signal })).rejects.toThrow(/canceled/);
         expect(yields.count).toBe(40);
+    });
+});
+
+describe('search cost at a live guild’s size', () => {
+    // As measured live: 126 eligible, 55 with data, the rest kept where they signed up or not
+    // placed, four trials of 42 slots
+    const trials = [CRAFTING, MILKING, ALCHEMY, COOKING];
+    const live = () => {
+        const members = [];
+        for (let i = 0; i < 126; i++) {
+            const rates = {};
+            if (i < 55) {
+                for (const [t, hrid] of trials.entries()) {
+                    if ((i * 7 + t) % 6 === 0) continue;
+                    rates[hrid] = rateInputFromLevel(60 + ((i * 37 + t * 53) % 140), {
+                        efficiency: 0.3 + (i % 5) / 10,
+                        actionSeconds: 4 + (i % 3),
+                        doubleChance: 0.05,
+                    });
+                }
+            }
+            const member = { id: String(i), name: `M${i}`, rates, inCombat: i % 4 === 0 };
+            if (i % 3 === 0) member.current = trials[i % 4];
+            if (i >= 55) {
+                if (!member.current) continue;
+                member.pin = member.current;
+            }
+            members.push(member);
+        }
+        return { trials, baseWork: 40000, cap: 42, members, seed: 1, restarts: 4 };
+    };
+
+    test('the async search finishes well inside two seconds, with real frames', async () => {
+        const started = performance.now();
+        const result = await optimizeTrialAssignmentAsync(live());
+        expect(performance.now() - started).toBeLessThan(2000);
+        expect(result.timing.wallMs).toBeGreaterThanOrEqual(result.timing.computeMs);
+        expect(result.totalPoints).toBeCloseTo(optimizeTrialAssignment(live()).totalPoints, 9);
     });
 });

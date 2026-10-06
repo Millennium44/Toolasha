@@ -195,7 +195,29 @@ function prepare(problem) {
         options: { baseWork, seconds, jitter: problem.jitter || ASSIGN_JITTER },
         members,
         zero: new Float64Array(TRIAL_MAX_TIER + 1),
+        marginal: Float64Array.from({ length: TRIAL_MAX_TIER + 1 }, (_, tier) =>
+            tier ? tierMarginalPoints('skilling', tier) : 0
+        ),
+        poolsBySignups: new Map(),
     };
+}
+
+/**
+ * Every tier's pool for a sign-up count, computed once per count rather than per tier walked.
+ * @param {Object} state - Prepared problem
+ * @param {number} participants - Sign-ups
+ * @returns {Float64Array} Indexed by tier
+ */
+function poolsFor(state, participants) {
+    let pools = state.poolsBySignups.get(participants);
+    if (!pools) {
+        pools = new Float64Array(TRIAL_MAX_TIER + 1);
+        for (let tier = 1; tier <= TRIAL_MAX_TIER; tier++) {
+            pools[tier] = tierPoolWork({ baseWork: state.options.baseWork, tier, participants });
+        }
+        state.poolsBySignups.set(participants, pools);
+    }
+    return pools;
 }
 
 /**
@@ -239,22 +261,45 @@ class Sheet {
         this.counts[t] += sign;
     }
 
+    /**
+     * {@link scoreTrial}'s mean points for trial `t`, optionally without member `out` and with
+     * member `inn`. The search's hot path: it walks the summed rates in place, with pools cached
+     * per sign-up count, instead of copying the rates and building a pool per tier. The arithmetic
+     * is the same, operation for operation, so the scores are identical.
+     */
     score(t, out = null, inn = null) {
+        const { options, marginal } = this.state;
         const sum = this.sums[t];
-        const work = new Float64Array(sum);
-        let count = this.counts[t];
-        if (out != null) {
-            const rates = this.rate(out, t);
-            for (let i = 1; i < work.length; i++) work[i] -= rates[i];
-            count--;
+        const outRates = out != null ? this.rate(out, t) : null;
+        const inRates = inn != null ? this.rate(inn, t) : null;
+        const count = this.counts[t] - (out != null ? 1 : 0) + (inn != null ? 1 : 0);
+        const pools = poolsFor(this.state, count);
+        const jitter = options.jitter;
+        let points = 0;
+        for (let j = 0; j < jitter.length; j++) {
+            const factor = jitter[j];
+            let left = options.seconds;
+            let earned = 0;
+            for (let tier = 1; tier <= TRIAL_MAX_TIER; tier++) {
+                let work = sum[tier];
+                if (outRates) work -= outRates[tier];
+                if (inRates) work += inRates[tier];
+                if (work < 0) work = 0;
+                const rate = work * factor;
+                if (!(rate > 0)) break;
+                const pool = pools[tier];
+                const time = pool / rate;
+                if (time <= left) {
+                    left -= time;
+                    earned += marginal[tier];
+                    continue;
+                }
+                earned += marginal[tier] * partialTierCredit((left * rate) / pool);
+                break;
+            }
+            points += earned;
         }
-        if (inn != null) {
-            const rates = this.rate(inn, t);
-            for (let i = 1; i < work.length; i++) work[i] += rates[i];
-            count++;
-        }
-        for (let i = 1; i < work.length; i++) if (work[i] < 0) work[i] = 0;
-        return scoreTrial(work, count, this.state.options).points;
+        return points / jitter.length;
     }
 
     total() {
@@ -264,6 +309,13 @@ class Sheet {
     move(m, to) {
         const from = this.assignment[m];
         if (from === to) return;
+        // When each trial (the bench last) last changed, so an evaluation of an unchanged pair of
+        // trials can be skipped: its answer cannot have changed
+        const bench = this.state.trials.length;
+        this.clock = (this.clock || 0) + 1;
+        this.changedAt ||= new Float64Array(bench + 1);
+        this.changedAt[from < 0 ? bench : from] = this.clock;
+        this.changedAt[to < 0 ? bench : to] = this.clock;
         if (from >= 0) this.add(m, from, -1);
         if (to >= 0) this.add(m, to, 1);
         this.assignment[m] = to;
@@ -409,8 +461,26 @@ function* placeEveryone(state, sheet) {
 /** One improving pass of single moves then swaps; true when anything changed */
 function* improve(state, sheet) {
     const free = freeMembers(state);
+    const bench = state.trials.length;
+    sheet.changedAt ||= new Float64Array(bench + 1);
+    sheet.clock ||= 0;
+    // Clock readings at which a member's moves, or a pair's swap, were last found not to improve.
+    // Moves and swaps read only the trials involved, so while none of them has changed since,
+    // re-evaluating would give the same answer and is skipped. Results are unchanged.
+    sheet.moveStamp ||= new Float64Array(state.members.length).fill(-1);
+    sheet.pairStamp ||= new Float64Array(free.length * free.length).fill(-1);
+    const slot = (t) => (t < 0 ? bench : t);
+    const unchangedSince = (stamp) => {
+        if (stamp < 0) return false;
+        for (let t = 0; t <= bench; t++) if (sheet.changedAt[t] > stamp) return false;
+        return true;
+    };
     let changed = false;
     for (const m of free) {
+        if (unchangedSince(sheet.moveStamp[m])) {
+            yield;
+            continue;
+        }
         const from = sheet.assignment[m];
         let pick = null;
         for (let t = -1; t < state.trials.length; t++) {
@@ -424,7 +494,7 @@ function* improve(state, sheet) {
         if (pick) {
             sheet.move(m, pick.t);
             changed = true;
-        }
+        } else sheet.moveStamp[m] = sheet.clock;
         yield;
     }
     for (let i = 0; i < free.length; i++) {
@@ -434,6 +504,10 @@ function* improve(state, sheet) {
             const b = free[j];
             const ta = sheet.assignment[a];
             const tb = sheet.assignment[b];
+            const key = i * free.length + j;
+            const stamp = sheet.pairStamp[key];
+            if (stamp >= 0 && sheet.changedAt[slot(ta)] <= stamp && sheet.changedAt[slot(tb)] <= stamp) continue;
+            sheet.pairStamp[key] = sheet.clock;
             if (ta === tb || !canPlace(state, a, tb) || !canPlace(state, b, ta)) continue;
             // Benching a member who must be placed is only a trade for another such member
             // left out for want of slots
@@ -540,15 +614,38 @@ export function optimizeTrialAssignment(problem) {
  * @returns {Promise<Object>} As for {@link optimizeTrialAssignment}
  */
 export async function optimizeTrialAssignmentAsync(problem, { signal } = {}) {
-    let sliceStart = performance.now();
-    return runSearch(problem, async () => {
+    const started = performance.now();
+    const timing = { wallMs: 0, computeMs: 0, yields: 0 };
+    let sliceStart = started;
+    // Synchronous unless a frame is due: awaiting on every step cost more than the steps did.
+    // A hidden page has no frames to keep, and its timers may be throttled to a second, so it is
+    // not yielded to; Cancel is still checked at every step.
+    const pause = () => {
         if (signal?.aborted) throw new Error('Assignment canceled.');
-        if (performance.now() - sliceStart > 12) {
+        const now = performance.now();
+        if (now - sliceStart <= YIELD_SLICE_MS || pageHidden()) return null;
+        timing.computeMs += now - sliceStart;
+        timing.yields++;
+        return (async () => {
             await yieldToBrowser();
             sliceStart = performance.now();
             if (signal?.aborted) throw new Error('Assignment canceled.');
-        }
-    });
+        })();
+    };
+    const result = await runSearch(problem, pause);
+    const end = performance.now();
+    timing.computeMs += end - sliceStart;
+    timing.wallMs = end - started;
+    result.timing = timing;
+    return result;
+}
+
+/** Work between frames handed to the browser, in milliseconds */
+const YIELD_SLICE_MS = 12;
+
+/** Whether the page is in a background tab or minimized */
+function pageHidden() {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
 }
 
 function runSearch(problem, pause) {
@@ -586,7 +683,8 @@ function runSearch(problem, pause) {
     return (async () => {
         let step = steps.next();
         while (!step.done) {
-            await pause();
+            const wait = pause();
+            if (wait) await wait;
             step = steps.next();
         }
         return finish(step.value);
