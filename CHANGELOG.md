@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A combat task's profit estimate now flags unpriced drops ("≥") and unpriced consumables ("-- ⚠") instead of counting them as worth nothing; the reroll-spend line no longer lands on the wrong card when one task's name contains another's ("Cow" vs "Verdant Cow"); the planner no longer files one character's combat baseline under another after a switch, and an earning leg whose market volume was not measured now says so.
 
+### Labyrinth badges cover rooms revealed mid-calculation
+
+- Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
