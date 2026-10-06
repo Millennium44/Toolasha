@@ -909,7 +909,7 @@ describe('writeSyncGist', () => {
         expect(calls).toHaveLength(1);
     });
 
-    test('a failed re-list on a conflict retry keeps the listing the first attempt got', async () => {
+    test('a failed re-list on a conflict retry stops instead of writing on the stale listing', async () => {
         vi.useFakeTimers();
         try {
             responses.push({
@@ -923,18 +923,26 @@ describe('writeSyncGist', () => {
             });
             responses.push({ status: 409, body: { message: 'Conflict' } });
             responses.push({ status: 502, body: {} });
-            responses.push({ status: 200, body: { id: 'abc' } });
 
-            const pending = writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 3 }, ['data']);
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 3 }, ['data']).catch((caught) => caught);
             await vi.advanceTimersByTimeAsync(3000);
-            const result = await pending;
+            const error = await pending;
 
-            const { files } = JSON.parse(calls[3].data);
-            // Still raised above the gist, and the orphan still named
-            expect(result.syncSeq).toBe(8);
-            expect(files[chunkFileName(1)]).toBeNull();
+            // The device that won the conflict may have raised the counter or encrypted the gist
+            expect(error.kind).toBe('unlisted');
+            expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(1);
         } finally {
             vi.useRealTimers();
+        }
+    });
+
+    test('a manifest that parses but is not a sync manifest leaves encryption unknown', async () => {
+        for (const content of ['[]', '{}', '{"encrypted":false}']) {
+            responses.push({ status: 200, body: { files: { [MANIFEST_FILE]: { size: 9, content } } } });
+            const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+                unattended: true,
+            }).catch((caught) => caught);
+            expect(error.kind).toBe('passphrase');
         }
     });
 

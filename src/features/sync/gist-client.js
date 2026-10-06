@@ -602,6 +602,10 @@ function listedManifest(files) {
     if (!file || file.truncated || typeof file.content !== 'string') return { syncSeq: null, encrypted: null };
     try {
         const manifest = JSON.parse(file.content);
+        // The same shape readSyncGist insists on; anything else parsed but says nothing about encryption
+        if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || !(Number(manifest.chunks) >= 1)) {
+            return { syncSeq: null, encrypted: null };
+        }
         const seq = manifest?.syncSeq;
         return {
             syncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : null,
@@ -840,8 +844,10 @@ export async function writeSyncGist(
     const payloadBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     let serialized = null;
     let plaintextConfirmed = false;
+    let attempts = 0;
 
     const attempt = async () => {
+        attempts += 1;
         // Listed before the size guard, because what survives the write counts
         // towards the ceiling as much as what is being written. Inside the
         // attempt so a conflict retry sees the file set that just beat it.
@@ -852,9 +858,15 @@ export async function writeSyncGist(
             if (!fresh && unattended) {
                 throw new GistError('unlisted', 'The sync gist could not be listed before writing it.');
             }
-            // A failed re-list on a conflict retry must not throw away the
-            // listing the first attempt did get
-            if (fresh || !listing) listing = fresh;
+            // A conflict means another device just wrote: the first attempt's listing predates it, so
+            // its counter and encryption cannot be trusted. Without a fresh one the retry stops.
+            if (!fresh && attempts > 1) {
+                throw new GistError(
+                    'unlisted',
+                    'Another device pushed at the same moment and the sync gist could not be listed again.'
+                );
+            }
+            listing = fresh;
         }
         const existingFiles = listing?.files ?? null;
 
