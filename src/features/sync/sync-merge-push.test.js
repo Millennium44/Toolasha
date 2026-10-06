@@ -721,6 +721,37 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(a.latches).toBe(0);
     });
 
+    test('a device keeping 20 sessions that startup-pulled a gist of 500 does not cut it on its next merge', async () => {
+        const { a, b } = await syncedPair();
+        const range = (from, count) => Array.from({ length: count }, (_, index) => from + index);
+        a.settings.logCap = 20;
+        b.settings.logCap = 500;
+        a.db.xpHistory.cappedLog_c1 = range(1, 20);
+        await as(b, async () => {
+            b.db.xpHistory.cappedLog_c1 = range(1000, 500);
+            await auto.push();
+        });
+        // A's startup pull records the gist's 500 as the last exchange, and keeps 20 itself
+        await as(a, auto.startup);
+        expect(a.db.xpHistory.cappedLog_c1).toHaveLength(20);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+
+        // B moves the gist on (a setting, the log untouched); A records a session and its push merges
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        const log = gistStores().xpHistory.cappedLog_c1;
+        expect(log).toContain(5000);
+        expect(log).toEqual(expect.arrayContaining(range(1000, 500)));
+        expect(gistStores().settings[MAP].X.isTrue).toBe(true);
+    });
+
     test('a device switched to Settings only does not carry the gist history stores in its merged upload', async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {

@@ -1322,6 +1322,35 @@ describe('mergeForUpload, which writes nothing local', () => {
         });
     });
 
+    test('a registered key this device alone moved is still folded: its scalar wins, the gist keeps its entries', () => {
+        // A capped fold: this device keeps two, and its copy is trimmed to them
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'cappedRuns',
+            merge: (base, incoming, context) => ({
+                sortBy: incoming?.sortBy ?? base?.sortBy,
+                runs: [...new Set([...(base?.runs || []), ...(incoming?.runs || [])])]
+                    .sort((x, y) => y - x)
+                    .slice(0, context?.forUpload ? Infinity : 2),
+            }),
+            label: 'capped',
+        });
+        const full = (value) =>
+            JSON.stringify({
+                formatVersion: 1,
+                exportedAt: 'x',
+                syncScope: 'everything',
+                stores: { dungeonRuns: { cappedRuns_c1: value } },
+            });
+        const gist = { sortBy: 'old', runs: [5, 4, 3, 2, 1] };
+        const local = { sortBy: 'new', runs: [6, 5] };
+
+        const merged = JSON.parse(mergeForUpload(full(local), full(gist), wholeKeyHashes(full(gist))).text);
+
+        expect(merged.stores.dungeonRuns.cappedRuns_c1).toEqual({ sortBy: 'new', runs: [6, 5, 4, 3, 2, 1] });
+        off();
+    });
+
     test("never uploads another device's token or another script's keys from the gist", () => {
         const local = payloadOf({ settings: { [MAP]: { A: { v: 1 } } } });
         const remote = payloadOf({

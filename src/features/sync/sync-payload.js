@@ -1013,11 +1013,12 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
  * Per key:
  * - settings maps per setting, the later change winning ({@link localStampWins}), each kept value with its
  *   stamp;
- * - any other key whose gist value is still the one this device last exchanged (see {@link wholeKeyHashes}):
- *   this device's value;
- * - otherwise a key with a registered merge folded with it, this device as the base and the gist as the
- *   incoming side, so what the fold cannot combine goes to the gist — every pull folds the same way round,
- *   which is what lets two devices settle;
+ * - a key with a registered merge always folded with it, never taken whole (this device's copy may be trimmed
+ *   to its own retention): this device as the base and the gist as the incoming side, so what the fold cannot
+ *   combine goes to the gist — every pull folds the same way round, which is what lets two devices settle —
+ *   except when the gist's value is still the one this device last exchanged (see {@link wholeKeyHashes}),
+ *   when this device's side is the incoming one;
+ * - any other key whose gist value is still the one this device last exchanged: this device's value;
  * - otherwise the gist's value;
  * - a key on one side only, kept from that side.
  *
@@ -1080,15 +1081,19 @@ export function mergeForUpload(localText, remoteText, baseline) {
                 continue;
             }
             // The gist moved nowhere since this device last exchanged it: this
-            // device's copy is the newer one whole, folded or not
+            // device's copy is the newer one
             const registration = mergeForKey(storeName, key);
-            if (
-                keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
-                    allowRestored: !registration,
-                    storeName,
-                    key,
-                })
-            ) {
+            const mineMoved = keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
+                allowRestored: !registration,
+                storeName,
+                key,
+            });
+            // Whole, for a key with no fold. A key with one is still folded:
+            // this device's copy may be trimmed to its own retention setting,
+            // and taken whole it would delete from the gist history the other
+            // device keeps — a device keeping 20 sessions, after a startup
+            // pull of a gist holding 500, would upload its 20
+            if (mineMoved && !registration) {
                 out[key] = value;
                 continue;
             }
@@ -1100,10 +1105,15 @@ export function mergeForUpload(localText, remoteText, baseline) {
                     // The other way round, each device's scalar beat the
                     // gist's on every upload, the next device's beat that,
                     // and two devices traded one setting every interval.
+                    // Except when only this device moved: then its side is the
+                    // incoming one, so its newer scalars win as they did when
+                    // it was taken whole, and the gist's entries stay.
                     // Uncapped: a fold that trims to this device's own retention
                     // setting would upload the trimmed copy and delete, from the
                     // gist, history the other device keeps (see UPLOAD_CONTEXT)
-                    out[key] = registration.merge(value, theirs[key], UPLOAD_CONTEXT);
+                    out[key] = mineMoved
+                        ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
+                        : registration.merge(value, theirs[key], UPLOAD_CONTEXT);
                 } catch (error) {
                     console.error(
                         `[Sync] Merging ${storeName}/${key} for upload failed; keeping the gist's copy:`,
