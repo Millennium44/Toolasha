@@ -1865,12 +1865,8 @@ class TaskProfitDisplay {
             }
 
             const playerHrid = players[0]?.hrid || 'player1';
-            const { netPerHour, dropEntries, consumableEntries } = calculateSimRevenue(
-                simResult,
-                simGameData,
-                playerHrid,
-                SIM_HOURS
-            );
+            const { netPerHour, dropEntries, consumableEntries, unpricedDrops, unpricedConsumables } =
+                calculateSimRevenue(simResult, simGameData, playerHrid, SIM_HOURS);
 
             // Task completion rewards (one-time: coins + token value + Purple's Gift)
             const rewardValue = calculateTaskRewardValue(taskData.coinReward, taskData.taskTokenReward);
@@ -1891,7 +1887,8 @@ class TaskProfitDisplay {
                 simResult,
                 zoneHrid,
                 estimateTier,
-                estimateTierKnown
+                estimateTierKnown,
+                { drops: unpricedDrops || [], consumables: unpricedConsumables || [] }
             );
         } catch (e) {
             console.error('[TaskProfit] Combat estimate failed:', e);
@@ -1937,9 +1934,15 @@ class TaskProfitDisplay {
         simResult,
         zoneHrid,
         estimateTier,
-        estimateTierKnown
+        estimateTierKnown,
+        unpriced = { drops: [], consumables: [] }
     ) {
         container.innerHTML = '';
+        // An unpriced consumable was charged at zero, so the profit is overstated by an unknown
+        // amount and no figure is honest; an unpriced drop was counted at zero, so the profit is
+        // a floor. Said out loud, as the skilling cards say it, rather than drawn as a clean total.
+        const hasUnpricedConsumable = (unpriced.consumables || []).length > 0;
+        const hasUnpricedDrop = (unpriced.drops || []).length > 0;
         if (completionSeconds !== null) {
             container.dataset.completionSeconds = completionSeconds;
         }
@@ -1948,11 +1951,13 @@ class TaskProfitDisplay {
         const completionHours = completionSeconds > 0 ? completionSeconds / 3600 : 0;
         const totalDropValue = dropEntries.reduce((s, d) => s + d.totalValue * completionHours, 0);
         const totalConsumableCost = consumableEntries.reduce((s, c) => s + c.totalCost * completionHours, 0);
-        const totalProfit = rewardValue.error
-            ? null
-            : Math.round(totalDropValue - totalConsumableCost + rewardValue.total);
+        const totalProfit =
+            rewardValue.error || hasUnpricedConsumable
+                ? null
+                : Math.round(totalDropValue - totalConsumableCost + rewardValue.total);
+        const profitIsPartial = Boolean(rewardValue.isPartial) || hasUnpricedDrop;
         const totalProfitLabel =
-            totalProfit === null ? '-- ⚠' : `${rewardValue.isPartial ? '≥ ' : ''}${formatKMB(totalProfit)}`;
+            totalProfit === null ? '-- ⚠' : `${profitIsPartial ? '≥ ' : ''}${formatKMB(totalProfit)}`;
 
         const profitColor =
             totalProfit === null ? config.COLOR_ACCENT : totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
@@ -2084,7 +2089,10 @@ class TaskProfitDisplay {
             // A gold rating built on rewards the market could not price is a
             // confident wrong number, so say so instead — same warning the
             // skilling cards show.
-            let ratingError = ratingMode === RATING_MODE_GOLD ? rewardValue.error || null : null;
+            let ratingError =
+                ratingMode === RATING_MODE_GOLD
+                    ? rewardValue.error || (hasUnpricedConsumable ? 'Missing price data' : null)
+                    : null;
 
             if (ratingMode === RATING_MODE_GOLD) {
                 unitLabel = 'gold/hr';
@@ -2108,7 +2116,7 @@ class TaskProfitDisplay {
                 ratingLine.title = ratingError || '';
                 ratingLine.textContent = `⚡ -- ⚠ ${unitLabel}`;
             } else {
-                const isPartialRating = ratingMode === RATING_MODE_GOLD && Boolean(rewardValue.isPartial);
+                const isPartialRating = ratingMode === RATING_MODE_GOLD && profitIsPartial;
                 if (isPartialRating) {
                     ratingLine.dataset.ratingPartial = 'true';
                 } else {

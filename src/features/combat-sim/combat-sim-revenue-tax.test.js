@@ -181,6 +181,32 @@ describe('calculateSimRevenue drop tax', () => {
     });
 });
 
+describe('calculateSimRevenue unpriced items', () => {
+    test('a drop and a consumable with no price are named, not silently free', () => {
+        const { simResult, gameData } = simDropping('/items/unlisted_drop', KILLS, 0);
+        delete mocks.prices['/items/unlisted_drop'];
+        simResult.consumablesUsed = { player1: { '/items/unlisted_tea': 5 } };
+
+        const { unpricedDrops, unpricedConsumables, costPerHour } = calculateSimRevenue(
+            simResult,
+            gameData,
+            'player1',
+            HOURS
+        );
+
+        expect(unpricedDrops).toEqual(['/items/unlisted_drop']);
+        expect(unpricedConsumables).toEqual(['/items/unlisted_tea']);
+        expect(costPerHour).toBe(0);
+    });
+
+    test('priced items are not listed', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        const { unpricedDrops, unpricedConsumables } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+        expect(unpricedDrops).toEqual([]);
+        expect(unpricedConsumables).toEqual([]);
+    });
+});
+
 /**
  * A dungeon's keys are a cost of running it.
  *
