@@ -638,7 +638,13 @@ export function foldSessions(ordered) {
         }
     }
     const items = Object.keys(combined);
-    if (items.length > 1 || (items.length === 1 && items[0] !== (newest.protectionItemHrid || ''))) {
+    // A survivor that already keeps a breakdown always takes the combined one, or the runs folded
+    // in now would be counted in protectionCount but missing from the per-item rows
+    if (
+        newest.protectionBreakdown ||
+        items.length > 1 ||
+        (items.length === 1 && items[0] !== (newest.protectionItemHrid || ''))
+    ) {
         newest.protectionBreakdown = combined;
     }
 

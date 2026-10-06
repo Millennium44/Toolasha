@@ -701,6 +701,60 @@ describe('attributeGoldSources', () => {
             expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 6000, '2026-08-20': -500 });
         });
 
+        test('a leg that cannot be priced is left out alone; the valued legs are still booked', () => {
+            // The 19th's leg climbed +0 → +5 for 1,000 (net 7,000). The 20th's leg went on to +7,
+            // a level with no price: that leg alone is left out, and the session is partly valued.
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 5, cost: 1000 },
+                        ],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        segmentStartLevel: 5,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: d20Start + 11 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 7,
+                        totalCost: 1400,
+                    },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 7000, '2026-08-20': 0 });
+            expect(result.partlyPricedEnhancementSessions).toBe(1);
+            expect(result.unpricedEnhancementSessions).toBe(0);
+        });
+
+        test('a session none of whose legs can be priced is unpriced, as before', () => {
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [
+                            { start: spanStart, end: spanStart + 3600_000, startLevel: 0, endLevel: 7, cost: 1000 },
+                        ],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        segmentStartLevel: 7,
+                        segmentStartCost: 1000,
+                        lastUpdateTime: d20Start + 11 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 8,
+                        totalCost: 1400,
+                    },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 0, '2026-08-20': 0 });
+            expect(result.unpricedEnhancementSessions).toBe(1);
+            expect(result.partlyPricedEnhancementSessions).toBe(0);
+        });
+
         test("a fresh resume's spending lands on the day it was spent, not on the old leg's days", () => {
             // The 19th's leg climbed +0 → +5 for 1,000 (net 7,000). Resumed on the 20th, the new
             // stretch has spent 500 before any attempt moved its clock: a zero-length stretch.

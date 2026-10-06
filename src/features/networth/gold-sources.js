@@ -614,8 +614,12 @@ function spanHasLeg(span) {
  * @param {number} start - The session's start, epoch ms
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
  * @param {Function} [basisPrice] - Deeper cost-basis lookup, tried where the market is silent
- * @returns {{entries: Array<{day: string, amount: number}>, days: Array<string>, priced: boolean}|null}
- *   Per-day amounts, the days touched, and whether every leg could be valued (null: no legs)
+ * A leg whose item cannot be priced at one of its levels is left out on its own; the legs that
+ * can be valued are still booked, so a merge never erases history that was valued before it.
+ *
+ * @returns {{entries: Array<{day: string, amount: number}>, pricedLegs: number, unpricedLegs: number,
+ *   unpricedDays: Array<string>}|null} Per-day amounts of the valued legs, how many legs were and
+ *   were not valued, and the days the unvalued ones ran on (null: no legs)
  */
 export function enhancementLegNets(session, start, price, basisPrice = price) {
     const past = Array.isArray(session?.pastActiveSpans) ? session.pastActiveSpans : [];
@@ -641,21 +645,23 @@ export function enhancementLegNets(session, start, price, basisPrice = price) {
     ];
 
     const entries = [];
-    const days = new Set();
-    let priced = true;
+    const unpricedDays = new Set();
+    let pricedLegs = 0;
+    let unpricedLegs = 0;
     for (const leg of legs) {
         const shares = daySharesOfSpan(leg.start, leg.end);
-        for (const { day } of shares) days.add(day);
         const from = value(leg.startLevel);
         const to = value(leg.endLevel);
         if (from === null || to === null) {
-            priced = false;
+            unpricedLegs += 1;
+            for (const { day } of shares) unpricedDays.add(day);
             continue;
         }
+        pricedLegs += 1;
         const net = to - from - leg.cost;
         for (const { day, share } of shares) entries.push({ day, amount: net * share });
     }
-    return { entries, days: [...days], priced };
+    return { entries, pricedLegs, unpricedLegs, unpricedDays: [...unpricedDays] };
 }
 
 /**
@@ -1570,6 +1576,7 @@ export function combatConsumablesByDay({ liveDays = [], sessions = [], offline =
  *   coverage: Object<string, number|null>,
  *   unpricedAlchemySessions: number,
  *   unpricedEnhancementSessions: number,
+ *   partlyPricedEnhancementSessions: number,
  *   unpricedProductionActions: number,
  *   combatBasis: {lootLogDays: number, sessionDays: number, liveDays: number, archiveDays: number,
  *     uncoveredDays: number, sessions: number, emptySessions: number, sessionsHeld: number,
@@ -1760,17 +1767,20 @@ export function attributeGoldSources(input) {
     }
 
     let unpricedEnhancementSessions = 0;
+    let partlyPricedEnhancementSessions = 0;
     for (const session of enhancementSessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
         // A resumed or merged run is valued leg by leg, each on its own days
         const legs = enhancementLegNets(session, t, price, basisPrice);
         if (legs) {
-            if (!legs.priced) {
-                if (legs.days.some((day) => inWindow.has(day))) unpricedEnhancementSessions += 1;
-                continue;
-            }
+            // Every leg that can be valued is booked; one that cannot is left out on its own, and
+            // the session counts as unpriced (none valued) or partly priced (some valued)
             for (const { day, amount } of legs.entries) add(day, 'enhancement', amount);
+            if (legs.unpricedLegs > 0 && legs.unpricedDays.some((day) => inWindow.has(day))) {
+                if (legs.pricedLegs > 0) partlyPricedEnhancementSessions += 1;
+                else unpricedEnhancementSessions += 1;
+            }
             continue;
         }
         const shares = enhancementDayShares(session, t);
@@ -2000,6 +2010,7 @@ export function attributeGoldSources(input) {
         },
         unpricedAlchemySessions,
         unpricedEnhancementSessions,
+        partlyPricedEnhancementSessions,
         unpricedProductionActions,
         unpricedChestItems,
         unpricedChests,

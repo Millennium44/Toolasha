@@ -880,3 +880,37 @@ describe('extending a session starts a new stretch', () => {
         expect(getSessionDuration(session)).toBe(600 + 100);
     });
 });
+
+describe('folding into a survivor that already keeps a protection breakdown', () => {
+    test('a further run of the same item lands in the per-item rows, not only the count', () => {
+        // #7 used 12 Mirrors of Protection; #8 had used none when they merged
+        const { seven, eight } = spatulaRuns();
+        const once = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(once.protectionBreakdown).toEqual({ '/items/mirror_of_protection': { count: 12, totalCost: 12_000 } });
+
+        // After the merge #8 consumes one of the same item itself
+        addProtectionCost(once, '/items/mirror_of_protection', 1000);
+        expect(once.protectionItemHrid).toBe('/items/mirror_of_protection');
+
+        // Then an earlier run on the same copy, which used two, is folded in as well
+        const earlier = createSession('/items/holy_spatula', 'Holy Spatula', 0, 8, 5);
+        Object.assign(earlier, {
+            id: 'session_6',
+            state: SessionState.COMPLETED,
+            startTime: 100_000,
+            lastUpdateTime: 500_000,
+            endTime: 500_000,
+            currentLevel: 0,
+            protectionCount: 2,
+            protectionCost: 2000,
+            protectionItemHrid: '/items/mirror_of_protection',
+            lastAttempt: { attemptNumber: 20, level: 0, timestamp: 500_000, actionId: 'a6', currentCount: 20 },
+        });
+        const twice = foldSessions(planSessionMerge([earlier, once]).ordered);
+
+        expect(twice.protectionCount).toBe(15);
+        expect(getProtectionBreakdown(twice)).toEqual({
+            '/items/mirror_of_protection': { count: 15, totalCost: 15_000 },
+        });
+    });
+});
