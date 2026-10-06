@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A new "Assign skilling" mode in the Trial Sim suggests which member should join which skilling trial for the most guild points, honoring slot caps, eligibility, the guild's trial minimum levels and pins, with copyable sign-up messages and an optional simulator check. Other members' work rates are estimated from their skill levels and your own readings, and are labeled as estimates.
 - In the split (GreasyFork) build, the Session Briefing's trial sign-up line and the trial alerts' "signed-up members only" audience read the guild tracker's registration record instead of the tracker, so the briefing never knew your sign-up and the alerts never filtered; both now read the live tracker.
 
+### Patient ±1 fills at the instant price when the spread is one tick
+
+- When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
+
 ### Item tooltip marks partly priced alchemy profits
 
 - In the item tooltip's Coinify/Decompose/Transmute list, a profit with an unpriced output now shows as a floor ("≥ 9.0K/hr (unpriced output)"), one with an unpriced tea as a ceiling ("≤"), and both sort after fully priced rows instead of ranking as if complete.
