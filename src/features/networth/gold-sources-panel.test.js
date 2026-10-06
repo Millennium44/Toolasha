@@ -208,6 +208,14 @@ describe('buildPanelBody', () => {
         expect(body.querySelector('.mwi-gold-sources-unpriced').textContent).toContain('2 enhancement sessions');
     });
 
+    test('a partly valued merged enhancement run is called out', () => {
+        const body = buildPanelBody(attribution({ partlyPricedEnhancementSessions: 1 }));
+        expect(body.querySelector('.mwi-gold-sources-partly-priced').textContent).toContain(
+            '1 enhancement session was only partly valued'
+        );
+        expect(buildPanelBody(attribution()).querySelector('.mwi-gold-sources-partly-priced')).toBeNull();
+    });
+
     test('the local-time and today’s-prices caveats are on the panel', () => {
         const body = buildPanelBody(attribution());
         expect(body.querySelector('.mwi-gold-sources-note').textContent).toContain('local time');
