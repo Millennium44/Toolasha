@@ -660,6 +660,13 @@ class SyncManager {
                 console.warn(`[Sync] Skipped an automatic merge (passphrase): ${error.message}`);
                 return { ok: false, reason: 'passphrase' };
             }
+            // A gist that is corrupt or in a newer format stays that way until
+            // someone pushes over it on purpose (a pressed Push still does).
+            // Saying so every interval is noise; once is the record.
+            if (error instanceof GistError && error.kind === 'parse') {
+                this._logStuckOnce('parse', error);
+                return { ok: false, reason: 'parse' };
+            }
             throw error;
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
@@ -669,7 +676,7 @@ class SyncManager {
         try {
             merged = mergeForUpload(localText, remote.payload, baseline);
         } catch (error) {
-            console.warn('[Sync] Skipped an automatic push: the gist holds a payload this build cannot merge.', error);
+            this._logStuckOnce('unmergeable', error);
             return { ok: false, reason: 'unmergeable' };
         }
 
@@ -694,6 +701,25 @@ class SyncManager {
             remoteAt: remote.manifest?.exportedAt ?? null,
             remoteSeq: readSeq(remote.manifest?.syncSeq),
         });
+    }
+
+    /**
+     * Log, once per session and cause, that an automatic push is held up by
+     * a gist it cannot merge. The gist does not change by itself, so the
+     * second interval's line would say nothing the first did not.
+     * @param {string} reason - 'parse' or 'unmergeable'
+     * @param {Error} error - What was thrown
+     * @private
+     */
+    _logStuckOnce(reason, error) {
+        this._stuckLogged = this._stuckLogged || new Set();
+        const key = `${reason}:${error?.message ?? ''}`;
+        if (this._stuckLogged.has(key)) return;
+        this._stuckLogged.add(key);
+        console.warn(
+            `[Sync] Automatic pushes are held: the gist cannot be merged (${reason}). A pressed Push replaces it.`,
+            error
+        );
     }
 
     /**
@@ -1560,6 +1586,15 @@ class SyncManager {
             if (error instanceof GistError) {
                 console.warn(`[Sync] ${label} failed (${error.kind})`, error.githubMessage || '');
                 if (error.kind === 'not-found') await this.forgetGist();
+                // A corrupt or newer-format gist fails every unattended sync the
+                // same way until someone pushes over it. One sticky toast says
+                // so; repeating it every interval only stacks them.
+                const repeat = `${error.kind}:${error.message}`;
+                this._toastedSilently = this._toastedSilently || new Set();
+                if (silent && error.kind === 'parse' && this._toastedSilently.has(repeat)) {
+                    return { ok: false, reason: error.kind };
+                }
+                if (silent && error.kind === 'parse') this._toastedSilently.add(repeat);
                 showToast(describeFailure(label, error), {
                     kind: error.kind === 'rate-limit' ? 'warn' : 'error',
                     // A failure the player has to act on must not fade before

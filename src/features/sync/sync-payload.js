@@ -25,6 +25,7 @@ import settingsStorage from '../../core/settings-storage.js';
 import { isSyncedStore, partitionOwnedKeys } from './sync-ownership.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
+import { GistError } from './gist-client.js';
 
 /** Matches the full-backup format, because that is what this produces */
 const FORMAT_VERSION = 1;
@@ -623,16 +624,17 @@ async function restoreMigrationRecords(records) {
  */
 function assertApplicable(payload) {
     if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) {
-        throw new Error(
-            `[Sync] The downloaded payload has format ${payload?.formatVersion ?? 'none'}; this build reads ` +
+        throw new GistError(
+            'parse',
+            `The sync gist holds data in format ${payload?.formatVersion ?? 'none'}; this build reads ` +
                 `${FORMAT_VERSION}. Update Toolasha on this device, or push from one whose data is good.`
         );
     }
     const isRecordMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-    if (!isRecordMap(payload.stores)) throw new Error('[Sync] The downloaded payload has no stores to apply.');
+    if (!isRecordMap(payload.stores)) throw new GistError('parse', 'The downloaded payload has no stores to apply.');
     for (const [storeName, entries] of Object.entries(payload.stores)) {
         if (!isRecordMap(entries)) {
-            throw new Error(`[Sync] The downloaded payload's ${storeName} store is not a keyed object.`);
+            throw new GistError('parse', `The downloaded payload's ${storeName} store is not a keyed object.`);
         }
     }
 }

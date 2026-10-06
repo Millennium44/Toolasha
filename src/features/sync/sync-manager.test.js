@@ -1932,6 +1932,37 @@ describe('automatic pushes merge into the upload, never into this device', () =>
         expect(gist.readOptions.at(-1)).toEqual({ etag: 'W/"r1"' });
     });
 
+    test('a gist the merge cannot read holds automatic pushes quietly, logging the cause once', async () => {
+        gistAhead();
+        gist.readError = new FakeGistError('parse', 'The sync gist is corrupted.');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            for (let tick = 0; tick < 3; tick += 1) {
+                payload.text = `{"local":${tick + 3}}`;
+                expect(await syncManager.push({ silent: true, unattended: true })).toEqual({
+                    ok: false,
+                    reason: 'parse',
+                });
+            }
+            expect(toasts).toHaveLength(0);
+            expect(warn.mock.calls.filter(([line]) => String(line).includes('Automatic pushes are held'))).toHaveLength(
+                1
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('a corrupt gist toasts once from the unattended pulls, not every interval; a pressed pull still says so', async () => {
+        gist.readError = new FakeGistError('parse', 'The sync gist is corrupted.');
+        for (let tick = 0; tick < 3; tick += 1) await syncManager.pull({ silent: true });
+        expect(toasts).toHaveLength(1);
+        expect(toasts[0].duration).toBe(0);
+
+        await syncManager.pull();
+        expect(toasts).toHaveLength(2);
+    });
+
     test('a pressed Push still replaces the gist, and clears the note', async () => {
         stored.map.toolasha_sync_unapplied = { since: remoteAt };
         await syncManager.push();
