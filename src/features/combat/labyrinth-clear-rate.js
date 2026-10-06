@@ -498,6 +498,7 @@ class LabyrinthClearRate {
             for (const timer of this.catchUpTimers) clearTimeout(timer);
             this.catchUpTimers = [];
             this.calculatedTileKeys?.clear();
+            this._calculatedTileInputs?.clear();
 
             unregisterCommand('Recompute lab sims');
 
@@ -727,6 +728,7 @@ class LabyrinthClearRate {
                 this.resetBeaconCountToAuto();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
+                this._calculatedTileInputs?.clear();
                 // A pass still awaiting a sim belongs to the floor just left; its
                 // cells stay connected until React repaints, so without a fence it
                 // resumes and writes the old floor's result under a coordinate the
@@ -3235,12 +3237,28 @@ class LabyrinthClearRate {
         if (!this.calculatedTileKeys) {
             this.calculatedTileKeys = new Set();
         }
+        // What each calculated tile was calculated FROM. A tile counts as done
+        // only while its own inputs (room, level, precision, build) are the
+        // ones it was judged under: a settled 0% room, which is never cached,
+        // would otherwise keep its old badge through a gear or precision change
+        // that the floor fingerprint correctly let a new pass run for.
+        if (!this._calculatedTileInputs) {
+            this._calculatedTileInputs = new Map();
+        }
+        const buildInputs = `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}`;
+        const tileInputs = (room, roomLevel) =>
+            `${buildInputs}|${room.skillHrid || room.monsterHrid || ''}|${roomLevel}`;
+        const markCalculated = (target) => {
+            this.calculatedTileKeys.add(target.tileKey);
+            this._calculatedTileInputs.set(target.tileKey, target.inputs);
+        };
         if (!this._tileResults) {
             this._tileResults = new Map();
         }
         // Manual runs recalculate everything; auto runs only touch new tiles
         if (!auto) {
             this.calculatedTileKeys.clear();
+            this._calculatedTileInputs.clear();
             this._tileResults.clear();
             this.autoTileRetryCount = 0;
             document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
@@ -3274,7 +3292,8 @@ class LabyrinthClearRate {
             const tileKey = `${i % cols},${Math.floor(i / cols)}`;
             if (!room.skillHrid && !room.monsterHrid) continue;
             eligible++;
-            if (auto && this.calculatedTileKeys.has(tileKey)) {
+            const inputs = tileInputs(room, roomLevel);
+            if (auto && this.calculatedTileKeys.has(tileKey) && this._calculatedTileInputs.get(tileKey) === inputs) {
                 if (cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
                     doneUpFront++;
                     continue;
@@ -3292,7 +3311,7 @@ class LabyrinthClearRate {
             }
 
             if (room.skillHrid) {
-                skillingTargets.push({ room, cell, roomLevel, tileKey });
+                skillingTargets.push({ room, cell, roomLevel, tileKey, inputs });
                 // Worked out arithmetically in one burst, so never a step of the bar
                 doneUpFront++;
             } else {
@@ -3301,7 +3320,7 @@ class LabyrinthClearRate {
                 // unless it is a 0% an auto pass treats as suspicious and retries,
                 // which counted up front and then subtracted walked the bar back
                 const cached = !!hit && !(auto && !(hit.clearChance > 0));
-                combatTargets.push({ room, cell, roomLevel, tileKey, cached });
+                combatTargets.push({ room, cell, roomLevel, tileKey, cached, inputs });
                 if (cached) doneUpFront++;
             }
         }
@@ -3338,7 +3357,7 @@ class LabyrinthClearRate {
                         : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
                 if (result) {
                     this.appendTileBadge(target.cell, result);
-                    this.calculatedTileKeys.add(target.tileKey);
+                    markCalculated(target);
                     this._tileResults.set(target.tileKey, result);
                 }
                 completed++;
@@ -3389,9 +3408,9 @@ class LabyrinthClearRate {
 
                 this.appendTileBadge(target.cell, result);
                 this._tileResults.set(target.tileKey, result);
-                judgedKeys.push(target.tileKey);
+                judgedKeys.push(target);
                 if (result.clearChance > 0 || !auto) {
-                    this.calculatedTileKeys.add(target.tileKey);
+                    markCalculated(target);
                 } else {
                     // A 0% right after load is suspicious — keep the key unmarked
                     // so the next auto pass re-sims it with loaded snapshots
@@ -3438,7 +3457,7 @@ class LabyrinthClearRate {
                 // bar, on every grid re-render and every labyrinth_updated for as
                 // long as the floor map was open.
                 this.autoTileRetryCount = 0;
-                for (const tileKey of judgedKeys) this.calculatedTileKeys.add(tileKey);
+                for (const target of judgedKeys) markCalculated(target);
                 // The floor as a whole settles only if every room was judged. A
                 // room whose sim could not run leaves the fingerprint unset, so a
                 // later trigger (once the loadouts have loaded, say) tries it

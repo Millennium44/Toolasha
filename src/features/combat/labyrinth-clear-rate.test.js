@@ -5087,6 +5087,35 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         expect(sims).not.toHaveBeenCalled();
     });
 
+    test('a settled 0% room is re-simmed when the build changes, and not while it stays the same', async () => {
+        // Codex P2 on #364: the settled key outlived the inputs it was judged
+        // under, so a gear change let a new pass run and the pass then skipped
+        // the room, leaving the old 0% badge up until a manual Calculate.
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+
+            // Same build: nothing is simmed, however many triggers arrive
+            sims.mockClear();
+            labyrinthClearRate._autoCalcFingerprint = null; // even with the floor gate open
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            // New gear: the floor fingerprint moves, and both rooms are judged again
+            gear.snapshots[7] = { name: 'Upgraded', equipment: [{ itemHrid: '/items/griffin_bulwark' }] };
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl).sort()).toEqual([100, 110]);
+        } finally {
+            delete gear.snapshots[7];
+        }
+    });
+
     test('a manual Calculate still re-sims the settled 0% room', async () => {
         mountFloor();
         const sims = vi
