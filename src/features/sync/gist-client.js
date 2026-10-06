@@ -603,7 +603,7 @@ function listedManifest(files) {
     try {
         const manifest = JSON.parse(file.content);
         // The same shape readSyncGist insists on; anything else parsed but says nothing about encryption
-        if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || !(Number(manifest.chunks) >= 1)) {
+        if (manifest?.toolashaSync !== 1 || Array.isArray(manifest) || !(Number(manifest.chunks) >= 1)) {
             return { syncSeq: null, encrypted: null };
         }
         const seq = manifest?.syncSeq;

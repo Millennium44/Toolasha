@@ -937,7 +937,7 @@ describe('writeSyncGist', () => {
     });
 
     test('a manifest that parses but is not a sync manifest leaves encryption unknown', async () => {
-        for (const content of ['[]', '{}', '{"encrypted":false}']) {
+        for (const content of ['[]', '{}', '{"encrypted":false}', '{"chunks":1}']) {
             responses.push({ status: 200, body: { files: { [MANIFEST_FILE]: { size: 9, content } } } });
             const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
                 unattended: true,
