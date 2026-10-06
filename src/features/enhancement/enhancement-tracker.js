@@ -21,6 +21,7 @@ import {
     resumeSession,
     planSessionMerge,
     foldSessions,
+    calibrationObservation,
     SessionState,
 } from './enhancement-session.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
@@ -231,7 +232,13 @@ class EnhancementTracker {
         if (!sessionsLoaded()) {
             return { ok: false, reason: 'The stored sessions have not finished loading; try again in a moment.' };
         }
-        return planSessionMerge((sessionIds || []).map((id) => this.sessions[id]));
+        // Named in a refusal as the panel numbers them: #N in the session list
+        const ids = Object.keys(this.sessions);
+        const labelOf = (session) => '#' + (ids.indexOf(session.id) + 1);
+        return planSessionMerge(
+            (sessionIds || []).map((id) => this.sessions[id]),
+            { labelOf }
+        );
     }
 
     /**
@@ -239,9 +246,9 @@ class EnhancementTracker {
      *
      * The most recently active session absorbs the others (see {@link foldSessions}), so when it
      * is the run in progress it stays the current session and keeps receiving attempts. The
-     * prediction is recomputed for the merged start state — the first-started session's start
-     * level, the latest one's target and protection — falling back to the first-started session's
-     * own prediction when it cannot be computed.
+     * prediction is recomputed for the merged start state — the chain's first run's start level,
+     * the latest run's target and protection — falling back to that first run's own prediction
+     * when it cannot be computed. Only runs that continue each other can merge (planSessionMerge).
      * @param {string[]} sessionIds - Picked session IDs
      * @returns {Promise<{ok: boolean, reason?: string, id?: string}>}
      */
@@ -250,8 +257,7 @@ class EnhancementTracker {
         if (!plan.ok) return { ok: false, reason: plan.reason };
 
         const { ordered } = plan;
-        const firstStarted = ordered.reduce((a, b) => ((b.startTime || 0) < (a.startTime || 0) ? b : a));
-        const earliestPredictions = firstStarted.predictions || null;
+        const earliestPredictions = ordered[0].predictions || null;
         const merged = foldSessions(ordered);
         for (const session of ordered.slice(0, -1)) delete this.sessions[session.id];
 
@@ -348,16 +354,17 @@ class EnhancementTracker {
                 await saveCurrentSessionId(null);
             }
             if (!this._ownsSessions(sessions, owner)) return;
-            // A merged session holding a run that already reached its own target was recorded
-            // under that run's id; recording this one too would count those attempts twice
-            if (completed.calibrationRecordedTargets?.includes(completed.targetLevel)) return;
+            // A merged session that reaches a target one of its folded-in runs already reached (and
+            // was recorded for) is measured on its own leg alone, or not at all (calibrationObservation)
+            const observation = calibrationObservation(completed);
+            if (!observation) return;
 
             // The run just became one finished draw from the distribution its
             // prediction quoted; the recorder declines anything that is not
             // (no distribution stored, target not actually reached). Errors
             // stay its problem — a calibration ledger must never break a run.
             try {
-                await enhancementCalibration.recordCompletion(completed);
+                await enhancementCalibration.recordCompletion(observation);
             } catch (error) {
                 console.error('[EnhancementTracker] Recording the calibration observation failed:', error);
             }

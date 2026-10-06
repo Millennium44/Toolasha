@@ -426,11 +426,15 @@ export function resumeSession(session, now = Date.now()) {
  * and `protectionItemsDiffer` when the runs consumed different protection items, so the
  * confirmation can say so).
  *
+ * Every run must also continue the one before it, in that order: start at the level it ended at.
+ *
  * @param {Array<Object>} sessions - Sessions picked for the merge
+ * @param {Object} [options]
+ * @param {function(Object): string} [options.labelOf] - How to name a session in a refusal
  * @returns {{ok: boolean, reason?: string, ordered?: Array<Object>, settingsDiffer?: boolean,
  *   protectionItemsDiffer?: boolean}} `ordered` runs from least to most recently active
  */
-export function planSessionMerge(sessions) {
+export function planSessionMerge(sessions, { labelOf = (session) => session.id } = {}) {
     const list = (Array.isArray(sessions) ? sessions : []).filter(Boolean);
     if (list.length < 2) return { ok: false, reason: 'Pick at least two sessions to merge.' };
     const itemHrid = list[0].itemHrid;
@@ -444,6 +448,22 @@ export function planSessionMerge(sessions) {
             ok: false,
             reason: 'Only the most recently active of the picked sessions may still be in progress; the others must have ended.',
         };
+    }
+    // One chain only: each run picks the item up at the level the run before it left it. Two
+    // independent climbs (two +0 → +5 runs on different copies) cannot become one session — it
+    // would hold one start and one end level against both runs' costs, and everything valuing
+    // the climb (worth-it, gold sources) would see one level gain paid for twice.
+    for (let i = 1; i < ordered.length; i++) {
+        const before = ordered[i - 1];
+        const after = ordered[i];
+        if (after.startLevel !== before.currentLevel) {
+            return {
+                ok: false,
+                reason:
+                    `${labelOf(before)} ended at +${before.currentLevel} but ${labelOf(after)} started at ` +
+                    `+${after.startLevel} — only runs that continue each other can merge.`,
+            };
+        }
     }
     const newest = ordered[ordered.length - 1];
     const settingsDiffer = older.some(
@@ -480,7 +500,27 @@ export function planSessionMerge(sessions) {
 export function foldSessions(ordered) {
     const newest = ordered[ordered.length - 1];
     const older = ordered.slice(0, -1);
-    const earliest = ordered.reduce((a, b) => ((b.startTime || 0) < (a.startTime || 0) ? b : a));
+    // The chain starts where its first run (by activity) started; the start time is the earliest
+    // any of them started, for anything asking how far back the session reaches
+    const chainStart = ordered[0];
+    const firstStartTime = Math.min(...ordered.map((session) => session.startTime || Infinity));
+
+    // The survivor's own leg, before the others are folded in: its prediction, and how many
+    // attempts and protections the merged counters will hold before that leg's own began
+    // (a survivor merged before already carries its leg; the runs folded in now come before it)
+    const foldedAttempts = older.reduce((sum, s) => sum + (s.totalAttempts || 0), 0);
+    const foldedProtections = older.reduce((sum, s) => sum + (s.protectionCount || 0), 0);
+    const ownBaseline = newest.calibrationOwnLeg || {
+        targetLevel: newest.targetLevel,
+        predictions: newest.predictions || null,
+        totalAttempts: newest.extensionBaseline?.totalAttempts || 0,
+        protectionCount: newest.extensionBaseline?.protectionCount || 0,
+    };
+    const ownLeg = {
+        ...ownBaseline,
+        totalAttempts: ownBaseline.totalAttempts + foldedAttempts,
+        protectionCount: ownBaseline.protectionCount + foldedProtections,
+    };
 
     const spans = [];
     const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
@@ -554,19 +594,45 @@ export function foldSessions(ordered) {
         newest.protectionBreakdown = combined;
     }
 
-    newest.startLevel = earliest.startLevel;
-    newest.startTime = earliest.startTime;
+    newest.startLevel = chainStart.startLevel;
+    if (Number.isFinite(firstStartTime)) newest.startTime = firstStartTime;
     newest.pastActiveSpans = [...spans, ...ownPast].sort((a, b) => a.start - b.start);
     newest.segmentStartTime = segmentStartTime;
     newest.extensionBaseline = null;
     if (recordedTargets.size > 0) {
         newest.calibrationRecordedTargets = [...recordedTargets].sort((a, b) => a - b);
+        // Reaching one of those targets again is the survivor's own leg finishing: calibration
+        // then measures that leg alone, against its own prediction (see calibrationObservation)
+        newest.calibrationOwnLeg = ownLeg;
     }
     newest.mergedFrom = [
         ...(newest.mergedFrom || []),
         ...older.flatMap((session) => [...(session.mergedFrom || []), session.id]),
     ];
     return newest;
+}
+
+/**
+ * What a completed session hands calibration, or null when it must not be recorded.
+ *
+ * A merged session holding a run that already reached its own target T had that run recorded
+ * under the run's own id. Reaching T again is the survivor's own leg finishing — a separate
+ * draw — so it is measured alone: its own attempts, against the prediction it was started with.
+ * Without that leg on record (nothing to measure it against) it is not recorded at all, so the
+ * folded-in run is never counted twice. Any other target is the whole chain's observation.
+ * @param {Object} session - A completed session (a snapshot; not mutated)
+ * @returns {Object|null} The session as calibration should read it
+ */
+export function calibrationObservation(session) {
+    if (!session) return null;
+    if (!session.calibrationRecordedTargets?.includes(session.targetLevel)) return session;
+    const leg = session.calibrationOwnLeg;
+    if (!leg || leg.targetLevel !== session.targetLevel || !leg.predictions) return null;
+    return {
+        ...session,
+        predictions: leg.predictions,
+        extensionBaseline: { totalAttempts: leg.totalAttempts, protectionCount: leg.protectionCount },
+    };
 }
 
 /**

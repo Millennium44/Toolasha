@@ -1390,8 +1390,13 @@ class EnhancementUI {
         const name =
             dataManager.getInitClientData()?.itemDetailMap?.[newest.itemHrid]?.name || newest.itemName || 'item';
         const protect = newest.protectFrom ? `protect from +${newest.protectFrom}` : 'no protection';
+        // Only runs that continue each other merge; show the chain so the player sees what is joined
+        const chain = [plan.ordered[0].startLevel, ...plan.ordered.map((session) => session.currentLevel)]
+            .map((level) => `+${level}`)
+            .join(' → ');
         let message =
             `Merge ${plan.ordered.length} ${name} sessions into one?\n\n` +
+            `They continue one another: ${chain}.\n\n` +
             'Their attempts, per-level results, costs, protections, XP and active time are combined, ' +
             'and the originals are removed. This cannot be undone.';
         if (plan.settingsDiffer) {

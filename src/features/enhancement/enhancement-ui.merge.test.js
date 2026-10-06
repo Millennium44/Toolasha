@@ -174,6 +174,8 @@ describe('merging for real', () => {
 
         expect(confirm).toHaveBeenCalledTimes(1);
         expect(confirm.mock.calls[0][0]).toContain('cannot be undone');
+        // #7 ran +0 to +3, #8 picked it up there and stands at +4
+        expect(confirm.mock.calls[0][0]).toContain('They continue one another: +0 → +3 → +4.');
         expect(game.merges).toEqual([['session_7', 'session_8']]);
         expect(enhancementUI.mergeMode).toBe(false);
     });

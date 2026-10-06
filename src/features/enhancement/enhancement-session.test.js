@@ -7,6 +7,7 @@ import {
     createSession,
     canExtendSession,
     addProtectionCost,
+    calibrationObservation,
     canResumeSession,
     getActiveSpans,
     getProtectionBreakdown,
@@ -540,9 +541,13 @@ describe('mergeSessions view marks where the item stands', () => {
 
 describe('merging picks the most recently active session as the survivor', () => {
     const HOUR = 3600_000;
-    /** A: started 10:00, ended 11:00, resumed 15:00, ended 16:00 at +12. B: 12:00-14:00, ended at +8. */
+    /**
+     * A: started 10:00 at +8, stopped 11:00, resumed 15:00, ended 16:00 at +12. B: 12:00-14:00,
+     * +0 to +8. By activity the chain is B then A, and its levels follow on (B ends where A starts);
+     * by start time it would be A then B, which neither survives nor chains.
+     */
     function interleaved() {
-        const a = createSession('/items/holy_spatula', 'Holy Spatula', 0, 15, 5);
+        const a = createSession('/items/holy_spatula', 'Holy Spatula', 8, 15, 5);
         Object.assign(a, {
             id: 'session_a',
             state: SessionState.COMPLETED,
@@ -582,6 +587,8 @@ describe('merging picks the most recently active session as the survivor', () =>
         expect(merged.lastAttempt.actionId).toBe('a2');
         expect(merged.targetLevel).toBe(15);
         expect(merged.startTime).toBe(10 * HOUR);
+        // The chain starts where its first run started
+        expect(merged.startLevel).toBe(0);
         expect(merged.totalAttempts).toBe(400);
         // Three stretches of an hour, two hours and an hour — the gaps between them are not counted
         expect(getActiveSpans(merged)).toEqual([
@@ -687,43 +694,125 @@ describe('merging runs protected by different items', () => {
     });
 });
 
-describe('a merged run already counted for calibration', () => {
-    test('a folded-in session that reached its own target lists that target', () => {
+describe('only runs that continue each other can merge', () => {
+    test('#7 ending at +3 and #8 starting at +3 chain', () => {
         const { seven, eight } = spatulaRuns();
-        seven.currentLevel = 8; // reached its +8
-        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
-        expect(merged.calibrationRecordedTargets).toEqual([8]);
+        expect(seven.currentLevel).toBe(3);
+        expect(eight.startLevel).toBe(3);
+        expect(planSessionMerge([seven, eight]).ok).toBe(true);
     });
 
-    test('folding a completed +8 into a running +10 leaves the +10 observation open', () => {
+    test('two independent climbs are refused, naming where each stood', () => {
+        // A second copy climbed +0 → +4 after #7 left its copy at +3
         const { seven, eight } = spatulaRuns();
-        seven.currentLevel = 8;
-        eight.targetLevel = 10;
-        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
-        expect(merged.calibrationRecordedTargets).toEqual([8]);
-        expect(merged.calibrationRecordedTargets).not.toContain(merged.targetLevel);
+        eight.startLevel = 0;
+        const labels = { session_7: '#7', session_8: '#8' };
+        const plan = planSessionMerge([seven, eight], { labelOf: (s) => labels[s.id] });
+        expect(plan.ok).toBe(false);
+        expect(plan.reason).toBe('#7 ended at +3 but #8 started at +0 — only runs that continue each other can merge.');
     });
 
-    test('recorded targets carry through a second merge', () => {
-        const first = spatulaRuns();
-        first.seven.currentLevel = 8;
-        const once = foldSessions(planSessionMerge([first.seven, first.eight]).ordered);
-        once.state = SessionState.COMPLETED;
-        const later = spatulaRuns().eight;
-        Object.assign(later, {
+    test('a chain of three is checked link by link', () => {
+        const { seven, eight } = spatulaRuns();
+        const nine = spatulaRuns().eight;
+        Object.assign(nine, {
             id: 'session_9',
-            targetLevel: 10,
+            startLevel: 4,
             startTime: 9_000_000,
             lastUpdateTime: 9_100_000,
-            lastAttempt: { attemptNumber: 1, level: 4, timestamp: 9_100_000, actionId: 'a9', currentCount: 1 },
+            lastAttempt: { attemptNumber: 1, level: 5, timestamp: 9_100_000, actionId: 'a9', currentCount: 1 },
         });
-        const twice = foldSessions(planSessionMerge([once, later]).ordered);
+        eight.state = SessionState.COMPLETED;
+        expect(planSessionMerge([nine, seven, eight]).ok).toBe(true);
+        nine.startLevel = 2;
+        expect(planSessionMerge([nine, seven, eight]).ok).toBe(false);
+    });
+});
+
+describe('a merged run already counted for calibration', () => {
+    /**
+     * A chain of three: #7 climbed +0 → +8 and completed (recorded under #7's id); #8 aimed for +10
+     * from +8 and stopped back at +6; #9 runs from +6 aiming for +8 again.
+     */
+    function chain() {
+        const { seven, eight } = spatulaRuns();
+        Object.assign(seven, { currentLevel: 8 });
+        Object.assign(eight, {
+            state: SessionState.COMPLETED,
+            startLevel: 8,
+            targetLevel: 10,
+            currentLevel: 6,
+            endTime: 5_100_000,
+        });
+        const nine = spatulaRuns().eight;
+        Object.assign(nine, {
+            id: 'session_9',
+            startLevel: 6,
+            targetLevel: 8,
+            currentLevel: 7,
+            startTime: 9_000_000,
+            lastUpdateTime: 9_100_000,
+            totalAttempts: 30,
+            protectionCount: 2,
+            predictions: { expectedAttempts: 25 },
+            lastAttempt: { attemptNumber: 30, level: 7, timestamp: 9_100_000, actionId: 'a9', currentCount: 30 },
+        });
+        return { seven, eight, nine };
+    }
+
+    test('a folded-in session that reached its own target lists that target', () => {
+        const { seven, eight, nine } = chain();
+        const merged = foldSessions(planSessionMerge([seven, eight, nine]).ordered);
+        expect(merged.calibrationRecordedTargets).toEqual([8]);
+    });
+
+    test("reaching that target again is measured on the survivor's own leg, never the folded-in one", () => {
+        const { seven, eight, nine } = chain();
+        const merged = foldSessions(planSessionMerge([seven, eight, nine]).ordered);
+        merged.predictions = { expectedAttempts: 999 }; // the tracker's chain-wide recompute
+        merged.currentLevel = 8;
+        merged.totalAttempts += 5;
+        merged.state = SessionState.COMPLETED;
+
+        const observation = calibrationObservation(merged);
+        expect(observation).not.toBeNull();
+        // #9's own prediction, and only #9's own attempts: 30 before the merge, 5 after
+        expect(observation.predictions).toEqual({ expectedAttempts: 25 });
+        expect(getCurrentLegCounters(observation).attempts).toBe(35);
+        // The stored session itself is untouched
+        expect(merged.predictions).toEqual({ expectedAttempts: 999 });
+    });
+
+    test('with no prediction of its own to measure against, it is not recorded', () => {
+        const { seven, eight, nine } = chain();
+        nine.predictions = null;
+        const merged = foldSessions(planSessionMerge([seven, eight, nine]).ordered);
+        merged.currentLevel = 8;
+        expect(calibrationObservation(merged)).toBeNull();
+    });
+
+    test('a different target is the whole chain, recorded as it stands', () => {
+        const { seven, eight } = spatulaRuns();
+        seven.currentLevel = 8;
+        Object.assign(eight, { startLevel: 8, targetLevel: 10, currentLevel: 10 });
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.calibrationRecordedTargets).toEqual([8]);
+        expect(calibrationObservation(merged)).toBe(merged);
+    });
+
+    test('recorded targets and the own leg carry through a second merge', () => {
+        const { seven, eight, nine } = chain();
+        const once = foldSessions(planSessionMerge([seven, eight]).ordered);
+        const twice = foldSessions(planSessionMerge([once, nine]).ordered);
         expect(twice.calibrationRecordedTargets).toEqual([8]);
+        // #9 survives; everything before its own 30 attempts is folded-in history
+        expect(twice.calibrationOwnLeg.totalAttempts).toBe(twice.totalAttempts - 30);
     });
 
     test('one that ended short of its target does not', () => {
         const { seven, eight } = spatulaRuns();
         const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
         expect(merged.calibrationRecordedTargets).toBeUndefined();
+        expect(calibrationObservation(merged)).toBe(merged);
     });
 });
