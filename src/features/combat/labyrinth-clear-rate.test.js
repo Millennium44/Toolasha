@@ -5139,6 +5139,56 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         }
     });
 
+    test('with Uncapped switched on, an auto pass still re-sims on an hours change: it runs capped', async () => {
+        // Codex P2 on #364: the signature read the Uncapped toggle, but an auto
+        // pass always runs capped, so its runs were recorded as uncapped and a
+        // change to the hours ceiling they actually stopped at never re-simmed
+        mountFloor();
+        settings.map.set('labyrinthSimCaps', 'precision');
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+            expect(sims.mock.calls.every(([, , options]) => options?.uncapped === false)).toBe(true);
+
+            settings.map.set('labyrinthSimMaxHours', 77);
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl)).toContain(110);
+        } finally {
+            settings.map.delete('labyrinthSimCaps');
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
+    test('a manual uncapped pass is not undone by later capped auto passes, and the two do not alternate', async () => {
+        mountFloor();
+        settings.map.set('labyrinthSimCaps', 'precision');
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await labyrinthClearRate.runTileCalculation();
+            expect(sims.mock.calls.every(([, , options]) => options?.uncapped === true)).toBe(true);
+
+            sims.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            // An uncapped result answers a capped request, and the hours ceiling
+            // never bound it, so changing it does not either
+            settings.map.set('labyrinthSimMaxHours', 77);
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+        } finally {
+            settings.map.delete('labyrinthSimCaps');
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
     test('a settled combat room is re-simmed when its assigned loadout changes, and not otherwise', async () => {
         // Codex P2 on #364: the loadout a monster is fought in is part of the
         // combat cache key, and was missing from both the tile's settled inputs

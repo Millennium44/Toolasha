@@ -2674,7 +2674,10 @@ class LabyrinthClearRate {
             const inputs = room.isCleared || !target || level <= 0 ? '' : inputsOf(room, level);
             parts.push(`${i}:${target}:${level}:${room.isCleared ? 1 : 0}:${inputs}`);
         }
-        return `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}|${parts.join(';')}`;
+        // This gates auto passes only, and an auto pass is always capped, so the
+        // cap it would run under is the configured hours ceiling — never the
+        // strip's Uncapped toggle, which only a manual pass obeys
+        return `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}|${this._tileSimCap(false)}|${parts.join(';')}`;
     }
 
     /**
@@ -2695,13 +2698,6 @@ class LabyrinthClearRate {
      */
     _tileInputsReader() {
         const build = this._snapshotContentFingerprint();
-        // The hours ceiling caps how many fights a combat sim can run: raising it can lift a capped 0%
-        let hoursCap = '';
-        try {
-            hoursCap = this.tileCalcUncapped() ? 'uncapped' : String(this.getSimHours());
-        } catch {
-            hoursCap = 'unreadable';
-        }
         const bySkill = new Map();
         const skillInputs = (skillHrid) => {
             if (bySkill.has(skillHrid)) return bySkill.get(skillHrid);
@@ -2721,7 +2717,28 @@ class LabyrinthClearRate {
         return (room, roomLevel) =>
             room.skillHrid
                 ? `${room.skillHrid}|${roomLevel}|${skillInputs(room.skillHrid)}`
-                : `${this.buildCombatCacheKey(room.monsterHrid, roomLevel)}|${build}|h${hoursCap}`;
+                : `${this.buildCombatCacheKey(room.monsterHrid, roomLevel)}|${build}`;
+    }
+
+    /**
+     * The fight ceiling a combat tile is simmed under, as recorded beside its
+     * settled inputs: 'uncapped', or the hours ceiling a capped run stops at.
+     *
+     * Taken from the cap the pass actually runs with. An auto pass is always
+     * capped whatever the Uncapped toggle says, so reading the toggle here
+     * recorded 'uncapped' for capped auto runs, and a later change to the hours
+     * ceiling never re-simmed them.
+     * @private
+     * @param {boolean} uncapped - Whether the pass lifts the ceilings
+     * @returns {string}
+     */
+    _tileSimCap(uncapped) {
+        if (uncapped) return 'uncapped';
+        try {
+            return `h${this.getSimHours()}`;
+        } catch {
+            return 'unreadable';
+        }
     }
 
     /**
@@ -3305,9 +3322,23 @@ class LabyrinthClearRate {
             this._calculatedTileInputs = new Map();
         }
         const tileInputs = this._tileInputsReader();
+        // A combat tile also records the ceiling it was simmed under. An
+        // uncapped result answers a capped request too (the cache serves it the
+        // same way, see peekCombatClear), so a manual uncapped pass is not
+        // undone by the next capped auto pass, and the two never alternate.
+        const passCap = this._tileSimCap(uncapped);
         const markCalculated = (target) => {
             this.calculatedTileKeys.add(target.tileKey);
-            this._calculatedTileInputs.set(target.tileKey, target.inputs);
+            this._calculatedTileInputs.set(target.tileKey, {
+                inputs: target.inputs,
+                cap: target.room.skillHrid ? '' : passCap,
+            });
+        };
+        const stillCurrent = (tileKey, room, inputs) => {
+            const recorded = this._calculatedTileInputs.get(tileKey);
+            if (!recorded || recorded.inputs !== inputs) return false;
+            if (room.skillHrid) return true;
+            return recorded.cap === passCap || recorded.cap === 'uncapped';
         };
         if (!this._tileResults) {
             this._tileResults = new Map();
@@ -3350,7 +3381,7 @@ class LabyrinthClearRate {
             if (!room.skillHrid && !room.monsterHrid) continue;
             eligible++;
             const inputs = tileInputs(room, roomLevel);
-            if (auto && this.calculatedTileKeys.has(tileKey) && this._calculatedTileInputs.get(tileKey) === inputs) {
+            if (auto && this.calculatedTileKeys.has(tileKey) && stillCurrent(tileKey, room, inputs)) {
                 if (cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
                     doneUpFront++;
                     continue;
