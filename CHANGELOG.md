@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: market listings and price history
+
+- My Listings no longer shows your own price as the "Top Order Price" when nobody else is on that side of the book, and the price history no longer dates a marketplace snapshot as "now" — an older snapshot could overwrite a fresher order-book reading and wipe its depth.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
