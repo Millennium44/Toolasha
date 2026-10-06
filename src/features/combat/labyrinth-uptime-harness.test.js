@@ -764,6 +764,22 @@ describe('extractPlayerAttacks — bleed chains and parry counters', () => {
         expect(byAbility.unattributed).toMatchObject({ hits: 1, damage: 131 });
     });
 
+    test('a counter 3 s after a tripled auto is the parry counter, not a bleed that rewrites the auto into maim', () => {
+        const p = { atkCounter: 49, isAutoAtk: true, dmgCounter: 25, cHP: 1208 };
+        const ticks = [
+            both(0, p, { atkCounter: 31, isAutoAtk: true, dmgCounter: 49, cHP: 5000 }),
+            // an auto lands for 300
+            both(874, { ...p, atkCounter: 50 }, { atkCounter: 31, isAutoAtk: true, dmgCounter: 50, cHP: 4700 }),
+            // 3 s on, the monster swings, the player's dmgCounter never answers,
+            // and the monster takes 100 with no player swing behind it
+            both(3912, { ...p, atkCounter: 50 }, { atkCounter: 32, isAutoAtk: true, dmgCounter: 51, cHP: 4600 }),
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks, { dotAbilities: new Set([MAIM]) });
+        expect(byAbility.autoAttack).toMatchObject({ hits: 2, damage: 400 });
+        expect(byAbility[MAIM]).toBeUndefined();
+        expect(byAbility.damageOverTime).toBeUndefined();
+    });
+
     test('sim thorns and retaliation rows are shown but not graded or counted in the share totals', () => {
         const real = extractPlayerAttacks(bleedTicks(), { dotAbilities: new Set([MAIM]) });
         const sim = summarizeSimAttacks({

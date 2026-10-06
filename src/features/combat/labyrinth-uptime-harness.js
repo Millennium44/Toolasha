@@ -292,9 +292,13 @@ function extractAttacks(ticks, opts) {
                 fileTick(rec(DOT_ABILITY), per);
                 return;
             }
+            // A tick with parry evidence this tick is the counter, not the first tick
+            // of a new bleed: only a chain already established by earlier ticks (above)
+            // keeps precedence over it.
+            const startsChain = parryBalance === 0;
             let source = null;
             let fits = [];
-            for (const h of hitLog) {
+            for (const h of startsChain ? hitLog : []) {
                 if (h.used || Math.abs(at - h.at - BLEED_INTERVAL_MS) > BLEED_TOLERANCE_MS) continue;
                 // Only a hit the game could have mislabeled can be a bleed's source. One
                 // filed under an explicitly named non-DoT ability (a Cleave) is never
@@ -327,7 +331,7 @@ function extractAttacks(ticks, opts) {
                 return;
             }
         }
-        if (dotCandidates.length && per > 0 && Number.isFinite(at)) {
+        if (dotCandidates.length && parryBalance === 0 && per > 0 && Number.isFinite(at)) {
             // A bleed whose source hit was never seen (a gap in the capture, a
             // merged tick): its first tick is still unexplained, so the second
             // — the same damage exactly three seconds on — proves both.
