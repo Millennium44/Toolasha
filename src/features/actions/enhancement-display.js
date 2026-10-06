@@ -26,6 +26,7 @@ import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -586,18 +587,12 @@ function generateCostsByLevelTable(
  * @returns {number} Protect from level (0 = never, 1-20)
  */
 export function getProtectFromLevelFromUI(panel) {
-    // Find the "Protect From Level" input
-    const labels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Protect From Level' && el.children.length === 0
-    );
-
-    if (labels.length > 0) {
-        const parent = labels[0].parentElement;
-        const input = parent.querySelector('input[type="number"], input[type="text"]');
-        if (input && input.value) {
-            const value = parseInt(input.value, 10);
-            return Math.max(0, Math.min(20, value)); // Clamp 0-20
-        }
+    // Found by the panel's structure as well as its English label: a translated client has no
+    // "Protect From Level" text to match
+    const input = findEnhancingInput(panel, 'protectFrom');
+    if (input && input.value) {
+        const value = parseInt(input.value, 10);
+        if (!Number.isNaN(value)) return Math.max(0, Math.min(20, value)); // Clamp 0-20
     }
 
     return 0; // Default to never protect
@@ -609,11 +604,9 @@ export function getProtectFromLevelFromUI(panel) {
  * @returns {number|null} Target level 1-20, or null when the input is absent or empty
  */
 export function getTargetLevelFromUI(panel) {
-    const labels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
-    );
-    if (labels.length === 0) return null;
-    const input = labels[0].parentElement?.querySelector('input[type="number"], input[type="text"]');
+    // Found by the panel's structure as well as its English label: a translated client has no
+    // "Target Level" text to match, and the mirror summary then fell back to +20
+    const input = findEnhancingInput(panel, 'target');
     if (!input || !input.value) return null;
     const value = parseInt(input.value, 10);
     if (Number.isNaN(value)) return null;

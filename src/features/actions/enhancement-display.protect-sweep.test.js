@@ -144,12 +144,18 @@ const enhancingItems = (itemName) => {
     );
 };
 
-function buildPanel({ target = 5, protectFrom = 3, protection = 'mirror_of_protection', itemName = null } = {}) {
+function buildPanel({
+    target = 5,
+    protectFrom = 3,
+    protection = 'mirror_of_protection',
+    itemName = null,
+    labels = { target: 'Target Level', protectFrom: 'Protect From Level' },
+} = {}) {
     const panel = document.createElement('div');
     panel.innerHTML =
         (itemName ? enhancingItems(itemName) : '') +
-        `<div><span>Target Level</span><input type="number" value="${target}"></div>` +
-        `<div><span>Protect From Level</span><input type="number" value="${protectFrom}"></div>` +
+        `<div><span>${labels.target}</span><input type="number" value="${target}"></div>` +
+        `<div><span>${labels.protectFrom}</span><input type="number" value="${protectFrom}"></div>` +
         `<div class="protectionItemInputContainer">${
             protection ? `<svg><use href="/static/media/items_sprite.abc.svg#${protection}"></use></svg>` : ''
         }</div>`;
@@ -513,6 +519,21 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
         // The banner's total and the line's are both taken to the target
         expect(stats.textContent).toContain('Total savings to +12:');
         expect(stats.textContent).not.toContain('to +20');
+    });
+
+    test('a Chinese client still quotes the mirror to the target, not +20', async () => {
+        state.prices['/items/philosophers_mirror'] = 1;
+        const panel = buildPanel({
+            target: 12,
+            protectFrom: 3,
+            protection: 'philosophers_mirror',
+            labels: { target: '目标等级', protectFrom: '保护等级' },
+        });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+        expect(stats.textContent).toContain('Total savings to +12:');
+        expect(stats.textContent).not.toContain('to +20');
+        expect(stats.querySelector('.mwi-protsweep-mirror').textContent).toMatch(/to \+12\.$/);
     });
 
     test('below the level mirrors first pay off, the line and the banner are left out', async () => {
