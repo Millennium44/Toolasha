@@ -569,6 +569,7 @@ describe('applyPayload and the key-migration carry', () => {
             { formatVersion: 1, stores: { settings: { script_settingsMap_abc: {} }, dungeonRuns: [1, 2] } },
         ],
         ['a settings store that is a string', { formatVersion: 1, stores: { settings: 'script_settingsMap_abc' } }],
+        ['a settings store that is an array', { formatVersion: 1, stores: { settings: [{ chatCommands: {} }] } }],
     ])('a payload with %s is refused before any record is forgotten or written', async (_label, body) => {
         await expect(applyPayload(JSON.stringify(body))).rejects.toThrow();
 
