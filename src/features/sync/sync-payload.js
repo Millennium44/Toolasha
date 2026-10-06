@@ -829,14 +829,30 @@ export function wholeKeyHashes(text) {
  * @param {Record<string, string>|null} baseline - Hashes at the last exchange
  * @returns {boolean} True to keep `mine`
  */
-function keepMine(id, mine, theirs, baseline, { allowRestored = false } = {}) {
+function keepMine(id, mine, theirs, baseline, { allowRestored = false, storeName = null } = {}) {
     // A full-backup restore made this device's whole-value keys a choice made
-    // now, whatever the last exchange was (see RESTORED_BASELINE)
-    if (allowRestored && baseline?.[RESTORED_BASELINE]) return valueHash(mine) !== valueHash(theirs);
+    // now, whatever the last exchange was (see RESTORED_BASELINE) — in the
+    // stores the restore actually landed
+    if (allowRestored && restoredStore(baseline?.[RESTORED_BASELINE], storeName)) {
+        return valueHash(mine) !== valueHash(theirs);
+    }
     const was = readBaselineEntry(baseline?.[id]);
     if (!was) return false;
     // The gist's side unmoved since the exchange, and this side moved since
     return valueHash(theirs) === was.gist && valueHash(mine) !== was.local;
+}
+
+/**
+ * Whether a restore marker covers a store.
+ * @param {*} marker - The baseline's RESTORED_BASELINE entry: `{at, stores}`, or a bare time from before
+ *   restores were recorded per store (which covered every store)
+ * @param {string|null} storeName - The store asked about
+ * @returns {boolean} True when that store's whole-value keys are the restore's
+ */
+function restoredStore(marker, storeName) {
+    if (!marker) return false;
+    if (typeof marker === 'number') return true;
+    return Array.isArray(marker.stores) && marker.stores.includes(storeName);
 }
 
 /**
@@ -940,7 +956,12 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
         const local = await storage.getAll(storeName);
         for (const key of Object.keys(entries)) {
             if (!isWholeKey(storeName, key) || !Object.hasOwn(local || {}, key)) continue;
-            if (keepMine(baselineId(storeName, key), local[key], entries[key], baseline, { allowRestored: true })) {
+            if (
+                keepMine(baselineId(storeName, key), local[key], entries[key], baseline, {
+                    allowRestored: true,
+                    storeName,
+                })
+            ) {
                 delete entries[key];
             }
         }
@@ -985,6 +1006,15 @@ export function mergeForUpload(localText, remoteText, baseline) {
     const remote = JSON.parse(remoteText);
     dropUnownedFromPayload(remote);
     assertApplicable(remote);
+    // The upload carries what this device's scope carries. A device switched
+    // to "Settings only" while the gist still holds a full-scope push must not
+    // keep re-uploading every history store it no longer syncs — that is the
+    // size the switch was made to shed — nor hand them to its next startup.
+    if ((local?.syncScope ?? 'settings') !== 'everything') {
+        for (const storeName of Object.keys(remote.stores)) {
+            if (storeName !== SETTINGS_STORE) delete remote.stores[storeName];
+        }
+    }
     for (const [storeName, entries] of Object.entries(remote.stores)) {
         let cleaned = stripExcludedKeys(storeName, entries);
         if (storeName === SETTINGS_STORE) cleaned = redactSettingsStore(cleaned);
@@ -1020,7 +1050,12 @@ export function mergeForUpload(localText, remoteText, baseline) {
             // The gist moved nowhere since this device last exchanged it: this
             // device's copy is the newer one whole, folded or not
             const registration = mergeForKey(storeName, key);
-            if (keepMine(baselineId(storeName, key), value, theirs[key], baseline, { allowRestored: !registration })) {
+            if (
+                keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
+                    allowRestored: !registration,
+                    storeName,
+                })
+            ) {
                 out[key] = value;
                 continue;
             }

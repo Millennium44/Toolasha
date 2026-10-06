@@ -47,6 +47,8 @@ const mocks = vi.hoisted(() => ({
     resets: [],
     /** What `importEverything` reports back to the restore flow */
     importResult: { restored: {}, expected: {}, failed: [], complete: true },
+    /** The store lists handed to `syncManager.noteFullRestore`, in call order */
+    restoreNotes: [],
     /** How many times the panel emptied config's settings map */
     cacheClears: 0,
     /** Times the command palette's own `open()` was called */
@@ -469,7 +471,12 @@ vi.mock('../ui/overlay-tab-button.js', () => ({
     },
 }));
 vi.mock('../sync/sync-manager.js', () => ({
-    default: { initialize: async () => {}, describeStatus: async () => 'Not linked.' },
+    default: {
+        initialize: async () => {},
+        describeStatus: async () => 'Not linked.',
+        prepareFullRestore: () => {},
+        noteFullRestore: async (stores) => mocks.restoreNotes.push(stores),
+    },
     getSyncTrace: () => [],
 }));
 vi.mock('./custom-price-overrides.js', () => ({
@@ -1488,6 +1495,7 @@ describe('restoring a backup says whether it worked', () => {
     beforeEach(() => {
         mocks.choiceAnswer = 'restore';
         mocks.importResult = { restored: {}, expected: {}, failed: [], complete: true };
+        mocks.restoreNotes.length = 0;
         globalThis.alert = vi.fn();
     });
 
@@ -1511,6 +1519,19 @@ describe('restoring a backup says whether it worked', () => {
         expect(said).toContain('did not finish');
         expect(said).toContain('xpHistory (0/40)');
         expect(said).not.toContain('Reload');
+    });
+
+    test('a partial restore still tells the sync which stores landed, so its merge does not undo them', async () => {
+        mocks.importResult = {
+            restored: { settings: 12, xpHistory: 0, dungeonRuns: 3 },
+            expected: { settings: 12, xpHistory: 40, dungeonRuns: 3 },
+            failed: [{ store: 'xpHistory', expected: 40, written: 0 }],
+            complete: false,
+        };
+
+        await restore({ formatVersion: 1, stores: { settings: {}, xpHistory: {}, dungeonRuns: {} } });
+
+        expect(mocks.restoreNotes).toEqual([['settings', 'dungeonRuns']]);
     });
 
     test('a clean restore asks for a reload, and says what a delayed one costs', async () => {

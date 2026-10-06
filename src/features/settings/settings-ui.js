@@ -1871,6 +1871,12 @@ class SettingsUI {
                 syncManager.prepareFullRestore?.(payload);
                 const { restored, failed, complete } = await importEverything(payload);
                 const total = Object.values(restored).reduce((sum, n) => sum + n, 0);
+                // The stores that landed are latched and restored whether or not
+                // the rest did; the sync merge must treat those as this device's
+                const landed = Object.keys(restored).filter(
+                    (store) => restored[store] > 0 && !failed.some((entry) => entry.store === store)
+                );
+                await syncManager.noteFullRestore?.(landed);
 
                 // "Restored 0 entries" used to be reported as success. A store
                 // whose transaction aborts writes nothing, and one bad key aborts
@@ -1888,7 +1894,6 @@ class SettingsUI {
                     return;
                 }
 
-                await syncManager.noteFullRestore?.();
                 alert(
                     `Restored ${total} entries across ${Object.keys(restored).length} stores. ` +
                         'Reload now — changes made before reloading will not be kept.'

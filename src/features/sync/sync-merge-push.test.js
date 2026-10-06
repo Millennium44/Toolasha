@@ -477,8 +477,9 @@ describe('an automatic push merges a gist that moved past it', () => {
 
         await as(a, async () => {
             syncManager.prepareFullRestore(backup);
-            expect((await importEverything(backup)).complete).toBe(true);
-            await syncManager.noteFullRestore();
+            const result = await importEverything(backup);
+            expect(result.complete).toBe(true);
+            await syncManager.noteFullRestore(Object.keys(result.restored));
         });
         await as(a, auto.push);
 
@@ -550,6 +551,66 @@ describe('an automatic push merges a gist that moved past it', () => {
         a.latches = 0;
         toasts.length = 0;
         await as(a, auto.startup);
+        expect(a.latches).toBe(0);
+        expect(toasts).toHaveLength(0);
+    });
+
+    test('a partial restore still protects the stores that landed, and only those', async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            b.db.settings.panelGeometry = { from: 'b' };
+            b.db.xpHistory.otherKey = 'b';
+            await auto.push();
+        });
+        // The settings store landed; xpHistory's transaction did not
+        await as(a, async () => {
+            a.db.settings.panelGeometry = { from: 'backup' };
+            await syncManager.noteFullRestore(['settings']);
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            a.db.xpHistory.otherKey = 'stale-local';
+        });
+        await as(a, auto.push);
+
+        expect(gistStores().settings.panelGeometry).toEqual({ from: 'backup' });
+        // Not restored, so not protected: both moved it, and the gist's stands
+        expect(gistStores().xpHistory.otherKey).toBe('b');
+    });
+
+    test('a device switched to Settings only does not carry the gist history stores in its merged upload', async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            b.db.xpHistory.testHistory_c1 = ['s1', 'b-sample'];
+            await auto.push();
+        });
+        a.settings.sync_scope = 'settings';
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await auto.push();
+        });
+
+        const merged = JSON.parse(gist.state.payload);
+        expect(Object.keys(merged.stores)).toEqual(['settings']);
+        expect(merged.syncScope).toBe('settings');
+        expect(merged.stores.settings[MAP]).toMatchObject({ X: { isTrue: true }, Y: { isTrue: true } });
+    });
+
+    test('a newer push identical in content settles quietly: no note, and no reload at the next startup', async () => {
+        const { a, b } = await syncedPair();
+        // B re-pushes the same data under a newer counter
+        await as(b, () => syncManager.push());
+        a.db.settings.panelSizeMemory = 1;
+        b.db.settings.panelSizeMemory = 1;
+        await as(b, auto.push);
+
+        // A recorded the same thing, so its merge adds nothing either way
+        expect((await as(a, auto.push)).reason).toBe('in-step');
+        expect(a.db.settings.toolasha_sync_unapplied ?? null).toBeNull();
+
+        a.latches = 0;
+        toasts.length = 0;
+        await as(a, auto.startup);
+        await as(a, auto.pull);
         expect(a.latches).toBe(0);
         expect(toasts).toHaveLength(0);
     });

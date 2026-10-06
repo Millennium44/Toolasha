@@ -594,16 +594,10 @@ class SyncManager {
             // next read then downloads in full, as it always did.
             // A merged upload holding changes this device has not applied is
             // not this device's data, so not `current`
-            version: gistVersion(
-                written.id,
-                written.etag,
-                written.files,
-                !(merged && (merged.remoteAdds || unapplied)),
-                {
-                    syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
-                    encrypted: manifest.encrypted,
-                }
-            ),
+            version: gistVersion(written.id, written.etag, written.files, !merged?.remoteAdds, {
+                syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
+                encrypted: manifest.encrypted,
+            }),
             // In the same transaction as the counter. Written after it, a page
             // closing between the two kept the advanced counter and lost the
             // note that the gist holds changes not applied here — and the next
@@ -617,7 +611,9 @@ class SyncManager {
                 // A merged upload carried changes this device has not applied, or
                 // still carries ones an earlier merge did. A plain push replaced
                 // the gist with this device's data, so there are none.
-                [KEY_UNAPPLIED]: merged && (merged.remoteAdds || unapplied) ? { since: exportedAt } : null,
+                // `remoteAdds` is read off the merged result, which holds
+                // whatever an earlier merge left unapplied too
+                [KEY_UNAPPLIED]: merged?.remoteAdds ? { since: exportedAt } : null,
             },
         });
 
@@ -681,11 +677,30 @@ class SyncManager {
             return { ok: false, reason: 'unmergeable' };
         }
 
+        if (!addsToRemote(merged.text, remote.payload) && !merged.remoteAdds) {
+            // The two hold the same data: another device pushed nothing this
+            // one lacks. Settle on that version exactly as a pull finding
+            // nothing new would, so neither the next startup nor the interval
+            // pull imports an identical payload, latches the stores and asks
+            // for a reload over nothing.
+            const lastSeq = readSeq(await storage.get(KEY_LAST_SYNCED_SEQ, STORE, null));
+            await this._remember({
+                gistId,
+                exportedAt: remote.manifest?.exportedAt ?? null,
+                hash: contentHash(localText),
+                chunkCount: Number(remote.manifest?.chunks) || 0,
+                syncSeq: advanceSeq(lastSeq, readSeq(remote.manifest?.syncSeq)),
+                version: remote.seen ? { ...remote.seen, current: true } : null,
+                extra: { [KEY_BASELINE]: wholeKeyHashes(localText), [KEY_UNAPPLIED]: null },
+            });
+            return { ok: true, skipped: true, reason: 'in-step' };
+        }
+
         if (!addsToRemote(merged.text, remote.payload)) {
-            // The gist already holds everything here. Nothing to send, but the
-            // gist is ahead: note it for the startup pull, and remember this
-            // device's data as seen so the next interval does not merge again
-            // until something changes here.
+            // The gist already holds everything here, and more. Nothing to
+            // send, but the gist is ahead: note it for the startup pull, and
+            // remember this device's data as seen so the next interval does
+            // not merge again until something changes here.
             await rememberLocal({
                 [KEY_LAST_HASH]: contentHash(localText),
                 [KEY_UNAPPLIED]: { since: remote.manifest?.exportedAt ?? null },
@@ -1120,11 +1135,20 @@ class SyncManager {
     /**
      * Record that a full backup was restored, so the next merge takes this
      * device's whole-value keys as the newer copy instead of reverting them to
-     * the gist's (see `RESTORED_BASELINE`). Call after the restore landed.
+     * the gist's (see `RESTORED_BASELINE`). Call after the restore, with the
+     * stores that landed whole — a partial restore latched those and they are
+     * as much the player's choice as a complete one.
+     * @param {Array<string>} storeNames - Stores the restore wrote in full
      * @returns {Promise<void>}
      */
-    async noteFullRestore() {
-        await rememberLocal({ [KEY_BASELINE]: { [RESTORED_BASELINE]: Date.now() } });
+    async noteFullRestore(storeNames = []) {
+        if (!storeNames.length) return;
+        // Added to the baseline rather than replacing it: a store the restore
+        // did not land keeps its last exchange to be merged against
+        const baseline = (await storage.get(KEY_BASELINE, STORE, null)) || {};
+        await rememberLocal({
+            [KEY_BASELINE]: { ...baseline, [RESTORED_BASELINE]: { at: Date.now(), stores: [...storeNames] } },
+        });
     }
 
     /**
