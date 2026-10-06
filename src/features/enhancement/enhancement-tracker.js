@@ -350,7 +350,7 @@ class EnhancementTracker {
             if (!this._ownsSessions(sessions, owner)) return;
             // A merged session holding a run that already reached its own target was recorded
             // under that run's id; recording this one too would count those attempts twice
-            if (completed.calibrationSkipTarget === completed.targetLevel) return;
+            if (completed.calibrationRecordedTargets?.includes(completed.targetLevel)) return;
 
             // The run just became one finished draw from the distribution its
             // prediction quoted; the recorder declines anything that is not

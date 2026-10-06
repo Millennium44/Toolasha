@@ -310,7 +310,7 @@ describe('merging sessions into one', () => {
 
 describe('calibration after a merge', () => {
     /** #7 reached its +8 (recorded then under its own id), #8 is a second copy climbing to +8 */
-    async function loadMergedPair({ sevenReachedTarget }) {
+    async function loadMergedPair({ sevenReachedTarget, eightTarget = 8 }) {
         const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
         Object.assign(seven, {
             id: 'session_7',
@@ -322,7 +322,7 @@ describe('calibration after a merge', () => {
             currentLevel: sevenReachedTarget ? 8 : 3,
             totalAttempts: 466,
         });
-        const eight = createSession('/items/sword', 'Sword', 6, 8, 5);
+        const eight = createSession('/items/sword', 'Sword', 6, eightTarget, 5);
         Object.assign(eight, {
             id: 'session_8',
             startTime: 5_000_000,
@@ -344,6 +344,15 @@ describe('calibration after a merge', () => {
         await loadMergedPair({ sevenReachedTarget: true });
         await enhancementTracker.recordSuccess(7, 8);
         expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+    });
+
+    test('a completed +8 folded into a running +10 still records the distinct +10 observation', async () => {
+        await loadMergedPair({ sevenReachedTarget: true, eightTarget: 10 });
+        await enhancementTracker.recordSuccess(7, 8);
+        await enhancementTracker.recordSuccess(8, 9);
+        await enhancementTracker.recordSuccess(9, 10);
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
+        expect(enhancementCalibration.recordCompletion.mock.calls[0][0].targetLevel).toBe(10);
     });
 
     test('a merge of runs that never reached their target is recorded as one observation', async () => {

@@ -455,8 +455,9 @@ export function planSessionMerge(sessions) {
  * from the earliest start.
  *
  * When a folded-in session had already reached its own target, its completion has been recorded
- * for calibration under its own id; the merged session is marked (`calibrationSkipTarget`) so
- * reaching its target does not record those attempts a second time.
+ * for calibration under its own id; the merged session lists those targets
+ * (`calibrationRecordedTargets`) so reaching one of them does not record those attempts a second
+ * time. A different target is a distinct observation and is still recorded.
  *
  * @param {Array<Object>} ordered - Sessions by last activity, from {@link planSessionMerge}
  * @returns {Object} The latest session, now the merged one
@@ -470,9 +471,16 @@ export function foldSessions(ordered) {
     const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
     const segmentStartTime = newest.segmentStartTime || newest.startTime;
     const ownPast = Array.isArray(newest.pastActiveSpans) ? newest.pastActiveSpans : [];
-    const reachedTarget = older.some(
-        (session) => session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel
-    );
+    // Targets whose completion calibration has already recorded under a folded-in session's id
+    const recordedTargets = new Set();
+    for (const session of ordered) {
+        for (const target of session.calibrationRecordedTargets || []) recordedTargets.add(target);
+    }
+    for (const session of older) {
+        if (session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel) {
+            recordedTargets.add(session.targetLevel);
+        }
+    }
     for (const session of older) {
         spans.push(...getActiveSpans(session));
 
@@ -533,7 +541,9 @@ export function foldSessions(ordered) {
     newest.pastActiveSpans = [...spans, ...ownPast].sort((a, b) => a.start - b.start);
     newest.segmentStartTime = segmentStartTime;
     newest.extensionBaseline = null;
-    if (reachedTarget) newest.calibrationSkipTarget = newest.targetLevel;
+    if (recordedTargets.size > 0) {
+        newest.calibrationRecordedTargets = [...recordedTargets].sort((a, b) => a - b);
+    }
     newest.mergedFrom = [
         ...(newest.mergedFrom || []),
         ...older.flatMap((session) => [...(session.mergedFrom || []), session.id]),

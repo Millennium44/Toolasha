@@ -639,16 +639,42 @@ describe('merging runs protected by different items', () => {
 });
 
 describe('a merged run already counted for calibration', () => {
-    test('a folded-in session that reached its own target marks the merged one', () => {
+    test('a folded-in session that reached its own target lists that target', () => {
         const { seven, eight } = spatulaRuns();
         seven.currentLevel = 8; // reached its +8
         const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
-        expect(merged.calibrationSkipTarget).toBe(8);
+        expect(merged.calibrationRecordedTargets).toEqual([8]);
+    });
+
+    test('folding a completed +8 into a running +10 leaves the +10 observation open', () => {
+        const { seven, eight } = spatulaRuns();
+        seven.currentLevel = 8;
+        eight.targetLevel = 10;
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.calibrationRecordedTargets).toEqual([8]);
+        expect(merged.calibrationRecordedTargets).not.toContain(merged.targetLevel);
+    });
+
+    test('recorded targets carry through a second merge', () => {
+        const first = spatulaRuns();
+        first.seven.currentLevel = 8;
+        const once = foldSessions(planSessionMerge([first.seven, first.eight]).ordered);
+        once.state = SessionState.COMPLETED;
+        const later = spatulaRuns().eight;
+        Object.assign(later, {
+            id: 'session_9',
+            targetLevel: 10,
+            startTime: 9_000_000,
+            lastUpdateTime: 9_100_000,
+            lastAttempt: { attemptNumber: 1, level: 4, timestamp: 9_100_000, actionId: 'a9', currentCount: 1 },
+        });
+        const twice = foldSessions(planSessionMerge([once, later]).ordered);
+        expect(twice.calibrationRecordedTargets).toEqual([8]);
     });
 
     test('one that ended short of its target does not', () => {
         const { seven, eight } = spatulaRuns();
         const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
-        expect(merged.calibrationSkipTarget).toBeUndefined();
+        expect(merged.calibrationRecordedTargets).toBeUndefined();
     });
 });
