@@ -2662,14 +2662,58 @@ class LabyrinthClearRate {
         if (!this.roomData) return null;
         const flat = this.roomData.flat();
         const parts = [];
+        const inputsOf = this._tileInputsReader();
         for (let i = 0; i < flat.length; i++) {
             const room = flat[i];
             if (!room) continue;
             const target = room.skillHrid || room.monsterHrid || '';
             const level = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
-            parts.push(`${i}:${target}:${level}:${room.isCleared ? 1 : 0}`);
+            // A cleared room has no badge to keep current, so only its identity
+            // counts; an open one carries everything its badge is computed from
+            const inputs = room.isCleared || !target || level <= 0 ? '' : inputsOf(room, level);
+            parts.push(`${i}:${target}:${level}:${room.isCleared ? 1 : 0}:${inputs}`);
         }
         return `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}|${parts.join(';')}`;
+    }
+
+    /**
+     * A reader for what one tile's badge is computed from, for one pass.
+     *
+     * A combat room's is its combat cache key — monster, level, assigned
+     * loadout, precision, crates, the full-ability rule and the labyrinth combat
+     * upgrades — plus the saved loadouts' contents, which the key leaves to the
+     * cache invalidation. A skilling room's is the skill level and the metrics
+     * `computeSkillingClear` reads: gear, buffs, crates and labyrinth upgrades.
+     *
+     * Only standing state — nothing that moves tick to tick — so a static floor
+     * keeps one signature and a settled pass is not re-run. Skilling metrics
+     * are worked out once per skill per reader.
+     *
+     * @private
+     * @returns {function(Object, number): string} (room, roomLevel) => signature
+     */
+    _tileInputsReader() {
+        const build = this._snapshotContentFingerprint();
+        const bySkill = new Map();
+        const skillInputs = (skillHrid) => {
+            if (bySkill.has(skillHrid)) return bySkill.get(skillHrid);
+            let value = '';
+            try {
+                const skillId = skillHrid.replace('/skills/', '');
+                const metrics = this.getSkillingMetrics(skillId, `/action_types/${skillId}`);
+                const level = dataManager.getSkills()?.find((skill) => skill.skillHrid === skillHrid)?.level || 1;
+                value = `${level}|${JSON.stringify(metrics)}|${JSON.stringify(this.getLabyrinthUpgrades())}`;
+            } catch (error) {
+                console.error('[LabyrinthClearRate] Reading a skilling tile signature failed:', error);
+                value = 'unreadable';
+            }
+            bySkill.set(skillHrid, value);
+            return value;
+        };
+        return (room, roomLevel) =>
+            room.skillHrid
+                ? `${room.skillHrid}|${roomLevel}|${skillInputs(room.skillHrid)}`
+                : `${this.buildCombatCacheKey(room.monsterHrid, roomLevel)}|${build}`;
     }
 
     /**
@@ -3238,16 +3282,14 @@ class LabyrinthClearRate {
             this.calculatedTileKeys = new Set();
         }
         // What each calculated tile was calculated FROM. A tile counts as done
-        // only while its own inputs (room, level, precision, build) are the
-        // ones it was judged under: a settled 0% room, which is never cached,
+        // only while its own inputs (see _tileInputsReader) are the ones it
+        // was judged under: a settled 0% room, which is never cached,
         // would otherwise keep its old badge through a gear or precision change
         // that the floor fingerprint correctly let a new pass run for.
         if (!this._calculatedTileInputs) {
             this._calculatedTileInputs = new Map();
         }
-        const buildInputs = `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}`;
-        const tileInputs = (room, roomLevel) =>
-            `${buildInputs}|${room.skillHrid || room.monsterHrid || ''}|${roomLevel}`;
+        const tileInputs = this._tileInputsReader();
         const markCalculated = (target) => {
             this.calculatedTileKeys.add(target.tileKey);
             this._calculatedTileInputs.set(target.tileKey, target.inputs);

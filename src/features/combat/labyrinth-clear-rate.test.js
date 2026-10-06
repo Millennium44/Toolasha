@@ -5116,6 +5116,64 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         }
     });
 
+    test('a settled combat room is re-simmed when its assigned loadout changes, and not otherwise', async () => {
+        // Codex P2 on #364: the loadout a monster is fought in is part of the
+        // combat cache key, and was missing from both the tile's settled inputs
+        // and the floor fingerprint, so reassigning it left the old badge up
+        mountFloor();
+        const setting = { labyrinthLoadoutImp: 2 };
+        dataManagerMock.characterData = { characterSetting: setting, characterInfo: {} };
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+
+            sims.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            setting.labyrinthLoadoutImp = 5;
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl).sort()).toEqual([100, 110]);
+        } finally {
+            dataManagerMock.characterData = null;
+        }
+    });
+
+    test('a skilling room is worked out again when the skill levels up, and not otherwise', async () => {
+        const parent = document.createElement('div');
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(cell);
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [[{ skillHrid: '/skills/milking', recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        let level = 90;
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level }]);
+        const worked = vi.spyOn(labyrinthClearRate, 'computeSkillingClear');
+        try {
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(worked).toHaveBeenCalledTimes(1);
+
+            worked.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(worked).not.toHaveBeenCalled();
+
+            level = 95;
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(worked).toHaveBeenCalledTimes(1);
+        } finally {
+            dataManagerMock.characterData = null;
+            dataManagerMock.getSkills.mockImplementation(() => []);
+        }
+    });
+
     test('a manual Calculate still re-sims the settled 0% room', async () => {
         mountFloor();
         const sims = vi
