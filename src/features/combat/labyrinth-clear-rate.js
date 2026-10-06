@@ -2694,6 +2694,13 @@ class LabyrinthClearRate {
      */
     _tileInputsReader() {
         const build = this._snapshotContentFingerprint();
+        // The hours ceiling caps how many fights a combat sim can run: raising it can lift a capped 0%
+        let hoursCap = '';
+        try {
+            hoursCap = this.tileCalcUncapped() ? 'uncapped' : String(this.getSimHours());
+        } catch {
+            hoursCap = 'unreadable';
+        }
         const bySkill = new Map();
         const skillInputs = (skillHrid) => {
             if (bySkill.has(skillHrid)) return bySkill.get(skillHrid);
@@ -2713,7 +2720,7 @@ class LabyrinthClearRate {
         return (room, roomLevel) =>
             room.skillHrid
                 ? `${room.skillHrid}|${roomLevel}|${skillInputs(room.skillHrid)}`
-                : `${this.buildCombatCacheKey(room.monsterHrid, roomLevel)}|${build}`;
+                : `${this.buildCombatCacheKey(room.monsterHrid, roomLevel)}|${build}|h${hoursCap}`;
     }
 
     /**

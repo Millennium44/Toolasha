@@ -5116,6 +5116,29 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         }
     });
 
+    test('a settled 0% room is re-simmed when the sim hours ceiling changes', async () => {
+        // A capped run that ended at 0% can clear with more simulated hours to run in
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            settings.map.set('labyrinthSimMaxHours', 77);
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl)).toContain(110);
+        } finally {
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
     test('a settled combat room is re-simmed when its assigned loadout changes, and not otherwise', async () => {
         // Codex P2 on #364: the loadout a monster is fought in is part of the
         // combat cache key, and was missing from both the tile's settled inputs
