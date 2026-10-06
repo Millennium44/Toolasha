@@ -844,6 +844,23 @@ class SyncManager {
             return { ok: false, reason: 'raced' };
         }
 
+        // More revisions were replaced than one check reads back. The older ones
+        // cannot be folded in, and a rewrite built from the newest few would be
+        // recorded as a success that leaves them stranded in the gist's history
+        // with nothing left to look for them. Undo this write instead, the way
+        // an unreadable revision is: the gist is put back as the newest replaced
+        // push, a normal revision, so this device's fingerprint stays "changed"
+        // and the next interval merges onto it as an ordinary push. Not a hold:
+        // nothing about the gist is unmergeable, only this write's view of it.
+        if (written.interveningTruncated) {
+            console.warn(
+                `[Sync] More than ${written.intervening.length} other pushes landed while this one was written; ` +
+                    'undid it and will merge onto the latest on the next interval.'
+            );
+            await this._restoreReplaced(token, gistId, written.intervening.at(-1));
+            return { ok: false, reason: 'raced' };
+        }
+
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
         let text = uploadedText;
         let remoteAdds = Boolean(merged?.remoteAdds);

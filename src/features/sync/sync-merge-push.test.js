@@ -199,7 +199,9 @@ vi.mock('./gist-client.js', async () => {
             // GitHub's PATCH answer carries the history: what came right before this write
             const after = history();
             const base = basedOn ? after.indexOf(basedOn) : -1;
-            const intervening = basedOn && base > 1 ? after.slice(1, base).reverse() : [];
+            // As the real write reads it: the newest five, and whether older ones were left out
+            const between = basedOn && base > 1 ? after.slice(1, base) : [];
+            const intervening = between.slice(0, 5).reverse();
             return {
                 id: id ?? 'g1',
                 updatedAt: 'now',
@@ -209,6 +211,7 @@ vi.mock('./gist-client.js', async () => {
                 version: versionOf(gist.etag),
                 basedOn,
                 intervening,
+                interveningTruncated: between.length > 5,
             };
         },
     };
@@ -1190,6 +1193,58 @@ describe('two devices writing at the same moment', () => {
 
         expect(result).toEqual({ ok: false, reason: 'raced' });
         expect(a.db.settings.toolasha_sync_lastHash).toBe(lastHashBefore);
+    });
+
+    test('a write that replaced more pushes than one check reads back puts the newest back and retries', async () => {
+        const { a } = await syncedPair();
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        // Six other pushes, each a mergeable payload of its own, land between
+        // A's listing and A's write: one more than the check reads back
+        let newest;
+        gist.betweenListAndWrite = async () => {
+            for (let i = 1; i <= 6; i += 1) {
+                const based = `v${gist.etag}`;
+                const payload = JSON.parse(gist.state.payload);
+                payload.stores.xpHistory = { ...payload.stores.xpHistory, testHistory_c1: [`other-${i}`] };
+                gist.etag += 1;
+                gist.state = {
+                    manifest: {
+                        ...gist.state.manifest,
+                        syncSeq: gist.state.manifest.syncSeq + 1,
+                        exportedAt: new Date(BASE_MS + elapsed - 1000 + i).toISOString(),
+                        basedOn: based,
+                        hash: undefined,
+                        bytes: undefined,
+                    },
+                    payload: JSON.stringify(payload),
+                };
+                newest = gist.state.payload;
+                gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+            }
+        };
+        const result = await as(a, auto.push);
+        const aWrite = gist.revisions.find((revision) => revision.payload.includes('a-sample'));
+
+        // Not recorded as a success, and no rewrite built from the newest five
+        expect(result).toEqual({ ok: false, reason: 'raced' });
+        expect(aWrite).toBeTruthy();
+        expect(gist.revisions.filter((revision) => revision.payload.includes('a-sample'))).toHaveLength(1);
+        // The newest other push is the gist again, numbered above A's write
+        expect(gist.state.payload).toBe(newest);
+        expect(gist.state.manifest.syncSeq).toBeGreaterThan(aWrite.manifest.syncSeq);
+
+        // ...and A's next tick merges its sample onto that revision as an ordinary push
+        expect(await as(a, auto.push)).toEqual({ ok: true });
+        expect(gist.state.payload).toContain('a-sample');
+        expect(gist.state.payload).toContain('other-6');
+        expect(
+            warn.mock.calls.some(([line]) => String(line).includes('other pushes landed while this one was written'))
+        ).toBe(true);
+        warn.mockRestore();
+        error.mockRestore();
     });
 
     test('a write in the clear that replaced an encrypted push it cannot read puts that push back', async () => {
