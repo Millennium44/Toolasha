@@ -740,6 +740,7 @@ class LabyrinthClearRate {
                 // restores nothing once fenced, so hand back the flag and button
                 // here.
                 this._tileGen = (this._tileGen || 0) + 1;
+                this._autoCalcDeferred = false;
                 if (this.tileCalcRunning) {
                     this.tileCalcRunning = false;
                     this._pathQueued = false;
@@ -3245,7 +3246,14 @@ class LabyrinthClearRate {
         // manual press it is the strip's own Uncapped toggle. Never for an auto
         // pass — those fire off DOM re-renders and must stay bounded.
         const uncapped = options.uncapped === true || (!auto && this.tileCalcUncapped());
-        if (this.tileCalcRunning) return;
+        if (this.tileCalcRunning) {
+            // An auto trigger that lands mid-pass (a beacon or a delta revealing
+            // rooms while sims are awaited) used to vanish here, and the pass in
+            // flight only covers the rooms it gathered at its start. Remember it
+            // so the pass hands over to one more auto run when it settles.
+            if (auto) this._autoCalcDeferred = true;
+            return;
+        }
         // A pass that finds nothing to calculate still settles a path queued
         // while it was pending, or the wait would never be released
         const settledIdle = () => {
@@ -3395,6 +3403,7 @@ class LabyrinthClearRate {
         // An auto pass that schedules a retry is not settled: a queued path waits for the retry
         let retryScheduled = false;
         let simmed = 0;
+        let sawDisconnected = false;
         const barFraction = (failed = 0) => Math.min(1, Math.max(0, (doneUpFront + simmed - failed) / eligible));
         this.setTileProgress(barFraction());
 
@@ -3450,7 +3459,24 @@ class LabyrinthClearRate {
                     continue;
                 }
                 if (!target.cell.isConnected) {
-                    unjudged++;
+                    // The game repainted the grid under the pass. Keep the result
+                    // so the restore below paints it onto the fresh cell instead
+                    // of leaving the tile bare under a "settled" fingerprint.
+                    // The same retry rule as a connected cell: an auto 0% may just
+                    // be loadout snapshots still loading, so it is neither cached
+                    // nor painted as final, and the pass is not settled over it —
+                    // it counts as unjudged, so even once the retries are spent
+                    // the floor fingerprint stays open for a later trigger.
+                    if (auto && !(result.clearChance > 0)) {
+                        combatRetryNeeded++;
+                        unjudged++;
+                    } else {
+                        this._tileResults.set(target.tileKey, result);
+                        // Judged: settled under the inputs it was simmed with, so
+                        // the restore's repaint is not mistaken for a stale tile
+                        markCalculated(target);
+                        sawDisconnected = true;
+                    }
                     step();
                     continue;
                 }
@@ -3467,6 +3493,8 @@ class LabyrinthClearRate {
                 }
                 step();
             }
+
+            if (sawDisconnected && !cancelled && !epochGone() && !floorGone()) this.restoreTileBadgesFromCache();
 
             if (cancelled) {
                 // Torn down rather than stopped: the status line and the
@@ -3534,10 +3562,20 @@ class LabyrinthClearRate {
                 // withdraws the wait too: the rooms it skipped are unjudged.
                 // A pass that scheduled a retry keeps the wait: pathing now would
                 // judge the rooms the retry is about to settle on assumptions.
-                const wantsPath = this._pathQueued && !retryScheduled;
-                if (!retryScheduled || cancelled) this._pathQueued = false;
+                // A deferred auto trigger (rooms revealed mid-pass) is a pass about
+                // to run, exactly like a scheduled retry, and keeps the wait too.
+                // Only a pass that can actually be scheduled holds the wait: with
+                // Auto-calc switched off mid-pass nothing would drain a queued Path.
+                const deferred = this._autoCalcDeferred && Boolean(config.getSetting('labyrinthAutoCalcTiles'));
+                this._autoCalcDeferred = false;
+                const followUp = retryScheduled || (deferred && !cancelled);
+                const wantsPath = this._pathQueued && !followUp;
+                if (!followUp || cancelled) this._pathQueued = false;
                 this.setPathButtonRunning(false);
                 if (wantsPath && !cancelled) this.runPathCalculation();
+                // A retry already scheduled covers the new rooms; a user cancel
+                // withdraws the request.
+                if (deferred && !retryScheduled && !cancelled) this.scheduleAutoTileCalc();
             } else {
                 this._pathQueued = false;
             }

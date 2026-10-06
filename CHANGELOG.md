@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The floor map no longer re-simulates every 0% room each time the game redraws the grid (a likely source of stutter while the map is open), lab combat sims now wear the loadout a room is set to even when two loadouts share a name, and the Accuracy tab opens several times faster with the same figures. Fights in a room the sim hadn't run yet were stored as a 0% prediction (they're now stored as unpredicted), which threw the Reliability card far off; older fights stored that way are now left out of it, with a count.
 
+### Labyrinth badges cover rooms revealed mid-calculation
+
+- Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
