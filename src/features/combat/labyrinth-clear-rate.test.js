@@ -5068,3 +5068,156 @@ describe('Path pressed during a floor calculation', () => {
         expect(pathBtn.textContent).toBe('Path');
     });
 });
+
+describe('floor calculation and rooms revealed mid-pass', () => {
+    const IMP = '/monsters/imp';
+    const makeCells = (n) => {
+        const parent = document.createElement('div');
+        const cells = [];
+        for (let i = 0; i < n; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+            cells.push(cell);
+        }
+        document.body.appendChild(parent);
+        return cells;
+    };
+    afterEach(() => {
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate._autoCalcDeferred = false;
+        if (labyrinthClearRate.autoTileTimer) clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.autoTileTimer = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        vi.restoreAllMocks();
+    });
+
+    test('an auto trigger that lands while a pass runs is replayed once the pass settles', async () => {
+        makeCells(2);
+        const room = (lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false });
+        labyrinthClearRate.roomData = [[room(100), null]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        const scheduleSpy = vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc').mockImplementation(() => {});
+
+        const pass = labyrinthClearRate.runTileCalculation({ auto: true });
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        // A beacon reveals the second room while the first sim is awaited
+        labyrinthClearRate.roomData = [[room(100), room(110)]];
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(scheduleSpy).not.toHaveBeenCalled();
+
+        release({ clearChance: 0.9, expectedSeconds: 10 });
+        await pass;
+        expect(scheduleSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('a result for a cell the game repainted mid-pass is restored onto the fresh cell', async () => {
+        const [cell] = makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            const fresh = document.createElement('div');
+            fresh.className = 'LabyrinthPanel_roomCell_abc';
+            cell.replaceWith(fresh);
+            return { clearChance: 0.9, expectedSeconds: 10 };
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        const live = document.querySelector('.LabyrinthPanel_roomCell_abc');
+        expect(live).not.toBe(cell);
+        expect(live.querySelector('.mwi-labyrinth-tile-badge')).not.toBeNull();
+    });
+
+    test('an auto 0% for a repainted cell is retried, not cached, painted, or settled', async () => {
+        const [cell] = makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            const fresh = document.createElement('div');
+            fresh.className = 'LabyrinthPanel_roomCell_abc';
+            cell.replaceWith(fresh);
+            return { clearChance: 0, expectedSeconds: Infinity };
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(document.querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
+        expect(labyrinthClearRate._tileResults.size).toBe(0);
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+        expect(labyrinthClearRate.autoTileRetryCount).toBe(1);
+    });
+
+    test('a Path queued during a pass waits for the deferred pass instead of pathing at once', async () => {
+        makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc').mockImplementation(() => {});
+        const pathSpy = vi.spyOn(labyrinthClearRate, 'runPathCalculation').mockImplementation(() => {});
+
+        const pass = labyrinthClearRate.runTileCalculation({ auto: true });
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        labyrinthClearRate._pathQueued = true;
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        release({ clearChance: 0.9, expectedSeconds: 10 });
+        await pass;
+
+        expect(pathSpy).not.toHaveBeenCalled();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('a queued Path runs at once when Auto-calc was switched off before the deferred pass', async () => {
+        makeCells(1);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc').mockImplementation(() => {});
+        const pathSpy = vi.spyOn(labyrinthClearRate, 'runPathCalculation').mockImplementation(() => {});
+
+        const pass = labyrinthClearRate.runTileCalculation({ auto: true });
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        labyrinthClearRate._pathQueued = true;
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        configMock.getSetting.mockImplementation((key) => key !== 'labyrinthAutoCalcTiles');
+        try {
+            release({ clearChance: 0.9, expectedSeconds: 10 });
+            await pass;
+        } finally {
+            configMock.getSetting.mockImplementation(() => true);
+        }
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+    });
+});

@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
 
+### Labyrinth badges cover rooms revealed mid-calculation
+
+- Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
