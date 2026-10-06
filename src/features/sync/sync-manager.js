@@ -593,17 +593,21 @@ class SyncManager {
                     encrypted: manifest.encrypted,
                 }
             ),
-        });
-        await rememberLocal({
-            [KEY_LAST_PUSHED_AT]: exportedAt,
-            // This device's values, whichever of them the upload kept: a key
-            // the gist's side won stays "unmoved here" against this device's
-            // own value, so the startup pull takes the gist's (see wholeKeyHashes)
-            [KEY_BASELINE]: wholeKeyHashes(localPayload),
-            // A merged upload carried changes this device has not applied, or
-            // still carries ones an earlier merge did. A plain push replaced
-            // the gist with this device's data, so there are none.
-            [KEY_UNAPPLIED]: merged && (merged.remoteAdds || unapplied) ? { since: exportedAt } : null,
+            // In the same transaction as the counter. Written after it, a page
+            // closing between the two kept the advanced counter and lost the
+            // note that the gist holds changes not applied here — and the next
+            // automatic push, seeing the gist no longer ahead, replaced it
+            extra: {
+                [KEY_LAST_PUSHED_AT]: exportedAt,
+                // This device's values, whichever of them the upload kept: a key
+                // the gist's side won stays "unmoved here" against this device's
+                // own value, so the startup pull takes the gist's (see wholeKeyHashes)
+                [KEY_BASELINE]: wholeKeyHashes(localPayload),
+                // A merged upload carried changes this device has not applied, or
+                // still carries ones an earlier merge did. A plain push replaced
+                // the gist with this device's data, so there are none.
+                [KEY_UNAPPLIED]: merged && (merged.remoteAdds || unapplied) ? { since: exportedAt } : null,
+            },
         });
 
         if (!silent) {
@@ -988,14 +992,15 @@ class SyncManager {
             // Applied whole, this version is now this device's. Held-back
             // records mean it is not yet, and the retry must re-download it.
             version: seen ? { ...seen, current: !pendingHeld } : null,
-        });
-        await rememberLocal({
-            // The gist's values are now the last exchange: a key this device
-            // kept over an unmoved gist value stays "moved here" against it
-            [KEY_BASELINE]: wholeKeyHashes(payload),
-            // Whatever an automatic merge left in the gist has landed now —
-            // unless records were held back, which the retry has to take
-            ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
+            // One transaction with the stamp and counter, as on the push side
+            extra: {
+                // The gist's values are now the last exchange: a key this device
+                // kept over an unmoved gist value stays "moved here" against it
+                [KEY_BASELINE]: wholeKeyHashes(payload),
+                // Whatever an automatic merge left in the gist has landed now —
+                // unless records were held back, which the retry has to take
+                ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
+            },
         });
 
         // Every figure below comes out of the apply result; nothing here re-reads
@@ -1308,14 +1313,25 @@ class SyncManager {
     /**
      * Record what this device now believes about the gist.
      * @param {{gistId: string, exportedAt: string, hash: string, chunkCount: number,
-     *   syncSeq?: number|null, mergeHeld?: Object|null, version?: Object|null}} state - New state. `syncSeq`
+     *   syncSeq?: number|null, mergeHeld?: Object|null, version?: Object|null, extra?: Object}} state - New state. `syncSeq`
      *   is null for an exchange with a gist that carries no counter, which must not invent one. `mergeHeld`
      *   is passed only by a pull, which is the one exchange that can land or hold back records; a push leaves
      *   the marker alone. `version` is the gist version the exchange leaves behind (see KEY_GIST_VERSION).
+     *   `extra` is any other bookkeeping that must land in the same transaction.
      * @private
      */
-    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = undefined, version }) {
+    async _remember({
+        gistId,
+        exportedAt,
+        hash,
+        chunkCount,
+        syncSeq = null,
+        mergeHeld = undefined,
+        version,
+        extra = {},
+    }) {
         await rememberLocal({
+            ...extra,
             [KEY_GIST_ID]: gistId,
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,

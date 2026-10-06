@@ -17,7 +17,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => character.id },
 }));
 
-const stored = vi.hoisted(() => ({ map: {} }));
+const stored = vi.hoisted(() => ({ map: {}, putAlls: [] }));
 /** What the manager did to storage, in order, so a test can see when it did it */
 const storageCalls = vi.hoisted(() => []);
 vi.mock('../../core/storage.js', () => ({
@@ -36,6 +36,7 @@ vi.mock('../../core/storage.js', () => ({
         // Sync bookkeeping goes down the bulk path, which the restore latch
         // does not cover — see `rememberLocal` in sync-manager.js
         putAll: async (_store, entries) => {
+            stored.putAlls.push(Object.keys(entries));
             for (const [key, value] of Object.entries(entries)) stored.map[key] = value;
             return Object.keys(entries).length;
         },
@@ -165,6 +166,7 @@ const { default: syncManager, isNewer, SyncManager } = await import('./sync-mana
 beforeEach(() => {
     settings.values = { sync_enabled: true, sync_token: 'ghp_secret', sync_scope: 'settings', sync_auto: false };
     stored.map = {};
+    stored.putAlls = [];
     storageCalls.length = 0;
     toasts.length = 0;
     dialog.answer = null;
@@ -1861,6 +1863,27 @@ describe('automatic pushes merge into the upload, never into this device', () =>
         expect(stored.map.toolasha_sync_baseline).toEqual({ of: '{"local":2}' });
         expect(stored.map.toolasha_sync_unapplied).toBeTruthy();
         expect(toasts).toHaveLength(0);
+    });
+
+    test('the counter and the note that the gist holds news for this device land in one write', async () => {
+        gistAhead();
+        await syncManager.push({ silent: true, unattended: true });
+
+        const withCounter = stored.putAlls.filter((keys) => keys.includes('toolasha_sync_lastSyncedSeq'));
+        expect(withCounter).toHaveLength(1);
+        expect(withCounter[0]).toEqual(
+            expect.arrayContaining(['toolasha_sync_unapplied', 'toolasha_sync_baseline', 'toolasha_sync_lastHash'])
+        );
+    });
+
+    test('a pull lands its counter, baseline and cleared note in one write', async () => {
+        stored.map.toolasha_sync_unapplied = { since: remoteAt };
+        stored.map.toolasha_sync_lastHash = 'h:{"local":2}';
+        await syncManager.pull({ silent: true, startup: true });
+
+        const withCounter = stored.putAlls.filter((keys) => keys.includes('toolasha_sync_lastSyncedSeq'));
+        expect(withCounter).toHaveLength(1);
+        expect(withCounter[0]).toEqual(expect.arrayContaining(['toolasha_sync_unapplied', 'toolasha_sync_baseline']));
     });
 
     test('a merge that adds nothing to the gist sends nothing, and still notes the gist is ahead', async () => {
