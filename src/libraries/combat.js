@@ -106,7 +106,7 @@ import characterCardButton from '../features/profile/character-card-button.js';
 import eliteAchievementReminder from '../features/profile/elite-achievement-reminder.js';
 
 // Guild
-import guildXPTracker from '../features/guild/guild-xp-tracker.js';
+import guildXPTracker, { guildXPTracker as guildXPTrackerInstance } from '../features/guild/guild-xp-tracker.js';
 // Namespace-imported for the ui bundle's chat commands, which used to inline a
 // private copy of the whole guild graph through these five roots — the
 // externals map (rollup.config.js) now points its imports here instead
@@ -121,6 +121,7 @@ import guildTrials, { guildTrials as guildTrialsStore } from '../features/guild/
 import * as guildTrialExport from '../features/guild/guild-trial-recorder.js';
 import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
 import guildTrialLedgerView from '../features/guild/guild-trial-ledger-view.js';
+import guildMemberSkills from '../features/guild/guild-member-skills.js';
 // Side-effect import: registers the Guild Trials overlay row
 import '../features/guild/guild-trials-row.js';
 
@@ -195,6 +196,8 @@ toolashaRoot.Combat = {
     combatSim,
     labSim,
     guildXPTracker,
+    // The live tracker (roster, sign-ups, week): guildXPTracker above is only its registration record
+    guildXPTrackerInstance,
     guildXPDisplay,
     guildCreditValue,
     // Shared so guild-token-value (runs live in the sim and ui bundles) reads
@@ -212,6 +215,8 @@ toolashaRoot.Combat = {
     guildTrialsModule,
     guildTrialScoreboard,
     guildTrialLedgerView,
+    // Read by the Trial Sim's skilling assignment (sim bundle) for members' captured skill levels
+    guildMemberSkills,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because

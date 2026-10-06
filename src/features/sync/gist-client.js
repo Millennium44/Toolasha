@@ -591,15 +591,26 @@ function fileSizes(files) {
  * the counter is null for anything but a plain non-negative integer — the push
  * then writes what it built, exactly as before.
  *
+ * `unordered` says the gist holds sync data — a manifest, or chunks — whose
+ * place in the order of exchanges cannot be read: no counter and no readable
+ * timestamp. Nothing then says whether it is older or newer than what the
+ * caller last took, which a write that must not replace a newer exchange has
+ * to know. A gist this sync never wrote holds no exchange, so it is not.
+ *
  * @param {Object|null|undefined} files - The `files` map of a gist response
- * @returns {{syncSeq: number|null, encrypted: boolean|null, exportedAt: string|null}} What the manifest says
+ * @returns {{syncSeq: number|null, encrypted: boolean|null, exportedAt: string|null, unordered: boolean}} What
+ *   the manifest says
  */
 function listedManifest(files) {
-    const unread = { syncSeq: null, encrypted: null, exportedAt: null };
     const file = files?.[MANIFEST_FILE];
-    // No manifest at all is a gist this sync never wrote: nothing in it can be encrypted. A manifest
-    // that is there but unreadable leaves the encryption unknown, which the push treats as unsafe.
-    if (files && !file) return { ...unread, encrypted: false };
+    const unread = { syncSeq: null, encrypted: null, exportedAt: null, unordered: Boolean(file) };
+    // No manifest and no sync chunks is a gist this sync never wrote: nothing in it can be encrypted.
+    // Sync chunks without a manifest are an encrypted gist whose manifest was deleted, so the encryption
+    // is unknown, as it is for a manifest that is there but unreadable; the push treats both as unsafe.
+    if (files && !file) {
+        const hasChunks = Object.keys(files).some((name) => chunkIndexFromName(name) !== null);
+        return { ...unread, encrypted: hasChunks ? null : false, unordered: hasChunks };
+    }
     if (!file || file.truncated || typeof file.content !== 'string') return unread;
     try {
         const manifest = JSON.parse(file.content);
@@ -608,10 +619,13 @@ function listedManifest(files) {
             return unread;
         }
         const seq = manifest?.syncSeq;
+        const syncSeq = Number.isSafeInteger(seq) && seq >= 0 ? seq : null;
+        const exportedAt = typeof manifest?.exportedAt === 'string' ? manifest.exportedAt : null;
         return {
-            syncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : null,
+            syncSeq,
             encrypted: Boolean(manifest?.encrypted),
-            exportedAt: typeof manifest?.exportedAt === 'string' ? manifest.exportedAt : null,
+            exportedAt,
+            unordered: syncSeq === null && !Number.isFinite(Date.parse(exportedAt ?? '')),
         };
     } catch {
         return unread;
@@ -884,7 +898,8 @@ async function readFileContent(token, file) {
  *   what it would be writing over.
  * @param {(() => Promise<boolean>)|null} [options.confirmPlaintext=null] - For a push someone did press:
  *   asked before a payload in the clear replaces an encrypted gist. False cancels the write.
- * @param {((manifest: {syncSeq: number|null, exportedAt: string|null}) => boolean)|null} [options.isAhead=null]
+ * @param {((manifest: {syncSeq: number|null, exportedAt: string|null, unordered: boolean, version: string|null,
+ *   etag: string|null}) => boolean)|null} [options.isAhead=null]
  *   Asked of a gist this write had to download the listing of (not a 304 against `known`): true means the gist
  *   holds an exchange the caller has not taken, and the write stops with a `behind` GistError instead of
  *   overwriting it — the caller merges first.
@@ -1123,6 +1138,7 @@ async function listGistFiles(token, gistId, previous) {
                 syncSeq: previous.syncSeq ?? null,
                 encrypted: previous.encrypted ?? null,
                 exportedAt: null,
+                unordered: false,
                 version: previous.version ?? null,
                 fresh: false,
             };

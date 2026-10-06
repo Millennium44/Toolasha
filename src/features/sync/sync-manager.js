@@ -580,9 +580,14 @@ class SyncManager {
                 // not taken: that is how a setting changed on the other device
                 // was lost on both. It merges first (below). A pressed Push
                 // still means "this device's copy", and overwrites.
+                // A changed gist whose manifest gives no order at all — damaged, or
+                // edited by hand — may hold a newer exchange, so it counts as ahead:
+                // the merge then either folds it in or, unable to read it, holds
+                // automatic pushes until someone presses Push
                 isAhead: unattended
                     ? (listed) =>
                           (!merged && Boolean(unapplied)) ||
+                          (Boolean(listed.unordered) && listingMoved(listed, known)) ||
                           isNewer(listed.exportedAt, aheadOf.at, listed.syncSeq, aheadOf.seq)
                     : null,
             });
@@ -736,7 +741,10 @@ class SyncManager {
             return { ok: false, reason: 'unmergeable' };
         }
 
-        if (!addsToRemote(merged.text, remote.payload) && !merged.remoteAdds) {
+        // An upload that only sheds stores this device's scope no longer syncs
+        // adds nothing, yet is the write that stops every device downloading them
+        const changesRemote = merged.dropsFromRemote || addsToRemote(merged.text, remote.payload);
+        if (!changesRemote && !merged.remoteAdds) {
             // The two hold the same data: another device pushed nothing this
             // one lacks. Settle on that version exactly as a pull finding
             // nothing new would, so neither the next startup nor the interval
@@ -759,7 +767,7 @@ class SyncManager {
             return { ok: true, skipped: true, reason: 'in-step' };
         }
 
-        if (!addsToRemote(merged.text, remote.payload)) {
+        if (!changesRemote) {
             // The gist already holds everything here, and more. Nothing to
             // send, but the gist is ahead: note it for the startup pull, and
             // remember this device's data as seen so the next interval does
@@ -840,26 +848,29 @@ class SyncManager {
         let text = uploadedText;
         let remoteAdds = Boolean(merged?.remoteAdds);
         for (const version of written.intervening) {
-            let replaced;
             try {
-                replaced = await this._readRemote(token, gistId, null, null, version);
+                const replaced = await this._readRemote(token, gistId, null, null, version);
+                text = mergeForUpload(text, replaced.payload, baseline).text;
             } catch (error) {
-                // A revision this device cannot read (no passphrase, or one this
-                // build cannot parse) cannot be folded in; leave the push unrecorded
-                console.warn(`[Sync] Could not read a revision this push replaced (${version}):`, error);
-                // One it cannot decrypt was an encrypted push, and this write
-                // just replaced it in the clear. Left that way, the next interval
-                // lists this device's own write, finds no encryption, and pushes
-                // in the clear again: the replacement the refusal before every
-                // automatic push exists to prevent. Put the gist back as it was
+                // A revision this device cannot read (no passphrase, a corrupt
+                // one) or cannot merge (a newer build's format) cannot be folded
+                // in, and this write has just replaced it. Left that way, the
+                // next interval lists this device's own write as current and the
+                // other device's data survives only in the gist's history; an
+                // encrypted one is replaced in the clear again at every interval.
+                // Put the gist back as it was, under a counter above this write,
+                // so the next automatic push finds it ahead and refuses it there
+                console.warn(`[Sync] Could not fold in a revision this push replaced (${version}):`, error);
+                await this._restoreReplaced(token, gistId, written.intervening.at(-1));
                 if (error instanceof GistError && error.kind === 'passphrase') {
-                    await this._restoreReplaced(token, gistId, written.intervening.at(-1));
                     return { ok: false, reason: 'passphrase' };
+                }
+                if (!(error instanceof GistError) || error.kind === 'parse') {
+                    this._logStuckOnce('unmergeable', error);
+                    return { ok: false, reason: 'unmergeable' };
                 }
                 return { ok: false, reason: 'raced' };
             }
-            const folded = mergeForUpload(text, replaced.payload, baseline);
-            text = folded.text;
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
         remoteAdds = remoteAdds || addsToRemote(text, localPayload, { forUpload: false });
@@ -883,7 +894,7 @@ class SyncManager {
     /**
      * Write a revision this push replaced back over it, byte for byte: its
      * manifest and its chunks as they were, under a counter above the write
-     * it undoes. For a revision this device cannot decrypt, so cannot merge.
+     * it undoes. For a revision this device cannot decrypt, read or merge.
      * Best effort: a failure is logged, and the next interval's push is
      * refused or merges as it would have before.
      * @param {string} token - GitHub token
@@ -901,9 +912,9 @@ class SyncManager {
             await writeSyncGist(token, gistId, { ...manifest, chunks: chunks.length }, chunks, 0, null, {
                 unattended: true,
             });
-            console.warn('[Sync] Put back an encrypted push this device replaced; it needs the sync passphrase.');
+            console.warn("[Sync] Put back another device's push that this device replaced and could not merge.");
         } catch (error) {
-            console.error('[Sync] Could not put back the encrypted push this device replaced:', error);
+            console.error("[Sync] Could not put back another device's push that this device replaced:", error);
         }
     }
 
@@ -2003,6 +2014,24 @@ function gistVersion(gistId, etag, files, current, manifest) {
         // still knows what it was based on
         version: typeof manifest?.version === 'string' ? manifest.version : null,
     };
+}
+
+/**
+ * Whether a gist listing is a different version from the one this device last
+ * saw. Only a matching history version, or failing that a matching ETag, proves
+ * it is the same; with no record to compare against, it may have moved.
+ * @param {{version?: string|null, etag?: string|null}} listed - The fresh listing
+ * @param {{version?: string|null, etag?: string|null}|null} seen - The version record this device holds
+ * @returns {boolean} True unless the listing is provably the version already seen
+ */
+function listingMoved(listed, seen) {
+    if (typeof listed?.version === 'string' && typeof seen?.version === 'string') {
+        return listed.version !== seen.version;
+    }
+    if (typeof listed?.etag === 'string' && listed.etag && typeof seen?.etag === 'string') {
+        return listed.etag !== seen.etag;
+    }
+    return true;
 }
 
 /**

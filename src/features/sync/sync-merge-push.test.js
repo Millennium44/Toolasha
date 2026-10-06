@@ -164,6 +164,10 @@ vi.mock('./gist-client.js', async () => {
                               syncSeq: gist.state.manifest.syncSeq ?? null,
                               encrypted: Boolean(gist.state.manifest.encrypted),
                               exportedAt: gist.state.manifest.exportedAt,
+                              // As the real listing reads it: sync data with no counter and no timestamp
+                              unordered:
+                                  gist.state.manifest.syncSeq == null &&
+                                  !Number.isFinite(Date.parse(gist.state.manifest.exportedAt ?? '')),
                               version: versionOf(gist.etag),
                               fresh: true,
                           };
@@ -597,6 +601,33 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(a.db.settings.panelGeometry).toEqual({ from: 'a2' });
     });
 
+    test("a startup pull that keeps a key this device moved leaves the next push sending this device's value", async () => {
+        const { a, b } = await syncedPair();
+        // The key is on the gist, and both devices hold that copy
+        await as(a, async () => {
+            a.db.settings.panelGeometry = { from: 'base' };
+            await auto.push();
+        });
+        await as(b, auto.startup);
+        // A moves it offline; B pushes something else, so the gist is newer but unmoved on this key
+        a.db.settings.panelGeometry = { from: 'a1' };
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        await as(a, auto.startup);
+        expect(a.db.settings.panelGeometry).toEqual({ from: 'a1' });
+
+        // The next automatic push carries the edit, not the gist's older copy
+        await as(a, async () => {
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            await auto.push();
+        });
+        expect(gistStores().settings.panelGeometry).toEqual({ from: 'a1' });
+        await as(a, auto.startup);
+        expect(a.db.settings.panelGeometry).toEqual({ from: 'a1' });
+    });
+
     test("a reload after a merge the gist won takes the gist's value when nothing was edited here since", async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {
@@ -772,6 +803,29 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(Object.keys(merged.stores)).toEqual(['settings']);
         expect(merged.syncScope).toBe('settings');
         expect(merged.stores.settings[MAP]).toMatchObject({ X: { isTrue: true }, Y: { isTrue: true } });
+    });
+
+    test('a Settings-only merge that changes nothing but drops history stores still uploads', async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            b.db.settings.panelSizeMemory = 1;
+            b.db.xpHistory.testHistory_c1 = ['s1', 'b-sample'];
+            await auto.push();
+        });
+        // A, now Settings only, recorded the very setting B pushed: its merge
+        // adds nothing to the gist, but sheds the history stores it no longer syncs
+        a.settings.sync_scope = 'settings';
+        a.db.settings.panelSizeMemory = 1;
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(true);
+        expect(result.skipped).toBeFalsy();
+        expect(Object.keys(gistStores())).toEqual(['settings']);
+        expect(gistStores().settings.panelSizeMemory).toBe(1);
+        // ...and the next tick, with nothing changed, writes nothing
+        const writes = gist.writes;
+        expect((await as(a, auto.push)).reason).toBe('unchanged');
+        expect(gist.writes).toBe(writes);
     });
 
     test('a newer push identical in content settles quietly: no note, and no reload at the next startup', async () => {
@@ -957,6 +1011,30 @@ describe('mixed versions', () => {
         expect(a.db.settings[MAP].Z).toEqual({ id: 'Z' });
     });
 
+    test("an older build's device-local key leaves the gist though everything else already matches", async () => {
+        const { a } = await syncedPair();
+        // An older build pushes A's own data plus a key this build keeps on the device
+        const old = JSON.parse(gist.state.payload);
+        old.exportedAt = new Date(BASE_MS + elapsed + 60 * 1000).toISOString();
+        old.stores.settings.panelSizeMemory = 1;
+        old.stores.settings.toolasha_local_whispers = ['private'];
+        gist.state = {
+            manifest: { toolashaSync: 1, exportedAt: old.exportedAt, chunks: 1 },
+            payload: JSON.stringify(old),
+        };
+        gist.etag += 1;
+        // A recorded the same setting, so its merge adds nothing to the gist
+        a.db.settings.panelSizeMemory = 1;
+        const writes = gist.writes;
+
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(true);
+        expect(gist.writes).toBe(writes + 1);
+        expect(gistStores().settings).not.toHaveProperty('toolasha_local_whispers');
+        expect(gistStores().settings.panelSizeMemory).toBe(1);
+    });
+
     test('the payload this build writes keeps the map in the shape an older build reads', async () => {
         const { a } = await syncedPair();
         await as(a, async () => {
@@ -989,6 +1067,35 @@ describe('an encrypted gist and a device without the passphrase', () => {
         expect(gist.writes).toBe(writes);
         expect(gist.state.manifest.encrypted).toBeTruthy();
         expect(toasts).toHaveLength(0);
+    });
+});
+
+describe('a gist whose manifest lost its order', () => {
+    test("an automatic push merges it rather than writing over the other device's push", async () => {
+        // The real WebCrypto; fake timers would starve its promises
+        vi.useRealTimers();
+        const { a, b } = await syncedPair({ sync_passphrase: 'pw' }, { sync_passphrase: 'pw' });
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        // The manifest is damaged: its counter and timestamp are gone. A's
+        // passphrase means the plaintext refusal does not stop its write
+        const { syncSeq: _seq, exportedAt: _at, ...damaged } = gist.state.manifest;
+        gist.state = { ...gist.state, manifest: damaged };
+        gist.etag += 1;
+        gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+
+        // The gist holds both edits: A's startup pull takes B's
+        await as(a, auto.startup);
+        expect(a.db.settings[MAP].X.isTrue).toBe(true);
+        expect(a.db.settings[MAP].Y.isTrue).toBe(true);
     });
 });
 
@@ -1129,6 +1236,67 @@ describe('two devices writing at the same moment', () => {
         expect((await as(b, auto.pull)).reason).toBe('in-step');
         expect(b.latches).toBe(0);
         expect(toasts).toHaveLength(0);
+    });
+
+    test.each([
+        ["a newer build's format", (payload) => ({ ...payload, formatVersion: 2 })],
+        [
+            'a store that is not a keyed object',
+            (payload) => ({ ...payload, stores: { ...payload.stores, xpHistory: [] } }),
+        ],
+    ])('a write that replaced a push it cannot merge (%s) puts that push back', async (_label, reshape) => {
+        const { a } = await syncedPair();
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        // A lists the gist; another device's write in a shape this build cannot
+        // merge lands before A writes
+        let theirs;
+        gist.betweenListAndWrite = async () => {
+            const based = `v${gist.etag}`;
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    exportedAt: new Date(BASE_MS + elapsed - 1000).toISOString(),
+                    basedOn: based,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(reshape(JSON.parse(gist.state.payload))),
+            };
+            theirs = gist.state.payload;
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        };
+        const result = await as(a, auto.push);
+        const aWrite = gist.revisions.find((revision) => revision.payload.includes('a-sample'));
+
+        expect(result).toEqual({ ok: false, reason: 'unmergeable' });
+        // The other device's write is the gist again, numbered above A's
+        expect(aWrite).toBeTruthy();
+        expect(gist.state.payload).toBe(theirs);
+        expect(gist.state.manifest.syncSeq).toBeGreaterThan(aWrite.manifest.syncSeq);
+
+        // ...and A's next tick refuses rather than writing over it again
+        const writes = gist.writes;
+        expect(await as(a, auto.push)).toEqual({ ok: false, reason: 'unmergeable' });
+        expect(gist.writes).toBe(writes);
+        expect(gist.state.payload).toBe(theirs);
+        // The hold names its cause once, not every interval, and a newer
+        // format's says what to do about it
+        const held = warn.mock.calls.filter(([line]) => String(line).includes('Automatic pushes are held'));
+        expect(held).toHaveLength(1);
+        if (JSON.parse(theirs).formatVersion !== 1) expect(held[0][1].message).toContain('Update Toolasha');
+        // A's interval pull stands down on its unsent sample rather than applying it
+        a.latches = 0;
+        expect((await as(a, auto.pull)).reason).toBe('conflict');
+        expect(a.latches).toBe(0);
+        expect(a.db.xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
+        expect(gist.state.payload).toBe(theirs);
+        warn.mockRestore();
+        error.mockRestore();
     });
 
     test('a replacement at the same counter with an earlier stamp is not taken as old news', async () => {

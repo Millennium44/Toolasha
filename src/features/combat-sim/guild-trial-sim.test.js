@@ -750,3 +750,232 @@ describe('trial simulator controls and ownership', () => {
         expect(feature.result).toBeNull();
     });
 });
+
+describe('Assign skilling view', () => {
+    test('draws the planner, follows the drawn trials off guild_updated, and resets on a switch', () => {
+        feature.kind = 'assign';
+        harness.ws.guild_updated({
+            guildWeeklyTrialSet: {
+                skillHrids: ['/guild_skilling/crafting', '/guild_skilling/milking'],
+                combatHrids: ['/guild_combat/badger'],
+            },
+        });
+        harness.initializedPanel.render();
+        expect(text()).toContain('Recommend sign-ups');
+        expect(text()).toContain('Trials from the guild update.');
+        expect(text()).not.toContain('Simulate trial');
+        feature.assign.pins['2'] = 'bench';
+        harness.listeners.character_switched();
+        expect(feature.assign.pins).toEqual({});
+        expect(feature.assign.weeklyTrialSet).toBeNull();
+        expect(feature.kind).toBe('combat');
+    });
+
+    test('ignores a trial set from an inactive socket', () => {
+        harness.activeSocket = 'live';
+        harness.ws.guild_updated(
+            { guildWeeklyTrialSet: { skillHrids: ['/guild_skilling/crafting'] } },
+            { socket: 'old' }
+        );
+        expect(feature.assign.weeklyTrialSet).toBeNull();
+    });
+});
+
+describe('Assign skilling view while the planner runs', () => {
+    test('the mode select is disabled while a search or check is running', () => {
+        feature.kind = 'assign';
+        feature.assign.controller = new AbortController();
+        harness.initializedPanel.render();
+        const mode = Array.from(document.querySelectorAll('select')).find((s) =>
+            Array.from(s.options).some((o) => o.value === 'assign')
+        );
+        expect(mode.disabled).toBe(true);
+        feature.assign.controller = null;
+    });
+
+    test('a guild update carries the trial minimum levels to the planner', () => {
+        harness.ws.guild_updated({ guild: { trialMinLevelsData: '{"/guild_skilling/crafting":120}' } });
+        expect(feature.assign.trialMinLevelsData).toBe('{"/guild_skilling/crafting":120}');
+    });
+});
+
+describe('Assign skilling view and sign-up changes', () => {
+    test('a sign-up update reaches the planner after the tracker has read it, active socket only', () => {
+        vi.useFakeTimers();
+        try {
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            harness.activeSocket = 'live';
+            harness.ws.guild_trial_signup_updated({ characterId: 2 }, { socket: 'old' });
+            vi.runAllTimers();
+            expect(changed).not.toHaveBeenCalled();
+            harness.ws.guild_trial_signup_updated({ characterId: 2 }, { socket: 'live' });
+            expect(changed).not.toHaveBeenCalled(); // deferred a tick
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+            harness.ws.guild_characters_updated({}, { socket: 'live' });
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(2);
+            feature.disable();
+            expect(harness.ws.guild_trial_signup_updated).toBeUndefined();
+            expect(harness.ws.guild_characters_updated).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('every input the Assign view reads notifies it', () => {
+    test('guild updates, profiles, readings, skills and building levels each reach inputsChanged a tick later', () => {
+        vi.useFakeTimers();
+        try {
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            const fire = (send) => {
+                changed.mockClear();
+                send();
+                expect(changed).not.toHaveBeenCalled();
+                vi.runAllTimers();
+                expect(changed).toHaveBeenCalledTimes(1);
+            };
+            fire(() => harness.ws.guild_updated({ guild: { trialMinLevelsData: '{"/guild_skilling/crafting":130}' } }));
+            fire(() =>
+                harness.ws.guild_updated({
+                    guildWeeklyTrialSet: { skillHrids: ['/guild_skilling/crafting'] },
+                    guildBuildingLevelMap: { '/guild_buildings/skilling_encampment': 3 },
+                })
+            );
+            fire(() => harness.ws.profile_shared({ profile: { characterSkills: [] } }));
+            fire(() => harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0] }));
+            fire(() => harness.listeners.skills_updated({}));
+            fire(() => harness.listeners.guild_shrine_levels_updated({}));
+            fire(() => harness.ws.action_completed({ endCharacterSkills: [] }));
+            // Several in one tick are one notification
+            changed.mockClear();
+            harness.ws.profile_shared({});
+            harness.ws.guild_trial_signup_updated({});
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('messages from an inactive socket do not notify', () => {
+        vi.useFakeTimers();
+        try {
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            harness.activeSocket = 'live';
+            for (const type of ['guild_updated', 'profile_shared', 'guild_skilling_updated', 'action_completed'])
+                harness.ws[type]({ trialHrid: '/guild_skilling/crafting' }, { socket: 'old' });
+            vi.runAllTimers();
+            expect(changed).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('roster changes come from the guild XP tracker', () => {
+    test('with the tracker reachable, its change hook notifies and the socket relays are not used', () => {
+        vi.useFakeTimers();
+        let listener = null;
+        const off = vi.fn();
+        window.Toolasha = {
+            Combat: {
+                guildXPTrackerInstance: {
+                    onMetaChanged: (callback) => {
+                        listener = callback;
+                        return off;
+                    },
+                },
+            },
+        };
+        try {
+            feature.disable();
+            feature = new GuildTrialSim();
+            feature.initialize();
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            expect(harness.ws.guild_trial_signup_updated).toBeUndefined();
+            expect(harness.ws.guild_characters_updated).toBeUndefined();
+            // Fires after the tracker's own (possibly awaited) write
+            listener();
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+            feature.disable();
+            expect(off).toHaveBeenCalled();
+        } finally {
+            delete window.Toolasha;
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('captured skill levels come from the member skill store', () => {
+    test('with the store reachable, its change hook notifies and profile_shared is not relayed', () => {
+        vi.useFakeTimers();
+        let listener = null;
+        const off = vi.fn();
+        window.Toolasha = {
+            Combat: {
+                guildMemberSkills: {
+                    onChanged: (callback) => {
+                        listener = callback;
+                        return off;
+                    },
+                },
+            },
+        };
+        try {
+            feature.disable();
+            feature = new GuildTrialSim();
+            feature.initialize();
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            expect(harness.ws.profile_shared).toBeUndefined();
+            listener();
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalledTimes(1);
+            feature.disable();
+            expect(off).toHaveBeenCalled();
+        } finally {
+            delete window.Toolasha;
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('trial readings belong to one guild', () => {
+    test('a guild update for the same guild keeps them; another guild drops them and tells the planner', () => {
+        vi.useFakeTimers();
+        try {
+            harness.ws.guild_updated({ guild: { id: 11, name: 'One' } });
+            harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0] });
+            expect(feature.readings['/guild_skilling/crafting']).toBeTruthy();
+            harness.ws.guild_updated({ guild: { id: 11, name: 'One' } });
+            expect(feature.readings['/guild_skilling/crafting']).toBeTruthy();
+
+            const changed = vi.spyOn(feature.assign, 'inputsChanged').mockImplementation(() => {});
+            harness.ws.guild_updated({ guild: { id: 22, name: 'Two' } });
+            expect(feature.readings).toEqual({});
+            expect(feature.successReadings).toEqual({});
+            vi.runAllTimers();
+            expect(changed).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the login payload’s guild is the baseline', () => {
+        dataManager.characterData.guild = { id: 11 };
+        try {
+            feature.disable();
+            feature = new GuildTrialSim();
+            feature.initialize();
+            harness.ws.guild_skilling_updated({ ...GUILD_SKILLING_TICKS[0] });
+            harness.ws.guild_updated({ guild: { id: 11 } });
+            expect(feature.readings['/guild_skilling/crafting']).toBeTruthy();
+            harness.ws.guild_updated({ guild: { id: 33 } });
+            expect(feature.readings).toEqual({});
+        } finally {
+            delete dataManager.characterData.guild;
+        }
+    });
+});

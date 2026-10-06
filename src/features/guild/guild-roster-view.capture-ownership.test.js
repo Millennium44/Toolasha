@@ -75,7 +75,11 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
 vi.mock('./guild-member-skills.js', () => ({
-    default: { progress: () => ({ logged: 0, total: 0, next: null, stale: 0 }), anyBattleUnits: () => false },
+    default: {
+        progress: () => ({ logged: 0, total: 0, next: null, stale: 0 }),
+        anyBattleUnits: () => false,
+        onChanged: () => () => {},
+    },
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {

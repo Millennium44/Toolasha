@@ -59,6 +59,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getAllSnapshots: () => [] },
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     loadoutSnapshot: () => null,
     dataManager: null,
 }));

@@ -130,7 +130,7 @@ export function calibrationBandIndex(p) {
  * pre-migration records this split exists to keep out.
  *
  * @param {Array<Object>} attempts - One cohort, e.g. `splitModelCohorts().current`
- * @returns {{count: number, unpredicted: number, expected: number, observed: number,
+ * @returns {{count: number, unpredicted: number, coercedZero: number, expected: number, observed: number,
  *   brier: number|null, variance: number, sd: number|null, sigma: number|null,
  *   enough: boolean, bands: Array<{label: string, low: number, high: number,
  *   count: number, expected: number, observed: number}>}}
@@ -139,6 +139,7 @@ export function calibrationReport(attempts) {
     const bands = CALIBRATION_BANDS.map((band) => ({ ...band, count: 0, expected: 0, observed: 0 }));
     let count = 0;
     let unpredicted = 0;
+    let coercedZero = 0;
     let expected = 0;
     let observed = 0;
     let brierSum = 0;
@@ -152,6 +153,14 @@ export function calibrationReport(attempts) {
         const index = calibrationBandIndex(p);
         if (index < 0) {
             unpredicted++;
+            continue;
+        }
+        // Builds before the fix stored a missing prediction as 0 (Number(null)).
+        // A combat sim result of exactly 0 is never cached, so it can never be
+        // the prediction on screen: in a record without the null-safe marker an
+        // exact 0 is that coerced null. Set aside and counted, never rewritten.
+        if (p === 0 && attempt?.model?.nullSafePrediction !== true) {
+            coercedZero++;
             continue;
         }
         const outcome = attempt.cleared ? 1 : 0;
@@ -170,6 +179,7 @@ export function calibrationReport(attempts) {
     return {
         count,
         unpredicted,
+        coercedZero,
         expected,
         observed,
         brier: count > 0 ? brierSum / count : null,

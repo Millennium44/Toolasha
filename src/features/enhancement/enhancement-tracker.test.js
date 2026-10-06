@@ -50,6 +50,7 @@ vi.mock('./tooltip-enhancement.js', () => ({
 import { createSession, SessionState } from './enhancement-session.js';
 import enhancementTracker from './enhancement-tracker.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
+import { calculateEnhancementPredictions } from './enhancement-xp.js';
 
 /** Load the singleton fresh with the given session as the current one. */
 async function loadWith(session) {
@@ -227,5 +228,275 @@ describe('EnhancementTracker material costs', () => {
 
         const tracked = enhancementTracker.getCurrentSession().materialCosts['/items/sword'];
         expect(tracked).toEqual({ count: 3, totalCost: 5000 });
+    });
+});
+
+describe('merging sessions into one', () => {
+    /** #7 ended at +3, #8 running from +3; stored as the tracker holds them */
+    async function loadSpatulaRuns() {
+        const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastAttempt: { attemptNumber: 466, level: 3, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
+            lastUpdateTime: 1_600_000,
+            currentLevel: 3,
+            totalAttempts: 466,
+            totalXP: 9000,
+            predictions: { expectedAttempts: 400 },
+        });
+        const eight = createSession('/items/sword', 'Sword', 3, 8, 5);
+        Object.assign(eight, {
+            id: 'session_8',
+            startTime: 5_000_000,
+            lastUpdateTime: 5_100_000,
+            lastAttempt: { attemptNumber: 10, level: 4, timestamp: 5_100_000, actionId: 'a8', currentCount: 10 },
+            currentLevel: 4,
+            totalAttempts: 10,
+            totalXP: 200,
+        });
+        mocks.loadSessions.mockResolvedValue({ session_7: seven, session_8: eight });
+        mocks.loadCurrentSessionId.mockResolvedValue('session_8');
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+        return { seven, eight };
+    }
+
+    test('the originals are removed and the live session stays current, keeping its object', async () => {
+        const { eight } = await loadSpatulaRuns();
+        const result = await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+
+        expect(result).toEqual({ ok: true, id: 'session_8' });
+        expect(Object.keys(enhancementTracker.sessions)).toEqual(['session_8']);
+        expect(enhancementTracker.currentSessionId).toBe('session_8');
+        expect(enhancementTracker.getCurrentSession()).toBe(eight);
+        expect(eight.totalAttempts).toBe(476);
+        expect(eight.totalXP).toBe(9200);
+        expect(eight.startLevel).toBe(0);
+        expect(mocks.saveSessions).toHaveBeenLastCalledWith({ session_8: eight });
+
+        // Later attempts land on the merged session
+        await enhancementTracker.recordFailure(4, 3);
+        expect(eight.totalAttempts).toBe(477);
+    });
+
+    test('no combined prediction is made from current stats; each run keeps its own', async () => {
+        await loadSpatulaRuns();
+        calculateEnhancementPredictions.mockReturnValue({ expectedAttempts: 520 });
+        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+        calculateEnhancementPredictions.mockReturnValue(null);
+
+        expect(calculateEnhancementPredictions).not.toHaveBeenCalled();
+        const merged = enhancementTracker.getSession('session_8');
+        expect(merged.predictions).toBeNull();
+        expect(merged.legPredictions.map((leg) => [leg.sessionId, leg.predictions])).toEqual([
+            ['session_7', { expectedAttempts: 400 }],
+            ['session_8', null],
+        ]);
+    });
+
+    test('runs protected from different levels get no prediction and no calibration', async () => {
+        const { seven, eight } = await loadSpatulaRuns();
+        seven.protectFrom = 4;
+        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+
+        expect(calculateEnhancementPredictions).not.toHaveBeenCalled();
+        expect(eight.predictions).toBeNull();
+        expect(eight.mixedProtection).toBe(true);
+
+        // Reaching the target records nothing
+        await enhancementTracker.recordSuccess(4, 8);
+        expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+    });
+
+    test('an older session still in progress is refused and nothing changes', async () => {
+        const { seven } = await loadSpatulaRuns();
+        seven.state = SessionState.TRACKING;
+        const result = await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+        expect(result.ok).toBe(false);
+        expect(Object.keys(enhancementTracker.sessions)).toEqual(['session_7', 'session_8']);
+        expect(mocks.saveSessions).not.toHaveBeenCalled();
+    });
+});
+
+describe('calibration after a merge', () => {
+    /**
+     * One chain of runs on one sword. #7 climbed +0 toward +8: it reached it (recorded then under
+     * #7's own id) or stopped at +6. After a completed #7, #7b aimed for +10 from +8 and stopped
+     * back at +6. #8 runs on from +6.
+     */
+    async function loadMergedChain({ sevenReachedTarget, eightTarget = 8, eightPredictions = null }) {
+        const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastUpdateTime: 1_600_000,
+            lastAttempt: { attemptNumber: 466, level: 8, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
+            currentLevel: sevenReachedTarget ? 8 : 6,
+            totalAttempts: 466,
+        });
+        const stored = { session_7: seven };
+        if (sevenReachedTarget) {
+            const between = createSession('/items/sword', 'Sword', 8, 10, 5);
+            Object.assign(between, {
+                id: 'session_7b',
+                state: SessionState.COMPLETED,
+                startTime: 2_000_000,
+                endTime: 2_600_000,
+                lastUpdateTime: 2_600_000,
+                lastAttempt: { attemptNumber: 40, level: 6, timestamp: 2_600_000, actionId: 'a7b', currentCount: 40 },
+                currentLevel: 6,
+                totalAttempts: 40,
+            });
+            stored.session_7b = between;
+        }
+        const eight = createSession('/items/sword', 'Sword', 6, eightTarget, 5);
+        Object.assign(eight, {
+            id: 'session_8',
+            startTime: 5_000_000,
+            lastUpdateTime: 5_100_000,
+            lastAttempt: { attemptNumber: 10, level: 7, timestamp: 5_100_000, actionId: 'a8', currentCount: 10 },
+            currentLevel: 7,
+            totalAttempts: 10,
+            predictions: eightPredictions,
+        });
+        stored.session_8 = eight;
+        mocks.loadSessions.mockResolvedValue(stored);
+        mocks.loadCurrentSessionId.mockResolvedValue('session_8');
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+        const result = await enhancementTracker.mergeSessionsIntoOne(Object.keys(stored));
+        expect(result.ok).toBe(true);
+    }
+
+    test('reaching the target of a merged run records nothing, whatever its runs reached', async () => {
+        await loadMergedChain({ sevenReachedTarget: true, eightPredictions: { expectedAttempts: 12 } });
+        await enhancementTracker.recordSuccess(7, 8);
+        expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+    });
+
+    test('a merge of runs that never reached their target records nothing either', async () => {
+        await loadMergedChain({ sevenReachedTarget: false, eightPredictions: { expectedAttempts: 12 } });
+        await enhancementTracker.recordSuccess(7, 8);
+        expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+    });
+
+    test('an extension leg started after the merge is recorded on its own prediction', async () => {
+        await loadMergedChain({ sevenReachedTarget: false });
+        await enhancementTracker.recordSuccess(7, 8);
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 40 });
+        await enhancementTracker.extendSessionTarget('session_8', 10);
+        await enhancementTracker.recordSuccess(8, 9);
+        await enhancementTracker.recordSuccess(9, 10);
+
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
+        const observation = enhancementCalibration.recordCompletion.mock.calls[0][0];
+        expect(observation.targetLevel).toBe(10);
+        expect(observation.predictions).toEqual({ expectedAttempts: 40 });
+        expect(observation.totalAttempts - observation.extensionBaseline.totalAttempts).toBe(2);
+    });
+});
+
+describe('merging only runs that continue each other', () => {
+    test('two independent climbs are refused with the panel numbers, and nothing changes', async () => {
+        const seven = createSession('/items/sword', 'Sword', 0, 5, 0);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastUpdateTime: 1_600_000,
+            lastAttempt: { attemptNumber: 50, level: 5, timestamp: 1_600_000, actionId: 'a7', currentCount: 50 },
+            currentLevel: 5,
+            totalAttempts: 50,
+        });
+        const eight = createSession('/items/sword', 'Sword', 0, 5, 0);
+        Object.assign(eight, {
+            id: 'session_8',
+            state: SessionState.COMPLETED,
+            startTime: 5_000_000,
+            endTime: 5_600_000,
+            lastUpdateTime: 5_600_000,
+            lastAttempt: { attemptNumber: 60, level: 5, timestamp: 5_600_000, actionId: 'a8', currentCount: 60 },
+            currentLevel: 5,
+            totalAttempts: 60,
+        });
+        mocks.loadSessions.mockResolvedValue({ session_7: seven, session_8: eight });
+        mocks.loadCurrentSessionId.mockResolvedValue(null);
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+
+        const result = await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+        expect(result).toEqual({
+            ok: false,
+            reason: '#1 ended at +5 but #2 started at +0 — only runs that continue each other can merge.',
+        });
+        expect(Object.keys(enhancementTracker.sessions)).toEqual(['session_7', 'session_8']);
+        expect(seven.totalAttempts).toBe(50);
+        expect(eight.totalAttempts).toBe(60);
+    });
+});
+
+describe('auto-resume predicts the resumed leg on its own', () => {
+    /** #7 stopped at +3 short of +8, predicted then for 400 attempts from +0 */
+    async function loadEnded() {
+        const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastUpdateTime: 1_600_000,
+            lastAttempt: { attemptNumber: 466, level: 3, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
+            currentLevel: 3,
+            totalAttempts: 466,
+            predictions: { expectedAttempts: 400 },
+        });
+        mocks.loadSessions.mockResolvedValue({ session_7: seven });
+        mocks.loadCurrentSessionId.mockResolvedValue(null);
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+        return seven;
+    }
+
+    test("the resumed leg gets a prediction from today's stats and the old one is banked", async () => {
+        const seven = await loadEnded();
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 90 });
+        await enhancementTracker.resumeSessionById('session_7');
+
+        expect(calculateEnhancementPredictions).toHaveBeenCalledWith('/items/sword', 3, 8, 5);
+        expect(seven.predictions).toEqual({ expectedAttempts: 90 });
+        expect(seven.legPredictions[0].predictions).toEqual({ expectedAttempts: 400 });
+    });
+
+    test('reaching the target calibrates only the resumed leg, against its own prediction', async () => {
+        await loadEnded();
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 90 });
+        await enhancementTracker.resumeSessionById('session_7');
+        for (let level = 3; level < 8; level++) await enhancementTracker.recordSuccess(level, level + 1);
+
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
+        const observation = enhancementCalibration.recordCompletion.mock.calls[0][0];
+        expect(observation.predictions).toEqual({ expectedAttempts: 90 });
+        // Five attempts on the resumed leg, not 471 against the first run's distribution
+        expect(observation.totalAttempts - observation.extensionBaseline.totalAttempts).toBe(5);
+    });
+
+    test('with no prediction to compute, the resumed leg has none rather than the old one', async () => {
+        const seven = await loadEnded();
+        await enhancementTracker.resumeSessionById('session_7');
+        expect(seven.predictions).toBeNull();
     });
 });

@@ -10,9 +10,42 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When two devices are in use, an automatic push that finds the gist ahead now merges the other device's changes into what it uploads instead of overwriting them: each setting keeps whichever device changed it last, histories and other mergeable records are combined, and other saved data keeps this device's copy only if the other side didn't change it. Nothing is applied to the device you're using until its next reload (no "Reload now" prompts mid-session); a restored backup counts as a new change, and a damaged gist now warns once per session instead of every interval.
 
+### Trial Sim recommends skilling trial sign-ups
+
+- A new "Assign skilling" mode in the Trial Sim suggests which member should join which skilling trial for the most guild points, honoring slot caps, eligibility, the guild's trial minimum levels and pins, with copyable sign-up messages and an optional simulator check. Other members' work rates are estimated from their skill levels and your own readings, and are labeled as estimates.
+- In the split (GreasyFork) build, the Session Briefing's trial sign-up line and the trial alerts' "signed-up members only" audience read the guild tracker's registration record instead of the tracker, so the briefing never knew your sign-up and the alerts never filtered; both now read the live tracker.
+
+### Labyrinth floor stops re-simming 0% rooms, and the Accuracy tab opens faster
+
+- The floor map no longer re-simulates every 0% room each time the game redraws the grid, lab sims wear the loadout a room is set to even when two share a name, and the Accuracy tab opens several times faster. Fights in a room the sim hadn't run were stored as a 0% prediction, which threw the Reliability card far off; they're now stored as unpredicted, and older ones are left out with a count.
+
 ### Audit round: Gist sync
 
 - A push now numbers itself above the gist's own counter, so other devices no longer skip it as older; an automatic push from a device without the passphrase no longer replaces an encrypted gist with plaintext, and a pressed push asks first; and a sync pull that cannot be applied no longer forgets which settings migrations already ran.
+
+### Patient ±1 fills at the instant price when the spread is one tick
+
+- When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
+
+### Item tooltip marks partly priced alchemy profits
+
+- In the item tooltip's Coinify/Decompose/Transmute list, a profit with an unpriced output now shows as a floor ("≥ 9.0K/hr (unpriced output)"), one with an unpriced tea as a ceiling ("≤"), and both sort after fully priced rows instead of ranking as if complete.
+
+### Audit round: market listings and price history
+
+- My Listings no longer shows your own price as the "Top Order Price" when nobody else is on that side of the book, and the price history no longer dates a marketplace snapshot as "now" — an older snapshot could overwrite a fresher order-book reading and wipe its depth.
+
+### Audit round: tasks and the planner
+
+- A combat task's profit estimate now flags unpriced drops ("≥") and unpriced consumables ("-- ⚠") instead of counting them as worth nothing; the reroll-spend line no longer lands on the wrong card when one task's name contains another's ("Cow" vs "Verdant Cow"); the planner no longer files one character's combat baseline under another after a switch, and an earning leg whose market volume was not measured now says so.
+
+### Enhancing tracker merges and resumes sessions
+
+- The ∑ merge view can combine one item's ticked sessions into a single saved session, and a new "auto-resume" setting (off by default) continues the last ended session when you restart the same item where it stopped with the same target. The merge view now updates live, and the Philosopher's Mirror line quotes savings to your target instead of +20.
+
+### Monster stat check files bleeds and parry counters correctly
+
+- The stat check's uptime table no longer lumps parry counter-attacks and stray ticks into your damage-over-time row: bleed ticks are matched to the maim hit that started them, parry counters go to their own row (the one the sim reports), and anything left unexplained shows as an ungraded "unattributed" row instead of making the sim look wrong.
 
 ### Labyrinth badges cover rooms revealed mid-calculation
 

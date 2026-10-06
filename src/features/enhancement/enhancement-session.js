@@ -250,6 +250,18 @@ export function addCoinCost(session, amount) {
  */
 export function addProtectionCost(session, protectionItemHrid, cost) {
     if (!(cost > 0)) session.hasUnpricedInput = true;
+
+    // A second protection item starts a per-item breakdown, splitting off what the first one
+    // already consumed, rather than booking the new item under the old one's name
+    if (
+        !session.protectionBreakdown &&
+        protectionItemHrid &&
+        session.protectionItemHrid &&
+        session.protectionItemHrid !== protectionItemHrid
+    ) {
+        session.protectionBreakdown = { ...getProtectionBreakdown(session) };
+    }
+
     session.protectionCost += cost;
     session.protectionCount += 1;
 
@@ -258,7 +270,32 @@ export function addProtectionCost(session, protectionItemHrid, cost) {
         session.protectionItemHrid = protectionItemHrid;
     }
 
+    // A session merged from runs that used different protection items keeps them apart
+    if (session.protectionBreakdown && protectionItemHrid) {
+        const entry = (session.protectionBreakdown[protectionItemHrid] ||= { count: 0, totalCost: 0 });
+        entry.count += 1;
+        entry.totalCost += cost;
+    }
+
     recalculateTotalCost(session);
+}
+
+/**
+ * The protection a session consumed, per protection item. A session that never mixed items has
+ * no stored breakdown; its one item carries the whole count and cost.
+ * @param {Object} session - Session object
+ * @returns {Object<string, {count: number, totalCost: number}>} Keyed by item hrid ('' when the
+ *   item was never recorded)
+ */
+export function getProtectionBreakdown(session) {
+    if (session?.protectionBreakdown) return session.protectionBreakdown;
+    if (!(session?.protectionCount > 0) && !(session?.protectionCost > 0)) return {};
+    return {
+        [session.protectionItemHrid || '']: {
+            count: session.protectionCount || 0,
+            totalCost: session.protectionCost || 0,
+        },
+    };
 }
 
 /**
@@ -283,8 +320,392 @@ export function getSessionDuration(session) {
     // its target — the duration freezes instead of counting time nobody spent
     // enhancing. Before this, only a completed run (which sets endTime) ever
     // stopped, so an idle In-Progress session ticked up forever.
-    const endTime = session.endTime || session.lastUpdateTime || session.startTime;
-    return Math.floor((endTime - session.startTime) / 1000);
+    //
+    // A resumed or merged session counts only active time: the stretches it was
+    // ended for (between one run stopping and the next picking it up) are not
+    // enhancing. See getActiveSpans.
+    const ms = getActiveSpans(session).reduce((sum, span) => sum + (span.end - span.start), 0);
+    return Math.floor(ms / 1000);
+}
+
+/**
+ * The stretches of time a session was actually enhancing, oldest first.
+ *
+ * A session that was never resumed or merged has one: its start to its end (or, while running,
+ * its last recorded attempt). A resumed or merged one keeps its closed stretches in
+ * `pastActiveSpans` and runs its current one from `segmentStartTime`, so the gaps between runs
+ * are neither counted as duration nor spread over by anything that shares a session's figures
+ * out across the days it ran.
+ * @param {Object} session - Session object
+ * @returns {Array<{start: number, end: number}>} Epoch ms, `end >= start`
+ */
+export function getActiveSpans(session) {
+    if (!session) return [];
+    const past = Array.isArray(session.pastActiveSpans) ? session.pastActiveSpans : [];
+    const start = session.segmentStartTime || session.startTime;
+    const end = session.endTime || session.lastUpdateTime || start;
+    const spans = past.map((span) => ({ ...span, end: Math.max(span.start, span.end) }));
+    if (Number.isFinite(start)) {
+        // The open stretch's own leg: from the level and spend it began at to where they stand
+        spans.push({
+            start,
+            end: Math.max(start, end),
+            startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
+            endLevel: session.currentLevel,
+            cost: (session.totalCost || 0) - (session.segmentStartCost || 0),
+        });
+    }
+    return spans;
+}
+
+/**
+ * When a session's active history begins: the start of its earliest active stretch.
+ * @param {Object} session - Session object
+ * @returns {number} Epoch ms
+ */
+export function firstActiveTime(session) {
+    const starts = getActiveSpans(session)
+        .map((span) => span.start)
+        .filter(Number.isFinite);
+    return starts.length > 0 ? Math.min(...starts) : session?.startTime || 0;
+}
+
+/**
+ * When a session last did anything: its last attempt, else its last update, else its end, else
+ * its start. Resume and extend keep a session's original start time while it runs on long
+ * after, so ordering sessions by start says nothing about which one is the latest.
+ * @param {Object} session - Session object
+ * @returns {number} Epoch ms
+ */
+export function lastActivityTime(session) {
+    return (
+        Math.max(session?.lastAttempt?.timestamp || 0, session?.lastUpdateTime || 0, session?.endTime || 0) ||
+        session?.startTime ||
+        0
+    );
+}
+
+/**
+ * Whether an ended session is the one a new run should continue rather than start afresh: the
+ * same item, the same target and protection setup, ended short of its target, and the new run
+ * starting at exactly the level the session ended at.
+ *
+ * Every input is the game's own data (item hrid, levels from the queue row's item hash, the
+ * action's target and protect-from fields), never displayed text.
+ *
+ * @param {Object} session - Candidate session (the most recent one)
+ * @param {Object} run - The run about to start
+ * @param {string} run.itemHrid - Item being enhanced
+ * @param {number|null} run.startLevel - Level the run's first attempt started from (null: unknown)
+ * @param {number} run.targetLevel - The action's enhancingMaxLevel
+ * @param {number} run.protectFrom - The action's enhancingProtectionMinLevel (0: none)
+ * @param {string|null} [run.protectionItemHrid] - Protection item loaded, when known
+ * @returns {boolean}
+ */
+export function canResumeSession(session, run) {
+    if (!session || !run) return false;
+    if (session.state !== SessionState.COMPLETED) return false;
+    if (session.itemHrid !== run.itemHrid) return false;
+    if (!Number.isFinite(run.startLevel)) return false;
+    if (session.targetLevel !== run.targetLevel) return false;
+    if ((session.protectFrom || 0) !== (run.protectFrom || 0)) return false;
+    // A different protection item is a different setup; an unknown one on either side (no
+    // protection consumed yet, or none loaded) is not evidence against it. The session's own
+    // setup is the item loaded on its last attempt; the item it first consumed stands in for
+    // sessions recorded before attempts carried it.
+    const configured = session.lastAttempt?.protectionItemHrid ?? session.protectionItemHrid;
+    if (configured && run.protectionItemHrid && configured !== run.protectionItemHrid) {
+        return false;
+    }
+    // A run that reached its target is extended, not resumed
+    if (!(session.currentLevel < session.targetLevel)) return false;
+    return session.currentLevel === run.startLevel;
+}
+
+/**
+ * Close the session's open stretch and start a new one now — for every path that sets an ended
+ * session running again (resume, extend). The stretch that ended is banked in `pastActiveSpans`
+ * with its own levels and spend; the new one starts from the level and spend in hand. Without
+ * this the reopened run's stretch reached back to the previous one's start: the idle gap counted
+ * as duration, and gold sources booked both runs' figures across the wrong days.
+ * @param {Object} session - Session reopened (mutated)
+ * @param {number} now - Epoch ms
+ */
+function startNewSegment(session, now) {
+    session.pastActiveSpans = getActiveSpans(session);
+    session.segmentStartTime = now;
+    session.segmentStartLevel = session.currentLevel;
+    session.segmentStartCost = session.totalCost || 0;
+}
+
+/**
+ * Reopen an ended session so a new run's attempts are recorded against it. The time it spent
+ * ended is not counted: its duration so far is banked and the clock restarts now.
+ *
+ * The resumed run is its own predicted leg, the way an extension is: the player may have changed
+ * level, gear, teas or buffs before restarting, so the old prediction describes none of the new
+ * run's attempts. The old leg's prediction is banked in `legPredictions` (as a merge banks its
+ * runs'), the counters are snapshotted as the leg's baseline, and the prediction is cleared for
+ * the caller to compute afresh from current stats. The panel and calibration then read only the
+ * resumed leg against its own prediction.
+ * @param {Object} session - Session to reopen (mutated)
+ * @param {number} [now] - Epoch ms
+ */
+export function resumeSession(session, now = Date.now()) {
+    if (session.predictions) {
+        session.legPredictions = [
+            ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
+            {
+                sessionId: session.id,
+                startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
+                targetLevel: session.targetLevel,
+                protectFrom: session.protectFrom || 0,
+                predictions: session.predictions,
+            },
+        ];
+    }
+    session.predictions = null;
+    session.extensionBaseline = {
+        totalAttempts: session.totalAttempts || 0,
+        protectionCount: session.protectionCount || 0,
+    };
+    startNewSegment(session, now);
+    session.state = SessionState.TRACKING;
+    session.endTime = null;
+    session.lastUpdateTime = now;
+}
+
+/**
+ * Check whether a set of sessions can be merged into one, and order them by last activity.
+ *
+ * Every session must be the same item, and every one but the latest — the one active most
+ * recently ({@link lastActivityTime}), not the one started last: a resumed or extended session
+ * keeps its early start while it runs on — must have ended. The latest may still be running, in
+ * which case the merged session stays the live one. Differing targets or protection are
+ * allowed: the merged session keeps the latest one's (`settingsDiffer` says when that happened,
+ * and `protectionItemsDiffer` when the runs consumed different protection items, so the
+ * confirmation can say so).
+ *
+ * Every run must also continue the one before it, in that order: start at the level it ended at.
+ *
+ * @param {Array<Object>} sessions - Sessions picked for the merge
+ * @param {Object} [options]
+ * @param {function(Object): string} [options.labelOf] - How to name a session in a refusal
+ * @returns {{ok: boolean, reason?: string, ordered?: Array<Object>, settingsDiffer?: boolean,
+ *   protectionItemsDiffer?: boolean}} `ordered` runs from least to most recently active
+ */
+export function planSessionMerge(sessions, { labelOf = (session) => session.id } = {}) {
+    const list = (Array.isArray(sessions) ? sessions : []).filter(Boolean);
+    if (list.length < 2) return { ok: false, reason: 'Pick at least two sessions to merge.' };
+    const itemHrid = list[0].itemHrid;
+    if (list.some((session) => session.itemHrid !== itemHrid)) {
+        return { ok: false, reason: 'Only sessions for the same item can be merged.' };
+    }
+    const ordered = [...list].sort((a, b) => lastActivityTime(a) - lastActivityTime(b));
+    const older = ordered.slice(0, -1);
+    if (older.some((session) => session.state === SessionState.TRACKING)) {
+        return {
+            ok: false,
+            reason: 'Only the most recently active of the picked sessions may still be in progress; the others must have ended.',
+        };
+    }
+    // One chain only: each run picks the item up at the level the run before it left it. Two
+    // independent climbs (two +0 → +5 runs on different copies) cannot become one session — it
+    // would hold one start and one end level against both runs' costs, and everything valuing
+    // the climb (worth-it, gold sources) would see one level gain paid for twice.
+    for (let i = 1; i < ordered.length; i++) {
+        const before = ordered[i - 1];
+        const after = ordered[i];
+        if (after.startLevel !== before.currentLevel) {
+            return {
+                ok: false,
+                reason:
+                    `${labelOf(before)} ended at +${before.currentLevel} but ${labelOf(after)} started at ` +
+                    `+${after.startLevel} — only runs that continue each other can merge.`,
+            };
+        }
+        // ...and in time: a run that was enhancing before the one ahead of it had finished
+        // cannot have been working on what that run produced, whatever its levels say
+        if (firstActiveTime(after) < lastActivityTime(before)) {
+            return {
+                ok: false,
+                reason:
+                    `${labelOf(after)} was already enhancing before ${labelOf(before)} finished — ` +
+                    'only runs that follow one another can merge.',
+            };
+        }
+    }
+    const newest = ordered[ordered.length - 1];
+    const settingsDiffer = older.some(
+        (session) =>
+            session.targetLevel !== newest.targetLevel || (session.protectFrom || 0) !== (newest.protectFrom || 0)
+    );
+    const protectionItems = new Set(
+        ordered.flatMap((session) => Object.keys(getProtectionBreakdown(session)).filter(Boolean))
+    );
+    const protectFromDiffers =
+        ordered.some((session) => session.mixedProtection === true) ||
+        older.some((session) => (session.protectFrom || 0) !== (newest.protectFrom || 0));
+    return {
+        ok: true,
+        ordered,
+        settingsDiffer,
+        protectFromDiffers,
+        protectionItemsDiffer: protectionItems.size > 1,
+    };
+}
+
+/**
+ * Fold the other sessions into the most recently active one, in place, making one persisted
+ * session.
+ *
+ * The latest session's object is kept (and so its id, its place in the list, the tracker's
+ * current-session pointer, and any attempt handler still holding it). It takes the sum of every
+ * counter, cost, per-level tally and XP; the start level and start time of the session that
+ * started first; and every session's active stretches (not the wall-clock span between them).
+ * Its own target, protection, state, current level and last attempt are kept. Protection is kept
+ * per item when the runs used different ones. The merged session carries no combined
+ * prediction — each run's own is kept in `legPredictions` — and is not calibrated (see
+ * calibrationObservation); the extension baseline is cleared.
+ *
+ * @param {Array<Object>} ordered - Sessions by last activity, from {@link planSessionMerge}
+ * @returns {Object} The latest session, now the merged one
+ */
+export function foldSessions(ordered) {
+    const newest = ordered[ordered.length - 1];
+    const older = ordered.slice(0, -1);
+    // The chain starts where its first run (by activity) started; the start time is the earliest
+    // any of them started, for anything asking how far back the session reaches
+    const chainStart = ordered[0];
+    const firstStartTime = Math.min(...ordered.map((session) => session.startTime || Infinity));
+
+    // Each run's own prediction, kept as it was made (on the stats the player had then) for the
+    // leg it describes, in chain order. Nothing composes them yet; see calibrationObservation.
+    // A run merged before already carries its legs.
+    const legPredictions = ordered.flatMap((session) =>
+        Array.isArray(session.legPredictions)
+            ? session.legPredictions
+            : [
+                  {
+                      sessionId: session.id,
+                      startLevel: session.startLevel,
+                      targetLevel: session.targetLevel,
+                      protectFrom: session.protectFrom || 0,
+                      predictions: session.predictions || null,
+                  },
+              ]
+    );
+
+    const spans = [];
+    const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
+    const segmentStartTime = newest.segmentStartTime || newest.startTime;
+    const ownPast = Array.isArray(newest.pastActiveSpans) ? newest.pastActiveSpans : [];
+    // The survivor's open stretch keeps its own leg: the level it began at (its start level is
+    // about to become the chain's), and the spend before it, which now includes every folded run
+    const segmentStartLevel = Number.isFinite(newest.segmentStartLevel) ? newest.segmentStartLevel : newest.startLevel;
+    const segmentStartCost = (newest.segmentStartCost || 0) + older.reduce((sum, s) => sum + (s.totalCost || 0), 0);
+    // Legs run with different protect-from levels: said on the panel's Prot row
+    const mixedProtection =
+        ordered.some((session) => session.mixedProtection === true) ||
+        older.some((session) => (session.protectFrom || 0) !== (newest.protectFrom || 0));
+    for (const session of older) {
+        spans.push(...getActiveSpans(session));
+
+        newest.totalAttempts = (newest.totalAttempts || 0) + (session.totalAttempts || 0);
+        newest.totalSuccesses = (newest.totalSuccesses || 0) + (session.totalSuccesses || 0);
+        newest.totalFailures = (newest.totalFailures || 0) + (session.totalFailures || 0);
+        newest.totalBlessed = (newest.totalBlessed || 0) + (session.totalBlessed || 0);
+        newest.totalXP = (newest.totalXP || 0) + (session.totalXP || 0);
+        newest.coinCost = (newest.coinCost || 0) + (session.coinCost || 0);
+        newest.coinCount = (newest.coinCount || 0) + (session.coinCount || 0);
+        newest.protectionCost = (newest.protectionCost || 0) + (session.protectionCost || 0);
+        newest.protectionCount = (newest.protectionCount || 0) + (session.protectionCount || 0);
+        newest.hasUnpricedInput = newest.hasUnpricedInput === true || session.hasUnpricedInput === true;
+        newest.longestSuccessStreak = Math.max(newest.longestSuccessStreak || 0, session.longestSuccessStreak || 0);
+        newest.longestFailureStreak = Math.max(newest.longestFailureStreak || 0, session.longestFailureStreak || 0);
+
+        newest.attemptsPerLevel ||= {};
+        for (const [level, tally] of Object.entries(session.attemptsPerLevel || {})) {
+            initializeLevelTracking(newest, level);
+            const into = newest.attemptsPerLevel[level];
+            into.success += tally.success || 0;
+            into.fail += tally.fail || 0;
+            into.blessed = (into.blessed || 0) + (tally.blessed || 0);
+            updateSuccessRate(newest, level);
+        }
+
+        newest.materialCosts ||= {};
+        for (const [hrid, material] of Object.entries(session.materialCosts || {})) {
+            if (!newest.materialCosts[hrid]) newest.materialCosts[hrid] = { count: 0, totalCost: 0 };
+            newest.materialCosts[hrid].count += material.count || 0;
+            newest.materialCosts[hrid].totalCost += material.totalCost || 0;
+        }
+
+        for (const milestone of session.milestonesReached || []) {
+            newest.milestonesReached ||= [];
+            if (!newest.milestonesReached.includes(milestone)) newest.milestonesReached.push(milestone);
+        }
+    }
+    newest.milestonesReached?.sort((a, b) => a - b);
+    recalculateTotalCost(newest);
+
+    // Per-item protection. The survivor's protectionItemHrid stays its own (the item its own setup
+    // consumes, null until it consumes one), never one inherited from another run; that history
+    // is kept per item whenever it is not all that one item, so a later protection is booked
+    // under its real name.
+    const combined = {};
+    for (const breakdown of breakdowns) {
+        for (const [hrid, entry] of Object.entries(breakdown)) {
+            const into = (combined[hrid] ||= { count: 0, totalCost: 0 });
+            into.count += entry.count || 0;
+            into.totalCost += entry.totalCost || 0;
+        }
+    }
+    const items = Object.keys(combined);
+    // A survivor that already keeps a breakdown always takes the combined one, or the runs folded
+    // in now would be counted in protectionCount but missing from the per-item rows
+    if (
+        newest.protectionBreakdown ||
+        items.length > 1 ||
+        (items.length === 1 && items[0] !== (newest.protectionItemHrid || ''))
+    ) {
+        newest.protectionBreakdown = combined;
+    }
+
+    newest.startLevel = chainStart.startLevel;
+    if (Number.isFinite(firstStartTime)) newest.startTime = firstStartTime;
+    newest.pastActiveSpans = [...spans, ...ownPast].sort((a, b) => a.start - b.start);
+    newest.segmentStartTime = segmentStartTime;
+    newest.segmentStartLevel = segmentStartLevel;
+    newest.segmentStartCost = segmentStartCost;
+    newest.extensionBaseline = null;
+    if (mixedProtection) newest.mixedProtection = true;
+    // No combined prediction: the legs ran on the stats the player had at the time, and one
+    // prediction from today's stats would describe none of them (the caller clears it)
+    newest.predictions = null;
+    newest.legPredictions = legPredictions;
+    newest.mergedFrom = [
+        ...(newest.mergedFrom || []),
+        ...older.flatMap((session) => [...(session.mergedFrom || []), session.id]),
+    ];
+    return newest;
+}
+
+/**
+ * What a completed session hands calibration, or null when it must not be recorded.
+ *
+ * A merged session is several runs, each made on the stats the player had at the time; their
+ * combined attempts are no draw from any one predicted distribution, so it is not recorded. (Each
+ * run's own prediction is kept in `legPredictions`; nothing composes them.) A later extension
+ * starts a new leg with one setup and its own prediction (`extensionBaseline` set), and that leg
+ * is recorded as usual.
+ * @param {Object} session - A completed session (a snapshot; not mutated)
+ * @returns {Object|null} The session as calibration should read it
+ */
+export function calibrationObservation(session) {
+    if (!session) return null;
+    if (session.mergedFrom?.length > 0 && !session.extensionBaseline) return null;
+    return session;
 }
 
 /**
@@ -424,12 +845,15 @@ export function canExtendSession(session, itemHrid, currentLevel, action = null)
  *
  * @param {Object} session - Session object
  * @param {number} newTargetLevel - New target level
+ * @param {number} [now] - Epoch ms
  */
-export function extendSession(session, newTargetLevel) {
+export function extendSession(session, newTargetLevel, now = Date.now()) {
+    // A new run on this session: its stretch starts now, not at the session's start
+    startNewSegment(session, now);
     session.state = SessionState.TRACKING;
     session.targetLevel = newTargetLevel;
     session.endTime = null;
-    session.lastUpdateTime = Date.now();
+    session.lastUpdateTime = now;
     session.extensionBaseline = {
         totalAttempts: session.totalAttempts || 0,
         protectionCount: session.protectionCount || 0,
@@ -501,6 +925,7 @@ export function mergeSessions(sessions) {
         expectedProtections: 0,
     };
     const seenItems = new Set();
+    const protection = {};
 
     for (const session of sessions) {
         if (!session) continue;
@@ -526,6 +951,11 @@ export function mergeSessions(sessions) {
         agg.durationSeconds += getSessionDuration(session);
         if (!agg.protectionItemHrid && session.protectionItemHrid) {
             agg.protectionItemHrid = session.protectionItemHrid;
+        }
+        for (const [hrid, entry] of Object.entries(getProtectionBreakdown(session))) {
+            const into = (protection[hrid] ||= { count: 0, totalCost: 0 });
+            into.count += entry.count || 0;
+            into.totalCost += entry.totalCost || 0;
         }
 
         for (const [level, tally] of Object.entries(session.attemptsPerLevel || {})) {
@@ -556,6 +986,20 @@ export function mergeSessions(sessions) {
         tally.successRate = total > 0 ? tally.success / total : 0;
     }
     agg.successRate = agg.totalAttempts > 0 ? agg.totalSuccesses / agg.totalAttempts : 0;
+
+    // Where the item stands now: the level of the most recently active session, so the
+    // per-level table marks the row being worked on, the way the single-session view does.
+    // Several items have no one level to mark.
+    const present = sessions.filter(Boolean);
+    agg.live = present.some((session) => session.state === SessionState.TRACKING);
+    if (Object.keys(protection).length > 1) agg.protectionBreakdown = protection;
+    if (agg.itemHrids.length === 1) {
+        const activity = (s) =>
+            Math.max(s.endTime || 0, s.lastAttempt?.timestamp || 0, s.lastUpdateTime || 0, s.startTime || 0);
+        const running = present.filter((session) => session.state === SessionState.TRACKING);
+        const latest = (running.length > 0 ? running : present).reduce((a, b) => (activity(b) >= activity(a) ? b : a));
+        agg.currentLevel = Number.isFinite(latest.currentLevel) ? latest.currentLevel : 0;
+    }
 
     return agg;
 }

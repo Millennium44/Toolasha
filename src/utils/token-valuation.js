@@ -69,7 +69,12 @@ export function calculateDungeonTokenValue(
         const { price, source } = getItemPriceInfo(hrid, { mode });
         if (source !== 'book') return price;
         const book = getItemPrices(hrid);
-        return patientTickPrice(price, 'sell', 'ask', { ask: book?.ask, bid: book?.bid, itemHrid: hrid });
+        return patientTickPrice(price, 'sell', 'ask', {
+            ask: book?.ask,
+            bid: book?.bid,
+            bidEstimated: Boolean(book?.bidEstimated),
+            itemHrid: hrid,
+        });
     };
 
     // Only single-currency lines price a token cleanly

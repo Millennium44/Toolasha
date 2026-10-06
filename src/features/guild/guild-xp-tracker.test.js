@@ -966,3 +966,78 @@ describe('with XP history tracking switched off', () => {
         }
     });
 });
+
+describe('onMetaChanged — roster and sign-up subscribers', () => {
+    beforeEach(() => {
+        storageMock.store.clear();
+        storageMock.unavailable = false;
+        settings.guildXPTracker = true;
+        guildXPTracker.disable();
+        guildXPTracker.ownGuildName = 'Milky';
+        guildXPTracker.ownGuildID = null;
+        guildXPTracker.memberXPHistory = {};
+        guildXPTracker.memberMeta = {};
+        // An earlier suite can leave a load counted as pending; these tests start from none
+        guildXPTracker._loadsPending = 0;
+        guildXPTracker.ready = null;
+    });
+
+    afterEach(() => {
+        storageMock.tryGet.mockReset().mockImplementation(async (key) => {
+            if (storageMock.unavailable) return null;
+            return storageMock.store.has(key)
+                ? { found: true, value: structuredClone(storageMock.store.get(key)) }
+                : { found: false, value: null };
+        });
+    });
+
+    test('fires after a member update that waited on storage, with the new roster in place', async () => {
+        guildXPTracker.ownGuildID = 'g1';
+        guildXPTracker.memberMeta = { 101: { name: 'Old' } };
+        let release;
+        storageMock.tryGet.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = () => resolve({ found: false, value: null });
+                })
+        );
+        const seen = [];
+        const off = guildXPTracker.onMetaChanged(() => seen.push(guildXPTracker.getMemberMeta('202')?.name ?? null));
+        try {
+            const pending = guildXPTracker._onMembersUpdated({
+                guildCharacterMap: { 202: { guildID: 'g2', guildExperience: 8 } },
+                guildSharableCharacterMap: { 202: { name: 'New' } },
+            });
+            // A tick later the read is still in flight
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(seen.at(-1) ?? null).toBeNull();
+            release();
+            await pending;
+            expect(seen.at(-1)).toBe('New');
+        } finally {
+            off();
+        }
+    });
+
+    test('fires on a sign-up change and on a guild update', async () => {
+        guildXPTracker.memberMeta = { 101: { name: 'A', signedUpSkillingTrialHrid: '' } };
+        const calls = vi.fn();
+        const off = guildXPTracker.onMetaChanged(calls);
+        try {
+            guildXPTracker._onTrialSignupUpdated({
+                characterId: 101,
+                signedUpSkillingTrialHrid: '/guild_skilling/crafting',
+                signupWeekStartAt: 'W',
+            });
+            expect(calls).toHaveBeenCalledTimes(1);
+            await guildXPTracker._onGuildUpdated({
+                guild: { name: guildXPTracker.ownGuildName, currentWeekStartAt: 'W2' },
+            });
+            expect(calls).toHaveBeenCalledTimes(2);
+        } finally {
+            off();
+        }
+        guildXPTracker._onTrialSignupUpdated({ characterId: 101, signupWeekStartAt: 'W' });
+        expect(calls).toHaveBeenCalledTimes(2);
+    });
+});

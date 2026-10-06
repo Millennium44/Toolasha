@@ -143,6 +143,7 @@ vi.mock('../enhancement/enhancement-tracker.js', () => ({
 }));
 
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     guildXpTracker: () =>
         game.guildMeta
             ? { getMemberMeta: () => game.guildMeta, getCurrentWeekStartAt: () => game.guildMeta.week || null }

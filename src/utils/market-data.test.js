@@ -324,10 +324,12 @@ describe('patient +1 tick', () => {
         expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(1234);
     });
 
-    test('never crosses the spread', () => {
+    test('a one-tick spread prices at the instant fill on both sides', () => {
+        // Bid 400 + one tick reaches the 410 ask, and ask 410 - one tick reaches the 400 bid: no queue
+        // is left to jump, so each order fills at the other side's price
         marketAPI.getPrice.mockReturnValue({ ask: 410, bid: 400 });
-        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(400);
-        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(410);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(410);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(400);
     });
 
     test('the ticked price is re-clamped into the item band', async () => {

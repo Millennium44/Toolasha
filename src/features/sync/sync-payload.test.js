@@ -569,6 +569,7 @@ describe('applyPayload and the key-migration carry', () => {
             { formatVersion: 1, stores: { settings: { script_settingsMap_abc: {} }, dungeonRuns: [1, 2] } },
         ],
         ['a settings store that is a string', { formatVersion: 1, stores: { settings: 'script_settingsMap_abc' } }],
+        ['a settings store that is an array', { formatVersion: 1, stores: { settings: [{ chatCommands: {} }] } }],
     ])('a payload with %s is refused before any record is forgotten or written', async (_label, body) => {
         await expect(applyPayload(JSON.stringify(body))).rejects.toThrow();
 
@@ -1351,6 +1352,30 @@ describe('mergeForUpload, which writes nothing local', () => {
         off();
     });
 
+    test('a legacy custom-tab edit only this device made is uploaded, and the gist is not called in step', async () => {
+        // The real registration: unstamped tabs on both sides tie, and the tie
+        // must go to the side the upload chose to win — this device's
+        await import('../inventory/custom-tabs/custom-tabs-data.js');
+        const KEY = 'c1_inventoryTabs_config';
+        const config = (name, items) => ({
+            version: 1,
+            tabs: [{ id: 't1', name, items, children: [] }],
+            selectedTabId: 't1',
+        });
+        const gist = payloadOf({ settings: { [KEY]: config('Ores', ['/items/copper_ore']) } });
+        const local = payloadOf({ settings: { [KEY]: config('Metals', ['/items/copper_ore', '/items/iron_ore']) } });
+
+        const result = mergeForUpload(local, gist, wholeKeyHashes(gist));
+        const tab = JSON.parse(result.text).stores.settings[KEY].tabs[0];
+
+        expect(tab.name).toBe('Metals');
+        expect(tab.items).toContain('/items/iron_ore');
+        // The push decision: the upload changes the gist
+        expect(addsToRemote(result.text, gist)).toBe(true);
+        // And a pull of what was uploaded keeps this device's tab as it is
+        expect(result.remoteAdds).toBe(false);
+    });
+
     test("never uploads another device's token or another script's keys from the gist", () => {
         const local = payloadOf({ settings: { [MAP]: { A: { v: 1 } } } });
         const remote = payloadOf({
@@ -1392,6 +1417,51 @@ describe('mergeForUpload, which writes nothing local', () => {
         expect(
             mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1, panelSizeMemory: 2 } }), null).remoteAdds
         ).toBe(true);
+    });
+
+    test('says whether it left out stores the gist holds that this scope does not sync', () => {
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const withHistory = payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: { h: [1] } });
+        expect(mergeForUpload(local, withHistory, null).dropsFromRemote).toBe(true);
+        expect(
+            mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: {} }), null).dropsFromRemote
+        ).toBe(false);
+        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+            false
+        );
+        const everything = JSON.stringify({ ...JSON.parse(local), syncScope: 'everything' });
+        expect(mergeForUpload(everything, withHistory, null).dropsFromRemote).toBe(false);
+    });
+
+    test('says so when it cleans a key out of a store it keeps, so the cleaned copy is written', () => {
+        // An older build uploaded a key this one keeps on the device; the
+        // rest of the gist matches. The loop guard only asks about keys the
+        // upload holds, so without the flag the gist kept the key for ever
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const remote = payloadOf({ settings: { panelSizeMemory: 1, toolasha_local_whispers: ['private'] } });
+        const merged = mergeForUpload(local, remote, null);
+
+        expect(addsToRemote(merged.text, remote)).toBe(false);
+        expect(merged.dropsFromRemote).toBe(true);
+        expect(JSON.parse(merged.text).stores.settings).not.toHaveProperty('toolasha_local_whispers');
+        // And a gist with nothing to clean stays quiet
+        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+            false
+        );
+    });
+
+    test('says so when it redacts a device-local setting out of a settings map the gist holds', () => {
+        const MAP = 'script_settingsMap_abc';
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const remote = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { sync_token: { value: 'ghp_x' } } } });
+        expect(mergeForUpload(local, remote, null).dropsFromRemote).toBe(true);
+        const clean = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { other: { value: 1 } } } });
+        expect(mergeForUpload(local, clean, null).dropsFromRemote).toBe(false);
+        // The same map as text, in another layout, is not a removal
+        const asText = payloadOf({
+            settings: { panelSizeMemory: 1, [MAP]: JSON.stringify({ other: { value: 1 } }, null, 2) },
+        });
+        expect(mergeForUpload(local, asText, null).dropsFromRemote).toBe(false);
     });
 
     test('a gist that differs only where this device won the merge holds nothing for it', () => {

@@ -45,6 +45,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
+import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
 // The walk to the Tester tab is shared with the Item Dictionary's ability-book
 // panel — see utils/tester-shop-nav.js
@@ -408,17 +409,11 @@ function getRepeatCountFromUI(panel) {
 }
 
 function getTargetLevelFromUI(panel) {
-    const labels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
-    );
-
-    if (labels.length > 0) {
-        const parent = labels[0].parentElement;
-        const input = parent.querySelector('input[type="number"], input[type="text"]');
-        if (input && input.value) {
-            const value = parseInt(input.value, 10);
-            if (!isNaN(value)) return Math.max(1, Math.min(20, value));
-        }
+    // By the panel's structure as well as the English label, so a translated client reads it too
+    const input = findEnhancingInput(panel, 'target');
+    if (input && input.value) {
+        const value = parseInt(input.value, 10);
+        if (!isNaN(value)) return Math.max(1, Math.min(20, value));
     }
 
     return null;

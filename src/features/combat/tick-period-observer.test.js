@@ -49,7 +49,7 @@ vi.mock('../../core/websocket.js', () => ({
         off: (event) => state.handlers.delete(event),
     },
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ webSocketHook: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, webSocketHook: () => null }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,

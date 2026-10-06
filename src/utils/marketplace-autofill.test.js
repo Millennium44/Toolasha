@@ -13,6 +13,7 @@ vi.mock('../core/config.js', () => ({
 }));
 
 vi.mock('./bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     estimatedListingAge: () => ({
         cachedBookSide: (itemHrid, enhancementLevel, isSell) => {
             const listings = bookState.books[`${itemHrid}|${enhancementLevel}|${isSell}`];

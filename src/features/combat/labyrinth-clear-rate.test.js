@@ -1600,6 +1600,16 @@ describe('the beacon count as a per-floor override', () => {
         expect(labyrinthClearRate._tileResults.size).toBe(0);
     });
 
+    test('a new floor forgets the settled auto-calc fingerprint, so its rooms are not restored from nothing', () => {
+        buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._autoCalcFingerprint = 'same-rooms-same-inputs';
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+    });
+
     test('a new floor redraws an open distribution panel from the cleared results', () => {
         buildToolbar(4);
         labyrinthClearRate.currentFloor = 3;
@@ -3342,6 +3352,50 @@ describe('a labyrinth token upgrade changes the cache slot', () => {
     });
 });
 
+/**
+ * Guild shrine and achievement combat buffs ride the player DTO into every sim,
+ * and nothing else in the key marks them: upgrading a shrine or unlocking an
+ * achievement left cached results (and settled 0% badge signatures) answering
+ * for the old buffs.
+ */
+describe('guild and achievement combat buffs change the cache slot', () => {
+    const buff = (typeHrid, ratioBoost) => ({ uniqueHrid: `/buff_uniques/${typeHrid}`, typeHrid, ratioBoost });
+
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+        delete dataManagerMock.getAchievementBuffs;
+    });
+
+    test('a guild shrine buff moves the key and the tile signature input', () => {
+        dataManagerMock.characterData = { guildActionTypeBuffsMap: { '/action_types/combat': [] } };
+        const before = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.characterData = {
+            guildActionTypeBuffsMap: { '/action_types/combat': [buff('/buff_types/damage', 0.05)] },
+        };
+        const after = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        expect(after).not.toBe(before);
+    });
+
+    test('an unlocked achievement buff moves the key', () => {
+        dataManagerMock.characterData = {};
+        dataManagerMock.getAchievementBuffs = vi.fn(() => []);
+        const before = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.getAchievementBuffs = vi.fn(() => [buff('/buff_types/accuracy', 0.02)]);
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).not.toBe(before);
+    });
+
+    test('buff order does not move the key, and no buffs leaves it as it was', () => {
+        const a = buff('/buff_types/damage', 0.05);
+        const b = buff('/buff_types/accuracy', 0.02);
+        dataManagerMock.characterData = { guildActionTypeBuffsMap: { '/action_types/combat': [a, b] } };
+        const first = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.characterData = { guildActionTypeBuffsMap: { '/action_types/combat': [b, a] } };
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).toBe(first);
+        dataManagerMock.characterData = {};
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).not.toContain(':cb=');
+    });
+});
+
 const adapterMock = await import('../combat-sim/combat-sim-adapter.js');
 
 /**
@@ -3391,9 +3445,29 @@ describe('a labyrinth DTO waits for the loadout it is told to wear', () => {
     test('a loaded store holding it applies that loadout', () => {
         Object.assign(gear.snapshots, { 3: { name: 'Fighting', equipment: [] } });
         expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).not.toBeNull();
-        const [dto, name] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
+        const [dto, applied] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
         expect(dto).toMatchObject({ hrid: 'player1' });
-        expect(name).toBe('Fighting');
+        expect(applied).toBe(gear.snapshots[3]);
+    });
+
+    test('two loadouts sharing a name each sim as themselves, not the first one found by name', () => {
+        // The adapter resolves a *name* with a first-match search, so handing it
+        // the name filed every room configured for the second "Lab" under the
+        // first one's gear. The id the room is configured with is the identity.
+        Object.assign(gear.snapshots, {
+            2: { name: 'Lab', equipment: [{ itemHrid: '/items/holy_milking_tool' }] },
+            3: { name: 'Lab', equipment: [{ itemHrid: '/items/griffin_bulwark' }] },
+        });
+        labyrinthClearRate.buildLabyrinthPlayerDTO(3);
+        const [, applied] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
+        expect(applied).toBe(gear.snapshots[3]);
+    });
+
+    test('a loadout saved without a name is still applied rather than falling back to worn gear', () => {
+        Object.assign(gear.snapshots, { 3: { name: '', equipment: [] } });
+        labyrinthClearRate.buildLabyrinthPlayerDTO(3);
+        expect(adapterMock.applyLoadoutSnapshotToDTO).toHaveBeenCalledTimes(1);
+        expect(adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0][1]).toBe(gear.snapshots[3]);
     });
 
     test('a sim asked for before the loadout arrives reports failure, not a 0% clear', async () => {
@@ -4035,6 +4109,19 @@ describe('the recompute verb', () => {
 
         expect(verb()).toBeDefined();
         expect(verb().kind).toBe('verb');
+    });
+
+    test('the room-cell watcher is debounced, so one grid render is one rescan', async () => {
+        // The handler rescans the whole grid whatever cell it is handed, and a
+        // render inserts every cell at once — undebounced, a 64-room floor was
+        // 64 document-wide rescans per game repaint
+        const { default: domObserver } = await import('../../core/dom-observer.js');
+        domObserver.onClass.mockClear();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+        const call = domObserver.onClass.mock.calls.find(([name]) => name === 'LabyrinthTileCalc');
+        expect(call).toBeDefined();
+        expect(call[3]).toMatchObject({ debounce: true });
     });
 
     test('switching the feature off takes it out of the palette', () => {
@@ -4935,6 +5022,409 @@ describe('floor calculation progress bar across a retry', () => {
 });
 
 /**
+ * A genuine 0% room is never cached (a 0% right after load is often a sim of
+ * gear that had not arrived yet), so an auto pass retries it — three times. Once
+ * those are spent the floor has to count as settled, or every grid re-render
+ * and every labyrinth_updated re-sims every 0% room and refills the bar for as
+ * long as the floor map is open.
+ */
+describe('a floor with a 0% room settles once its retries are spent', () => {
+    const IMP = '/monsters/imp';
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._tileResults?.clear();
+        if (labyrinthClearRate.autoTileTimer) clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.autoTileTimer = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        labyrinthClearRate._autoCalcFingerprint = null;
+        vi.restoreAllMocks();
+    });
+
+    const mountFloor = () => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [100, 110].map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false })),
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.autoTileRetryCount = 0;
+        return parent;
+    };
+
+    /** The first pass and each retry the pass schedules, run straight through */
+    const runPassAndRetries = async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        while (labyrinthClearRate.autoTileTimer) {
+            clearTimeout(labyrinthClearRate.autoTileTimer);
+            labyrinthClearRate.autoTileTimer = null;
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+        }
+    };
+
+    test('a genuine 0% room is not re-simmed by later auto triggers', async () => {
+        const parent = mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+
+        await runPassAndRetries();
+        const settledAfter = sims.mock.calls.length;
+        expect(labyrinthClearRate._autoCalcFingerprint).not.toBeNull();
+
+        // A game re-render wipes both badges; auto triggers keep arriving
+        parent.querySelectorAll('.mwi-labyrinth-tile-badge').forEach((el) => el.remove());
+        for (let i = 0; i < 5; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(sims.mock.calls.length).toBe(settledAfter);
+        // ...and both badges, the 0% one included, are restored from the last pass
+        expect(parent.querySelectorAll('.mwi-labyrinth-tile-badge').length).toBe(2);
+        expect(parent.children[1].textContent).toContain('0%');
+    });
+
+    test('a room that could not sim is retried by a later trigger once ready, and the 0% room is not', async () => {
+        // Codex P2 on #364: readiness is not in the fingerprint, so settling
+        // over a room whose inputs were not ready left it unbadged until a
+        // manual Calculate. Lv.110 is a genuine 0%; Lv.120 fails until ready.
+        const parent = document.createElement('div');
+        for (let i = 0; i < 3; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [100, 110, 120].map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false })),
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.autoTileRetryCount = 0;
+        let ready = false;
+        const sims = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (_hrid, lvl) => {
+            if (lvl === 110) return { clearChance: 0, expectedSeconds: Infinity };
+            if (lvl === 120 && !ready) return { failed: true, clearChance: 0, expectedSeconds: Infinity };
+            return { clearChance: 0.9, expectedSeconds: 30 };
+        });
+
+        await runPassAndRetries();
+        // Not settled while a room is still unjudged
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+        expect(parent.children[2].querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
+
+        // The store finishes loading; the next trigger, after a re-render wiped
+        // every badge, sims only the room that never ran
+        ready = true;
+        parent.querySelectorAll('.mwi-labyrinth-tile-badge').forEach((el) => el.remove());
+        sims.mockClear();
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(sims.mock.calls.map(([, lvl]) => lvl)).toEqual([120]);
+        expect(parent.children[2].textContent).toContain('90%');
+        expect(parent.children[1].textContent).toContain('0%');
+        expect(labyrinthClearRate._autoCalcFingerprint).not.toBeNull();
+
+        // Settled now: further triggers sim nothing
+        sims.mockClear();
+        for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(sims).not.toHaveBeenCalled();
+    });
+
+    test('a settled 0% room is re-simmed when the build changes, and not while it stays the same', async () => {
+        // Codex P2 on #364: the settled key outlived the inputs it was judged
+        // under, so a gear change let a new pass run and the pass then skipped
+        // the room, leaving the old 0% badge up until a manual Calculate.
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+
+            // Same build: nothing is simmed, however many triggers arrive
+            sims.mockClear();
+            labyrinthClearRate._autoCalcFingerprint = null; // even with the floor gate open
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            // New gear: the floor fingerprint moves, and both rooms are judged again
+            gear.snapshots[7] = { name: 'Upgraded', equipment: [{ itemHrid: '/items/griffin_bulwark' }] };
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl).sort()).toEqual([100, 110]);
+        } finally {
+            delete gear.snapshots[7];
+        }
+    });
+
+    test('a settled 0% room is re-simmed when the sim hours ceiling changes', async () => {
+        // A capped run that ended at 0% can clear with more simulated hours to run in
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            settings.map.set('labyrinthSimMaxHours', 77);
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl)).toContain(110);
+        } finally {
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
+    test('with Uncapped switched on, an auto pass still re-sims on an hours change: it runs capped', async () => {
+        // Codex P2 on #364: the signature read the Uncapped toggle, but an auto
+        // pass always runs capped, so its runs were recorded as uncapped and a
+        // change to the hours ceiling they actually stopped at never re-simmed
+        mountFloor();
+        settings.map.set('labyrinthSimCaps', 'precision');
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+            expect(sims.mock.calls.every(([, , options]) => options?.uncapped === false)).toBe(true);
+
+            settings.map.set('labyrinthSimMaxHours', 77);
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl)).toContain(110);
+        } finally {
+            settings.map.delete('labyrinthSimCaps');
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
+    test('a manual uncapped pass is not undone by later capped auto passes, and the two do not alternate', async () => {
+        mountFloor();
+        settings.map.set('labyrinthSimCaps', 'precision');
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await labyrinthClearRate.runTileCalculation();
+            expect(sims.mock.calls.every(([, , options]) => options?.uncapped === true)).toBe(true);
+
+            sims.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            // An uncapped result answers a capped request, and the hours ceiling
+            // never bound it, so changing it does not either
+            settings.map.set('labyrinthSimMaxHours', 77);
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+        } finally {
+            settings.map.delete('labyrinthSimCaps');
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
+    test('a zero-target auto pass over satisfied results records the new fingerprint, and only then', async () => {
+        // Codex P2 on #364: after a manual uncapped pass the hours ceiling changes
+        // the floor fingerprint but every tile still satisfies it, so the pass
+        // found nothing to run and left the fingerprint stale, repeating the full
+        // scan on every repaint
+        mountFloor();
+        settings.map.set('labyrinthSimCaps', 'precision');
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await labyrinthClearRate.runTileCalculation();
+            settings.map.set('labyrinthSimMaxHours', 77);
+            const changed = labyrinthClearRate._tileCalcFingerprint();
+            expect(labyrinthClearRate._autoCalcFingerprint).not.toBe(changed);
+
+            sims.mockClear();
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+            expect(labyrinthClearRate._autoCalcFingerprint).toBe(changed);
+
+            // A pass that is zero for any other reason does not record: here a
+            // room whose inputs changed under it becomes a target again
+            labyrinthClearRate._autoCalcFingerprint = null;
+            labyrinthClearRate.calculatedTileKeys.clear();
+            sims.mockClear();
+            await runPassAndRetries();
+            expect(sims).toHaveBeenCalled();
+        } finally {
+            settings.map.delete('labyrinthSimCaps');
+            settings.map.delete('labyrinthSimMaxHours');
+        }
+    });
+
+    test('a settled combat room is re-simmed when its assigned loadout changes, and not otherwise', async () => {
+        // Codex P2 on #364: the loadout a monster is fought in is part of the
+        // combat cache key, and was missing from both the tile's settled inputs
+        // and the floor fingerprint, so reassigning it left the old badge up
+        mountFloor();
+        const setting = { labyrinthLoadoutImp: 2 };
+        dataManagerMock.characterData = { characterSetting: setting, characterInfo: {} };
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        try {
+            await runPassAndRetries();
+
+            sims.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            setting.labyrinthLoadoutImp = 5;
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([, lvl]) => lvl).sort()).toEqual([100, 110]);
+        } finally {
+            dataManagerMock.characterData = null;
+        }
+    });
+
+    test('a skilling room is worked out again when the skill levels up, and not otherwise', async () => {
+        const parent = document.createElement('div');
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(cell);
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [[{ skillHrid: '/skills/milking', recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        let level = 90;
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level }]);
+        const worked = vi.spyOn(labyrinthClearRate, 'computeSkillingClear');
+        try {
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(worked).toHaveBeenCalledTimes(1);
+
+            worked.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(worked).not.toHaveBeenCalled();
+
+            level = 95;
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(worked).toHaveBeenCalledTimes(1);
+        } finally {
+            dataManagerMock.characterData = null;
+            dataManagerMock.getSkills.mockImplementation(() => []);
+        }
+    });
+
+    test('a 0% room simmed in worn gear is re-simmed when the worn gear changes; a loadout room is not', async () => {
+        // Codex P2 on #364: a room with no assigned loadout sims the worn gear,
+        // which neither the cache key nor the build fingerprint described, so a
+        // settled 0% outlived a gear change. Imp has no loadout; the Cyclops
+        // fights in loadout 3, so the lab swapping worn gear must not touch it.
+        const CYCLOPS = '/monsters/cyclops';
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [
+                { monsterHrid: IMP, recommendedLevel: 110, isCleared: false },
+                { monsterHrid: CYCLOPS, recommendedLevel: 110, isCleared: false },
+            ],
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.autoTileRetryCount = 0;
+        gear.snapshots[3] = { name: 'Cyclops kit', equipment: [{ itemHrid: '/items/griffin_bulwark' }] };
+        dataManagerMock.characterData = { characterSetting: { labyrinthLoadoutCyclops: 3 }, characterInfo: {} };
+        dataManagerMock.characterEquipment = new Map([
+            ['/item_locations/main_hand', { itemHrid: '/items/cheese_sword', enhancementLevel: 0 }],
+        ]);
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async () => ({ clearChance: 0, expectedSeconds: Infinity }));
+        try {
+            await runPassAndRetries();
+
+            sims.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            // The lab (or the player) puts other gear on
+            dataManagerMock.characterEquipment = new Map([
+                ['/item_locations/main_hand', { itemHrid: '/items/holy_sword', enhancementLevel: 5 }],
+            ]);
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([hrid]) => hrid)).toEqual([IMP]);
+        } finally {
+            delete gear.snapshots[3];
+            dataManagerMock.characterData = null;
+            delete dataManagerMock.characterEquipment;
+        }
+    });
+
+    test('an auto 0% on a cell repainted mid-sim is never settled, even with the retries spent', async () => {
+        // The two settle rules have to agree: a 0% whose cell the game repainted
+        // under the pass is one the repaint rule retries rather than paints, so
+        // it must not count as judged, or the floor would settle over a bare tile
+        const parent = mountFloor();
+        labyrinthClearRate.autoTileRetryCount = 3;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (_hrid, lvl) => {
+            if (lvl !== 110) return { clearChance: 0.9, expectedSeconds: 30 };
+            const stale = parent.children[1];
+            const fresh = document.createElement('div');
+            fresh.className = stale.className;
+            parent.replaceChild(fresh, stale);
+            return { clearChance: 0, expectedSeconds: Infinity };
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+        expect(labyrinthClearRate.calculatedTileKeys.has('1,0')).toBe(false);
+        expect(labyrinthClearRate.calculatedTileKeys.has('0,0')).toBe(true);
+    });
+
+    test('a manual Calculate still re-sims the settled 0% room', async () => {
+        mountFloor();
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async (_hrid, lvl) =>
+                lvl === 110 ? { clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.9, expectedSeconds: 30 }
+            );
+        await runPassAndRetries();
+        const settledAfter = sims.mock.calls.length;
+        await labyrinthClearRate.runTileCalculation();
+        expect(sims.mock.calls.length).toBe(settledAfter + 2);
+    });
+});
+
+/**
  * Pressing Path while the rooms are still being calculated. It waits for the
  * calculation to settle and then paths once; it neither interrupts the
  * calculation nor judges partial results, and a second press withdraws the wait.
@@ -5066,6 +5556,56 @@ describe('Path pressed during a floor calculation', () => {
         expect(refresh).not.toHaveBeenCalled();
         expect(labyrinthClearRate._pathQueued).toBe(false);
         expect(pathBtn.textContent).toBe('Path');
+    });
+});
+
+/**
+ * The Accuracy tab scores every room in the record — thousands of them — and a
+ * skilling room's inputs are per skill. Each room used to rebuild them, which
+ * resolves the skill's loadout against the whole inventory, and that is what
+ * made the tab lag when it opened and on every redraw while it stayed open.
+ */
+describe('the accuracy snapshot scores a skill once, not once per room', () => {
+    afterEach(() => {
+        labyrinthClearRate._outcomes = {};
+        labyrinthClearRate._outcomesLoaded = false;
+        vi.restoreAllMocks();
+    });
+
+    test('one metrics build per skill, and the same predictions as without the memo', async () => {
+        const totals = {};
+        for (const skill of ['milking', 'foraging']) {
+            for (let level = 60; level < 90; level++) {
+                totals[`/skills/${skill}:${level}`] = {
+                    subjectHrid: `/skills/${skill}`,
+                    kind: 'skilling',
+                    roomLevel: level,
+                    attempts: 3,
+                    clears: 2,
+                };
+            }
+        }
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        dataManagerMock.getSkills.mockReturnValue([
+            { skillHrid: '/skills/milking', level: 80 },
+            { skillHrid: '/skills/foraging', level: 75 },
+        ]);
+        labyrinthClearRate._outcomes = totals;
+        labyrinthClearRate._outcomesLoaded = true;
+        vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
+        const build = vi.spyOn(labyrinthClearRate, '_computeSkillingMetrics');
+
+        const { rows } = await labyrinthClearRate.accuracySnapshot();
+
+        expect(build).toHaveBeenCalledTimes(2);
+        // The memo is gone once the pass is over, so a later caller sees live inputs
+        expect(labyrinthClearRate._skillingMetricsMemo).toBeNull();
+        for (const row of rows) {
+            expect(row.predicted).toBe(labyrinthClearRate.predictedClearChance(row.subjectHrid, row.level, 'skilling'));
+        }
+        expect(rows.every((row) => Number.isFinite(row.predicted))).toBe(true);
+        dataManagerMock.characterData = null;
+        dataManagerMock.getSkills.mockReturnValue([]);
     });
 });
 
@@ -5219,5 +5759,113 @@ describe('floor calculation and rooms revealed mid-pass', () => {
 
         expect(pathSpy).toHaveBeenCalledTimes(1);
         expect(labyrinthClearRate._pathQueued).toBe(false);
+    });
+});
+
+/**
+ * Opening the Accuracy tab on a 3,241-fight record froze the page for one
+ * 1,274 ms frame: every room in the record was scored in a single synchronous
+ * pass. The rows are now built in time slices with a frame handed back between
+ * them, and must come out exactly as the single pass made them.
+ */
+const { accuracyRows: singlePassRows } = await import('./labyrinth-outcome-log.js');
+const { wilsonInterval: wilsonForRows } = await import('../combat-sim/engine/wilson.js');
+
+describe('the accuracy snapshot hands the browser frames on a large record', () => {
+    afterEach(() => {
+        labyrinthClearRate._outcomes = {};
+        labyrinthClearRate._outcomesLoaded = false;
+        labyrinthClearRate._skillPredictionCache = null;
+        labyrinthClearRate.combatCache.clear();
+        delete globalThis.scheduler;
+        dataManagerMock.characterData = null;
+        dataManagerMock.getSkills.mockReturnValue([]);
+        vi.restoreAllMocks();
+    });
+
+    const record = () => {
+        const totals = {};
+        for (const skill of ['milking', 'foraging', 'enhancing']) {
+            for (let level = 60; level < 160; level++) {
+                totals[`/skills/${skill}:${level}`] = {
+                    subjectHrid: `/skills/${skill}`,
+                    kind: 'skilling',
+                    roomLevel: level,
+                    attempts: 3,
+                    clears: level % 3,
+                    predicted: 0.5,
+                };
+            }
+        }
+        for (let level = 60; level < 160; level++) {
+            totals[`/monsters/imp:${level}`] = {
+                subjectHrid: '/monsters/imp',
+                kind: 'combat',
+                roomLevel: level,
+                attempts: 2,
+                clears: 1,
+            };
+            if (level % 2)
+                labyrinthClearRate.combatCache.set(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', level), {
+                    clearChance: 0.8,
+                });
+        }
+        return totals;
+    };
+
+    test('yields between slices, and the rows are exactly what one pass builds', async () => {
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        dataManagerMock.getSkills.mockReturnValue([
+            { skillHrid: '/skills/milking', level: 120 },
+            { skillHrid: '/skills/foraging', level: 110 },
+            { skillHrid: '/skills/enhancing', level: 100 },
+        ]);
+        const totals = record();
+        labyrinthClearRate._outcomes = totals;
+        labyrinthClearRate._outcomesLoaded = true;
+        vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
+        let yields = 0;
+        globalThis.scheduler = {
+            yield: () => {
+                yields++;
+                return Promise.resolve();
+            },
+        };
+        // A clock that moves a millisecond per reading, so the slices are deterministic
+        let clock = 0;
+        vi.spyOn(performance, 'now').mockImplementation(() => ++clock);
+
+        const { rows, summary } = await labyrinthClearRate.accuracySnapshot();
+
+        expect(yields).toBeGreaterThan(10);
+        const orderOf = (hrid) => labyrinthClearRate.subjectSortIndex(hrid);
+        const single = singlePassRows(totals, {
+            predictedFor: (hrid, level, kind) => labyrinthClearRate.predictedClearChance(hrid, level, kind),
+            interval: wilsonForRows,
+            orderOf,
+        });
+        expect(rows).toEqual(single);
+        expect(summary.buckets).toBe(400);
+    });
+
+    test('a reopen reuses the skilling predictions while their inputs are unchanged', async () => {
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        let level = 120;
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level }]);
+        labyrinthClearRate._outcomes = record();
+        labyrinthClearRate._outcomesLoaded = true;
+        vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
+        const worked = vi.spyOn(labyrinthClearRate, 'computeSkillingClear');
+
+        await labyrinthClearRate.accuracySnapshot();
+        expect(worked).toHaveBeenCalled();
+        worked.mockClear();
+        await labyrinthClearRate.accuracySnapshot();
+        expect(worked).not.toHaveBeenCalled();
+
+        // A level-up is a new input, so the rooms of that skill are scored again
+        level = 121;
+        await labyrinthClearRate.accuracySnapshot();
+        expect(worked).toHaveBeenCalled();
     });
 });

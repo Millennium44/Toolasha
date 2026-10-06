@@ -406,7 +406,7 @@ async function mergeLocalHistories(payload) {
                     continue;
                 }
                 if (!probed.found || probed.value == null) continue;
-                entries[key] = registration.merge(probed.value, entries[key]);
+                entries[key] = registration.mergeForPull(probed.value, entries[key]);
                 merged.push({ store: storeName, key, label: registration.label });
             } catch (error) {
                 console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
@@ -669,7 +669,10 @@ function dropUnownedFromPayload(payload) {
             continue;
         }
         const entries = stores[storeName];
-        if (!entries || typeof entries !== 'object') continue;
+        // A store this script owns in the wrong shape is left as it came, for
+        // assertApplicable to refuse: filtering an array's indices as foreign keys
+        // would turn it into an empty map that passes and applies nothing
+        if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
         const { owned } = partitionOwnedKeys(storeName, entries);
         if (owned !== entries) {
             stores[storeName] = owned;
@@ -1051,6 +1054,36 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
 }
 
 /**
+ * Whether cleaning one of the gist's stores took anything out of it.
+ *
+ * A key gone is a removal. So is a settings map or stamps record that came out
+ * different: the redaction drops device-local entries from inside them. Those
+ * are compared as data, since a map stored as text is re-serialized whether or
+ * not anything left it.
+ *
+ * @param {Record<string, *>} entries - The store as the gist holds it
+ * @param {Record<string, *>} cleaned - The same store after cleaning
+ * @returns {boolean} True when the gist holds something the cleaned copy does not
+ */
+function cleaningRemoved(entries, cleaned) {
+    if (cleaned === entries) return false;
+    if (Object.keys(cleaned).length !== Object.keys(entries || {}).length) return true;
+    const asData = (value) => {
+        if (typeof value !== 'string') return value;
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    };
+    for (const [key, value] of Object.entries(cleaned)) {
+        if (value === entries[key]) continue;
+        if (stableStringify(asData(value)) !== stableStringify(asData(entries[key]))) return true;
+    }
+    return false;
+}
+
+/**
  * Fold the gist's payload into this device's, in memory, for an automatic push
  * that found the gist ahead of it.
  *
@@ -1080,27 +1113,38 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
  * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
  * @param {string} remoteText - The gist's payload, decrypted
  * @param {Record<string, string>|null} baseline - This device's hashes at its last exchange
- * @returns {{text: string, remoteAdds: boolean}} The merged payload, and whether it holds anything this device
- *   does not (so its next startup pull has something to take)
+ * @returns {{text: string, remoteAdds: boolean, dropsFromRemote: boolean}} The merged payload; whether it holds
+ *   anything this device does not (so its next startup pull has something to take); and whether it leaves out
+ *   stores the gist holds that this device's scope does not sync (so it is worth uploading even when it adds
+ *   nothing)
  * @throws {Error} When the gist's payload is not one this build can apply
  */
 export function mergeForUpload(localText, remoteText, baseline) {
     const local = JSON.parse(localText);
     const remote = JSON.parse(remoteText);
-    dropUnownedFromPayload(remote);
+    const droppedUnowned = dropUnownedFromPayload(remote);
     assertApplicable(remote);
     // The upload carries what this device's scope carries. A device switched
     // to "Settings only" while the gist still holds a full-scope push must not
     // keep re-uploading every history store it no longer syncs — that is the
     // size the switch was made to shed — nor hand them to its next startup.
+    // The upload is then smaller than the gist although it adds nothing to it,
+    // which `addsToRemote` cannot see: it asks only of what the upload holds.
+    // The same goes for whatever the cleaning below takes out of a store the
+    // upload keeps — another script's keys, a device-local key or a token an
+    // older build uploaded — so those count too, or the gist would keep them
+    let dropsFromRemote = droppedUnowned;
     if ((local?.syncScope ?? 'settings') !== 'everything') {
         for (const storeName of Object.keys(remote.stores)) {
-            if (storeName !== SETTINGS_STORE) delete remote.stores[storeName];
+            if (storeName === SETTINGS_STORE) continue;
+            if (Object.keys(remote.stores[storeName] || {}).length) dropsFromRemote = true;
+            delete remote.stores[storeName];
         }
     }
     for (const [storeName, entries] of Object.entries(remote.stores)) {
         let cleaned = stripExcludedKeys(storeName, entries);
         if (storeName === SETTINGS_STORE) cleaned = redactSettingsStore(cleaned);
+        if (!dropsFromRemote && cleaningRemoved(entries, cleaned)) dropsFromRemote = true;
         remote.stores[storeName] = cleaned;
     }
 
@@ -1191,7 +1235,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
     // and asked for a reload over nothing.
     // Asked the way a local apply would fold, retention and all: entries this
     // device's own cap would drop on arrival are not news it can take
-    return { text, remoteAdds: addsToRemote(text, localText, { forUpload: false }) };
+    return { text, remoteAdds: addsToRemote(text, localText, { forUpload: false }), dropsFromRemote };
 }
 
 /**
@@ -1241,7 +1285,11 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
             let folded = value;
             if (registration) {
                 try {
-                    folded = registration.merge(theirs[key], value, forUpload ? UPLOAD_CONTEXT : undefined);
+                    // Folded the way the gist takes an upload, or — asked of a
+                    // local apply — the way a pull here would fold it
+                    folded = forUpload
+                        ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
+                        : registration.mergeForPull(theirs[key], value);
                 } catch {
                     folded = value;
                 }

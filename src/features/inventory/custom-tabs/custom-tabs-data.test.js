@@ -402,7 +402,7 @@ describe('the sync merge', () => {
             ],
         };
 
-        const merged = registration.merge(local, incoming);
+        const merged = registration.mergeForPull(local, incoming);
         const ids = merged.tabs.map((tab) => tab.id).sort();
 
         // Union keeps everything either side has; the local copy wins per id
@@ -415,7 +415,7 @@ describe('the sync merge', () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
         const registration = mergeForKey('settings', 'char9_inventoryTabs_config');
 
-        const merged = registration.merge(
+        const merged = registration.mergeForPull(
             { version: 1, tabs: [], selectedTabId: null },
             { version: 1, tabs: [{ id: 'x', name: 'Kept', items: [] }], selectedTabId: 'x' }
         );
@@ -539,7 +539,7 @@ describe('the merge with stamps and tombstones', () => {
     beforeEach(async () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
         // The registry hands (local, incoming) and local is the side that wins ties
-        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').mergeForPull;
     });
 
     test('a newer remote rename beats an older local copy', () => {
@@ -777,7 +777,7 @@ describe('tombstones against unstamped tabs', () => {
     beforeEach(async () => {
         storageMock.reset();
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        merge = mergeForKey('settings', KEY).merge;
+        merge = mergeForKey('settings', KEY).mergeForPull;
     });
 
     test('an unstamped tab survives a tombstone, and the tombstone is dropped', () => {
@@ -885,7 +885,7 @@ describe('the mass-delete cap', () => {
     let merge;
     beforeEach(async () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').mergeForPull;
     });
 
     test('a fold that would drop most of the list keeps every tab and holds the tombstones', () => {
@@ -948,7 +948,7 @@ describe('Clear All', () => {
     let warn;
     beforeEach(async () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').mergeForPull;
         warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
     afterEach(() => warn.mockRestore());
@@ -1442,7 +1442,7 @@ describe('the item merge', () => {
     beforeEach(async () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
         // The registry hands (local, incoming); local is the side that wins ties
-        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').mergeForPull;
     });
 
     test('two devices adding to the same tab keep both items', () => {
@@ -1594,7 +1594,7 @@ describe('the item-level mass-delete cap', () => {
     let merge;
     beforeEach(async () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').mergeForPull;
     });
 
     const carrier = () => ({ version: 1, selectedTabId: null, tabs: [tab('t', { updatedAt: 100, items: five })] });
@@ -1708,7 +1708,7 @@ describe('item tombstone recording', () => {
 
     test('a removal is not undone by the read-back fold at save time', async () => {
         const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').mergeForPull;
         const stored = seed();
         stored.tabs[0].updatedAt = 100;
         const held = removeItem(stored, 't', '/items/x');

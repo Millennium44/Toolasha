@@ -267,6 +267,7 @@ vi.mock('../../core/data-manager.js', () => ({
 
 // The missing-materials tabs live in another bundle; reached through the bridge
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     expectedValueCalculator: () => null,
     missingMaterialsButton: () => mocks.bridgeMissingMats,
     dungeonTrackerStorage: () => ({ getAllRuns: async () => mocks.dungeonRuns }),

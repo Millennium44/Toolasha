@@ -43,6 +43,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: (definition) => tracker.rows.push(definition) }));
 vi.mock('./guild-member-skills.js', () => ({
     default: {
+        onChanged: () => () => {},
         progress: () => tracker.cycler,
         nextBattleUnit: () => tracker.unit ?? null,
         anyBattleUnits: () => tracker.anyUnits ?? false,

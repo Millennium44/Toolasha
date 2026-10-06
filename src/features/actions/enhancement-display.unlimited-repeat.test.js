@@ -115,6 +115,7 @@ vi.mock('../../utils/tester-shop.js', () => ({
 }));
 
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     missingMaterialsButton: () => null,
     loadoutSnapshot: () => null,
     combatSimUI: () => null,

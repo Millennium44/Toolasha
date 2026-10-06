@@ -285,15 +285,24 @@ class LabyrinthClearRate {
         );
         this.unregisterHandlers.push(unregister);
 
-        const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () => {
-            this.seedFromCharacterData();
-            this.injectTileControls();
-            this.refreshAttemptBadges();
-            this.pruneClearedTileBadges();
-            this.pruneClearedPathOverlays();
-            this.pruneUsedBeaconOverlays();
-            this.scheduleAutoTileCalc();
-        });
+        // Debounced: the handler ignores the cell it is handed and rescans the
+        // whole grid, and a grid render inserts every room cell at once — up to
+        // 64 of them, each a separate call doing document-wide queries and
+        // computed-style reads. Collapsed to one call per burst of re-renders.
+        const unregisterTiles = domObserver.onClass(
+            'LabyrinthTileCalc',
+            'LabyrinthPanel_roomCell',
+            () => {
+                this.seedFromCharacterData();
+                this.injectTileControls();
+                this.refreshAttemptBadges();
+                this.pruneClearedTileBadges();
+                this.pruneClearedPathOverlays();
+                this.pruneUsedBeaconOverlays();
+                this.scheduleAutoTileCalc();
+            },
+            { debounce: true, debounceDelay: 150, debounceMaxWait: 1000 }
+        );
         this.unregisterHandlers.push(unregisterTiles);
         // @run-at document-start: both settle delays start from the shared observer's
         // actual-ready signal (immediate if it is already attached), not module init, so
@@ -489,6 +498,7 @@ class LabyrinthClearRate {
             for (const timer of this.catchUpTimers) clearTimeout(timer);
             this.catchUpTimers = [];
             this.calculatedTileKeys?.clear();
+            this._calculatedTileInputs?.clear();
 
             unregisterCommand('Recompute lab sims');
 
@@ -718,6 +728,10 @@ class LabyrinthClearRate {
                 this.resetBeaconCountToAuto();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
+                this._calculatedTileInputs?.clear();
+                // The fingerprint omits the floor, so a new floor whose rooms match
+                // the last one would take the restore path over the emptied results
+                this._autoCalcFingerprint = null;
                 // A pass still awaiting a sim belongs to the floor just left; its
                 // cells stay connected until React repaints, so without a fence it
                 // resumes and writes the old floor's result under a coordinate the
@@ -1018,6 +1032,24 @@ class LabyrinthClearRate {
      * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
      */
     getSkillingMetrics(skillId, actionTypeHrid) {
+        // A pass that scores thousands of rooms (the Accuracy tab's snapshot)
+        // holds one memo for its duration: every input below is per skill, not
+        // per room, and the loadout's resolved equipment rescans the whole
+        // inventory each time it is read. A copy is handed out so no caller can
+        // edit another's metrics.
+        const memo = this._skillingMetricsMemo;
+        const memoKey = `${skillId}|${actionTypeHrid}`;
+        if (memo?.has(memoKey)) return { ...memo.get(memoKey) };
+        const metrics = this._computeSkillingMetrics(skillId, actionTypeHrid);
+        if (memo) memo.set(memoKey, { ...metrics });
+        return metrics;
+    }
+
+    /**
+     * {@link getSkillingMetrics} without the per-pass memo.
+     * @private
+     */
+    _computeSkillingMetrics(skillId, actionTypeHrid) {
         const metrics = {
             skillLevelBonus: 0,
             efficiencyBonus: 0,
@@ -1783,9 +1815,14 @@ class LabyrinthClearRate {
         if (Number(loadoutId) > 0 && !loadoutSnapshot.snapshotsReady) return null;
 
         const snapshot = loadoutSnapshot.snapshots[loadoutId];
-        if (snapshot?.name) {
+        if (snapshot) {
             const gameData = buildGameDataPayload();
-            applyLoadoutSnapshotToDTO(dto, snapshot.name, gameData);
+            // The snapshot itself, never its name: the adapter resolves a name
+            // with a first-match search, so two loadouts sharing a name sent
+            // every room configured for the second one through the first one's
+            // gear — a skilling outfit, say, simmed as the fighting build. A
+            // nameless loadout fell back to whatever was worn the same way.
+            applyLoadoutSnapshotToDTO(dto, snapshot, gameData);
         }
         return dto;
     }
@@ -2629,14 +2666,82 @@ class LabyrinthClearRate {
         if (!this.roomData) return null;
         const flat = this.roomData.flat();
         const parts = [];
+        const inputsOf = this._tileInputsReader();
         for (let i = 0; i < flat.length; i++) {
             const room = flat[i];
             if (!room) continue;
             const target = room.skillHrid || room.monsterHrid || '';
             const level = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
-            parts.push(`${i}:${target}:${level}:${room.isCleared ? 1 : 0}`);
+            // A cleared room has no badge to keep current, so only its identity
+            // counts; an open one carries everything its badge is computed from
+            const inputs = room.isCleared || !target || level <= 0 ? '' : inputsOf(room, level);
+            parts.push(`${i}:${target}:${level}:${room.isCleared ? 1 : 0}:${inputs}`);
         }
-        return `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}|${parts.join(';')}`;
+        // This gates auto passes only, and an auto pass is always capped, so the
+        // cap it would run under is the configured hours ceiling — never the
+        // strip's Uncapped toggle, which only a manual pass obeys
+        return `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}|${this._tileSimCap(false)}|${parts.join(';')}`;
+    }
+
+    /**
+     * A reader for what one tile's badge is computed from, for one pass.
+     *
+     * A combat room's is its combat cache key — monster, level, assigned
+     * loadout, precision, crates, the full-ability rule and the labyrinth combat
+     * upgrades — plus the saved loadouts' contents, which the key leaves to the
+     * cache invalidation. A skilling room's is the skill level and the metrics
+     * `computeSkillingClear` reads: gear, buffs, crates and labyrinth upgrades.
+     *
+     * Only standing state — nothing that moves tick to tick — so a static floor
+     * keeps one signature and a settled pass is not re-run. Skilling metrics
+     * are worked out once per skill per reader.
+     *
+     * @private
+     * @returns {function(Object, number): string} (room, roomLevel) => signature
+     */
+    _tileInputsReader() {
+        const build = this._snapshotContentFingerprint();
+        const bySkill = new Map();
+        const skillInputs = (skillHrid) => {
+            if (bySkill.has(skillHrid)) return bySkill.get(skillHrid);
+            let value = '';
+            try {
+                const skillId = skillHrid.replace('/skills/', '');
+                const metrics = this.getSkillingMetrics(skillId, `/action_types/${skillId}`);
+                const level = dataManager.getSkills()?.find((skill) => skill.skillHrid === skillHrid)?.level || 1;
+                value = `${level}|${JSON.stringify(metrics)}|${JSON.stringify(this.getLabyrinthUpgrades())}`;
+            } catch (error) {
+                console.error('[LabyrinthClearRate] Reading a skilling tile signature failed:', error);
+                value = 'unreadable';
+            }
+            bySkill.set(skillHrid, value);
+            return value;
+        };
+        return (room, roomLevel) =>
+            room.skillHrid
+                ? `${room.skillHrid}|${roomLevel}|${skillInputs(room.skillHrid)}`
+                : `${this.buildCombatCacheKey(room.monsterHrid, roomLevel)}|${build}`;
+    }
+
+    /**
+     * The fight ceiling a combat tile is simmed under, as recorded beside its
+     * settled inputs: 'uncapped', or the hours ceiling a capped run stops at.
+     *
+     * Taken from the cap the pass actually runs with. An auto pass is always
+     * capped whatever the Uncapped toggle says, so reading the toggle here
+     * recorded 'uncapped' for capped auto runs, and a later change to the hours
+     * ceiling never re-simmed them.
+     * @private
+     * @param {boolean} uncapped - Whether the pass lifts the ceilings
+     * @returns {string}
+     */
+    _tileSimCap(uncapped) {
+        if (uncapped) return 'uncapped';
+        try {
+            return `h${this.getSimHours()}`;
+        } catch {
+            return 'unreadable';
+        }
     }
 
     /**
@@ -3211,12 +3316,40 @@ class LabyrinthClearRate {
         if (!this.calculatedTileKeys) {
             this.calculatedTileKeys = new Set();
         }
+        // What each calculated tile was calculated FROM. A tile counts as done
+        // only while its own inputs (see _tileInputsReader) are the ones it
+        // was judged under: a settled 0% room, which is never cached,
+        // would otherwise keep its old badge through a gear or precision change
+        // that the floor fingerprint correctly let a new pass run for.
+        if (!this._calculatedTileInputs) {
+            this._calculatedTileInputs = new Map();
+        }
+        const tileInputs = this._tileInputsReader();
+        // A combat tile also records the ceiling it was simmed under. An
+        // uncapped result answers a capped request too (the cache serves it the
+        // same way, see peekCombatClear), so a manual uncapped pass is not
+        // undone by the next capped auto pass, and the two never alternate.
+        const passCap = this._tileSimCap(uncapped);
+        const markCalculated = (target) => {
+            this.calculatedTileKeys.add(target.tileKey);
+            this._calculatedTileInputs.set(target.tileKey, {
+                inputs: target.inputs,
+                cap: target.room.skillHrid ? '' : passCap,
+            });
+        };
+        const stillCurrent = (tileKey, room, inputs) => {
+            const recorded = this._calculatedTileInputs.get(tileKey);
+            if (!recorded || recorded.inputs !== inputs) return false;
+            if (room.skillHrid) return true;
+            return recorded.cap === passCap || recorded.cap === 'uncapped';
+        };
         if (!this._tileResults) {
             this._tileResults = new Map();
         }
         // Manual runs recalculate everything; auto runs only touch new tiles
         if (!auto) {
             this.calculatedTileKeys.clear();
+            this._calculatedTileInputs.clear();
             this._tileResults.clear();
             this.autoTileRetryCount = 0;
             document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
@@ -3250,13 +3383,26 @@ class LabyrinthClearRate {
             const tileKey = `${i % cols},${Math.floor(i / cols)}`;
             if (!room.skillHrid && !room.monsterHrid) continue;
             eligible++;
-            if (auto && this.calculatedTileKeys.has(tileKey) && cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
-                doneUpFront++;
-                continue;
+            const inputs = tileInputs(room, roomLevel);
+            if (auto && this.calculatedTileKeys.has(tileKey) && stillCurrent(tileKey, room, inputs)) {
+                if (cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
+                    doneUpFront++;
+                    continue;
+                }
+                // Settled by an earlier pass and wiped by a re-render: redraw it
+                // from that pass rather than sim it again. This is what keeps a
+                // settled 0% room from being re-simmed while passes still run for
+                // some other room whose inputs were not ready.
+                const settled = this._tileResults.get(tileKey);
+                if (settled) {
+                    this.appendTileBadge(cell, settled);
+                    doneUpFront++;
+                    continue;
+                }
             }
 
             if (room.skillHrid) {
-                skillingTargets.push({ room, cell, roomLevel, tileKey });
+                skillingTargets.push({ room, cell, roomLevel, tileKey, inputs });
                 // Worked out arithmetically in one burst, so never a step of the bar
                 doneUpFront++;
             } else {
@@ -3265,13 +3411,20 @@ class LabyrinthClearRate {
                 // unless it is a 0% an auto pass treats as suspicious and retries,
                 // which counted up front and then subtracted walked the bar back
                 const cached = !!hit && !(auto && !(hit.clearChance > 0));
-                combatTargets.push({ room, cell, roomLevel, tileKey, cached });
+                combatTargets.push({ room, cell, roomLevel, tileKey, cached, inputs });
                 if (cached) doneUpFront++;
             }
         }
 
         const total = skillingTargets.length + combatTargets.length;
         if (!total) {
+            // Nothing left to run because every calculable room is already
+            // badged and current (a pass still in flight returned at the top, and
+            // a room that is unready or needs a retry becomes a target): that is
+            // a settled floor. Record the fingerprint, or a changed setting the
+            // results still satisfy (the hours ceiling after an uncapped pass)
+            // repeats this whole scan on every repaint instead of the fast restore.
+            if (auto && eligible > 0 && doneUpFront === eligible) this._autoCalcFingerprint = fingerprint;
             if (!auto) this.setTileStatus('No calculable tiles');
             settledIdle();
             return;
@@ -3303,13 +3456,20 @@ class LabyrinthClearRate {
                         : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
                 if (result) {
                     this.appendTileBadge(target.cell, result);
-                    this.calculatedTileKeys.add(target.tileKey);
+                    markCalculated(target);
                     this._tileResults.set(target.tileKey, result);
                 }
                 completed++;
             }
 
             let combatRetryNeeded = 0;
+            // Rooms this pass could not judge at all (sim inputs not ready, or
+            // the cell went away), apart from the genuine 0% rooms it did judge.
+            // Only judged rooms may settle: readiness is not in the fingerprint,
+            // so settling over an unjudged room left it unbadged until a manual
+            // Calculate.
+            let unjudged = 0;
+            const judgedKeys = [];
             // Drawn once a room is judged, net of every room left for a retry: a
             // failed last room otherwise touched 100% and dropped back when the
             // retry was scheduled
@@ -3335,6 +3495,7 @@ class LabyrinthClearRate {
                     // Sim inputs not ready (e.g. loadout snapshots still loading) —
                     // leave the tile unbadged and unmarked so a retry picks it up
                     combatRetryNeeded++;
+                    unjudged++;
                     step();
                     continue;
                 }
@@ -3344,11 +3505,17 @@ class LabyrinthClearRate {
                     // of leaving the tile bare under a "settled" fingerprint.
                     // The same retry rule as a connected cell: an auto 0% may just
                     // be loadout snapshots still loading, so it is neither cached
-                    // nor painted as final, and the pass is not settled over it.
+                    // nor painted as final, and the pass is not settled over it —
+                    // it counts as unjudged, so even once the retries are spent
+                    // the floor fingerprint stays open for a later trigger.
                     if (auto && !(result.clearChance > 0)) {
                         combatRetryNeeded++;
+                        unjudged++;
                     } else {
                         this._tileResults.set(target.tileKey, result);
+                        // Judged: settled under the inputs it was simmed with, so
+                        // the restore's repaint is not mistaken for a stale tile
+                        markCalculated(target);
                         sawDisconnected = true;
                     }
                     step();
@@ -3357,8 +3524,9 @@ class LabyrinthClearRate {
 
                 this.appendTileBadge(target.cell, result);
                 this._tileResults.set(target.tileKey, result);
+                judgedKeys.push(target);
                 if (result.clearChance > 0 || !auto) {
-                    this.calculatedTileKeys.add(target.tileKey);
+                    markCalculated(target);
                 } else {
                     // A 0% right after load is suspicious — keep the key unmarked
                     // so the next auto pass re-sims it with loaded snapshots
@@ -3399,12 +3567,22 @@ class LabyrinthClearRate {
                     this.autoTileTimer = null;
                     this.runTileCalculation({ auto: true });
                 }, 2500);
-            } else if (combatRetryNeeded === 0) {
+            } else if (combatRetryNeeded === 0 || auto) {
+                // Retries spent (or none needed). A genuine 0% (never cached,
+                // see computeCombatClear) is settled here: its tile is marked
+                // calculated so no later auto pass sims it again. Without this a
+                // floor holding a single 0% room re-simmed it, and refilled the
+                // bar, on every grid re-render and every labyrinth_updated for as
+                // long as the floor map was open.
                 this.autoTileRetryCount = 0;
-                // Every calculable tile is badged from a full pass — record the
-                // inputs so further auto triggers restore from cache instead of
-                // re-simming until a room, gear, or precision actually changes.
-                this._autoCalcFingerprint = fingerprint;
+                for (const target of judgedKeys) markCalculated(target);
+                // The floor as a whole settles only if every room was judged. A
+                // room whose sim could not run leaves the fingerprint unset, so a
+                // later trigger (once the loadouts have loaded, say) tries it
+                // again, and skips the rooms settled above. A changed room, gear,
+                // loadout or precision changes the fingerprint and runs a fresh
+                // pass; a manual Calculate always re-sims everything.
+                this._autoCalcFingerprint = unjudged === 0 ? fingerprint : null;
             }
         } catch (error) {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
