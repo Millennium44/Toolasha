@@ -50,6 +50,7 @@ vi.mock('./tooltip-enhancement.js', () => ({
 import { createSession, SessionState } from './enhancement-session.js';
 import enhancementTracker from './enhancement-tracker.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
+import { calculateEnhancementPredictions } from './enhancement-xp.js';
 
 /** Load the singleton fresh with the given session as the current one. */
 async function loadWith(session) {
@@ -227,5 +228,80 @@ describe('EnhancementTracker material costs', () => {
 
         const tracked = enhancementTracker.getCurrentSession().materialCosts['/items/sword'];
         expect(tracked).toEqual({ count: 3, totalCost: 5000 });
+    });
+});
+
+describe('merging sessions into one', () => {
+    /** #7 ended at +3, #8 running from +3; stored as the tracker holds them */
+    async function loadSpatulaRuns() {
+        const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastUpdateTime: 1_600_000,
+            currentLevel: 3,
+            totalAttempts: 466,
+            totalXP: 9000,
+            predictions: { expectedAttempts: 400 },
+        });
+        const eight = createSession('/items/sword', 'Sword', 3, 8, 5);
+        Object.assign(eight, {
+            id: 'session_8',
+            startTime: 5_000_000,
+            lastUpdateTime: 5_100_000,
+            currentLevel: 4,
+            totalAttempts: 10,
+            totalXP: 200,
+        });
+        mocks.loadSessions.mockResolvedValue({ session_7: seven, session_8: eight });
+        mocks.loadCurrentSessionId.mockResolvedValue('session_8');
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+        return { seven, eight };
+    }
+
+    test('the originals are removed and the live session stays current, keeping its object', async () => {
+        const { eight } = await loadSpatulaRuns();
+        const result = await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+
+        expect(result).toEqual({ ok: true, id: 'session_8' });
+        expect(Object.keys(enhancementTracker.sessions)).toEqual(['session_8']);
+        expect(enhancementTracker.currentSessionId).toBe('session_8');
+        expect(enhancementTracker.getCurrentSession()).toBe(eight);
+        expect(eight.totalAttempts).toBe(476);
+        expect(eight.totalXP).toBe(9200);
+        expect(eight.startLevel).toBe(0);
+        expect(mocks.saveSessions).toHaveBeenLastCalledWith({ session_8: eight });
+
+        // Later attempts land on the merged session
+        await enhancementTracker.recordFailure(4, 3);
+        expect(eight.totalAttempts).toBe(477);
+    });
+
+    test('the prediction is recomputed from the merged start state', async () => {
+        await loadSpatulaRuns();
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 520 });
+        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+        expect(calculateEnhancementPredictions).toHaveBeenCalledWith('/items/sword', 0, 8, 5);
+        expect(enhancementTracker.getSession('session_8').predictions).toEqual({ expectedAttempts: 520 });
+    });
+
+    test('with no prediction to compute, the earliest session prediction is kept', async () => {
+        await loadSpatulaRuns();
+        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+        expect(enhancementTracker.getSession('session_8').predictions).toEqual({ expectedAttempts: 400 });
+    });
+
+    test('an older session still in progress is refused and nothing changes', async () => {
+        const { seven } = await loadSpatulaRuns();
+        seven.state = SessionState.TRACKING;
+        const result = await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+        expect(result.ok).toBe(false);
+        expect(Object.keys(enhancementTracker.sessions)).toEqual(['session_7', 'session_8']);
+        expect(mocks.saveSessions).not.toHaveBeenCalled();
     });
 });

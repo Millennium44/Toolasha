@@ -1370,6 +1370,46 @@ class EnhancementUI {
     }
 
     /**
+     * Turn the picked sessions into one persisted session, after confirmation.
+     * @returns {Promise<void>}
+     */
+    async commitMerge() {
+        const ids = [...this.mergeSelected];
+        const plan = enhancementTracker.planMerge(ids);
+        if (!plan.ok) {
+            alert(plan.reason);
+            return;
+        }
+        const newest = plan.ordered[plan.ordered.length - 1];
+        const name =
+            dataManager.getInitClientData()?.itemDetailMap?.[newest.itemHrid]?.name || newest.itemName || 'item';
+        const protect = newest.protectFrom ? `protect from +${newest.protectFrom}` : 'no protection';
+        let message =
+            `Merge ${plan.ordered.length} ${name} sessions into one?\n\n` +
+            'Their attempts, per-level results, costs, protections, XP and active time are combined, ' +
+            'and the originals are removed. This cannot be undone.';
+        if (plan.settingsDiffer) {
+            message += `\n\nThey do not share one target and protection setup; the merged session keeps the newest one's (+${newest.targetLevel}, ${protect}).`;
+        }
+        if (newest.state === SessionState.TRACKING) {
+            message += '\n\nThe newest is still in progress and keeps receiving attempts.';
+        }
+        if (!confirm(message)) return;
+
+        const result = await enhancementTracker.mergeSessionsIntoOne(ids);
+        if (!result.ok) {
+            alert(result.reason);
+            return;
+        }
+        // Show the merged session itself
+        this.mergeMode = false;
+        this.mergeSelected = new Set();
+        this.styleMergeButton();
+        this.switchToSession(result.id);
+        this.updateUI();
+    }
+
+    /**
      * The pick-list: one checkable row per session.
      * @param {Array<Object>} sessions - All sessions
      * @returns {string} HTML
@@ -1405,6 +1445,11 @@ class EnhancementUI {
                 <div class="enh-merge-list" style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
                     ${rows}
                 </div>
+                ${
+                    this.mergeSelected.size >= 2
+                        ? `<button class="enh-merge-commit" style="${mergeChipStyle} margin-top: 6px; width: 100%;" title="Combine the picked sessions into one stored session. The originals are removed.">Merge into one session</button>`
+                        : ''
+                }
             </div>`;
     }
 
@@ -1511,6 +1556,16 @@ class EnhancementUI {
                 for (const session of sessions) this.mergeSelected.add(session.id);
                 this.updateSessionCounter();
                 this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+            });
+        }
+        const commit = content.querySelector('.enh-merge-commit');
+        if (commit) {
+            commit.addEventListener('click', async () => {
+                try {
+                    await this.commitMerge();
+                } catch (error) {
+                    console.error('[EnhancementUI] Merging sessions failed:', error);
+                }
             });
         }
         const none = content.querySelector('.enh-merge-none');

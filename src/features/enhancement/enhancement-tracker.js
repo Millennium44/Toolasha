@@ -17,6 +17,10 @@ import {
     extendSession,
     validateSession,
     normalizeSession,
+    canResumeSession,
+    resumeSession,
+    planSessionMerge,
+    foldSessions,
     SessionState,
 } from './enhancement-session.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
@@ -175,6 +179,101 @@ class EnhancementTracker {
         await saveCurrentSessionId(sessionId);
 
         return true;
+    }
+
+    /**
+     * The most recently active stored session, ended or not.
+     * @returns {Object|null}
+     */
+    getMostRecentSession() {
+        const activity = (s) =>
+            Math.max(s?.endTime || 0, s?.lastAttempt?.timestamp || 0, s?.lastUpdateTime || 0, s?.startTime || 0);
+        let latest = null;
+        for (const session of Object.values(this.sessions)) {
+            if (session && (!latest || activity(session) > activity(latest))) latest = session;
+        }
+        return latest;
+    }
+
+    /**
+     * The session a new run should continue, when it is the most recent one and the run picks up
+     * exactly where it ended (see {@link canResumeSession}). Only with the auto-resume setting on.
+     * @param {Object} run - `{itemHrid, startLevel, targetLevel, protectFrom, protectionItemHrid}`
+     * @returns {string|null} Session ID, or null
+     */
+    findResumableSession(run) {
+        if (config.getSetting('enhancementTracker_autoResume') !== true) return null;
+        const latest = this.getMostRecentSession();
+        return latest && canResumeSession(latest, run) ? latest.id : null;
+    }
+
+    /**
+     * Reopen an ended session as the current one, counting only active time from here on.
+     * @param {string} sessionId - Session ID
+     * @returns {Promise<boolean>} True when resumed
+     */
+    async resumeSessionById(sessionId) {
+        const session = this.sessions[sessionId];
+        if (!session || session.state !== SessionState.COMPLETED) return false;
+        resumeSession(session);
+        this.currentSessionId = sessionId;
+        await saveSessions(this.sessions);
+        await saveCurrentSessionId(sessionId);
+        return true;
+    }
+
+    /**
+     * Whether the picked sessions can be merged, without changing anything.
+     * @param {string[]} sessionIds - Picked session IDs
+     * @returns {{ok: boolean, reason?: string, ordered?: Array<Object>, settingsDiffer?: boolean}}
+     */
+    planMerge(sessionIds) {
+        if (!sessionsLoaded()) {
+            return { ok: false, reason: 'The stored sessions have not finished loading; try again in a moment.' };
+        }
+        return planSessionMerge((sessionIds || []).map((id) => this.sessions[id]));
+    }
+
+    /**
+     * Merge the picked sessions into one persisted session; the originals are removed.
+     *
+     * The newest session absorbs the others (see {@link foldSessions}), so when it is the run in
+     * progress it stays the current session and keeps receiving attempts. The prediction is
+     * recomputed for the merged start state — the earliest session's start level, the newest's
+     * target and protection — falling back to the earliest session's own prediction when it
+     * cannot be computed.
+     * @param {string[]} sessionIds - Picked session IDs
+     * @returns {Promise<{ok: boolean, reason?: string, id?: string}>}
+     */
+    async mergeSessionsIntoOne(sessionIds) {
+        const plan = this.planMerge(sessionIds);
+        if (!plan.ok) return { ok: false, reason: plan.reason };
+
+        const { ordered } = plan;
+        const earliestPredictions = ordered[0].predictions || null;
+        const merged = foldSessions(ordered);
+        for (const session of ordered.slice(0, -1)) delete this.sessions[session.id];
+
+        let predictions = null;
+        try {
+            predictions = calculateEnhancementPredictions(
+                merged.itemHrid,
+                merged.startLevel,
+                merged.targetLevel,
+                merged.protectFrom
+            );
+        } catch (error) {
+            console.error('[EnhancementTracker] Recomputing the merged prediction failed:', error);
+        }
+        merged.predictions = predictions || earliestPredictions;
+
+        // The pointer only ever names a running session; a removed one cannot be current
+        if (this.currentSessionId && !this.sessions[this.currentSessionId]) {
+            this.currentSessionId = merged.state === SessionState.TRACKING ? merged.id : null;
+            await saveCurrentSessionId(this.currentSessionId);
+        }
+        await saveSessions(this.sessions);
+        return { ok: true, id: merged.id };
     }
 
     /**

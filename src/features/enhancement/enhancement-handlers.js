@@ -571,6 +571,23 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
         }
     }
     const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
+
+    // Auto-resume (off by default): the most recent session ended short of its target, and this
+    // run is the same item, target and protection setup and starts exactly where it ended — the
+    // level read off the queue row before this attempt, never a guess. Continue that session.
+    const resumableId = enhancementTracker.findResumableSession?.({
+        itemHrid,
+        startLevel: baselineLevel,
+        targetLevel,
+        protectFrom,
+        protectionItemHrid: usesPhilosophersMirror(action) ? PHILOSOPHERS_MIRROR_HRID : getProtectionItemHrid(action),
+    });
+    if (resumableId && (await enhancementTracker.resumeSessionById(resumableId))) {
+        enhancementUI.switchToSession(resumableId);
+        enhancementUI.scheduleUpdate();
+        return enhancementTracker.getCurrentSession();
+    }
+
     const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
     enhancementUI.switchToSession(sessionId);
     enhancementUI.scheduleUpdate();

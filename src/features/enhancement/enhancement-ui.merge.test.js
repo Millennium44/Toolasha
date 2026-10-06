@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  *
  * The ∑ merge view of the Enhancement Tracker panel: it follows a picked session that is still
- * running.
+ * running, and it can turn the picked sessions into one stored session.
  *
  * The merge view was redrawn on every attempt, but its combined reading never carried a current
  * level (it stayed 0), so the per-level table marked the +0 row whatever level the item stood at
@@ -148,5 +148,57 @@ describe('the merge view follows a running session', () => {
         expect(boxes.map((box) => box.checked)).toEqual([true, true]);
         expect(content.querySelector('.enh-merge-list').scrollTop).toBe(40);
         expect(content.scrollTop).toBe(120);
+    });
+});
+
+describe('merging for real', () => {
+    test('the merge button appears with two picks and merges after confirmation', async () => {
+        const { seven, eight } = spatulaRuns();
+        game.sessions = { session_7: seven, session_8: eight };
+        game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: false };
+        const confirm = vi.fn(() => true);
+        vi.stubGlobal('confirm', confirm);
+
+        enhancementUI.mergeMode = true;
+        enhancementUI.mergeSelected = new Set(['session_7']);
+        enhancementUI.createFloatingUI();
+        enhancementUI.updateUI();
+        const content = document.getElementById('enhancementPanelContent');
+        expect(content.querySelector('.enh-merge-commit')).toBeNull();
+
+        enhancementUI.mergeSelected.add('session_8');
+        enhancementUI.updateUI();
+        await enhancementUI.commitMerge();
+
+        expect(confirm).toHaveBeenCalledTimes(1);
+        expect(confirm.mock.calls[0][0]).toContain('cannot be undone');
+        expect(game.merges).toEqual([['session_7', 'session_8']]);
+        expect(enhancementUI.mergeMode).toBe(false);
+    });
+
+    test('declining the confirmation merges nothing', async () => {
+        const { seven, eight } = spatulaRuns();
+        game.sessions = { session_7: seven, session_8: eight };
+        game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: true };
+        const confirm = vi.fn(() => false);
+        vi.stubGlobal('confirm', confirm);
+        enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
+
+        await enhancementUI.commitMerge();
+        expect(confirm.mock.calls[0][0]).toContain("keeps the newest one's (+8, protect from +5)");
+        expect(game.merges).toEqual([]);
+    });
+
+    test('a refused merge says why and asks nothing', async () => {
+        const alert = vi.fn();
+        const confirm = vi.fn();
+        vi.stubGlobal('alert', alert);
+        vi.stubGlobal('confirm', confirm);
+        game.plan = { ok: false, reason: 'Only sessions for the same item can be merged.' };
+        enhancementUI.mergeSelected = new Set(['a', 'b']);
+
+        await enhancementUI.commitMerge();
+        expect(alert).toHaveBeenCalledWith('Only sessions for the same item can be merged.');
+        expect(confirm).not.toHaveBeenCalled();
     });
 });

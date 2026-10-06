@@ -6,6 +6,10 @@ import { describe, test, expect } from 'vitest';
 import {
     createSession,
     canExtendSession,
+    canResumeSession,
+    foldSessions,
+    planSessionMerge,
+    resumeSession,
     extendSession,
     finalizeSession,
     getCurrentLegCounters,
@@ -334,5 +338,194 @@ describe('finalizeSession end time', () => {
         const now = createSession('/items/sword', 'Sword', 0, 5, 0);
         finalizeSession(now);
         expect(now.endTime).toBeGreaterThan(12_345);
+    });
+});
+
+/**
+ * Two runs of one Holy Spatula toward +8, protect from +5: #7 ended at +3 after a climb to +6,
+ * #8 picked up right after. Shaped as the store holds them.
+ */
+function spatulaRuns() {
+    const seven = createSession('/items/holy_spatula', 'Holy Spatula', 0, 8, 5);
+    Object.assign(seven, {
+        id: 'session_7',
+        state: SessionState.COMPLETED,
+        startTime: 1_000_000,
+        lastUpdateTime: 1_600_000,
+        endTime: 1_600_000, // 600s active
+        currentLevel: 3,
+        totalAttempts: 466,
+        totalSuccesses: 200,
+        totalFailures: 266,
+        totalBlessed: 4,
+        totalXP: 9000,
+        protectionCount: 12,
+        protectionCost: 12_000,
+        protectionItemHrid: '/items/mirror_of_protection',
+        coinCost: 466 * 1500,
+        coinCount: 466,
+        materialCosts: { '/items/holy_cheese': { count: 2796, totalCost: 2_796_000 } },
+        totalCost: 2_796_000 + 466 * 1500 + 12_000,
+        longestSuccessStreak: 4,
+        longestFailureStreak: 9,
+        milestonesReached: [5],
+        attemptsPerLevel: {
+            0: { success: 150, fail: 200, blessed: 3, successRate: 150 / 350 },
+            5: { success: 2, fail: 6, blessed: 0, successRate: 0.25 },
+        },
+        predictions: { expectedAttempts: 400 },
+    });
+    const eight = createSession('/items/holy_spatula', 'Holy Spatula', 3, 8, 5);
+    Object.assign(eight, {
+        id: 'session_8',
+        state: SessionState.TRACKING,
+        startTime: 5_000_000, // an hour after #7 ended
+        lastUpdateTime: 5_100_000, // 100s active so far
+        endTime: null,
+        currentLevel: 4,
+        totalAttempts: 10,
+        totalSuccesses: 4,
+        totalFailures: 6,
+        totalXP: 200,
+        coinCost: 10 * 1500,
+        coinCount: 10,
+        materialCosts: { '/items/holy_cheese': { count: 60, totalCost: 60_000 } },
+        totalCost: 60_000 + 10 * 1500,
+        longestSuccessStreak: 2,
+        longestFailureStreak: 3,
+        attemptsPerLevel: {
+            0: { success: 3, fail: 6, blessed: 0, successRate: 1 / 3 },
+            3: { success: 1, fail: 0, blessed: 0, successRate: 1 },
+        },
+        lastAttempt: { attemptNumber: 10, level: 4, timestamp: 5_100_000, actionId: 'a8', currentCount: 10 },
+    });
+    return { seven, eight };
+}
+
+describe('planSessionMerge', () => {
+    test('orders oldest first and lets the newest still be running', () => {
+        const { seven, eight } = spatulaRuns();
+        const plan = planSessionMerge([eight, seven]);
+        expect(plan.ok).toBe(true);
+        expect(plan.ordered.map((s) => s.id)).toEqual(['session_7', 'session_8']);
+        expect(plan.settingsDiffer).toBe(false);
+    });
+
+    test('refuses an older session still in progress, a different item, or a single session', () => {
+        const { seven, eight } = spatulaRuns();
+        seven.state = SessionState.TRACKING;
+        expect(planSessionMerge([seven, eight]).ok).toBe(false);
+
+        const other = spatulaRuns();
+        other.seven.itemHrid = '/items/holy_brush';
+        expect(planSessionMerge([other.seven, other.eight]).reason).toMatch(/same item/);
+
+        expect(planSessionMerge([eight]).ok).toBe(false);
+    });
+
+    test('says when targets or protection differ (the newest one is kept)', () => {
+        const { seven, eight } = spatulaRuns();
+        seven.protectFrom = 4;
+        expect(planSessionMerge([seven, eight]).settingsDiffer).toBe(true);
+    });
+});
+
+describe('foldSessions', () => {
+    test('combines every counter, cost and tally into the newest session', () => {
+        const { seven, eight } = spatulaRuns();
+        const merged = foldSessions([seven, eight]);
+
+        expect(merged).toBe(eight);
+        expect(merged.id).toBe('session_8');
+        expect(merged.state).toBe(SessionState.TRACKING);
+        expect(merged.totalAttempts).toBe(476);
+        expect(merged.totalSuccesses).toBe(204);
+        expect(merged.totalFailures).toBe(272);
+        expect(merged.totalBlessed).toBe(4);
+        expect(merged.totalXP).toBe(9200);
+        expect(merged.protectionCount).toBe(12);
+        expect(merged.protectionCost).toBe(12_000);
+        expect(merged.protectionItemHrid).toBe('/items/mirror_of_protection');
+        expect(merged.coinCost).toBe(476 * 1500);
+        expect(merged.coinCount).toBe(476);
+        expect(merged.materialCosts['/items/holy_cheese']).toEqual({ count: 2856, totalCost: 2_856_000 });
+        expect(merged.totalCost).toBe(2_856_000 + 476 * 1500 + 12_000);
+        expect(merged.attemptsPerLevel[0]).toEqual({ success: 153, fail: 206, blessed: 3, successRate: 153 / 359 });
+        expect(merged.attemptsPerLevel[3].success).toBe(1);
+        expect(merged.attemptsPerLevel[5]).toEqual({ success: 2, fail: 6, blessed: 0, successRate: 0.25 });
+        expect(merged.longestFailureStreak).toBe(9);
+        expect(merged.milestonesReached).toEqual([5]);
+        expect(merged.mergedFrom).toEqual(['session_7']);
+    });
+
+    test('starts where the earliest started, stands where the newest stands', () => {
+        const { seven, eight } = spatulaRuns();
+        const merged = foldSessions([seven, eight]);
+        expect(merged.startLevel).toBe(0);
+        expect(merged.startTime).toBe(1_000_000);
+        expect(merged.currentLevel).toBe(4);
+        expect(merged.targetLevel).toBe(8);
+        expect(merged.protectFrom).toBe(5);
+        expect(merged.lastAttempt.actionId).toBe('a8');
+        expect(merged.extensionBaseline).toBeNull();
+    });
+
+    test('duration is the sum of active time, not the span from the first start', () => {
+        const { seven, eight } = spatulaRuns();
+        const merged = foldSessions([seven, eight]);
+        expect(getSessionDuration(merged)).toBe(600 + 100);
+        // and keeps running with the live session
+        merged.lastUpdateTime += 30_000;
+        expect(getSessionDuration(merged)).toBe(730);
+    });
+});
+
+describe('canResumeSession and resumeSession', () => {
+    const run = (over = {}) => ({
+        itemHrid: '/items/holy_spatula',
+        startLevel: 3,
+        targetLevel: 8,
+        protectFrom: 5,
+        protectionItemHrid: '/items/mirror_of_protection',
+        ...over,
+    });
+
+    test('resumes only an ended run of the same setup, starting exactly where it ended', () => {
+        const { seven } = spatulaRuns();
+        expect(canResumeSession(seven, run())).toBe(true);
+        expect(canResumeSession(seven, run({ startLevel: 2 }))).toBe(false);
+        expect(canResumeSession(seven, run({ startLevel: null }))).toBe(false);
+        expect(canResumeSession(seven, run({ targetLevel: 10 }))).toBe(false);
+        expect(canResumeSession(seven, run({ protectFrom: 6 }))).toBe(false);
+        expect(canResumeSession(seven, run({ protectionItemHrid: '/items/holy_spatula' }))).toBe(false);
+        expect(canResumeSession(seven, run({ itemHrid: '/items/holy_brush' }))).toBe(false);
+    });
+
+    test('a running session or one that reached its target is not resumed', () => {
+        const { seven, eight } = spatulaRuns();
+        expect(canResumeSession(eight, run({ startLevel: 4 }))).toBe(false);
+        seven.currentLevel = 8;
+        expect(canResumeSession(seven, run({ startLevel: 8 }))).toBe(false);
+    });
+
+    test('reopening banks the active time and does not count the time it was ended', () => {
+        const { seven } = spatulaRuns();
+        resumeSession(seven, 9_000_000);
+        expect(seven.state).toBe(SessionState.TRACKING);
+        expect(seven.endTime).toBeNull();
+        expect(getSessionDuration(seven)).toBe(600);
+        seven.lastUpdateTime = 9_020_000;
+        expect(getSessionDuration(seven)).toBe(620);
+    });
+});
+
+describe('mergeSessions view marks where the item stands', () => {
+    test('the live session sets the current level, so its row is highlighted', () => {
+        const { seven, eight } = spatulaRuns();
+        const merged = mergeSessions([seven, eight]);
+        expect(merged.currentLevel).toBe(4);
+        expect(merged.live).toBe(true);
+        eight.currentLevel = 5;
+        expect(mergeSessions([seven, eight]).currentLevel).toBe(5);
     });
 });
