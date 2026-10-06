@@ -1791,9 +1791,14 @@ class LabyrinthClearRate {
         if (Number(loadoutId) > 0 && !loadoutSnapshot.snapshotsReady) return null;
 
         const snapshot = loadoutSnapshot.snapshots[loadoutId];
-        if (snapshot?.name) {
+        if (snapshot) {
             const gameData = buildGameDataPayload();
-            applyLoadoutSnapshotToDTO(dto, snapshot.name, gameData);
+            // The snapshot itself, never its name: the adapter resolves a name
+            // with a first-match search, so two loadouts sharing a name sent
+            // every room configured for the second one through the first one's
+            // gear — a skilling outfit, say, simmed as the fighting build. A
+            // nameless loadout fell back to whatever was worn the same way.
+            applyLoadoutSnapshotToDTO(dto, snapshot, gameData);
         }
         return dto;
     }

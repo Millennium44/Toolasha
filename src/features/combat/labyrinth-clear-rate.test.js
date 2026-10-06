@@ -3391,9 +3391,29 @@ describe('a labyrinth DTO waits for the loadout it is told to wear', () => {
     test('a loaded store holding it applies that loadout', () => {
         Object.assign(gear.snapshots, { 3: { name: 'Fighting', equipment: [] } });
         expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).not.toBeNull();
-        const [dto, name] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
+        const [dto, applied] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
         expect(dto).toMatchObject({ hrid: 'player1' });
-        expect(name).toBe('Fighting');
+        expect(applied).toBe(gear.snapshots[3]);
+    });
+
+    test('two loadouts sharing a name each sim as themselves, not the first one found by name', () => {
+        // The adapter resolves a *name* with a first-match search, so handing it
+        // the name filed every room configured for the second "Lab" under the
+        // first one's gear. The id the room is configured with is the identity.
+        Object.assign(gear.snapshots, {
+            2: { name: 'Lab', equipment: [{ itemHrid: '/items/holy_milking_tool' }] },
+            3: { name: 'Lab', equipment: [{ itemHrid: '/items/griffin_bulwark' }] },
+        });
+        labyrinthClearRate.buildLabyrinthPlayerDTO(3);
+        const [, applied] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
+        expect(applied).toBe(gear.snapshots[3]);
+    });
+
+    test('a loadout saved without a name is still applied rather than falling back to worn gear', () => {
+        Object.assign(gear.snapshots, { 3: { name: '', equipment: [] } });
+        labyrinthClearRate.buildLabyrinthPlayerDTO(3);
+        expect(adapterMock.applyLoadoutSnapshotToDTO).toHaveBeenCalledTimes(1);
+        expect(adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0][1]).toBe(gear.snapshots[3]);
     });
 
     test('a sim asked for before the loadout arrives reports failure, not a 0% clear', async () => {
