@@ -363,7 +363,7 @@ class SyncManager {
      *   confirmation dialog left open, a hung request) — see `_stillOwns`.
      * @param {boolean} [unattended=false] - Nobody pressed a button for this push; see `push`. An unattended
      *   push that finds the gist ahead of this device merges it into the upload rather than writing over it.
-     * @param {{text: string, localText: string, remoteAdds: boolean, remoteAt: string|null,
+     * @param {{text: string, localText: string, known: Object|null, remoteAdds: boolean, remoteAt: string|null,
      *   remoteSeq: number|null}|null} [merged=null] - An upload `_mergeIntoUpload` built: the merged payload,
      *   this device's own payload it was built from, and the gist version it was merged with. Finding the gist
      *   moved past that version again stands down for the next interval, so one tick merges at most once.
@@ -432,6 +432,12 @@ class SyncManager {
             // wrote. Stand down instead of overwriting a newer sync.
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
         }
+
+        // The gist holds changes this device has not applied, so an automatic
+        // push can only merge: go straight there rather than list the gist to
+        // learn it is ahead and then download it again to merge it
+        const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
+        if (unattended && unapplied && !merged && gistId) return this._mergeIntoUpload(localPayload, opToken, silent);
 
         // The hash above is always of the plaintext — compression and
         // encryption both change the bytes without changing the data (and a
@@ -516,10 +522,12 @@ class SyncManager {
         // Nor while the gist holds changes this device has not applied, or
         // when sending a merge: the write must read the gist's manifest to know
         // whether it moved, and a 304 does not carry one.
-        const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
-        const known = await this._knownVersion(gistId);
+        // A merge hands over the version it just downloaded: a 304 against it
+        // proves the gist did not move while the merge was built, and saves
+        // a third download of the same gist
+        const known = merged ? merged.known : await this._knownVersion(gistId);
         const usableKnown =
-            known?.current && typeof known.encrypted === 'boolean' && !unapplied && !merged ? known : null;
+            (merged || (known?.current && !unapplied)) && typeof known?.encrypted === 'boolean' ? known : null;
         const aheadOf = merged ? { at: merged.remoteAt, seq: merged.remoteSeq } : { at: lastSyncedAt, seq: lastSeq };
         let written;
         try {
@@ -681,6 +689,7 @@ class SyncManager {
         return this._doPush(silent, opToken, true, {
             text: merged.text,
             localText,
+            known: remote.seen,
             remoteAdds: merged.remoteAdds,
             remoteAt: remote.manifest?.exportedAt ?? null,
             remoteSeq: readSeq(remote.manifest?.syncSeq),
@@ -811,10 +820,14 @@ class SyncManager {
         const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
         const takeUnapplied = Boolean(unapplied) && (startup || !silent);
         const known = await this._knownVersion(gistId);
+        // Asked conditionally whether or not this device's data reflects the
+        // version: one it saw and stood down on, or merged into an upload, has
+        // already been weighed, and downloading it again every interval to
+        // weigh it again the same way costs the whole gist each time. A change
+        // to the gist still comes down in full; the next automatic push merges
+        // whatever is left.
         const conditional =
-            silent && !takeUnapplied && known?.current && !(await storage.get(KEY_MERGE_HELD, STORE, null))
-                ? known.etag
-                : null;
+            silent && !takeUnapplied && known && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
         const remote = await this._readRemote(token, gistId, known, conditional);
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
         if (remote.notModified) return { ok: true, skipped: true, reason: 'not-modified' };
