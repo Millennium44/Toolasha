@@ -256,8 +256,8 @@ export function memberRates(
         const own = member.id === ownId;
         const typedRaw = manual?.[trial];
         const typedNumber = typedRaw === '' || typedRaw == null ? NaN : Number(typedRaw);
-        // A typed level outside any skill's range is ignored rather than scored
-        const typed = typedNumber >= 1 && typedNumber <= 500 ? typedNumber : NaN;
+        // A typed level that is not a whole number within any skill's range is ignored rather than scored
+        const typed = validTypedLevel(typedNumber) ? typedNumber : NaN;
         let base = Number.isFinite(typed) ? typed : own ? ownLevels?.[skill] : levelFor?.(member.name, skill);
         if (!Number.isFinite(base)) base = null;
         const min = minLevels?.[trial] || 0;
@@ -295,6 +295,11 @@ async function copyText(text, area) {
         area?.select?.();
         return false;
     }
+}
+
+/** Whether a typed level can be used: a whole number from 1 to 500 */
+export function validTypedLevel(level) {
+    return Number.isInteger(level) && level >= 1 && level <= 500;
 }
 
 /** Remove any drawn recommendation from the page */
@@ -925,12 +930,14 @@ export class TrialAssignPlanner {
                 const typed = this.manual[member.id]?.[trial];
                 input.value = typed ?? '';
                 input.placeholder = coverage.level != null ? String(Math.round(coverage.level * 10) / 10) : '—';
-                // The same 1–500 range memberRates scores; anything else is shown as not used
+                // The same rule memberRates scores by; anything else is shown as not used
                 const markRange = () => {
                     const raw = input.value;
-                    const outOfRange = raw !== '' && !(Number(raw) >= 1 && Number(raw) <= 500);
+                    const outOfRange = raw !== '' && !validTypedLevel(Number(raw));
                     input.style.borderColor = outOfRange ? '#ff6b6b' : '';
-                    input.title = outOfRange ? 'Level must be between 1 and 500; this value is not used' : '';
+                    input.title = outOfRange
+                        ? 'Level must be a whole number from 1 to 500; this value is not used'
+                        : '';
                 };
                 markRange();
                 input.addEventListener('input', () => {
@@ -976,6 +983,15 @@ export class TrialAssignPlanner {
                 `${format(result.totalPoints)} (current sign-ups: ${format(result.currentPoints)})`
             )
         );
+        if (result.timing) {
+            // Wall time against computing time shows how long the page took to hand frames back
+            const { wallMs, computeMs, yields } = result.timing;
+            card.appendChild(
+                panelNote(
+                    `Searched in ${(wallMs / 1000).toFixed(2)} s (${(computeMs / 1000).toFixed(2)} s computing, ${yields} ${yields === 1 ? 'frame' : 'frames'} handed back).`
+                )
+            );
+        }
         const trials = document.createElement('table');
         trials.style.cssText = 'width:100%;border-collapse:collapse;text-align:right;margin:6px 0;';
         const head = document.createElement('tr');

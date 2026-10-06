@@ -694,4 +694,22 @@ describe('the Assign skilling view', () => {
             delete LEVELS.unknown;
         }
     });
+
+    test('a fractional typed level is not used and is marked like an out-of-range one', () => {
+        const { shell, sim } = makeSim();
+        sim.panel.render();
+        const input = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        input.value = '100.5';
+        input.dispatchEvent(new Event('input'));
+        expect(input.style.borderColor).not.toBe('');
+        sim.panel.render();
+        const redrawn = shell.querySelector('[aria-label="Unknown Crafting level"]');
+        expect(redrawn.style.borderColor).not.toBe('');
+        expect(markers(shell, '900005')[1]).toBe('missing');
+        redrawn.value = '100';
+        redrawn.dispatchEvent(new Event('input'));
+        expect(redrawn.style.borderColor).toBe('');
+        sim.panel.render();
+        expect(markers(shell, '900005')[1]).toBe('manual');
+    });
 });
