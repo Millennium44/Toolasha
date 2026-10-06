@@ -479,7 +479,7 @@ describe('an automatic push merges a gist that moved past it', () => {
             syncManager.prepareFullRestore(backup);
             const result = await importEverything(backup);
             expect(result.complete).toBe(true);
-            await syncManager.noteFullRestore(Object.keys(result.restored));
+            await syncManager.noteFullRestore(backup, Object.keys(result.restored));
         });
         await as(a, auto.push);
 
@@ -565,7 +565,10 @@ describe('an automatic push merges a gist that moved past it', () => {
         // The settings store landed; xpHistory's transaction did not
         await as(a, async () => {
             a.db.settings.panelGeometry = { from: 'backup' };
-            await syncManager.noteFullRestore(['settings']);
+            const backup = {
+                stores: { settings: { panelGeometry: { from: 'backup' } }, xpHistory: { otherKey: 'stale-local' } },
+            };
+            await syncManager.noteFullRestore(backup, ['settings']);
             a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
             a.db.xpHistory.otherKey = 'stale-local';
         });
@@ -574,6 +577,36 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(gistStores().settings.panelGeometry).toEqual({ from: 'backup' });
         // Not restored, so not protected: both moved it, and the gist's stands
         expect(gistStores().xpHistory.otherKey).toBe('b');
+    });
+
+    test('a key the backup did not hold is merged as usual, not given the restore precedence', async () => {
+        const { importEverything } = await import('../../utils/full-backup.js');
+        const { a, b } = await syncedPair();
+        // Both devices hold K (panelSizeMemory) from before; the backup does not
+        a.db.settings.panelSizeMemory = 'old';
+        await as(a, () => syncManager.push());
+        await as(b, () => syncManager.pull());
+        const backup = {
+            formatVersion: 1,
+            exportedAt: 'x',
+            stores: { settings: { panelGeometry: { from: 'backup' } } },
+        };
+
+        // The other device changes K and the panel position, and pushes
+        await as(b, async () => {
+            b.db.settings.panelSizeMemory = 'b-newer';
+            b.db.settings.panelGeometry = { from: 'b' };
+            await auto.push();
+        });
+        // A restores the backup and its automatic push merges
+        await as(a, async () => {
+            const result = await importEverything(backup);
+            await syncManager.noteFullRestore(backup, Object.keys(result.restored));
+        });
+        await as(a, auto.push);
+
+        expect(gistStores().settings.panelSizeMemory).toBe('b-newer');
+        expect(gistStores().settings.panelGeometry).toEqual({ from: 'backup' });
     });
 
     test('a device switched to Settings only does not carry the gist history stores in its merged upload', async () => {

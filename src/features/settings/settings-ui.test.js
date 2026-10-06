@@ -475,7 +475,7 @@ vi.mock('../sync/sync-manager.js', () => ({
         initialize: async () => {},
         describeStatus: async () => 'Not linked.',
         prepareFullRestore: () => {},
-        noteFullRestore: async (stores) => mocks.restoreNotes.push(stores),
+        noteFullRestore: async (_payload, stores) => mocks.restoreNotes.push(stores),
     },
     getSyncTrace: () => [],
 }));

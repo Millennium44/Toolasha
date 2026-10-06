@@ -1133,21 +1133,32 @@ class SyncManager {
     }
 
     /**
-     * Record that a full backup was restored, so the next merge takes this
-     * device's whole-value keys as the newer copy instead of reverting them to
-     * the gist's (see `RESTORED_BASELINE`). Call after the restore, with the
-     * stores that landed whole — a partial restore latched those and they are
-     * as much the player's choice as a complete one.
+     * Record that a full backup was restored, so the next merge takes the keys
+     * it wrote as this device's newer copy instead of reverting them to the
+     * gist's (see `RESTORED_BASELINE`). Call after the restore, with the stores
+     * that landed whole — a partial restore latched those, and they are as
+     * much the player's choice as a complete one.
+     *
+     * Only the keys the backup held are recorded. Anything else in those
+     * stores — a key created after the backup was taken — was left as it
+     * was, and is merged against its last exchange as before.
+     *
+     * @param {Object} payload - The backup that was restored
      * @param {Array<string>} storeNames - Stores the restore wrote in full
      * @returns {Promise<void>}
      */
-    async noteFullRestore(storeNames = []) {
-        if (!storeNames.length) return;
-        // Added to the baseline rather than replacing it: a store the restore
-        // did not land keeps its last exchange to be merged against
+    async noteFullRestore(payload, storeNames = []) {
+        const keys = {};
+        for (const storeName of storeNames) {
+            const entries = payload?.stores?.[storeName];
+            if (entries && typeof entries === 'object') keys[storeName] = Object.keys(entries);
+        }
+        if (Object.keys(keys).length === 0) return;
+        // Added to the baseline rather than replacing it: a key the restore
+        // did not write keeps its last exchange to be merged against
         const baseline = (await storage.get(KEY_BASELINE, STORE, null)) || {};
         await rememberLocal({
-            [KEY_BASELINE]: { ...baseline, [RESTORED_BASELINE]: { at: Date.now(), stores: [...storeNames] } },
+            [KEY_BASELINE]: { ...baseline, [RESTORED_BASELINE]: { at: Date.now(), keys } },
         });
     }
 

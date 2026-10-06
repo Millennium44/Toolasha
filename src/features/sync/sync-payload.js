@@ -829,11 +829,10 @@ export function wholeKeyHashes(text) {
  * @param {Record<string, string>|null} baseline - Hashes at the last exchange
  * @returns {boolean} True to keep `mine`
  */
-function keepMine(id, mine, theirs, baseline, { allowRestored = false, storeName = null } = {}) {
-    // A full-backup restore made this device's whole-value keys a choice made
-    // now, whatever the last exchange was (see RESTORED_BASELINE) — in the
-    // stores the restore actually landed
-    if (allowRestored && restoredStore(baseline?.[RESTORED_BASELINE], storeName)) {
+function keepMine(id, mine, theirs, baseline, { allowRestored = false, storeName = null, key = null } = {}) {
+    // A full-backup restore made the keys it wrote a choice made now, whatever
+    // the last exchange was (see RESTORED_BASELINE) — those keys, and no others
+    if (allowRestored && restoredKey(baseline?.[RESTORED_BASELINE], storeName, key)) {
         return valueHash(mine) !== valueHash(theirs);
     }
     const was = readBaselineEntry(baseline?.[id]);
@@ -842,17 +841,36 @@ function keepMine(id, mine, theirs, baseline, { allowRestored = false, storeName
     return valueHash(theirs) === was.gist && valueHash(mine) !== was.local;
 }
 
+/** Each restore marker's key lists as sets, built once per marker */
+const restoredKeySets = new WeakMap();
+
 /**
- * Whether a restore marker covers a store.
- * @param {*} marker - The baseline's RESTORED_BASELINE entry: `{at, stores}`, or a bare time from before
- *   restores were recorded per store (which covered every store)
- * @param {string|null} storeName - The store asked about
- * @returns {boolean} True when that store's whole-value keys are the restore's
+ * Whether a restore wrote this key.
+ *
+ * Only a key the backup actually held counts. A store the restore landed can
+ * still hold keys the backup never had — created after it was taken — and
+ * those were left exactly as they were, so they are no more this device's
+ * choice than before the restore; a merge must weigh them as usual.
+ *
+ * A marker from before restores were recorded per key (a bare time, or
+ * `{at, stores}`) cannot say which keys were written, so it counts for none.
+ *
+ * @param {*} marker - The baseline's RESTORED_BASELINE entry: `{at, keys: {store: [key]}}`
+ * @param {string|null} storeName - The key's store
+ * @param {string|null} key - The key
+ * @returns {boolean} True when the restore wrote that key
  */
-function restoredStore(marker, storeName) {
-    if (!marker) return false;
-    if (typeof marker === 'number') return true;
-    return Array.isArray(marker.stores) && marker.stores.includes(storeName);
+function restoredKey(marker, storeName, key) {
+    if (!marker || typeof marker !== 'object' || !marker.keys || typeof marker.keys !== 'object') return false;
+    let sets = restoredKeySets.get(marker);
+    if (!sets) {
+        sets = new Map();
+        for (const [store, keys] of Object.entries(marker.keys)) {
+            if (Array.isArray(keys)) sets.set(store, new Set(keys));
+        }
+        restoredKeySets.set(marker, sets);
+    }
+    return Boolean(sets.get(storeName)?.has(key));
 }
 
 /**
@@ -898,10 +916,10 @@ export function exchangeBaseline(uploadedText, localText) {
 }
 
 /**
- * The baseline a full-backup restore leaves: no exchange to compare with, and
- * an instruction that every whole-value key this device holds is the newer
- * copy, so the next merge neither reverts the restore nor counts it as
- * unmoved. A key with a registered merge is still folded — a restore must not
+ * The baseline entry a full-backup restore adds: the keys it wrote, per
+ * store (`{at, keys: {store: [key]}}`), each of which the next merge takes as
+ * this device's newer copy, so it neither reverts the restore nor counts it
+ * as unmoved. A key with a registered merge is still folded — a restore must not
  * drop entries the other device recorded. Replaced by the next exchange's
  * real baseline.
  */
@@ -960,6 +978,7 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
                 keepMine(baselineId(storeName, key), local[key], entries[key], baseline, {
                     allowRestored: true,
                     storeName,
+                    key,
                 })
             ) {
                 delete entries[key];
@@ -1054,6 +1073,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
                 keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
                     allowRestored: !registration,
                     storeName,
+                    key,
                 })
             ) {
                 out[key] = value;

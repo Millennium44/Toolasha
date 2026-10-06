@@ -1876,7 +1876,7 @@ class SettingsUI {
                 const landed = Object.keys(restored).filter(
                     (store) => restored[store] > 0 && !failed.some((entry) => entry.store === store)
                 );
-                await syncManager.noteFullRestore?.(landed);
+                await syncManager.noteFullRestore?.(payload, landed);
 
                 // "Restored 0 entries" used to be reported as success. A store
                 // whose transaction aborts writes nothing, and one bad key aborts

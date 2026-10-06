@@ -105,6 +105,7 @@ const {
     mergeForUpload,
     wholeKeyHashes,
     SETTING_STAMPS_PREFIX,
+    RESTORED_BASELINE,
 } = await import('./sync-payload.js');
 
 beforeEach(() => {
@@ -1339,6 +1340,21 @@ describe('mergeForUpload, which writes nothing local', () => {
         expect(() =>
             mergeForUpload(payloadOf({ settings: {} }), JSON.stringify({ formatVersion: 2, stores: {} }), null)
         ).toThrow();
+    });
+
+    test('a restore marker gives precedence to the keys it lists; an older marker shape to none', () => {
+        const local = payloadOf({ settings: { panelGeometry: 'restored', panelSizeMemory: 'stale' } });
+        const remote = payloadOf({ settings: { panelGeometry: 'theirs', panelSizeMemory: 'theirs' } });
+        const merge = (marker) =>
+            JSON.parse(mergeForUpload(local, remote, { [RESTORED_BASELINE]: marker }).text).stores.settings;
+
+        expect(merge({ at: 1, keys: { settings: ['panelGeometry'] } })).toMatchObject({
+            panelGeometry: 'restored',
+            panelSizeMemory: 'theirs',
+        });
+        for (const old of [123, { at: 1, stores: ['settings'] }]) {
+            expect(merge(old)).toMatchObject({ panelGeometry: 'theirs', panelSizeMemory: 'theirs' });
+        }
     });
 
     test('says whether the gist held anything this device lacks', () => {
