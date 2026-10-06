@@ -598,6 +598,33 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(a.db.settings.panelGeometry).toEqual({ from: 'a2' });
     });
 
+    test("a startup pull that keeps a key this device moved leaves the next push sending this device's value", async () => {
+        const { a, b } = await syncedPair();
+        // The key is on the gist, and both devices hold that copy
+        await as(a, async () => {
+            a.db.settings.panelGeometry = { from: 'base' };
+            await auto.push();
+        });
+        await as(b, auto.startup);
+        // A moves it offline; B pushes something else, so the gist is newer but unmoved on this key
+        a.db.settings.panelGeometry = { from: 'a1' };
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        await as(a, auto.startup);
+        expect(a.db.settings.panelGeometry).toEqual({ from: 'a1' });
+
+        // The next automatic push carries the edit, not the gist's older copy
+        await as(a, async () => {
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            await auto.push();
+        });
+        expect(gistStores().settings.panelGeometry).toEqual({ from: 'a1' });
+        await as(a, auto.startup);
+        expect(a.db.settings.panelGeometry).toEqual({ from: 'a1' });
+    });
+
     test("a reload after a merge the gist won takes the gist's value when nothing was edited here since", async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {
