@@ -394,6 +394,23 @@ describe('the Assign skilling view', () => {
         expect(high.max).toBe('500');
     });
 
+    test('a cleared assumption field keeps the last value and shows it again on blur', () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        for (const caption of ['Level bonus', 'Double progress (%)']) {
+            const input = shell.querySelector(`input[aria-label="${caption}"]`);
+            const shown = input.value;
+            input.focus();
+            input.value = '';
+            input.dispatchEvent(new Event('input'));
+            expect(input.style.borderColor).not.toBe('');
+            input.blur();
+            expect(input.value).toBe(shown);
+            expect(input.style.borderColor).toBe('');
+        }
+        expect(Object.keys(planner.assumed)).toEqual([]);
+    });
+
     test('a pin to a trial that is no longer drawn is dropped and shows Auto', async () => {
         const { planner, shell, sim } = makeSim();
         sim.panel.render();

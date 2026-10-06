@@ -807,12 +807,32 @@ export class TrialAssignPlanner {
                 // the last valid one stays in use, with the field marked
                 const bounded = (key, min, max, scale) => (v) => {
                     const input = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
-                    const valid = Number.isFinite(v) && v >= min && v <= max;
+                    // A cleared field reads as 0 through Number(''), so a blank is refused on the raw text
+                    const blank = input?.value === '';
+                    const valid = !blank && Number.isFinite(v) && v >= min && v <= max;
                     if (input) {
                         input.style.borderColor = valid ? '' : '#ff6b6b';
                         input.title = valid ? '' : `Must be between ${min} and ${max}; the last valid value is used`;
                     }
-                    if (!valid) return;
+                    if (!valid) {
+                        // Leaving the field blank shows the value that is still in use again
+                        if (blank && input && !input.dataset.restoreOnBlur) {
+                            input.dataset.restoreOnBlur = '1';
+                            input.addEventListener(
+                                'blur',
+                                () => {
+                                    delete input.dataset.restoreOnBlur;
+                                    if (input.value !== '') return;
+                                    const current = this.assumed[trial]?.[key] ?? assumed[key];
+                                    input.value = String(Number((current / scale).toPrecision(12)));
+                                    input.style.borderColor = '';
+                                    input.title = '';
+                                },
+                                { once: true }
+                            );
+                        }
+                        return;
+                    }
                     this.assumed[trial] = { ...(this.assumed[trial] || {}), [key]: v * scale };
                     this.edited();
                 };
