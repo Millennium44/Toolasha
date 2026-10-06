@@ -59,9 +59,10 @@ export function isPatientTickOn(side) {
  *
  * Only a buy priced at the bid (moves up, under the buy setting) or a sell priced
  * at the ask (moves down, under the sell setting) changes; every other side/basis
- * pair comes back as given. The tick never crosses the spread — a bid that would
- * reach the ask, or an ask that would reach the bid, stays where it was, because
- * that order would fill instantly at the other side's price instead of queueing.
+ * pair comes back as given. The tick never crosses the spread: a bid that would
+ * reach the ask, or an ask that would reach the bid, has no queue left to jump —
+ * an order there fills instantly at the other side's price, so that price (the
+ * instant one) is what the quote becomes.
  * With an item hrid the result is pulled back into the item's tradable range.
  *
  * The caller decides whether the quote is a real listing: an estimate filled in
@@ -74,6 +75,8 @@ export function isPatientTickOn(side) {
  * @param {Object} [book] - The rest of the book, for the no-crossing check and the band
  * @param {number|null} [book.ask] - Best ask (a buy never ticks up to it)
  * @param {number|null} [book.bid] - Best bid (a sell never ticks down to it)
+ * @param {boolean} [book.askEstimated] - The ask is a value-map stand-in, not a listing: no bound
+ * @param {boolean} [book.bidEstimated] - The bid is a value-map stand-in, not a listing: no bound
  * @param {string} [book.itemHrid] - Item HRID, to clamp into the tradable range
  * @param {number} [book.enhancementLevel=0] - Enhancement level; sets the tick size and the band
  * @returns {number|null} The improved price, or `price` unchanged
@@ -85,15 +88,19 @@ export function patientTickPrice(price, side, basis, book = {}) {
     if (!buyAtBid && !sellAtAsk) return price;
     if (!isPatientTickOn(side)) return price;
 
-    const { ask = null, bid = null, itemHrid = null, enhancementLevel = 0 } = book;
+    // Only a real listing on the other side can be filled against; an estimated one is no bound
+    const { itemHrid = null, enhancementLevel = 0 } = book;
+    const ask = book.askEstimated ? null : (book.ask ?? null);
+    const bid = book.bidEstimated ? null : (book.bid ?? null);
     let improved;
     if (buyAtBid) {
         improved = nextPriceUp(price, enhancementLevel);
-        if (typeof ask === 'number' && ask > 0 && improved >= ask) return price;
+        // The instant fill, still pulled into the band below: a stale raw-book ask can sit outside it
+        if (typeof ask === 'number' && ask > 0 && improved >= ask) improved = ask;
     } else {
         improved = nextPriceDown(price, enhancementLevel);
         if (improved >= price) return price;
-        if (typeof bid === 'number' && bid > 0 && improved <= bid) return price;
+        if (typeof bid === 'number' && bid > 0 && improved <= bid) improved = bid;
     }
 
     if (itemHrid) {

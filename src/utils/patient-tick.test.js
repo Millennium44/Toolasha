@@ -104,13 +104,23 @@ describe('patientTickPrice', () => {
         expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(996);
     });
 
-    test('the tick never crosses the spread', () => {
-        // One tick above 1000 is 1004: equal to the ask would fill instantly
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1004 })).toBe(1000);
+    test('a tick that reaches the other side becomes the instant price', () => {
+        // One tick above 1000 is 1004: at the ask there is no queue to jump, the order fills at the ask
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1004 })).toBe(1004);
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1004);
-        // One tick below 1000 is 996
-        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 996 })).toBe(1000);
+        // One tick below 1000 is 996: at the bid the sell fills at the bid
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 996 })).toBe(996);
         expect(patientTickPrice(1000, 'sell', 'ask', { bid: 992 })).toBe(996);
+    });
+
+    test('an estimated other side is no listing to fill against', () => {
+        // Live bid 1050, no ask: the value map's 1000 stands in, but nothing can be bought there
+        expect(patientTickPrice(1050, 'buy', 'bid', { ask: 1000, askEstimated: true })).toBe(1052);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 1100, bidEstimated: true })).toBe(996);
+    });
+
+    test('Steady Shot: a 141,500 bid one tick under a 142,000 ask buys at 142,000, not 141,500', () => {
+        expect(patientTickPrice(141_500, 'buy', 'bid', { ask: 142_000 })).toBe(142_000);
     });
 
     test('a missing other side (absent, 0 or -1) is no bound', () => {
@@ -132,6 +142,14 @@ describe('patientTickPrice', () => {
         expect(patientTickPrice(1000, 'sell', 'ask', {})).toBe(996);
     });
 
+    test('an instant fill against a stale out-of-band listing is pulled into the band', () => {
+        mocks.band = { min: 900, max: 1000 };
+        // Bid at the band max; its tick reaches a stale 1004 ask above the band
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1004, itemHrid: '/items/x' })).toBe(1000);
+        mocks.band = { min: 1000, max: 1200 };
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 996, itemHrid: '/items/x' })).toBe(1000);
+    });
+
     test('an unpriced quote passes straight through', () => {
         expect(patientTickPrice(null, 'buy', 'bid')).toBeNull();
         expect(patientTickPrice(0, 'buy', 'bid')).toBe(0);
@@ -150,8 +168,8 @@ describe('patientTickPrice with the September 2026 bins', () => {
         );
     });
 
-    test('a wider enhanced tick that would reach the other side stays put', () => {
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010, enhancementLevel: 2 })).toBe(1000);
+    test('a wider enhanced tick that would reach the other side fills at it', () => {
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010, enhancementLevel: 2 })).toBe(1010);
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1004);
     });
 });
@@ -163,8 +181,8 @@ describe('patientTickPrice against an off-grid book (pre-patch listings)', () =>
         expect(patientTickPrice(1003, 'sell', 'ask', { bid: 900, enhancementLevel: 2 })).toBe(1000);
     });
 
-    test('an off-grid other side one new bin away still blocks the cross', () => {
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1003 })).toBe(1000);
-        expect(patientTickPrice(1005, 'sell', 'ask', { bid: 1004 })).toBe(1005);
+    test('an off-grid other side one new bin away is the instant price', () => {
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1003 })).toBe(1003);
+        expect(patientTickPrice(1005, 'sell', 'ask', { bid: 1004 })).toBe(1004);
     });
 });
