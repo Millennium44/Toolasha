@@ -856,6 +856,30 @@ describe('mixed versions', () => {
         expect(a.db.settings[MAP].Z).toEqual({ id: 'Z' });
     });
 
+    test("an older build's device-local key leaves the gist though everything else already matches", async () => {
+        const { a } = await syncedPair();
+        // An older build pushes A's own data plus a key this build keeps on the device
+        const old = JSON.parse(gist.state.payload);
+        old.exportedAt = new Date(BASE_MS + elapsed + 60 * 1000).toISOString();
+        old.stores.settings.panelSizeMemory = 1;
+        old.stores.settings.toolasha_local_whispers = ['private'];
+        gist.state = {
+            manifest: { toolashaSync: 1, exportedAt: old.exportedAt, chunks: 1 },
+            payload: JSON.stringify(old),
+        };
+        gist.etag += 1;
+        // A recorded the same setting, so its merge adds nothing to the gist
+        a.db.settings.panelSizeMemory = 1;
+        const writes = gist.writes;
+
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(true);
+        expect(gist.writes).toBe(writes + 1);
+        expect(gistStores().settings).not.toHaveProperty('toolasha_local_whispers');
+        expect(gistStores().settings.panelSizeMemory).toBe(1);
+    });
+
     test('the payload this build writes keeps the map in the shape an older build reads', async () => {
         const { a } = await syncedPair();
         await as(a, async () => {

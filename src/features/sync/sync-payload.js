@@ -1004,6 +1004,36 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
 }
 
 /**
+ * Whether cleaning one of the gist's stores took anything out of it.
+ *
+ * A key gone is a removal. So is a settings map or stamps record that came out
+ * different: the redaction drops device-local entries from inside them. Those
+ * are compared as data, since a map stored as text is re-serialized whether or
+ * not anything left it.
+ *
+ * @param {Record<string, *>} entries - The store as the gist holds it
+ * @param {Record<string, *>} cleaned - The same store after cleaning
+ * @returns {boolean} True when the gist holds something the cleaned copy does not
+ */
+function cleaningRemoved(entries, cleaned) {
+    if (cleaned === entries) return false;
+    if (Object.keys(cleaned).length !== Object.keys(entries || {}).length) return true;
+    const asData = (value) => {
+        if (typeof value !== 'string') return value;
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    };
+    for (const [key, value] of Object.entries(cleaned)) {
+        if (value === entries[key]) continue;
+        if (stableStringify(asData(value)) !== stableStringify(asData(entries[key]))) return true;
+    }
+    return false;
+}
+
+/**
  * Fold the gist's payload into this device's, in memory, for an automatic push
  * that found the gist ahead of it.
  *
@@ -1042,15 +1072,18 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
 export function mergeForUpload(localText, remoteText, baseline) {
     const local = JSON.parse(localText);
     const remote = JSON.parse(remoteText);
-    dropUnownedFromPayload(remote);
+    const droppedUnowned = dropUnownedFromPayload(remote);
     assertApplicable(remote);
     // The upload carries what this device's scope carries. A device switched
     // to "Settings only" while the gist still holds a full-scope push must not
     // keep re-uploading every history store it no longer syncs — that is the
     // size the switch was made to shed — nor hand them to its next startup.
     // The upload is then smaller than the gist although it adds nothing to it,
-    // which `addsToRemote` cannot see: it asks only of what the upload holds
-    let dropsFromRemote = false;
+    // which `addsToRemote` cannot see: it asks only of what the upload holds.
+    // The same goes for whatever the cleaning below takes out of a store the
+    // upload keeps — another script's keys, a device-local key or a token an
+    // older build uploaded — so those count too, or the gist would keep them
+    let dropsFromRemote = droppedUnowned;
     if ((local?.syncScope ?? 'settings') !== 'everything') {
         for (const storeName of Object.keys(remote.stores)) {
             if (storeName === SETTINGS_STORE) continue;
@@ -1061,6 +1094,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
     for (const [storeName, entries] of Object.entries(remote.stores)) {
         let cleaned = stripExcludedKeys(storeName, entries);
         if (storeName === SETTINGS_STORE) cleaned = redactSettingsStore(cleaned);
+        if (!dropsFromRemote && cleaningRemoved(entries, cleaned)) dropsFromRemote = true;
         remote.stores[storeName] = cleaned;
     }
 

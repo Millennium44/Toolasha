@@ -1409,6 +1409,37 @@ describe('mergeForUpload, which writes nothing local', () => {
         expect(mergeForUpload(everything, withHistory, null).dropsFromRemote).toBe(false);
     });
 
+    test('says so when it cleans a key out of a store it keeps, so the cleaned copy is written', () => {
+        // An older build uploaded a key this one keeps on the device; the
+        // rest of the gist matches. The loop guard only asks about keys the
+        // upload holds, so without the flag the gist kept the key for ever
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const remote = payloadOf({ settings: { panelSizeMemory: 1, toolasha_local_whispers: ['private'] } });
+        const merged = mergeForUpload(local, remote, null);
+
+        expect(addsToRemote(merged.text, remote)).toBe(false);
+        expect(merged.dropsFromRemote).toBe(true);
+        expect(JSON.parse(merged.text).stores.settings).not.toHaveProperty('toolasha_local_whispers');
+        // And a gist with nothing to clean stays quiet
+        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+            false
+        );
+    });
+
+    test('says so when it redacts a device-local setting out of a settings map the gist holds', () => {
+        const MAP = 'script_settingsMap_abc';
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const remote = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { sync_token: { value: 'ghp_x' } } } });
+        expect(mergeForUpload(local, remote, null).dropsFromRemote).toBe(true);
+        const clean = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { other: { value: 1 } } } });
+        expect(mergeForUpload(local, clean, null).dropsFromRemote).toBe(false);
+        // The same map as text, in another layout, is not a removal
+        const asText = payloadOf({
+            settings: { panelSizeMemory: 1, [MAP]: JSON.stringify({ other: { value: 1 } }, null, 2) },
+        });
+        expect(mergeForUpload(local, asText, null).dropsFromRemote).toBe(false);
+    });
+
     test('a gist that differs only where this device won the merge holds nothing for it', () => {
         // The gist's X is older than this device's, and its panel position is
         // the one this device last exchanged: this device wins both, so a
