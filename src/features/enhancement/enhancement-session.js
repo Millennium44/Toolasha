@@ -250,6 +250,18 @@ export function addCoinCost(session, amount) {
  */
 export function addProtectionCost(session, protectionItemHrid, cost) {
     if (!(cost > 0)) session.hasUnpricedInput = true;
+
+    // A second protection item starts a per-item breakdown, splitting off what the first one
+    // already consumed, rather than booking the new item under the old one's name
+    if (
+        !session.protectionBreakdown &&
+        protectionItemHrid &&
+        session.protectionItemHrid &&
+        session.protectionItemHrid !== protectionItemHrid
+    ) {
+        session.protectionBreakdown = { ...getProtectionBreakdown(session) };
+    }
+
     session.protectionCost += cost;
     session.protectionCount += 1;
 
@@ -377,8 +389,11 @@ export function canResumeSession(session, run) {
     if (session.targetLevel !== run.targetLevel) return false;
     if ((session.protectFrom || 0) !== (run.protectFrom || 0)) return false;
     // A different protection item is a different setup; an unknown one on either side (no
-    // protection consumed yet, or none loaded) is not evidence against it
-    if (session.protectionItemHrid && run.protectionItemHrid && session.protectionItemHrid !== run.protectionItemHrid) {
+    // protection consumed yet, or none loaded) is not evidence against it. The session's own
+    // setup is the item loaded on its last attempt; the item it first consumed stands in for
+    // sessions recorded before attempts carried it.
+    const configured = session.lastAttempt?.protectionItemHrid ?? session.protectionItemHrid;
+    if (configured && run.protectionItemHrid && configured !== run.protectionItemHrid) {
         return false;
     }
     // A run that reached its target is extended, not resumed
@@ -494,9 +509,6 @@ export function foldSessions(ordered) {
         newest.protectionCost = (newest.protectionCost || 0) + (session.protectionCost || 0);
         newest.protectionCount = (newest.protectionCount || 0) + (session.protectionCount || 0);
         newest.hasUnpricedInput = newest.hasUnpricedInput === true || session.hasUnpricedInput === true;
-        if (!newest.protectionItemHrid && session.protectionItemHrid) {
-            newest.protectionItemHrid = session.protectionItemHrid;
-        }
         newest.longestSuccessStreak = Math.max(newest.longestSuccessStreak || 0, session.longestSuccessStreak || 0);
         newest.longestFailureStreak = Math.max(newest.longestFailureStreak || 0, session.longestFailureStreak || 0);
 
@@ -525,7 +537,10 @@ export function foldSessions(ordered) {
     newest.milestonesReached?.sort((a, b) => a - b);
     recalculateTotalCost(newest);
 
-    // Per-item protection, kept only when more than one item was used
+    // Per-item protection. The survivor's protectionItemHrid stays its own (the item its own setup
+    // consumes, null until it consumes one), never one inherited from another run; that history
+    // is kept per item whenever it is not all that one item, so a later protection is booked
+    // under its real name.
     const combined = {};
     for (const breakdown of breakdowns) {
         for (const [hrid, entry] of Object.entries(breakdown)) {
@@ -534,7 +549,10 @@ export function foldSessions(ordered) {
             into.totalCost += entry.totalCost || 0;
         }
     }
-    if (Object.keys(combined).length > 1) newest.protectionBreakdown = combined;
+    const items = Object.keys(combined);
+    if (items.length > 1 || (items.length === 1 && items[0] !== (newest.protectionItemHrid || ''))) {
+        newest.protectionBreakdown = combined;
+    }
 
     newest.startLevel = earliest.startLevel;
     newest.startTime = earliest.startTime;

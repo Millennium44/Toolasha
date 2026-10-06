@@ -449,7 +449,11 @@ describe('foldSessions', () => {
         expect(merged.totalXP).toBe(9200);
         expect(merged.protectionCount).toBe(12);
         expect(merged.protectionCost).toBe(12_000);
-        expect(merged.protectionItemHrid).toBe('/items/mirror_of_protection');
+        // #8 has consumed no protection yet: #7's mirrors are history, not #8's setup
+        expect(merged.protectionItemHrid).toBeNull();
+        expect(getProtectionBreakdown(merged)).toEqual({
+            '/items/mirror_of_protection': { count: 12, totalCost: 12_000 },
+        });
         expect(merged.coinCost).toBe(476 * 1500);
         expect(merged.coinCount).toBe(476);
         expect(merged.materialCosts['/items/holy_cheese']).toEqual({ count: 2856, totalCost: 2_856_000 });
@@ -630,11 +634,56 @@ describe('merging runs protected by different items', () => {
         expect(merged.protectionCount).toBe(15);
     });
 
-    test('one protection item needs no breakdown', () => {
+    test('one protection item the survivor also consumed needs no breakdown', () => {
         const { seven, eight } = spatulaRuns();
+        Object.assign(eight, {
+            protectionCount: 1,
+            protectionCost: 1000,
+            protectionItemHrid: '/items/mirror_of_protection',
+        });
         const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
         expect(merged.protectionBreakdown).toBeUndefined();
+        expect(merged.protectionItemHrid).toBe('/items/mirror_of_protection');
         expect(planSessionMerge([spatulaRuns().seven, spatulaRuns().eight]).protectionItemsDiffer).toBe(false);
+    });
+
+    test('a survivor that has not consumed protection yet keeps its own item, not the older run', () => {
+        // #8 is set up to protect from +5 but has not failed above it yet: nothing consumed
+        const { seven, eight } = spatulaRuns();
+        eight.lastAttempt.protectionItemHrid = '/items/holy_spatula';
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.protectionItemHrid).toBeNull();
+
+        // Its first protection is booked under the item it actually used
+        addProtectionCost(merged, '/items/holy_spatula', 25_000);
+        expect(merged.protectionItemHrid).toBe('/items/holy_spatula');
+        expect(getProtectionBreakdown(merged)).toEqual({
+            '/items/mirror_of_protection': { count: 12, totalCost: 12_000 },
+            '/items/holy_spatula': { count: 1, totalCost: 25_000 },
+        });
+
+        // And a run resuming it with that setup is not turned away by the older run's item
+        merged.state = SessionState.COMPLETED;
+        expect(
+            canResumeSession(merged, {
+                itemHrid: '/items/holy_spatula',
+                startLevel: 4,
+                targetLevel: 8,
+                protectFrom: 5,
+                protectionItemHrid: '/items/holy_spatula',
+            })
+        ).toBe(true);
+    });
+
+    test('a single session that switches protection item splits its breakdown', () => {
+        const session = createSession('/items/holy_spatula', 'Holy Spatula', 0, 8, 5);
+        addProtectionCost(session, '/items/mirror_of_protection', 1000);
+        addProtectionCost(session, '/items/mirror_of_protection', 1000);
+        addProtectionCost(session, '/items/holy_spatula', 25_000);
+        expect(getProtectionBreakdown(session)).toEqual({
+            '/items/mirror_of_protection': { count: 2, totalCost: 2000 },
+            '/items/holy_spatula': { count: 1, totalCost: 25_000 },
+        });
     });
 });
 

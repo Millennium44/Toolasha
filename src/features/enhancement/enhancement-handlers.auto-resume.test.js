@@ -157,6 +157,8 @@ describe('auto-resume', () => {
         expect(first.state).toBe(SessionState.COMPLETED);
         expect(first.currentLevel).toBe(3);
         expect(first.totalAttempts).toBe(5);
+        // The run's configured protection item, read off the action, whether or not one was used
+        expect(first.lastAttempt.protectionItemHrid).toBe('/items/mirror_of_protection');
         const activeBefore = getSessionDuration(first);
 
         // Ten minutes away, then a new queue action for the same spatula at +3

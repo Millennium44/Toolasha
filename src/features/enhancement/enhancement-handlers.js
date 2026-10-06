@@ -450,6 +450,16 @@ function usesPhilosophersMirror(action) {
 }
 
 /**
+ * The protection item the run is set up with: the mirror when one is loaded, else the protection
+ * item when protect-from is on, else null.
+ * @param {Object} action - Enhance action
+ * @returns {string|null}
+ */
+function configuredProtectionItem(action) {
+    return usesPhilosophersMirror(action) ? PHILOSOPHERS_MIRROR_HRID : getProtectionItemHrid(action);
+}
+
+/**
  * Charge one Philosopher's Mirror attempt. The game replaces the enhancement costs of a mirror
  * attempt with one copy of the base item at one level below the item, and the mirror itself is
  * consumed every attempt (game client: getPhilosophersMirrorCost, and the mirror's item
@@ -495,6 +505,9 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
         timestamp: Date.now(),
         actionId: action.id ?? null,
         currentCount: Number.isFinite(action.currentCount) ? action.currentCount : null,
+        // The protection item this run is set up with, whether or not one has been consumed yet —
+        // auto-resume compares the next run against it
+        protectionItemHrid: configuredProtectionItem(action),
     };
 
     const knownStart = scored && Number.isFinite(previousLevel);
@@ -580,7 +593,7 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
         startLevel: baselineLevel,
         targetLevel,
         protectFrom,
-        protectionItemHrid: usesPhilosophersMirror(action) ? PHILOSOPHERS_MIRROR_HRID : getProtectionItemHrid(action),
+        protectionItemHrid: configuredProtectionItem(action),
     });
     if (resumableId && (await enhancementTracker.resumeSessionById(resumableId))) {
         enhancementUI.switchToSession(resumableId);
