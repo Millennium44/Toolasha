@@ -217,7 +217,11 @@ export function ownUseCompare(profitData, actionDetail = null) {
     // Patient +1 tick, the same move getItemPriceInfo makes for a patient buy —
     // but not on a bid estimated from the value map, which has no queue to jump
     if (buy > 0 && priceBasis === 'bid' && !itemPrice?.bidEstimated) {
-        buy = patientTickPrice(buy, 'buy', 'bid', { ask: Number(itemPrice?.ask), itemHrid: profitData?.itemHrid });
+        buy = patientTickPrice(buy, 'buy', 'bid', {
+            ask: Number(itemPrice?.ask),
+            askEstimated: Boolean(itemPrice?.askEstimated),
+            itemHrid: profitData?.itemHrid,
+        });
     }
     if (!(buy > 0)) return { make, buy: null, saves: null, cheaper: null, priceBasis };
 

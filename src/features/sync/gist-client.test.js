@@ -848,6 +848,25 @@ describe('writeSyncGist', () => {
         expect(calls.at(-1).method).toBe('PATCH');
     });
 
+    test('chunk files whose manifest was deleted leave encryption unknown, so an unattended push refuses', async () => {
+        responses.push({
+            status: 200,
+            body: { files: { 'toolasha-data-000.json': { size: 90, content: 'ciphertext' } } },
+        });
+        const refused = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            unattended: true,
+        }).catch((caught) => caught);
+        expect(refused.kind).toBe('passphrase');
+        expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
+    });
+
+    test('an empty gist with no manifest is still writable unattended', async () => {
+        responses.push({ status: 200, body: { files: {} } });
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, { unattended: true });
+        expect(calls.at(-1).method).toBe('PATCH');
+    });
+
     test('a pressed push over an encrypted gist that is not confirmed writes nothing', async () => {
         responses.push({
             status: 200,

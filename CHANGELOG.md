@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A push now numbers itself above the gist's own counter, so other devices no longer skip it as older; an automatic push from a device without the passphrase no longer replaces an encrypted gist with plaintext, and a pressed push asks first; and a sync pull that cannot be applied no longer forgets which settings migrations already ran.
 
+### Patient ±1 fills at the instant price when the spread is one tick
+
+- When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
+
 ### Item tooltip marks partly priced alchemy profits
 
 - In the item tooltip's Coinify/Decompose/Transmute list, a profit with an unpriced output now shows as a floor ("≥ 9.0K/hr (unpriced output)"), one with an unpriced tea as a ceiling ("≤"), and both sort after fully priced rows instead of ranking as if complete.
