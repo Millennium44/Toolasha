@@ -6,7 +6,10 @@ import { describe, test, expect } from 'vitest';
 import {
     createSession,
     canExtendSession,
+    addProtectionCost,
     canResumeSession,
+    getActiveSpans,
+    getProtectionBreakdown,
     foldSessions,
     planSessionMerge,
     resumeSession,
@@ -353,6 +356,7 @@ function spatulaRuns() {
         startTime: 1_000_000,
         lastUpdateTime: 1_600_000,
         endTime: 1_600_000, // 600s active
+        lastAttempt: { attemptNumber: 466, level: 3, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
         currentLevel: 3,
         totalAttempts: 466,
         totalSuccesses: 200,
@@ -527,5 +531,124 @@ describe('mergeSessions view marks where the item stands', () => {
         expect(merged.live).toBe(true);
         eight.currentLevel = 5;
         expect(mergeSessions([seven, eight]).currentLevel).toBe(5);
+    });
+});
+
+describe('merging picks the most recently active session as the survivor', () => {
+    const HOUR = 3600_000;
+    /** A: started 10:00, ended 11:00, resumed 15:00, ended 16:00 at +12. B: 12:00-14:00, ended at +8. */
+    function interleaved() {
+        const a = createSession('/items/holy_spatula', 'Holy Spatula', 0, 15, 5);
+        Object.assign(a, {
+            id: 'session_a',
+            state: SessionState.COMPLETED,
+            startTime: 10 * HOUR,
+            pastActiveSpans: [{ start: 10 * HOUR, end: 11 * HOUR }],
+            segmentStartTime: 15 * HOUR,
+            lastUpdateTime: 16 * HOUR,
+            endTime: 16 * HOUR,
+            currentLevel: 12,
+            totalAttempts: 300,
+            lastAttempt: { attemptNumber: 300, level: 12, timestamp: 16 * HOUR, actionId: 'a2', currentCount: 120 },
+        });
+        const b = createSession('/items/holy_spatula', 'Holy Spatula', 0, 8, 5);
+        Object.assign(b, {
+            id: 'session_b',
+            state: SessionState.COMPLETED,
+            startTime: 12 * HOUR,
+            lastUpdateTime: 14 * HOUR,
+            endTime: 14 * HOUR,
+            currentLevel: 8,
+            totalAttempts: 100,
+            lastAttempt: { attemptNumber: 100, level: 8, timestamp: 14 * HOUR, actionId: 'b1', currentCount: 100 },
+        });
+        return { a, b };
+    }
+
+    test('a resumed session that ran last survives, keeping its level, last attempt and end', () => {
+        const { a, b } = interleaved();
+        const plan = planSessionMerge([a, b]);
+        expect(plan.ok).toBe(true);
+        expect(plan.ordered.map((s) => s.id)).toEqual(['session_b', 'session_a']);
+
+        const merged = foldSessions(plan.ordered);
+        expect(merged).toBe(a);
+        expect(merged.currentLevel).toBe(12);
+        expect(merged.endTime).toBe(16 * HOUR);
+        expect(merged.lastAttempt.actionId).toBe('a2');
+        expect(merged.targetLevel).toBe(15);
+        expect(merged.startTime).toBe(10 * HOUR);
+        expect(merged.totalAttempts).toBe(400);
+        // Three stretches of an hour, two hours and an hour — the gaps between them are not counted
+        expect(getActiveSpans(merged)).toEqual([
+            { start: 10 * HOUR, end: 11 * HOUR },
+            { start: 12 * HOUR, end: 14 * HOUR },
+            { start: 15 * HOUR, end: 16 * HOUR },
+        ]);
+        expect(getSessionDuration(merged)).toBe(4 * 3600);
+    });
+
+    test('a running session started before an ended one can still absorb it', () => {
+        const { a, b } = interleaved();
+        a.state = SessionState.TRACKING;
+        a.endTime = null;
+        const plan = planSessionMerge([a, b]);
+        expect(plan.ok).toBe(true);
+        expect(plan.ordered.at(-1)).toBe(a);
+    });
+
+    test('a running session is refused when another was active after it', () => {
+        const { a, b } = interleaved();
+        b.state = SessionState.TRACKING;
+        b.endTime = null;
+        expect(planSessionMerge([a, b]).ok).toBe(false);
+    });
+});
+
+describe('merging runs protected by different items', () => {
+    test('protection is kept per item, and later protections land on their own item', () => {
+        const { seven, eight } = spatulaRuns();
+        Object.assign(eight, {
+            protectionCount: 2,
+            protectionCost: 50_000,
+            protectionItemHrid: '/items/holy_spatula',
+        });
+        eight.totalCost += 50_000;
+        const plan = planSessionMerge([seven, eight]);
+        expect(plan.protectionItemsDiffer).toBe(true);
+
+        const merged = foldSessions(plan.ordered);
+        expect(merged.protectionCount).toBe(14);
+        expect(merged.protectionCost).toBe(62_000);
+        expect(getProtectionBreakdown(merged)).toEqual({
+            '/items/mirror_of_protection': { count: 12, totalCost: 12_000 },
+            '/items/holy_spatula': { count: 2, totalCost: 50_000 },
+        });
+
+        addProtectionCost(merged, '/items/holy_spatula', 25_000);
+        expect(getProtectionBreakdown(merged)['/items/holy_spatula']).toEqual({ count: 3, totalCost: 75_000 });
+        expect(merged.protectionCount).toBe(15);
+    });
+
+    test('one protection item needs no breakdown', () => {
+        const { seven, eight } = spatulaRuns();
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.protectionBreakdown).toBeUndefined();
+        expect(planSessionMerge([spatulaRuns().seven, spatulaRuns().eight]).protectionItemsDiffer).toBe(false);
+    });
+});
+
+describe('a merged run already counted for calibration', () => {
+    test('a folded-in session that reached its own target marks the merged one', () => {
+        const { seven, eight } = spatulaRuns();
+        seven.currentLevel = 8; // reached its +8
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.calibrationSkipTarget).toBe(8);
+    });
+
+    test('one that ended short of its target does not', () => {
+        const { seven, eight } = spatulaRuns();
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.calibrationSkipTarget).toBeUndefined();
     });
 });

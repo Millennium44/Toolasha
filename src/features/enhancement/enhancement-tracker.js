@@ -237,11 +237,11 @@ class EnhancementTracker {
     /**
      * Merge the picked sessions into one persisted session; the originals are removed.
      *
-     * The newest session absorbs the others (see {@link foldSessions}), so when it is the run in
-     * progress it stays the current session and keeps receiving attempts. The prediction is
-     * recomputed for the merged start state — the earliest session's start level, the newest's
-     * target and protection — falling back to the earliest session's own prediction when it
-     * cannot be computed.
+     * The most recently active session absorbs the others (see {@link foldSessions}), so when it
+     * is the run in progress it stays the current session and keeps receiving attempts. The
+     * prediction is recomputed for the merged start state — the first-started session's start
+     * level, the latest one's target and protection — falling back to the first-started session's
+     * own prediction when it cannot be computed.
      * @param {string[]} sessionIds - Picked session IDs
      * @returns {Promise<{ok: boolean, reason?: string, id?: string}>}
      */
@@ -250,7 +250,8 @@ class EnhancementTracker {
         if (!plan.ok) return { ok: false, reason: plan.reason };
 
         const { ordered } = plan;
-        const earliestPredictions = ordered[0].predictions || null;
+        const firstStarted = ordered.reduce((a, b) => ((b.startTime || 0) < (a.startTime || 0) ? b : a));
+        const earliestPredictions = firstStarted.predictions || null;
         const merged = foldSessions(ordered);
         for (const session of ordered.slice(0, -1)) delete this.sessions[session.id];
 
@@ -347,6 +348,9 @@ class EnhancementTracker {
                 await saveCurrentSessionId(null);
             }
             if (!this._ownsSessions(sessions, owner)) return;
+            // A merged session holding a run that already reached its own target was recorded
+            // under that run's id; recording this one too would count those attempts twice
+            if (completed.calibrationSkipTarget === completed.targetLevel) return;
 
             // The run just became one finished draw from the distribution its
             // prediction quoted; the recorder declines anything that is not

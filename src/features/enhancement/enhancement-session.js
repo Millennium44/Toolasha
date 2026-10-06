@@ -258,7 +258,32 @@ export function addProtectionCost(session, protectionItemHrid, cost) {
         session.protectionItemHrid = protectionItemHrid;
     }
 
+    // A session merged from runs that used different protection items keeps them apart
+    if (session.protectionBreakdown && protectionItemHrid) {
+        const entry = (session.protectionBreakdown[protectionItemHrid] ||= { count: 0, totalCost: 0 });
+        entry.count += 1;
+        entry.totalCost += cost;
+    }
+
     recalculateTotalCost(session);
+}
+
+/**
+ * The protection a session consumed, per protection item. A session that never mixed items has
+ * no stored breakdown; its one item carries the whole count and cost.
+ * @param {Object} session - Session object
+ * @returns {Object<string, {count: number, totalCost: number}>} Keyed by item hrid ('' when the
+ *   item was never recorded)
+ */
+export function getProtectionBreakdown(session) {
+    if (session?.protectionBreakdown) return session.protectionBreakdown;
+    if (!(session?.protectionCount > 0) && !(session?.protectionCost > 0)) return {};
+    return {
+        [session.protectionItemHrid || '']: {
+            count: session.protectionCount || 0,
+            totalCost: session.protectionCost || 0,
+        },
+    };
 }
 
 /**
@@ -286,12 +311,45 @@ export function getSessionDuration(session) {
     //
     // A resumed or merged session counts only active time: the stretches it was
     // ended for (between one run stopping and the next picking it up) are not
-    // enhancing. Its earlier stretches are banked in priorActiveSeconds and the
-    // clock runs from segmentStartTime, the moment the current stretch began.
-    const segmentStart = session.segmentStartTime || session.startTime;
-    const endTime = session.endTime || session.lastUpdateTime || segmentStart;
-    const prior = Number.isFinite(session.priorActiveSeconds) ? session.priorActiveSeconds : 0;
-    return prior + Math.max(0, Math.floor((endTime - segmentStart) / 1000));
+    // enhancing. See getActiveSpans.
+    const ms = getActiveSpans(session).reduce((sum, span) => sum + (span.end - span.start), 0);
+    return Math.floor(ms / 1000);
+}
+
+/**
+ * The stretches of time a session was actually enhancing, oldest first.
+ *
+ * A session that was never resumed or merged has one: its start to its end (or, while running,
+ * its last recorded attempt). A resumed or merged one keeps its closed stretches in
+ * `pastActiveSpans` and runs its current one from `segmentStartTime`, so the gaps between runs
+ * are neither counted as duration nor spread over by anything that shares a session's figures
+ * out across the days it ran.
+ * @param {Object} session - Session object
+ * @returns {Array<{start: number, end: number}>} Epoch ms, `end >= start`
+ */
+export function getActiveSpans(session) {
+    if (!session) return [];
+    const past = Array.isArray(session.pastActiveSpans) ? session.pastActiveSpans : [];
+    const start = session.segmentStartTime || session.startTime;
+    const end = session.endTime || session.lastUpdateTime || start;
+    const spans = past.map((span) => ({ start: span.start, end: Math.max(span.start, span.end) }));
+    if (Number.isFinite(start)) spans.push({ start, end: Math.max(start, end) });
+    return spans;
+}
+
+/**
+ * When a session last did anything: its last attempt, else its last update, else its end, else
+ * its start. Resume and extend keep a session's original start time while it runs on long
+ * after, so ordering sessions by start says nothing about which one is the latest.
+ * @param {Object} session - Session object
+ * @returns {number} Epoch ms
+ */
+export function lastActivityTime(session) {
+    return (
+        Math.max(session?.lastAttempt?.timestamp || 0, session?.lastUpdateTime || 0, session?.endTime || 0) ||
+        session?.startTime ||
+        0
+    );
 }
 
 /**
@@ -335,7 +393,7 @@ export function canResumeSession(session, run) {
  * @param {number} [now] - Epoch ms
  */
 export function resumeSession(session, now = Date.now()) {
-    session.priorActiveSeconds = getSessionDuration(session);
+    session.pastActiveSpans = getActiveSpans(session);
     session.segmentStartTime = now;
     session.state = SessionState.TRACKING;
     session.endTime = null;
@@ -343,15 +401,19 @@ export function resumeSession(session, now = Date.now()) {
 }
 
 /**
- * Check whether a set of sessions can be merged into one, and order them oldest first.
+ * Check whether a set of sessions can be merged into one, and order them by last activity.
  *
- * Every session must be the same item, and every one but the newest must have ended — the
- * newest may still be running, in which case the merged session stays the live one. Differing
- * targets or protection are allowed: the merged session keeps the newest one's (`settingsDiffer`
- * says when that happened, so the confirmation can say so).
+ * Every session must be the same item, and every one but the latest — the one active most
+ * recently ({@link lastActivityTime}), not the one started last: a resumed or extended session
+ * keeps its early start while it runs on — must have ended. The latest may still be running, in
+ * which case the merged session stays the live one. Differing targets or protection are
+ * allowed: the merged session keeps the latest one's (`settingsDiffer` says when that happened,
+ * and `protectionItemsDiffer` when the runs consumed different protection items, so the
+ * confirmation can say so).
  *
  * @param {Array<Object>} sessions - Sessions picked for the merge
- * @returns {{ok: boolean, reason?: string, ordered?: Array<Object>, settingsDiffer?: boolean}}
+ * @returns {{ok: boolean, reason?: string, ordered?: Array<Object>, settingsDiffer?: boolean,
+ *   protectionItemsDiffer?: boolean}} `ordered` runs from least to most recently active
  */
 export function planSessionMerge(sessions) {
     const list = (Array.isArray(sessions) ? sessions : []).filter(Boolean);
@@ -360,12 +422,12 @@ export function planSessionMerge(sessions) {
     if (list.some((session) => session.itemHrid !== itemHrid)) {
         return { ok: false, reason: 'Only sessions for the same item can be merged.' };
     }
-    const ordered = [...list].sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+    const ordered = [...list].sort((a, b) => lastActivityTime(a) - lastActivityTime(b));
     const older = ordered.slice(0, -1);
     if (older.some((session) => session.state === SessionState.TRACKING)) {
         return {
             ok: false,
-            reason: 'Only the newest of the picked sessions may still be in progress; the others must have ended.',
+            reason: 'Only the most recently active of the picked sessions may still be in progress; the others must have ended.',
         };
     }
     const newest = ordered[ordered.length - 1];
@@ -373,32 +435,46 @@ export function planSessionMerge(sessions) {
         (session) =>
             session.targetLevel !== newest.targetLevel || (session.protectFrom || 0) !== (newest.protectFrom || 0)
     );
-    return { ok: true, ordered, settingsDiffer };
+    const protectionItems = new Set(
+        ordered.flatMap((session) => Object.keys(getProtectionBreakdown(session)).filter(Boolean))
+    );
+    return { ok: true, ordered, settingsDiffer, protectionItemsDiffer: protectionItems.size > 1 };
 }
 
 /**
- * Fold older sessions into the newest one, in place, making one persisted session.
+ * Fold the other sessions into the most recently active one, in place, making one persisted
+ * session.
  *
- * The newest session's object is kept (and so its id, its place in the list, the tracker's
+ * The latest session's object is kept (and so its id, its place in the list, the tracker's
  * current-session pointer, and any attempt handler still holding it). It takes the sum of every
- * counter, cost, per-level tally and XP; the earliest session's start level and start time; and
- * the sum of every session's active time (not the wall-clock span between them). Its own target,
- * protection, state, current level and last attempt are kept. The caller recomputes the
- * prediction for the merged start state; the extension baseline is cleared since the merged
- * session is one leg from the earliest start.
+ * counter, cost, per-level tally and XP; the start level and start time of the session that
+ * started first; and every session's active stretches (not the wall-clock span between them).
+ * Its own target, protection, state, current level and last attempt are kept. Protection is kept
+ * per item when the runs used different ones. The caller recomputes the prediction for the
+ * merged start state; the extension baseline is cleared since the merged session is one leg
+ * from the earliest start.
  *
- * @param {Array<Object>} ordered - Sessions oldest first, from {@link planSessionMerge}
- * @returns {Object} The newest session, now the merged one
+ * When a folded-in session had already reached its own target, its completion has been recorded
+ * for calibration under its own id; the merged session is marked (`calibrationSkipTarget`) so
+ * reaching its target does not record those attempts a second time.
+ *
+ * @param {Array<Object>} ordered - Sessions by last activity, from {@link planSessionMerge}
+ * @returns {Object} The latest session, now the merged one
  */
 export function foldSessions(ordered) {
     const newest = ordered[ordered.length - 1];
     const older = ordered.slice(0, -1);
-    const earliest = ordered[0];
+    const earliest = ordered.reduce((a, b) => ((b.startTime || 0) < (a.startTime || 0) ? b : a));
 
-    let priorActiveSeconds = Number.isFinite(newest.priorActiveSeconds) ? newest.priorActiveSeconds : 0;
+    const spans = [];
+    const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
     const segmentStartTime = newest.segmentStartTime || newest.startTime;
+    const ownPast = Array.isArray(newest.pastActiveSpans) ? newest.pastActiveSpans : [];
+    const reachedTarget = older.some(
+        (session) => session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel
+    );
     for (const session of older) {
-        priorActiveSeconds += getSessionDuration(session);
+        spans.push(...getActiveSpans(session));
 
         newest.totalAttempts = (newest.totalAttempts || 0) + (session.totalAttempts || 0);
         newest.totalSuccesses = (newest.totalSuccesses || 0) + (session.totalSuccesses || 0);
@@ -441,11 +517,23 @@ export function foldSessions(ordered) {
     newest.milestonesReached?.sort((a, b) => a - b);
     recalculateTotalCost(newest);
 
+    // Per-item protection, kept only when more than one item was used
+    const combined = {};
+    for (const breakdown of breakdowns) {
+        for (const [hrid, entry] of Object.entries(breakdown)) {
+            const into = (combined[hrid] ||= { count: 0, totalCost: 0 });
+            into.count += entry.count || 0;
+            into.totalCost += entry.totalCost || 0;
+        }
+    }
+    if (Object.keys(combined).length > 1) newest.protectionBreakdown = combined;
+
     newest.startLevel = earliest.startLevel;
     newest.startTime = earliest.startTime;
+    newest.pastActiveSpans = [...spans, ...ownPast].sort((a, b) => a.start - b.start);
     newest.segmentStartTime = segmentStartTime;
-    newest.priorActiveSeconds = priorActiveSeconds;
     newest.extensionBaseline = null;
+    if (reachedTarget) newest.calibrationSkipTarget = newest.targetLevel;
     newest.mergedFrom = [
         ...(newest.mergedFrom || []),
         ...older.flatMap((session) => [...(session.mergedFrom || []), session.id]),
@@ -667,6 +755,7 @@ export function mergeSessions(sessions) {
         expectedProtections: 0,
     };
     const seenItems = new Set();
+    const protection = {};
 
     for (const session of sessions) {
         if (!session) continue;
@@ -692,6 +781,11 @@ export function mergeSessions(sessions) {
         agg.durationSeconds += getSessionDuration(session);
         if (!agg.protectionItemHrid && session.protectionItemHrid) {
             agg.protectionItemHrid = session.protectionItemHrid;
+        }
+        for (const [hrid, entry] of Object.entries(getProtectionBreakdown(session))) {
+            const into = (protection[hrid] ||= { count: 0, totalCost: 0 });
+            into.count += entry.count || 0;
+            into.totalCost += entry.totalCost || 0;
         }
 
         for (const [level, tally] of Object.entries(session.attemptsPerLevel || {})) {
@@ -728,6 +822,7 @@ export function mergeSessions(sessions) {
     // Several items have no one level to mark.
     const present = sessions.filter(Boolean);
     agg.live = present.some((session) => session.state === SessionState.TRACKING);
+    if (Object.keys(protection).length > 1) agg.protectionBreakdown = protection;
     if (agg.itemHrids.length === 1) {
         const activity = (s) =>
             Math.max(s.endTime || 0, s.lastAttempt?.timestamp || 0, s.lastUpdateTime || 0, s.startTime || 0);

@@ -240,6 +240,7 @@ describe('merging sessions into one', () => {
             state: SessionState.COMPLETED,
             startTime: 1_000_000,
             endTime: 1_600_000,
+            lastAttempt: { attemptNumber: 466, level: 3, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
             lastUpdateTime: 1_600_000,
             currentLevel: 3,
             totalAttempts: 466,
@@ -251,6 +252,7 @@ describe('merging sessions into one', () => {
             id: 'session_8',
             startTime: 5_000_000,
             lastUpdateTime: 5_100_000,
+            lastAttempt: { attemptNumber: 10, level: 4, timestamp: 5_100_000, actionId: 'a8', currentCount: 10 },
             currentLevel: 4,
             totalAttempts: 10,
             totalXP: 200,
@@ -303,5 +305,50 @@ describe('merging sessions into one', () => {
         expect(result.ok).toBe(false);
         expect(Object.keys(enhancementTracker.sessions)).toEqual(['session_7', 'session_8']);
         expect(mocks.saveSessions).not.toHaveBeenCalled();
+    });
+});
+
+describe('calibration after a merge', () => {
+    /** #7 reached its +8 (recorded then under its own id), #8 is a second copy climbing to +8 */
+    async function loadMergedPair({ sevenReachedTarget }) {
+        const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastUpdateTime: 1_600_000,
+            lastAttempt: { attemptNumber: 466, level: 8, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
+            currentLevel: sevenReachedTarget ? 8 : 3,
+            totalAttempts: 466,
+        });
+        const eight = createSession('/items/sword', 'Sword', 6, 8, 5);
+        Object.assign(eight, {
+            id: 'session_8',
+            startTime: 5_000_000,
+            lastUpdateTime: 5_100_000,
+            lastAttempt: { attemptNumber: 10, level: 7, timestamp: 5_100_000, actionId: 'a8', currentCount: 10 },
+            currentLevel: 7,
+            totalAttempts: 10,
+        });
+        mocks.loadSessions.mockResolvedValue({ session_7: seven, session_8: eight });
+        mocks.loadCurrentSessionId.mockResolvedValue('session_8');
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
+    }
+
+    test('reaching the target does not record attempts an earlier completion already recorded', async () => {
+        await loadMergedPair({ sevenReachedTarget: true });
+        await enhancementTracker.recordSuccess(7, 8);
+        expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+    });
+
+    test('a merge of runs that never reached their target is recorded as one observation', async () => {
+        await loadMergedPair({ sevenReachedTarget: false });
+        await enhancementTracker.recordSuccess(7, 8);
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
     });
 });

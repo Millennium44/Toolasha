@@ -5,7 +5,13 @@
  */
 
 import enhancementTracker from './enhancement-tracker.js';
-import { SessionState, getSessionDuration, getCurrentLegCounters, mergeSessions } from './enhancement-session.js';
+import {
+    SessionState,
+    getSessionDuration,
+    getCurrentLegCounters,
+    getProtectionBreakdown,
+    mergeSessions,
+} from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
 import { costVsExpected, valueVsCost } from './enhancement-profit.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -1389,10 +1395,15 @@ class EnhancementUI {
             'Their attempts, per-level results, costs, protections, XP and active time are combined, ' +
             'and the originals are removed. This cannot be undone.';
         if (plan.settingsDiffer) {
-            message += `\n\nThey do not share one target and protection setup; the merged session keeps the newest one's (+${newest.targetLevel}, ${protect}).`;
+            message += `\n\nThey do not share one target and protection setup; the merged session keeps the most recent one's (+${newest.targetLevel}, ${protect}).`;
+        }
+        if (plan.protectionItemsDiffer) {
+            message +=
+                '\n\nThey used different protection items. The merged session lists the protection used ' +
+                'per item, and a later auto-resume matches only the most recent one.';
         }
         if (newest.state === SessionState.TRACKING) {
-            message += '\n\nThe newest is still in progress and keeps receiving attempts.';
+            message += '\n\nThe most recent one is still in progress and keeps receiving attempts.';
         }
         if (!confirm(message)) return;
 
@@ -1769,16 +1780,17 @@ class EnhancementUI {
 
         // Protection costs
         if (hasProtection) {
-            const protectionItemName = session.protectionItemHrid
-                ? gameData?.itemDetailMap?.[session.protectionItemHrid]?.name || 'Protection'
-                : 'Protection';
+            // One row per protection item: a merged session can hold runs protected by different ones
+            for (const [hrid, entry] of Object.entries(getProtectionBreakdown(session))) {
+                const protectionItemName = hrid ? gameData?.itemDetailMap?.[hrid]?.name || 'Protection' : 'Protection';
 
-            html += `
-                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
-                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${session.protectionCount || 0}×):</span>
-                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.protectionCost)}</span>
+                html += `
+                <div class="enh-protection-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${entry.count || 0}×):</span>
+                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(entry.totalCost || 0)}</span>
                 </div>
             `;
+            }
         }
 
         html += '</div>'; // Close details

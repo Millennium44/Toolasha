@@ -359,6 +359,43 @@ function sessionSpanEnd(session, start) {
 }
 
 /**
+ * The days an enhancement session ran on, and its share of each.
+ *
+ * A resumed or merged enhancement session is several runs with idle gaps between them: its
+ * closed stretches are in `pastActiveSpans` and its current one runs from `segmentStartTime`.
+ * Spreading it over start..end as one span put part of its net on days nobody was enhancing —
+ * and a merge or resume moved figures already shown for past days. Each stretch gets the share
+ * its length is of the session's active time. A session with no stored stretches is one span,
+ * as before.
+ *
+ * @param {Object} session - A stored enhancement session
+ * @param {number} start - The session's start, epoch ms
+ * @returns {Array<{day: string, share: number}>} Shares summing to 1
+ */
+export function enhancementDayShares(session, start) {
+    const past = Array.isArray(session?.pastActiveSpans) ? session.pastActiveSpans : [];
+    if (past.length === 0) return daySharesOfSpan(start, sessionSpanEnd(session, start));
+
+    const segmentStart = num(session.segmentStartTime) || start;
+    const spans = past
+        .map((span) => ({ from: num(span?.start), to: Math.max(num(span?.start), num(span?.end)) }))
+        .filter((span) => span.from > 0);
+    spans.push({ from: segmentStart, to: sessionSpanEnd(session, segmentStart) });
+    const total = spans.reduce((sum, span) => sum + (span.to - span.from), 0);
+    if (!(total > 0)) return daySharesOfSpan(start, start);
+
+    const byDay = new Map();
+    for (const span of spans) {
+        const length = span.to - span.from;
+        if (!(length > 0)) continue;
+        for (const { day, share } of daySharesOfSpan(span.from, span.to)) {
+            byDay.set(day, (byDay.get(day) || 0) + (share * length) / total);
+        }
+    }
+    return [...byDay].map(([day, share]) => ({ day, share }));
+}
+
+/**
  * A blank per-source tally.
  * @returns {Object} Every source key at zero
  */
@@ -1652,7 +1689,7 @@ export function attributeGoldSources(input) {
     for (const session of enhancementSessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
-        const shares = daySharesOfSpan(t, sessionSpanEnd(session, t));
+        const shares = enhancementDayShares(session, t);
         const net = enhancementSessionNet(session, price, basisPrice);
         if (net === null) {
             if (shares.some(({ day }) => inWindow.has(day))) unpricedEnhancementSessions += 1;

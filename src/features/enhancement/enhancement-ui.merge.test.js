@@ -72,6 +72,7 @@ function spatulaRuns() {
         state: SessionState.COMPLETED,
         startTime: 1_000_000,
         endTime: 1_600_000,
+        lastAttempt: { attemptNumber: 466, level: 3, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
         lastUpdateTime: 1_600_000,
         currentLevel: 3,
         totalAttempts: 466,
@@ -87,6 +88,7 @@ function spatulaRuns() {
         id: 'session_8',
         startTime: 5_000_000,
         lastUpdateTime: 5_100_000,
+        lastAttempt: { attemptNumber: 10, level: 4, timestamp: 5_100_000, actionId: 'a8', currentCount: 10 },
         currentLevel: 4,
         totalAttempts: 1,
         totalSuccesses: 1,
@@ -185,7 +187,7 @@ describe('merging for real', () => {
         enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
 
         await enhancementUI.commitMerge();
-        expect(confirm.mock.calls[0][0]).toContain("keeps the newest one's (+8, protect from +5)");
+        expect(confirm.mock.calls[0][0]).toContain("keeps the most recent one's (+8, protect from +5)");
         expect(game.merges).toEqual([]);
     });
 
@@ -200,5 +202,38 @@ describe('merging for real', () => {
         await enhancementUI.commitMerge();
         expect(alert).toHaveBeenCalledWith('Only sessions for the same item can be merged.');
         expect(confirm).not.toHaveBeenCalled();
+    });
+});
+
+describe('runs protected by different items', () => {
+    test('the confirmation warns, and the cost breakdown lists each item', async () => {
+        const { seven, eight } = spatulaRuns();
+        game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: false, protectionItemsDiffer: true };
+        const confirm = vi.fn(() => false);
+        vi.stubGlobal('confirm', confirm);
+        enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
+        await enhancementUI.commitMerge();
+        expect(confirm.mock.calls[0][0]).toContain('different protection items');
+
+        const html = enhancementUI.generateMaterialCostsHTML({
+            id: 'session_8',
+            materialCosts: {},
+            coinCost: 0,
+            protectionCost: 62000,
+            protectionCount: 14,
+            protectionItemHrid: '/items/holy_spatula',
+            protectionBreakdown: {
+                '/items/mirror_of_protection': { count: 12, totalCost: 12000 },
+                '/items/holy_spatula': { count: 2, totalCost: 50000 },
+            },
+        });
+        const box = document.createElement('div');
+        box.innerHTML = html;
+        const rows = [...box.querySelectorAll('.enh-protection-row')].map((row) =>
+            row.textContent.replace(/\s+/g, ' ')
+        );
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toContain('(12×)');
+        expect(rows[1]).toContain('Holy Spatula (2×)');
     });
 });

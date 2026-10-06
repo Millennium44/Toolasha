@@ -599,6 +599,28 @@ describe('attributeGoldSources', () => {
             expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 1750, '2026-08-20': 5250 });
         });
 
+        test('a resumed or merged enhancement run spreads over its active stretches, not the gap between them', () => {
+            // Four hours on the 19th, idle overnight, four more hours on the 20th (10:00-14:00)
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        pastActiveSpans: [{ start: spanStart, end: spanStart + 4 * 3600_000 }],
+                        segmentStartTime: d20Start + 10 * 3600_000,
+                        lastUpdateTime: d20Start + 14 * 3600_000,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 5,
+                        totalCost: 1000,
+                    },
+                ],
+            });
+
+            // 7000 net, half the active time on each day — not 6/22 of the start..end span on the 19th
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 3500, '2026-08-20': 3500 });
+        });
+
         test('a legacy enhancement session without either stamp books to its start day, whole', () => {
             const result = attributeGoldSources({
                 ...base,
