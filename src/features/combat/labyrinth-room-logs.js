@@ -3037,6 +3037,10 @@ class LabyrinthRoomLogs {
 
         const token = ++this.renderToken;
         list.textContent = '';
+        // Read and cleared first, so a redraw that bails below cannot leave it
+        // set for the next, data-driven one
+        const reuseRequested = this._reuseAccuracySnapshot === true;
+        this._reuseAccuracySnapshot = false;
 
         if (!this.simSource?.accuracy) {
             list.appendChild(
@@ -3045,9 +3049,15 @@ class LabyrinthRoomLogs {
             return;
         }
 
+        // Opening or closing a room type changes what is shown, not what is
+        // known: redraw from the reading already on screen rather than score
+        // every room in the record again, which is what made each click lag.
+        // Only the toggle sets this, and only for the view (whole record or
+        // since the mark) that reading was taken under.
+        const reuse = reuseRequested && !!this.lastAccuracy && this._lastAccuracySince === this.sinceBaseline;
         let snapshot;
         try {
-            snapshot = await this.simSource.accuracy({ since: this.sinceBaseline });
+            snapshot = reuse ? this.lastAccuracy : await this.simSource.accuracy({ since: this.sinceBaseline });
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the fight record failed:', error);
             list.appendChild(this.makeNote('Could not read the fight record.'));
@@ -3079,6 +3089,7 @@ class LabyrinthRoomLogs {
         }
 
         this.lastAccuracy = snapshot;
+        this._lastAccuracySince = this.sinceBaseline;
         list.appendChild(this.renderAccuracySummary(summary, snapshot));
 
         // The per-attempt calibration check, from the recorder's pool — each
@@ -3129,6 +3140,7 @@ class LabyrinthRoomLogs {
         card.addEventListener('click', () => {
             if (open) this.expandedSubjects.delete(group.subjectHrid);
             else this.expandedSubjects.add(group.subjectHrid);
+            this._reuseAccuracySnapshot = true;
             this.render();
         });
 

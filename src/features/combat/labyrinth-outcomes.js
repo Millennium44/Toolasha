@@ -447,11 +447,22 @@ export const outcomeMethods = {
         await this.loadOutcomes();
         const orderOf = (hrid) => this.subjectSortIndex(hrid);
         const totals = since && this._baseline ? totalsSince(this._outcomes, this._baseline.totals) : this._outcomes;
-        const rows = accuracyRows(totals, {
-            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
-            interval: wilsonInterval,
-            orderOf,
-        });
+        // Thousands of rooms are scored here, and a skilling room's inputs are
+        // per skill. Without the memo each one re-resolved its loadout against
+        // the whole inventory, which made opening the Accuracy tab — and every
+        // redraw while it stayed open — take a visible pause. Synchronous from
+        // here to the finally, so nothing else can see the memo.
+        this._skillingMetricsMemo = new Map();
+        let rows;
+        try {
+            rows = accuracyRows(totals, {
+                predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
+                interval: wilsonInterval,
+                orderOf,
+            });
+        } finally {
+            this._skillingMetricsMemo = null;
+        }
         return {
             rows,
             summary: accuracySummary(rows, wilsonInterval),

@@ -5203,3 +5203,53 @@ describe('Path pressed during a floor calculation', () => {
         expect(pathBtn.textContent).toBe('Path');
     });
 });
+
+/**
+ * The Accuracy tab scores every room in the record — thousands of them — and a
+ * skilling room's inputs are per skill. Each room used to rebuild them, which
+ * resolves the skill's loadout against the whole inventory, and that is what
+ * made the tab lag when it opened and on every redraw while it stayed open.
+ */
+describe('the accuracy snapshot scores a skill once, not once per room', () => {
+    afterEach(() => {
+        labyrinthClearRate._outcomes = {};
+        labyrinthClearRate._outcomesLoaded = false;
+        vi.restoreAllMocks();
+    });
+
+    test('one metrics build per skill, and the same predictions as without the memo', async () => {
+        const totals = {};
+        for (const skill of ['milking', 'foraging']) {
+            for (let level = 60; level < 90; level++) {
+                totals[`/skills/${skill}:${level}`] = {
+                    subjectHrid: `/skills/${skill}`,
+                    kind: 'skilling',
+                    roomLevel: level,
+                    attempts: 3,
+                    clears: 2,
+                };
+            }
+        }
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        dataManagerMock.getSkills.mockReturnValue([
+            { skillHrid: '/skills/milking', level: 80 },
+            { skillHrid: '/skills/foraging', level: 75 },
+        ]);
+        labyrinthClearRate._outcomes = totals;
+        labyrinthClearRate._outcomesLoaded = true;
+        vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
+        const build = vi.spyOn(labyrinthClearRate, '_computeSkillingMetrics');
+
+        const { rows } = await labyrinthClearRate.accuracySnapshot();
+
+        expect(build).toHaveBeenCalledTimes(2);
+        // The memo is gone once the pass is over, so a later caller sees live inputs
+        expect(labyrinthClearRate._skillingMetricsMemo).toBeNull();
+        for (const row of rows) {
+            expect(row.predicted).toBe(labyrinthClearRate.predictedClearChance(row.subjectHrid, row.level, 'skilling'));
+        }
+        expect(rows.every((row) => Number.isFinite(row.predicted))).toBe(true);
+        dataManagerMock.characterData = null;
+        dataManagerMock.getSkills.mockReturnValue([]);
+    });
+});

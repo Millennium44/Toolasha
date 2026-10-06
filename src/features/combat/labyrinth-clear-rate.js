@@ -1026,6 +1026,24 @@ class LabyrinthClearRate {
      * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
      */
     getSkillingMetrics(skillId, actionTypeHrid) {
+        // A pass that scores thousands of rooms (the Accuracy tab's snapshot)
+        // holds one memo for its duration: every input below is per skill, not
+        // per room, and the loadout's resolved equipment rescans the whole
+        // inventory each time it is read. A copy is handed out so no caller can
+        // edit another's metrics.
+        const memo = this._skillingMetricsMemo;
+        const memoKey = `${skillId}|${actionTypeHrid}`;
+        if (memo?.has(memoKey)) return { ...memo.get(memoKey) };
+        const metrics = this._computeSkillingMetrics(skillId, actionTypeHrid);
+        if (memo) memo.set(memoKey, { ...metrics });
+        return metrics;
+    }
+
+    /**
+     * {@link getSkillingMetrics} without the per-pass memo.
+     * @private
+     */
+    _computeSkillingMetrics(skillId, actionTypeHrid) {
         const metrics = {
             skillLevelBonus: 0,
             efficiencyBonus: 0,

@@ -483,6 +483,31 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).not.toContain('Milking Lv.173');
     });
 
+    test('opening a room type redraws from the reading on screen instead of rescoring the record', async () => {
+        // Scoring every room of an 11,000-fight record is what made each click lag
+        const accuracy = vi.fn(async () => snapshot);
+        labyrinthRoomLogs.simSource = { accuracy };
+        [...cards()][1].click();
+        await vi.waitFor(() => expect(text()).toContain('Milking Lv.173'));
+        expect(accuracy).not.toHaveBeenCalled();
+
+        // A redraw for any other reason still takes a fresh reading
+        await labyrinthRoomLogs.renderAccuracy();
+        expect(accuracy).toHaveBeenCalledTimes(1);
+    });
+
+    test('the reused reading is never one taken for the other view', async () => {
+        const accuracy = vi.fn(async () => snapshot);
+        labyrinthRoomLogs.simSource = { accuracy };
+        labyrinthRoomLogs.sinceBaseline = true;
+        try {
+            [...cards()][1].click();
+            await vi.waitFor(() => expect(accuracy).toHaveBeenCalledWith({ since: true }));
+        } finally {
+            labyrinthRoomLogs.sinceBaseline = false;
+        }
+    });
+
     test('replay explains exclusions and sim failures rather than claiming too few fights', () => {
         const card = labyrinthRoomLogs.renderReplayResult({
             groups: [],
