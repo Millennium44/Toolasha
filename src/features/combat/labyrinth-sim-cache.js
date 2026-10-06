@@ -150,6 +150,27 @@ function nonDamagingPlayerAbilities(gameData, dto) {
     return set;
 }
 
+/**
+ * The PLAYER's equipped ability hrids that apply a damage-over-time (maim's
+ * bleed). The outgoing harness uses them to tell a bleed chain from other
+ * boss damage, and to count the cast whose hit started it as that ability even
+ * when the game labels the swing an auto-attack.
+ * @param {Object} gameData - `{abilityDetailMap}`
+ * @param {Object} dto - A player DTO (`abilities: [{hrid, level}|null]`)
+ * @returns {Set<string>}
+ */
+function dotPlayerAbilities(gameData, dto) {
+    const set = new Set();
+    const abilityMap = gameData?.abilityDetailMap || {};
+    for (const entry of dto?.abilities || []) {
+        const hrid = entry?.hrid;
+        const def = hrid && abilityMap[hrid];
+        if (!def) continue;
+        if ((def.abilityEffects || []).some((e) => Number(e.damageOverTimeRatio) > 0)) set.add(hrid);
+    }
+    return set;
+}
+
 /** Clear chances are pinned to this many percentage points either side by default */
 export const DEFAULT_SIM_PRECISION_PCT = 1;
 /** Schema default for `labyrinthSimMaxHours`, kept here so the clamp agrees with it */
@@ -475,11 +496,16 @@ export const simCacheMethods = {
             fullAbilities: this.labyrinthFullAbilities(),
             zone: setup.zone,
         });
-        const real = extractMonsterAttacks(ticks, { nonDamaging: nonDamagingAbilities(gameData, monsterHrid) });
+        const monsterNonDamaging = nonDamagingAbilities(gameData, monsterHrid);
+        const real = extractMonsterAttacks(ticks, { nonDamaging: monsterNonDamaging });
         const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
         // The outgoing direction, from the SAME capture and the SAME sim run —
         // the attack tallies already hold the player→monster pair.
-        const outReal = extractPlayerAttacks(ticks, { nonDamaging: nonDamagingPlayerAbilities(gameData, dto) });
+        const outReal = extractPlayerAttacks(ticks, {
+            nonDamaging: nonDamagingPlayerAbilities(gameData, dto),
+            dotAbilities: dotPlayerAbilities(gameData, dto),
+            monsterNonDamaging,
+        });
         const outSim = summarizeSimAttacks(simResult?.attacks?.[playerHrid]?.[monsterHrid]);
         return {
             comparison: compareIncoming(real, sim),
