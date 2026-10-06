@@ -584,6 +584,27 @@ function fileSizes(files) {
 }
 
 /**
+ * The ordering counter the gist's manifest carries, read from a gist response.
+ *
+ * Null for anything that is not a plain non-negative integer, for a manifest
+ * GitHub truncated, and for one that does not parse — the push then writes the
+ * counter it built, exactly as before.
+ *
+ * @param {Object|null|undefined} files - The `files` map of a gist response
+ * @returns {number|null} The counter, or null when there is none to read
+ */
+function manifestSeq(files) {
+    const file = files?.[MANIFEST_FILE];
+    if (!file || file.truncated || typeof file.content !== 'string') return null;
+    try {
+        const seq = JSON.parse(file.content)?.syncSeq;
+        return Number.isSafeInteger(seq) && seq >= 0 ? seq : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Split a payload into files small enough that GitHub returns them whole.
  *
  * Sliced by UTF-16 code units rather than bytes, which over-counts for ASCII and
@@ -777,8 +798,9 @@ async function readFileContent(token, file) {
  * @param {number} [previousChunkCount=0] - How many chunks this device last wrote, as a hint
  * @param {{gistId: string, etag: string, files: Record<string, number>}|null} [known] - A remembered
  *   listing: the gist's ETag and the file sizes it had at that ETag
- * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null}>}
- *   The gist that was written, with the ETag and file sizes of the version the write produced
+ * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
+ *   syncSeq: number|undefined}>} The gist that was written, with the ETag and file sizes of the version the
+ *   write produced, and the counter its manifest actually carries (raised above the gist's own, see below)
  */
 export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0, known = null) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
@@ -786,7 +808,7 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
     // Everything but the orphan list is the same on every attempt, so the body
     // is serialized again only when a retry's listing names different orphans.
     // A full-scope body is megabytes; stringifying it once per 409 was waste.
-    const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
+    const files = {};
     chunks.forEach((chunk, index) => {
         // A gist file may not be empty; a single space keeps an empty payload legal
         files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
@@ -805,7 +827,7 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
         let survivingBytes = 0;
         if (existingFiles) {
             for (const [name, size] of Object.entries(existingFiles)) {
-                if (Object.hasOwn(files, name)) continue; // being overwritten
+                if (name === MANIFEST_FILE || Object.hasOwn(files, name)) continue; // being overwritten
                 if (chunkIndexFromName(name) !== null) {
                     // A chunk this payload does not reach is an orphan, whoever wrote it
                     orphans.push(name);
@@ -829,16 +851,30 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
             );
         }
 
-        const orphanKey = orphans.join('\n');
+        // The counter is written above whatever the gist already carries.
+        // This device's own counter only knows the exchanges it took part in:
+        // a device that last took 5 and pushes 6 over a gist another device
+        // has since taken to 7 would write a payload every device at 7 reads
+        // as *older* — skipped as "not newer", marked current, and never
+        // downloaded again — while its contents are now the gist's. Lamport's
+        // send rule is one above everything seen, and the listing just saw it.
+        const remoteSeq = listing?.syncSeq ?? null;
+        const syncSeq =
+            Number.isSafeInteger(manifest?.syncSeq) && remoteSeq !== null && remoteSeq >= manifest.syncSeq
+                ? remoteSeq + 1
+                : manifest?.syncSeq;
+        const writtenManifest = syncSeq === manifest?.syncSeq ? manifest : { ...manifest, syncSeq };
+
+        const orphanKey = `${orphans.join('\n')}|${syncSeq}`;
         if (serialized?.orphanKey !== orphanKey) {
-            const withOrphans = { ...files };
+            const withOrphans = { [MANIFEST_FILE]: { content: JSON.stringify(writtenManifest, null, 2) }, ...files };
             for (const name of orphans) withOrphans[name] = null;
             const body = {
                 description: 'Toolasha cross-device sync (do not edit by hand)',
                 files: withOrphans,
                 ...(gistId ? {} : { public: false }),
             };
-            serialized = { orphanKey, text: JSON.stringify(body) };
+            serialized = { orphanKey, syncSeq, text: JSON.stringify(body) };
         }
 
         if (gistId) {
@@ -850,6 +886,7 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
                 updatedAt: updated.data?.updated_at ?? null,
                 etag: updated.etag,
                 files: fileSizes(updated.data?.files),
+                syncSeq: serialized.syncSeq,
             };
         }
 
@@ -860,6 +897,7 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
             updatedAt: created.data.updated_at ?? null,
             etag: created.etag,
             files: fileSizes(created.data.files),
+            syncSeq: serialized.syncSeq,
         };
     };
 
@@ -897,15 +935,18 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
  * @param {{etag: string, files: Record<string, number>}|null} previous - Listing to revalidate
- * @returns {Promise<{gistId: string, etag: string|null, files: Record<string, number>}|null>} The listing
+ * @returns {Promise<{gistId: string, etag: string|null, files: Record<string, number>, syncSeq: number|null}|null>}
+ *   The listing, with the counter the gist's manifest carries (null when unread, or kept from `previous` on a 304)
  */
 async function listGistFiles(token, gistId, previous) {
     try {
         const ifNoneMatch = previous?.etag && previous.files ? previous.etag : null;
         const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch });
-        if (exchange.notModified) return { gistId, etag: exchange.etag, files: previous.files };
+        if (exchange.notModified) {
+            return { gistId, etag: exchange.etag, files: previous.files, syncSeq: previous.syncSeq ?? null };
+        }
         const files = fileSizes(exchange.data?.files);
-        return files ? { gistId, etag: exchange.etag, files } : null;
+        return files ? { gistId, etag: exchange.etag, files, syncSeq: manifestSeq(exchange.data?.files) } : null;
     } catch (error) {
         console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
         return null;

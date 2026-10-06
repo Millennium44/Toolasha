@@ -134,7 +134,13 @@ vi.mock('./gist-client.js', () => ({
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
         gist.writes.push({ id, manifest, chunks, previous, known });
-        return { id: id ?? 'created-id', updatedAt: 'now', etag: gist.writeEtag, files: gist.writeFiles };
+        return {
+            id: id ?? 'created-id',
+            updatedAt: 'now',
+            etag: gist.writeEtag,
+            files: gist.writeFiles,
+            syncSeq: gist.writeSeq ?? manifest.syncSeq,
+        };
     },
 }));
 
@@ -182,6 +188,7 @@ beforeEach(() => {
     gist.remoteFiles = null;
     gist.writeEtag = undefined;
     gist.writeFiles = undefined;
+    gist.writeSeq = undefined;
     panelOpens.length = 0;
     clearPullSummary();
     syncManager.busy = false;
@@ -1460,7 +1467,7 @@ describe('the remembered gist version', () => {
     });
 
     test('a push hands the remembered listing to the write and remembers the version it produced', async () => {
-        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: false };
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
         stored.map.toolasha_sync_gistVersion = known;
         payload.text = '{"local":2}';
         gist.writeEtag = 'W/"e9"';
@@ -1474,6 +1481,28 @@ describe('the remembered gist version', () => {
             files: gist.writeFiles,
             current: true,
         });
+    });
+
+    test('a version this device only saw is not handed over, so the write reads the gist counter', async () => {
+        // A silent pull stood down on it: the gist there may be further along
+        // than this device, and a 304 against it would hide by how much
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: false };
+        payload.text = '{"local":2}';
+
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(gist.writes[0].known).toBeNull();
+    });
+
+    test('a push remembers the counter the write actually put in the manifest', async () => {
+        stored.map.toolasha_sync_lastSyncedSeq = 5;
+        payload.text = '{"local":2}';
+        gist.writeSeq = 8;
+
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(gist.writes[0].manifest.syncSeq).toBe(6);
+        // Remembering 6 would leave this device reading its own push, at 8, as
+        // newer than itself — and every later push of its own a step behind
+        expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(8);
     });
 
     test('a write that reports no ETag leaves no version behind', async () => {

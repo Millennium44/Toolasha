@@ -706,6 +706,60 @@ describe('writeSyncGist', () => {
         }
     });
 
+    test('writes its counter above one another device has since pushed to the gist', async () => {
+        // This device last took counter 5 and builds 6; another device has
+        // meanwhile pushed twice and the gist's manifest says 7. Written as 6,
+        // every device at 7 would read this push as older and skip it for good
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1, syncSeq: 7 }) },
+                    [chunkFileName(0)]: { size: 10 },
+                },
+            },
+        });
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 6 }, ['data']);
+
+        const { files } = JSON.parse(calls[1].data);
+        expect(JSON.parse(files[MANIFEST_FILE].content).syncSeq).toBe(8);
+        expect(result.syncSeq).toBe(8);
+    });
+
+    test('keeps its own counter when the gist is not ahead of it', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1, syncSeq: 4 }) },
+                },
+            },
+        });
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 6 }, ['data']);
+
+        const { files } = JSON.parse(calls[1].data);
+        expect(JSON.parse(files[MANIFEST_FILE].content).syncSeq).toBe(6);
+        expect(result.syncSeq).toBe(6);
+        // The manifest is rewritten in place, never counted as a file left behind
+        expect(files[MANIFEST_FILE]).not.toBeNull();
+    });
+
+    test('a manifest without a counter is not given one', async () => {
+        responses.push({
+            status: 200,
+            body: { files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ syncSeq: 9 }) } } },
+        });
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1 }, ['data']);
+
+        expect(JSON.parse(JSON.parse(calls[1].data).files[MANIFEST_FILE].content).syncSeq).toBeUndefined();
+    });
+
     test('falls back to the remembered count when the gist cannot be listed', async () => {
         responses.push({ status: 500, body: {} });
         responses.push({ status: 200, body: { id: 'abc' } });

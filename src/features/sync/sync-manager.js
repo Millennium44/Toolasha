@@ -459,8 +459,20 @@ class SyncManager {
         // being built. The check at the top is too early to cover that.
         if (await storage.get(KEY_MERGE_HELD, STORE, null)) return this._heldBackResult(silent);
 
+        // A remembered listing is handed over only when this device's data
+        // already reflects it. One it merely saw — a silent pull that stood
+        // down on a conflict — can carry a higher counter than this device's,
+        // and a 304 against it would hide that counter from the write below,
+        // which raises the manifest's counter above the gist's own.
         const known = await this._knownVersion(gistId);
-        const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks, known);
+        const written = await writeSyncGist(
+            token,
+            gistId,
+            manifest,
+            chunks,
+            previousChunks,
+            known?.current ? known : null
+        );
 
         // The upload already landed — that part cannot be undone or is not
         // worth undoing, since the takeover's own more-recent write (if any)
@@ -476,7 +488,9 @@ class SyncManager {
             exportedAt,
             hash,
             chunkCount: chunks.length,
-            syncSeq,
+            // What the manifest actually carries: the write raises it above a
+            // gist another device has since moved further along
+            syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
             // The write's own response describes the version it produced, which
             // is this device's data by construction. No ETag, no claim: the
             // next read then downloads in full, as it always did.
