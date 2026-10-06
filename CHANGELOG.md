@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - My Listings no longer shows your own price as the "Top Order Price" when nobody else is on that side of the book, and the price history no longer dates a marketplace snapshot as "now" — an older snapshot could overwrite a fresher order-book reading and wipe its depth.
 
+### Audit round: tasks and the planner
+
+- A combat task's profit estimate now flags unpriced drops ("≥") and unpriced consumables ("-- ⚠") instead of counting them as worth nothing; the reroll-spend line no longer lands on the wrong card when one task's name contains another's ("Cow" vs "Verdant Cow"); the planner no longer files one character's combat baseline under another after a switch, and an earning leg whose market volume was not measured now says so.
+
 ### Labyrinth badges cover rooms revealed mid-calculation
 
 - Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.

@@ -542,42 +542,41 @@ class TaskRerollTracker {
             }
         }
 
-        // Match against stored task data
+        // Match against stored task data. Names overlap ("Cow" is inside
+        // "Verdant Cow", "Tree" inside "Birch Tree"), so every record that fits
+        // is collected and the one with the longest name wins; if that record is
+        // already taken by another card this pass, the card matches nothing
+        // rather than falling back to a shorter name that is a different task.
+        const descLower = description.toLowerCase();
+        const gameData = dataManager.getInitClientData();
+        let best = null;
         for (const [taskId, taskData] of this.taskRerollData.entries()) {
-            // Check if goal count matches
             if (taskData.goalCount !== goalCount) continue;
 
-            // Extract monster/action name from description
-            // Description format: "Kill X" or "Do action X times"
-            const descLower = description.toLowerCase();
-
-            // Skip if already matched to another DOM element this pass
-            if (claimedIds?.has(taskId)) continue;
-
-            // For monster tasks, check monsterHrid
+            let name = '';
             if (taskData.monsterHrid) {
-                const gameData = dataManager.getInitClientData();
                 const monsterDetail = gameData?.combatMonsterDetailMap?.[taskData.monsterHrid];
                 const monsterName =
                     monsterDetail?.name || taskData.monsterHrid.replace('/monsters/', '').replace(/_/g, ' ');
-                if (descLower.includes(monsterName.toLowerCase())) {
-                    claimedIds?.add(taskId);
-                    return taskId;
-                }
+                if (descLower.includes(monsterName.toLowerCase())) name = monsterName;
             }
-
-            // For action tasks, check actionHrid
-            if (taskData.actionHrid) {
+            if (!name && taskData.actionHrid) {
                 const actionParts = taskData.actionHrid.split('/');
                 const actionName = actionParts[actionParts.length - 1].replace(/_/g, ' ');
-                if (descLower.includes(actionName.toLowerCase())) {
-                    claimedIds?.add(taskId);
-                    return taskId;
-                }
+                if (descLower.includes(actionName.toLowerCase())) name = actionName;
+            }
+            if (!name) continue;
+
+            const claimed = Boolean(claimedIds?.has(taskId));
+            // Longest name first; among equal names an unclaimed record is preferred
+            if (!best || name.length > best.length || (name.length === best.length && best.claimed && !claimed)) {
+                best = { taskId, length: name.length, claimed };
             }
         }
 
-        return null;
+        if (!best || best.claimed) return null;
+        claimedIds?.add(best.taskId);
+        return best.taskId;
     }
 
     /**

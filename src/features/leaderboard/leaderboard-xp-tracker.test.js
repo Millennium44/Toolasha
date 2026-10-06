@@ -556,6 +556,16 @@ describe('leaderboard XP tracker', () => {
         expect(leaderboardXPTracker.getBoardRecordTimes('standard')).toEqual({ cooking: later });
     });
 
+    test('getBoardRecordTimes is not fooled by a player name carrying "|", "_" or a board type', () => {
+        // The key is rank|<category>|<filters>_<name>: the category ends at the FIRST '|' and the filter part is
+        // matched only at its start or after a '/', so nothing in the trailing name can move a reading
+        leaderboardXPTracker.playerXPHistory['rank|milking|standard_a|b_steam_standard_c'] = [{ t: 11, r: 1 }];
+        leaderboardXPTracker.playerXPHistory['rank|foraging|all_steam_standard_x'] = [{ t: 22, r: 1 }];
+        leaderboardXPTracker.playerXPHistory['rank|cooking|steam_standard_p|q_r'] = [{ t: 33, r: 1 }];
+        expect(leaderboardXPTracker.getBoardRecordTimes('steam_standard')).toEqual({ cooking: 33 });
+        expect(leaderboardXPTracker.getBoardRecordTimes('standard')).toEqual({ milking: 11 });
+    });
+
     test('getBoardRecordTimes is empty while the tracker is off', () => {
         leaderboardXPTracker.playerXPHistory['rank|milking|steam_standard_M'] = [{ t: 5, r: 1 }];
         leaderboardXPTracker.disable();
