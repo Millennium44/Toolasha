@@ -1342,9 +1342,26 @@ describe('mergeForUpload, which writes nothing local', () => {
     });
 
     test('says whether the gist held anything this device lacks', () => {
-        const local = payloadOf({ settings: { a: 1 } });
-        expect(mergeForUpload(local, payloadOf({ settings: { a: 1 } }), null).remoteAdds).toBe(false);
-        expect(mergeForUpload(local, payloadOf({ settings: { a: 1, b: 2 } }), null).remoteAdds).toBe(true);
+        const local = payloadOf({ settings: { panelGeometry: 1 } });
+        expect(mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1 } }), null).remoteAdds).toBe(false);
+        expect(
+            mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1, panelSizeMemory: 2 } }), null).remoteAdds
+        ).toBe(true);
+    });
+
+    test('a gist that differs only where this device won the merge holds nothing for it', () => {
+        // The gist's X is older than this device's, and its panel position is
+        // the one this device last exchanged: this device wins both, so a
+        // startup pull of the result would change nothing here
+        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
+        const local = payloadOf({
+            settings: { [MAP]: { X: { v: 'new' } }, [STAMPS]: { X: { at: 20 } }, panelGeometry: { x: 2 } },
+        });
+        const remote = payloadOf({
+            settings: { [MAP]: { X: { v: 'old' } }, [STAMPS]: { X: { at: 10 } }, panelGeometry: { x: 1 } },
+        });
+
+        expect(mergeForUpload(local, remote, baseline).remoteAdds).toBe(false);
     });
 
     test('the result is a payload an older build restores: format 1, stamps beside the map', () => {

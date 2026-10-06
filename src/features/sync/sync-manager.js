@@ -53,6 +53,7 @@ import {
     addsToRemote,
     mergeForUpload,
     wholeKeyHashes,
+    exchangeBaseline,
     restampRestoredSettings,
     RESTORED_BASELINE,
 } from './sync-payload.js';
@@ -609,10 +610,10 @@ class SyncManager {
             // automatic push, seeing the gist no longer ahead, replaced it
             extra: {
                 [KEY_LAST_PUSHED_AT]: exportedAt,
-                // This device's values, whichever of them the upload kept: a key
-                // the gist's side won stays "unmoved here" against this device's
-                // own value, so the startup pull takes the gist's (see wholeKeyHashes)
-                [KEY_BASELINE]: wholeKeyHashes(localPayload),
+                // A merged upload records both what went up and what this device
+                // holds (see exchangeBaseline); a plain one, where they are the
+                // same, records the one
+                [KEY_BASELINE]: merged ? exchangeBaseline(payload, localPayload) : wholeKeyHashes(localPayload),
                 // A merged upload carried changes this device has not applied, or
                 // still carries ones an earlier merge did. A plain push replaced
                 // the gist with this device's data, so there are none.

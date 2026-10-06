@@ -833,10 +833,52 @@ function keepMine(id, mine, theirs, baseline, { allowRestored = false } = {}) {
     // A full-backup restore made this device's whole-value keys a choice made
     // now, whatever the last exchange was (see RESTORED_BASELINE)
     if (allowRestored && baseline?.[RESTORED_BASELINE]) return valueHash(mine) !== valueHash(theirs);
-    const was = baseline?.[id];
+    const was = readBaselineEntry(baseline?.[id]);
     if (!was) return false;
-    const mineHash = valueHash(mine);
-    return mineHash !== was && valueHash(theirs) === was;
+    // The gist's side unmoved since the exchange, and this side moved since
+    return valueHash(theirs) === was.gist && valueHash(mine) !== was.local;
+}
+
+/**
+ * One key's baseline entry as its two halves: what the gist held after the
+ * exchange, and what this device held. They are one hash — stored as a plain
+ * string — after every exchange but a merged upload, where the gist can take
+ * a value this device has not applied yet.
+ * @param {*} entry - A stored entry
+ * @returns {{gist: string, local: string|null}|null} The halves, or null when there is none
+ */
+function readBaselineEntry(entry) {
+    if (typeof entry === 'string' && entry) return { gist: entry, local: entry };
+    if (entry && typeof entry === 'object' && typeof entry.gist === 'string') {
+        return { gist: entry.gist, local: typeof entry.local === 'string' ? entry.local : null };
+    }
+    return null;
+}
+
+/**
+ * The baseline a merged upload leaves: per key, what the gist now holds (the
+ * merge's winner) beside what this device holds.
+ *
+ * Both halves are needed, and for opposite questions. "Did this device change
+ * the key since?" is asked of its own value: recording only the uploaded
+ * winner made a key the gist won look locally edited at the next startup
+ * pull, which then kept the stale local value. "Did the gist change it
+ * since?" is asked of the gist's value: recording only the local value made
+ * a key the gist won look moved on the gist's side forever, so an edit made
+ * here after the merge lost to it at the next push.
+ *
+ * @param {string} uploadedText - The merged payload that went up
+ * @param {string} localText - This device's payload it was built from
+ * @returns {Record<string, string|{gist: string, local: string|null}>} The baseline
+ */
+export function exchangeBaseline(uploadedText, localText) {
+    const gist = wholeKeyHashes(uploadedText);
+    const local = wholeKeyHashes(localText);
+    const baseline = {};
+    for (const [id, hash] of Object.entries(gist)) {
+        baseline[id] = local[id] === hash ? hash : { gist: hash, local: local[id] ?? null };
+    }
+    return baseline;
 }
 
 /**
@@ -934,8 +976,8 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
  * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
  * @param {string} remoteText - The gist's payload, decrypted
  * @param {Record<string, string>|null} baseline - This device's hashes at its last exchange
- * @returns {{text: string, remoteAdds: boolean}} The merged payload, and whether the gist held anything this
- *   device does not (so its next startup pull has something to take)
+ * @returns {{text: string, remoteAdds: boolean}} The merged payload, and whether it holds anything this device
+ *   does not (so its next startup pull has something to take)
  * @throws {Error} When the gist's payload is not one this build can apply
  */
 export function mergeForUpload(localText, remoteText, baseline) {
@@ -1011,7 +1053,12 @@ export function mergeForUpload(localText, remoteText, baseline) {
         syncScope: local?.syncScope ?? remote.syncScope ?? 'settings',
         stores,
     });
-    return { text, remoteAdds: addsToRemote(remoteText, localText) };
+    // Whether applying the result here would change anything — not whether
+    // the gist differs from this device, which it does even when this device
+    // won every difference. That case left a note that the gist held news,
+    // and the next startup imported an identical payload, latched the stores
+    // and asked for a reload over nothing.
+    return { text, remoteAdds: addsToRemote(text, localText) };
 }
 
 /**
@@ -1141,6 +1188,7 @@ export default {
     applyPayload,
     mergeForUpload,
     wholeKeyHashes,
+    exchangeBaseline,
     restampRestoredSettings,
     addsToRemote,
     hashPayload,

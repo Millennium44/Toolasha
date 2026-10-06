@@ -490,6 +490,70 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
     });
 
+    test('an edit made after a merge the gist won is not lost at the next push, and a reload keeps it', async () => {
+        const { a, b } = await syncedPair();
+        // Both move the panel position between the same two syncs; B pushes first
+        await as(b, async () => {
+            b.db.settings.panelGeometry = { from: 'b' };
+            await auto.push();
+        });
+        await as(a, async () => {
+            a.db.settings.panelGeometry = { from: 'a1' };
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            await auto.push();
+        });
+        // Both moved it: the gist's copy stands
+        expect(gistStores().settings.panelGeometry).toEqual({ from: 'b' });
+
+        // A moves it again before reloading: that is a change made after the
+        // merge, against a gist that has not moved since
+        await as(a, async () => {
+            a.db.settings.panelGeometry = { from: 'a2' };
+            await auto.push();
+        });
+        expect(gistStores().settings.panelGeometry).toEqual({ from: 'a2' });
+
+        await as(a, auto.startup);
+        expect(a.db.settings.panelGeometry).toEqual({ from: 'a2' });
+    });
+
+    test("a reload after a merge the gist won takes the gist's value when nothing was edited here since", async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            b.db.settings.panelGeometry = { from: 'b' };
+            await auto.push();
+        });
+        await as(a, async () => {
+            a.db.settings.panelGeometry = { from: 'a1' };
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            await auto.push();
+        });
+
+        await as(a, auto.startup);
+        expect(a.db.settings.panelGeometry).toEqual({ from: 'b' });
+    });
+
+    test('a merge this device won outright leaves nothing for its next reload to apply', async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        // A changes X later, and has nothing else the gist lacks or holds
+        await as(a, async () => {
+            changeSetting(a, 'X', false);
+            await auto.push();
+        });
+        expect(gistStores().settings[MAP].X.isTrue).toBe(false);
+        expect(a.db.settings.toolasha_sync_unapplied ?? null).toBeNull();
+
+        a.latches = 0;
+        toasts.length = 0;
+        await as(a, auto.startup);
+        expect(a.latches).toBe(0);
+        expect(toasts).toHaveLength(0);
+    });
+
     test('a pressed Push still means this device, and overwrites', async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {

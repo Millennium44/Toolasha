@@ -104,6 +104,7 @@ vi.mock('./sync-payload.js', () => ({
     mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
     restampRestoredSettings: () => {},
     RESTORED_BASELINE: '\u0000restoredAt',
+    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
     wholeKeyHashes: () => ({}),
 }));
 

@@ -98,6 +98,7 @@ vi.mock('./sync-payload.js', () => ({
     },
     restampRestoredSettings: () => {},
     RESTORED_BASELINE: '\u0000restoredAt',
+    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
     wholeKeyHashes: (text) => ({ of: text }),
     // The older raw-text hash, which the manifest gate also accepts
     hashPayload: (text) => `raw:${text}`,
@@ -1866,7 +1867,11 @@ describe('automatic pushes merge into the upload, never into this device', () =>
         // This device's own data is what "unchanged" is measured against
         expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":2}');
         // The baseline is this device's values, and the gist holds news for it
-        expect(stored.map.toolasha_sync_baseline).toEqual({ of: '{"local":2}' });
+        // Both halves of a merged exchange: what went up, and what this device holds
+        expect(stored.map.toolasha_sync_baseline).toEqual({
+            uploaded: '{"remote":1}+{"local":2}',
+            local: '{"local":2}',
+        });
         expect(stored.map.toolasha_sync_unapplied).toBeTruthy();
         expect(toasts).toHaveLength(0);
     });
