@@ -52,6 +52,13 @@ const AUTO_ABILITY = 'autoAttack';
  * so it is shown but never compared and never counted in the share totals.
  */
 export const UNATTRIBUTED_ABILITY = 'unattributed';
+/**
+ * Reflected damage the sim records (thorns, retaliation). The wire gives no way
+ * to tell a reflect tick from other damage, so these rows are shown but never
+ * graded and left out of the share totals — the same way `unattributed` is on
+ * the real side — keeping both sides' denominators to damage that can be read.
+ */
+const REFLECT_ABILITIES = new Set(['physicalThorns', 'elementalThorns', 'retaliation']);
 /** A bleed ticks three times, three seconds apart (the sim's DOT_TICK_INTERVAL) */
 const BLEED_TICKS = 3;
 const BLEED_INTERVAL_MS = 3000;
@@ -289,6 +296,11 @@ function extractAttacks(ticks, opts) {
             let fits = [];
             for (const h of hitLog) {
                 if (h.used || Math.abs(at - h.at - BLEED_INTERVAL_MS) > BLEED_TOLERANCE_MS) continue;
+                // Only a hit the game could have mislabeled can be a bleed's source. One
+                // filed under an explicitly named non-DoT ability (a Cleave) is never
+                // rewritten, and a tick whose only timing match is such a hit stays
+                // unattributed rather than being taken as a bleed on weak evidence.
+                if (h.label !== AUTO_ABILITY && h.label !== UNATTRIBUTED_ABILITY && !dotNames.has(h.label)) continue;
                 const matching = dotCandidates.filter(
                     (cand) => Math.abs(per - h.dmg * cand.frac) <= Math.max(3, 0.02 * h.dmg) * cand.frac
                 );
@@ -690,7 +702,7 @@ function totalsOf(byAbility) {
     for (const [ability, r] of Object.entries(byAbility || {})) {
         // DoT ticks are not casts (see DOT_ABILITY) — counting the sim's tick
         // entries as casts would deflate every real ability's sim cast share
-        if (ability === UNATTRIBUTED_ABILITY) continue;
+        if (ability === UNATTRIBUTED_ABILITY || REFLECT_ABILITIES.has(ability)) continue;
         if (ability !== DOT_ABILITY) casts += r.casts || 0;
         damage += r.damage || 0;
     }
@@ -751,16 +763,18 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
     };
 
     const rows = abilities.map((ability) => {
+        const isReflect = REFLECT_ABILITIES.has(ability);
         const isUnattributed = ability === UNATTRIBUTED_ABILITY;
+        const ungraded = isUnattributed || isReflect;
         // Unattributed ticks are counted like a DoT's: per tick, not per cast
         const isDot = ability === DOT_ABILITY || isUnattributed;
         const rawReal = real?.byAbility?.[ability];
-        const r = side(rawReal, realT, isDot, isUnattributed);
-        const s = side(sim?.byAbility?.[ability], simT, isDot, isUnattributed);
+        const r = side(rawReal, realT, isDot, ungraded);
+        const s = side(sim?.byAbility?.[ability], simT, isDot, ungraded);
         // How many real casts (DoT: ticks) stand behind this row's numbers.
         const samples = rawReal ? (isDot ? rawReal.hits + rawReal.misses : rawReal.casts) : 0;
         // The headline gap: how the ability's share of incoming damage differs.
-        const dmgShareGap = isUnattributed ? 0 : (s?.dmgSharePct ?? 0) - (r?.dmgSharePct ?? 0);
+        const dmgShareGap = ungraded ? 0 : (s?.dmgSharePct ?? 0) - (r?.dmgSharePct ?? 0);
         // Cadence, read straight off the attack counter — the reliable half. A
         // damage-share gap on an ability whose cast share matches is a magnitude
         // question (per-cast damage), not a rotation one. Null for the DoT row,
@@ -770,11 +784,14 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
         // Magnitude gap relative to the real mean; needs both means, and a real
         // mean of zero (an all-miss row) has no scale to compare against.
         const meanPerCastGapPct =
-            !isUnattributed && r && s && r.meanDmgPerCast > 0
+            !ungraded && r && s && r.meanDmgPerCast > 0
                 ? (100 * (s.meanDmgPerCast - r.meanDmgPerCast)) / r.meanDmgPerCast
                 : null;
         let verdict = 'ok';
-        if (isUnattributed) {
+        if (isReflect) {
+            // Reflected damage the wire cannot identify: reported, never graded
+            verdict = 'reflect';
+        } else if (isUnattributed) {
             // Real damage nothing explains: reported, never graded against a sim
             // row the sim has no way to produce
             verdict = 'unattributed';

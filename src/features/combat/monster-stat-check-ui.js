@@ -83,12 +83,15 @@ const UPTIME_VERDICT = {
     buff: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
     inconclusive: { glyph: '?', color: 'rgba(255,255,255,0.35)' },
     unattributed: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
+    reflect: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
 };
 
 /** Hover text for the uptime verdicts that need more than their own name. */
 const UPTIME_TITLE = {
     buff: 'non-damaging buff — not in the damage tally; verify via blind probe',
     inconclusive: `fewer than ${MIN_REAL_CASTS} real casts — too few to grade`,
+    reflect:
+        'thorns / retaliation damage the sim records but the wire cannot identify — not graded, not in the share totals',
     unattributed:
         'boss damage no swing, bleed or parry accounts for — shown for completeness, not compared against the sim',
 };

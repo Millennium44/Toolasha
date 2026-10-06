@@ -747,6 +747,39 @@ describe('extractPlayerAttacks — bleed chains and parry counters', () => {
         expect(extractPlayerAttacks(bleedTicks()).byAbility.damageOverTime).toBeUndefined();
     });
 
+    test('a correctly labeled non-DoT ability is never rewritten into the DoT ability', () => {
+        // A 393 Cleave, then three ticks of 131 three seconds apart: 3 x 131 matches
+        // the Cleave's size, but the game named it, so it stays a Cleave and the
+        // ticks stay unattributed (no source the game could have mislabeled).
+        const p = { atkCounter: 49, isAutoAtk: true, dmgCounter: 25, cHP: 1208 };
+        const ticks = [
+            both(0, { ...p, abilityHrid: '/abilities/cleave' }, { atkCounter: 31, dmgCounter: 49, cHP: 5000 }),
+            both(874, { ...p, atkCounter: 50 }, { atkCounter: 31, dmgCounter: 50, cHP: 4607 }),
+            both(3912, { ...p, atkCounter: 50 }, { atkCounter: 31, dmgCounter: 51, cHP: 4476 }),
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks, { dotAbilities: new Set([MAIM]) });
+        expect(byAbility['/abilities/cleave']).toMatchObject({ hits: 1, damage: 393 });
+        expect(byAbility[MAIM]).toBeUndefined();
+        expect(byAbility.damageOverTime).toBeUndefined();
+        expect(byAbility.unattributed).toMatchObject({ hits: 1, damage: 131 });
+    });
+
+    test('sim thorns and retaliation rows are shown but not graded or counted in the share totals', () => {
+        const real = extractPlayerAttacks(bleedTicks(), { dotAbilities: new Set([MAIM]) });
+        const sim = summarizeSimAttacks({
+            autoAttack: { 100: 10 },
+            physicalThorns: { 50: 4 },
+            retaliation: { 30: 2, miss: 3 },
+        });
+        const cmp = compareIncoming(real, sim);
+        const rows = Object.fromEntries(cmp.rows.map((r) => [r.ability, r]));
+        expect(rows.physicalThorns.verdict).toBe('reflect');
+        expect(rows.retaliation.verdict).toBe('reflect');
+        expect(rows.physicalThorns.sim.dmgSharePct).toBeNull();
+        expect(cmp.simTotals.damage).toBe(1000);
+        expect(rows.autoAttack.sim.dmgSharePct).toBe(100);
+    });
+
     test('two DoT abilities: the chain relabels the hit to the one whose tick size fits', () => {
         // maim: 3 ticks of a third; the other: 4 ticks of a quarter of 0.8 of the hit
         const dots = new Map([
