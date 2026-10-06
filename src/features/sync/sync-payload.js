@@ -370,6 +370,8 @@ export async function applyPayload(json) {
     // preserved below. Both getAll and tryGet read IndexedDB, so preserving a
     // token or a recent setting before this flush would write its old value
     // back over the queued edit, just like merging a history from a stale base.
+    /** This device's key-migration records, as they were before the pull forgot any */
+    let migrationRecords = null;
     try {
         await storage.beginRestore?.();
 
@@ -393,6 +395,9 @@ export async function applyPayload(json) {
             // for exactly the maps that did not bring their own (see
             // reconcileKeyMigrationState), so the next load reconciles what this
             // pull actually landed.
+            migrationRecords = Object.fromEntries(
+                Object.entries(local || {}).filter(([key]) => key.startsWith(MIGRATION_RECORD_PREFIX))
+            );
             await settingsStorage.reconcileKeyMigrationState(Object.keys(settingsStore));
         }
 
@@ -409,7 +414,20 @@ export async function applyPayload(json) {
         const rewrote = merged.length > 0 || mergeHeld.length > 0 || droppedUnowned || Boolean(settingsStore);
         const applied = rewrote ? JSON.stringify(payload) : json;
 
-        const { restored, expected, failed, complete } = await importEverything(payload);
+        let imported;
+        try {
+            imported = await importEverything(payload);
+        } catch (error) {
+            await restoreMigrationRecords(migrationRecords);
+            throw error;
+        }
+        const { restored, expected, failed, complete } = imported;
+        // The records were forgotten because the maps were about to land. A
+        // settings store that did not land kept its old maps, which still match
+        // the old records — one aborted transaction takes every key with it
+        if ((failed || []).some((entry) => entry.store === SETTINGS_STORE)) {
+            await restoreMigrationRecords(migrationRecords);
+        }
         return {
             restored,
             expected,
@@ -427,6 +445,33 @@ export async function applyPayload(json) {
         // otherwise leave every debounced write in the script held until the
         // unload flush. Ending an already-ended hold is a no-op.
         await storage.endRestore?.();
+    }
+}
+
+/**
+ * Where `core/settings-storage.js` keeps the key-migration records — the
+ * per-map `settings_key_migrations_applied_<map>` and the legacy
+ * `settings_key_migrations_v1`/`_v2` flags all share it.
+ */
+const MIGRATION_RECORD_PREFIX = 'settings_key_migrations_';
+
+/**
+ * Put back the key-migration records a pull forgot, when the settings maps
+ * they were forgotten for did not land.
+ *
+ * Written down the bulk path with `bypassRestoreLatch`, because a restore may
+ * already have latched the settings store. A failure here is logged, not
+ * thrown: the pull has already failed, and its own error is the one to report.
+ *
+ * @param {Record<string, *>|null} records - The records as they were, or null when none were touched
+ * @returns {Promise<void>}
+ */
+async function restoreMigrationRecords(records) {
+    if (!records || Object.keys(records).length === 0) return;
+    try {
+        await storage.putAll(SETTINGS_STORE, records, { bypassRestoreLatch: true });
+    } catch (error) {
+        console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
     }
 }
 
