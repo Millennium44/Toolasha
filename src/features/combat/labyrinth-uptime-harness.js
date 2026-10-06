@@ -46,6 +46,7 @@
 const DOT_ABILITY = 'damageOverTime';
 /** The sim's name for the player's counter-attack after parrying a swing */
 const PARRY_ABILITY = 'parry';
+const AUTO_ABILITY = 'autoAttack';
 /**
  * Boss damage no swing, bleed or parry accounts for. The sim has no such row,
  * so it is shown but never compared and never counted in the share totals.
@@ -90,7 +91,8 @@ const PARRY_WINDOW_MS = 700;
  *   never credited damage; `playerAttacks` picks the direction — false reads
  *   the monster's swings paid off by the player's dmgCounter, true the
  *   player's swings paid off by the monster's. Outgoing only: `dotAbilities`
- *   is a Set of the player's abilities that apply a damage-over-time (maim),
+ *   is a Map of the player's DoT-applying abilities to `{ratio, ticks}` (a Set
+ *   of hrids reads as plain 3-tick bleeds),
  *   and `monsterNonDamaging` a Set of the monster's non-damaging ability hrids
  *   (they cannot be parried, so they are not evidence of a parry)
  * @returns {{durationMs: number, fights: number, partialFights: number,
@@ -142,7 +144,21 @@ function extractAttacks(ticks, opts) {
     // Swings awaiting their resolution, oldest first — each holds the ability the
     // attacker was preparing when it swung.
     const pending = [];
-    const dotAbilities = opts.dotAbilities instanceof Set ? opts.dotAbilities : new Set();
+    // The player's DoT-applying abilities, each with the share of the hit one bleed
+    // tick takes (damageOverTimeRatio / ticks) and its tick count. A Set (no
+    // game data) means a plain 3-tick, third-per-tick bleed. With none equipped,
+    // no damage is ever read as a bleed.
+    const dotCandidates = [];
+    if (opts.dotAbilities instanceof Map) {
+        for (const [name, d] of opts.dotAbilities) {
+            const ticks = Math.max(1, Math.round(Number(d?.ticks) || BLEED_TICKS));
+            const ratio = Number(d?.ratio) > 0 ? Number(d.ratio) : 1;
+            dotCandidates.push({ name, frac: ratio / ticks, ticks });
+        }
+    } else if (opts.dotAbilities instanceof Set) {
+        for (const name of opts.dotAbilities) dotCandidates.push({ name, frac: 1 / BLEED_TICKS, ticks: BLEED_TICKS });
+    }
+    const dotNames = new Set(dotCandidates.map((c) => c.name));
     const monsterNonDamaging = opts.monsterNonDamaging instanceof Set ? opts.monsterNonDamaging : new Set();
 
     // Outgoing direction only — the monster's damage taken from sources that
@@ -158,6 +174,9 @@ function extractAttacks(ticks, opts) {
     let prevPlayerDmg;
     let parryBalance = 0;
     let parryBalanceAt = 0;
+    // Whether the swing behind the parry credit was an ordinary one (the sim files
+    // its counter under autoAttack) or an ability (under parry)
+    let parryWasAbility = false;
 
     const resetBaselines = () => {
         prevAtk = undefined;
@@ -223,11 +242,11 @@ function extractAttacks(ticks, opts) {
     /**
      * Move a hit already filed under another label to the DoT-applying ability:
      * the game labels some maim casts as auto-attacks, and the bleed that follows
-     * is what gives them away.
+     * is what gives them away. Only done when one DoT ability alone fits the
+     * bleed's size; abilities that cannot be told apart leave the hit where it was.
      */
-    const relabelAsDotCast = (hit) => {
-        if (dotAbilities.size !== 1 || dotAbilities.has(hit.label)) return;
-        const name = [...dotAbilities][0];
+    const relabelAsDotCast = (hit, name) => {
+        if (!name || dotNames.has(hit.label)) return;
         const from = hit.rec;
         const to = rec(name);
         if (from.casts > 0) from.casts -= 1;
@@ -251,7 +270,7 @@ function extractAttacks(ticks, opts) {
      * `parry` row), else `unattributed` — kept apart so it is never compared.
      */
     const fileUnexplained = (per, at) => {
-        if (per > 0 && Number.isFinite(at)) {
+        if (dotCandidates.length && per > 0 && Number.isFinite(at)) {
             hitLog = hitLog.filter((h) => at - h.at <= BLEED_INTERVAL_MS + BLEED_TOLERANCE_MS);
             chains = chains.filter((c) => at - c.lastAt <= BLEED_INTERVAL_MS + BLEED_TOLERANCE_MS);
             const chain = chains.find(
@@ -262,25 +281,41 @@ function extractAttacks(ticks, opts) {
             if (chain) {
                 chain.lastAt = at;
                 chain.n += 1;
-                if (chain.n >= BLEED_TICKS) chains.splice(chains.indexOf(chain), 1);
+                if (chain.n >= chain.ticks) chains.splice(chains.indexOf(chain), 1);
                 fileTick(rec(DOT_ABILITY), per);
                 return;
             }
             let source = null;
+            let fits = [];
             for (const h of hitLog) {
                 if (h.used || Math.abs(at - h.at - BLEED_INTERVAL_MS) > BLEED_TOLERANCE_MS) continue;
-                if (Math.abs(3 * per - h.dmg) > Math.max(3, 0.02 * h.dmg)) continue;
-                if (!source || Math.abs(3 * per - h.dmg) < Math.abs(3 * per - source.dmg)) source = h;
+                const matching = dotCandidates.filter(
+                    (cand) => Math.abs(per - h.dmg * cand.frac) <= Math.max(3, 0.02 * h.dmg) * cand.frac
+                );
+                if (!matching.length) continue;
+                const err = Math.abs(per - h.dmg * matching[0].frac);
+                if (!source || err < source.err) {
+                    source = { h, err };
+                    fits = matching;
+                }
             }
             if (source) {
-                source.used = true;
-                relabelAsDotCast(source);
-                chains.push({ per: source.dmg / BLEED_TICKS, lastAt: at, n: 1 });
+                const hit = source.h;
+                hit.used = true;
+                // Relabel only when exactly one DoT ability's bleed fits this size
+                const distinct = new Set(fits.map((f) => f.name));
+                if (distinct.size === 1) relabelAsDotCast(hit, fits[0].name);
+                chains.push({
+                    per: per,
+                    lastAt: at,
+                    n: 1,
+                    ticks: Math.max(...fits.map((f) => f.ticks)),
+                });
                 fileTick(rec(DOT_ABILITY), per);
                 return;
             }
         }
-        if (per > 0 && Number.isFinite(at)) {
+        if (dotCandidates.length && per > 0 && Number.isFinite(at)) {
             // A bleed whose source hit was never seen (a gap in the capture, a
             // merged tick): its first tick is still unexplained, so the second
             // — the same damage exactly three seconds on — proves both.
@@ -301,14 +336,21 @@ function extractAttacks(ticks, opts) {
                 if (idx >= 0) from.samples.splice(idx, 1);
                 dropIfEmpty(UNATTRIBUTED_ABILITY, from);
                 fileTick(rec(DOT_ABILITY), first.dmg);
-                chains.push({ per: first.dmg, lastAt: at, n: 2 });
+                chains.push({
+                    per: first.dmg,
+                    lastAt: at,
+                    n: 2,
+                    ticks: Math.max(...dotCandidates.map((cand) => cand.ticks)),
+                });
                 fileTick(rec(DOT_ABILITY), per);
                 return;
             }
         }
         if (parryBalance > 0) {
             parryBalance -= 1;
-            const r = rec(PARRY_ABILITY);
+            // The sim files a parried ordinary swing's counter under autoAttack and
+            // only a parried ability's under parry
+            const r = rec(parryWasAbility ? PARRY_ABILITY : AUTO_ABILITY);
             r.casts += 1;
             fileTick(r, per);
             return;
@@ -317,7 +359,9 @@ function extractAttacks(ticks, opts) {
         // is about to prove it — so it stays a candidate source.
         const r = rec(UNATTRIBUTED_ABILITY);
         fileTick(r, per);
-        if (per > 0 && Number.isFinite(at)) hitLog.push({ at, dmg: per, label: UNATTRIBUTED_ABILITY, rec: r });
+        if (dotCandidates.length && per > 0 && Number.isFinite(at)) {
+            hitLog.push({ at, dmg: per, label: UNATTRIBUTED_ABILITY, rec: r });
+        }
     };
 
     for (const tick of ticks || []) {
@@ -434,7 +478,10 @@ function extractAttacks(ticks, opts) {
                     if (swings > 0 && prevMonLabel && monsterNonDamaging.has(prevMonLabel)) swings -= 1;
                     const splats = Number.isFinite(plDmg) ? Math.max(0, plDmg - prevPlayerDmg) : 0;
                     parryBalance = Math.max(0, parryBalance + swings - splats);
-                    if (swings > 0 && Number.isFinite(at)) parryBalanceAt = at;
+                    if (swings > 0 && Number.isFinite(at)) {
+                        parryBalanceAt = at;
+                        parryWasAbility = !!prevMonLabel && prevMonLabel !== AUTO_ABILITY;
+                    }
                 }
                 if (Number.isFinite(monAtk)) prevMonAtk = monAtk;
                 if (Number.isFinite(plDmg)) prevPlayerDmg = plDmg;

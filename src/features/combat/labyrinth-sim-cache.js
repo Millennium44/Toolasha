@@ -151,24 +151,31 @@ function nonDamagingPlayerAbilities(gameData, dto) {
 }
 
 /**
- * The PLAYER's equipped ability hrids that apply a damage-over-time (maim's
- * bleed). The outgoing harness uses them to tell a bleed chain from other
- * boss damage, and to count the cast whose hit started it as that ability even
- * when the game labels the swing an auto-attack.
+ * The PLAYER's equipped abilities that apply a damage-over-time (maim's bleed,
+ * firestorm's burn), each with its own `damageOverTimeRatio` and tick count
+ * (duration over the sim's 3 s tick). The outgoing harness uses them to tell a
+ * bleed chain from other boss damage, to tell one DoT ability from another by
+ * the size of its ticks, and to count the cast whose hit started a chain as
+ * that ability even when the game labels the swing an auto-attack.
  * @param {Object} gameData - `{abilityDetailMap}`
  * @param {Object} dto - A player DTO (`abilities: [{hrid, level}|null]`)
- * @returns {Set<string>}
+ * @returns {Map<string, {ratio: number, ticks: number}>}
  */
 function dotPlayerAbilities(gameData, dto) {
-    const set = new Set();
+    const map = new Map();
     const abilityMap = gameData?.abilityDetailMap || {};
     for (const entry of dto?.abilities || []) {
         const hrid = entry?.hrid;
         const def = hrid && abilityMap[hrid];
         if (!def) continue;
-        if ((def.abilityEffects || []).some((e) => Number(e.damageOverTimeRatio) > 0)) set.add(hrid);
+        const effect = (def.abilityEffects || []).find((e) => Number(e.damageOverTimeRatio) > 0);
+        if (!effect) continue;
+        // Game data carries the duration in nanoseconds; the sim ticks every 3 s
+        const duration = Number(effect.damageOverTimeDuration);
+        const seconds = duration >= 1e6 ? duration / 1e9 : duration;
+        map.set(hrid, { ratio: Number(effect.damageOverTimeRatio), ticks: Math.max(1, Math.round(seconds / 3)) });
     }
-    return set;
+    return map;
 }
 
 /** Clear chances are pinned to this many percentage points either side by default */

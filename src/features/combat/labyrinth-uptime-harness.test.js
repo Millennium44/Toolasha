@@ -712,9 +712,9 @@ describe('extractPlayerAttacks — bleed chains and parry counters', () => {
             both(
                 26435,
                 { atkCounter: 69, isAutoAtk: true, dmgCounter: 34, cHP: 26 },
-                { atkCounter: 42, dmgCounter: 70, cHP: 1707 }
+                { atkCounter: 42, abilityHrid: '/abilities/rain_of_arrows', dmgCounter: 70, cHP: 1707 }
             ),
-            // the monster swings (42 -> 43), the player's dmgCounter stays at 34,
+            // the monster swings its prepared ability (42 -> 43), the player's dmgCounter stays at 34,
             // and the monster takes 16 with no swing of the player's behind it
             both(
                 29260,
@@ -726,6 +726,49 @@ describe('extractPlayerAttacks — bleed chains and parry counters', () => {
         expect(byAbility.parry).toMatchObject({ casts: 1, hits: 1, damage: 16 });
         expect(byAbility.damageOverTime).toBeUndefined();
         expect(byAbility.unattributed).toBeUndefined();
+    });
+
+    test('a parried ordinary swing’s counter is filed under autoAttack, like the sim does', () => {
+        const p = { atkCounter: 69, isAutoAtk: true, dmgCounter: 34, cHP: 26 };
+        const ticks = [
+            both(26435, p, { atkCounter: 42, isAutoAtk: true, dmgCounter: 70, cHP: 1707 }),
+            both(29260, p, { atkCounter: 43, isAutoAtk: true, dmgCounter: 71, cHP: 1691 }),
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks, { dotAbilities: new Set([MAIM]) });
+        expect(byAbility.autoAttack).toMatchObject({ casts: 1, hits: 1, damage: 16 });
+        expect(byAbility.parry).toBeUndefined();
+    });
+
+    test('with no DoT ability equipped, a tripled hit 3 s earlier and equal repeats are not bleeds', () => {
+        const none = { dotAbilities: new Set() };
+        const real = extractPlayerAttacks(bleedTicks(), none);
+        expect(real.byAbility.damageOverTime).toBeUndefined();
+        expect(real.byAbility.unattributed).toMatchObject({ hits: 3, damage: 131 });
+        expect(extractPlayerAttacks(bleedTicks()).byAbility.damageOverTime).toBeUndefined();
+    });
+
+    test('two DoT abilities: the chain relabels the hit to the one whose tick size fits', () => {
+        // maim: 3 ticks of a third; the other: 4 ticks of a quarter of 0.8 of the hit
+        const dots = new Map([
+            [MAIM, { ratio: 1, ticks: 3 }],
+            ['/abilities/firestorm', { ratio: 0.8, ticks: 4 }],
+        ]);
+        const { byAbility } = extractPlayerAttacks(bleedTicks(), { dotAbilities: dots });
+        expect(byAbility[MAIM]).toMatchObject({ casts: 1, hits: 1, damage: 131 });
+        expect(byAbility['/abilities/firestorm']).toBeUndefined();
+        expect(byAbility.autoAttack).toBeUndefined();
+        expect(byAbility.damageOverTime).toMatchObject({ hits: 3 });
+    });
+
+    test('two DoT abilities that cannot be told apart leave the hit where the game filed it', () => {
+        const dots = new Map([
+            [MAIM, { ratio: 1, ticks: 3 }],
+            ['/abilities/other', { ratio: 1, ticks: 3 }],
+        ]);
+        const { byAbility } = extractPlayerAttacks(bleedTicks(), { dotAbilities: dots });
+        expect(byAbility[MAIM]).toBeUndefined();
+        expect(byAbility.autoAttack).toMatchObject({ hits: 1, damage: 131 });
+        expect(byAbility.damageOverTime).toMatchObject({ hits: 3 });
     });
 
     test('a monster buff cast is not evidence of a parry (the swing belongs to the ability prepared a tick earlier)', () => {
