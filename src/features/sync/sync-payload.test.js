@@ -30,6 +30,11 @@ vi.mock('../../core/storage.js', () => ({
         },
         putAll: async (name, entries, options) => {
             storeState.putAllCalls.push({ name, entries, options });
+            // An aborted transaction: putAll says so with a short count, not a throw
+            if (storeState.shortWrites > 0) {
+                storeState.shortWrites -= 1;
+                return 0;
+            }
             storeState.stores[name] = { ...(storeState.stores[name] || {}), ...entries };
             return Object.keys(entries).length;
         },
@@ -101,6 +106,7 @@ beforeEach(() => {
     storeState.pending = {};
     storeState.flushError = null;
     storeState.putAllCalls = [];
+    storeState.shortWrites = 0;
     flushLog.length = 0;
     reconcileKeyMigrationState.mockClear();
     storeState.stores = {
@@ -591,6 +597,15 @@ describe('applyPayload and the key-migration carry', () => {
             importOutcome.failed = [{ store: 'settings', expected: 1, written: 0 }];
             await applyPayload(body);
 
+            expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+        });
+
+        test('a restore write that comes back short is retried', async () => {
+            importOutcome.throws = new Error('listStores failed');
+            storeState.shortWrites = 1;
+            await expect(applyPayload(body)).rejects.toThrow('listStores failed');
+
+            expect(storeState.putAllCalls).toHaveLength(2);
             expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
         });
 

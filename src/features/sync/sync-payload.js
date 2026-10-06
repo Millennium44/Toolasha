@@ -464,15 +464,28 @@ const MIGRATION_RECORD_PREFIX = 'settings_key_migrations_';
  * thrown: the pull has already failed, and its own error is the one to report.
  *
  * @param {Record<string, *>|null} records - The records as they were, or null when none were touched
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} Whether every record is back
  */
 async function restoreMigrationRecords(records) {
-    if (!records || Object.keys(records).length === 0) return;
-    try {
-        await storage.putAll(SETTINGS_STORE, records, { bypassRestoreLatch: true });
-    } catch (error) {
-        console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
+    const wanted = records ? Object.keys(records).length : 0;
+    if (wanted === 0) return true;
+    // putAll reports a failed transaction as a short count, not a throw; one retry covers a
+    // transient abort, and a second short write is said plainly because the next load would
+    // re-run those migrations over the player's settings
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            const written = await storage.putAll(SETTINGS_STORE, records, { bypassRestoreLatch: true });
+            if (written === wanted) return true;
+        } catch (error) {
+            console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
+        }
     }
+    console.error(
+        '[Sync] The settings migration records could not be restored after a failed pull; the next load may ' +
+            're-run settings migrations. Keys:',
+        Object.keys(records)
+    );
+    return false;
 }
 
 /**

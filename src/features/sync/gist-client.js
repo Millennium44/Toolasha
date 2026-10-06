@@ -596,6 +596,9 @@ function fileSizes(files) {
  */
 function listedManifest(files) {
     const file = files?.[MANIFEST_FILE];
+    // No manifest at all is a gist this sync never wrote: nothing in it can be encrypted. A manifest
+    // that is there but unreadable leaves the encryption unknown, which the push treats as unsafe.
+    if (files && !file) return { syncSeq: null, encrypted: false };
     if (!file || file.truncated || typeof file.content !== 'string') return { syncSeq: null, encrypted: null };
     try {
         const manifest = JSON.parse(file.content);
@@ -890,7 +893,9 @@ export async function writeSyncGist(
         // as *older* — skipped as "not newer", marked current, and never
         // downloaded again — while its contents are now the gist's. Lamport's
         // send rule is one above everything seen, and the listing just saw it.
-        if (listing?.encrypted === true && !manifest?.encrypted) {
+        // Unknown counts as encrypted: an unreadable manifest, or no listing for a pressed push, must
+        // not let plaintext replace what may be an encrypted gist without asking
+        if (gistId && listing?.encrypted !== false && !manifest?.encrypted) {
             if (unattended) {
                 throw new GistError(
                     'passphrase',

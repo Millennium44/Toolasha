@@ -824,6 +824,42 @@ describe('writeSyncGist', () => {
         expect(asked).toBe(1);
     });
 
+    test('an unreadable manifest counts as possibly encrypted; a gist with no manifest does not', async () => {
+        const garbled = () => ({
+            status: 200,
+            body: { files: { [MANIFEST_FILE]: { size: 90, content: '{not json' } } },
+        });
+        responses.push(garbled());
+        const refused = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            unattended: true,
+        }).catch((caught) => caught);
+        expect(refused.kind).toBe('passphrase');
+
+        responses.push(garbled());
+        const declined = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            confirmPlaintext: async () => false,
+        }).catch((caught) => caught);
+        expect(declined.kind).toBe('cancelled');
+
+        // A gist this sync never wrote has nothing encrypted in it
+        responses.push({ status: 200, body: { files: { 'notes.txt': { size: 3, content: 'hi' } } } });
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, { unattended: true });
+        expect(calls.at(-1).method).toBe('PATCH');
+    });
+
+    test('a pressed push whose listing failed asks before writing plaintext', async () => {
+        responses.push({ status: 500, body: {} }, { status: 200, body: { id: 'abc' } });
+        let asked = 0;
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            confirmPlaintext: async () => {
+                asked += 1;
+                return true;
+            },
+        });
+        expect(asked).toBe(1);
+    });
+
     test('a pressed push over an encrypted gist that is not confirmed writes nothing', async () => {
         responses.push({
             status: 200,
