@@ -5671,3 +5671,111 @@ describe('floor calculation and rooms revealed mid-pass', () => {
         expect(labyrinthClearRate._pathQueued).toBe(false);
     });
 });
+
+/**
+ * Opening the Accuracy tab on a 3,241-fight record froze the page for one
+ * 1,274 ms frame: every room in the record was scored in a single synchronous
+ * pass. The rows are now built in time slices with a frame handed back between
+ * them, and must come out exactly as the single pass made them.
+ */
+const { accuracyRows: singlePassRows } = await import('./labyrinth-outcome-log.js');
+const { wilsonInterval: wilsonForRows } = await import('../combat-sim/engine/wilson.js');
+
+describe('the accuracy snapshot hands the browser frames on a large record', () => {
+    afterEach(() => {
+        labyrinthClearRate._outcomes = {};
+        labyrinthClearRate._outcomesLoaded = false;
+        labyrinthClearRate._skillPredictionCache = null;
+        labyrinthClearRate.combatCache.clear();
+        delete globalThis.scheduler;
+        dataManagerMock.characterData = null;
+        dataManagerMock.getSkills.mockReturnValue([]);
+        vi.restoreAllMocks();
+    });
+
+    const record = () => {
+        const totals = {};
+        for (const skill of ['milking', 'foraging', 'enhancing']) {
+            for (let level = 60; level < 160; level++) {
+                totals[`/skills/${skill}:${level}`] = {
+                    subjectHrid: `/skills/${skill}`,
+                    kind: 'skilling',
+                    roomLevel: level,
+                    attempts: 3,
+                    clears: level % 3,
+                    predicted: 0.5,
+                };
+            }
+        }
+        for (let level = 60; level < 160; level++) {
+            totals[`/monsters/imp:${level}`] = {
+                subjectHrid: '/monsters/imp',
+                kind: 'combat',
+                roomLevel: level,
+                attempts: 2,
+                clears: 1,
+            };
+            if (level % 2)
+                labyrinthClearRate.combatCache.set(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', level), {
+                    clearChance: 0.8,
+                });
+        }
+        return totals;
+    };
+
+    test('yields between slices, and the rows are exactly what one pass builds', async () => {
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        dataManagerMock.getSkills.mockReturnValue([
+            { skillHrid: '/skills/milking', level: 120 },
+            { skillHrid: '/skills/foraging', level: 110 },
+            { skillHrid: '/skills/enhancing', level: 100 },
+        ]);
+        const totals = record();
+        labyrinthClearRate._outcomes = totals;
+        labyrinthClearRate._outcomesLoaded = true;
+        vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
+        let yields = 0;
+        globalThis.scheduler = {
+            yield: () => {
+                yields++;
+                return Promise.resolve();
+            },
+        };
+        // A clock that moves a millisecond per reading, so the slices are deterministic
+        let clock = 0;
+        vi.spyOn(performance, 'now').mockImplementation(() => ++clock);
+
+        const { rows, summary } = await labyrinthClearRate.accuracySnapshot();
+
+        expect(yields).toBeGreaterThan(10);
+        const orderOf = (hrid) => labyrinthClearRate.subjectSortIndex(hrid);
+        const single = singlePassRows(totals, {
+            predictedFor: (hrid, level, kind) => labyrinthClearRate.predictedClearChance(hrid, level, kind),
+            interval: wilsonForRows,
+            orderOf,
+        });
+        expect(rows).toEqual(single);
+        expect(summary.buckets).toBe(400);
+    });
+
+    test('a reopen reuses the skilling predictions while their inputs are unchanged', async () => {
+        dataManagerMock.characterData = { characterSetting: {}, characterInfo: {} };
+        let level = 120;
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level }]);
+        labyrinthClearRate._outcomes = record();
+        labyrinthClearRate._outcomesLoaded = true;
+        vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
+        const worked = vi.spyOn(labyrinthClearRate, 'computeSkillingClear');
+
+        await labyrinthClearRate.accuracySnapshot();
+        expect(worked).toHaveBeenCalled();
+        worked.mockClear();
+        await labyrinthClearRate.accuracySnapshot();
+        expect(worked).not.toHaveBeenCalled();
+
+        // A level-up is a new input, so the rooms of that skill are scored again
+        level = 121;
+        await labyrinthClearRate.accuracySnapshot();
+        expect(worked).toHaveBeenCalled();
+    });
+});

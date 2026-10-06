@@ -19,12 +19,14 @@ import {
     foldFloorOutcomes,
     outcomeKey,
     accuracyRows,
+    sortAccuracyRows,
     accuracySummary,
     accuracyBySubject,
     totalsSince,
     foldRoomResult,
 } from './labyrinth-outcome-log.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { CLEAR_FOLD_LIMIT } from '../../utils/cleared-record.js';
 
@@ -445,24 +447,26 @@ export const outcomeMethods = {
      */
     async accuracySnapshot({ since = false } = {}) {
         await this.loadOutcomes();
-        const orderOf = (hrid) => this.subjectSortIndex(hrid);
+        const generation = this._outcomeGeneration || 0;
+        // Sorting compares two rooms at a time and asks each for its place in
+        // the game's order, so the same few dozen subjects were looked up tens of
+        // thousands of times; one lookup each is the same answer
+        const order = new Map();
+        const orderOf = (hrid) => {
+            if (!order.has(hrid)) order.set(hrid, this.subjectSortIndex(hrid));
+            return order.get(hrid);
+        };
         const totals = since && this._baseline ? totalsSince(this._outcomes, this._baseline.totals) : this._outcomes;
-        // Thousands of rooms are scored here, and a skilling room's inputs are
-        // per skill. Without the memo each one re-resolved its loadout against
-        // the whole inventory, which made opening the Accuracy tab — and every
-        // redraw while it stayed open — take a visible pause. Synchronous from
-        // here to the finally, so nothing else can see the memo.
-        this._skillingMetricsMemo = new Map();
-        let rows;
-        try {
-            rows = accuracyRows(totals, {
-                predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
-                interval: wilsonInterval,
-                orderOf,
-            });
-        } finally {
-            this._skillingMetricsMemo = null;
-        }
+
+        // Every room in the record is scored against the sim — thousands of
+        // them — and on a live record that was over a second of one frame.
+        // The rows are built a slice at a time with the browser handed a frame
+        // between slices, then sorted exactly as a single pass sorts them.
+        const rows = await this._accuracyRowsSliced(totals, orderOf);
+        // A character switch landed while the slices yielded: the totals in
+        // hand are the departing character's. Start over on the arriving one's.
+        if ((this._outcomeGeneration || 0) !== generation) return this.accuracySnapshot({ since });
+
         return {
             rows,
             summary: accuracySummary(rows, wilsonInterval),
@@ -470,6 +474,63 @@ export const outcomeMethods = {
             baselineAt: this._baseline?.at || null,
             since: !!(since && this._baseline),
         };
+    },
+
+    /**
+     * `accuracyRows` over a record, built a bucket at a time in time slices
+     * with a frame handed back between them, then sorted as one pass sorts.
+     * Each row depends only on its own bucket, so the result is the same rows
+     * in the same order.
+     *
+     * The per-skill metrics memo lives for one slice only — never across a
+     * yield, where another caller could read it.
+     *
+     * A skilling room's clear chance is a pure function of its skill's inputs
+     * (level, metrics, labyrinth upgrades — the tile signature) and its level,
+     * so it is kept across opens under that signature: reopening the tab, or a
+     * redraw while it is open, reuses it until one of those inputs changes.
+     * Combat predictions are a cache lookup already and are read fresh.
+     *
+     * @private
+     * @param {Object} totals - The record
+     * @param {Function} orderOf - (subjectHrid) => sort key
+     * @returns {Promise<Array<Object>>}
+     */
+    async _accuracyRowsSliced(totals, orderOf) {
+        if (!this._skillPredictionCache || this._skillPredictionCache.size > 20000) {
+            this._skillPredictionCache = new Map();
+        }
+        const cache = this._skillPredictionCache;
+        let signatureOf = null;
+        const predictedFor = (hrid, level, kind) => {
+            if (kind !== 'skilling' && !String(hrid).startsWith('/skills/')) {
+                return this.predictedClearChance(hrid, level, kind);
+            }
+            signatureOf = signatureOf || this._tileInputsReader();
+            const signature = signatureOf({ skillHrid: hrid }, level);
+            if (!cache.has(signature)) cache.set(signature, this.predictedClearChance(hrid, level, kind));
+            return cache.get(signature);
+        };
+
+        const rows = [];
+        let sliceStart = performance.now();
+        this._skillingMetricsMemo = new Map();
+        try {
+            for (const [key, bucket] of Object.entries(totals || {})) {
+                rows.push(...accuracyRows({ [key]: bucket }, { predictedFor, interval: wilsonInterval }));
+                if (performance.now() - sliceStart > 12) {
+                    this._skillingMetricsMemo = null;
+                    await yieldToBrowser();
+                    this._skillingMetricsMemo = new Map();
+                    // Fresh per slice too: the reader holds the inputs it read
+                    signatureOf = null;
+                    sliceStart = performance.now();
+                }
+            }
+        } finally {
+            this._skillingMetricsMemo = null;
+        }
+        return sortAccuracyRows(rows, orderOf);
     },
 
     /**
