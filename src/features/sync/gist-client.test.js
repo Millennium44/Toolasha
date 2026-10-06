@@ -946,6 +946,54 @@ describe('writeSyncGist', () => {
         }
     });
 
+    test('a gist ahead of the caller stops the write instead of overwriting it', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: {
+                        size: 90,
+                        content: JSON.stringify({
+                            toolashaSync: 1,
+                            chunks: 1,
+                            syncSeq: 7,
+                            exportedAt: '2026-05-01T00:00:00.000Z',
+                        }),
+                    },
+                },
+            },
+        });
+        const seen = [];
+
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 4 }, ['data'], 0, null, {
+            isAhead: (listed) => {
+                seen.push(listed);
+                return listed.syncSeq > 3;
+            },
+        }).catch((caught) => caught);
+
+        expect(error.kind).toBe('behind');
+        expect(seen[0]).toMatchObject({ syncSeq: 7, exportedAt: '2026-05-01T00:00:00.000Z' });
+        expect(calls).toHaveLength(1);
+    });
+
+    test('a 304 against a version the caller already reflects is never ahead', async () => {
+        responses.push({ status: 304, headers: { etag: 'W/"e1"' } });
+        responses.push({ status: 200, body: { id: 'abc' } });
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: {}, current: true, syncSeq: 3, encrypted: false };
+        let asked = 0;
+
+        await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 4 }, ['data'], 0, known, {
+            isAhead: () => {
+                asked += 1;
+                return true;
+            },
+        });
+
+        expect(asked).toBe(0);
+        expect(calls[1].method).toBe('PATCH');
+    });
+
     test('falls back to the remembered count when the gist cannot be listed', async () => {
         responses.push({ status: 500, body: {} });
         responses.push({ status: 200, body: { id: 'abc' } });

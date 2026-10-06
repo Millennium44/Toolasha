@@ -98,6 +98,11 @@ vi.mock('./sync-payload.js', () => ({
     },
     contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
     hashPayload: (text) => `raw:${text}`,
+    // The real one folds by registered merge; these payloads are opaque text
+    addsToRemote: (local, remote) => local !== remote,
+    // Opaque payload text here: the merged upload is the two texts side by side
+    mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
+    wholeKeyHashes: () => ({}),
 }));
 
 // Sync in the clear, so the gist's payload here is the payload text itself and

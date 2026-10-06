@@ -592,27 +592,29 @@ function fileSizes(files) {
  * then writes what it built, exactly as before.
  *
  * @param {Object|null|undefined} files - The `files` map of a gist response
- * @returns {{syncSeq: number|null, encrypted: boolean|null}} What the manifest says
+ * @returns {{syncSeq: number|null, encrypted: boolean|null, exportedAt: string|null}} What the manifest says
  */
 function listedManifest(files) {
+    const unread = { syncSeq: null, encrypted: null, exportedAt: null };
     const file = files?.[MANIFEST_FILE];
     // No manifest at all is a gist this sync never wrote: nothing in it can be encrypted. A manifest
     // that is there but unreadable leaves the encryption unknown, which the push treats as unsafe.
-    if (files && !file) return { syncSeq: null, encrypted: false };
-    if (!file || file.truncated || typeof file.content !== 'string') return { syncSeq: null, encrypted: null };
+    if (files && !file) return { ...unread, encrypted: false };
+    if (!file || file.truncated || typeof file.content !== 'string') return unread;
     try {
         const manifest = JSON.parse(file.content);
         // The same shape readSyncGist insists on; anything else parsed but says nothing about encryption
         if (manifest?.toolashaSync !== 1 || Array.isArray(manifest) || !(Number(manifest.chunks) >= 1)) {
-            return { syncSeq: null, encrypted: null };
+            return unread;
         }
         const seq = manifest?.syncSeq;
         return {
             syncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : null,
             encrypted: Boolean(manifest?.encrypted),
+            exportedAt: typeof manifest?.exportedAt === 'string' ? manifest.exportedAt : null,
         };
     } catch {
-        return { syncSeq: null, encrypted: null };
+        return unread;
     }
 }
 
@@ -818,6 +820,10 @@ async function readFileContent(token, file) {
  *   what it would be writing over.
  * @param {(() => Promise<boolean>)|null} [options.confirmPlaintext=null] - For a push someone did press:
  *   asked before a payload in the clear replaces an encrypted gist. False cancels the write.
+ * @param {((manifest: {syncSeq: number|null, exportedAt: string|null}) => boolean)|null} [options.isAhead=null]
+ *   Asked of a gist this write had to download the listing of (not a 304 against `known`): true means the gist
+ *   holds an exchange the caller has not taken, and the write stops with a `behind` GistError instead of
+ *   overwriting it — the caller merges first.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
  *   syncSeq: number|undefined}>} The gist that was written, with the ETag and file sizes of the version the
  *   write produced, and the counter its manifest actually carries (raised above the gist's own, see below)
@@ -829,7 +835,7 @@ export async function writeSyncGist(
     chunks,
     previousChunkCount = 0,
     known = null,
-    { unattended = false, confirmPlaintext = null } = {}
+    { unattended = false, confirmPlaintext = null, isAhead = null } = {}
 ) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
 
@@ -898,13 +904,6 @@ export async function writeSyncGist(
             );
         }
 
-        // The counter is written above whatever the gist already carries.
-        // This device's own counter only knows the exchanges it took part in:
-        // a device that last took 5 and pushes 6 over a gist another device
-        // has since taken to 7 would write a payload every device at 7 reads
-        // as *older* — skipped as "not newer", marked current, and never
-        // downloaded again — while its contents are now the gist's. Lamport's
-        // send rule is one above everything seen, and the listing just saw it.
         // Unknown counts as encrypted: an unreadable manifest, or no listing for a pressed push, must
         // not let plaintext replace what may be an encrypted gist without asking
         if (gistId && listing?.encrypted !== false && !manifest?.encrypted) {
@@ -922,6 +921,26 @@ export async function writeSyncGist(
             }
         }
 
+        // Another device has pushed since this one last took the gist. Writing
+        // now would replace that push with a copy that has never seen it
+        if (isAhead && listing?.fresh && isAhead(listing)) {
+            throw new GistError('behind', 'The sync gist has changes this device has not taken yet.');
+        }
+
+        // The counter is written above whatever the gist already carries.
+        // This device's own counter only knows the exchanges it took part in:
+        // a device that last took 5 and pushes 6 over a gist another device
+        // has since taken to 7 would write a payload every device at 7 reads
+        // as *older* — skipped as "not newer", marked current, and never
+        // downloaded again — while its contents are now the gist's. Lamport's
+        // send rule is one above everything seen, and the listing just saw it.
+        // The counter is written above whatever the gist already carries.
+        // This device's own counter only knows the exchanges it took part in:
+        // a device that last took 5 and pushes 6 over a gist another device
+        // has since taken to 7 would write a payload every device at 7 reads
+        // as *older* — skipped as "not newer", marked current, and never
+        // downloaded again — while its contents are now the gist's. Lamport's
+        // send rule is one above everything seen, and the listing just saw it.
         const remoteSeq = listing?.syncSeq ?? null;
         const syncSeq =
             Number.isSafeInteger(manifest?.syncSeq) && remoteSeq !== null && remoteSeq >= manifest.syncSeq
@@ -1014,10 +1033,14 @@ async function listGistFiles(token, gistId, previous) {
                 files: previous.files,
                 syncSeq: previous.syncSeq ?? null,
                 encrypted: previous.encrypted ?? null,
+                exportedAt: null,
+                fresh: false,
             };
         }
         const files = fileSizes(exchange.data?.files);
-        return files ? { gistId, etag: exchange.etag, files, ...listedManifest(exchange.data?.files) } : null;
+        return files
+            ? { gistId, etag: exchange.etag, files, fresh: true, ...listedManifest(exchange.data?.files) }
+            : null;
     } catch (error) {
         console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
         return null;

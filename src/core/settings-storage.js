@@ -367,6 +367,63 @@ const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
 const SHARED_SETTINGS_KEY = 'script_settingsMap_shared';
 
 /**
+ * Where each settings map's per-setting change stamps live:
+ * `settings_changedAt_<map key>` → `{settingId: {at, seq, system?}}`.
+ *
+ * `at` is this device's clock when the stored value of that setting last
+ * changed here, and `seq` the sync counter this device had reached then (a
+ * tie-break only). Cross-device sync reads them so the later change of a
+ * setting two devices both changed is the one kept
+ * (`features/sync/sync-payload.js`, which repeats this literal — a feature
+ * cannot be imported from core).
+ *
+ * Every path that writes a settings map stamps what it changed, by comparing
+ * the entries before and after (`_stampDiff`), so no path can forget a
+ * setting it touched. A write the player did not make — the first-load seed,
+ * a key migration, a default rewrite, the account-wide carry-over — stamps
+ * `{at: 0, system: true}`: older than any change a person made, so it never
+ * beats one, while still saying "this build has an opinion here" against a
+ * device that has never stamped the setting at all.
+ */
+const SETTING_STAMPS_PREFIX = 'settings_changedAt_';
+
+/** The sync's own record of how far this device has got, read for `seq` above */
+const SYNC_SEQ_KEY = 'toolasha_sync_lastSyncedSeq';
+
+/**
+ * A settings map as an object, whether it was stored as one or as JSON text.
+ * @param {*} value - Stored value
+ * @returns {Object|null} The map, or null when it is not one
+ */
+function parseMap(value) {
+    let parsed = value;
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value);
+        } catch {
+            return null;
+        }
+    }
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+}
+
+/**
+ * JSON with object keys sorted, so two equal entries compare equal.
+ * @param {*} value - Any JSON value
+ * @returns {string} Canonical text
+ */
+function canonical(value) {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    if (value && typeof value === 'object') {
+        const keys = Object.keys(value)
+            .filter((key) => value[key] !== undefined)
+            .sort();
+        return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
+}
+
+/**
  * Whole schema groups that belong to the device rather than to one character.
  *
  * `sync` because a GitHub token authenticates the *player*, not a character.
@@ -575,7 +632,8 @@ class SettingsStorage {
                 if (globalTemplate) {
                     // Copy global template to this character
                     saved = globalTemplate;
-                    await storage.setJSON(characterKey, saved, this.storageArea, true);
+                    const written = await storage.setJSON(characterKey, saved, this.storageArea, true);
+                    if (written !== false) await this._stampDiff(characterKey, null, saved, { system: true });
                 }
 
                 // Add character to known characters list
@@ -798,6 +856,7 @@ class SettingsStorage {
                 // character on its own token forever.
                 const written = await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true);
                 if (written === false) return;
+                await this._stampDiff(SHARED_SETTINGS_KEY, existing, next, { system: true });
             }
             if (conflicts.length > 0) {
                 // A previous run's record may still be waiting to be shown —
@@ -858,7 +917,9 @@ class SettingsStorage {
         const stored = (await this._loadSharedSettings()) ?? {};
         const next = { ...stored };
         for (const id of ids) next[id] = { ...settings[id] };
-        return (await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true)) !== false;
+        if ((await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true)) === false) return false;
+        await this._stampDiff(SHARED_SETTINGS_KEY, stored, next);
+        return true;
     }
 
     /**
@@ -917,6 +978,7 @@ class SettingsStorage {
                 // would find the old default back.
                 const written = await storage.setJSON(characterKey, next, this.storageArea, true);
                 if (written === false) return next;
+                await this._stampDiff(characterKey, saved, next, { system: true });
             }
             await storage.set(flagKey, true, this.storageArea, true);
             return next;
@@ -1000,6 +1062,7 @@ class SettingsStorage {
                 // reload would find the new settings off.
                 const written = await storage.setJSON(characterKey, next, this.storageArea, true);
                 if (written === false) return next;
+                await this._stampDiff(characterKey, saved, next, { system: true });
             }
             // The union, not just this pass: an id recorded by a build that has
             // an entry this one does not must not be forgotten, or that entry
@@ -1243,6 +1306,7 @@ class SettingsStorage {
 
         const written = await storage.setJSON(characterKey, toWrite, this.storageArea, true);
         if (written === false) return false;
+        await this._stampDiff(characterKey, stored, toWrite);
 
         // The account-wide settings go to their own key as well as staying in
         // this character's map. Staying keeps a downgrade working and adds no
@@ -1257,6 +1321,51 @@ class SettingsStorage {
             ? sharedIds.filter((id) => (dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys)).has(id))
             : sharedIds;
         return this._writeSharedEntries(settings, sharedToWrite);
+    }
+
+    /**
+     * Stamp every setting whose stored entry a write just changed.
+     *
+     * Compares the map before and after rather than trusting a caller's list
+     * of "dirty" ids: every write path ends here, so none can forget an id,
+     * and an id saved with the value it already had is not a change and is not
+     * stamped. A setting the write removed loses its stamp with it.
+     *
+     * Best effort: a stamp that fails to land costs only the tie-break on a
+     * setting two devices both changed, and must never fail the write itself.
+     *
+     * @param {string} mapKey - The settings map's storage key
+     * @param {Object|null} before - The map as stored before the write
+     * @param {Object|null} after - The map as written
+     * @param {{system?: boolean}} [options] - `system` for a write the player did not make
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _stampDiff(mapKey, before, after, { system = false } = {}) {
+        try {
+            const old = before && typeof before === 'object' ? before : {};
+            const next = after && typeof after === 'object' ? after : {};
+            const changed = Object.keys(next).filter((id) => canonical(old[id]) !== canonical(next[id]));
+            const removed = Object.keys(old).filter((id) => !Object.hasOwn(next, id));
+            if (changed.length === 0 && removed.length === 0) return;
+
+            const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
+            const existing = await storage.getJSON(stampKey, this.storageArea, null);
+            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+            let stamp;
+            if (system) {
+                stamp = { at: 0, seq: null, system: true };
+            } else {
+                const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
+                const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
+                stamp = { at: Date.now(), seq };
+            }
+            for (const id of changed) stamps[id] = { ...stamp };
+            for (const id of removed) delete stamps[id];
+            await storage.setJSON(stampKey, stamps, this.storageArea, true);
+        } catch (error) {
+            console.error('[SettingsStorage] Could not stamp changed settings:', error);
+        }
     }
 
     /**
@@ -1311,6 +1420,7 @@ class SettingsStorage {
         if (!stored || typeof stored !== 'object') {
             const written = await storage.setJSON(characterKey, settings, this.storageArea, true);
             if (written === false) return false;
+            await this._stampDiff(characterKey, null, settings);
             return this._writeSharedEntries(settings, touchedShared);
         }
 
@@ -1321,6 +1431,7 @@ class SettingsStorage {
         }
         const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
         if (written === false) return false;
+        await this._stampDiff(characterKey, stored, merged);
         return this._writeSharedEntries(settings, touchedShared);
     }
 
@@ -1430,7 +1541,9 @@ class SettingsStorage {
         for (const character of targets) {
             if (character.id === sourceId) continue;
             const characterKey = `${this.storageKey}_${character.id}`;
+            const before = await storage.getJSON(characterKey, this.storageArea, null);
             let targetWritten = (await storage.setJSON(characterKey, settings, this.storageArea, true)) !== false;
+            if (targetWritten) await this._stampDiff(characterKey, before, settings);
 
             for (let i = 0; i < TASK_CHARACTER_SCOPED_PREFIXES.length; i++) {
                 if (taskScopedValues[i] === null) continue;
@@ -1490,8 +1603,12 @@ class SettingsStorage {
             const merged = { ...stored };
             for (const id of ids) merged[id] = { ...entries[id] };
             const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
-            if (written === false) skipped.push(character);
-            else copied.push(character);
+            if (written === false) {
+                skipped.push(character);
+            } else {
+                await this._stampDiff(characterKey, stored, merged);
+                copied.push(character);
+            }
         }
 
         return { copied, skipped };
@@ -1525,8 +1642,10 @@ class SettingsStorage {
             console.warn('[SettingsStorage] Settings not copied: the character changed while the source map loaded');
             return false;
         }
+        const before = await storage.getJSON(destinationKey, this.storageArea, null);
         const written = await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
         if (written === false) return false;
+        await this._stampDiff(destinationKey, before, sourceMap);
         // The map is the source character's; the migration record left behind is
         // this character's, and it describes a map that is no longer here. A
         // source last written by a build that predates a merge would otherwise
@@ -1708,6 +1827,10 @@ class SettingsStorage {
                 // "belongs to another character", which the summary offers to
                 // explain, and this is "never travels" with nothing to explain.
                 if (DEVICE_LOCAL_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+                // The file's stamps describe when the settings changed on the
+                // machine that exported them. Importing is a change made now,
+                // and it is stamped as one below
+                if (key.startsWith(SETTING_STAMPS_PREFIX)) continue;
 
                 const charIdMatch =
                     key.match(/_([0-9a-f]{24})$/i) ||
@@ -1722,7 +1845,10 @@ class SettingsStorage {
                     }
                 }
 
+                const isMap = key.startsWith(this.storageKey);
+                const before = isMap ? await storage.getJSON(key, this.storageArea, null) : null;
                 const written = await storage.setJSON(key, value, this.storageArea, true);
+                if (written !== false && isMap) await this._stampDiff(key, before, parseMap(value));
                 if (written === false) {
                     await this.reconcileKeyMigrationState(importedKeys);
                     console.error(`[Settings Storage] Import stopped: ${key} could not be written`);

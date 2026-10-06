@@ -2,7 +2,7 @@
  * Tests for SettingsStorage import character matching
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const stored = new Map();
 /** When set, every read answers "could not be made" and every write is refused */
@@ -1793,5 +1793,123 @@ describe('two clients on one character', () => {
         const defaults = settingsStorage.buildDefaults();
         expect(Object.keys(written).length).toBe(Object.keys(defaults).length);
         expect(written.chatCommands.isTrue).toBe(defaults.chatCommands.isTrue);
+    });
+});
+
+describe('settings change stamps, for the sync merge', () => {
+    const STAMPS = 'json:settings_changedAt_script_settingsMap_alice';
+    const NOW = Date.parse('2026-05-01T12:00:00.000Z');
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+        vi.setSystemTime(new Date(NOW));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a setting changed here is stamped with the time and the sync counter reached', async () => {
+        stored.set('toolasha_sync_lastSyncedSeq', 4);
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+
+        await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, new Set(['chatCommands']));
+
+        expect(stored.get(STAMPS)).toEqual({ chatCommands: { at: NOW, seq: 4 } });
+    });
+
+    test('only what changed is stamped; an id saved with the value it had is not', async () => {
+        stored.set('json:script_settingsMap_alice', {
+            chatCommands: { isTrue: true },
+            whatsNew_showPopup: { isTrue: true },
+        });
+        stored.set(STAMPS, { whatsNew_showPopup: { at: 1, seq: null } });
+
+        await settingsStorage.saveSettings(
+            { chatCommands: { isTrue: false }, whatsNew_showPopup: { isTrue: true } },
+            new Set(['chatCommands', 'whatsNew_showPopup'])
+        );
+
+        expect(stored.get(STAMPS).whatsNew_showPopup).toEqual({ at: 1, seq: null });
+        expect(stored.get(STAMPS).chatCommands.at).toBe(NOW);
+    });
+
+    test('a save with no dirty tracking still stamps what it changed', async () => {
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+        await settingsStorage.saveSettings({ chatCommands: { isTrue: false } });
+        expect(stored.get(STAMPS).chatCommands.at).toBe(NOW);
+    });
+
+    test('a reset stamps every setting it moved', async () => {
+        stored.set('json:script_settingsMap_alice', {
+            chatCommands: { isTrue: true },
+            whatsNew_showPopup: { isTrue: false },
+        });
+        await settingsStorage.saveSettings(
+            { chatCommands: { isTrue: false }, whatsNew_showPopup: { isTrue: true } },
+            settingsStorage.SAVE_ALL_KEYS
+        );
+        expect(Object.keys(stored.get(STAMPS)).sort()).toEqual(['chatCommands', 'whatsNew_showPopup']);
+    });
+
+    test('an account-wide setting is stamped beside the account-wide map too', async () => {
+        await settingsStorage.saveSettings({ sync_auto: { isTrue: true } }, new Set(['sync_auto']));
+        expect(stored.get('json:settings_changedAt_script_settingsMap_shared').sync_auto.at).toBe(NOW);
+    });
+
+    test('a save that did not land stamps nothing', async () => {
+        outage.on = true;
+        await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, new Set(['chatCommands']));
+        outage.on = false;
+        expect(stored.get(STAMPS)).toBeUndefined();
+    });
+
+    test('an import is a change made now: its maps are stamped now, and the file’s own stamps are not taken', async () => {
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+
+        await settingsStorage.importSettings(
+            JSON.stringify({
+                script_settingsMap_alice: { chatCommands: { isTrue: false } },
+                settings_changedAt_script_settingsMap_alice: { chatCommands: { at: 5, seq: 1 } },
+            })
+        );
+
+        expect(stored.get(STAMPS)).toEqual({ chatCommands: { at: NOW, seq: null } });
+    });
+
+    test('copying another character’s settings stamps what it changed here', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+        stored.set('json:script_settingsMap_bob', { chatCommands: { isTrue: false } });
+
+        expect(await settingsStorage.copySettingsFromCharacter('bob')).toBe(true);
+        expect(stored.get(STAMPS).chatCommands.at).toBe(NOW);
+    });
+
+    test('copying entries to the other characters stamps theirs', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        stored.set('json:script_settingsMap_bob', { chatCommands: { isTrue: true } });
+
+        await settingsStorage.copySettingEntriesToOtherCharacters({ chatCommands: { isTrue: false } });
+
+        expect(stored.get('json:settings_changedAt_script_settingsMap_bob').chatCommands.at).toBe(NOW);
+    });
+
+    test('a key migration stamps what it rewrote as a system change, older than any person’s', async () => {
+        stored.set('json:script_settingsMap_alice', { actionBar_showTimeRemaining: { isTrue: true } });
+        stored.set(STAMPS, { actionBar_showTimeRemaining: { at: 7, seq: 2 } });
+
+        await settingsStorage.loadSettings();
+
+        expect(stored.get(STAMPS).actionBar_showTimeRemaining).toEqual({ at: 0, seq: null, system: true });
     });
 });
