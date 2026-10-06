@@ -508,6 +508,8 @@ class GuildXPTracker {
         this.unregisterHandlers = [];
         /** @type {Set<function(string|null): void>} Subscribers told when the own guild name changes */
         this.ownGuildListeners = new Set();
+        /** Called after member metadata, sign-ups or the current week are written; see {@link onMetaChanged} */
+        this.metaListeners = new Set();
         /** One save chain per storage key, so read-merge-writes never interleave */
         this._saveChains = new Map();
         /** History loads still in flight; see `_trackLoad` */
@@ -828,6 +830,7 @@ class GuildXPTracker {
                 signupWeekStartAt: guildChar?.signupWeekStartAt || null,
             };
         }
+        this._notifyMetaChanged();
 
         // Metadata is all the trials features need; history is the setting's own business
         if (!this._recordsHistory()) {
@@ -975,6 +978,7 @@ class GuildXPTracker {
             if (previous && previous !== name) this.guildXPHistory = {};
             this.guildType = guild.guildType || this.guildType;
             this.currentWeekStartAt = guild.currentWeekStartAt || this.currentWeekStartAt;
+            this._notifyMetaChanged();
             return;
         }
 
@@ -990,6 +994,7 @@ class GuildXPTracker {
         }
         this.guildType = guild.guildType || this.guildType;
         this.currentWeekStartAt = guild.currentWeekStartAt || this.currentWeekStartAt;
+        this._notifyMetaChanged();
 
         if (!this.guildXPHistory[name]) {
             this.guildXPHistory[name] = [];
@@ -1083,6 +1088,7 @@ class GuildXPTracker {
                 signupWeekStartAt: guildChar?.signupWeekStartAt || null,
             };
         }
+        this._notifyMetaChanged();
 
         if (!this._recordsHistory()) return;
 
@@ -1111,6 +1117,7 @@ class GuildXPTracker {
         meta.signedUpSkillingTrialHrid = data.signedUpSkillingTrialHrid || '';
         meta.signedUpCombatTrialHrid = data.signedUpCombatTrialHrid || '';
         meta.signupWeekStartAt = data.signupWeekStartAt || null;
+        this._notifyMetaChanged();
     }
 
     /**
@@ -1207,6 +1214,28 @@ class GuildXPTracker {
     onOwnGuildChange(callback) {
         this.ownGuildListeners.add(callback);
         return () => this.ownGuildListeners.delete(callback);
+    }
+
+    /**
+     * Subscribe to the roster, sign-ups or current week having been written. Fires after the
+     * write, including writes that waited on a storage read, so a subscriber reads the new state.
+     * @param {function(): void} callback - Called with no arguments
+     * @returns {function(): void} Unsubscribe
+     */
+    onMetaChanged(callback) {
+        this.metaListeners.add(callback);
+        return () => this.metaListeners.delete(callback);
+    }
+
+    /** Tell subscribers the roster, sign-ups or week were written */
+    _notifyMetaChanged() {
+        for (const callback of [...this.metaListeners]) {
+            try {
+                callback();
+            } catch (error) {
+                console.error('[GuildXPTracker] Roster listener failed:', error);
+            }
+        }
     }
 
     /**

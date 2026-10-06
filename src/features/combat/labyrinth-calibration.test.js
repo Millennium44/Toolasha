@@ -17,7 +17,7 @@ import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 const attempt = (predicted, cleared, over = {}) => ({
     predicted,
     cleared,
-    model: { fullKit: true, version: '4.0.0' },
+    model: { fullKit: true, version: '4.0.0', nullSafePrediction: true },
     fingerprintVersion: FINGERPRINT_VERSION,
     ...over,
 });
@@ -220,5 +220,44 @@ describe('cohort exclusion end to end', () => {
         expect(report.count).toBe(0);
         expect(report.unpredicted).toBe(MIN_CALIBRATION_FIGHTS);
         expect(report.enough).toBe(false);
+    });
+});
+
+/**
+ * Builds before the fix stored a room that had never been simmed as
+ * `predicted: 0` (Number(null)). The shape below is a live export's record: the
+ * full-kit marker without the null-safe one. A combat sim of exactly 0 is never
+ * cached, so on such a record an exact 0 cannot have been a real prediction.
+ */
+describe('stored zeros from before the null-safe recorder', () => {
+    const preFix = (predicted, cleared) => ({
+        predicted,
+        cleared,
+        outcome: cleared ? 'clear' : 'timeout',
+        resolveReason: 'room_switch',
+        complete: true,
+        model: { fullKit: true, version: '3.61.2' },
+        fingerprintVersion: FINGERPRINT_VERSION,
+    });
+
+    test('are set aside and counted, not judged as certain losses', () => {
+        const report = calibrationReport([preFix(0, true), preFix(0, true), preFix(1, true), preFix(0.5, false)]);
+        expect(report.coercedZero).toBe(2);
+        expect(report.count).toBe(2);
+        expect(report.bands[0].count).toBe(0);
+        expect(report.observed).toBe(1);
+    });
+
+    test('a nonzero prediction from the same builds is still judged', () => {
+        const report = calibrationReport([preFix(0.05, true)]);
+        expect(report.coercedZero).toBe(0);
+        expect(report.bands[0].count).toBe(1);
+    });
+
+    test('a 0 recorded by a null-safe build is a real prediction and stays in', () => {
+        const report = calibrationReport([attempt(0, false)]);
+        expect(report.coercedZero).toBe(0);
+        expect(report.count).toBe(1);
+        expect(report.bands[0].count).toBe(1);
     });
 });

@@ -337,6 +337,19 @@ describe('labyrinth fight recorder', () => {
         expect(c.predicted).toBeNull();
     });
 
+    test('a room that was never simmed stays unpredicted, not a 0% prediction', () => {
+        // The room log hands over `session.predicted ?? null` — an explicit
+        // null, not an absent field — and Number(null) is 0. Coerced, every
+        // unsimmed room went into the 0–10% band as a certain loss (329 of a
+        // live export's 1000 fights, 313 of them cleared).
+        recorder.noteAttempt(attempt({ predicted: null }));
+        recorder.noteAttempt(attempt({ predicted: 0 })); // a real 0 is still a 0
+        const [unsimmed, zero] = recorder.recordedAttempts();
+        expect(unsimmed.predicted).toBeNull();
+        expect(zero.predicted).toBe(0);
+        expect(unsimmed.model.nullSafePrediction).toBe(true);
+    });
+
     test('every new attempt carries the sim-model marker', () => {
         // Attempts without it are the legacy cohort from before the full-kit
         // switch, which the accuracy views count but never pool

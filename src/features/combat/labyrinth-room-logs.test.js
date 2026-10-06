@@ -483,6 +483,31 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).not.toContain('Milking Lv.173');
     });
 
+    test('opening a room type redraws from the reading on screen instead of rescoring the record', async () => {
+        // Scoring every room of an 11,000-fight record is what made each click lag
+        const accuracy = vi.fn(async () => snapshot);
+        labyrinthRoomLogs.simSource = { accuracy };
+        [...cards()][1].click();
+        await vi.waitFor(() => expect(text()).toContain('Milking Lv.173'));
+        expect(accuracy).not.toHaveBeenCalled();
+
+        // A redraw for any other reason still takes a fresh reading
+        await labyrinthRoomLogs.renderAccuracy();
+        expect(accuracy).toHaveBeenCalledTimes(1);
+    });
+
+    test('the reused reading is never one taken for the other view', async () => {
+        const accuracy = vi.fn(async () => snapshot);
+        labyrinthRoomLogs.simSource = { accuracy };
+        labyrinthRoomLogs.sinceBaseline = true;
+        try {
+            [...cards()][1].click();
+            await vi.waitFor(() => expect(accuracy).toHaveBeenCalledWith({ since: true }));
+        } finally {
+            labyrinthRoomLogs.sinceBaseline = false;
+        }
+    });
+
     test('replay explains exclusions and sim failures rather than claiming too few fights', () => {
         const card = labyrinthRoomLogs.renderReplayResult({
             groups: [],
@@ -858,6 +883,23 @@ describe('the accuracy view keeps sim-model cohorts apart', () => {
         expect(card.textContent).toContain('2 fights with a stored prediction — too few to call');
         expect(card.textContent).toContain('30 older fights from a previous build fingerprint excluded');
         expect(card.textContent).not.toContain('Brier');
+    });
+
+    test('an unsimmed room filed as 0% by an older build is excluded and counted, not judged', () => {
+        const preFix = (predicted, cleared) => ({
+            ...fight(predicted, cleared),
+            model: { fullKit: true, version: '3.61.2' },
+            fingerprintVersion: FINGERPRINT_VERSION,
+        });
+        const pool = [];
+        for (let i = 0; i < 25; i++) pool.push(preFix(0.95, true));
+        for (let i = 0; i < 9; i++) pool.push(preFix(0, true));
+        const card = labyrinthRoomLogs.renderReliability(pool);
+
+        expect(card.textContent).toContain('25 fights with a stored prediction');
+        expect(card.textContent).toContain(
+            '9 older fights stored as 0% because their room had not been simmed excluded'
+        );
     });
 
     test('the sanitized export is offered on the accuracy view, labelled for public bug reports', async () => {

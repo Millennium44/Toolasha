@@ -658,6 +658,22 @@ export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
             legacyCohortJudged: Math.max(0, Number(current.legacyCohortJudged) || 0),
         });
     }
+    return sortAccuracyRows(rows, orderOf);
+}
+
+/**
+ * Put accuracy rows in the order `accuracyRows` returns them, in place.
+ *
+ * Exported so a caller that builds the rows a bucket at a time — the Accuracy
+ * tab spreads the work over several frames — gets exactly the order a single
+ * pass gives. The sort is stable, so rows built in the record's own order end
+ * up where they would have.
+ *
+ * @param {Array<Object>} rows - From `accuracyRows`
+ * @param {Function} [orderOf] - (subjectHrid) => sort key
+ * @returns {Array<Object>} The same array
+ */
+export function sortAccuracyRows(rows, orderOf) {
     // The game's order, and within a room type by level, so a subject's rooms
     // read as a progression rather than being scattered through the list by how
     // often each happened to be fought

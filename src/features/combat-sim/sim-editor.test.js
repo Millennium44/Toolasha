@@ -141,6 +141,7 @@ vi.mock('../../utils/character-key.js', () => ({
 // The fed store lives behind the bundle bridge; the picker must read it there.
 const bridge = vi.hoisted(() => ({ snapshots: [], applied: [], mutate: null }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    guildMemberSkills: () => null,
     loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));
 

@@ -10,6 +10,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When two devices are in use, an automatic push that finds the gist ahead now merges the other device's changes into what it uploads instead of overwriting them: each setting keeps whichever device changed it last, histories and other mergeable records are combined, and other saved data keeps this device's copy only if the other side didn't change it. Nothing is applied to the device you're using until its next reload (no "Reload now" prompts mid-session); a restored backup counts as a new change, and a damaged gist now warns once per session instead of every interval.
 
+### Trial Sim recommends skilling trial sign-ups
+
+- A new "Assign skilling" mode in the Trial Sim suggests which member should join which skilling trial for the most guild points, honoring slot caps, eligibility, the guild's trial minimum levels and pins, with copyable sign-up messages and an optional simulator check. Other members' work rates are estimated from their skill levels and your own readings, and are labeled as estimates.
+- In the split (GreasyFork) build, the Session Briefing's trial sign-up line and the trial alerts' "signed-up members only" audience read the guild tracker's registration record instead of the tracker, so the briefing never knew your sign-up and the alerts never filtered; both now read the live tracker.
+
+### Labyrinth floor stops re-simming 0% rooms, and the Accuracy tab opens faster
+
+- The floor map no longer re-simulates every 0% room each time the game redraws the grid, lab sims wear the loadout a room is set to even when two share a name, and the Accuracy tab opens several times faster. Fights in a room the sim hadn't run were stored as a 0% prediction, which threw the Reliability card far off; they're now stored as unpredicted, and older ones are left out with a count.
+
 ### Audit round: Gist sync
 
 - A push now numbers itself above the gist's own counter, so other devices no longer skip it as older; an automatic push from a device without the passphrase no longer replaces an encrypted gist with plaintext, and a pressed push asks first; and a sync pull that cannot be applied no longer forgets which settings migrations already ran.
