@@ -1007,6 +1007,67 @@ describe('two devices writing at the same moment', () => {
         expect(toasts).toHaveLength(0);
     });
 
+    test.each([
+        ["a newer build's format", (payload) => ({ ...payload, formatVersion: 2 })],
+        [
+            'a store that is not a keyed object',
+            (payload) => ({ ...payload, stores: { ...payload.stores, xpHistory: [] } }),
+        ],
+    ])('a write that replaced a push it cannot merge (%s) puts that push back', async (_label, reshape) => {
+        const { a } = await syncedPair();
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        // A lists the gist; another device's write in a shape this build cannot
+        // merge lands before A writes
+        let theirs;
+        gist.betweenListAndWrite = async () => {
+            const based = `v${gist.etag}`;
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    exportedAt: new Date(BASE_MS + elapsed - 1000).toISOString(),
+                    basedOn: based,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(reshape(JSON.parse(gist.state.payload))),
+            };
+            theirs = gist.state.payload;
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        };
+        const result = await as(a, auto.push);
+        const aWrite = gist.revisions.find((revision) => revision.payload.includes('a-sample'));
+
+        expect(result).toEqual({ ok: false, reason: 'unmergeable' });
+        // The other device's write is the gist again, numbered above A's
+        expect(aWrite).toBeTruthy();
+        expect(gist.state.payload).toBe(theirs);
+        expect(gist.state.manifest.syncSeq).toBeGreaterThan(aWrite.manifest.syncSeq);
+
+        // ...and A's next tick refuses rather than writing over it again
+        const writes = gist.writes;
+        expect(await as(a, auto.push)).toEqual({ ok: false, reason: 'unmergeable' });
+        expect(gist.writes).toBe(writes);
+        expect(gist.state.payload).toBe(theirs);
+        // The hold names its cause once, not every interval, and a newer
+        // format's says what to do about it
+        const held = warn.mock.calls.filter(([line]) => String(line).includes('Automatic pushes are held'));
+        expect(held).toHaveLength(1);
+        if (JSON.parse(theirs).formatVersion !== 1) expect(held[0][1].message).toContain('Update Toolasha');
+        // A's interval pull stands down on its unsent sample rather than applying it
+        a.latches = 0;
+        expect((await as(a, auto.pull)).reason).toBe('conflict');
+        expect(a.latches).toBe(0);
+        expect(a.db.xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
+        expect(gist.state.payload).toBe(theirs);
+        warn.mockRestore();
+        error.mockRestore();
+    });
+
     test('a replacement at the same counter with an earlier stamp is not taken as old news', async () => {
         const { b } = await syncedPair();
         await as(b, async () => {

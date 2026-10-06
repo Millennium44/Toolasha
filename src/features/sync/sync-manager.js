@@ -820,26 +820,29 @@ class SyncManager {
         let text = uploadedText;
         let remoteAdds = Boolean(merged?.remoteAdds);
         for (const version of written.intervening) {
-            let replaced;
             try {
-                replaced = await this._readRemote(token, gistId, null, null, version);
+                const replaced = await this._readRemote(token, gistId, null, null, version);
+                text = mergeForUpload(text, replaced.payload, baseline).text;
             } catch (error) {
-                // A revision this device cannot read (no passphrase, or one this
-                // build cannot parse) cannot be folded in; leave the push unrecorded
-                console.warn(`[Sync] Could not read a revision this push replaced (${version}):`, error);
-                // One it cannot decrypt was an encrypted push, and this write
-                // just replaced it in the clear. Left that way, the next interval
-                // lists this device's own write, finds no encryption, and pushes
-                // in the clear again: the replacement the refusal before every
-                // automatic push exists to prevent. Put the gist back as it was
+                // A revision this device cannot read (no passphrase, a corrupt
+                // one) or cannot merge (a newer build's format) cannot be folded
+                // in, and this write has just replaced it. Left that way, the
+                // next interval lists this device's own write as current and the
+                // other device's data survives only in the gist's history; an
+                // encrypted one is replaced in the clear again at every interval.
+                // Put the gist back as it was, under a counter above this write,
+                // so the next automatic push finds it ahead and refuses it there
+                console.warn(`[Sync] Could not fold in a revision this push replaced (${version}):`, error);
+                await this._restoreReplaced(token, gistId, written.intervening.at(-1));
                 if (error instanceof GistError && error.kind === 'passphrase') {
-                    await this._restoreReplaced(token, gistId, written.intervening.at(-1));
                     return { ok: false, reason: 'passphrase' };
+                }
+                if (!(error instanceof GistError) || error.kind === 'parse') {
+                    this._logStuckOnce('unmergeable', error);
+                    return { ok: false, reason: 'unmergeable' };
                 }
                 return { ok: false, reason: 'raced' };
             }
-            const folded = mergeForUpload(text, replaced.payload, baseline);
-            text = folded.text;
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
         remoteAdds = remoteAdds || addsToRemote(text, localPayload, { forUpload: false });
@@ -863,7 +866,7 @@ class SyncManager {
     /**
      * Write a revision this push replaced back over it, byte for byte: its
      * manifest and its chunks as they were, under a counter above the write
-     * it undoes. For a revision this device cannot decrypt, so cannot merge.
+     * it undoes. For a revision this device cannot decrypt, read or merge.
      * Best effort: a failure is logged, and the next interval's push is
      * refused or merges as it would have before.
      * @param {string} token - GitHub token
@@ -881,9 +884,9 @@ class SyncManager {
             await writeSyncGist(token, gistId, { ...manifest, chunks: chunks.length }, chunks, 0, null, {
                 unattended: true,
             });
-            console.warn('[Sync] Put back an encrypted push this device replaced; it needs the sync passphrase.');
+            console.warn("[Sync] Put back another device's push that this device replaced and could not merge.");
         } catch (error) {
-            console.error('[Sync] Could not put back the encrypted push this device replaced:', error);
+            console.error("[Sync] Could not put back another device's push that this device replaced:", error);
         }
     }
 
