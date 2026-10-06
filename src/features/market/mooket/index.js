@@ -145,6 +145,21 @@ const SERIES = [
 ];
 
 /**
+ * Fold the marketplace.json snapshot into the price store, stamped with when the
+ * snapshot was taken rather than when it was read.
+ *
+ * The store folds newest-wins, so a snapshot read at 14 minutes old (or, from the
+ * expired-cache fallback, hours old) and stamped "now" replaced an order-book
+ * reading taken after it — price and depth both — and dated its price move from
+ * the wrong instant.
+ * @param {{ingestSnapshot: Function}} store - The price store
+ * @param {{marketData: Object|null, lastFetchTimestamp: number|null}} api - The market API
+ */
+export function ingestMarketSnapshot(store, api) {
+    store.ingestSnapshot(api.marketData, api.lastFetchTimestamp || Date.now());
+}
+
+/**
  * Whether one of the game's own modals is covering the page.
  *
  * The pin overlay sits at z-index 820 while the game's `Modal_modalContainer`
@@ -263,7 +278,7 @@ class MarketHistoryPanel {
 
         // The snapshot has no sizes but covers every item, so it fills in
         // everything never opened
-        const priceListener = () => marketPriceStore.ingestSnapshot(marketAPI.marketData, Date.now());
+        const priceListener = () => ingestMarketSnapshot(marketPriceStore, marketAPI);
         marketAPI.on(priceListener);
         this.cleanupRegistry.registerCleanup(() => marketAPI.off(priceListener));
         priceListener();

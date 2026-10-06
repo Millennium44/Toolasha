@@ -463,6 +463,51 @@ async function prefetchVolumes(rates) {
 }
 
 /**
+ * Mark a rate whose sold outputs include one with no volume measurement.
+ *
+ * A rate cut by a measured output's `volume` limit is still marked when a co-product went unmeasured:
+ * the measured limit says nothing about the other output's market. The rate is copied, never edited,
+ * for the reason {@link applySellLimit} gives.
+ *
+ * @param {Object} rate - A bounded gold rate
+ * @returns {Object} The rate, with an `unmeasured` limit when one of its outputs was not checked
+ */
+function markUnmeasured(rate) {
+    try {
+        return markUnmeasuredUnsafe(rate);
+    } catch (error) {
+        console.error('[MarketLiquidity] Checking a rate for unmeasured outputs failed:', error);
+        return rate;
+    }
+}
+
+/** @param {Object} rate - See {@link markUnmeasured} @returns {Object} The rate, marked or not */
+function markUnmeasuredUnsafe(rate) {
+    const sells = Array.isArray(rate?.sells) ? rate.sells : [];
+    const unmeasured = sells.find(
+        (sold) =>
+            sold?.itemHrid &&
+            sold.itemHrid !== COIN_HRID &&
+            (Number(sold.unitsPerHour) || 0) > 0 &&
+            !cachedDailyVolume(sold.itemHrid, sold.enhancementLevel || 0)?.known
+    );
+    if (!unmeasured) return rate;
+
+    const name = unmeasured.name || unmeasured.itemHrid.split('/').pop().replace(/_/g, ' ');
+    return {
+        ...rate,
+        limits: [
+            ...(rate.limits || []),
+            {
+                kind: 'unmeasured',
+                note: `market volume for ${name} not measured`,
+                itemHrid: unmeasured.itemHrid,
+            },
+        ],
+    };
+}
+
+/**
  * Bound every rate in a ranking, and say whether the bounding could happen at all.
  *
  * @param {Array<Object>} rates - Gold rates
@@ -488,7 +533,12 @@ export async function applyLiquidityLimits(rates) {
     bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
     const sourcePrefix = `${marketHistoryAPI.currentSource().key}:${marketHistoryAPI.enabled}:`;
     const measured = [...cache.entries()].some(([key, entry]) => key.startsWith(sourcePrefix) && entry.known);
-    return { rates: bounded, measured };
+
+    // Some volume figures landed and this rate's own output has none: it was left unbounded, which
+    // is "not checked", not "checked and fine". The panel-wide note only fires when nothing at all
+    // was measured, so without a mark here the rate reads exactly like one that passed the check.
+    const marked = measured ? bounded.map((rate) => markUnmeasured(rate)) : bounded;
+    return { rates: marked, measured };
 }
 
 export default {

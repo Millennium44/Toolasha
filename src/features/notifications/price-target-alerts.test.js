@@ -73,6 +73,7 @@ vi.mock('../market/mooket/index.js', () => ({
         game.reaches.push({ key, sighting });
         return true;
     },
+    ingestMarketSnapshot: () => {},
 }));
 vi.mock('./notification-service.js', () => ({
     default: {

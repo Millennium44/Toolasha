@@ -10,6 +10,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The floor map no longer re-simulates every 0% room each time the game redraws the grid (a likely source of stutter while the map is open), lab combat sims now wear the loadout a room is set to even when two loadouts share a name, and the Accuracy tab opens several times faster with the same figures. Fights in a room the sim hadn't run yet were stored as a 0% prediction (they're now stored as unpredicted), which threw the Reliability card far off; older fights stored that way are now left out of it, with a count.
 
+### Item tooltip marks partly priced alchemy profits
+
+- In the item tooltip's Coinify/Decompose/Transmute list, a profit with an unpriced output now shows as a floor ("≥ 9.0K/hr (unpriced output)"), one with an unpriced tea as a ceiling ("≤"), and both sort after fully priced rows instead of ranking as if complete.
+
+### Audit round: market listings and price history
+
+- My Listings no longer shows your own price as the "Top Order Price" when nobody else is on that side of the book, and the price history no longer dates a marketplace snapshot as "now" — an older snapshot could overwrite a fresher order-book reading and wipe its depth.
+
+### Audit round: tasks and the planner
+
+- A combat task's profit estimate now flags unpriced drops ("≥") and unpriced consumables ("-- ⚠") instead of counting them as worth nothing; the reroll-spend line no longer lands on the wrong card when one task's name contains another's ("Cow" vs "Verdant Cow"); the planner no longer files one character's combat baseline under another after a switch, and an earning leg whose market volume was not measured now says so.
+
+### Enhancing tracker merges and resumes sessions
+
+- The ∑ merge view can combine one item's ticked sessions into a single saved session, and a new "auto-resume" setting (off by default) continues the last ended session when you restart the same item where it stopped with the same target. The merge view now updates live, and the Philosopher's Mirror line quotes savings to your target instead of +20.
+
+### Monster stat check files bleeds and parry counters correctly
+
+- The stat check's uptime table no longer lumps parry counter-attacks and stray ticks into your damage-over-time row: bleed ticks are matched to the maim hit that started them, parry counters go to their own row (the one the sim reports), and anything left unexplained shows as an ungraded "unattributed" row instead of making the sim look wrong.
+
 ### Labyrinth badges cover rooms revealed mid-calculation
 
 - Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.

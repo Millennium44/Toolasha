@@ -32,6 +32,8 @@ const game = vi.hoisted(() => ({
     /** The planner's own record of the loadout each run was first seen under */
     gear: { preferred: null, baseline: null },
     resolveThrows: false,
+    /** Who is logged in */
+    characterId: 'char-a',
 }));
 
 // The default export, because that is what the module reads — see the note on
@@ -39,13 +41,14 @@ const game = vi.hoisted(() => ({
 vi.mock('../combat-sim/combat-sim-ui.js', () => ({
     default: {
         loadAllZonesSnapshot: async () => {
+            sim.onLoad?.();
             if (sim.loadThrows) throw new Error('storage is unhappy');
             return sim.snapshot;
         },
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getEquipment: () => game.equipment },
+    default: { getEquipment: () => game.equipment, getCurrentCharacterId: () => game.characterId },
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({
     default: {
@@ -134,6 +137,8 @@ const SWORD_5 = '/item_locations/main_hand=/items/sword+5';
 beforeEach(() => {
     sim.snapshot = null;
     sim.loadThrows = false;
+    sim.onLoad = null;
+    game.characterId = 'char-a';
     game.loadouts = [loadout('Fighting', { isDefault: true })];
     game.equipment = new Map();
     game.gear = { preferred: null, baseline: null };
@@ -455,6 +460,19 @@ describe('loadCombatRates', () => {
         const { status } = await loadCombatRates({ now: NOW });
         expect(status.loadoutName).toBe('Ranged');
         expect(game.gear.baseline.name).toBe('Ranged');
+    });
+
+    test('a character switch during the reads records nothing for the arriving character', async () => {
+        sim.snapshot = snapshot();
+        // The switch lands while the snapshot is being read
+        sim.onLoad = () => {
+            game.characterId = 'char-b';
+        };
+
+        const { rates, status } = await loadCombatRates({ now: NOW });
+        expect(rates).toEqual([]);
+        expect(status.hasSnapshot).toBe(false);
+        expect(game.gear.baseline).toBeNull();
     });
 
     test('a storage failure reads as "no run", not as a crash', async () => {

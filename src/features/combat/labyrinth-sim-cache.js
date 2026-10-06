@@ -150,6 +150,34 @@ function nonDamagingPlayerAbilities(gameData, dto) {
     return set;
 }
 
+/**
+ * The PLAYER's equipped abilities that apply a damage-over-time (maim's bleed,
+ * firestorm's burn), each with its own `damageOverTimeRatio` and tick count
+ * (duration over the sim's 3 s tick). The outgoing harness uses them to tell a
+ * bleed chain from other boss damage, to tell one DoT ability from another by
+ * the size of its ticks, and to count the cast whose hit started a chain as
+ * that ability even when the game labels the swing an auto-attack.
+ * @param {Object} gameData - `{abilityDetailMap}`
+ * @param {Object} dto - A player DTO (`abilities: [{hrid, level}|null]`)
+ * @returns {Map<string, {ratio: number, ticks: number}>}
+ */
+function dotPlayerAbilities(gameData, dto) {
+    const map = new Map();
+    const abilityMap = gameData?.abilityDetailMap || {};
+    for (const entry of dto?.abilities || []) {
+        const hrid = entry?.hrid;
+        const def = hrid && abilityMap[hrid];
+        if (!def) continue;
+        const effect = (def.abilityEffects || []).find((e) => Number(e.damageOverTimeRatio) > 0);
+        if (!effect) continue;
+        // Game data carries the duration in nanoseconds; the sim ticks every 3 s
+        const duration = Number(effect.damageOverTimeDuration);
+        const seconds = duration >= 1e6 ? duration / 1e9 : duration;
+        map.set(hrid, { ratio: Number(effect.damageOverTimeRatio), ticks: Math.max(1, Math.round(seconds / 3)) });
+    }
+    return map;
+}
+
 /** Clear chances are pinned to this many percentage points either side by default */
 export const DEFAULT_SIM_PRECISION_PCT = 1;
 /** Schema default for `labyrinthSimMaxHours`, kept here so the clamp agrees with it */
@@ -537,11 +565,16 @@ export const simCacheMethods = {
             fullAbilities: this.labyrinthFullAbilities(),
             zone: setup.zone,
         });
-        const real = extractMonsterAttacks(ticks, { nonDamaging: nonDamagingAbilities(gameData, monsterHrid) });
+        const monsterNonDamaging = nonDamagingAbilities(gameData, monsterHrid);
+        const real = extractMonsterAttacks(ticks, { nonDamaging: monsterNonDamaging });
         const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
         // The outgoing direction, from the SAME capture and the SAME sim run —
         // the attack tallies already hold the player→monster pair.
-        const outReal = extractPlayerAttacks(ticks, { nonDamaging: nonDamagingPlayerAbilities(gameData, dto) });
+        const outReal = extractPlayerAttacks(ticks, {
+            nonDamaging: nonDamagingPlayerAbilities(gameData, dto),
+            dotAbilities: dotPlayerAbilities(gameData, dto),
+            monsterNonDamaging,
+        });
         const outSim = summarizeSimAttacks(simResult?.attacks?.[playerHrid]?.[monsterHrid]);
         return {
             comparison: compareIncoming(real, sim),

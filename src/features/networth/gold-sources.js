@@ -359,6 +359,43 @@ function sessionSpanEnd(session, start) {
 }
 
 /**
+ * The days an enhancement session ran on, and its share of each.
+ *
+ * A resumed or merged enhancement session is several runs with idle gaps between them: its
+ * closed stretches are in `pastActiveSpans` and its current one runs from `segmentStartTime`.
+ * Spreading it over start..end as one span put part of its net on days nobody was enhancing —
+ * and a merge or resume moved figures already shown for past days. Each stretch gets the share
+ * its length is of the session's active time. A session with no stored stretches is one span,
+ * as before.
+ *
+ * @param {Object} session - A stored enhancement session
+ * @param {number} start - The session's start, epoch ms
+ * @returns {Array<{day: string, share: number}>} Shares summing to 1
+ */
+export function enhancementDayShares(session, start) {
+    const past = Array.isArray(session?.pastActiveSpans) ? session.pastActiveSpans : [];
+    if (past.length === 0) return daySharesOfSpan(start, sessionSpanEnd(session, start));
+
+    const segmentStart = num(session.segmentStartTime) || start;
+    const spans = past
+        .map((span) => ({ from: num(span?.start), to: Math.max(num(span?.start), num(span?.end)) }))
+        .filter((span) => span.from > 0);
+    spans.push({ from: segmentStart, to: sessionSpanEnd(session, segmentStart) });
+    const total = spans.reduce((sum, span) => sum + (span.to - span.from), 0);
+    if (!(total > 0)) return daySharesOfSpan(start, start);
+
+    const byDay = new Map();
+    for (const span of spans) {
+        const length = span.to - span.from;
+        if (!(length > 0)) continue;
+        for (const { day, share } of daySharesOfSpan(span.from, span.to)) {
+            byDay.set(day, (byDay.get(day) || 0) + (share * length) / total);
+        }
+    }
+    return [...byDay].map(([day, share]) => ({ day, share }));
+}
+
+/**
  * A blank per-source tally.
  * @returns {Object} Every source key at zero
  */
@@ -545,6 +582,86 @@ export function enhancementSessionNet(session, price, basisPrice = price) {
     if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
 
     return to - from - num(session.totalCost);
+}
+
+/**
+ * Whether a stored span carries its own leg: the levels it began and ended at and what it spent.
+ * @param {Object} span - A `pastActiveSpans` entry
+ * @returns {boolean}
+ */
+function spanHasLeg(span) {
+    return (
+        Number.isFinite(span?.start) &&
+        Number.isFinite(span?.startLevel) &&
+        Number.isFinite(span?.endLevel) &&
+        Number.isFinite(span?.cost)
+    );
+}
+
+/**
+ * What a resumed or merged enhancement session added to the account, leg by leg, on the days
+ * each leg ran.
+ *
+ * Each closed stretch in `pastActiveSpans` keeps its own start and end level and its own spend,
+ * so it is valued on its own and booked to its own days; the open stretch is the rest (from the
+ * level and spend it began at to where the session stands now). Sharing one net out over every
+ * stretch by duration rewrote days already shown — a cheap new leg took on an old leg's loss, and
+ * a resume's empty stretch pulled new spending back onto the old days. A session without legs on
+ * its stretches (never resumed or merged, or stored before they were kept) gets null and stays
+ * on the single-span reading.
+ *
+ * @param {Object} session - A stored enhancement session
+ * @param {number} start - The session's start, epoch ms
+ * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @param {Function} [basisPrice] - Deeper cost-basis lookup, tried where the market is silent
+ * A leg whose item cannot be priced at one of its levels is left out on its own; the legs that
+ * can be valued are still booked, so a merge never erases history that was valued before it.
+ *
+ * @returns {{entries: Array<{day: string, amount: number}>, pricedLegs: number, unpricedLegs: number,
+ *   unpricedDays: Array<string>}|null} Per-day amounts of the valued legs, how many legs were and
+ *   were not valued, and the days the unvalued ones ran on (null: no legs)
+ */
+export function enhancementLegNets(session, start, price, basisPrice = price) {
+    const past = Array.isArray(session?.pastActiveSpans) ? session.pastActiveSpans : [];
+    if (past.length === 0 || !past.every(spanHasLeg) || !session?.itemHrid) return null;
+
+    const value = (level) => {
+        let v = price(session.itemHrid, level);
+        if (!Number.isFinite(v)) v = basisPrice(session.itemHrid, level);
+        return Number.isFinite(v) ? v : null;
+    };
+    const segmentStart = num(session.segmentStartTime) || start;
+    const legs = [
+        ...past.map((span) => ({ ...span, end: Math.max(span.start, num(span.end)) })),
+        {
+            start: segmentStart,
+            end: sessionSpanEnd(session, segmentStart),
+            startLevel: Number.isFinite(session.segmentStartLevel)
+                ? session.segmentStartLevel
+                : num(session.startLevel),
+            endLevel: num(session.currentLevel ?? session.startLevel),
+            cost: num(session.totalCost) - num(session.segmentStartCost),
+        },
+    ];
+
+    const entries = [];
+    const unpricedDays = new Set();
+    let pricedLegs = 0;
+    let unpricedLegs = 0;
+    for (const leg of legs) {
+        const shares = daySharesOfSpan(leg.start, leg.end);
+        const from = value(leg.startLevel);
+        const to = value(leg.endLevel);
+        if (from === null || to === null) {
+            unpricedLegs += 1;
+            for (const { day } of shares) unpricedDays.add(day);
+            continue;
+        }
+        pricedLegs += 1;
+        const net = to - from - leg.cost;
+        for (const { day, share } of shares) entries.push({ day, amount: net * share });
+    }
+    return { entries, pricedLegs, unpricedLegs, unpricedDays: [...unpricedDays] };
 }
 
 /**
@@ -1459,6 +1576,7 @@ export function combatConsumablesByDay({ liveDays = [], sessions = [], offline =
  *   coverage: Object<string, number|null>,
  *   unpricedAlchemySessions: number,
  *   unpricedEnhancementSessions: number,
+ *   partlyPricedEnhancementSessions: number,
  *   unpricedProductionActions: number,
  *   combatBasis: {lootLogDays: number, sessionDays: number, liveDays: number, archiveDays: number,
  *     uncoveredDays: number, sessions: number, emptySessions: number, sessionsHeld: number,
@@ -1649,10 +1767,23 @@ export function attributeGoldSources(input) {
     }
 
     let unpricedEnhancementSessions = 0;
+    let partlyPricedEnhancementSessions = 0;
     for (const session of enhancementSessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
-        const shares = daySharesOfSpan(t, sessionSpanEnd(session, t));
+        // A resumed or merged run is valued leg by leg, each on its own days
+        const legs = enhancementLegNets(session, t, price, basisPrice);
+        if (legs) {
+            // Every leg that can be valued is booked; one that cannot is left out on its own, and
+            // the session counts as unpriced (none valued) or partly priced (some valued)
+            for (const { day, amount } of legs.entries) add(day, 'enhancement', amount);
+            if (legs.unpricedLegs > 0 && legs.unpricedDays.some((day) => inWindow.has(day))) {
+                if (legs.pricedLegs > 0) partlyPricedEnhancementSessions += 1;
+                else unpricedEnhancementSessions += 1;
+            }
+            continue;
+        }
+        const shares = enhancementDayShares(session, t);
         const net = enhancementSessionNet(session, price, basisPrice);
         if (net === null) {
             if (shares.some(({ day }) => inWindow.has(day))) unpricedEnhancementSessions += 1;
@@ -1879,6 +2010,7 @@ export function attributeGoldSources(input) {
         },
         unpricedAlchemySessions,
         unpricedEnhancementSessions,
+        partlyPricedEnhancementSessions,
         unpricedProductionActions,
         unpricedChestItems,
         unpricedChests,
