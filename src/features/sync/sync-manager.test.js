@@ -1576,6 +1576,37 @@ describe('the remembered gist version', () => {
         expect(toasts).toHaveLength(1);
     });
 
+    test('a pressed push whose listing failed says so, records nothing, and is not swallowed', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError(
+            'unlisted',
+            "Couldn't read the gist's current state, so nothing was pushed. Try again."
+        );
+
+        expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'unlisted' });
+        expect(toasts.at(-1).message).toMatch(/Couldn't read the gist's current state/);
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
+    });
+
+    test('"Keep this device and push" with a failed listing writes nothing and leaves the pull unsettled', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed';
+        gist.read = {
+            manifest: { exportedAt: '2026-04-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}' },
+            payload: '{"remote":1}',
+        };
+        dialog.answer = 'push';
+        gist.writeError = new FakeGistError(
+            'unlisted',
+            "Couldn't read the gist's current state, so nothing was pushed. Try again."
+        );
+
+        expect(await syncManager.pull()).toMatchObject({ ok: false, reason: 'unlisted' });
+        expect(gist.writes).toHaveLength(0);
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+
     test('a write that reports no ETag leaves no version behind', async () => {
         stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
         payload.text = '{"local":2}';
