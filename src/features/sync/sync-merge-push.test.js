@@ -151,6 +151,8 @@ vi.mock('./gist-client.js', async () => {
 
 const { default: syncManager } = await import('./sync-manager.js');
 const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
+// A real fold with a scalar it cannot combine (`sortBy`), registered the way a page load does
+await import('../../utils/watchlist.js');
 
 // A history with its own fold, the shape every registered one has: a union
 registerSyncMerge({
@@ -367,6 +369,48 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(afterB).toBeGreaterThan(writes);
         expect((await as(a, auto.push)).reason).toBe('gist-has-it');
         expect(gist.writes).toBe(afterB);
+    });
+
+    test('two devices whose folds disagree on a scalar settle instead of trading it every interval', async () => {
+        const { a, b } = await syncedPair();
+        const list = (sortBy, hrid) => ({
+            entries: [{ hrid, name: hrid }],
+            zones: {},
+            chests: {},
+            sortBy,
+            direction: 'asc',
+        });
+        await as(a, () => {
+            a.db.settings.watchlist_c1 = list('name', '/items/a');
+        });
+        await as(b, () => {
+            b.db.settings.watchlist_c1 = list('price', '/items/b');
+        });
+
+        // Both in use: each records history every tick, so each pushes every
+        // tick, and each push folds the other's watchlist into the upload
+        const sortOnGist = [];
+        for (let tick = 0; tick < 6; tick += 1) {
+            await activeTick(a, `a${tick}`);
+            sortOnGist.push(gistStores().settings.watchlist_c1.sortBy);
+            await activeTick(b, `b${tick}`);
+            sortOnGist.push(gistStores().settings.watchlist_c1.sortBy);
+        }
+
+        // Settled after the first exchange, not flipping with every upload
+        expect(new Set(sortOnGist.slice(2)).size).toBe(1);
+        const onGist = gistStores().settings.watchlist_c1;
+        expect(onGist.entries.map((entry) => entry.hrid).sort()).toEqual(['/items/a', '/items/b']);
+
+        // Once neither records anything, neither uploads
+        const settled = gist.writes;
+        for (let tick = 0; tick < 3; tick += 1) {
+            await as(a, auto.pull);
+            await as(a, auto.push);
+            await as(b, auto.pull);
+            await as(b, auto.push);
+        }
+        expect(gist.writes).toBe(settled);
     });
 
     test('a concurrent edit of one setting goes to the later wall-clock change', async () => {

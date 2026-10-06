@@ -1213,7 +1213,7 @@ describe('addsToRemote, the automatic merge loop guard', () => {
 describe('the whole-value baseline', () => {
     const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
 
-    test('fingerprints only the keys sync writes whole', () => {
+    test('fingerprints every key but the settings maps and their stamps', () => {
         const hashes = wholeKeyHashes(
             payloadOf({
                 settings: {
@@ -1224,7 +1224,7 @@ describe('the whole-value baseline', () => {
                 },
             })
         );
-        expect(Object.keys(hashes)).toEqual(['settings\u0000panelGeometry']);
+        expect(Object.keys(hashes).sort()).toEqual(['settings\u0000panelGeometry', 'settings\u0000treasureTally_abc']);
     });
 
     test('ignores the order an object was written in', () => {

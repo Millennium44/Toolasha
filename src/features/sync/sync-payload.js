@@ -763,13 +763,20 @@ function foldSettingsMap(localValue, incomingValue, localStamps, incomingStamps,
  * @returns {boolean} True for a whole-value key
  */
 function isWholeKey(storeName, key) {
-    if (
-        storeName === SETTINGS_STORE &&
-        (key.startsWith('script_settingsMap') || key.startsWith(SETTING_STAMPS_PREFIX))
-    ) {
-        return false;
-    }
-    return !mergeForKey(storeName, key);
+    return !isSettingsMapKey(storeName, key) && !mergeForKey(storeName, key);
+}
+
+/**
+ * Whether a key is a settings map or a map's stamps — the keys merged per
+ * setting, and the only ones the baseline does not cover.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {boolean} True for a settings map or its stamps
+ */
+function isSettingsMapKey(storeName, key) {
+    return (
+        storeName === SETTINGS_STORE && (key.startsWith('script_settingsMap') || key.startsWith(SETTING_STAMPS_PREFIX))
+    );
 }
 
 /** One whole-value key's baseline id: store and key, joined by a character neither can hold */
@@ -779,15 +786,16 @@ const baselineId = (storeName, key) => `${storeName}\u0000${key}`;
 const valueHash = (value) => hashPayload(stableStringify(value));
 
 /**
- * Fingerprint every whole-value key in a payload: the baseline a later merge
- * compares against.
+ * Fingerprint every key in a payload but the settings maps: the baseline a
+ * later merge compares against.
  *
- * Whole-value keys have no merge, so "which side changed it?" has to be asked
- * of a common ancestor, and this is a cheap one: after every exchange, each
- * such key's hash as it then stood. A key whose current value still hashes to
- * its baseline has not moved on that side since; the side that did move it
- * wins. With no baseline, or both sides moved, the gist's value is kept,
- * because that is what a pull always did.
+ * "Which side changed it?" has to be asked of a common ancestor, and this is a
+ * cheap one: after every exchange, each key's hash as it then stood. A key
+ * whose current value still hashes to its baseline has not moved on that side
+ * since; the side that did move it wins. With no baseline, or both sides
+ * moved, a whole-value key keeps the gist's value, because that is what a
+ * pull always did, and a key with a registered merge is folded with the gist
+ * as the side that wins what the fold cannot combine.
  *
  * Stored device-local (`toolasha_sync_baseline`), never uploaded.
  *
@@ -805,7 +813,7 @@ export function wholeKeyHashes(text) {
     for (const [storeName, entries] of Object.entries(stores)) {
         if (!entries || typeof entries !== 'object') continue;
         for (const [key, value] of Object.entries(entries)) {
-            if (isWholeKey(storeName, key)) hashes[baselineId(storeName, key)] = valueHash(value);
+            if (!isSettingsMapKey(storeName, key)) hashes[baselineId(storeName, key)] = valueHash(value);
         }
     }
     return hashes;
@@ -859,9 +867,12 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
  * Per key:
  * - settings maps per setting, the later change winning ({@link localStampWins}), each kept value with its
  *   stamp;
- * - a key with a registered merge folded with it, the gist's copy as the base;
- * - any other key: this device's value when the gist's is still the one this device last exchanged (see
- *   {@link wholeKeyHashes}), the gist's otherwise;
+ * - any other key whose gist value is still the one this device last exchanged (see {@link wholeKeyHashes}):
+ *   this device's value;
+ * - otherwise a key with a registered merge folded with it, this device as the base and the gist as the
+ *   incoming side, so what the fold cannot combine goes to the gist — every pull folds the same way round,
+ *   which is what lets two devices settle;
+ * - otherwise the gist's value;
  * - a key on one side only, kept from that side.
  *
  * The gist's copy is cleaned the way a pull cleans it first — other scripts'
@@ -913,10 +924,22 @@ export function mergeForUpload(localText, remoteText, baseline) {
                 else delete out[stampKey];
                 continue;
             }
+            // The gist moved nowhere since this device last exchanged it: this
+            // device's copy is the newer one whole, folded or not
+            if (keepMine(baselineId(storeName, key), value, theirs[key], baseline)) {
+                out[key] = value;
+                continue;
+            }
             const registration = mergeForKey(storeName, key);
             if (registration) {
                 try {
-                    out[key] = registration.merge(theirs[key], value);
+                    // This device as the base and the gist as the incoming side,
+                    // the way every pull folds: whatever a fold cannot combine
+                    // — a sort order, a direction, a tie — goes to the gist.
+                    // The other way round, each device's scalar beat the
+                    // gist's on every upload, the next device's beat that,
+                    // and two devices traded one setting every interval.
+                    out[key] = registration.merge(value, theirs[key]);
                 } catch (error) {
                     console.error(
                         `[Sync] Merging ${storeName}/${key} for upload failed; keeping the gist's copy:`,
@@ -925,7 +948,6 @@ export function mergeForUpload(localText, remoteText, baseline) {
                 }
                 continue;
             }
-            if (keepMine(baselineId(storeName, key), value, theirs[key], baseline)) out[key] = value;
         }
         // Stamps for a map only this device has came across with it above;
         // stamps the gist holds for a map it alone has stay with that map
