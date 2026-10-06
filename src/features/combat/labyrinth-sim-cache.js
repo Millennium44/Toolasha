@@ -395,7 +395,34 @@ export const simCacheMethods = {
         const upgrades = this.getLabyrinthCombatBuffs()
             .map((buff) => `${buff.typeHrid}=${buff.ratioBoost || 0}|${buff.flatBoost || 0}`)
             .join(',');
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}${this._fallbackWornPart(loadoutId)}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}${this._combatBuffsPart()}${this._fallbackWornPart(loadoutId)}`;
+    },
+
+    /**
+     * The server-computed combat buffs the sim folds in: guild shrines and
+     * completed achievements, read the way `buildPlayerDTO` reads them
+     * (`guildCombatBuffs` / `achievementCombatBuffs`). Nothing else in the key
+     * marks them, so a shrine upgrade or an achievement unlock left every cached
+     * result, and every settled badge signature built on the key, answering for
+     * the old buffs. Standing state that changes on the scale of days, unlike
+     * consumables, so it belongs in the key.
+     *
+     * Sorted so array order never matters; hashed so the key stays short.
+     * @returns {string} '' when neither source has a buff, else ':cb=<hash>'
+     */
+    _combatBuffsPart() {
+        const guild = dataManager.characterData?.guildActionTypeBuffsMap?.['/action_types/combat'];
+        const achievement = dataManager.getAchievementBuffs?.('/action_types/combat');
+        const describe = (tag, buffs) =>
+            (Array.isArray(buffs) ? buffs : [])
+                .map(
+                    (b) =>
+                        `${tag}${b?.uniqueHrid || ''}/${b?.typeHrid || ''}/${b?.ratioBoost || 0}/${b?.flatBoost || 0}` +
+                        `/${b?.ratioBoostLevelBonus || 0}/${b?.flatBoostLevelBonus || 0}`
+                )
+                .sort();
+        const parts = [...describe('g', guild), ...describe('a', achievement)];
+        return parts.length ? `:cb=${this._hashString(parts.join(','))}` : '';
     },
 
     /**

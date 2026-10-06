@@ -3342,6 +3342,50 @@ describe('a labyrinth token upgrade changes the cache slot', () => {
     });
 });
 
+/**
+ * Guild shrine and achievement combat buffs ride the player DTO into every sim,
+ * and nothing else in the key marks them: upgrading a shrine or unlocking an
+ * achievement left cached results (and settled 0% badge signatures) answering
+ * for the old buffs.
+ */
+describe('guild and achievement combat buffs change the cache slot', () => {
+    const buff = (typeHrid, ratioBoost) => ({ uniqueHrid: `/buff_uniques/${typeHrid}`, typeHrid, ratioBoost });
+
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+        delete dataManagerMock.getAchievementBuffs;
+    });
+
+    test('a guild shrine buff moves the key and the tile signature input', () => {
+        dataManagerMock.characterData = { guildActionTypeBuffsMap: { '/action_types/combat': [] } };
+        const before = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.characterData = {
+            guildActionTypeBuffsMap: { '/action_types/combat': [buff('/buff_types/damage', 0.05)] },
+        };
+        const after = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        expect(after).not.toBe(before);
+    });
+
+    test('an unlocked achievement buff moves the key', () => {
+        dataManagerMock.characterData = {};
+        dataManagerMock.getAchievementBuffs = vi.fn(() => []);
+        const before = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.getAchievementBuffs = vi.fn(() => [buff('/buff_types/accuracy', 0.02)]);
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).not.toBe(before);
+    });
+
+    test('buff order does not move the key, and no buffs leaves it as it was', () => {
+        const a = buff('/buff_types/damage', 0.05);
+        const b = buff('/buff_types/accuracy', 0.02);
+        dataManagerMock.characterData = { guildActionTypeBuffsMap: { '/action_types/combat': [a, b] } };
+        const first = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.characterData = { guildActionTypeBuffsMap: { '/action_types/combat': [b, a] } };
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).toBe(first);
+        dataManagerMock.characterData = {};
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).not.toContain(':cb=');
+    });
+});
+
 const adapterMock = await import('../combat-sim/combat-sim-adapter.js');
 
 /**
