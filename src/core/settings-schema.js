@@ -1295,6 +1295,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Hide tracker when not on the Enhancing screen',
             },
+            enhancementTracker_autoResume: {
+                id: 'enhancementTracker_autoResume',
+                label: 'Resume the last session when a run picks up where it ended',
+                type: 'checkbox',
+                default: false,
+                help: 'When a new enhancing run is the same item, target level and protection setup as the most recent session, and starts at exactly the level that session ended at, its attempts are added to that session instead of starting a new one. Only active enhancing time is counted. It matches by item and level only, so a different copy of the same item at the same level also resumes it, as does a run whose protection item is not known yet.',
+            },
             enhancementXPH: {
                 id: 'enhancementXPH',
                 label: 'Enhancement: XPH calculator',

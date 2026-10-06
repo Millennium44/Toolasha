@@ -17,6 +17,11 @@ import {
     extendSession,
     validateSession,
     normalizeSession,
+    canResumeSession,
+    resumeSession,
+    planSessionMerge,
+    foldSessions,
+    calibrationObservation,
     SessionState,
 } from './enhancement-session.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
@@ -178,6 +183,109 @@ class EnhancementTracker {
     }
 
     /**
+     * The most recently active stored session, ended or not.
+     * @returns {Object|null}
+     */
+    getMostRecentSession() {
+        const activity = (s) =>
+            Math.max(s?.endTime || 0, s?.lastAttempt?.timestamp || 0, s?.lastUpdateTime || 0, s?.startTime || 0);
+        let latest = null;
+        for (const session of Object.values(this.sessions)) {
+            if (session && (!latest || activity(session) > activity(latest))) latest = session;
+        }
+        return latest;
+    }
+
+    /**
+     * The session a new run should continue, when it is the most recent one and the run picks up
+     * exactly where it ended (see {@link canResumeSession}). Only with the auto-resume setting on.
+     * @param {Object} run - `{itemHrid, startLevel, targetLevel, protectFrom, protectionItemHrid}`
+     * @returns {string|null} Session ID, or null
+     */
+    findResumableSession(run) {
+        if (config.getSetting('enhancementTracker_autoResume') !== true) return null;
+        const latest = this.getMostRecentSession();
+        return latest && canResumeSession(latest, run) ? latest.id : null;
+    }
+
+    /**
+     * Reopen an ended session as the current one, counting only active time from here on.
+     * @param {string} sessionId - Session ID
+     * @returns {Promise<boolean>} True when resumed
+     */
+    async resumeSessionById(sessionId) {
+        const session = this.sessions[sessionId];
+        if (!session || session.state !== SessionState.COMPLETED) return false;
+        resumeSession(session);
+        // The resumed run is its own leg, predicted from the stats the player has now; when that
+        // cannot be computed it has none rather than the old run's
+        try {
+            session.predictions =
+                calculateEnhancementPredictions(
+                    session.itemHrid,
+                    session.currentLevel,
+                    session.targetLevel,
+                    session.protectFrom
+                ) || null;
+        } catch (error) {
+            console.error('[EnhancementTracker] Predicting the resumed leg failed:', error);
+            session.predictions = null;
+        }
+        this.currentSessionId = sessionId;
+        await saveSessions(this.sessions);
+        await saveCurrentSessionId(sessionId);
+        return true;
+    }
+
+    /**
+     * Whether the picked sessions can be merged, without changing anything.
+     * @param {string[]} sessionIds - Picked session IDs
+     * @returns {{ok: boolean, reason?: string, ordered?: Array<Object>, settingsDiffer?: boolean}}
+     */
+    planMerge(sessionIds) {
+        if (!sessionsLoaded()) {
+            return { ok: false, reason: 'The stored sessions have not finished loading; try again in a moment.' };
+        }
+        // Named in a refusal as the panel numbers them: #N in the session list
+        const ids = Object.keys(this.sessions);
+        const labelOf = (session) => '#' + (ids.indexOf(session.id) + 1);
+        return planSessionMerge(
+            (sessionIds || []).map((id) => this.sessions[id]),
+            { labelOf }
+        );
+    }
+
+    /**
+     * Merge the picked sessions into one persisted session; the originals are removed.
+     *
+     * The most recently active session absorbs the others (see {@link foldSessions}), so when it
+     * is the run in progress it stays the current session and keeps receiving attempts. Only runs
+     * that continue each other can merge (planSessionMerge).
+     *
+     * No combined prediction is made: one computed now would use today's stats for attempts made
+     * on the stats the player had then. The merged session shows none and is not calibrated; each
+     * run's own prediction stays in `legPredictions`.
+     * @param {string[]} sessionIds - Picked session IDs
+     * @returns {Promise<{ok: boolean, reason?: string, id?: string}>}
+     */
+    async mergeSessionsIntoOne(sessionIds) {
+        const plan = this.planMerge(sessionIds);
+        if (!plan.ok) return { ok: false, reason: plan.reason };
+
+        const { ordered } = plan;
+        const merged = foldSessions(ordered);
+        for (const session of ordered.slice(0, -1)) delete this.sessions[session.id];
+
+        // The pointer only ever names a running session; a removed one cannot be current
+        if (this.currentSessionId && !this.sessions[this.currentSessionId]) {
+            this.currentSessionId = merged.state === SessionState.TRACKING ? merged.id : null;
+            await saveCurrentSessionId(this.currentSessionId);
+        }
+        await saveSessions(this.sessions);
+        return { ok: true, id: merged.id };
+    }
+
+    /**
      * Get current active session
      * @returns {Object|null} Current session or null
      */
@@ -248,13 +356,17 @@ class EnhancementTracker {
                 await saveCurrentSessionId(null);
             }
             if (!this._ownsSessions(sessions, owner)) return;
+            // A merged session that reaches a target one of its folded-in runs already reached (and
+            // was recorded for) is measured on its own leg alone, or not at all (calibrationObservation)
+            const observation = calibrationObservation(completed);
+            if (!observation) return;
 
             // The run just became one finished draw from the distribution its
             // prediction quoted; the recorder declines anything that is not
             // (no distribution stored, target not actually reached). Errors
             // stay its problem — a calibration ledger must never break a run.
             try {
-                await enhancementCalibration.recordCompletion(completed);
+                await enhancementCalibration.recordCompletion(observation);
             } catch (error) {
                 console.error('[EnhancementTracker] Recording the calibration observation failed:', error);
             }

@@ -450,6 +450,16 @@ function usesPhilosophersMirror(action) {
 }
 
 /**
+ * The protection item the run is set up with: the mirror when one is loaded, else the protection
+ * item when protect-from is on, else null.
+ * @param {Object} action - Enhance action
+ * @returns {string|null}
+ */
+function configuredProtectionItem(action) {
+    return usesPhilosophersMirror(action) ? PHILOSOPHERS_MIRROR_HRID : getProtectionItemHrid(action);
+}
+
+/**
  * Charge one Philosopher's Mirror attempt. The game replaces the enhancement costs of a mirror
  * attempt with one copy of the base item at one level below the item, and the mirror itself is
  * consumed every attempt (game client: getPhilosophersMirrorCost, and the mirror's item
@@ -495,6 +505,9 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
         timestamp: Date.now(),
         actionId: action.id ?? null,
         currentCount: Number.isFinite(action.currentCount) ? action.currentCount : null,
+        // The protection item this run is set up with, whether or not one has been consumed yet —
+        // auto-resume compares the next run against it
+        protectionItemHrid: configuredProtectionItem(action),
     };
 
     const knownStart = scored && Number.isFinite(previousLevel);
@@ -571,6 +584,29 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
         }
     }
     const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
+
+    // Auto-resume (off by default): the most recent session ended short of its target, and this
+    // run is the same item, target and protection setup and starts exactly where it ended — the
+    // level read off the queue row before this attempt, never a guess. Continue that session.
+    //
+    // That baseline is only the run's start when this is the run's first attempt: on a page load
+    // after the new run has already done several, it is the level before the next one. The
+    // action's own count says which — currentCount is 1 after the first attempt, and the
+    // baseline was only taken when the row it came from counted one fewer (takeBaseline), i.e. 0.
+    const firstAttempt = action.currentCount === 1;
+    const resumableId = enhancementTracker.findResumableSession?.({
+        itemHrid,
+        startLevel: firstAttempt ? baselineLevel : null,
+        targetLevel,
+        protectFrom,
+        protectionItemHrid: configuredProtectionItem(action),
+    });
+    if (resumableId && (await enhancementTracker.resumeSessionById(resumableId))) {
+        enhancementUI.switchToSession(resumableId);
+        enhancementUI.scheduleUpdate();
+        return enhancementTracker.getCurrentSession();
+    }
+
     const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
     enhancementUI.switchToSession(sessionId);
     enhancementUI.scheduleUpdate();

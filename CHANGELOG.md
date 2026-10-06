@@ -18,6 +18,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A combat task's profit estimate now flags unpriced drops ("≥") and unpriced consumables ("-- ⚠") instead of counting them as worth nothing; the reroll-spend line no longer lands on the wrong card when one task's name contains another's ("Cow" vs "Verdant Cow"); the planner no longer files one character's combat baseline under another after a switch, and an earning leg whose market volume was not measured now says so.
 
+### Enhancing tracker merges and resumes sessions
+
+- The ∑ merge view can combine one item's ticked sessions into a single saved session, and a new "auto-resume" setting (off by default) continues the last ended session when you restart the same item where it stopped with the same target. The merge view now updates live, and the Philosopher's Mirror line quotes savings to your target instead of +20.
+
 ### Labyrinth badges cover rooms revealed mid-calculation
 
 - Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.
