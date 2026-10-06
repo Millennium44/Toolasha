@@ -914,3 +914,36 @@ describe('folding into a survivor that already keeps a protection breakdown', ()
         });
     });
 });
+
+describe('resuming starts a separately predicted leg', () => {
+    test("the old run's prediction is banked and the resumed leg counts from zero", () => {
+        const { seven } = spatulaRuns(); // 466 attempts, 12 protections, predicted 400
+        resumeSession(seven, 9_000_000);
+        expect(seven.predictions).toBeNull();
+        expect(seven.legPredictions).toEqual([
+            {
+                sessionId: 'session_7',
+                startLevel: 0,
+                targetLevel: 8,
+                protectFrom: 5,
+                predictions: { expectedAttempts: 400 },
+            },
+        ]);
+        expect(getCurrentLegCounters(seven)).toEqual({ attempts: 0, protections: 0 });
+        seven.totalAttempts += 3;
+        expect(getCurrentLegCounters(seven).attempts).toBe(3);
+    });
+
+    test('a second resume banks the first resumed leg after it', () => {
+        const { seven } = spatulaRuns();
+        resumeSession(seven, 9_000_000);
+        seven.predictions = { expectedAttempts: 60 };
+        seven.currentLevel = 2;
+        seven.state = SessionState.COMPLETED;
+        resumeSession(seven, 9_500_000);
+        expect(seven.legPredictions.map((leg) => [leg.startLevel, leg.predictions.expectedAttempts])).toEqual([
+            [0, 400],
+            [3, 60],
+        ]);
+    });
+});

@@ -441,10 +441,34 @@ function startNewSegment(session, now) {
 /**
  * Reopen an ended session so a new run's attempts are recorded against it. The time it spent
  * ended is not counted: its duration so far is banked and the clock restarts now.
+ *
+ * The resumed run is its own predicted leg, the way an extension is: the player may have changed
+ * level, gear, teas or buffs before restarting, so the old prediction describes none of the new
+ * run's attempts. The old leg's prediction is banked in `legPredictions` (as a merge banks its
+ * runs'), the counters are snapshotted as the leg's baseline, and the prediction is cleared for
+ * the caller to compute afresh from current stats. The panel and calibration then read only the
+ * resumed leg against its own prediction.
  * @param {Object} session - Session to reopen (mutated)
  * @param {number} [now] - Epoch ms
  */
 export function resumeSession(session, now = Date.now()) {
+    if (session.predictions) {
+        session.legPredictions = [
+            ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
+            {
+                sessionId: session.id,
+                startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
+                targetLevel: session.targetLevel,
+                protectFrom: session.protectFrom || 0,
+                predictions: session.predictions,
+            },
+        ];
+    }
+    session.predictions = null;
+    session.extensionBaseline = {
+        totalAttempts: session.totalAttempts || 0,
+        protectionCount: session.protectionCount || 0,
+    };
     startNewSegment(session, now);
     session.state = SessionState.TRACKING;
     session.endTime = null;

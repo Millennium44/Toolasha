@@ -446,3 +446,57 @@ describe('merging only runs that continue each other', () => {
         expect(eight.totalAttempts).toBe(60);
     });
 });
+
+describe('auto-resume predicts the resumed leg on its own', () => {
+    /** #7 stopped at +3 short of +8, predicted then for 400 attempts from +0 */
+    async function loadEnded() {
+        const seven = createSession('/items/sword', 'Sword', 0, 8, 5);
+        Object.assign(seven, {
+            id: 'session_7',
+            state: SessionState.COMPLETED,
+            startTime: 1_000_000,
+            endTime: 1_600_000,
+            lastUpdateTime: 1_600_000,
+            lastAttempt: { attemptNumber: 466, level: 3, timestamp: 1_600_000, actionId: 'a7', currentCount: 466 },
+            currentLevel: 3,
+            totalAttempts: 466,
+            predictions: { expectedAttempts: 400 },
+        });
+        mocks.loadSessions.mockResolvedValue({ session_7: seven });
+        mocks.loadCurrentSessionId.mockResolvedValue(null);
+        enhancementTracker.isInitialized = false;
+        enhancementTracker.sessions = {};
+        enhancementTracker.currentSessionId = null;
+        await enhancementTracker.initialize();
+        return seven;
+    }
+
+    test("the resumed leg gets a prediction from today's stats and the old one is banked", async () => {
+        const seven = await loadEnded();
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 90 });
+        await enhancementTracker.resumeSessionById('session_7');
+
+        expect(calculateEnhancementPredictions).toHaveBeenCalledWith('/items/sword', 3, 8, 5);
+        expect(seven.predictions).toEqual({ expectedAttempts: 90 });
+        expect(seven.legPredictions[0].predictions).toEqual({ expectedAttempts: 400 });
+    });
+
+    test('reaching the target calibrates only the resumed leg, against its own prediction', async () => {
+        await loadEnded();
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 90 });
+        await enhancementTracker.resumeSessionById('session_7');
+        for (let level = 3; level < 8; level++) await enhancementTracker.recordSuccess(level, level + 1);
+
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
+        const observation = enhancementCalibration.recordCompletion.mock.calls[0][0];
+        expect(observation.predictions).toEqual({ expectedAttempts: 90 });
+        // Five attempts on the resumed leg, not 471 against the first run's distribution
+        expect(observation.totalAttempts - observation.extensionBaseline.totalAttempts).toBe(5);
+    });
+
+    test('with no prediction to compute, the resumed leg has none rather than the old one', async () => {
+        const seven = await loadEnded();
+        await enhancementTracker.resumeSessionById('session_7');
+        expect(seven.predictions).toBeNull();
+    });
+});

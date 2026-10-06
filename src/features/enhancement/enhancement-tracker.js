@@ -217,6 +217,20 @@ class EnhancementTracker {
         const session = this.sessions[sessionId];
         if (!session || session.state !== SessionState.COMPLETED) return false;
         resumeSession(session);
+        // The resumed run is its own leg, predicted from the stats the player has now; when that
+        // cannot be computed it has none rather than the old run's
+        try {
+            session.predictions =
+                calculateEnhancementPredictions(
+                    session.itemHrid,
+                    session.currentLevel,
+                    session.targetLevel,
+                    session.protectFrom
+                ) || null;
+        } catch (error) {
+            console.error('[EnhancementTracker] Predicting the resumed leg failed:', error);
+            session.predictions = null;
+        }
         this.currentSessionId = sessionId;
         await saveSessions(this.sessions);
         await saveCurrentSessionId(sessionId);
