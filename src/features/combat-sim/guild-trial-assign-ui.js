@@ -718,6 +718,9 @@ export class TrialAssignPlanner {
                 if (!valid) return;
                 this.cap = value;
                 this.edited();
+                // A typed cap is what unlocks Recommend when the Encampment level never loaded; the
+                // redraw waits for the field to lose focus so the caret stays put
+                this.inputsChanged();
             },
             { min: 0, max: 100, step: 1, disabled: busy }
         );

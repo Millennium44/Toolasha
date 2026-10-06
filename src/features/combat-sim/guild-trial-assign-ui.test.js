@@ -296,18 +296,23 @@ describe('the Assign skilling view', () => {
         expect(text(shell)).toContain('Slots: 20 (Encampment data unavailable)');
     });
 
-    test('an Encampment level not loaded yet blocks a recommendation until a cap is known', () => {
+    test('an Encampment level not loaded yet blocks a recommendation until a cap is known', async () => {
         const levels = dataManager.guildBuildingLevelMap;
         dataManager.guildBuildingLevelMap = {};
         try {
-            const { planner, shell, sim } = makeSim();
+            const { shell, sim } = makeSim();
             sim.panel.render();
             expect(text(shell)).toContain('Skilling Encampment level has not loaded yet');
             const recommend = () =>
                 [...shell.querySelectorAll('button')].find((b) => b.textContent === 'Recommend sign-ups');
             expect(recommend().disabled).toBe(true);
-            planner.cap = 30;
-            sim.panel.render();
+            // Typing the cap is the suggested workaround: Recommend unlocks once the field is left
+            const cap = shell.querySelector('input[aria-label="Slots per trial"]');
+            cap.focus();
+            cap.value = '30';
+            cap.dispatchEvent(new Event('input'));
+            cap.blur();
+            await new Promise((resolve) => setTimeout(resolve, 0));
             expect(recommend().disabled).toBe(false);
         } finally {
             dataManager.guildBuildingLevelMap = levels;
