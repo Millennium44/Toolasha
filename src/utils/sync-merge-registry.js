@@ -35,15 +35,31 @@
  * same entry twice over, and for a counter means the max (those merges take
  * the larger of each count rather than the later argument). The point is the
  * union, not the precedence.
+ *
+ * That incoming-wins order is a contract, not a habit: an upload folds with
+ * either side as the incoming one — the gist, or this device when only this
+ * device moved — and relies on the second argument taking what the fold
+ * cannot combine. A merge must never swap its arguments to change who wins.
+ * A record whose PULL must keep this device's copy on a tie declares
+ * `localWinsOnPull` instead, and the pull alone folds through `mergeForPull`.
  */
 
-/** @typedef {(local: *, incoming: *) => *} SyncMerge */
+/**
+ * @typedef {(local: *, incoming: *, context?: {forUpload?: boolean}) => *} SyncMerge
+ * `context.forUpload` is set when the fold builds an automatic upload rather
+ * than a local apply. A merge that caps or prunes by this device's live
+ * settings must keep everything then — the gist is every device's copy, and
+ * one device's retention choice is not the others'. Constant, build-wide caps
+ * fold identically everywhere and may ignore it.
+ */
 
 /**
  * @typedef {Object} SyncMergeRegistration
  * @property {string} store - Object store the key lives in
  * @property {(key: string) => boolean} match - Whether this registration owns a key
- * @property {SyncMerge} merge - Folds the incoming value onto the local one
+ * @property {SyncMerge} merge - Folds the incoming value onto the local one; ties go to `incoming`
+ * @property {SyncMerge} mergeForPull - The fold a pull applies: `merge`, or with `localWinsOnPull`
+ *   the same fold with this device's copy as the side that wins ties
  * @property {string} label - For logging and for the apply summary
  */
 
@@ -80,11 +96,13 @@ export function scopedKeyMatcher(base) {
  * @param {string} [options.base] - Scoped key base
  * @param {string} [options.prefix] - Raw key prefix
  * @param {(key: string) => boolean} [options.match] - Key predicate
- * @param {SyncMerge} options.merge - `(local, incoming) => merged`
+ * @param {SyncMerge} options.merge - `(local, incoming) => merged`, ties to `incoming`
+ * @param {boolean} [options.localWinsOnPull] - A pull keeps this device's copy where the fold ties
+ *   (`mergeForPull` folds with the arguments turned round); uploads still use `merge`
  * @param {string} [options.label] - Name for logs and the apply summary
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncMerge({ store, key, base, prefix, match, merge, label }) {
+export function registerSyncMerge({ store, key, base, prefix, match, merge, localWinsOnPull = false, label }) {
     if (!store) throw new Error('[SyncMergeRegistry] registerSyncMerge needs a store');
     if (typeof merge !== 'function') throw new Error('[SyncMergeRegistry] registerSyncMerge needs a merge()');
 
@@ -114,6 +132,7 @@ export function registerSyncMerge({ store, key, base, prefix, match, merge, labe
         store,
         match: matcher,
         merge,
+        mergeForPull: localWinsOnPull ? (local, incoming, context) => merge(incoming, local, context) : merge,
         label: label || key || base || prefix || store,
         claim,
     };

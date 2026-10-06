@@ -94,8 +94,19 @@ const { registerSyncMerge, mergeForKey } = await import('../../utils/sync-merge-
 await import('../../utils/chest-tally.js');
 await import('../market/trade-history.js');
 
-const { buildPayloadJSON, applyPayload, hashPayload, readExportedAt, redactSettingsStore } =
-    await import('./sync-payload.js');
+const {
+    buildPayloadJSON,
+    applyPayload,
+    hashPayload,
+    readExportedAt,
+    redactSettingsStore,
+    localStampWins,
+    addsToRemote,
+    mergeForUpload,
+    wholeKeyHashes,
+    SETTING_STAMPS_PREFIX,
+    RESTORED_BASELINE,
+} = await import('./sync-payload.js');
 
 beforeEach(() => {
     importedPayloads.length = 0;
@@ -1053,5 +1064,425 @@ describe('what belongs to this script', () => {
         // What is remembered as "the state of this device" has to describe what
         // was applied, not what was downloaded
         expect(result.applied).not.toBe(json);
+    });
+});
+
+describe('settings change stamps', () => {
+    const MAP = 'script_settingsMap_abc';
+    const STAMPS = `settings_changedAt_${MAP}`;
+    const pull = (stores, mode) =>
+        applyPayload(JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores }), mode ? { mode } : undefined);
+    const landed = () => importedPayloads.at(-1).stores.settings;
+
+    test('the prefix matches the one core/settings-storage.js writes', () => {
+        expect(SETTING_STAMPS_PREFIX).toBe('settings_changedAt_');
+    });
+
+    test.each([
+        ['the later change wins, whatever the counters say', { at: 9, seq: 1 }, { at: 1, seq: 5 }, true],
+        ['the earlier change loses, whatever the counters say', { at: 1, seq: 5 }, { at: 9, seq: 1 }, false],
+        ['an exact tie of clocks goes to the higher counter', { at: 5, seq: 4 }, { at: 5, seq: 3 }, true],
+        ['a system stamp loses to any change a person made', { at: 0, system: true }, { at: 1, seq: null }, false],
+        ['a system stamp still beats no stamp', { at: 0, system: true }, undefined, true],
+        ['a stamp beats no stamp', { at: 1, seq: null }, undefined, true],
+        ['no stamp loses to a stamp', undefined, { at: 1, seq: null }, false],
+        ['neither stamped: the download', undefined, undefined, false],
+        ['an exact tie: the download', { at: 5, seq: 2 }, { at: 5, seq: 2 }, false],
+        ['a stamp that is not one counts as none', { at: 'soon' }, { at: 1, seq: 0 }, false],
+    ])('%s', (_label, local, incoming, localWins) => {
+        expect(localStampWins(local, incoming)).toBe(localWins);
+    });
+
+    test('an automatic merge keeps the newer change of a setting both sides have', async () => {
+        storeState.stores.settings[MAP] = { A: { isTrue: true }, B: { isTrue: true }, localOnly: { isTrue: true } };
+        storeState.stores.settings[STAMPS] = { A: { at: 100, seq: 1 }, B: { at: 10, seq: 9 } };
+
+        await pull(
+            {
+                settings: {
+                    [MAP]: { A: { isTrue: false }, B: { isTrue: false }, remoteOnly: { isTrue: true } },
+                    [STAMPS]: { A: { at: 99, seq: 2 }, B: { at: 11, seq: 2 } },
+                },
+            },
+            'merge'
+        );
+
+        const map = landed()[MAP];
+        expect(map.A).toEqual({ isTrue: true });
+        expect(map.B).toEqual({ isTrue: false });
+        expect(map.localOnly).toEqual({ isTrue: true });
+        expect(map.remoteOnly).toEqual({ isTrue: true });
+        // Each value keeps the stamp of the side it came from
+        expect(landed()[STAMPS]).toEqual({ A: { at: 100, seq: 1 }, B: { at: 11, seq: 2 } });
+    });
+
+    test('a pull someone asked for still takes the download for every setting it names', async () => {
+        storeState.stores.settings[MAP] = { A: { isTrue: true }, localOnly: { isTrue: true } };
+        storeState.stores.settings[STAMPS] = { A: { at: 10, seq: 9 }, localOnly: { at: 3, seq: 1 } };
+
+        await pull({ settings: { [MAP]: { A: { isTrue: false } } } });
+
+        expect(landed()[MAP]).toMatchObject({ A: { isTrue: false }, localOnly: { isTrue: true } });
+        // The download's A carried no stamp, so A has none now; localOnly keeps its own
+        expect(landed()[STAMPS]).toEqual({ localOnly: { at: 3, seq: 1 } });
+    });
+
+    test('stamps for a map the payload does not carry are not taken', async () => {
+        storeState.stores.settings[STAMPS] = { A: { at: 1, seq: 1 } };
+        await pull({ settings: { [STAMPS]: { A: { at: 99, seq: 99 } } } }, 'merge');
+        expect(landed()[STAMPS]).toBeUndefined();
+    });
+
+    test('the token and the thread count keep this device value and carry no stamp either way', async () => {
+        storeState.stores.settings[MAP] = { sync_token: { value: 'ghp_mine' } };
+        storeState.stores.settings[STAMPS] = { sync_token: { at: 1, seq: 1 } };
+
+        await pull(
+            {
+                settings: {
+                    [MAP]: { sync_token: { value: 'ghp_theirs' }, combatSim_maxThreads: { value: 8 } },
+                    [STAMPS]: { sync_token: { at: 9, seq: 9 }, combatSim_maxThreads: { at: 9, seq: 9 } },
+                },
+            },
+            'merge'
+        );
+
+        expect(landed()[MAP]).toEqual({ sync_token: { value: 'ghp_mine' } });
+        expect(landed()[STAMPS]).toEqual({});
+    });
+
+    test('stamps travel, without the stamps of the settings that do not', () => {
+        const safe = redactSettingsStore({
+            [STAMPS]: { chatCommands: { at: 1, seq: 1 }, sync_token: { at: 2, seq: 2 } },
+        });
+        expect(safe[STAMPS]).toEqual({ chatCommands: { at: 1, seq: 1 } });
+    });
+});
+
+describe('addsToRemote, the automatic merge loop guard', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+
+    test('the same data in another order adds nothing', () => {
+        expect(
+            addsToRemote(
+                payloadOf({ settings: { a: { x: 1, y: 2 }, b: 1 } }),
+                payloadOf({ settings: { b: 1, a: { y: 2, x: 1 } } })
+            )
+        ).toBe(false);
+    });
+
+    test('a key the gist lacks, or a value it does not have, is news', () => {
+        expect(addsToRemote(payloadOf({ settings: { a: 1, b: 2 } }), payloadOf({ settings: { a: 1 } }))).toBe(true);
+        expect(addsToRemote(payloadOf({ settings: { a: 1 } }), payloadOf({ settings: { a: 2 } }))).toBe(true);
+    });
+
+    test('a key only the gist has is not news from this device', () => {
+        expect(addsToRemote(payloadOf({ settings: { a: 1 } }), payloadOf({ settings: { a: 1, b: 2 } }))).toBe(false);
+    });
+
+    test('a merged record is folded into the gist copy, so a union in another order adds nothing', () => {
+        const unregister = registerSyncMerge({
+            store: 'xpHistory',
+            base: 'loopGuardTest',
+            merge: (local, incoming) => [...new Set([...(local || []), ...(incoming || [])])],
+        });
+        try {
+            const remote = payloadOf({ xpHistory: { loopGuardTest_1: ['a', 'b'] } });
+            expect(addsToRemote(payloadOf({ xpHistory: { loopGuardTest_1: ['b', 'a'] } }), remote)).toBe(false);
+            expect(addsToRemote(payloadOf({ xpHistory: { loopGuardTest_1: ['b', 'a', 'c'] } }), remote)).toBe(true);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a newer stamp is news even with the value unchanged, since it decides a later merge', () => {
+        const stamps = `${SETTING_STAMPS_PREFIX}m`;
+        expect(
+            addsToRemote(
+                payloadOf({ settings: { [stamps]: { a: { at: 9 } }, m: { a: 1 } } }),
+                payloadOf({ settings: { [stamps]: { a: { at: 1 } }, m: { a: 1 } } })
+            )
+        ).toBe(true);
+        expect(
+            addsToRemote(
+                payloadOf({ settings: { [stamps]: { a: { at: 9 } }, m: { a: 1 } } }),
+                payloadOf({ settings: { [stamps]: { a: { at: 9 } }, m: { a: 1 } } })
+            )
+        ).toBe(false);
+    });
+});
+
+describe('the whole-value baseline', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+
+    test('fingerprints every key but the settings maps and their stamps', () => {
+        const hashes = wholeKeyHashes(
+            payloadOf({
+                settings: {
+                    panelGeometry: { x: 1 },
+                    script_settingsMap_abc: {},
+                    settings_changedAt_script_settingsMap_abc: {},
+                    treasureTally_abc: {},
+                },
+            })
+        );
+        expect(Object.keys(hashes).sort()).toEqual(['settings\u0000panelGeometry', 'settings\u0000treasureTally_abc']);
+    });
+
+    test('ignores the order an object was written in', () => {
+        const a = wholeKeyHashes(payloadOf({ settings: { k: { x: 1, y: 2 } } }));
+        const b = wholeKeyHashes(payloadOf({ settings: { k: { y: 2, x: 1 } } }));
+        expect(a).toEqual(b);
+    });
+
+    test('a startup merge keeps a value this device moved while the gist did not', async () => {
+        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 }, panelSizeMemory: 1 } }));
+        storeState.stores.settings.panelGeometry = { x: 2 }; // moved here
+        storeState.stores.settings.panelSizeMemory = 1; // not moved here
+
+        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 1 }, panelSizeMemory: 7 } }), {
+            mode: 'merge',
+            baseline,
+        });
+
+        const landedSettings = importedPayloads.at(-1).stores.settings;
+        // Not in the import, so the newer local value stays where it is
+        expect(Object.hasOwn(landedSettings, 'panelGeometry')).toBe(false);
+        expect(landedSettings.panelSizeMemory).toBe(7);
+    });
+
+    test('with both sides moved, or no baseline, the download is written as a pull always did', async () => {
+        storeState.stores.settings.panelGeometry = { x: 2 };
+        const both = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
+        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 3 } } }), { mode: 'merge', baseline: both });
+        expect(importedPayloads.at(-1).stores.settings.panelGeometry).toEqual({ x: 3 });
+
+        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 1 } } }), { mode: 'merge', baseline: null });
+        expect(importedPayloads.at(-1).stores.settings.panelGeometry).toEqual({ x: 1 });
+    });
+
+    test('a pull someone asked for ignores the baseline', async () => {
+        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
+        storeState.stores.settings.panelGeometry = { x: 2 };
+        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 1 } } }), { baseline });
+        expect(importedPayloads.at(-1).stores.settings.panelGeometry).toEqual({ x: 1 });
+    });
+});
+
+describe('mergeForUpload, which writes nothing local', () => {
+    const MAP = 'script_settingsMap_abc';
+    const STAMPS = `settings_changedAt_${MAP}`;
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', syncScope: 'settings', stores });
+
+    test('takes the later change of each setting, each with its own stamp', () => {
+        const local = payloadOf({
+            settings: { [MAP]: { A: { v: 'mine' }, B: { v: 'mine' } }, [STAMPS]: { A: { at: 20 }, B: { at: 5 } } },
+        });
+        const remote = payloadOf({
+            settings: { [MAP]: { A: { v: 'theirs' }, B: { v: 'theirs' } }, [STAMPS]: { A: { at: 10 }, B: { at: 30 } } },
+        });
+
+        const { text } = mergeForUpload(local, remote, null);
+        const merged = JSON.parse(text).stores.settings;
+
+        expect(merged[MAP]).toEqual({ A: { v: 'mine' }, B: { v: 'theirs' } });
+        expect(merged[STAMPS]).toEqual({ A: { at: 20 }, B: { at: 30 } });
+    });
+
+    test('folds a registered history with its merge, and keeps keys either side alone has', () => {
+        const local = payloadOf({ settings: { treasureTally_abc: { chests: { a: 3 } }, panelGeometry: 1 } });
+        const remote = payloadOf({ settings: { treasureTally_abc: { chests: { a: 1, b: 2 } }, panelSizeMemory: 2 } });
+
+        const merged = JSON.parse(mergeForUpload(local, remote, null).text).stores.settings;
+
+        expect(merged.panelGeometry).toBe(1);
+        expect(merged.panelSizeMemory).toBe(2);
+        expect(merged.treasureTally_abc).toBeDefined();
+    });
+
+    test("a whole-value key keeps this device's value only when the gist's is still the one last exchanged", () => {
+        // panelGeometry moved here, panelSizeMemory moved there, panelOpenState
+        // moved on both, whatsNew_state has no baseline at all
+        const baseline = wholeKeyHashes(
+            payloadOf({ settings: { panelGeometry: 1, panelSizeMemory: 1, panelOpenState: 1 } })
+        );
+        const local = payloadOf({
+            settings: { panelGeometry: 2, panelSizeMemory: 1, panelOpenState: 2, whatsNew_state: 'mine' },
+        });
+        const remote = payloadOf({
+            settings: { panelGeometry: 1, panelSizeMemory: 3, panelOpenState: 3, whatsNew_state: 'theirs' },
+        });
+
+        const merged = JSON.parse(mergeForUpload(local, remote, baseline).text).stores.settings;
+
+        expect(merged).toMatchObject({
+            panelGeometry: 2,
+            panelSizeMemory: 3,
+            panelOpenState: 3,
+            whatsNew_state: 'theirs',
+        });
+    });
+
+    test('a registered key this device alone moved is still folded: its scalar wins, the gist keeps its entries', () => {
+        // A capped fold: this device keeps two, and its copy is trimmed to them
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'cappedRuns',
+            merge: (base, incoming, context) => ({
+                sortBy: incoming?.sortBy ?? base?.sortBy,
+                runs: [...new Set([...(base?.runs || []), ...(incoming?.runs || [])])]
+                    .sort((x, y) => y - x)
+                    .slice(0, context?.forUpload ? Infinity : 2),
+            }),
+            label: 'capped',
+        });
+        const full = (value) =>
+            JSON.stringify({
+                formatVersion: 1,
+                exportedAt: 'x',
+                syncScope: 'everything',
+                stores: { dungeonRuns: { cappedRuns_c1: value } },
+            });
+        const gist = { sortBy: 'old', runs: [5, 4, 3, 2, 1] };
+        const local = { sortBy: 'new', runs: [6, 5] };
+
+        const merged = JSON.parse(mergeForUpload(full(local), full(gist), wholeKeyHashes(full(gist))).text);
+
+        expect(merged.stores.dungeonRuns.cappedRuns_c1).toEqual({ sortBy: 'new', runs: [6, 5, 4, 3, 2, 1] });
+        off();
+    });
+
+    test('a legacy custom-tab edit only this device made is uploaded, and the gist is not called in step', async () => {
+        // The real registration: unstamped tabs on both sides tie, and the tie
+        // must go to the side the upload chose to win — this device's
+        await import('../inventory/custom-tabs/custom-tabs-data.js');
+        const KEY = 'c1_inventoryTabs_config';
+        const config = (name, items) => ({
+            version: 1,
+            tabs: [{ id: 't1', name, items, children: [] }],
+            selectedTabId: 't1',
+        });
+        const gist = payloadOf({ settings: { [KEY]: config('Ores', ['/items/copper_ore']) } });
+        const local = payloadOf({ settings: { [KEY]: config('Metals', ['/items/copper_ore', '/items/iron_ore']) } });
+
+        const result = mergeForUpload(local, gist, wholeKeyHashes(gist));
+        const tab = JSON.parse(result.text).stores.settings[KEY].tabs[0];
+
+        expect(tab.name).toBe('Metals');
+        expect(tab.items).toContain('/items/iron_ore');
+        // The push decision: the upload changes the gist
+        expect(addsToRemote(result.text, gist)).toBe(true);
+        // And a pull of what was uploaded keeps this device's tab as it is
+        expect(result.remoteAdds).toBe(false);
+    });
+
+    test("never uploads another device's token or another script's keys from the gist", () => {
+        const local = payloadOf({ settings: { [MAP]: { A: { v: 1 } } } });
+        const remote = payloadOf({
+            settings: { [MAP]: { A: { v: 1 }, sync_token: { value: 'ghp_old' } }, toolasha_sync_gistId: 'x' },
+            someoneElsesStore: { k: 1 },
+        });
+
+        const merged = JSON.parse(mergeForUpload(local, remote, null).text);
+
+        expect(merged.stores.settings[MAP].sync_token).toBeUndefined();
+        expect(merged.stores.settings.toolasha_sync_gistId).toBeUndefined();
+        expect(merged.stores.someoneElsesStore).toBeUndefined();
+    });
+
+    test('refuses a gist in a format this build does not read', () => {
+        expect(() =>
+            mergeForUpload(payloadOf({ settings: {} }), JSON.stringify({ formatVersion: 2, stores: {} }), null)
+        ).toThrow();
+    });
+
+    test('a restore marker gives precedence to the keys it lists; an older marker shape to none', () => {
+        const local = payloadOf({ settings: { panelGeometry: 'restored', panelSizeMemory: 'stale' } });
+        const remote = payloadOf({ settings: { panelGeometry: 'theirs', panelSizeMemory: 'theirs' } });
+        const merge = (marker) =>
+            JSON.parse(mergeForUpload(local, remote, { [RESTORED_BASELINE]: marker }).text).stores.settings;
+
+        expect(merge({ at: 1, keys: { settings: ['panelGeometry'] } })).toMatchObject({
+            panelGeometry: 'restored',
+            panelSizeMemory: 'theirs',
+        });
+        for (const old of [123, { at: 1, stores: ['settings'] }]) {
+            expect(merge(old)).toMatchObject({ panelGeometry: 'theirs', panelSizeMemory: 'theirs' });
+        }
+    });
+
+    test('says whether the gist held anything this device lacks', () => {
+        const local = payloadOf({ settings: { panelGeometry: 1 } });
+        expect(mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1 } }), null).remoteAdds).toBe(false);
+        expect(
+            mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1, panelSizeMemory: 2 } }), null).remoteAdds
+        ).toBe(true);
+    });
+
+    test('says whether it left out stores the gist holds that this scope does not sync', () => {
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const withHistory = payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: { h: [1] } });
+        expect(mergeForUpload(local, withHistory, null).dropsFromRemote).toBe(true);
+        expect(
+            mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: {} }), null).dropsFromRemote
+        ).toBe(false);
+        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+            false
+        );
+        const everything = JSON.stringify({ ...JSON.parse(local), syncScope: 'everything' });
+        expect(mergeForUpload(everything, withHistory, null).dropsFromRemote).toBe(false);
+    });
+
+    test('says so when it cleans a key out of a store it keeps, so the cleaned copy is written', () => {
+        // An older build uploaded a key this one keeps on the device; the
+        // rest of the gist matches. The loop guard only asks about keys the
+        // upload holds, so without the flag the gist kept the key for ever
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const remote = payloadOf({ settings: { panelSizeMemory: 1, toolasha_local_whispers: ['private'] } });
+        const merged = mergeForUpload(local, remote, null);
+
+        expect(addsToRemote(merged.text, remote)).toBe(false);
+        expect(merged.dropsFromRemote).toBe(true);
+        expect(JSON.parse(merged.text).stores.settings).not.toHaveProperty('toolasha_local_whispers');
+        // And a gist with nothing to clean stays quiet
+        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+            false
+        );
+    });
+
+    test('says so when it redacts a device-local setting out of a settings map the gist holds', () => {
+        const MAP = 'script_settingsMap_abc';
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const remote = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { sync_token: { value: 'ghp_x' } } } });
+        expect(mergeForUpload(local, remote, null).dropsFromRemote).toBe(true);
+        const clean = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { other: { value: 1 } } } });
+        expect(mergeForUpload(local, clean, null).dropsFromRemote).toBe(false);
+        // The same map as text, in another layout, is not a removal
+        const asText = payloadOf({
+            settings: { panelSizeMemory: 1, [MAP]: JSON.stringify({ other: { value: 1 } }, null, 2) },
+        });
+        expect(mergeForUpload(local, asText, null).dropsFromRemote).toBe(false);
+    });
+
+    test('a gist that differs only where this device won the merge holds nothing for it', () => {
+        // The gist's X is older than this device's, and its panel position is
+        // the one this device last exchanged: this device wins both, so a
+        // startup pull of the result would change nothing here
+        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
+        const local = payloadOf({
+            settings: { [MAP]: { X: { v: 'new' } }, [STAMPS]: { X: { at: 20 } }, panelGeometry: { x: 2 } },
+        });
+        const remote = payloadOf({
+            settings: { [MAP]: { X: { v: 'old' } }, [STAMPS]: { X: { at: 10 } }, panelGeometry: { x: 1 } },
+        });
+
+        expect(mergeForUpload(local, remote, baseline).remoteAdds).toBe(false);
+    });
+
+    test('the result is a payload an older build restores: format 1, stamps beside the map', () => {
+        const local = payloadOf({ settings: { [MAP]: { A: { isTrue: true } }, [STAMPS]: { A: { at: 1 } } } });
+        const merged = JSON.parse(mergeForUpload(local, payloadOf({ settings: {} }), null).text);
+        expect(merged.formatVersion).toBe(1);
+        expect(merged.stores.settings[MAP].A).toEqual({ isTrue: true });
     });
 });

@@ -3779,7 +3779,10 @@ const labyrinthRoomLogs = new LabyrinthRoomLogs();
 registerSyncMerge({
     store: 'settings',
     base: STORAGE_KEY,
-    merge: (local, incoming) => mergeRoomLogs(local, incoming, labyrinthRoomLogs.logSize()),
+    // The cap is this device's own setting: it trims local storage on a pull,
+    // never an upload, where it would delete sessions the other device keeps
+    merge: (local, incoming, context) =>
+        mergeRoomLogs(local, incoming, context?.forUpload ? Infinity : labyrinthRoomLogs.logSize()),
     label: 'Labyrinth room logs',
 });
 

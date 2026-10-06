@@ -98,6 +98,14 @@ vi.mock('./sync-payload.js', () => ({
     },
     contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
     hashPayload: (text) => `raw:${text}`,
+    // The real one folds by registered merge; these payloads are opaque text
+    addsToRemote: (local, remote) => local !== remote,
+    // Opaque payload text here: the merged upload is the two texts side by side
+    mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
+    restampRestoredSettings: () => {},
+    RESTORED_BASELINE: '\u0000restoredAt',
+    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+    wholeKeyHashes: () => ({}),
 }));
 
 // Sync in the clear, so the gist's payload here is the payload text itself and
@@ -122,6 +130,9 @@ class FakeGistError extends Error {
 vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
+    readSyncGistRevision: async () => {
+        throw new Error('no revisions in this fake');
+    },
     findSyncGist: async () => (world.gist ? 'gist-1' : null),
     readSyncGist: async () => {
         if (!world.gist) throw new FakeGistError('not-found', 'no gist');

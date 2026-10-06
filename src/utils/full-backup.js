@@ -38,8 +38,15 @@ function isRecordMap(value) {
  * every store `listStores()` reports. A store-scoped rule would then let the
  * same record out through the same upload without a line of it changing here.
  * The prefix means "never leaves this device" wherever it is written.
+ *
+ * `toolasha_sync_` is the sync's own bookkeeping: which gist, how far this
+ * device has got with it, its last-exchange baseline and whether the gist
+ * holds changes not applied here. True only of the machine that wrote it — a
+ * backup restored on another machine, or on this one after it has synced
+ * since, would hand the sync a position it never reached, and the next push
+ * could overwrite the gist with a copy that never saw what was there.
  */
-export const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
+export const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_', 'toolasha_sync_'];
 
 /**
  * Storage keys left out of every export, scoped to the store they live in.

@@ -953,6 +953,139 @@ describe('writeSyncGist', () => {
         }
     });
 
+    test('a gist ahead of the caller stops the write instead of overwriting it', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: {
+                        size: 90,
+                        content: JSON.stringify({
+                            toolashaSync: 1,
+                            chunks: 1,
+                            syncSeq: 7,
+                            exportedAt: '2026-05-01T00:00:00.000Z',
+                        }),
+                    },
+                },
+            },
+        });
+        const seen = [];
+
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 4 }, ['data'], 0, null, {
+            isAhead: (listed) => {
+                seen.push(listed);
+                return listed.syncSeq > 3;
+            },
+        }).catch((caught) => caught);
+
+        expect(error.kind).toBe('behind');
+        expect(seen[0]).toMatchObject({ syncSeq: 7, exportedAt: '2026-05-01T00:00:00.000Z' });
+        expect(calls).toHaveLength(1);
+    });
+
+    test('a listing says when the sync data it holds gives no order', async () => {
+        const manifestOf = (content) => ({ [MANIFEST_FILE]: { size: 9, content } });
+        const cases = [
+            // Sync data with no counter and no readable timestamp
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1 })), true],
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1, exportedAt: 'soon', syncSeq: -1 })), true],
+            [manifestOf('{not json'), true],
+            [manifestOf('{}'), true],
+            [{ 'toolasha-data-000.json': { size: 4, content: 'data' } }, true],
+            // An order: a counter, or a timestamp from an older build
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1, syncSeq: 0 })), false],
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1, exportedAt: '2026-05-01T00:00:00.000Z' })), false],
+            // A gist this sync never wrote
+            [{ 'notes.txt': { size: 4, content: 'mine' } }, false],
+            [{}, false],
+        ];
+        for (const [files, expected] of cases) {
+            responses.push({ status: 200, body: { files } });
+            responses.push({ status: 200, body: { id: 'abc' } });
+            const seen = [];
+            await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 4, encrypted: { v: 1 } }, ['data'], 0, null, {
+                isAhead: (listed) => {
+                    seen.push(listed);
+                    return false;
+                },
+            });
+            expect(seen[0]?.unordered).toBe(expected);
+        }
+    });
+
+    test('a 304 against a version the caller already reflects is never ahead', async () => {
+        responses.push({ status: 304, headers: { etag: 'W/"e1"' } });
+        responses.push({ status: 200, body: { id: 'abc' } });
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: {}, current: true, syncSeq: 3, encrypted: false };
+        let asked = 0;
+
+        await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 4 }, ['data'], 0, known, {
+            isAhead: () => {
+                asked += 1;
+                return true;
+            },
+        });
+
+        expect(asked).toBe(0);
+        expect(calls[1].method).toBe('PATCH');
+    });
+
+    test('a write that replaced another device write says which versions it replaced', async () => {
+        // Listed at v1; another device wrote v2 before this write landed as v3
+        responses.push({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history: [{ version: 'v1' }],
+            },
+        });
+        responses.push({
+            status: 200,
+            body: { id: 'abc', history: [{ version: 'v3' }, { version: 'v2' }, { version: 'v1' }] },
+        });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result).toMatchObject({ version: 'v3', basedOn: 'v1', intervening: ['v2'] });
+        expect(JSON.parse(JSON.parse(calls[1].data).files[MANIFEST_FILE].content).basedOn).toBe('v1');
+        expect(calls).toHaveLength(2);
+    });
+
+    test('a write nobody raced replaced nothing, and asks nothing more', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history: [{ version: 'v1' }],
+            },
+        });
+        responses.push({ status: 200, body: { id: 'abc', history: [{ version: 'v2' }, { version: 'v1' }] } });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result.intervening).toEqual([]);
+        expect(calls).toHaveLength(2);
+    });
+
+    test('with no history in the write answer, the check reads a fresh listing instead', async () => {
+        const listed = (history) => ({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history,
+            },
+        });
+        responses.push(listed([{ version: 'v1' }]));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        responses.push(listed([{ version: 'v3' }, { version: 'v2' }, { version: 'v1' }]));
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result.intervening).toEqual(['v2']);
+        expect(calls[2].method).toBe('GET');
+    });
+
     test('a pressed push that cannot list the gist writes nothing', async () => {
         // A stale device would write its lower counter over a gist further along,
         // and every device holding the higher one would skip the gist as older

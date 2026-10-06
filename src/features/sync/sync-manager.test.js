@@ -17,7 +17,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => character.id },
 }));
 
-const stored = vi.hoisted(() => ({ map: {} }));
+const stored = vi.hoisted(() => ({ map: {}, putAlls: [] }));
 /** What the manager did to storage, in order, so a test can see when it did it */
 const storageCalls = vi.hoisted(() => []);
 vi.mock('../../core/storage.js', () => ({
@@ -36,6 +36,7 @@ vi.mock('../../core/storage.js', () => ({
         // Sync bookkeeping goes down the bulk path, which the restore latch
         // does not cover — see `rememberLocal` in sync-manager.js
         putAll: async (_store, entries) => {
+            stored.putAlls.push(Object.keys(entries));
             for (const [key, value] of Object.entries(entries)) stored.map[key] = value;
             return Object.keys(entries).length;
         },
@@ -70,9 +71,10 @@ vi.mock('./sync-payload.js', () => ({
         if (payload.buildWait) await payload.buildWait;
         return payload.text;
     },
-    applyPayload: async (json) => {
+    applyPayload: async (json, options) => {
         payload.applyCalls = (payload.applyCalls || 0) + 1;
         payload.applied = json;
+        payload.applyOptions = options;
         if (payload.applyWait) await payload.applyWait;
         return {
             restored: {},
@@ -88,6 +90,16 @@ vi.mock('./sync-payload.js', () => ({
     },
     // Content hash, as the real one: the exportedAt stamp does not participate
     contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
+    addsToRemote: (local, remote) => payload.addsToRemote?.(local, remote) ?? local !== remote,
+    // Opaque payload text here: the merged upload is the two texts side by side
+    mergeForUpload: (local, remote) => {
+        payload.uploadMerges = (payload.uploadMerges || 0) + 1;
+        return { text: `${remote}+${local}`, remoteAdds: payload.remoteAdds ?? local !== remote };
+    },
+    restampRestoredSettings: () => {},
+    RESTORED_BASELINE: '\u0000restoredAt',
+    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+    wholeKeyHashes: (text) => ({ of: text }),
     // The older raw-text hash, which the manifest gate also accepts
     hashPayload: (text) => `raw:${text}`,
 }));
@@ -119,6 +131,9 @@ class FakeGistError extends Error {
 vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
+    readSyncGistRevision: async () => {
+        throw new Error('no revisions in this fake');
+    },
     findSyncGist: async () => gist.found,
     readSyncGist: async (_token, _id, options) => {
         gist.readCalls += 1;
@@ -133,6 +148,7 @@ vi.mock('./gist-client.js', () => ({
         gist.writeAttempts += 1;
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
+        gist.writeHook?.(options);
         gist.writes.push({ id, manifest, chunks, previous, known, options });
         return {
             id: id ?? 'created-id',
@@ -156,6 +172,7 @@ const { default: syncManager, isNewer, SyncManager } = await import('./sync-mana
 beforeEach(() => {
     settings.values = { sync_enabled: true, sync_token: 'ghp_secret', sync_scope: 'settings', sync_auto: false };
     stored.map = {};
+    stored.putAlls = [];
     storageCalls.length = 0;
     toasts.length = 0;
     dialog.answer = null;
@@ -166,6 +183,10 @@ beforeEach(() => {
     payload.applied = undefined;
     payload.applyCalls = 0;
     payload.applyWait = null;
+    payload.applyOptions = undefined;
+    payload.addsToRemote = undefined;
+    payload.uploadMerges = 0;
+    payload.remoteAdds = undefined;
     payload.buildWait = null;
     payload.appliedText = undefined;
     payload.merged = [];
@@ -189,6 +210,7 @@ beforeEach(() => {
     gist.writeEtag = undefined;
     gist.writeFiles = undefined;
     gist.writeSeq = undefined;
+    gist.writeHook = null;
     panelOpens.length = 0;
     clearPullSummary();
     syncManager.busy = false;
@@ -1409,6 +1431,7 @@ describe('the remembered gist version', () => {
             current: true,
             syncSeq: null,
             encrypted: false,
+            version: null,
         });
 
         expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true, reason: 'not-modified' });
@@ -1440,15 +1463,19 @@ describe('the remembered gist version', () => {
         expect(gist.readOptions[0]).toBeUndefined();
     });
 
-    test('a silent pull that stood down on a conflict is not current, so the next one downloads again', async () => {
+    test('a silent pull that stood down on a conflict is not current, and asks conditionally next time', async () => {
         gist.read = remote('2026-03-01T00:00:00.000Z');
         payload.text = '{"local":2}';
 
         expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'conflict' });
         expect(stored.map.toolasha_sync_gistVersion).toMatchObject({ etag: 'W/"e1"', current: false });
 
-        await syncManager.pull({ silent: true });
-        expect(gist.readOptions[1]).toBeUndefined();
+        // Already weighed: an unchanged gist is a 304, not the whole gist again
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-modified' });
+        expect(gist.readOptions[1]).toEqual({ etag: 'W/"e1"' });
+        // A startup pull or a pressed one still downloads it
+        await syncManager.pull();
+        expect(gist.readOptions[2]).toBeUndefined();
     });
 
     test('a pull that did not apply cleanly claims no version', async () => {
@@ -1484,6 +1511,7 @@ describe('the remembered gist version', () => {
             current: true,
             syncSeq: 1,
             encrypted: false,
+            version: null,
         });
     });
 
@@ -1836,5 +1864,269 @@ describe('one tab runs the automatic schedule', () => {
         expect(total('push')).toBe(oneTab.push);
         // The repeating pulls are the leader's alone; each extra tab adds only its three startup pulls
         expect(total('pull')).toBe(oneTab.pull + 3 * 3);
+    });
+});
+
+describe('automatic pushes merge into the upload, never into this device', () => {
+    const remotePayload = '{"remote":1}';
+    const remoteAt = '2026-03-01T00:00:00.000Z';
+
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-02-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastSyncedSeq = 4;
+        stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+        payload.text = '{"local":2}';
+        gist.read = {
+            manifest: { exportedAt: remoteAt, chunks: 1, syncSeq: 6, hash: `h:${remotePayload}` },
+            payload: remotePayload,
+        };
+    });
+
+    /** The fake write raises "behind" the way the real one does, for a gist ahead of the caller */
+    const gistAhead = () => {
+        gist.writeHook = (options) => {
+            if (options?.isAhead?.({ exportedAt: remoteAt, syncSeq: 6, fresh: true })) {
+                throw new FakeGistError('behind', 'ahead');
+            }
+        };
+    };
+
+    test('a gist that moved past this device is merged into the upload; nothing is applied here', async () => {
+        gistAhead();
+        const result = await syncManager.push({ silent: true, unattended: true });
+
+        expect(result.ok).toBe(true);
+        expect(payload.applyCalls).toBe(0);
+        expect(payload.uploadMerges).toBe(1);
+        expect(gist.writes.at(-1).manifest.hash).toBe(`h:${remotePayload}+{"local":2}`);
+        // This device's own data is what "unchanged" is measured against
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":2}');
+        // The baseline is this device's values, and the gist holds news for it
+        // Both halves of a merged exchange: what went up, and what this device holds
+        expect(stored.map.toolasha_sync_baseline).toEqual({
+            uploaded: '{"remote":1}+{"local":2}',
+            local: '{"local":2}',
+        });
+        expect(stored.map.toolasha_sync_unapplied).toBeTruthy();
+        expect(toasts).toHaveLength(0);
+    });
+
+    test('the counter and the note that the gist holds news for this device land in one write', async () => {
+        gistAhead();
+        await syncManager.push({ silent: true, unattended: true });
+
+        const withCounter = stored.putAlls.filter((keys) => keys.includes('toolasha_sync_lastSyncedSeq'));
+        expect(withCounter).toHaveLength(1);
+        expect(withCounter[0]).toEqual(
+            expect.arrayContaining(['toolasha_sync_unapplied', 'toolasha_sync_baseline', 'toolasha_sync_lastHash'])
+        );
+    });
+
+    test('a pull lands its counter, baseline and cleared note in one write', async () => {
+        stored.map.toolasha_sync_unapplied = { since: remoteAt };
+        stored.map.toolasha_sync_lastHash = 'h:{"local":2}';
+        await syncManager.pull({ silent: true, startup: true });
+
+        const withCounter = stored.putAlls.filter((keys) => keys.includes('toolasha_sync_lastSyncedSeq'));
+        expect(withCounter).toHaveLength(1);
+        expect(withCounter[0]).toEqual(expect.arrayContaining(['toolasha_sync_unapplied', 'toolasha_sync_baseline']));
+    });
+
+    test('a merge that adds nothing to the gist sends nothing, and still notes the gist is ahead', async () => {
+        gistAhead();
+        payload.addsToRemote = () => false;
+
+        const result = await syncManager.push({ silent: true, unattended: true });
+
+        expect(result).toMatchObject({ skipped: true, reason: 'gist-has-it' });
+        expect(gist.writes).toHaveLength(0);
+        expect(stored.map.toolasha_sync_unapplied).toBeTruthy();
+        expect((await syncManager.push({ silent: true, unattended: true })).reason).toBe('unchanged');
+    });
+
+    test('while the gist holds news for this device, every automatic push merges, downloading it once', async () => {
+        stored.map.toolasha_sync_unapplied = { since: remoteAt };
+        stored.map.toolasha_sync_lastSyncedSeq = 6;
+        gist.remoteEtag = 'W/"r1"';
+        gist.remoteFiles = { 'toolasha-sync.json': 1 };
+
+        await syncManager.push({ silent: true, unattended: true });
+
+        expect(payload.uploadMerges).toBe(1);
+        // Straight to the merge: no doomed write first, one download
+        expect(gist.writeAttempts).toBe(1);
+        expect(gist.readCalls).toBe(1);
+        // The write lists against the version the merge downloaded, so an
+        // unchanged gist is a 304 rather than a third download
+        expect(gist.writes[0].known).toMatchObject({ etag: 'W/"r1"' });
+    });
+
+    test('after a merge that adds nothing, the next interval pull is a 304, not the whole gist', async () => {
+        gistAhead();
+        payload.addsToRemote = () => false;
+        gist.remoteEtag = 'W/"r1"';
+        gist.remoteFiles = { 'toolasha-sync.json': 1 };
+
+        expect((await syncManager.push({ silent: true, unattended: true })).reason).toBe('gist-has-it');
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-modified' });
+        expect(gist.readOptions.at(-1)).toEqual({ etag: 'W/"r1"' });
+    });
+
+    test('a gist the merge cannot read holds automatic pushes quietly, logging the cause once', async () => {
+        gistAhead();
+        gist.readError = new FakeGistError('parse', 'The sync gist is corrupted.');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            for (let tick = 0; tick < 3; tick += 1) {
+                payload.text = `{"local":${tick + 3}}`;
+                expect(await syncManager.push({ silent: true, unattended: true })).toEqual({
+                    ok: false,
+                    reason: 'parse',
+                });
+            }
+            expect(toasts).toHaveLength(0);
+            expect(warn.mock.calls.filter(([line]) => String(line).includes('Automatic pushes are held'))).toHaveLength(
+                1
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('a corrupt gist toasts once from the unattended pulls, not every interval; a pressed pull still says so', async () => {
+        gist.readError = new FakeGistError('parse', 'The sync gist is corrupted.');
+        for (let tick = 0; tick < 3; tick += 1) await syncManager.pull({ silent: true });
+        expect(toasts).toHaveLength(1);
+        expect(toasts[0].duration).toBe(0);
+
+        await syncManager.pull();
+        expect(toasts).toHaveLength(2);
+    });
+
+    describe('a gist whose manifest gives no order', () => {
+        const unordered = { exportedAt: null, syncSeq: null, unordered: true, fresh: true };
+        const FILES = { 'toolasha-sync.json': 1 };
+        /** The write's ahead check, as an automatic push hands it over */
+        const aheadCheck = async () => {
+            let check = null;
+            gist.writeHook = (options) => {
+                check = options?.isAhead;
+            };
+            await syncManager.push({ silent: true, unattended: true });
+            return check;
+        };
+
+        test('that changed since this device last saw it is ahead: the push merges instead of writing', async () => {
+            stored.map.toolasha_sync_gistVersion = {
+                gistId: 'abc',
+                etag: 'W/"e1"',
+                files: FILES,
+                current: true,
+                version: 'v1',
+            };
+            const check = await aheadCheck();
+            expect(check({ ...unordered, version: 'v2', etag: 'W/"e2"' })).toBe(true);
+            // No version on either side: the ETag decides
+            expect(check({ ...unordered, version: null, etag: 'W/"e2"' })).toBe(true);
+        });
+
+        test('with no record of what this device saw, it may have moved, so it is ahead', async () => {
+            const check = await aheadCheck();
+            expect(check({ ...unordered, version: 'v2', etag: 'W/"e2"' })).toBe(true);
+        });
+
+        test('that is the version this device already saw is not ahead', async () => {
+            stored.map.toolasha_sync_gistVersion = {
+                gistId: 'abc',
+                etag: 'W/"e1"',
+                files: FILES,
+                current: false,
+                version: 'v1',
+            };
+            const check = await aheadCheck();
+            expect(check({ ...unordered, version: 'v1', etag: 'W/"other"' })).toBe(false);
+            expect(check({ ...unordered, version: null, etag: 'W/"e1"' })).toBe(false);
+        });
+
+        test('a gist this sync never wrote, or one with a readable order, is decided as before', async () => {
+            const check = await aheadCheck();
+            expect(check({ exportedAt: null, syncSeq: null, unordered: false, fresh: true, version: 'v9' })).toBe(
+                false
+            );
+            expect(check({ exportedAt: null, syncSeq: 3, unordered: false, fresh: true, version: 'v9' })).toBe(false);
+        });
+
+        test('one the merge then cannot read holds automatic pushes, logged once; a pressed Push still writes', async () => {
+            gist.writeHook = (options) => {
+                if (options?.isAhead?.({ ...unordered, version: 'v2', etag: 'W/"e2"' })) {
+                    throw new FakeGistError('behind', 'ahead');
+                }
+            };
+            gist.readError = new FakeGistError('parse', 'The sync gist manifest is unreadable.');
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            try {
+                for (let tick = 0; tick < 2; tick += 1) {
+                    payload.text = `{"local":${tick + 3}}`;
+                    expect(await syncManager.push({ silent: true, unattended: true })).toEqual({
+                        ok: false,
+                        reason: 'parse',
+                    });
+                }
+                expect(gist.writes).toHaveLength(0);
+                expect(
+                    warn.mock.calls.filter(([line]) => String(line).includes('Automatic pushes are held'))
+                ).toHaveLength(1);
+            } finally {
+                warn.mockRestore();
+            }
+
+            await syncManager.push();
+            expect(gist.writes).toHaveLength(1);
+        });
+    });
+
+    test('a pressed Push still replaces the gist, and clears the note', async () => {
+        stored.map.toolasha_sync_unapplied = { since: remoteAt };
+        await syncManager.push();
+        expect(gist.writes[0].options.isAhead).toBeNull();
+        expect(stored.map.toolasha_sync_unapplied).toBeNull();
+    });
+
+    test('the interval pull still stands down when both sides moved', async () => {
+        const result = await syncManager.pull({ silent: true });
+        expect(result).toMatchObject({ skipped: true, reason: 'conflict' });
+        expect(payload.applyCalls).toBe(0);
+    });
+
+    test('the interval pull does not take what a merge left for this device; a startup pull does', async () => {
+        stored.map.toolasha_sync_unapplied = { since: remoteAt };
+        stored.map.toolasha_sync_lastSyncedAt = remoteAt;
+        stored.map.toolasha_sync_lastSyncedSeq = 6;
+        stored.map.toolasha_sync_lastHash = 'h:{"local":2}';
+
+        expect((await syncManager.pull({ silent: true })).reason).toBe('not-newer');
+        expect(payload.applyCalls).toBe(0);
+
+        const result = await syncManager.pull({ silent: true, startup: true });
+        expect(result.ok).toBe(true);
+        expect(payload.applyOptions).toMatchObject({ mode: 'merge' });
+        expect(stored.map.toolasha_sync_unapplied).toBeNull();
+        expect(stored.map.toolasha_sync_baseline).toEqual({ of: remotePayload });
+    });
+
+    test('a startup pull merges into this device when both sides moved, instead of standing down', async () => {
+        const result = await syncManager.pull({ silent: true, startup: true });
+        expect(result.ok).toBe(true);
+        expect(dialog.calls).toBe(0);
+        expect(payload.applyOptions).toMatchObject({ mode: 'merge' });
+        // This device held changes the gist lacks: the next automatic push owes them
+        expect(stored.map.toolasha_sync_lastHash).toBe(`h:${remotePayload}`);
+    });
+
+    test('a pull someone asked for keeps the download-wins rule', async () => {
+        stored.map.toolasha_sync_lastHash = 'h:{"local":2}';
+        await syncManager.pull();
+        expect(payload.applyOptions).toMatchObject({ mode: 'pull' });
     });
 });

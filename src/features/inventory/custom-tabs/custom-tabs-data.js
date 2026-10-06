@@ -731,9 +731,12 @@ function pruneTombstones(config, now = Date.now()) {
 registerSyncMerge({
     store: STORE,
     match: (key) => key === STORAGE_KEY || key.endsWith(`_${STORAGE_KEY}`),
-    // The registry hands (local, incoming); mergeConfigs favours its second
-    // argument per tab, and local is the side a pull must not erase
-    merge: (local, incoming) => mergeConfigs(incoming, local),
+    // mergeConfigs favours its second argument per tab, which is the
+    // registry's incoming-wins contract: an upload that chose this device's
+    // copy as the incoming side must have its legacy (unstamped) tabs win.
+    // A pull is the one fold where local must not be erased by a tie
+    merge: (local, incoming) => mergeConfigs(local, incoming),
+    localWinsOnPull: true,
     label: 'Custom inventory tabs',
 });
 

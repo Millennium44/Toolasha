@@ -25,6 +25,7 @@ import settingsStorage from '../../core/settings-storage.js';
 import { isSyncedStore, partitionOwnedKeys } from './sync-ownership.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
+import { GistError } from './gist-client.js';
 
 /** Matches the full-backup format, because that is what this produces */
 const FORMAT_VERSION = 1;
@@ -143,6 +144,81 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
 ];
 
 /**
+ * Where each settings map's per-setting change stamps live:
+ * `settings_changedAt_<map key>`, a `{settingId: {at, seq}}` record written by
+ * `core/settings-storage.js` whenever a setting is changed on this device. The
+ * literal is duplicated there (core cannot import a feature) and pinned by a
+ * test on each side.
+ *
+ * A key of its own, not a field inside the map, for the older builds: they
+ * read the map entry by entry and would carry an unknown field around in
+ * whatever way their save path happens to, while a key they do not own is
+ * simply dropped from a payload they pull and never sent in one they push.
+ */
+export const SETTING_STAMPS_PREFIX = 'settings_changedAt_';
+
+/**
+ * A stamps record as an object, whatever form it was stored in.
+ * @param {*} value - Stored value
+ * @returns {Record<string, {at: number, seq: number|null}>|null} A copy, or null when unreadable
+ */
+function readStamps(value) {
+    let parsed = value;
+    if (typeof value === 'string') {
+        try {
+            parsed = JSON.parse(value);
+        } catch {
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return { ...parsed };
+}
+
+/**
+ * One stamp, or null when it is not one.
+ * @param {*} stamp - `{at, seq}` as stored
+ * @returns {{at: number, seq: number|null}|null} The stamp
+ */
+function readStamp(stamp) {
+    if (!stamp || typeof stamp !== 'object' || !Number.isFinite(stamp.at)) return null;
+    return { at: stamp.at, seq: Number.isSafeInteger(stamp.seq) && stamp.seq >= 0 ? stamp.seq : null };
+}
+
+/**
+ * Whether this side's change to one setting beats the other side's.
+ *
+ * The later change wins, by the wall clock of the device that made it. The
+ * sync counter each side had reached breaks an exact tie of clocks and
+ * nothing more. A device whose clock runs fast wins every setting both devices
+ * changed within that skew, which is the price of honouring "the change I made
+ * last" across devices with no shared clock.
+ *
+ * A system stamp (`at: 0`: a migration, a default rewrite, the first-load
+ * seed) is older than any change a person made, so it never beats one.
+ *
+ * A stamp beats no stamp. Every write path of this build stamps what it
+ * changes, so an unstamped setting is one nobody has changed since this build
+ * arrived, or one an older build wrote. The second case is the risk: a change
+ * made later on an older build loses to an earlier change stamped here.
+ * With no stamp on either side, or an exact tie, the other side wins — on a
+ * pull that is the download, as every pull always has been.
+ *
+ * @param {*} localStamp - This side's stamp for the setting
+ * @param {*} incomingStamp - The other side's stamp for it
+ * @returns {boolean} True when this side's value is kept
+ */
+export function localStampWins(localStamp, incomingStamp) {
+    const local = readStamp(localStamp);
+    const incoming = readStamp(incomingStamp);
+    if (!local) return false;
+    if (!incoming) return true;
+    if (local.at !== incoming.at) return local.at > incoming.at;
+    if (local.seq !== null && incoming.seq !== null) return local.seq > incoming.seq;
+    return false;
+}
+
+/**
  * Strip credentials, device-local settings and device-local bookkeeping from a
  * settings-store dump.
  *
@@ -157,6 +233,17 @@ export function redactSettingsStore(entries) {
 
     for (const [key, value] of Object.entries(entries || {})) {
         if (LOCAL_ONLY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+
+        // A map's change stamps travel with it, minus the stamps of the
+        // settings that do not: when the token was last changed is no business
+        // of the gist's, and the merge ignores those ids anyway
+        if (key.startsWith(SETTING_STAMPS_PREFIX)) {
+            const stamps = readStamps(value);
+            if (!stamps) continue;
+            for (const settingId of LOCAL_ONLY_SETTING_IDS) delete stamps[settingId];
+            safe[key] = stamps;
+            continue;
+        }
 
         // The settings map is one key whose value is every setting; the token
         // and the thread count are entries inside it, not keys of their own.
@@ -319,7 +406,7 @@ async function mergeLocalHistories(payload) {
                     continue;
                 }
                 if (!probed.found || probed.value == null) continue;
-                entries[key] = registration.merge(probed.value, entries[key]);
+                entries[key] = registration.mergeForPull(probed.value, entries[key]);
                 merged.push({ store: storeName, key, label: registration.label });
             } catch (error) {
                 console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
@@ -349,7 +436,21 @@ async function mergeLocalHistories(payload) {
  * real choice is what happens to the records that *can't* be combined, and
  * those still take the remote wholesale.
  *
+ * Settings maps are folded per setting. A pull someone asked for keeps the
+ * rule it always had — the download wins every setting it names — while the
+ * automatic paths pass `{mode: 'merge'}`, where the newer change wins by its
+ * stamp ({@link localStampWins}). Either way each map's stamps record is
+ * rewritten to match the values that were kept, so it stays true of them.
+ *
+ * In `merge` mode a whole-value key (no registered merge, not a settings map)
+ * keeps this device's value when the download's value is the one this device
+ * last exchanged and this device's has moved since — see {@link wholeKeyHashes}
+ * for the baseline. Otherwise, and always outside `merge` mode, the download
+ * is written as before.
+ *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
+ * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null}} [options] - How settings both
+ *   sides set are decided, and this device's per-key hashes of the last exchange
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<Object>, complete: boolean, merged: Array<Object>, mergeFailed: Array<Object>,
  *   mergeHeld: Array<Object>, exportedAt: string|null, applied: string}>}
@@ -358,7 +459,7 @@ async function mergeLocalHistories(payload) {
  *   combined, which were held back because this device's copy could not be read, and
  *   the payload text as actually applied
  */
-export async function applyPayload(json) {
+export async function applyPayload(json, { mode = 'pull', baseline = null } = {}) {
     const payload = JSON.parse(json);
     // After the foreign stores are dropped: what another script keeps in a
     // gist written by an older build is not this pull's to judge
@@ -379,7 +480,23 @@ export async function applyPayload(json) {
             const local = await storage.getAll(SETTINGS_STORE);
             for (const [key, incoming] of Object.entries(settingsStore)) {
                 if (!key.startsWith('script_settingsMap')) continue;
-                settingsStore[key] = preserveLocalOnlySettings(local[key], incoming);
+                const stampKey = `${SETTING_STAMPS_PREFIX}${key}`;
+                const folded = foldSettingsMap(
+                    local[key],
+                    incoming,
+                    readStamps(local[stampKey]),
+                    readStamps(settingsStore[stampKey]),
+                    mode === 'merge'
+                );
+                settingsStore[key] = folded.value;
+                if (folded.stamps) settingsStore[stampKey] = folded.stamps;
+                else delete settingsStore[stampKey];
+            }
+            // Stamps describe the map they sit beside. A payload carrying stamps
+            // for a map it does not carry has nothing to say about this one's
+            for (const key of Object.keys(settingsStore)) {
+                if (!key.startsWith(SETTING_STAMPS_PREFIX)) continue;
+                if (!Object.hasOwn(settingsStore, key.slice(SETTING_STAMPS_PREFIX.length))) delete settingsStore[key];
             }
             // Device-local bookkeeping is never taken from a payload, even one
             // written by an older build that did not redact it
@@ -402,6 +519,7 @@ export async function applyPayload(json) {
         }
 
         const { merged, failed: mergeFailed, held: mergeHeld } = await mergeLocalHistories(payload);
+        if (mode === 'merge') await keepMovedLocalWholeKeys(payload, baseline);
 
         // What is remembered as "the state of this device" has to be what was
         // actually written. `mergeLocalHistories` (and the settings fix-ups
@@ -506,16 +624,17 @@ async function restoreMigrationRecords(records) {
  */
 function assertApplicable(payload) {
     if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) {
-        throw new Error(
-            `[Sync] The downloaded payload has format ${payload?.formatVersion ?? 'none'}; this build reads ` +
+        throw new GistError(
+            'parse',
+            `The sync gist holds data in format ${payload?.formatVersion ?? 'none'}; this build reads ` +
                 `${FORMAT_VERSION}. Update Toolasha on this device, or push from one whose data is good.`
         );
     }
     const isRecordMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-    if (!isRecordMap(payload.stores)) throw new Error('[Sync] The downloaded payload has no stores to apply.');
+    if (!isRecordMap(payload.stores)) throw new GistError('parse', 'The downloaded payload has no stores to apply.');
     for (const [storeName, entries] of Object.entries(payload.stores)) {
         if (!isRecordMap(entries)) {
-            throw new Error(`[Sync] The downloaded payload's ${storeName} store is not a keyed object.`);
+            throw new GistError('parse', `The downloaded payload's ${storeName} store is not a keyed object.`);
         }
     }
 }
@@ -564,7 +683,8 @@ function dropUnownedFromPayload(payload) {
 }
 
 /**
- * Fold an incoming settings map onto this device's, entry by entry.
+ * Fold an incoming settings map onto this device's, entry by entry, and the
+ * two stamps records with it.
  *
  * A settings map is a per-setting structure, not one record: taking the
  * incoming map whole meant every setting the *local* map had and the incoming
@@ -573,11 +693,14 @@ function dropUnownedFromPayload(payload) {
  * builds (the newer one's settings are simply absent from the older one's
  * saved map, which is written whole from whatever schema wrote it), and the
  * erased entries came back as shipped defaults on the next load, so settings
- * the player had turned off turned themselves back on after a pull.
+ * the player had turned off turned themselves back on after a pull. So the
+ * entries the payload says nothing about are always kept.
  *
- * Per setting the incoming value still wins outright, which is the whole of
- * what the conflict dialog promises about settings. Only the entries the
- * payload says nothing about are kept.
+ * A setting both sides have goes to the download on a pull someone asked for —
+ * the whole of what the conflict dialog promises about settings — and to the
+ * newer change on an automatic one (`byStamp`, see {@link localStampWins}).
+ * Each kept value keeps its own side's stamp, so the record stays a true
+ * account of where every value came from and when.
  *
  * {@link LOCAL_ONLY_SETTING_IDS} are the one exception in the other direction:
  * they were stripped before upload, so an incoming map either lacks them or was
@@ -589,9 +712,13 @@ function dropUnownedFromPayload(payload) {
  *
  * @param {*} localValue - The settings map already on this device
  * @param {*} incomingValue - The settings map from the payload
- * @returns {*} Merged map, in whatever form the incoming value used
+ * @param {Record<string, *>|null} localStamps - This device's stamps for the map
+ * @param {Record<string, *>|null} incomingStamps - The payload's stamps for it
+ * @param {boolean} byStamp - Decide a setting both sides have by its stamps rather than for the download
+ * @returns {{value: *, stamps: Record<string, *>|null}} The merged map, in whatever form the incoming value
+ *   used, and the stamps of the values kept (null when neither side had any)
  */
-function preserveLocalOnlySettings(localValue, incomingValue) {
+function foldSettingsMap(localValue, incomingValue, localStamps, incomingStamps, byStamp) {
     const wasString = typeof incomingValue === 'string';
     const parse = (value) => {
         if (typeof value !== 'string') return value;
@@ -603,19 +730,540 @@ function preserveLocalOnlySettings(localValue, incomingValue) {
     };
 
     const incoming = parse(incomingValue);
-    const local = parse(localValue);
-    if (!incoming || typeof incoming !== 'object') return incomingValue;
+    const parsedLocal = parse(localValue);
+    const local = parsedLocal && typeof parsedLocal === 'object' ? parsedLocal : null;
+    if (!incoming || typeof incoming !== 'object') return { value: incomingValue, stamps: localStamps };
 
-    const merged = local && typeof local === 'object' ? { ...local, ...incoming } : { ...incoming };
+    const merged = local ? { ...local, ...incoming } : { ...incoming };
+    const stamps = {};
+    for (const settingId of Object.keys(merged)) {
+        const inLocal = Boolean(local) && Object.hasOwn(local, settingId);
+        const inIncoming = Object.hasOwn(incoming, settingId);
+        const keepLocal =
+            inLocal &&
+            (!inIncoming || (byStamp && localStampWins(localStamps?.[settingId], incomingStamps?.[settingId])));
+        const from = keepLocal ? localStamps : incomingStamps;
+        if (keepLocal) merged[settingId] = local[settingId];
+        if (from?.[settingId] !== undefined) stamps[settingId] = from[settingId];
+        else delete stamps[settingId];
+    }
     for (const settingId of LOCAL_ONLY_SETTING_IDS) {
-        if (local && typeof local === 'object' && local[settingId] !== undefined) {
+        delete stamps[settingId];
+        if (local && local[settingId] !== undefined) {
             merged[settingId] = local[settingId];
         } else {
             delete merged[settingId];
         }
     }
 
-    return wasString ? JSON.stringify(merged) : merged;
+    const hadStamps = Boolean(localStamps || incomingStamps);
+    return { value: wasString ? JSON.stringify(merged) : merged, stamps: hadStamps ? stamps : null };
+}
+
+/**
+ * Handed to a registered merge as its third argument when the fold builds an
+ * upload rather than a local apply.
+ *
+ * A merge may cap what it keeps by this device's own settings (the labyrinth
+ * room log keeps the player's chosen number of sessions). That is right for
+ * local storage and wrong for the gist: a device set to keep 20 would upload
+ * 20 and delete the other device's 480 from the gist. A merge that caps by
+ * live local config skips the cap when it sees `forUpload`; a merge with a
+ * build-wide constant cap folds the same on every device and needs nothing.
+ */
+const UPLOAD_CONTEXT = Object.freeze({ forUpload: true });
+
+/**
+ * Whether a key is written whole by sync — neither a settings map (merged per
+ * setting), nor a settings map's stamps, nor a key with a registered merge.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {boolean} True for a whole-value key
+ */
+function isWholeKey(storeName, key) {
+    return !isSettingsMapKey(storeName, key) && !mergeForKey(storeName, key);
+}
+
+/**
+ * Whether a key is a settings map or a map's stamps — the keys merged per
+ * setting, and the only ones the baseline does not cover.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {boolean} True for a settings map or its stamps
+ */
+function isSettingsMapKey(storeName, key) {
+    return (
+        storeName === SETTINGS_STORE && (key.startsWith('script_settingsMap') || key.startsWith(SETTING_STAMPS_PREFIX))
+    );
+}
+
+/** One whole-value key's baseline id: store and key, joined by a character neither can hold */
+const baselineId = (storeName, key) => `${storeName}\u0000${key}`;
+
+/** A value's fingerprint for the baseline, the same whatever order its object keys were written in */
+const valueHash = (value) => hashPayload(stableStringify(value));
+
+/**
+ * Fingerprint every key in a payload but the settings maps: the baseline a
+ * later merge compares against.
+ *
+ * "Which side changed it?" has to be asked of a common ancestor, and this is a
+ * cheap one: after every exchange, each key's hash as it then stood. A key
+ * whose current value still hashes to its baseline has not moved on that side
+ * since; the side that did move it wins. With no baseline, or both sides
+ * moved, a whole-value key keeps the gist's value, because that is what a
+ * pull always did, and a key with a registered merge is folded with the gist
+ * as the side that wins what the fold cannot combine.
+ *
+ * Stored device-local (`toolasha_sync_baseline`), never uploaded.
+ *
+ * @param {string} text - Payload text
+ * @returns {Record<string, string>} Hash by `store\u0000key`
+ */
+export function wholeKeyHashes(text) {
+    const hashes = {};
+    let stores;
+    try {
+        stores = JSON.parse(text)?.stores || {};
+    } catch {
+        return hashes;
+    }
+    for (const [storeName, entries] of Object.entries(stores)) {
+        if (!entries || typeof entries !== 'object') continue;
+        for (const [key, value] of Object.entries(entries)) {
+            if (!isSettingsMapKey(storeName, key)) hashes[baselineId(storeName, key)] = valueHash(value);
+        }
+    }
+    return hashes;
+}
+
+/**
+ * Which of two values of one whole-value key to keep.
+ * @param {string} id - Its baseline id
+ * @param {*} mine - This side's value
+ * @param {*} theirs - The other side's value (the gist's, or the download)
+ * @param {Record<string, string>|null} baseline - Hashes at the last exchange
+ * @returns {boolean} True to keep `mine`
+ */
+function keepMine(id, mine, theirs, baseline, { allowRestored = false, storeName = null, key = null } = {}) {
+    // A full-backup restore made the keys it wrote a choice made now, whatever
+    // the last exchange was (see RESTORED_BASELINE) — those keys, and no others
+    if (allowRestored && restoredKey(baseline?.[RESTORED_BASELINE], storeName, key)) {
+        return valueHash(mine) !== valueHash(theirs);
+    }
+    const was = readBaselineEntry(baseline?.[id]);
+    if (!was) return false;
+    // The gist's side unmoved since the exchange, and this side moved since
+    return valueHash(theirs) === was.gist && valueHash(mine) !== was.local;
+}
+
+/** Each restore marker's key lists as sets, built once per marker */
+const restoredKeySets = new WeakMap();
+
+/**
+ * Whether a restore wrote this key.
+ *
+ * Only a key the backup actually held counts. A store the restore landed can
+ * still hold keys the backup never had — created after it was taken — and
+ * those were left exactly as they were, so they are no more this device's
+ * choice than before the restore; a merge must weigh them as usual.
+ *
+ * A marker from before restores were recorded per key (a bare time, or
+ * `{at, stores}`) cannot say which keys were written, so it counts for none.
+ *
+ * @param {*} marker - The baseline's RESTORED_BASELINE entry: `{at, keys: {store: [key]}}`
+ * @param {string|null} storeName - The key's store
+ * @param {string|null} key - The key
+ * @returns {boolean} True when the restore wrote that key
+ */
+function restoredKey(marker, storeName, key) {
+    if (!marker || typeof marker !== 'object' || !marker.keys || typeof marker.keys !== 'object') return false;
+    let sets = restoredKeySets.get(marker);
+    if (!sets) {
+        sets = new Map();
+        for (const [store, keys] of Object.entries(marker.keys)) {
+            if (Array.isArray(keys)) sets.set(store, new Set(keys));
+        }
+        restoredKeySets.set(marker, sets);
+    }
+    return Boolean(sets.get(storeName)?.has(key));
+}
+
+/**
+ * One key's baseline entry as its two halves: what the gist held after the
+ * exchange, and what this device held. They are one hash — stored as a plain
+ * string — after every exchange but a merged upload, where the gist can take
+ * a value this device has not applied yet.
+ * @param {*} entry - A stored entry
+ * @returns {{gist: string, local: string|null}|null} The halves, or null when there is none
+ */
+function readBaselineEntry(entry) {
+    if (typeof entry === 'string' && entry) return { gist: entry, local: entry };
+    if (entry && typeof entry === 'object' && typeof entry.gist === 'string') {
+        return { gist: entry.gist, local: typeof entry.local === 'string' ? entry.local : null };
+    }
+    return null;
+}
+
+/**
+ * The baseline a merged upload leaves: per key, what the gist now holds (the
+ * merge's winner) beside what this device holds.
+ *
+ * Both halves are needed, and for opposite questions. "Did this device change
+ * the key since?" is asked of its own value: recording only the uploaded
+ * winner made a key the gist won look locally edited at the next startup
+ * pull, which then kept the stale local value. "Did the gist change it
+ * since?" is asked of the gist's value: recording only the local value made
+ * a key the gist won look moved on the gist's side forever, so an edit made
+ * here after the merge lost to it at the next push.
+ *
+ * @param {string} uploadedText - The merged payload that went up
+ * @param {string} localText - This device's payload it was built from
+ * @returns {Record<string, string|{gist: string, local: string|null}>} The baseline
+ */
+export function exchangeBaseline(uploadedText, localText) {
+    const gist = wholeKeyHashes(uploadedText);
+    const local = wholeKeyHashes(localText);
+    const baseline = {};
+    for (const [id, hash] of Object.entries(gist)) {
+        baseline[id] = local[id] === hash ? hash : { gist: hash, local: local[id] ?? null };
+    }
+    return baseline;
+}
+
+/**
+ * The baseline entry a full-backup restore adds: the keys it wrote, per
+ * store (`{at, keys: {store: [key]}}`), each of which the next merge takes as
+ * this device's newer copy, so it neither reverts the restore nor counts it
+ * as unmoved. A key with a registered merge is still folded — a restore must not
+ * drop entries the other device recorded. Replaced by the next exchange's
+ * real baseline.
+ */
+export const RESTORED_BASELINE = '\u0000restoredAt';
+
+/**
+ * Stamp every setting a full-backup restore is about to land as changed now.
+ *
+ * A backup's stamps are as old as the backup (or absent, from an older
+ * build), so the gist's newer stamps would take every setting back at the
+ * next merge and silently undo the restore. Restoring is a choice made now,
+ * exactly as importing a settings file is, and is stamped the same way.
+ *
+ * @param {{stores?: Object}} payload - The backup, mutated in place
+ * @param {number} [now] - The time to stamp
+ * @returns {void}
+ */
+export function restampRestoredSettings(payload, now = Date.now()) {
+    const settings = payload?.stores?.[SETTINGS_STORE];
+    if (!settings || typeof settings !== 'object') return;
+    for (const [key, value] of Object.entries(settings)) {
+        if (!key.startsWith('script_settingsMap')) continue;
+        let map = value;
+        if (typeof value === 'string') {
+            try {
+                map = JSON.parse(value);
+            } catch {
+                continue;
+            }
+        }
+        if (!map || typeof map !== 'object' || Array.isArray(map)) continue;
+        const stamps = {};
+        for (const settingId of Object.keys(map)) {
+            if (!LOCAL_ONLY_SETTING_IDS.includes(settingId)) stamps[settingId] = { at: now, seq: null };
+        }
+        settings[`${SETTING_STAMPS_PREFIX}${key}`] = stamps;
+    }
+}
+
+/**
+ * The startup pull's half of the whole-value rule: drop from the download each
+ * key this device moved since the last exchange while the gist's copy did not,
+ * so the import leaves this device's newer value where it is.
+ * @param {Object} payload - Parsed payload, mutated in place
+ * @param {Record<string, string>|null} baseline - Hashes at the last exchange
+ * @returns {Promise<void>}
+ */
+async function keepMovedLocalWholeKeys(payload, baseline) {
+    if (!baseline) return;
+    for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
+        if (!entries || typeof entries !== 'object') continue;
+        const local = await storage.getAll(storeName);
+        for (const key of Object.keys(entries)) {
+            if (!isWholeKey(storeName, key) || !Object.hasOwn(local || {}, key)) continue;
+            if (
+                keepMine(baselineId(storeName, key), local[key], entries[key], baseline, {
+                    allowRestored: true,
+                    storeName,
+                    key,
+                })
+            ) {
+                delete entries[key];
+            }
+        }
+    }
+}
+
+/**
+ * Whether cleaning one of the gist's stores took anything out of it.
+ *
+ * A key gone is a removal. So is a settings map or stamps record that came out
+ * different: the redaction drops device-local entries from inside them. Those
+ * are compared as data, since a map stored as text is re-serialized whether or
+ * not anything left it.
+ *
+ * @param {Record<string, *>} entries - The store as the gist holds it
+ * @param {Record<string, *>} cleaned - The same store after cleaning
+ * @returns {boolean} True when the gist holds something the cleaned copy does not
+ */
+function cleaningRemoved(entries, cleaned) {
+    if (cleaned === entries) return false;
+    if (Object.keys(cleaned).length !== Object.keys(entries || {}).length) return true;
+    const asData = (value) => {
+        if (typeof value !== 'string') return value;
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    };
+    for (const [key, value] of Object.entries(cleaned)) {
+        if (value === entries[key]) continue;
+        if (stableStringify(asData(value)) !== stableStringify(asData(entries[key]))) return true;
+    }
+    return false;
+}
+
+/**
+ * Fold the gist's payload into this device's, in memory, for an automatic push
+ * that found the gist ahead of it.
+ *
+ * Nothing local is written. Applying a payload latches every store it touches
+ * until the page reloads (`storage.finishRestore`) and asks for that reload on
+ * screen, which is right for a pull and wrong every fifteen minutes on two
+ * devices that are both in use. So the union is built here and uploaded; this
+ * device takes the other device's changes at its next startup pull.
+ *
+ * Per key:
+ * - settings maps per setting, the later change winning ({@link localStampWins}), each kept value with its
+ *   stamp;
+ * - a key with a registered merge always folded with it, never taken whole (this device's copy may be trimmed
+ *   to its own retention): this device as the base and the gist as the incoming side, so what the fold cannot
+ *   combine goes to the gist — every pull folds the same way round, which is what lets two devices settle —
+ *   except when the gist's value is still the one this device last exchanged (see {@link wholeKeyHashes}),
+ *   when this device's side is the incoming one;
+ * - any other key whose gist value is still the one this device last exchanged: this device's value;
+ * - otherwise the gist's value;
+ * - a key on one side only, kept from that side.
+ *
+ * The gist's copy is cleaned the way a pull cleans it first — other scripts'
+ * stores and keys, excluded keys, device-local keys and settings — and refused
+ * the way a pull refuses it, so a payload from a newer format is never merged
+ * into something this build half understands.
+ *
+ * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
+ * @param {string} remoteText - The gist's payload, decrypted
+ * @param {Record<string, string>|null} baseline - This device's hashes at its last exchange
+ * @returns {{text: string, remoteAdds: boolean, dropsFromRemote: boolean}} The merged payload; whether it holds
+ *   anything this device does not (so its next startup pull has something to take); and whether it leaves out
+ *   stores the gist holds that this device's scope does not sync (so it is worth uploading even when it adds
+ *   nothing)
+ * @throws {Error} When the gist's payload is not one this build can apply
+ */
+export function mergeForUpload(localText, remoteText, baseline) {
+    const local = JSON.parse(localText);
+    const remote = JSON.parse(remoteText);
+    const droppedUnowned = dropUnownedFromPayload(remote);
+    assertApplicable(remote);
+    // The upload carries what this device's scope carries. A device switched
+    // to "Settings only" while the gist still holds a full-scope push must not
+    // keep re-uploading every history store it no longer syncs — that is the
+    // size the switch was made to shed — nor hand them to its next startup.
+    // The upload is then smaller than the gist although it adds nothing to it,
+    // which `addsToRemote` cannot see: it asks only of what the upload holds.
+    // The same goes for whatever the cleaning below takes out of a store the
+    // upload keeps — another script's keys, a device-local key or a token an
+    // older build uploaded — so those count too, or the gist would keep them
+    let dropsFromRemote = droppedUnowned;
+    if ((local?.syncScope ?? 'settings') !== 'everything') {
+        for (const storeName of Object.keys(remote.stores)) {
+            if (storeName === SETTINGS_STORE) continue;
+            if (Object.keys(remote.stores[storeName] || {}).length) dropsFromRemote = true;
+            delete remote.stores[storeName];
+        }
+    }
+    for (const [storeName, entries] of Object.entries(remote.stores)) {
+        let cleaned = stripExcludedKeys(storeName, entries);
+        if (storeName === SETTINGS_STORE) cleaned = redactSettingsStore(cleaned);
+        if (!dropsFromRemote && cleaningRemoved(entries, cleaned)) dropsFromRemote = true;
+        remote.stores[storeName] = cleaned;
+    }
+
+    const stores = {};
+    const storeNames = new Set([...Object.keys(remote.stores), ...Object.keys(local?.stores || {})]);
+    for (const storeName of storeNames) {
+        const mine = local?.stores?.[storeName] || {};
+        const theirs = remote.stores[storeName] || {};
+        const out = { ...theirs };
+        for (const [key, value] of Object.entries(mine)) {
+            if (!Object.hasOwn(theirs, key)) {
+                out[key] = value;
+                continue;
+            }
+            if (storeName === SETTINGS_STORE && key.startsWith(SETTING_STAMPS_PREFIX)) continue;
+            if (storeName === SETTINGS_STORE && key.startsWith('script_settingsMap')) {
+                const stampKey = `${SETTING_STAMPS_PREFIX}${key}`;
+                const folded = foldSettingsMap(
+                    value,
+                    theirs[key],
+                    readStamps(mine[stampKey]),
+                    readStamps(theirs[stampKey]),
+                    true
+                );
+                out[key] = folded.value;
+                if (folded.stamps) out[stampKey] = folded.stamps;
+                else delete out[stampKey];
+                continue;
+            }
+            // The gist moved nowhere since this device last exchanged it: this
+            // device's copy is the newer one
+            const registration = mergeForKey(storeName, key);
+            const mineMoved = keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
+                allowRestored: !registration,
+                storeName,
+                key,
+            });
+            // Whole, for a key with no fold. A key with one is still folded:
+            // this device's copy may be trimmed to its own retention setting,
+            // and taken whole it would delete from the gist history the other
+            // device keeps — a device keeping 20 sessions, after a startup
+            // pull of a gist holding 500, would upload its 20
+            if (mineMoved && !registration) {
+                out[key] = value;
+                continue;
+            }
+            if (registration) {
+                try {
+                    // This device as the base and the gist as the incoming side,
+                    // the way every pull folds: whatever a fold cannot combine
+                    // — a sort order, a direction, a tie — goes to the gist.
+                    // The other way round, each device's scalar beat the
+                    // gist's on every upload, the next device's beat that,
+                    // and two devices traded one setting every interval.
+                    // Except when only this device moved: then its side is the
+                    // incoming one, so its newer scalars win as they did when
+                    // it was taken whole, and the gist's entries stay.
+                    // Uncapped: a fold that trims to this device's own retention
+                    // setting would upload the trimmed copy and delete, from the
+                    // gist, history the other device keeps (see UPLOAD_CONTEXT)
+                    out[key] = mineMoved
+                        ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
+                        : registration.merge(value, theirs[key], UPLOAD_CONTEXT);
+                } catch (error) {
+                    console.error(
+                        `[Sync] Merging ${storeName}/${key} for upload failed; keeping the gist's copy:`,
+                        error
+                    );
+                }
+                continue;
+            }
+        }
+        // Stamps for a map only this device has came across with it above;
+        // stamps the gist holds for a map it alone has stay with that map
+        stores[storeName] = out;
+    }
+
+    const text = JSON.stringify({
+        formatVersion: FORMAT_VERSION,
+        exportedAt: new Date().toISOString(),
+        syncScope: local?.syncScope ?? remote.syncScope ?? 'settings',
+        stores,
+    });
+    // Whether applying the result here would change anything — not whether
+    // the gist differs from this device, which it does even when this device
+    // won every difference. That case left a note that the gist held news,
+    // and the next startup imported an identical payload, latched the stores
+    // and asked for a reload over nothing.
+    // Asked the way a local apply would fold, retention and all: entries this
+    // device's own cap would drop on arrival are not news it can take
+    return { text, remoteAdds: addsToRemote(text, localText, { forUpload: false }), dropsFromRemote };
+}
+
+/**
+ * Whether this device's data holds anything the gist's does not.
+ *
+ * The loop guard for an automatic merge: after folding the gist into this
+ * device, the result is sent back up only when it would add something. Two
+ * plain comparisons both loop. Hashing the text does, because two devices that
+ * agree on every value still write them in different orders. So does
+ * comparing values, because a union keeps its base's order: each device's
+ * merge of the same two lists comes out in its own order, each reads the
+ * other's as different, and they push the one list back and forth for ever.
+ *
+ * So the question asked is the one that matters: folded INTO the gist's copy
+ * the way the other device's pull will fold it, does this device's copy change
+ * anything? A key with a registered merge is folded with that merge, gist side
+ * as the base; any other key is compared by value (object keys sorted). A key
+ * the gist lacks is new. Keys only the gist has add nothing from here.
+ *
+ * A settings map's stamps are compared like any other key. A stamp that moved
+ * with no value moving beside it still decides a later merge — a change back
+ * to the value the gist already shows has to beat an earlier change elsewhere
+ * — so it is news. The cost is one upload after each push from an older build,
+ * which drops the stamps record from the gist.
+ *
+ * @param {string} localText - This device's payload, rebuilt after the merge
+ * @param {string} remoteText - The gist's payload, as downloaded
+ * @param {{forUpload?: boolean}} [options] - `forUpload` (the default) folds the way the upload does, with no
+ *   retention cap; false folds the way a pull applies here, cap included — for asking whether a local apply
+ *   would change anything
+ * @returns {boolean} True when pushing would change what the gist holds
+ */
+export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
+    let local;
+    let remote;
+    try {
+        local = JSON.parse(localText)?.stores || {};
+        remote = JSON.parse(remoteText)?.stores || {};
+    } catch {
+        return true;
+    }
+    for (const [storeName, entries] of Object.entries(local)) {
+        const theirs = remote[storeName] && typeof remote[storeName] === 'object' ? remote[storeName] : {};
+        for (const [key, value] of Object.entries(entries || {})) {
+            if (!Object.hasOwn(theirs, key)) return true;
+            const registration = mergeForKey(storeName, key);
+            let folded = value;
+            if (registration) {
+                try {
+                    // Folded the way the gist takes an upload, or — asked of a
+                    // local apply — the way a pull here would fold it
+                    folded = forUpload
+                        ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
+                        : registration.mergeForPull(theirs[key], value);
+                } catch {
+                    folded = value;
+                }
+            }
+            if (stableStringify(folded) !== stableStringify(theirs[key])) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * JSON with every object's keys in sorted order, so equal values serialize equally.
+ * @param {*} value - Any JSON value
+ * @returns {string} Canonical text
+ */
+function stableStringify(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    if (value && typeof value === 'object') {
+        const keys = Object.keys(value)
+            .filter((key) => value[key] !== undefined)
+            .sort();
+        return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
 }
 
 /**
@@ -672,6 +1320,11 @@ export function readExportedAt(json) {
 export default {
     buildPayloadJSON,
     applyPayload,
+    mergeForUpload,
+    wholeKeyHashes,
+    exchangeBaseline,
+    restampRestoredSettings,
+    addsToRemote,
     hashPayload,
     readExportedAt,
     redactSettingsStore,

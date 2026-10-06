@@ -1865,8 +1865,18 @@ class SettingsUI {
                     ],
                 });
                 if (confirmed !== 'restore') return;
+                // A restore is a choice made now: its settings must not lose to
+                // the sync gist's newer stamps, nor its other keys to the gist's
+                // copies, at the next automatic merge
+                syncManager.prepareFullRestore?.(payload);
                 const { restored, failed, complete } = await importEverything(payload);
                 const total = Object.values(restored).reduce((sum, n) => sum + n, 0);
+                // The stores that landed are latched and restored whether or not
+                // the rest did; the sync merge must treat those as this device's
+                const landed = Object.keys(restored).filter(
+                    (store) => restored[store] > 0 && !failed.some((entry) => entry.store === store)
+                );
+                await syncManager.noteFullRestore?.(payload, landed);
 
                 // "Restored 0 entries" used to be reported as success. A store
                 // whose transaction aborts writes nothing, and one bad key aborts

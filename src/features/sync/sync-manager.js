@@ -42,10 +42,28 @@ import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { showToast } from '../../utils/toast.js';
 import { askChoice } from '../../utils/choice-dialog.js';
-import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } from './gist-client.js';
+import {
+    GistError,
+    findSyncGist,
+    readSyncGist,
+    readSyncGistRevision,
+    writeSyncGist,
+    chunkPayload,
+} from './gist-client.js';
 import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
-import { buildPayloadJSON, applyPayload, contentHash, hashPayload } from './sync-payload.js';
+import {
+    buildPayloadJSON,
+    applyPayload,
+    contentHash,
+    hashPayload,
+    addsToRemote,
+    mergeForUpload,
+    wholeKeyHashes,
+    exchangeBaseline,
+    restampRestoredSettings,
+    RESTORED_BASELINE,
+} from './sync-payload.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { flushPersistedRecords } from '../../utils/persisted-record.js';
 import {
@@ -103,6 +121,38 @@ const KEY_LAST_HASH = 'toolasha_sync_lastHash';
 
 /** Remote payload still has records held back by an unreadable local merge base. */
 const KEY_MERGE_HELD = 'toolasha_sync_mergeHeld';
+
+/**
+ * Set when an automatic push merged the gist into its upload instead of into
+ * this device: the gist then holds another device's changes this device has
+ * not applied. `{since}` — the stamp of that push.
+ *
+ * While it is set, every automatic push merges again (a plain one would drop
+ * those changes from the gist), and the next startup or manual pull applies
+ * the gist even though its counter is this device's own. Cleared by a pull
+ * that applies, and by a pressed Push, which replaces the gist by design.
+ */
+const KEY_UNAPPLIED = 'toolasha_sync_unapplied';
+
+/**
+ * The gist version (a `history` entry) this device's last push produced.
+ *
+ * GitHub takes every gist write unconditionally, so another device's write
+ * can replace this device's without either seeing the other. The replacing
+ * device checks its own write (see `_recoverReplaced`); this is how the
+ * replaced one can tell too: a newer gist whose manifest is `basedOn` a
+ * version older than this push was written by a device that never saw it.
+ */
+const KEY_LAST_PUSHED_VERSION = 'toolasha_sync_lastPushedVersion';
+
+/** Re-merges one push makes after finding its write replaced someone else's, before it gives up */
+const MAX_RACE_ROUNDS = 2;
+
+/**
+ * Each whole-value key's hash at this device's last exchange — the common
+ * ancestor the merge asks "which side moved this?" of. See `wholeKeyHashes`.
+ */
+const KEY_BASELINE = 'toolasha_sync_baseline';
 
 /** How many chunk files the gist holds, so a shrinking payload can delete the rest */
 const KEY_CHUNK_COUNT = 'toolasha_sync_chunkCount';
@@ -333,11 +383,17 @@ class SyncManager {
      * @param {number} [opToken] - This call's `busy` ownership token, from `_run`. Checked
      *   before every write that follows a wait a takeover could have happened during (a
      *   confirmation dialog left open, a hung request) — see `_stillOwns`.
-     * @param {boolean} [unattended=false] - Nobody pressed a button for this push; see `push`
+     * @param {boolean} [unattended=false] - Nobody pressed a button for this push; see `push`. An unattended
+     *   push that finds the gist ahead of this device merges it into the upload rather than writing over it.
+     * @param {{text: string, localText: string, known: Object|null, remoteAdds: boolean, remoteAt: string|null,
+     *   remoteSeq: number|null}|null} [merged=null] - An upload `_mergeIntoUpload` built: the merged payload,
+     *   this device's own payload it was built from, and the gist version it was merged with. Finding the gist
+     *   moved past that version again stands down for the next interval, so one tick merges at most once.
+     *   `raceRound` counts the re-merges made after finding this push's write replaced another device's.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _doPush(silent, opToken, unattended = false) {
+    async _doPush(silent, opToken, unattended = false, merged = null) {
         // A previous pull could not read a local history and deliberately held
         // its downloaded counterpart back. Uploading this incomplete union
         // would replace that counterpart in the gist before it can be retried.
@@ -354,13 +410,20 @@ class SyncManager {
         // session over, and the character-switch push fires as the character
         // being left goes away. Both would upload a copy with the final
         // seconds cut off, and nothing would ever put them back.
-        await flushPersistedRecords();
-        await storage.flushAll?.();
-
-        const payload = await buildPayloadJSON(scope);
+        let localPayload = merged?.localText;
+        if (!merged) {
+            await flushPersistedRecords();
+            await storage.flushAll?.();
+            localPayload = await buildPayloadJSON(scope);
+        }
+        // What goes up, and what this device holds. They differ only for a
+        // merged upload; the fingerprint remembered is always this device's,
+        // because "has this device changed since?" is asked of its own data.
+        const payload = merged ? merged.text : localPayload;
         const hash = contentHash(payload);
+        const localHash = merged ? contentHash(localPayload) : hash;
 
-        if (silent && hash === (await storage.get(KEY_LAST_HASH, STORE, null))) {
+        if (!merged && silent && localHash === (await storage.get(KEY_LAST_HASH, STORE, null))) {
             return { ok: true, skipped: true, reason: 'unchanged' };
         }
 
@@ -392,6 +455,12 @@ class SyncManager {
             // wrote. Stand down instead of overwriting a newer sync.
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
         }
+
+        // The gist holds changes this device has not applied, so an automatic
+        // push can only merge: go straight there rather than list the gist to
+        // learn it is ahead and then download it again to merge it
+        const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
+        if (unattended && unapplied && !merged && gistId) return this._mergeIntoUpload(localPayload, opToken, silent);
 
         // The hash above is always of the plaintext — compression and
         // encryption both change the bytes without changing the data (and a
@@ -433,7 +502,9 @@ class SyncManager {
         // a counter read before that wait would be one a takeover has since
         // moved past. (A takeover is stood down on by `_stillOwns` below
         // anyway; this keeps the number itself honest.)
-        const syncSeq = (readSeq(await storage.get(KEY_LAST_SYNCED_SEQ, STORE, null)) ?? 0) + 1;
+        const lastSeq = readSeq(await storage.get(KEY_LAST_SYNCED_SEQ, STORE, null));
+        const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
+        const syncSeq = (lastSeq ?? 0) + 1;
         const manifest = {
             toolashaSync: 1,
             scope,
@@ -471,8 +542,16 @@ class SyncManager {
         // A record written before versions carried the manifest's counter and
         // encryption is not handed over either: a 304 against it would leave
         // the write unable to see either one.
-        const known = await this._knownVersion(gistId);
-        const usableKnown = known?.current && typeof known.encrypted === 'boolean' ? known : null;
+        // Nor while the gist holds changes this device has not applied, or
+        // when sending a merge: the write must read the gist's manifest to know
+        // whether it moved, and a 304 does not carry one.
+        // A merge hands over the version it just downloaded: a 304 against it
+        // proves the gist did not move while the merge was built, and saves
+        // a third download of the same gist
+        const known = merged ? merged.known : await this._knownVersion(gistId);
+        const usableKnown =
+            (merged || (known?.current && !unapplied)) && typeof known?.encrypted === 'boolean' ? known : null;
+        const aheadOf = merged ? { at: merged.remoteAt, seq: merged.remoteSeq } : { at: lastSyncedAt, seq: lastSeq };
         let written;
         try {
             written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks, usableKnown, {
@@ -481,10 +560,33 @@ class SyncManager {
                 // that is encrypted. That may be meant, but it removes the
                 // encryption for every device, so it is asked rather than done
                 confirmPlaintext: unattended ? null : () => this._confirmPlaintextPush(opToken),
+                // An automatic push never overwrites an exchange this device has
+                // not taken: that is how a setting changed on the other device
+                // was lost on both. It merges first (below). A pressed Push
+                // still means "this device's copy", and overwrites.
+                // A changed gist whose manifest gives no order at all — damaged, or
+                // edited by hand — may hold a newer exchange, so it counts as ahead:
+                // the merge then either folds it in or, unable to read it, holds
+                // automatic pushes until someone presses Push
+                isAhead: unattended
+                    ? (listed) =>
+                          (!merged && Boolean(unapplied)) ||
+                          (Boolean(listed.unordered) && listingMoved(listed, known)) ||
+                          isNewer(listed.exportedAt, aheadOf.at, listed.syncSeq, aheadOf.seq)
+                    : null,
             });
         } catch (error) {
             if (error instanceof GistError && error.kind === 'cancelled') {
                 return { ok: true, skipped: true, reason: 'cancelled' };
+            }
+            if (unattended && error instanceof GistError && error.kind === 'behind') {
+                if (merged) {
+                    console.warn(
+                        '[Sync] The gist moved again while a merge was being sent; the next interval merges it.'
+                    );
+                    return { ok: false, reason: 'behind' };
+                }
+                return this._mergeIntoUpload(localPayload, opToken, silent);
             }
             // Quietly: this device's pulls of the same gist already fail on the
             // missing passphrase and say so, and a second sticky toast every
@@ -506,10 +608,29 @@ class SyncManager {
         // unsynced again.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
+        // Another device wrote between this push's listing and its write, and
+        // this write replaced it (GitHub has no conditional update). Fold what
+        // was replaced back in and write again, rather than record a success
+        // that leaves that device's push stranded.
+        if (unattended && written.intervening?.length) {
+            return this._recoverReplaced({
+                silent,
+                opToken,
+                token,
+                gistId: written.id,
+                written,
+                uploadedText: payload,
+                localPayload,
+                exportedAt,
+                encrypted: manifest.encrypted,
+                merged,
+            });
+        }
+
         await this._remember({
             gistId: written.id,
             exportedAt,
-            hash,
+            hash: localHash,
             chunkCount: chunks.length,
             // What the manifest actually carries: the write raises it above a
             // gist another device has since moved further along
@@ -517,17 +638,336 @@ class SyncManager {
             // The write's own response describes the version it produced, which
             // is this device's data by construction. No ETag, no claim: the
             // next read then downloads in full, as it always did.
-            version: gistVersion(written.id, written.etag, written.files, true, {
+            // A merged upload holding changes this device has not applied is
+            // not this device's data, so not `current`
+            version: gistVersion(written.id, written.etag, written.files, !merged?.remoteAdds, {
                 syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
                 encrypted: manifest.encrypted,
+                version: written.version,
             }),
+            // In the same transaction as the counter. Written after it, a page
+            // closing between the two kept the advanced counter and lost the
+            // note that the gist holds changes not applied here — and the next
+            // automatic push, seeing the gist no longer ahead, replaced it
+            extra: {
+                [KEY_LAST_PUSHED_AT]: exportedAt,
+                [KEY_LAST_PUSHED_VERSION]: written.version ?? null,
+                // A merged upload records both what went up and what this device
+                // holds (see exchangeBaseline); a plain one, where they are the
+                // same, records the one
+                [KEY_BASELINE]: merged ? exchangeBaseline(payload, localPayload) : wholeKeyHashes(localPayload),
+                // A merged upload carried changes this device has not applied, or
+                // still carries ones an earlier merge did. A plain push replaced
+                // the gist with this device's data, so there are none.
+                // `remoteAdds` is read off the merged result, which holds
+                // whatever an earlier merge left unapplied too
+                [KEY_UNAPPLIED]: merged?.remoteAdds ? { since: exportedAt } : null,
+            },
         });
-        await rememberLocal({ [KEY_LAST_PUSHED_AT]: exportedAt });
 
         if (!silent) {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);
         }
         return { ok: true };
+    }
+
+    /**
+     * The automatic push found the gist ahead of this device: fold the gist
+     * into the upload, in memory, and send the result.
+     *
+     * Merging into local storage instead (a pull) would latch every store it
+     * touches until a reload and put "Reload now" on screen — on two devices in
+     * use, every quarter hour each, with recording stopped in between. Nothing
+     * local is written here; this device takes the other's changes at its next
+     * startup pull (`KEY_UNAPPLIED` says there are some).
+     *
+     * When the merge adds nothing the gist does not already hold, nothing is
+     * sent: the loop guard that stops two devices trading one union for ever.
+     * A gist it cannot read for want of a passphrase is the refusal the push
+     * makes for it — logged, not toasted — and one in a format this build does
+     * not read is left alone rather than half merged.
+     *
+     * @param {string} localText - This device's payload
+     * @param {number} opToken - The push's ownership token
+     * @param {boolean} silent - Whether to stay quiet on success
+     * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
+     * @private
+     */
+    async _mergeIntoUpload(localText, opToken, silent) {
+        traceSync('merge-into-upload');
+        const token = this._token();
+        const gistId = await this._resolveGistId(token);
+        let remote;
+        try {
+            remote = await this._readRemote(token, gistId, null);
+        } catch (error) {
+            if (error instanceof GistError && error.kind === 'passphrase') {
+                console.warn(`[Sync] Skipped an automatic merge (passphrase): ${error.message}`);
+                return { ok: false, reason: 'passphrase' };
+            }
+            // A gist that is corrupt or in a newer format stays that way until
+            // someone pushes over it on purpose (a pressed Push still does).
+            // Saying so every interval is noise; once is the record.
+            if (error instanceof GistError && error.kind === 'parse') {
+                this._logStuckOnce('parse', error);
+                return { ok: false, reason: 'parse' };
+            }
+            throw error;
+        }
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+
+        const baseline = await storage.get(KEY_BASELINE, STORE, null);
+        let merged;
+        try {
+            merged = mergeForUpload(localText, remote.payload, baseline);
+        } catch (error) {
+            this._logStuckOnce('unmergeable', error);
+            return { ok: false, reason: 'unmergeable' };
+        }
+
+        // An upload that only sheds stores this device's scope no longer syncs
+        // adds nothing, yet is the write that stops every device downloading them
+        const changesRemote = merged.dropsFromRemote || addsToRemote(merged.text, remote.payload);
+        if (!changesRemote && !merged.remoteAdds) {
+            // The two hold the same data: another device pushed nothing this
+            // one lacks. Settle on that version exactly as a pull finding
+            // nothing new would, so neither the next startup nor the interval
+            // pull imports an identical payload, latches the stores and asks
+            // for a reload over nothing.
+            const lastSeq = readSeq(await storage.get(KEY_LAST_SYNCED_SEQ, STORE, null));
+            await this._remember({
+                gistId,
+                exportedAt: remote.manifest?.exportedAt ?? null,
+                hash: contentHash(localText),
+                chunkCount: Number(remote.manifest?.chunks) || 0,
+                syncSeq: advanceSeq(lastSeq, readSeq(remote.manifest?.syncSeq)),
+                version: remote.seen ? { ...remote.seen, current: true } : null,
+                extra: { [KEY_BASELINE]: wholeKeyHashes(localText), [KEY_UNAPPLIED]: null },
+            });
+            return { ok: true, skipped: true, reason: 'in-step' };
+        }
+
+        if (!changesRemote) {
+            // The gist already holds everything here, and more. Nothing to
+            // send, but the gist is ahead: note it for the startup pull, and
+            // remember this device's data as seen so the next interval does
+            // not merge again until something changes here.
+            await rememberLocal({
+                [KEY_LAST_HASH]: contentHash(localText),
+                [KEY_UNAPPLIED]: { since: remote.manifest?.exportedAt ?? null },
+                ...(remote.seen ? { [KEY_GIST_VERSION]: remote.seen } : {}),
+            });
+            return { ok: true, skipped: true, reason: 'gist-has-it' };
+        }
+
+        return this._doPush(silent, opToken, true, {
+            text: merged.text,
+            localText,
+            known: remote.seen,
+            remoteAdds: merged.remoteAdds,
+            remoteAt: remote.manifest?.exportedAt ?? null,
+            remoteSeq: readSeq(remote.manifest?.syncSeq),
+        });
+    }
+
+    /**
+     * Log, once per session and cause, that an automatic push is held up by
+     * a gist it cannot merge. The gist does not change by itself, so the
+     * second interval's line would say nothing the first did not.
+     * @param {string} reason - 'parse' or 'unmergeable'
+     * @param {Error} error - What was thrown
+     * @private
+     */
+    _logStuckOnce(reason, error) {
+        this._stuckLogged = this._stuckLogged || new Set();
+        const key = `${reason}:${error?.message ?? ''}`;
+        if (this._stuckLogged.has(key)) return;
+        this._stuckLogged.add(key);
+        console.warn(
+            `[Sync] Automatic pushes are held: the gist cannot be merged (${reason}). A pressed Push replaces it.`,
+            error
+        );
+    }
+
+    /**
+     * This push's write replaced versions another device wrote after this
+     * push listed the gist. Read each back, fold it into what was just
+     * written with the same upload merge, and write the result.
+     *
+     * The rewrite lists against the version just written, so its own check
+     * catches a third device writing meanwhile. After `MAX_RACE_ROUNDS` such
+     * rounds it stops without recording success: this device stays "changed"
+     * (its fingerprint was never moved), so the next interval tries again, and
+     * the device whose push is still missing can tell from the gist's
+     * manifest (see KEY_LAST_PUSHED_VERSION).
+     *
+     * @param {Object} state - The push so far
+     * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
+     * @private
+     */
+    async _recoverReplaced({
+        silent,
+        opToken,
+        token,
+        gistId,
+        written,
+        uploadedText,
+        localPayload,
+        exportedAt,
+        encrypted,
+        merged,
+    }) {
+        const round = (merged?.raceRound ?? 0) + 1;
+        traceSync('write-replaced', { versions: written.intervening.length, round });
+        if (round > MAX_RACE_ROUNDS) {
+            console.warn('[Sync] Other devices kept writing over this push; the next interval tries again.');
+            return { ok: false, reason: 'raced' };
+        }
+
+        const baseline = await storage.get(KEY_BASELINE, STORE, null);
+        let text = uploadedText;
+        let remoteAdds = Boolean(merged?.remoteAdds);
+        for (const version of written.intervening) {
+            try {
+                const replaced = await this._readRemote(token, gistId, null, null, version);
+                text = mergeForUpload(text, replaced.payload, baseline).text;
+            } catch (error) {
+                // A revision this device cannot read (no passphrase, a corrupt
+                // one) or cannot merge (a newer build's format) cannot be folded
+                // in, and this write has just replaced it. Left that way, the
+                // next interval lists this device's own write as current and the
+                // other device's data survives only in the gist's history; an
+                // encrypted one is replaced in the clear again at every interval.
+                // Put the gist back as it was, under a counter above this write,
+                // so the next automatic push finds it ahead and refuses it there
+                console.warn(`[Sync] Could not fold in a revision this push replaced (${version}):`, error);
+                await this._restoreReplaced(token, gistId, written.intervening.at(-1));
+                if (error instanceof GistError && error.kind === 'passphrase') {
+                    return { ok: false, reason: 'passphrase' };
+                }
+                if (!(error instanceof GistError) || error.kind === 'parse') {
+                    this._logStuckOnce('unmergeable', error);
+                    return { ok: false, reason: 'unmergeable' };
+                }
+                return { ok: false, reason: 'raced' };
+            }
+        }
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+        remoteAdds = remoteAdds || addsToRemote(text, localPayload, { forUpload: false });
+
+        return this._doPush(silent, opToken, true, {
+            text,
+            localText: localPayload,
+            // What was just written is the base of the rewrite
+            known: gistVersion(gistId, written.etag, written.files, false, {
+                syncSeq: written.syncSeq,
+                encrypted,
+                version: written.version,
+            }),
+            remoteAdds,
+            remoteAt: exportedAt,
+            remoteSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : null,
+            raceRound: round,
+        });
+    }
+
+    /**
+     * Write a revision this push replaced back over it, byte for byte: its
+     * manifest and its chunks as they were, under a counter above the write
+     * it undoes. For a revision this device cannot decrypt, read or merge.
+     * Best effort: a failure is logged, and the next interval's push is
+     * refused or merges as it would have before.
+     * @param {string} token - GitHub token
+     * @param {string} gistId - Gist id
+     * @param {string} version - The newest revision the push replaced
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _restoreReplaced(token, gistId, version) {
+        try {
+            const revision = await readSyncGistRevision(token, gistId, version);
+            const chunks = chunkPayload(revision.payload);
+            // `basedOn` is the write's own: the restore is based on what it undoes
+            const { basedOn: _basedOn, ...manifest } = revision.manifest;
+            await writeSyncGist(token, gistId, { ...manifest, chunks: chunks.length }, chunks, 0, null, {
+                unattended: true,
+            });
+            console.warn("[Sync] Put back another device's push that this device replaced and could not merge.");
+        } catch (error) {
+            console.error("[Sync] Could not put back another device's push that this device replaced:", error);
+        }
+    }
+
+    /**
+     * Download the gist and undo the push pipeline: decrypt, decompress, and
+     * check the result against its manifest.
+     * @param {string} token - GitHub token
+     * @param {string} gistId - Gist id
+     * @param {Object|null} known - The remembered version, for `seen`
+     * @param {string|null} [etag] - Ask conditionally against this ETag
+     * @param {string|null} [revision] - Read this past version instead of the current one
+     * @returns {Promise<{notModified?: boolean, manifest?: Object, payload?: string, seen?: Object|null}>}
+     *   The plaintext payload and its manifest, and the version record this download proves
+     * @private
+     */
+    async _readRemote(token, gistId, known, etag = null, revision = null) {
+        const remote = revision
+            ? await readSyncGistRevision(token, gistId, revision)
+            : await readSyncGist(token, gistId, etag ? { etag } : undefined);
+        if (remote.notModified) return { notModified: true };
+        const manifest = remote.manifest;
+        // What this download proves about the gist's file set, whatever the
+        // caller goes on to decide. It stays `current` only if it already was;
+        // the outcomes that settle the content upgrade it.
+        const seen = gistVersion(gistId, remote.etag, remote.files, known?.current && known.etag === remote.etag, {
+            ...manifest,
+            version: remote.version,
+        });
+        let payload = remote.payload;
+
+        // Decrypt first, then decompress. A manifest without either flag is a
+        // payload from before they existed, and reads exactly as it always did.
+        if (manifest?.encrypted) {
+            const passphrase = this._passphrase();
+            if (!passphrase) {
+                throw new GistError(
+                    'passphrase',
+                    'This sync gist is encrypted, and no sync passphrase is set on this device.'
+                );
+            }
+            const sealed = { ...manifest.encrypted, ciphertext: payload };
+            payload = manifest.compressed
+                ? await gunzipToText(await decryptBytes(sealed, passphrase))
+                : await decryptText(sealed, passphrase);
+        } else if (manifest?.compressed) {
+            payload = await gunzipToText(base64ToBytes(payload));
+        }
+
+        verifyAgainstManifest(manifest, payload);
+        return { manifest, payload, seen, history: remote.history ?? null };
+    }
+
+    /**
+     * Whether the gist's newest write replaced this device's last push without
+     * having seen it: the manifest says which version that write was based on,
+     * and the history puts this device's push after it.
+     *
+     * Undecidable — and answered no — without a recorded push version, a
+     * `basedOn` (a write from before it was recorded), or a history that still
+     * lists both.
+     *
+     * @param {{manifest?: Object, history?: Array<string>|null}} remote - What a pull downloaded
+     * @param {string|null} lastPushed - KEY_LAST_PUSHED_VERSION
+     * @returns {boolean} True when this device's push is not in the gist
+     * @private
+     */
+    _pushWasReplaced(remote, lastPushed) {
+        const basedOn = remote?.manifest?.basedOn;
+        const history = remote?.history;
+        if (!lastPushed || !basedOn || !Array.isArray(history)) return false;
+        const mine = history.indexOf(lastPushed);
+        const base = history.indexOf(basedOn);
+        return mine > 0 && base > mine;
     }
 
     /**
@@ -572,20 +1012,23 @@ class SyncManager {
      * @param {Object} [options] - Options
      * @param {boolean} [options.silent=false] - Only act when the remote is
      *   strictly newer, and stay quiet otherwise. Used at startup.
+     * @param {boolean} [options.startup=false] - One of the page-load pulls. It also takes what an automatic
+     *   merge left in the gist for this device, and merges when both sides moved instead of standing down.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
-    async pull({ silent = false } = {}) {
-        return this._run('pull', silent, (opToken) => this._doPull(silent, opToken));
+    async pull({ silent = false, startup = false } = {}) {
+        return this._run('pull', silent, (opToken) => this._doPull(silent, opToken, startup));
     }
 
     /**
      * The download itself, with no guard around it.
      * @param {boolean} silent - Only act on a strictly newer remote, and stay quiet otherwise
      * @param {number} [opToken] - This call's `busy` ownership token, from `_run`. See `_stillOwns`.
+     * @param {boolean} [startup=false] - A page-load pull; see `pull`
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _doPull(silent, opToken) {
+    async _doPull(silent, opToken, startup = false) {
         const token = this._token();
         const gistId = await this._resolveGistId(token);
         if (!gistId) {
@@ -597,46 +1040,24 @@ class SyncManager {
 
         // A silent pull asks GitHub whether the gist moved before downloading
         // it. Held-back records are the exception: they wait on a re-read of
-        // the very version this device already has.
+        // the very version this device already has. So is a gist an automatic
+        // merge left changes in for this device, for the pulls that take them.
+        const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
+        const takeUnapplied = Boolean(unapplied) && (startup || !silent);
         const known = await this._knownVersion(gistId);
+        // Asked conditionally whether or not this device's data reflects the
+        // version: one it saw and stood down on, or merged into an upload, has
+        // already been weighed, and downloading it again every interval to
+        // weigh it again the same way costs the whole gist each time. A change
+        // to the gist still comes down in full; the next automatic push merges
+        // whatever is left.
         const conditional =
-            silent && known?.current && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
-        const remote = await readSyncGist(token, gistId, conditional ? { etag: conditional } : undefined);
+            silent && !takeUnapplied && known && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
+        const remote = await this._readRemote(token, gistId, known, conditional);
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
         if (remote.notModified) return { ok: true, skipped: true, reason: 'not-modified' };
-        // What this download proves about the gist's file set, whatever this
-        // pull goes on to decide. It stays `current` only if it already was;
-        // the outcomes below that settle the content upgrade it.
-        const manifest = remote.manifest;
-        const seen = gistVersion(
-            gistId,
-            remote.etag,
-            remote.files,
-            known?.current && known.etag === remote.etag,
-            manifest
-        );
-        let payload = remote.payload;
-
-        // Unwind the push pipeline: decrypt first, then decompress. A manifest
-        // without either flag is a payload from before they existed, and reads
-        // exactly as it always did.
-        if (manifest?.encrypted) {
-            const passphrase = this._passphrase();
-            if (!passphrase) {
-                throw new GistError(
-                    'passphrase',
-                    'This sync gist is encrypted, and no sync passphrase is set on this device.'
-                );
-            }
-            const sealed = { ...manifest.encrypted, ciphertext: payload };
-            payload = manifest.compressed
-                ? await gunzipToText(await decryptBytes(sealed, passphrase))
-                : await decryptText(sealed, passphrase);
-        } else if (manifest?.compressed) {
-            payload = await gunzipToText(base64ToBytes(payload));
-        }
-
-        verifyAgainstManifest(manifest, payload);
+        const { manifest, seen } = remote;
+        const payload = remote.payload;
 
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
@@ -649,11 +1070,37 @@ class SyncManager {
         const held = await storage.get(KEY_MERGE_HELD, STORE, null);
         const retryHeld = held?.exportedAt === remoteAt && held?.hash === contentHash(payload);
 
-        if (!retryHeld && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
+        // This device's own last push may be missing from the gist: another
+        // device wrote over it without having seen it (the gist's manifest is
+        // based on a version older than that push). Then the gist is not a
+        // fast-forward of this device, whatever the fingerprint says — and not
+        // old news either: that write took the counter under this device's
+        // push, so it carries the same one, and its stamp is from before it
+        const replaced = this._pushWasReplaced(remote, await storage.get(KEY_LAST_PUSHED_VERSION, STORE, null));
+
+        if (!retryHeld && !takeUnapplied && !replaced && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
             // Settled: nothing in this version is news to this device
             if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
             if (!silent) showToast('Already up to date with GitHub.');
             return { ok: true, skipped: true, reason: 'not-newer' };
+        }
+
+        // The very content this device last exchanged — its own push, put back
+        // over a write that replaced it (see `_restoreReplaced`) — holds nothing
+        // to apply, whatever its counter says. Settled the way a merge that adds
+        // nothing settles: the counter taken, nothing imported, no reload asked
+        const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
+        if (!retryHeld && !takeUnapplied && Boolean(lastHash) && contentHash(payload) === lastHash) {
+            await this._remember({
+                gistId,
+                exportedAt: remoteAt,
+                hash: lastHash,
+                chunkCount: Number(manifest?.chunks) || 0,
+                syncSeq: advanceSeq(lastSeq, remoteSeq),
+                version: seen ? { ...seen, current: true } : null,
+            });
+            if (!silent) showToast('Already up to date with GitHub.');
+            return { ok: true, skipped: true, reason: 'in-step' };
         }
 
         // Both sides moved: the remote is ahead of what we last exchanged, and so
@@ -665,26 +1112,34 @@ class SyncManager {
         await flushPersistedRecords();
         await storage.flushAll?.();
         const localHash = contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
-        const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
-        const localChanged = Boolean(lastHash) && localHash !== lastHash;
+        const localChanged = replaced || (Boolean(lastHash) && localHash !== lastHash);
 
         /** Whether the union this pull produces is sent straight back up */
         let pushBack = false;
 
-        if (localChanged) {
-            // The silent path is the unattended one (the startup pull). A
-            // modal it raises sits unanswered behind the game while `busy`
-            // stays held, and every 15-minute auto-push for the rest of the
-            // session returns 'busy' without a word — the "auto-sync randomly
-            // stops until I reload" report. Unattended pulls stand down and
-            // leave the decision to a human-initiated sync.
-            if (silent) {
-                // Not settled, so not `current`: the next silent pull downloads
-                // again. The listing is still true, and the next push uses it.
-                if (seen) await rememberLocal({ [KEY_GIST_VERSION]: seen });
-                console.warn('[Sync] Startup pull found both sides changed; leaving it for a manual sync.');
-                return { ok: true, skipped: true, reason: 'conflict' };
-            }
+        // The silent paths never ask: a modal they raised sat unanswered
+        // behind the game while `busy` stayed held — the "auto-sync randomly
+        // stops until I reload" report. The interval pull applies only a clean
+        // fast-forward and stands down when both sides moved; the next
+        // automatic push merges the gist into its upload instead of
+        // overwriting it (see `_mergeIntoUpload`), so nothing is lost by
+        // waiting. A startup pull merges into this device — it is the moment
+        // a reload is expected anyway — with settings by their change stamps,
+        // histories by their folds and other keys by the baseline.
+        if (localChanged && silent && !startup) {
+            // Not settled, so not `current`: the next silent pull downloads
+            // again. The listing is still true, and the next push uses it.
+            // A gist that replaced this device's push can carry its counter, so
+            // the push would not find it ahead: the note sends it to the merge
+            const standDown = {
+                ...(seen ? { [KEY_GIST_VERSION]: seen } : {}),
+                ...(replaced ? { [KEY_UNAPPLIED]: { since: remoteAt } } : {}),
+            };
+            if (Object.keys(standDown).length) await rememberLocal(standDown);
+            console.warn('[Sync] Silent pull found both sides changed; the next automatic push merges them.');
+            return { ok: true, skipped: true, reason: 'conflict' };
+        }
+        if (localChanged && !silent) {
             const answer = await askChoice({
                 title: 'Sync conflict',
                 message:
@@ -720,7 +1175,11 @@ class SyncManager {
         // above, just without a dialog to point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
-        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload);
+        const baseline = await storage.get(KEY_BASELINE, STORE, null);
+        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload, {
+            mode: silent ? 'merge' : 'pull',
+            baseline,
+        });
         const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
 
         // An import already in progress cannot be cancelled between its store
@@ -760,6 +1219,20 @@ class SyncManager {
         // later push cannot replace the records this pull held back.
         if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
 
+        // The loop guard. An automatic merge goes back up only when this
+        // device's copy, folded into the gist's the way the other device will
+        // fold it, would change something. Otherwise the two devices would
+        // trade the same union back and forth for ever. The fingerprint
+        // remembered follows: the gist's own text when a push is owed (so the
+        // push, and its retry if it fails, sees this device as changed), and
+        // the rebuilt copy when not (so nothing does).
+        let mergedRebuild = null;
+        let pushOwed = false;
+        if (silent && !mergeHeld?.length) {
+            mergedRebuild = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
+            pushOwed = addsToRemote(mergedRebuild, payload);
+        }
+
         await this._remember({
             gistId,
             exportedAt: remoteAt,
@@ -773,9 +1246,11 @@ class SyncManager {
             // Held-back records remain on this device even though they were
             // removed from `applied`; fingerprint the actual local snapshot
             // so a retry does not mistake that expected difference for an edit.
-            hash: mergeHeld?.length
-                ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
-                : contentHash(applied ?? payload),
+            hash: mergedRebuild
+                ? contentHash(pushOwed ? payload : mergedRebuild)
+                : mergeHeld?.length
+                  ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+                  : contentHash(applied ?? payload),
             chunkCount: Number(manifest?.chunks) || 0,
             // Lamport's rule on receive: this device is now at least as far
             // along as the payload it accepted. Written only here, after the
@@ -788,6 +1263,15 @@ class SyncManager {
             // Applied whole, this version is now this device's. Held-back
             // records mean it is not yet, and the retry must re-download it.
             version: seen ? { ...seen, current: !pendingHeld } : null,
+            // One transaction with the stamp and counter, as on the push side
+            extra: {
+                // The gist's values are now the last exchange: a key this device
+                // kept over an unmoved gist value stays "moved here" against it
+                [KEY_BASELINE]: wholeKeyHashes(payload),
+                // Whatever an automatic merge left in the gist has landed now —
+                // unless records were held back, which the retry has to take
+                ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
+            },
         });
 
         // Every figure below comes out of the apply result; nothing here re-reads
@@ -844,12 +1328,52 @@ class SyncManager {
         // and will not stop to ask.
         if (pushBack && !mergeHeld?.length) {
             const pushed = await this._doPush(false, opToken);
-            return { ok: true, merged: merged?.length || 0, pushedBack: pushed?.ok === true };
+            return { ok: true, merged: merged?.length || 0, pushedBack: pushed?.ok === true && !pushed?.skipped };
         }
 
         if (pushBack && mergeHeld?.length) return { ok: true, merged: merged?.length || 0, pushedBack: false };
 
         return { ok: true, merged: merged?.length || 0 };
+    }
+
+    /**
+     * Ready a full backup for restoring: stamp the settings it lands as
+     * changed now (see `restampRestoredSettings`). Call before importing it.
+     * @param {Object} payload - The parsed backup, mutated in place
+     * @returns {void}
+     */
+    prepareFullRestore(payload) {
+        restampRestoredSettings(payload);
+    }
+
+    /**
+     * Record that a full backup was restored, so the next merge takes the keys
+     * it wrote as this device's newer copy instead of reverting them to the
+     * gist's (see `RESTORED_BASELINE`). Call after the restore, with the stores
+     * that landed whole — a partial restore latched those, and they are as
+     * much the player's choice as a complete one.
+     *
+     * Only the keys the backup held are recorded. Anything else in those
+     * stores — a key created after the backup was taken — was left as it
+     * was, and is merged against its last exchange as before.
+     *
+     * @param {Object} payload - The backup that was restored
+     * @param {Array<string>} storeNames - Stores the restore wrote in full
+     * @returns {Promise<void>}
+     */
+    async noteFullRestore(payload, storeNames = []) {
+        const keys = {};
+        for (const storeName of storeNames) {
+            const entries = payload?.stores?.[storeName];
+            if (entries && typeof entries === 'object') keys[storeName] = Object.keys(entries);
+        }
+        if (Object.keys(keys).length === 0) return;
+        // Added to the baseline rather than replacing it: a key the restore
+        // did not write keeps its last exchange to be merged against
+        const baseline = (await storage.get(KEY_BASELINE, STORE, null)) || {};
+        await rememberLocal({
+            [KEY_BASELINE]: { ...baseline, [RESTORED_BASELINE]: { at: Date.now(), keys } },
+        });
     }
 
     /**
@@ -874,6 +1398,9 @@ class SyncManager {
             [KEY_LAST_PUSHED_AT]: null,
             [KEY_MERGE_HELD]: null,
             [KEY_GIST_VERSION]: null,
+            [KEY_UNAPPLIED]: null,
+            [KEY_BASELINE]: null,
+            [KEY_LAST_PUSHED_VERSION]: null,
         });
     }
 
@@ -932,7 +1459,7 @@ class SyncManager {
         // the repeating schedule is the leader's. An unchanged gist answers these with an empty 304.
         for (const delay of STARTUP_PULL_DELAYS_MS) {
             this.timers.scheduleTimeout(() => {
-                this.pull({ silent: true });
+                this.pull({ silent: true, startup: true });
             }, delay);
         }
 
@@ -1098,14 +1625,25 @@ class SyncManager {
     /**
      * Record what this device now believes about the gist.
      * @param {{gistId: string, exportedAt: string, hash: string, chunkCount: number,
-     *   syncSeq?: number|null, mergeHeld?: Object|null, version?: Object|null}} state - New state. `syncSeq`
+     *   syncSeq?: number|null, mergeHeld?: Object|null, version?: Object|null, extra?: Object}} state - New state. `syncSeq`
      *   is null for an exchange with a gist that carries no counter, which must not invent one. `mergeHeld`
      *   is passed only by a pull, which is the one exchange that can land or hold back records; a push leaves
      *   the marker alone. `version` is the gist version the exchange leaves behind (see KEY_GIST_VERSION).
+     *   `extra` is any other bookkeeping that must land in the same transaction.
      * @private
      */
-    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = undefined, version }) {
+    async _remember({
+        gistId,
+        exportedAt,
+        hash,
+        chunkCount,
+        syncSeq = null,
+        mergeHeld = undefined,
+        version,
+        extra = {},
+    }) {
         await rememberLocal({
+            ...extra,
             [KEY_GIST_ID]: gistId,
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,
@@ -1299,6 +1837,15 @@ class SyncManager {
             if (error instanceof GistError) {
                 console.warn(`[Sync] ${label} failed (${error.kind})`, error.githubMessage || '');
                 if (error.kind === 'not-found') await this.forgetGist();
+                // A corrupt or newer-format gist fails every unattended sync the
+                // same way until someone pushes over it. One sticky toast says
+                // so; repeating it every interval only stacks them.
+                const repeat = `${error.kind}:${error.message}`;
+                this._toastedSilently = this._toastedSilently || new Set();
+                if (silent && error.kind === 'parse' && this._toastedSilently.has(repeat)) {
+                    return { ok: false, reason: error.kind };
+                }
+                if (silent && error.kind === 'parse') this._toastedSilently.add(repeat);
                 showToast(describeFailure(label, error), {
                     kind: error.kind === 'rate-limit' ? 'warn' : 'error',
                     // A failure the player has to act on must not fade before
@@ -1443,7 +1990,28 @@ function gistVersion(gistId, etag, files, current, manifest) {
         current: Boolean(current),
         syncSeq: readSeq(manifest?.syncSeq),
         encrypted: Boolean(manifest?.encrypted),
+        // The history version it is, so a write listed against it by a 304
+        // still knows what it was based on
+        version: typeof manifest?.version === 'string' ? manifest.version : null,
     };
+}
+
+/**
+ * Whether a gist listing is a different version from the one this device last
+ * saw. Only a matching history version, or failing that a matching ETag, proves
+ * it is the same; with no record to compare against, it may have moved.
+ * @param {{version?: string|null, etag?: string|null}} listed - The fresh listing
+ * @param {{version?: string|null, etag?: string|null}|null} seen - The version record this device holds
+ * @returns {boolean} True unless the listing is provably the version already seen
+ */
+function listingMoved(listed, seen) {
+    if (typeof listed?.version === 'string' && typeof seen?.version === 'string') {
+        return listed.version !== seen.version;
+    }
+    if (typeof listed?.etag === 'string' && listed.etag && typeof seen?.etag === 'string') {
+        return listed.etag !== seen.etag;
+    }
+    return true;
 }
 
 /**
