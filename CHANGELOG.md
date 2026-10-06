@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing tracker merges and resumes sessions
+
+- The ∑ merge view can now combine the ticked sessions of one item into a single saved session (counting only active time), and a new "auto-resume" setting (off by default) continues the last ended session when you restart the same item at the level it stopped, with the same target and protection. The merge view now marks the level a running session is at and keeps its scroll while updating, and the Philosopher's Mirror line quotes savings up to your target instead of +20, hiding when mirrors don't help.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
