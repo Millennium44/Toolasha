@@ -994,6 +994,61 @@ describe('writeSyncGist', () => {
         expect(calls[1].method).toBe('PATCH');
     });
 
+    test('a write that replaced another device write says which versions it replaced', async () => {
+        // Listed at v1; another device wrote v2 before this write landed as v3
+        responses.push({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history: [{ version: 'v1' }],
+            },
+        });
+        responses.push({
+            status: 200,
+            body: { id: 'abc', history: [{ version: 'v3' }, { version: 'v2' }, { version: 'v1' }] },
+        });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result).toMatchObject({ version: 'v3', basedOn: 'v1', intervening: ['v2'] });
+        expect(JSON.parse(JSON.parse(calls[1].data).files[MANIFEST_FILE].content).basedOn).toBe('v1');
+        expect(calls).toHaveLength(2);
+    });
+
+    test('a write nobody raced replaced nothing, and asks nothing more', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history: [{ version: 'v1' }],
+            },
+        });
+        responses.push({ status: 200, body: { id: 'abc', history: [{ version: 'v2' }, { version: 'v1' }] } });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result.intervening).toEqual([]);
+        expect(calls).toHaveLength(2);
+    });
+
+    test('with no history in the write answer, the check reads a fresh listing instead', async () => {
+        const listed = (history) => ({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history,
+            },
+        });
+        responses.push(listed([{ version: 'v1' }]));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        responses.push(listed([{ version: 'v3' }, { version: 'v2' }, { version: 'v1' }]));
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result.intervening).toEqual(['v2']);
+        expect(calls[2].method).toBe('GET');
+    });
+
     test('falls back to the remembered count when the gist cannot be listed', async () => {
         responses.push({ status: 500, body: {} });
         responses.push({ status: 200, body: { id: 'abc' } });

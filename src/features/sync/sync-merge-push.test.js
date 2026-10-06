@@ -97,7 +97,15 @@ vi.mock('./sync-compress.js', async (importOriginal) => {
 });
 
 /** The one gist both devices share */
-const gist = vi.hoisted(() => ({ state: null, etag: 0, writes: 0 }));
+const gist = vi.hoisted(() => ({
+    state: null,
+    etag: 0,
+    writes: 0,
+    revisions: [],
+    requests: 0,
+    revisionReads: [],
+    betweenListAndWrite: null,
+}));
 
 vi.mock('./gist-client.js', async () => {
     class GistError extends Error {
@@ -107,28 +115,54 @@ vi.mock('./gist-client.js', async () => {
         }
     }
     const files = () => ({ 'toolasha-sync.json': 100, 'toolasha-data-000.json': gist.state.payload.length });
+    const versionOf = (etag) => `v${etag}`;
+    /** Every version written, newest first, as GitHub's `history` lists them */
+    const history = () => gist.revisions.map((revision) => revision.version).reverse();
     return {
         GistError,
         chunkPayload: (text) => [text],
         findSyncGist: async () => (gist.state ? 'g1' : null),
         readSyncGist: async (_token, _id, { etag } = {}) => {
+            gist.requests += 1;
             if (!gist.state) throw new GistError('not-found', 'no gist');
             const current = `W/"${gist.etag}"`;
             if (etag && etag === current) return { notModified: true, etag };
-            return { manifest: gist.state.manifest, payload: gist.state.payload, etag: current, files: files() };
+            return {
+                manifest: gist.state.manifest,
+                payload: gist.state.payload,
+                etag: current,
+                files: files(),
+                history: history(),
+                version: versionOf(gist.etag),
+            };
+        },
+        readSyncGistRevision: async (_token, _id, version) => {
+            gist.requests += 1;
+            gist.revisionReads.push(version);
+            const revision = gist.revisions.find((entry) => entry.version === version);
+            if (!revision) throw new GistError('not-found', 'no such revision');
+            return { manifest: revision.manifest, payload: revision.payload, history: history(), version };
         },
         writeSyncGist: async (_token, id, manifest, chunks, _prev, known, options = {}) => {
             const { unattended = false, confirmPlaintext = null, isAhead = null } = options;
             const current = `W/"${gist.etag}"`;
             let listing = null;
             if (gist.state) {
+                gist.requests += 1;
                 listing =
                     known && known.etag === current
-                        ? { syncSeq: known.syncSeq, encrypted: known.encrypted, exportedAt: null, fresh: false }
+                        ? {
+                              syncSeq: known.syncSeq,
+                              encrypted: known.encrypted,
+                              exportedAt: null,
+                              version: known.version,
+                              fresh: false,
+                          }
                         : {
                               syncSeq: gist.state.manifest.syncSeq ?? null,
                               encrypted: Boolean(gist.state.manifest.encrypted),
                               exportedAt: gist.state.manifest.exportedAt,
+                              version: versionOf(gist.etag),
                               fresh: true,
                           };
             }
@@ -137,19 +171,44 @@ vi.mock('./gist-client.js', async () => {
                 if (confirmPlaintext && !(await confirmPlaintext())) throw new GistError('cancelled', 'cancelled');
             }
             if (isAhead && listing?.fresh && isAhead(listing)) throw new GistError('behind', 'ahead');
+            // Another device's whole push, between this one's listing and its write
+            if (gist.betweenListAndWrite) {
+                const between = gist.betweenListAndWrite;
+                gist.betweenListAndWrite = null;
+                await between();
+            }
             const syncSeq =
                 listing?.syncSeq != null && listing.syncSeq >= manifest.syncSeq
                     ? listing.syncSeq + 1
                     : manifest.syncSeq;
-            gist.state = { manifest: { ...manifest, syncSeq }, payload: chunks.join('') };
+            const basedOn = gist.state && listing?.version ? listing.version : null;
             gist.etag += 1;
+            gist.requests += 1;
+            gist.state = {
+                manifest: { ...manifest, syncSeq, ...(basedOn ? { basedOn } : {}) },
+                payload: chunks.join(''),
+            };
+            gist.revisions.push({ version: versionOf(gist.etag), ...gist.state });
             gist.writes += 1;
-            return { id: id ?? 'g1', updatedAt: 'now', etag: `W/"${gist.etag}"`, files: files(), syncSeq };
+            // GitHub's PATCH answer carries the history: what came right before this write
+            const after = history();
+            const base = basedOn ? after.indexOf(basedOn) : -1;
+            const intervening = basedOn && base > 1 ? after.slice(1, base).reverse() : [];
+            return {
+                id: id ?? 'g1',
+                updatedAt: 'now',
+                etag: `W/"${gist.etag}"`,
+                files: files(),
+                syncSeq,
+                version: versionOf(gist.etag),
+                basedOn,
+                intervening,
+            };
         },
     };
 });
 
-const { default: syncManager } = await import('./sync-manager.js');
+const { default: syncManager, SyncManager } = await import('./sync-manager.js');
 const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
 // A history capped by this device's own live setting, written the way the
 // labyrinth room log registers (newest first, trimmed to the player's choice
@@ -268,6 +327,10 @@ beforeEach(() => {
     gist.state = null;
     gist.etag = 0;
     gist.writes = 0;
+    gist.revisions = [];
+    gist.requests = 0;
+    gist.revisionReads = [];
+    gist.betweenListAndWrite = null;
     toasts.length = 0;
     dialog.calls = 0;
     dialog.answer = null;
@@ -800,5 +863,116 @@ describe('the merge path through gzip and encryption', () => {
         expect(b.db.xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
         expect(b.db.settings[MAP].X.isTrue).toBe(true);
         expect(a.latches).toBe(0);
+    });
+});
+
+describe('two devices writing at the same moment', () => {
+    test('GET, GET, PATCH, PATCH: the later write finds the earlier, folds it in, and both edits stay', async () => {
+        const { a, b } = await syncedPair();
+        // B, a separate manager, is pushing in the same instant from its own page
+        const other = new SyncManager();
+        await as(b, () => changeSetting(b, 'X', true));
+        await as(a, () => {
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        });
+
+        // A lists the gist; before A writes, B lists and writes too
+        gist.betweenListAndWrite = async () => {
+            // Another browser: its own Web Locks, so not this tab's sync lock
+            world.device = b;
+            vi.stubGlobal('navigator', {});
+            try {
+                expect((await other.push({ silent: true, unattended: true })).ok).toBe(true);
+            } finally {
+                vi.unstubAllGlobals();
+                other.busy = false;
+                world.device = a;
+            }
+        };
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(true);
+        expect(gist.revisionReads).toHaveLength(1);
+        expect(gistStores().settings[MAP].X.isTrue).toBe(true);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
+        // A holds B's change only on the gist, so its next reload takes it
+        expect(a.db.settings.toolasha_sync_unapplied).toBeTruthy();
+        await as(a, auto.startup);
+        expect(a.db.settings[MAP].X.isTrue).toBe(true);
+    });
+
+    test('a push raced on every rewrite gives up without recording success, so the next tick retries', async () => {
+        const { a, b } = await syncedPair();
+        const other = new SyncManager();
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        const lastHashBefore = a.db.settings.toolasha_sync_lastHash;
+        let raced = 0;
+        const race = async () => {
+            raced += 1;
+            world.device = b;
+            vi.stubGlobal('navigator', {});
+            try {
+                b.db.xpHistory.testHistory_c1 = [...(b.db.xpHistory.testHistory_c1 || []), `b${raced}`];
+                await other.push({ silent: true, unattended: true });
+            } finally {
+                vi.unstubAllGlobals();
+                other.busy = false;
+                world.device = a;
+            }
+            // Armed again for A's next write only, after B's own write is done
+            if (raced < 4) gist.betweenListAndWrite = race;
+        };
+        gist.betweenListAndWrite = race;
+
+        const result = await as(a, auto.push);
+
+        expect(result).toEqual({ ok: false, reason: 'raced' });
+        expect(a.db.settings.toolasha_sync_lastHash).toBe(lastHashBefore);
+    });
+
+    test('a push nobody raced makes no extra request', async () => {
+        const { a } = await syncedPair();
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        const before = gist.requests;
+
+        expect((await as(a, auto.push)).ok).toBe(true);
+
+        // One listing and one write; no revision read, no second write
+        expect(gist.requests - before).toBe(2);
+        expect(gist.revisionReads).toHaveLength(0);
+    });
+
+    test('a device whose push was replaced unseen can tell, and does not fast-forward over it', async () => {
+        const { b } = await syncedPair();
+        // B writes X; then A, which listed before B wrote, writes without seeing it —
+        // as a write that gave up re-merging would leave it
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        const bVersion = b.db.settings.toolasha_sync_lastPushedVersion;
+        expect(bVersion).toBeTruthy();
+        const replacing = JSON.parse(gist.state.payload);
+        replacing.stores.settings[MAP].X = { id: 'X', isTrue: false };
+        gist.etag += 1;
+        gist.state = {
+            manifest: {
+                ...gist.state.manifest,
+                exportedAt: new Date(Date.now() + 60_000).toISOString(),
+                syncSeq: gist.state.manifest.syncSeq + 1,
+                basedOn: gist.revisions.at(-2).version,
+                hash: undefined,
+                bytes: undefined,
+            },
+            payload: JSON.stringify(replacing),
+        };
+        gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+
+        // B's interval pull must not take the gist as a clean fast-forward
+        b.latches = 0;
+        const pulled = await as(b, auto.pull);
+        expect(pulled.reason).toBe('conflict');
+        expect(b.db.settings[MAP].X.isTrue).toBe(true);
+        expect(b.latches).toBe(0);
     });
 });

@@ -42,7 +42,14 @@ import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { showToast } from '../../utils/toast.js';
 import { askChoice } from '../../utils/choice-dialog.js';
-import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } from './gist-client.js';
+import {
+    GistError,
+    findSyncGist,
+    readSyncGist,
+    readSyncGistRevision,
+    writeSyncGist,
+    chunkPayload,
+} from './gist-client.js';
 import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
 import {
@@ -126,6 +133,20 @@ const KEY_MERGE_HELD = 'toolasha_sync_mergeHeld';
  * that applies, and by a pressed Push, which replaces the gist by design.
  */
 const KEY_UNAPPLIED = 'toolasha_sync_unapplied';
+
+/**
+ * The gist version (a `history` entry) this device's last push produced.
+ *
+ * GitHub takes every gist write unconditionally, so another device's write
+ * can replace this device's without either seeing the other. The replacing
+ * device checks its own write (see `_recoverReplaced`); this is how the
+ * replaced one can tell too: a newer gist whose manifest is `basedOn` a
+ * version older than this push was written by a device that never saw it.
+ */
+const KEY_LAST_PUSHED_VERSION = 'toolasha_sync_lastPushedVersion';
+
+/** Re-merges one push makes after finding its write replaced someone else's, before it gives up */
+const MAX_RACE_ROUNDS = 2;
 
 /**
  * Each whole-value key's hash at this device's last exchange — the common
@@ -368,6 +389,7 @@ class SyncManager {
      *   remoteSeq: number|null}|null} [merged=null] - An upload `_mergeIntoUpload` built: the merged payload,
      *   this device's own payload it was built from, and the gist version it was merged with. Finding the gist
      *   moved past that version again stands down for the next interval, so one tick merges at most once.
+     *   `raceRound` counts the re-merges made after finding this push's write replaced another device's.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
@@ -581,6 +603,25 @@ class SyncManager {
         // unsynced again.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
+        // Another device wrote between this push's listing and its write, and
+        // this write replaced it (GitHub has no conditional update). Fold what
+        // was replaced back in and write again, rather than record a success
+        // that leaves that device's push stranded.
+        if (unattended && written.intervening?.length) {
+            return this._recoverReplaced({
+                silent,
+                opToken,
+                token,
+                gistId: written.id,
+                written,
+                uploadedText: payload,
+                localPayload,
+                exportedAt,
+                encrypted: manifest.encrypted,
+                merged,
+            });
+        }
+
         await this._remember({
             gistId: written.id,
             exportedAt,
@@ -597,6 +638,7 @@ class SyncManager {
             version: gistVersion(written.id, written.etag, written.files, !merged?.remoteAdds, {
                 syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
                 encrypted: manifest.encrypted,
+                version: written.version,
             }),
             // In the same transaction as the counter. Written after it, a page
             // closing between the two kept the advanced counter and lost the
@@ -604,6 +646,7 @@ class SyncManager {
             // automatic push, seeing the gist no longer ahead, replaced it
             extra: {
                 [KEY_LAST_PUSHED_AT]: exportedAt,
+                [KEY_LAST_PUSHED_VERSION]: written.version ?? null,
                 // A merged upload records both what went up and what this device
                 // holds (see exchangeBaseline); a plain one, where they are the
                 // same, records the one
@@ -739,30 +782,100 @@ class SyncManager {
     }
 
     /**
+     * This push's write replaced versions another device wrote after this
+     * push listed the gist. Read each back, fold it into what was just
+     * written with the same upload merge, and write the result.
+     *
+     * The rewrite lists against the version just written, so its own check
+     * catches a third device writing meanwhile. After `MAX_RACE_ROUNDS` such
+     * rounds it stops without recording success: this device stays "changed"
+     * (its fingerprint was never moved), so the next interval tries again, and
+     * the device whose push is still missing can tell from the gist's
+     * manifest (see KEY_LAST_PUSHED_VERSION).
+     *
+     * @param {Object} state - The push so far
+     * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
+     * @private
+     */
+    async _recoverReplaced({
+        silent,
+        opToken,
+        token,
+        gistId,
+        written,
+        uploadedText,
+        localPayload,
+        exportedAt,
+        encrypted,
+        merged,
+    }) {
+        const round = (merged?.raceRound ?? 0) + 1;
+        traceSync('write-replaced', { versions: written.intervening.length, round });
+        if (round > MAX_RACE_ROUNDS) {
+            console.warn('[Sync] Other devices kept writing over this push; the next interval tries again.');
+            return { ok: false, reason: 'raced' };
+        }
+
+        const baseline = await storage.get(KEY_BASELINE, STORE, null);
+        let text = uploadedText;
+        let remoteAdds = Boolean(merged?.remoteAdds);
+        for (const version of written.intervening) {
+            let replaced;
+            try {
+                replaced = await this._readRemote(token, gistId, null, null, version);
+            } catch (error) {
+                // A revision this device cannot read (no passphrase, or one this
+                // build cannot parse) cannot be folded in; leave the push unrecorded
+                console.warn(`[Sync] Could not read a revision this push replaced (${version}):`, error);
+                return { ok: false, reason: 'raced' };
+            }
+            const folded = mergeForUpload(text, replaced.payload, baseline);
+            text = folded.text;
+        }
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+        remoteAdds = remoteAdds || addsToRemote(text, localPayload, { forUpload: false });
+
+        return this._doPush(silent, opToken, true, {
+            text,
+            localText: localPayload,
+            // What was just written is the base of the rewrite
+            known: gistVersion(gistId, written.etag, written.files, false, {
+                syncSeq: written.syncSeq,
+                encrypted,
+                version: written.version,
+            }),
+            remoteAdds,
+            remoteAt: exportedAt,
+            remoteSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : null,
+            raceRound: round,
+        });
+    }
+
+    /**
      * Download the gist and undo the push pipeline: decrypt, decompress, and
      * check the result against its manifest.
      * @param {string} token - GitHub token
      * @param {string} gistId - Gist id
      * @param {Object|null} known - The remembered version, for `seen`
      * @param {string|null} [etag] - Ask conditionally against this ETag
+     * @param {string|null} [revision] - Read this past version instead of the current one
      * @returns {Promise<{notModified?: boolean, manifest?: Object, payload?: string, seen?: Object|null}>}
      *   The plaintext payload and its manifest, and the version record this download proves
      * @private
      */
-    async _readRemote(token, gistId, known, etag = null) {
-        const remote = await readSyncGist(token, gistId, etag ? { etag } : undefined);
+    async _readRemote(token, gistId, known, etag = null, revision = null) {
+        const remote = revision
+            ? await readSyncGistRevision(token, gistId, revision)
+            : await readSyncGist(token, gistId, etag ? { etag } : undefined);
         if (remote.notModified) return { notModified: true };
         const manifest = remote.manifest;
         // What this download proves about the gist's file set, whatever the
         // caller goes on to decide. It stays `current` only if it already was;
         // the outcomes that settle the content upgrade it.
-        const seen = gistVersion(
-            gistId,
-            remote.etag,
-            remote.files,
-            known?.current && known.etag === remote.etag,
-            manifest
-        );
+        const seen = gistVersion(gistId, remote.etag, remote.files, known?.current && known.etag === remote.etag, {
+            ...manifest,
+            version: remote.version,
+        });
         let payload = remote.payload;
 
         // Decrypt first, then decompress. A manifest without either flag is a
@@ -784,7 +897,30 @@ class SyncManager {
         }
 
         verifyAgainstManifest(manifest, payload);
-        return { manifest, payload, seen };
+        return { manifest, payload, seen, history: remote.history ?? null };
+    }
+
+    /**
+     * Whether the gist's newest write replaced this device's last push without
+     * having seen it: the manifest says which version that write was based on,
+     * and the history puts this device's push after it.
+     *
+     * Undecidable — and answered no — without a recorded push version, a
+     * `basedOn` (a write from before it was recorded), or a history that still
+     * lists both.
+     *
+     * @param {{manifest?: Object, history?: Array<string>|null}} remote - What a pull downloaded
+     * @param {string|null} lastPushed - KEY_LAST_PUSHED_VERSION
+     * @returns {boolean} True when this device's push is not in the gist
+     * @private
+     */
+    _pushWasReplaced(remote, lastPushed) {
+        const basedOn = remote?.manifest?.basedOn;
+        const history = remote?.history;
+        if (!lastPushed || !basedOn || !Array.isArray(history)) return false;
+        const mine = history.indexOf(lastPushed);
+        const base = history.indexOf(basedOn);
+        return mine > 0 && base > mine;
     }
 
     /**
@@ -904,7 +1040,12 @@ class SyncManager {
         await storage.flushAll?.();
         const localHash = contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
-        const localChanged = Boolean(lastHash) && localHash !== lastHash;
+        // This device's own last push may be missing from the gist: another
+        // device wrote over it without having seen it (the gist's manifest is
+        // based on a version older than that push). Then the gist is not a
+        // fast-forward of this device, whatever the fingerprint says.
+        const replaced = this._pushWasReplaced(remote, await storage.get(KEY_LAST_PUSHED_VERSION, STORE, null));
+        const localChanged = replaced || (Boolean(lastHash) && localHash !== lastHash);
 
         /** Whether the union this pull produces is sent straight back up */
         let pushBack = false;
@@ -1186,6 +1327,7 @@ class SyncManager {
             [KEY_GIST_VERSION]: null,
             [KEY_UNAPPLIED]: null,
             [KEY_BASELINE]: null,
+            [KEY_LAST_PUSHED_VERSION]: null,
         });
     }
 
@@ -1775,6 +1917,9 @@ function gistVersion(gistId, etag, files, current, manifest) {
         current: Boolean(current),
         syncSeq: readSeq(manifest?.syncSeq),
         encrypted: Boolean(manifest?.encrypted),
+        // The history version it is, so a write listed against it by a 304
+        // still knows what it was based on
+        version: typeof manifest?.version === 'string' ? manifest.version : null,
     };
 }
 

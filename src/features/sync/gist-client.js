@@ -710,6 +710,67 @@ export async function findSyncGist(token) {
 export async function readSyncGist(token, gistId, { etag = null } = {}) {
     const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch: etag });
     if (exchange.notModified) return { notModified: true, etag: exchange.etag };
+    return parseSyncGist(token, gistId, exchange);
+}
+
+/**
+ * Read one past revision of the sync gist: what a given write left there.
+ *
+ * For the write check in `writeSyncGist`: a push that finds another device
+ * wrote between its listing and its own write reads that device's revision
+ * back to merge it in, rather than leave it overwritten.
+ *
+ * @param {string} token - GitHub personal access token
+ * @param {string} gistId - Gist id
+ * @param {string} version - The revision's version (a `history` entry's `version`)
+ * @returns {Promise<{manifest: Object, payload: string, history: Array<string>, version: string|null}>}
+ *   That revision's manifest and reassembled contents
+ */
+export async function readSyncGistRevision(token, gistId, version) {
+    const path = `/gists/${encodeURIComponent(gistId)}/${encodeURIComponent(version)}`;
+    const exchange = await apiExchange(token, 'GET', path);
+    return parseSyncGist(token, gistId, exchange);
+}
+
+/**
+ * The versions a gist response's `history` lists, newest first.
+ * @param {Object|null|undefined} gist - A gist response body
+ * @returns {Array<string>|null} Versions, or null when the response carries no history
+ */
+function historyVersions(gist) {
+    if (!Array.isArray(gist?.history)) return null;
+    return gist.history.map((entry) => entry?.version).filter((version) => typeof version === 'string');
+}
+
+/** How many replaced revisions one write check reads back, at most */
+const MAX_INTERVENING = 5;
+
+/**
+ * The versions written between a write's base and the write itself — other
+ * devices' pushes this write replaced — oldest first.
+ *
+ * Empty when there were none, and when it cannot be told: no base recorded
+ * (a gist listed before versions were), or no history to read.
+ *
+ * @param {Array<string>|null} history - The gist's versions after the write, newest first
+ * @param {string|null} basedOn - The version the write was based on
+ * @returns {Array<string>} Replaced versions, oldest first
+ */
+function interveningVersions(history, basedOn) {
+    if (!basedOn || !Array.isArray(history) || history.length < 2) return [];
+    const base = history.indexOf(basedOn);
+    const between = base === -1 ? history.slice(1) : history.slice(1, base);
+    return between.slice(0, MAX_INTERVENING).reverse();
+}
+
+/**
+ * A gist response read as a sync gist: manifest checked, chunks reassembled.
+ * @param {string} token - GitHub personal access token
+ * @param {string} gistId - Gist id
+ * @param {{data: Object, etag: string|null}} exchange - The response
+ * @returns {Promise<Object>} What `readSyncGist` returns
+ */
+async function parseSyncGist(token, gistId, exchange) {
     const gist = exchange.data;
     const files = gist?.files || {};
 
@@ -756,12 +817,15 @@ export async function readSyncGist(token, gistId, { etag = null } = {}) {
         parts.push(await readFileContent(token, file));
     }
 
+    const history = historyVersions(gist);
     return {
         manifest,
         payload: parts.join(''),
         updatedAt: gist?.updated_at ?? null,
         etag: exchange.etag,
         files: fileSizes(files),
+        history,
+        version: history?.[0] ?? null,
     };
 }
 
@@ -825,8 +889,10 @@ async function readFileContent(token, file) {
  *   holds an exchange the caller has not taken, and the write stops with a `behind` GistError instead of
  *   overwriting it — the caller merges first.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
- *   syncSeq: number|undefined}>} The gist that was written, with the ETag and file sizes of the version the
- *   write produced, and the counter its manifest actually carries (raised above the gist's own, see below)
+ *   syncSeq: number|undefined, version: string|null, basedOn: string|null, intervening: Array<string>}>} The
+ *   gist that was written, with the ETag and file sizes of the version the write produced, the counter its
+ *   manifest actually carries (raised above the gist's own, see below), the version it produced and the one it
+ *   was based on, and any versions other devices wrote in between that this write replaced (oldest first)
  */
 export async function writeSyncGist(
     token,
@@ -939,9 +1005,17 @@ export async function writeSyncGist(
             Number.isSafeInteger(manifest?.syncSeq) && remoteSeq !== null && remoteSeq >= manifest.syncSeq
                 ? remoteSeq + 1
                 : manifest?.syncSeq;
-        const writtenManifest = syncSeq === manifest?.syncSeq ? manifest : { ...manifest, syncSeq };
+        // The version this write was decided against, in the manifest: the
+        // check after the write compares it with what the gist's history says
+        // came before this write, and a device whose own push was replaced
+        // can tell from it that the replacement never saw that push.
+        const basedOn = gistId && listing?.version ? listing.version : null;
+        const writtenManifest =
+            syncSeq === manifest?.syncSeq && !basedOn
+                ? manifest
+                : { ...manifest, syncSeq, ...(basedOn ? { basedOn } : {}) };
 
-        const orphanKey = `${orphans.join('\n')}|${syncSeq}`;
+        const orphanKey = `${orphans.join('\n')}|${syncSeq}|${basedOn}`;
         if (serialized?.orphanKey !== orphanKey) {
             const withOrphans = { [MANIFEST_FILE]: { content: JSON.stringify(writtenManifest, null, 2) }, ...files };
             for (const name of orphans) withOrphans[name] = null;
@@ -950,19 +1024,33 @@ export async function writeSyncGist(
                 files: withOrphans,
                 ...(gistId ? {} : { public: false }),
             };
-            serialized = { orphanKey, syncSeq, text: JSON.stringify(body) };
+            serialized = { orphanKey, syncSeq, basedOn, text: JSON.stringify(body) };
         }
 
         if (gistId) {
             const updated = await apiExchange(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, {
                 body: serialized.text,
             });
+            // GitHub takes a PATCH unconditionally — the update endpoint has no
+            // precondition and answers no 409 — so two devices that both listed
+            // the gist before either wrote both succeed, and the later write
+            // replaces the earlier one. The write's own history says whether
+            // that happened: the entry under this write should be the version
+            // this write was based on.
+            let history = historyVersions(updated.data);
+            if (!history && serialized.basedOn) {
+                const relisted = await listGistFiles(token, gistId, null);
+                history = relisted?.history ?? null;
+            }
             return {
                 id: updated.data?.id ?? gistId,
                 updatedAt: updated.data?.updated_at ?? null,
                 etag: updated.etag,
                 files: fileSizes(updated.data?.files),
                 syncSeq: serialized.syncSeq,
+                version: history?.[0] ?? null,
+                basedOn: serialized.basedOn,
+                intervening: interveningVersions(history, serialized.basedOn),
             };
         }
 
@@ -1027,12 +1115,21 @@ async function listGistFiles(token, gistId, previous) {
                 syncSeq: previous.syncSeq ?? null,
                 encrypted: previous.encrypted ?? null,
                 exportedAt: null,
+                version: previous.version ?? null,
                 fresh: false,
             };
         }
         const files = fileSizes(exchange.data?.files);
         return files
-            ? { gistId, etag: exchange.etag, files, fresh: true, ...listedManifest(exchange.data?.files) }
+            ? {
+                  gistId,
+                  etag: exchange.etag,
+                  files,
+                  fresh: true,
+                  version: historyVersions(exchange.data)?.[0] ?? null,
+                  history: historyVersions(exchange.data),
+                  ...listedManifest(exchange.data?.files),
+              }
             : null;
     } catch (error) {
         console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
@@ -1049,5 +1146,6 @@ export default {
     chunkFileName,
     findSyncGist,
     readSyncGist,
+    readSyncGistRevision,
     writeSyncGist,
 };

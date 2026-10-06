@@ -131,6 +131,9 @@ class FakeGistError extends Error {
 vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
+    readSyncGistRevision: async () => {
+        throw new Error('no revisions in this fake');
+    },
     findSyncGist: async () => gist.found,
     readSyncGist: async (_token, _id, options) => {
         gist.readCalls += 1;
@@ -1428,6 +1431,7 @@ describe('the remembered gist version', () => {
             current: true,
             syncSeq: null,
             encrypted: false,
+            version: null,
         });
 
         expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true, reason: 'not-modified' });
@@ -1507,6 +1511,7 @@ describe('the remembered gist version', () => {
             current: true,
             syncSeq: 1,
             encrypted: false,
+            version: null,
         });
     });
 

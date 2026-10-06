@@ -130,6 +130,9 @@ class FakeGistError extends Error {
 vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
+    readSyncGistRevision: async () => {
+        throw new Error('no revisions in this fake');
+    },
     findSyncGist: async () => (world.gist ? 'gist-1' : null),
     readSyncGist: async () => {
         if (!world.gist) throw new FakeGistError('not-found', 'no gist');
