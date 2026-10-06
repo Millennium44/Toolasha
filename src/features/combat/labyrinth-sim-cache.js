@@ -395,7 +395,42 @@ export const simCacheMethods = {
         const upgrades = this.getLabyrinthCombatBuffs()
             .map((buff) => `${buff.typeHrid}=${buff.ratioBoost || 0}|${buff.flatBoost || 0}`)
             .join(',');
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}${this._fallbackWornPart(loadoutId)}`;
+    },
+
+    /**
+     * The worn equipment, for a room that sims it.
+     *
+     * A room with no loadout assigned, or one whose saved loadout no longer
+     * exists, sims whatever is worn (see buildLabyrinthPlayerDTO), and nothing
+     * else in the key or the build fingerprint covers worn gear — the
+     * fingerprint hashes saved loadouts. Without this a worn-gear change left
+     * the result under the same key and the tile's badge settled on the old
+     * gear. Rooms with an assigned loadout return '' so the lab's own per-room
+     * gear swaps never touch their keys.
+     * @param {number} loadoutId - From getLabyrinthLoadoutId
+     * @returns {string} '' or ':worn=<slot=item+level,...>'
+     */
+    _fallbackWornPart(loadoutId) {
+        if (Number(loadoutId) > 0) {
+            // Still loading: the DTO is not built at all, so nothing to describe
+            if (!loadoutSnapshot.snapshotsReady) return '';
+            if (loadoutSnapshot.snapshots?.[loadoutId]) return '';
+        }
+        const parts = [];
+        const equipment = dataManager.characterEquipment;
+        if (equipment?.size > 0) {
+            for (const [location, item] of equipment) {
+                if (item?.itemHrid) parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
+            }
+        } else {
+            for (const item of dataManager.characterData?.characterItems || []) {
+                const location = String(item?.itemLocationHrid || '');
+                if (!item?.itemHrid || !location || location.includes('/item_locations/inventory')) continue;
+                parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
+            }
+        }
+        return `:worn=${parts.sort().join(',')}`;
     },
 
     /**

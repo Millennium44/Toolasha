@@ -5174,6 +5174,57 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         }
     });
 
+    test('a 0% room simmed in worn gear is re-simmed when the worn gear changes; a loadout room is not', async () => {
+        // Codex P2 on #364: a room with no assigned loadout sims the worn gear,
+        // which neither the cache key nor the build fingerprint described, so a
+        // settled 0% outlived a gear change. Imp has no loadout; the Cyclops
+        // fights in loadout 3, so the lab swapping worn gear must not touch it.
+        const CYCLOPS = '/monsters/cyclops';
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [
+                { monsterHrid: IMP, recommendedLevel: 110, isCleared: false },
+                { monsterHrid: CYCLOPS, recommendedLevel: 110, isCleared: false },
+            ],
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.autoTileRetryCount = 0;
+        gear.snapshots[3] = { name: 'Cyclops kit', equipment: [{ itemHrid: '/items/griffin_bulwark' }] };
+        dataManagerMock.characterData = { characterSetting: { labyrinthLoadoutCyclops: 3 }, characterInfo: {} };
+        dataManagerMock.characterEquipment = new Map([
+            ['/item_locations/main_hand', { itemHrid: '/items/cheese_sword', enhancementLevel: 0 }],
+        ]);
+        const sims = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockImplementation(async () => ({ clearChance: 0, expectedSeconds: Infinity }));
+        try {
+            await runPassAndRetries();
+
+            sims.mockClear();
+            for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims).not.toHaveBeenCalled();
+
+            // The lab (or the player) puts other gear on
+            dataManagerMock.characterEquipment = new Map([
+                ['/item_locations/main_hand', { itemHrid: '/items/holy_sword', enhancementLevel: 5 }],
+            ]);
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(sims.mock.calls.map(([hrid]) => hrid)).toEqual([IMP]);
+        } finally {
+            delete gear.snapshots[3];
+            dataManagerMock.characterData = null;
+            delete dataManagerMock.characterEquipment;
+        }
+    });
+
     test('a manual Calculate still re-sims the settled 0% room', async () => {
         mountFloor();
         const sims = vi
