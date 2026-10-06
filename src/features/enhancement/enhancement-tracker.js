@@ -245,10 +245,12 @@ class EnhancementTracker {
      * Merge the picked sessions into one persisted session; the originals are removed.
      *
      * The most recently active session absorbs the others (see {@link foldSessions}), so when it
-     * is the run in progress it stays the current session and keeps receiving attempts. The
-     * prediction is recomputed for the merged start state — the chain's first run's start level,
-     * the latest run's target and protection — falling back to that first run's own prediction
-     * when it cannot be computed. Only runs that continue each other can merge (planSessionMerge).
+     * is the run in progress it stays the current session and keeps receiving attempts. Only runs
+     * that continue each other can merge (planSessionMerge).
+     *
+     * No combined prediction is made: one computed now would use today's stats for attempts made
+     * on the stats the player had then. The merged session shows none and is not calibrated; each
+     * run's own prediction stays in `legPredictions`.
      * @param {string[]} sessionIds - Picked session IDs
      * @returns {Promise<{ok: boolean, reason?: string, id?: string}>}
      */
@@ -257,27 +259,8 @@ class EnhancementTracker {
         if (!plan.ok) return { ok: false, reason: plan.reason };
 
         const { ordered } = plan;
-        const earliestPredictions = ordered[0].predictions || null;
         const merged = foldSessions(ordered);
         for (const session of ordered.slice(0, -1)) delete this.sessions[session.id];
-
-        // Legs protected from different levels have no one prediction: none is shown or calibrated
-        if (merged.mixedProtection) {
-            merged.predictions = null;
-        } else {
-            let predictions = null;
-            try {
-                predictions = calculateEnhancementPredictions(
-                    merged.itemHrid,
-                    merged.startLevel,
-                    merged.targetLevel,
-                    merged.protectFrom
-                );
-            } catch (error) {
-                console.error('[EnhancementTracker] Recomputing the merged prediction failed:', error);
-            }
-            merged.predictions = predictions || earliestPredictions;
-        }
 
         // The pointer only ever names a running session; a removed one cannot be current
         if (this.currentSessionId && !this.sessions[this.currentSessionId]) {

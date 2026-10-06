@@ -240,21 +240,30 @@ describe('runs protected by different items', () => {
     });
 });
 
-describe('a merge of runs protected from different levels', () => {
-    test('shows no expected attempts, and the confirmation says why', async () => {
+describe('a merged session', () => {
+    test('shows no expected attempts or factors, and the confirmation says why', async () => {
         const { seven, eight } = spatulaRuns();
-        game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: true, protectFromDiffers: true };
+        game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: false, protectFromDiffers: false };
         const confirm = vi.fn(() => false);
         vi.stubGlobal('confirm', confirm);
         enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
         await enhancementUI.commitMerge();
-        expect(confirm.mock.calls[0][0]).toContain('protected from different levels');
+        expect(confirm.mock.calls[0][0]).toContain('shows no expected attempts, protections or factors');
 
-        const merged = { ...eight, predictions: null, mixedProtection: true, totalAttempts: 467 };
+        const merged = { ...eight, predictions: null, mergedFrom: ['session_7'], totalAttempts: 467 };
         const box = document.createElement('div');
         box.innerHTML = enhancementUI.generateSessionHTML(merged);
-        expect(box.querySelector('.enh-mixed-protection').textContent).toContain('— (mixed protection)');
-        expect(box.textContent).toContain('(merged runs differ)');
+        expect(box.querySelector('.enh-merged-runs').textContent).toContain('— (merged runs)');
+        expect(box.textContent).not.toContain('(merged runs differ)');
         expect(box.textContent).not.toContain('Attempt Factor');
+    });
+
+    test('with mixed protect-from levels the Prot row says so too', () => {
+        const { eight } = spatulaRuns();
+        const merged = { ...eight, predictions: null, mergedFrom: ['session_7'], mixedProtection: true };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(merged);
+        expect(box.textContent).toContain('(merged runs differ)');
+        expect(box.querySelector('.enh-merged-runs')).not.toBeNull();
     });
 });

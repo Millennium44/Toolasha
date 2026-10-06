@@ -1313,12 +1313,13 @@ class EnhancementUI {
                 ${predictions.paramsNote}
             </div>`;
             }
-        } else if (session.mixedProtection) {
-            // Merged from runs protected from different levels: no one prediction covers them
+        } else if (session.mergedFrom?.length > 0) {
+            // Merged from several runs, each made on the stats the player had then: no one
+            // prediction covers them, so no expected figures and no factors
             html += `
-            <div class="enh-mixed-protection" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+            <div class="enh-merged-runs" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
                 <span>Expected Attempts:</span>
-                <span title="The merged runs used different protect-from levels, so no one prediction covers them">— (mixed protection)</span>
+                <span title="Merged from several runs, made on the stats you had at the time, so no one prediction covers them">— (merged runs)</span>
             </div>`;
         }
 
@@ -1409,11 +1410,10 @@ class EnhancementUI {
         if (plan.settingsDiffer) {
             message += `\n\nThey do not share one target and protection setup; the merged session keeps the most recent one's (+${newest.targetLevel}, ${protect}).`;
         }
-        if (plan.protectFromDiffers) {
-            message +=
-                '\n\nThey were protected from different levels, so the merged session shows no expected ' +
-                'attempts or protections and is not used for prediction calibration.';
-        }
+        message +=
+            '\n\nThe merged session shows no expected attempts, protections or factors, and is not used ' +
+            'for prediction calibration: its runs were made on the stats you had at the time, which no ' +
+            'one prediction covers.';
         if (plan.protectionItemsDiffer) {
             message +=
                 '\n\nThey used different protection items. The merged session lists the protection used ' +

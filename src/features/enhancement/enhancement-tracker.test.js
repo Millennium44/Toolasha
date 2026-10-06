@@ -284,24 +284,24 @@ describe('merging sessions into one', () => {
         expect(eight.totalAttempts).toBe(477);
     });
 
-    test('the prediction is recomputed from the merged start state', async () => {
+    test('no combined prediction is made from current stats; each run keeps its own', async () => {
         await loadSpatulaRuns();
-        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 520 });
+        calculateEnhancementPredictions.mockReturnValue({ expectedAttempts: 520 });
         await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
-        expect(calculateEnhancementPredictions).toHaveBeenCalledWith('/items/sword', 0, 8, 5);
-        expect(enhancementTracker.getSession('session_8').predictions).toEqual({ expectedAttempts: 520 });
-    });
+        calculateEnhancementPredictions.mockReturnValue(null);
 
-    test('with no prediction to compute, the earliest session prediction is kept', async () => {
-        await loadSpatulaRuns();
-        await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
-        expect(enhancementTracker.getSession('session_8').predictions).toEqual({ expectedAttempts: 400 });
+        expect(calculateEnhancementPredictions).not.toHaveBeenCalled();
+        const merged = enhancementTracker.getSession('session_8');
+        expect(merged.predictions).toBeNull();
+        expect(merged.legPredictions.map((leg) => [leg.sessionId, leg.predictions])).toEqual([
+            ['session_7', { expectedAttempts: 400 }],
+            ['session_8', null],
+        ]);
     });
 
     test('runs protected from different levels get no prediction and no calibration', async () => {
         const { seven, eight } = await loadSpatulaRuns();
         seven.protectFrom = 4;
-        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 520 });
         await enhancementTracker.mergeSessionsIntoOne(['session_7', 'session_8']);
 
         expect(calculateEnhancementPredictions).not.toHaveBeenCalled();
@@ -377,36 +377,31 @@ describe('calibration after a merge', () => {
         expect(result.ok).toBe(true);
     }
 
-    test("reaching an already-recorded target again records #8's own leg alone", async () => {
+    test('reaching the target of a merged run records nothing, whatever its runs reached', async () => {
         await loadMergedChain({ sevenReachedTarget: true, eightPredictions: { expectedAttempts: 12 } });
-        await enhancementTracker.recordSuccess(7, 8);
-        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
-        const observation = enhancementCalibration.recordCompletion.mock.calls[0][0];
-        expect(observation.targetLevel).toBe(8);
-        expect(observation.predictions).toEqual({ expectedAttempts: 12 });
-        // #8's ten attempts and the one that finished it — not #7's 466 or #7b's 40
-        expect(observation.totalAttempts - observation.extensionBaseline.totalAttempts).toBe(11);
-    });
-
-    test('with no prediction of its own, that leg is not recorded rather than counted twice', async () => {
-        await loadMergedChain({ sevenReachedTarget: true });
         await enhancementTracker.recordSuccess(7, 8);
         expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
     });
 
-    test('a completed +8 in the chain still leaves a distinct +10 observation', async () => {
-        await loadMergedChain({ sevenReachedTarget: true, eightTarget: 10 });
+    test('a merge of runs that never reached their target records nothing either', async () => {
+        await loadMergedChain({ sevenReachedTarget: false, eightPredictions: { expectedAttempts: 12 } });
         await enhancementTracker.recordSuccess(7, 8);
-        await enhancementTracker.recordSuccess(8, 9);
-        await enhancementTracker.recordSuccess(9, 10);
-        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
-        expect(enhancementCalibration.recordCompletion.mock.calls[0][0].targetLevel).toBe(10);
+        expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
     });
 
-    test('a merge of runs that never reached their target is recorded as one observation', async () => {
+    test('an extension leg started after the merge is recorded on its own prediction', async () => {
         await loadMergedChain({ sevenReachedTarget: false });
         await enhancementTracker.recordSuccess(7, 8);
+        calculateEnhancementPredictions.mockReturnValueOnce({ expectedAttempts: 40 });
+        await enhancementTracker.extendSessionTarget('session_8', 10);
+        await enhancementTracker.recordSuccess(8, 9);
+        await enhancementTracker.recordSuccess(9, 10);
+
         expect(enhancementCalibration.recordCompletion).toHaveBeenCalledTimes(1);
+        const observation = enhancementCalibration.recordCompletion.mock.calls[0][0];
+        expect(observation.targetLevel).toBe(10);
+        expect(observation.predictions).toEqual({ expectedAttempts: 40 });
+        expect(observation.totalAttempts - observation.extensionBaseline.totalAttempts).toBe(2);
     });
 });
 

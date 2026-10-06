@@ -528,14 +528,9 @@ export function planSessionMerge(sessions, { labelOf = (session) => session.id }
  * counter, cost, per-level tally and XP; the start level and start time of the session that
  * started first; and every session's active stretches (not the wall-clock span between them).
  * Its own target, protection, state, current level and last attempt are kept. Protection is kept
- * per item when the runs used different ones. The caller recomputes the prediction for the
- * merged start state; the extension baseline is cleared since the merged session is one leg
- * from the earliest start.
- *
- * When a folded-in session had already reached its own target, its completion has been recorded
- * for calibration under its own id; the merged session lists those targets
- * (`calibrationRecordedTargets`) so reaching one of them does not record those attempts a second
- * time. A different target is a distinct observation and is still recorded.
+ * per item when the runs used different ones. The merged session carries no combined
+ * prediction — each run's own is kept in `legPredictions` — and is not calibrated (see
+ * calibrationObservation); the extension baseline is cleared.
  *
  * @param {Array<Object>} ordered - Sessions by last activity, from {@link planSessionMerge}
  * @returns {Object} The latest session, now the merged one
@@ -548,22 +543,22 @@ export function foldSessions(ordered) {
     const chainStart = ordered[0];
     const firstStartTime = Math.min(...ordered.map((session) => session.startTime || Infinity));
 
-    // The survivor's own leg, before the others are folded in: its prediction, and how many
-    // attempts and protections the merged counters will hold before that leg's own began
-    // (a survivor merged before already carries its leg; the runs folded in now come before it)
-    const foldedAttempts = older.reduce((sum, s) => sum + (s.totalAttempts || 0), 0);
-    const foldedProtections = older.reduce((sum, s) => sum + (s.protectionCount || 0), 0);
-    const ownBaseline = newest.calibrationOwnLeg || {
-        targetLevel: newest.targetLevel,
-        predictions: newest.predictions || null,
-        totalAttempts: newest.extensionBaseline?.totalAttempts || 0,
-        protectionCount: newest.extensionBaseline?.protectionCount || 0,
-    };
-    const ownLeg = {
-        ...ownBaseline,
-        totalAttempts: ownBaseline.totalAttempts + foldedAttempts,
-        protectionCount: ownBaseline.protectionCount + foldedProtections,
-    };
+    // Each run's own prediction, kept as it was made (on the stats the player had then) for the
+    // leg it describes, in chain order. Nothing composes them yet; see calibrationObservation.
+    // A run merged before already carries its legs.
+    const legPredictions = ordered.flatMap((session) =>
+        Array.isArray(session.legPredictions)
+            ? session.legPredictions
+            : [
+                  {
+                      sessionId: session.id,
+                      startLevel: session.startLevel,
+                      targetLevel: session.targetLevel,
+                      protectFrom: session.protectFrom || 0,
+                      predictions: session.predictions || null,
+                  },
+              ]
+    );
 
     const spans = [];
     const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
@@ -573,20 +568,10 @@ export function foldSessions(ordered) {
     // about to become the chain's), and the spend before it, which now includes every folded run
     const segmentStartLevel = Number.isFinite(newest.segmentStartLevel) ? newest.segmentStartLevel : newest.startLevel;
     const segmentStartCost = (newest.segmentStartCost || 0) + older.reduce((sum, s) => sum + (s.totalCost || 0), 0);
-    // Legs run with different protect-from levels have no one prediction between them
+    // Legs run with different protect-from levels: said on the panel's Prot row
     const mixedProtection =
         ordered.some((session) => session.mixedProtection === true) ||
         older.some((session) => (session.protectFrom || 0) !== (newest.protectFrom || 0));
-    // Targets whose completion calibration has already recorded under a folded-in session's id
-    const recordedTargets = new Set();
-    for (const session of ordered) {
-        for (const target of session.calibrationRecordedTargets || []) recordedTargets.add(target);
-    }
-    for (const session of older) {
-        if (session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel) {
-            recordedTargets.add(session.targetLevel);
-        }
-    }
     for (const session of older) {
         spans.push(...getActiveSpans(session));
 
@@ -653,12 +638,10 @@ export function foldSessions(ordered) {
     newest.segmentStartCost = segmentStartCost;
     newest.extensionBaseline = null;
     if (mixedProtection) newest.mixedProtection = true;
-    if (recordedTargets.size > 0) {
-        newest.calibrationRecordedTargets = [...recordedTargets].sort((a, b) => a - b);
-        // Reaching one of those targets again is the survivor's own leg finishing: calibration
-        // then measures that leg alone, against its own prediction (see calibrationObservation)
-        newest.calibrationOwnLeg = ownLeg;
-    }
+    // No combined prediction: the legs ran on the stats the player had at the time, and one
+    // prediction from today's stats would describe none of them (the caller clears it)
+    newest.predictions = null;
+    newest.legPredictions = legPredictions;
     newest.mergedFrom = [
         ...(newest.mergedFrom || []),
         ...older.flatMap((session) => [...(session.mergedFrom || []), session.id]),
@@ -669,26 +652,18 @@ export function foldSessions(ordered) {
 /**
  * What a completed session hands calibration, or null when it must not be recorded.
  *
- * A merged session holding a run that already reached its own target T had that run recorded
- * under the run's own id. Reaching T again is the survivor's own leg finishing — a separate
- * draw — so it is measured alone: its own attempts, against the prediction it was started with.
- * Without that leg on record (nothing to measure it against) it is not recorded at all, so the
- * folded-in run is never counted twice. Any other target is the whole chain's observation.
+ * A merged session is several runs, each made on the stats the player had at the time; their
+ * combined attempts are no draw from any one predicted distribution, so it is not recorded. (Each
+ * run's own prediction is kept in `legPredictions`; nothing composes them.) A later extension
+ * starts a new leg with one setup and its own prediction (`extensionBaseline` set), and that leg
+ * is recorded as usual.
  * @param {Object} session - A completed session (a snapshot; not mutated)
  * @returns {Object|null} The session as calibration should read it
  */
 export function calibrationObservation(session) {
     if (!session) return null;
-    // Legs protected from different levels are no draw from any one predicted distribution
-    if (session.mixedProtection === true && !session.extensionBaseline) return null;
-    if (!session.calibrationRecordedTargets?.includes(session.targetLevel)) return session;
-    const leg = session.calibrationOwnLeg;
-    if (!leg || leg.targetLevel !== session.targetLevel || !leg.predictions) return null;
-    return {
-        ...session,
-        predictions: leg.predictions,
-        extensionBaseline: { totalAttempts: leg.totalAttempts, protectionCount: leg.protectionCount },
-    };
+    if (session.mergedFrom?.length > 0 && !session.extensionBaseline) return null;
+    return session;
 }
 
 /**

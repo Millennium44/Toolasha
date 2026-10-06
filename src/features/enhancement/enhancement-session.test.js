@@ -782,90 +782,77 @@ describe('only runs that continue each other can merge', () => {
     });
 });
 
-describe('a merged run already counted for calibration', () => {
-    /**
-     * A chain of three: #7 climbed +0 → +8 and completed (recorded under #7's id); #8 aimed for +10
-     * from +8 and stopped back at +6; #9 runs from +6 aiming for +8 again.
-     */
-    function chain() {
+describe('a merged session carries no combined prediction', () => {
+    /** #7 climbed +0 → +3 on the stats of the time; #8 picks it up at +3, predicted on later ones */
+    function predictedRuns() {
         const { seven, eight } = spatulaRuns();
-        Object.assign(seven, { currentLevel: 8 });
-        Object.assign(eight, {
-            state: SessionState.COMPLETED,
-            startLevel: 8,
-            targetLevel: 10,
-            currentLevel: 6,
-            endTime: 5_100_000,
-        });
-        const nine = spatulaRuns().eight;
-        Object.assign(nine, {
-            id: 'session_9',
-            startLevel: 6,
-            targetLevel: 8,
-            currentLevel: 7,
-            startTime: 9_000_000,
-            lastUpdateTime: 9_100_000,
-            totalAttempts: 30,
-            protectionCount: 2,
-            predictions: { expectedAttempts: 25 },
-            lastAttempt: { attemptNumber: 30, level: 7, timestamp: 9_100_000, actionId: 'a9', currentCount: 30 },
-        });
-        return { seven, eight, nine };
+        seven.predictions = { expectedAttempts: 400 };
+        eight.predictions = { expectedAttempts: 30 };
+        return { seven, eight };
     }
 
-    test('a folded-in session that reached its own target lists that target', () => {
-        const { seven, eight, nine } = chain();
-        const merged = foldSessions(planSessionMerge([seven, eight, nine]).ordered);
-        expect(merged.calibrationRecordedTargets).toEqual([8]);
+    test('each run keeps its own prediction, in chain order, and the merge has none', () => {
+        const { seven, eight } = predictedRuns();
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
+        expect(merged.predictions).toBeNull();
+        expect(merged.legPredictions).toEqual([
+            {
+                sessionId: 'session_7',
+                startLevel: 0,
+                targetLevel: 8,
+                protectFrom: 5,
+                predictions: { expectedAttempts: 400 },
+            },
+            {
+                sessionId: 'session_8',
+                startLevel: 3,
+                targetLevel: 8,
+                protectFrom: 5,
+                predictions: { expectedAttempts: 30 },
+            },
+        ]);
     });
 
-    test("reaching that target again is measured on the survivor's own leg, never the folded-in one", () => {
-        const { seven, eight, nine } = chain();
-        const merged = foldSessions(planSessionMerge([seven, eight, nine]).ordered);
-        merged.predictions = { expectedAttempts: 999 }; // the tracker's chain-wide recompute
+    test('reaching its target records no calibration observation', () => {
+        const { seven, eight } = predictedRuns();
+        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
         merged.currentLevel = 8;
-        merged.totalAttempts += 5;
         merged.state = SessionState.COMPLETED;
-
-        const observation = calibrationObservation(merged);
-        expect(observation).not.toBeNull();
-        // #9's own prediction, and only #9's own attempts: 30 before the merge, 5 after
-        expect(observation.predictions).toEqual({ expectedAttempts: 25 });
-        expect(getCurrentLegCounters(observation).attempts).toBe(35);
-        // The stored session itself is untouched
-        expect(merged.predictions).toEqual({ expectedAttempts: 999 });
-    });
-
-    test('with no prediction of its own to measure against, it is not recorded', () => {
-        const { seven, eight, nine } = chain();
-        nine.predictions = null;
-        const merged = foldSessions(planSessionMerge([seven, eight, nine]).ordered);
-        merged.currentLevel = 8;
         expect(calibrationObservation(merged)).toBeNull();
     });
 
-    test('a different target is the whole chain, recorded as it stands', () => {
-        const { seven, eight } = spatulaRuns();
-        seven.currentLevel = 8;
-        Object.assign(eight, { startLevel: 8, targetLevel: 10, currentLevel: 10 });
+    test('a later extension leg, with one setup and its own prediction, is recorded', () => {
+        const { seven, eight } = predictedRuns();
         const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
-        expect(merged.calibrationRecordedTargets).toEqual([8]);
+        merged.currentLevel = 8;
+        merged.state = SessionState.COMPLETED;
+        extendSession(merged, 10);
+        merged.predictions = { expectedAttempts: 50 };
+        merged.currentLevel = 10;
+        merged.state = SessionState.COMPLETED;
         expect(calibrationObservation(merged)).toBe(merged);
     });
 
-    test('recorded targets and the own leg carry through a second merge', () => {
-        const { seven, eight, nine } = chain();
+    test('the legs carry through a second merge', () => {
+        const { seven, eight } = predictedRuns();
+        eight.state = SessionState.COMPLETED;
         const once = foldSessions(planSessionMerge([seven, eight]).ordered);
+        const nine = spatulaRuns().eight;
+        Object.assign(nine, {
+            id: 'session_9',
+            startLevel: 4,
+            startTime: 9_000_000,
+            lastUpdateTime: 9_100_000,
+            predictions: { expectedAttempts: 20 },
+            lastAttempt: { attemptNumber: 1, level: 5, timestamp: 9_100_000, actionId: 'a9', currentCount: 1 },
+        });
         const twice = foldSessions(planSessionMerge([once, nine]).ordered);
-        expect(twice.calibrationRecordedTargets).toEqual([8]);
-        // #9 survives; everything before its own 30 attempts is folded-in history
-        expect(twice.calibrationOwnLeg.totalAttempts).toBe(twice.totalAttempts - 30);
+        expect(twice.legPredictions.map((leg) => leg.sessionId)).toEqual(['session_7', 'session_8', 'session_9']);
+        expect(calibrationObservation(twice)).toBeNull();
     });
 
-    test('one that ended short of its target does not', () => {
-        const { seven, eight } = spatulaRuns();
-        const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
-        expect(merged.calibrationRecordedTargets).toBeUndefined();
-        expect(calibrationObservation(merged)).toBe(merged);
+    test('a session never merged is recorded as it stands', () => {
+        const { eight } = predictedRuns();
+        expect(calibrationObservation(eight)).toBe(eight);
     });
 });
