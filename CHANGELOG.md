@@ -22,6 +22,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The ∑ merge view can combine one item's ticked sessions into a single saved session, and a new "auto-resume" setting (off by default) continues the last ended session when you restart the same item where it stopped with the same target. The merge view now updates live, and the Philosopher's Mirror line quotes savings to your target instead of +20.
 
+### Monster stat check files bleeds and parry counters correctly
+
+- The stat check's uptime table no longer lumps parry counter-attacks and stray ticks into your damage-over-time row: bleed ticks are matched to the maim hit that started them, parry counters go to their own row (the one the sim reports), and anything left unexplained shows as an ungraded "unattributed" row instead of making the sim look wrong.
+
 ### Labyrinth badges cover rooms revealed mid-calculation
 
 - Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.
