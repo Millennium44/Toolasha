@@ -129,12 +129,18 @@ vi.mock('./gist-client.js', () => ({
         if (options?.etag && options.etag === gist.remoteEtag) return { notModified: true, etag: options.etag };
         return gist.remoteEtag ? { ...gist.read, etag: gist.remoteEtag, files: gist.remoteFiles } : gist.read;
     },
-    writeSyncGist: async (_token, id, manifest, chunks, previous, known) => {
+    writeSyncGist: async (_token, id, manifest, chunks, previous, known, options) => {
         gist.writeAttempts += 1;
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
-        gist.writes.push({ id, manifest, chunks, previous, known });
-        return { id: id ?? 'created-id', updatedAt: 'now', etag: gist.writeEtag, files: gist.writeFiles };
+        gist.writes.push({ id, manifest, chunks, previous, known, options });
+        return {
+            id: id ?? 'created-id',
+            updatedAt: 'now',
+            etag: gist.writeEtag,
+            files: gist.writeFiles,
+            syncSeq: gist.writeSeq ?? manifest.syncSeq,
+        };
     },
 }));
 
@@ -182,6 +188,7 @@ beforeEach(() => {
     gist.remoteFiles = null;
     gist.writeEtag = undefined;
     gist.writeFiles = undefined;
+    gist.writeSeq = undefined;
     panelOpens.length = 0;
     clearPullSummary();
     syncManager.busy = false;
@@ -917,7 +924,7 @@ describe('push on character switch', () => {
             await syncManager.initialize();
             await vi.advanceTimersByTimeAsync(6 * 1000);
             expect(pushes).toHaveBeenCalledTimes(1);
-            expect(pushes).toHaveBeenCalledWith({ silent: true });
+            expect(pushes).toHaveBeenCalledWith({ silent: true, unattended: true });
 
             // The same character again is not a switch
             syncManager.cleanup();
@@ -1400,6 +1407,8 @@ describe('the remembered gist version', () => {
             etag: 'W/"e1"',
             files: FILES,
             current: true,
+            syncSeq: null,
+            encrypted: false,
         });
 
         expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true, reason: 'not-modified' });
@@ -1460,7 +1469,7 @@ describe('the remembered gist version', () => {
     });
 
     test('a push hands the remembered listing to the write and remembers the version it produced', async () => {
-        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: false };
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true, syncSeq: 3, encrypted: false };
         stored.map.toolasha_sync_gistVersion = known;
         payload.text = '{"local":2}';
         gist.writeEtag = 'W/"e9"';
@@ -1473,7 +1482,129 @@ describe('the remembered gist version', () => {
             etag: 'W/"e9"',
             files: gist.writeFiles,
             current: true,
+            syncSeq: 1,
+            encrypted: false,
         });
+    });
+
+    test('a version this device only saw is not handed over, so the write reads the gist counter', async () => {
+        // A silent pull stood down on it: the gist there may be further along
+        // than this device, and a 304 against it would hide by how much
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: false };
+        payload.text = '{"local":2}';
+
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(gist.writes[0].known).toBeNull();
+    });
+
+    test('a push remembers the counter the write actually put in the manifest', async () => {
+        stored.map.toolasha_sync_lastSyncedSeq = 5;
+        payload.text = '{"local":2}';
+        gist.writeSeq = 8;
+
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(gist.writes[0].manifest.syncSeq).toBe(6);
+        // Remembering 6 would leave this device reading its own push, at 8, as
+        // newer than itself — and every later push of its own a step behind
+        expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(8);
+    });
+
+    test('an unattended push is refused the plaintext write; a pressed one is asked first', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        await syncManager.push({ silent: true, unattended: true });
+        payload.text = '{"local":3}';
+        await syncManager.push();
+
+        expect(gist.writes.map((write) => write.options.unattended)).toEqual([true, false]);
+        expect(gist.writes[0].options.confirmPlaintext).toBeNull();
+        expect(typeof gist.writes[1].options.confirmPlaintext).toBe('function');
+        // A silent push is not by that alone an unattended one
+        payload.text = '{"local":4}';
+        await syncManager.push({ silent: true });
+        expect(gist.writes[2].options.unattended).toBe(false);
+    });
+
+    test('the plaintext question says what it does, and only an explicit yes goes ahead', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        await syncManager.push();
+        const confirm = gist.writes[0].options.confirmPlaintext;
+
+        syncManager.busy = 0;
+        dialog.answer = null;
+        expect(await confirm()).toBe(false);
+        expect(dialog.last.message).toMatch(/removes the encryption for every device/);
+    });
+
+    test('a pressed push the player declines over an encrypted gist writes nothing and records nothing', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError('cancelled', 'cancelled');
+
+        expect(await syncManager.push()).toEqual({ ok: true, skipped: true, reason: 'cancelled' });
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
+    });
+
+    test('a remembered version from before it carried counter and encryption is not handed to the write', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        payload.text = '{"local":2}';
+
+        await syncManager.push({ silent: true, unattended: true });
+        expect(gist.writes[0].known).toBeNull();
+    });
+
+    test('an unattended push that could not list the gist skips quietly', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError('unlisted', 'could not list');
+
+        expect(await syncManager.push({ silent: true, unattended: true })).toEqual({ ok: false, reason: 'unlisted' });
+        expect(toasts).toHaveLength(0);
+    });
+
+    test('an unattended push refused for keeping encryption stays quiet; a pressed one is told', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError('passphrase', 'encrypted gist');
+
+        expect(await syncManager.push({ silent: true, unattended: true })).toEqual({ ok: false, reason: 'passphrase' });
+        expect(toasts).toHaveLength(0);
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
+
+        expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'passphrase' });
+        expect(toasts).toHaveLength(1);
+    });
+
+    test('a pressed push whose listing failed says so, records nothing, and is not swallowed', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError(
+            'unlisted',
+            "Couldn't read the gist's current state, so nothing was pushed. Try again."
+        );
+
+        expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'unlisted' });
+        expect(toasts.at(-1).message).toMatch(/Couldn't read the gist's current state/);
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
+    });
+
+    test('"Keep this device and push" with a failed listing writes nothing and leaves the pull unsettled', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed';
+        gist.read = {
+            manifest: { exportedAt: '2026-04-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}' },
+            payload: '{"remote":1}',
+        };
+        dialog.answer = 'push';
+        gist.writeError = new FakeGistError(
+            'unlisted',
+            "Couldn't read the gist's current state, so nothing was pushed. Try again."
+        );
+
+        expect(await syncManager.pull()).toMatchObject({ ok: false, reason: 'unlisted' });
+        expect(gist.writes).toHaveLength(0);
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-01-01T00:00:00.000Z');
     });
 
     test('a write that reports no ETag leaves no version behind', async () => {

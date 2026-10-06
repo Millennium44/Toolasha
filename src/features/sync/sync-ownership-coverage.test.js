@@ -1122,6 +1122,9 @@ const CALLER_KEYED_MODULES = new Set([
     // Its one write is `rememberLocal`, a wrapper whose callers name the keys —
     // and those call sites are scanned, as a sink
     'features/sync/sync-manager.js',
+    // Its one write puts back `settings_key_migrations_*` records it read a
+    // moment earlier, when a pull that forgot them fails to land its maps
+    'features/sync/sync-payload.js',
     'utils/character-key.js',
     'utils/chunked-history.js',
     'utils/daily-checkpoints.js',

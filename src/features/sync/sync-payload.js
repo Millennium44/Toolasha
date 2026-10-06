@@ -360,13 +360,18 @@ async function mergeLocalHistories(payload) {
  */
 export async function applyPayload(json) {
     const payload = JSON.parse(json);
+    // After the foreign stores are dropped: what another script keeps in a
+    // gist written by an older build is not this pull's to judge
     const droppedUnowned = dropUnownedFromPayload(payload);
+    assertApplicable(payload);
     const settingsStore = payload?.stores?.[SETTINGS_STORE];
 
     // Land the debounce queue before ANY local reads, including the settings
     // preserved below. Both getAll and tryGet read IndexedDB, so preserving a
     // token or a recent setting before this flush would write its old value
     // back over the queued edit, just like merging a history from a stale base.
+    /** This device's key-migration records, as they were before the pull forgot any */
+    let migrationRecords = null;
     try {
         await storage.beginRestore?.();
 
@@ -390,6 +395,9 @@ export async function applyPayload(json) {
             // for exactly the maps that did not bring their own (see
             // reconcileKeyMigrationState), so the next load reconciles what this
             // pull actually landed.
+            migrationRecords = Object.fromEntries(
+                Object.entries(local || {}).filter(([key]) => key.startsWith(MIGRATION_RECORD_PREFIX))
+            );
             await settingsStorage.reconcileKeyMigrationState(Object.keys(settingsStore));
         }
 
@@ -406,7 +414,20 @@ export async function applyPayload(json) {
         const rewrote = merged.length > 0 || mergeHeld.length > 0 || droppedUnowned || Boolean(settingsStore);
         const applied = rewrote ? JSON.stringify(payload) : json;
 
-        const { restored, expected, failed, complete } = await importEverything(payload);
+        let imported;
+        try {
+            imported = await importEverything(payload);
+        } catch (error) {
+            await restoreMigrationRecords(migrationRecords);
+            throw error;
+        }
+        const { restored, expected, failed, complete } = imported;
+        // The records were forgotten because the maps were about to land. A
+        // settings store that did not land kept its old maps, which still match
+        // the old records — one aborted transaction takes every key with it
+        if ((failed || []).some((entry) => entry.store === SETTINGS_STORE)) {
+            await restoreMigrationRecords(migrationRecords);
+        }
         return {
             restored,
             expected,
@@ -424,6 +445,78 @@ export async function applyPayload(json) {
         // otherwise leave every debounced write in the script held until the
         // unload flush. Ending an already-ended hold is a no-op.
         await storage.endRestore?.();
+    }
+}
+
+/**
+ * Where `core/settings-storage.js` keeps the key-migration records — the
+ * per-map `settings_key_migrations_applied_<map>` and the legacy
+ * `settings_key_migrations_v1`/`_v2` flags all share it.
+ */
+const MIGRATION_RECORD_PREFIX = 'settings_key_migrations_';
+
+/**
+ * Put back the key-migration records a pull forgot, when the settings maps
+ * they were forgotten for did not land.
+ *
+ * Written down the bulk path with `bypassRestoreLatch`, because a restore may
+ * already have latched the settings store. A failure here is logged, not
+ * thrown: the pull has already failed, and its own error is the one to report.
+ *
+ * @param {Record<string, *>|null} records - The records as they were, or null when none were touched
+ * @returns {Promise<boolean>} Whether every record is back
+ */
+async function restoreMigrationRecords(records) {
+    const wanted = records ? Object.keys(records).length : 0;
+    if (wanted === 0) return true;
+    // putAll reports a failed transaction as a short count, not a throw; one retry covers a
+    // transient abort, and a second short write is said plainly because the next load would
+    // re-run those migrations over the player's settings
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            const written = await storage.putAll(SETTINGS_STORE, records, { bypassRestoreLatch: true });
+            if (written === wanted) return true;
+        } catch (error) {
+            console.error('[Sync] Could not put the settings migration records back after a failed pull:', error);
+        }
+    }
+    console.error(
+        '[Sync] The settings migration records could not be restored after a failed pull; the next load may ' +
+            're-run settings migrations. Keys:',
+        Object.keys(records)
+    );
+    return false;
+}
+
+/**
+ * Refuse a payload `importEverything` would refuse, before anything is written.
+ *
+ * `importEverything` validates the format and every store's shape before its
+ * first write — but `applyPayload` writes before it gets there: it forgets the
+ * key-migration record of every settings map the payload carries
+ * (`reconcileKeyMigrationState`), on the understanding that those maps are
+ * about to land. A payload the import then rejects — a newer build's
+ * `formatVersion`, a store that is not a keyed object — left the local maps
+ * where they were with their records gone, and the next load replayed the
+ * reconciling migrations over choices the player had since made by hand.
+ *
+ * @param {*} payload - Parsed payload text
+ * @returns {void}
+ * @throws {Error} When the payload is not one this build can apply
+ */
+function assertApplicable(payload) {
+    if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) {
+        throw new Error(
+            `[Sync] The downloaded payload has format ${payload?.formatVersion ?? 'none'}; this build reads ` +
+                `${FORMAT_VERSION}. Update Toolasha on this device, or push from one whose data is good.`
+        );
+    }
+    const isRecordMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!isRecordMap(payload.stores)) throw new Error('[Sync] The downloaded payload has no stores to apply.');
+    for (const [storeName, entries] of Object.entries(payload.stores)) {
+        if (!isRecordMap(entries)) {
+            throw new Error(`[Sync] The downloaded payload's ${storeName} store is not a keyed object.`);
+        }
     }
 }
 
@@ -457,7 +550,10 @@ function dropUnownedFromPayload(payload) {
             continue;
         }
         const entries = stores[storeName];
-        if (!entries || typeof entries !== 'object') continue;
+        // A store this script owns in the wrong shape is left as it came, for
+        // assertApplicable to refuse: filtering an array's indices as foreign keys
+        // would turn it into an empty map that passes and applies nothing
+        if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
         const { owned } = partitionOwnedKeys(storeName, entries);
         if (owned !== entries) {
             stores[storeName] = owned;

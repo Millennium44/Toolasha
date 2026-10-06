@@ -28,6 +28,16 @@ vi.mock('../../core/storage.js', () => ({
         endRestore: async () => {
             flushLog.push('endRestore');
         },
+        putAll: async (name, entries, options) => {
+            storeState.putAllCalls.push({ name, entries, options });
+            // An aborted transaction: putAll says so with a short count, not a throw
+            if (storeState.shortWrites > 0) {
+                storeState.shortWrites -= 1;
+                return 0;
+            }
+            storeState.stores[name] = { ...(storeState.stores[name] || {}), ...entries };
+            return Object.keys(entries).length;
+        },
     },
 }));
 
@@ -51,6 +61,7 @@ const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
 }));
 vi.mock('../../utils/full-backup.js', () => ({
     importEverything: async (payload) => {
+        if (importOutcome.throws) throw importOutcome.throws;
         // The real `importEverything` quiesces live writers first
         flushLog.push('importEverything.beginRestore');
         for (const [name, entries] of Object.entries(storeState.pending || {})) {
@@ -90,9 +101,12 @@ beforeEach(() => {
     importedPayloads.length = 0;
     importOutcome.failed = [];
     importOutcome.complete = true;
+    importOutcome.throws = null;
     storeState.unreadable = false;
     storeState.pending = {};
     storeState.flushError = null;
+    storeState.putAllCalls = [];
+    storeState.shortWrites = 0;
     flushLog.length = 0;
     reconcileKeyMigrationState.mockClear();
     storeState.stores = {
@@ -531,6 +545,89 @@ describe('applyPayload and the key-migration carry', () => {
         await applyPayload(json);
 
         expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
+    });
+
+    // The import refuses these before its first write; applyPayload used to
+    // forget the migration records first, so a refused pull still cost the
+    // maps their records and the next load replayed reconciling migrations
+    test.each([
+        ['a newer format', { formatVersion: 2, stores: { settings: { script_settingsMap_abc: {} } } }],
+        ['no format at all', { stores: { settings: { script_settingsMap_abc: {} } } }],
+        [
+            'a store that is not a keyed object',
+            { formatVersion: 1, stores: { settings: { script_settingsMap_abc: {} }, dungeonRuns: [1, 2] } },
+        ],
+        ['a settings store that is a string', { formatVersion: 1, stores: { settings: 'script_settingsMap_abc' } }],
+        ['a settings store that is an array', { formatVersion: 1, stores: { settings: [{ chatCommands: {} }] } }],
+    ])('a payload with %s is refused before any record is forgotten or written', async (_label, body) => {
+        await expect(applyPayload(JSON.stringify(body))).rejects.toThrow();
+
+        expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
+        expect(importedPayloads).toHaveLength(0);
+        expect(flushLog).not.toContain('beginRestore');
+    });
+
+    describe('records forgotten for maps that then did not land are put back', () => {
+        const RECORD = 'settings_key_migrations_applied_script_settingsMap_abc';
+        const body = JSON.stringify({
+            formatVersion: 1,
+            stores: { settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } },
+        });
+
+        beforeEach(() => {
+            storeState.stores.settings[RECORD] = ['actionBarTimeDisplay'];
+            storeState.stores.settings.settings_key_migrations_v2 = true;
+            // The real reconcile deletes the record of every map that landed without one
+            reconcileKeyMigrationState.mockImplementationOnce(async () => {
+                delete storeState.stores.settings[RECORD];
+                delete storeState.stores.settings.settings_key_migrations_v2;
+            });
+        });
+
+        test('when the import throws', async () => {
+            importOutcome.throws = new Error('listStores failed');
+            await expect(applyPayload(body)).rejects.toThrow('listStores failed');
+
+            expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+            expect(storeState.stores.settings.settings_key_migrations_v2).toBe(true);
+            expect(storeState.putAllCalls[0].options).toEqual({ bypassRestoreLatch: true });
+        });
+
+        test('when the settings store did not write', async () => {
+            importOutcome.complete = false;
+            importOutcome.failed = [{ store: 'settings', expected: 1, written: 0 }];
+            await applyPayload(body);
+
+            expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+        });
+
+        test('a restore write that comes back short is retried', async () => {
+            importOutcome.throws = new Error('listStores failed');
+            storeState.shortWrites = 1;
+            await expect(applyPayload(body)).rejects.toThrow('listStores failed');
+
+            expect(storeState.putAllCalls).toHaveLength(2);
+            expect(storeState.stores.settings[RECORD]).toEqual(['actionBarTimeDisplay']);
+        });
+
+        test('but not when the maps landed', async () => {
+            await applyPayload(body);
+
+            expect(storeState.stores.settings[RECORD]).toBeUndefined();
+            expect(storeState.putAllCalls).toHaveLength(0);
+        });
+    });
+
+    test("another script's malformed store does not stop the pull", async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            stores: { settings: { script_settingsMap_abc: {} }, someoneElsesStore: 'not a map' },
+        });
+
+        await applyPayload(json);
+
+        expect(importedPayloads).toHaveLength(1);
+        expect(importedPayloads[0].stores.someoneElsesStore).toBeUndefined();
     });
 });
 

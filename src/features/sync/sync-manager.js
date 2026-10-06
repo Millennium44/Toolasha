@@ -268,7 +268,7 @@ class SyncManager {
             this.isConfigured()
         ) {
             this.timers.scheduleTimeout(() => {
-                this.push({ silent: true });
+                this.push({ silent: true, unattended: true });
             }, SWITCH_PUSH_DELAY_MS);
         }
         if (characterId !== null) lastCharacterId = characterId;
@@ -312,10 +312,13 @@ class SyncManager {
      * @param {Object} [options] - Options
      * @param {boolean} [options.silent=false] - Skip when nothing changed, and
      *   only speak up on failure. Used by the interval.
+     * @param {boolean} [options.unattended=false] - Nobody pressed a button for this push (the
+     *   interval, a character switch, a session handoff): it never removes the gist's encryption
+     *   and never writes a gist it could not list. See `writeSyncGist`.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
-    async push({ silent = false } = {}) {
-        return this._run('push', silent, (opToken) => this._doPush(silent, opToken));
+    async push({ silent = false, unattended = false } = {}) {
+        return this._run('push', silent, (opToken) => this._doPush(silent, opToken, unattended));
     }
 
     /**
@@ -330,10 +333,11 @@ class SyncManager {
      * @param {number} [opToken] - This call's `busy` ownership token, from `_run`. Checked
      *   before every write that follows a wait a takeover could have happened during (a
      *   confirmation dialog left open, a hung request) — see `_stillOwns`.
+     * @param {boolean} [unattended=false] - Nobody pressed a button for this push; see `push`
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _doPush(silent, opToken) {
+    async _doPush(silent, opToken, unattended = false) {
         // A previous pull could not read a local history and deliberately held
         // its downloaded counterpart back. Uploading this incomplete union
         // would replace that counterpart in the gist before it can be retried.
@@ -459,8 +463,39 @@ class SyncManager {
         // being built. The check at the top is too early to cover that.
         if (await storage.get(KEY_MERGE_HELD, STORE, null)) return this._heldBackResult(silent);
 
+        // A remembered listing is handed over only when this device's data
+        // already reflects it. One it merely saw — a silent pull that stood
+        // down on a conflict — can carry a higher counter than this device's,
+        // and a 304 against it would hide that counter from the write below,
+        // which raises the manifest's counter above the gist's own.
+        // A record written before versions carried the manifest's counter and
+        // encryption is not handed over either: a 304 against it would leave
+        // the write unable to see either one.
         const known = await this._knownVersion(gistId);
-        const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks, known);
+        const usableKnown = known?.current && typeof known.encrypted === 'boolean' ? known : null;
+        let written;
+        try {
+            written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks, usableKnown, {
+                unattended,
+                // Someone pressed Push on a device with no passphrase, over a gist
+                // that is encrypted. That may be meant, but it removes the
+                // encryption for every device, so it is asked rather than done
+                confirmPlaintext: unattended ? null : () => this._confirmPlaintextPush(opToken),
+            });
+        } catch (error) {
+            if (error instanceof GistError && error.kind === 'cancelled') {
+                return { ok: true, skipped: true, reason: 'cancelled' };
+            }
+            // Quietly: this device's pulls of the same gist already fail on the
+            // missing passphrase and say so, and a second sticky toast every
+            // interval would add nothing but noise. A gist that could not be
+            // listed is retried by the next interval.
+            if (unattended && error instanceof GistError && ['passphrase', 'unlisted'].includes(error.kind)) {
+                console.warn(`[Sync] Skipped an automatic push (${error.kind}): ${error.message}`);
+                return { ok: false, reason: error.kind };
+            }
+            throw error;
+        }
 
         // The upload already landed — that part cannot be undone or is not
         // worth undoing, since the takeover's own more-recent write (if any)
@@ -476,11 +511,16 @@ class SyncManager {
             exportedAt,
             hash,
             chunkCount: chunks.length,
-            syncSeq,
+            // What the manifest actually carries: the write raises it above a
+            // gist another device has since moved further along
+            syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
             // The write's own response describes the version it produced, which
             // is this device's data by construction. No ETag, no claim: the
             // next read then downloads in full, as it always did.
-            version: gistVersion(written.id, written.etag, written.files, true),
+            version: gistVersion(written.id, written.etag, written.files, true, {
+                syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
+                encrypted: manifest.encrypted,
+            }),
         });
         await rememberLocal({ [KEY_LAST_PUSHED_AT]: exportedAt });
 
@@ -488,6 +528,27 @@ class SyncManager {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);
         }
         return { ok: true };
+    }
+
+    /**
+     * Ask before a push in the clear replaces an encrypted gist.
+     * @param {number} opToken - The push's ownership token; a takeover during the dialog cancels it
+     * @returns {Promise<boolean>} True to go ahead
+     * @private
+     */
+    async _confirmPlaintextPush(opToken) {
+        const answer = await askChoice({
+            title: 'Remove the gist\u2019s encryption?',
+            message:
+                'The sync gist is encrypted, and this device has no sync passphrase. Pushing replaces it with an ' +
+                'UNENCRYPTED copy, which removes the encryption for every device that shares the gist. To keep it ' +
+                'encrypted, cancel and enter the same passphrase here first.',
+            choices: [
+                { value: 'push', label: 'Push unencrypted', tone: 'danger' },
+                { value: null, label: 'Cancel' },
+            ],
+        });
+        return answer === 'push' && this._stillOwns(opToken);
     }
 
     /**
@@ -546,8 +607,14 @@ class SyncManager {
         // What this download proves about the gist's file set, whatever this
         // pull goes on to decide. It stays `current` only if it already was;
         // the outcomes below that settle the content upgrade it.
-        const seen = gistVersion(gistId, remote.etag, remote.files, known?.current && known.etag === remote.etag);
         const manifest = remote.manifest;
+        const seen = gistVersion(
+            gistId,
+            remote.etag,
+            remote.files,
+            known?.current && known.etag === remote.etag,
+            manifest
+        );
         let payload = remote.payload;
 
         // Unwind the push pipeline: decrypt first, then decompress. A manifest
@@ -954,7 +1021,7 @@ class SyncManager {
         traceSync('schedule-started');
         this.timers.registerInterval(
             setInterval(() => {
-                this.push({ silent: true });
+                this.push({ silent: true, unattended: true });
             }, AUTO_PUSH_INTERVAL_MS)
         );
 
@@ -991,7 +1058,7 @@ class SyncManager {
             if (this.handoffPushed) return;
             if (!document.querySelector(GAME.CONNECTION_MESSAGE)) return;
             this.handoffPushed = true;
-            this.push({ silent: true });
+            this.push({ silent: true, unattended: true });
             // Rearm when the banner clears — checked lazily on the next appearance
             const rearm = setInterval(() => {
                 if (!document.querySelector(GAME.CONNECTION_MESSAGE)) {
@@ -1361,11 +1428,22 @@ function verifyAgainstManifest(manifest, payload) {
  * @param {string|null|undefined} etag - The response's ETag
  * @param {Record<string, number>|null|undefined} files - File sizes from the same response
  * @param {boolean} current - This device's data already reflects this version
- * @returns {{gistId: string, etag: string, files: Record<string, number>, current: boolean}|null} Record
+ * @param {{syncSeq?: *, encrypted?: *}|null|undefined} manifest - The manifest of that version. Its counter
+ *   and whether it is encrypted are kept beside the ETag, because a push that gets a 304 against this record
+ *   reads both from it rather than from the gist (see `writeSyncGist`).
+ * @returns {{gistId: string, etag: string, files: Record<string, number>, current: boolean,
+ *   syncSeq: number|null, encrypted: boolean}|null} Record
  */
-function gistVersion(gistId, etag, files, current) {
+function gistVersion(gistId, etag, files, current, manifest) {
     if (!gistId || typeof etag !== 'string' || !etag || !files || typeof files !== 'object') return null;
-    return { gistId, etag, files, current: Boolean(current) };
+    return {
+        gistId,
+        etag,
+        files,
+        current: Boolean(current),
+        syncSeq: readSeq(manifest?.syncSeq),
+        encrypted: Boolean(manifest?.encrypted),
+    };
 }
 
 /**

@@ -584,6 +584,43 @@ function fileSizes(files) {
 }
 
 /**
+ * What a push needs to know about the manifest already in the gist, read from
+ * a gist response: its ordering counter, and whether it is encrypted.
+ *
+ * Both are null when the manifest is absent, truncated or does not parse, and
+ * the counter is null for anything but a plain non-negative integer — the push
+ * then writes what it built, exactly as before.
+ *
+ * @param {Object|null|undefined} files - The `files` map of a gist response
+ * @returns {{syncSeq: number|null, encrypted: boolean|null}} What the manifest says
+ */
+function listedManifest(files) {
+    const file = files?.[MANIFEST_FILE];
+    // No manifest and no sync chunks is a gist this sync never wrote: nothing in it can be encrypted.
+    // Sync chunks without a manifest are an encrypted gist whose manifest was deleted, so the encryption
+    // is unknown, as it is for a manifest that is there but unreadable; the push treats both as unsafe.
+    if (files && !file) {
+        const hasChunks = Object.keys(files).some((name) => chunkIndexFromName(name) !== null);
+        return { syncSeq: null, encrypted: hasChunks ? null : false };
+    }
+    if (!file || file.truncated || typeof file.content !== 'string') return { syncSeq: null, encrypted: null };
+    try {
+        const manifest = JSON.parse(file.content);
+        // The same shape readSyncGist insists on; anything else parsed but says nothing about encryption
+        if (manifest?.toolashaSync !== 1 || Array.isArray(manifest) || !(Number(manifest.chunks) >= 1)) {
+            return { syncSeq: null, encrypted: null };
+        }
+        const seq = manifest?.syncSeq;
+        return {
+            syncSeq: Number.isSafeInteger(seq) && seq >= 0 ? seq : null,
+            encrypted: Boolean(manifest?.encrypted),
+        };
+    } catch {
+        return { syncSeq: null, encrypted: null };
+    }
+}
+
+/**
  * Split a payload into files small enough that GitHub returns them whole.
  *
  * Sliced by UTF-16 code units rather than bytes, which over-counts for ASCII and
@@ -777,35 +814,79 @@ async function readFileContent(token, file) {
  * @param {number} [previousChunkCount=0] - How many chunks this device last wrote, as a hint
  * @param {{gistId: string, etag: string, files: Record<string, number>}|null} [known] - A remembered
  *   listing: the gist's ETag and the file sizes it had at that ETag
- * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null}>}
- *   The gist that was written, with the ETag and file sizes of the version the write produced
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.unattended=false] - A push nobody pressed a button for (interval, character
+ *   switch, session handoff). It refuses to replace an encrypted gist with a payload in the clear — a device
+ *   whose passphrase was never entered would otherwise turn every other device's encryption off on its next
+ *   interval, without a word — and it refuses to write a gist it could not list, since it cannot then tell
+ *   what it would be writing over.
+ * @param {(() => Promise<boolean>)|null} [options.confirmPlaintext=null] - For a push someone did press:
+ *   asked before a payload in the clear replaces an encrypted gist. False cancels the write.
+ * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
+ *   syncSeq: number|undefined}>} The gist that was written, with the ETag and file sizes of the version the
+ *   write produced, and the counter its manifest actually carries (raised above the gist's own, see below)
  */
-export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0, known = null) {
+export async function writeSyncGist(
+    token,
+    gistId,
+    manifest,
+    chunks,
+    previousChunkCount = 0,
+    known = null,
+    { unattended = false, confirmPlaintext = null } = {}
+) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
 
     // Everything but the orphan list is the same on every attempt, so the body
     // is serialized again only when a retry's listing names different orphans.
     // A full-scope body is megabytes; stringifying it once per 409 was waste.
-    const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
+    const files = {};
     chunks.forEach((chunk, index) => {
         // A gist file may not be empty; a single space keeps an empty payload legal
         files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
     });
     const payloadBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     let serialized = null;
+    let plaintextConfirmed = false;
+    let attempts = 0;
 
     const attempt = async () => {
+        attempts += 1;
         // Listed before the size guard, because what survives the write counts
         // towards the ceiling as much as what is being written. Inside the
         // attempt so a conflict retry sees the file set that just beat it.
-        if (gistId) listing = await listGistFiles(token, gistId, listing);
+        if (gistId) {
+            const fresh = await listGistFiles(token, gistId, listing);
+            // Fail closed, pressed push or not: with no listing the write cannot
+            // see the counter or the encryption it would be writing over. A
+            // device with a stale counter would write it below the gist's, and
+            // every device holding the higher one would read the gist as older
+            // and skip it — for as many pushes as the gap is wide.
+            if (!fresh) {
+                throw new GistError(
+                    'unlisted',
+                    unattended
+                        ? 'The sync gist could not be listed before writing it.'
+                        : "Couldn't read the gist's current state, so nothing was pushed. Try again."
+                );
+            }
+            // A conflict means another device just wrote: the first attempt's listing predates it, so
+            // its counter and encryption cannot be trusted. Without a fresh one the retry stops.
+            if (!fresh && attempts > 1) {
+                throw new GistError(
+                    'unlisted',
+                    'Another device pushed at the same moment and the sync gist could not be listed again.'
+                );
+            }
+            listing = fresh;
+        }
         const existingFiles = listing?.files ?? null;
 
         const orphans = [];
         let survivingBytes = 0;
         if (existingFiles) {
             for (const [name, size] of Object.entries(existingFiles)) {
-                if (Object.hasOwn(files, name)) continue; // being overwritten
+                if (name === MANIFEST_FILE || Object.hasOwn(files, name)) continue; // being overwritten
                 if (chunkIndexFromName(name) !== null) {
                     // A chunk this payload does not reach is an orphan, whoever wrote it
                     orphans.push(name);
@@ -829,16 +910,47 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
             );
         }
 
-        const orphanKey = orphans.join('\n');
+        // The counter is written above whatever the gist already carries.
+        // This device's own counter only knows the exchanges it took part in:
+        // a device that last took 5 and pushes 6 over a gist another device
+        // has since taken to 7 would write a payload every device at 7 reads
+        // as *older* — skipped as "not newer", marked current, and never
+        // downloaded again — while its contents are now the gist's. Lamport's
+        // send rule is one above everything seen, and the listing just saw it.
+        // Unknown counts as encrypted: an unreadable manifest, or no listing for a pressed push, must
+        // not let plaintext replace what may be an encrypted gist without asking
+        if (gistId && listing?.encrypted !== false && !manifest?.encrypted) {
+            if (unattended) {
+                throw new GistError(
+                    'passphrase',
+                    'The sync gist is encrypted and this device has no sync passphrase, so pushing would replace ' +
+                        'it unencrypted. Automatic pushes from this device are skipped until the passphrase is entered.'
+                );
+            }
+            if (confirmPlaintext && !plaintextConfirmed) {
+                if (!(await confirmPlaintext())) throw new GistError('cancelled', 'The push was cancelled.');
+                // Asked once per push, not again on a conflict retry
+                plaintextConfirmed = true;
+            }
+        }
+
+        const remoteSeq = listing?.syncSeq ?? null;
+        const syncSeq =
+            Number.isSafeInteger(manifest?.syncSeq) && remoteSeq !== null && remoteSeq >= manifest.syncSeq
+                ? remoteSeq + 1
+                : manifest?.syncSeq;
+        const writtenManifest = syncSeq === manifest?.syncSeq ? manifest : { ...manifest, syncSeq };
+
+        const orphanKey = `${orphans.join('\n')}|${syncSeq}`;
         if (serialized?.orphanKey !== orphanKey) {
-            const withOrphans = { ...files };
+            const withOrphans = { [MANIFEST_FILE]: { content: JSON.stringify(writtenManifest, null, 2) }, ...files };
             for (const name of orphans) withOrphans[name] = null;
             const body = {
                 description: 'Toolasha cross-device sync (do not edit by hand)',
                 files: withOrphans,
                 ...(gistId ? {} : { public: false }),
             };
-            serialized = { orphanKey, text: JSON.stringify(body) };
+            serialized = { orphanKey, syncSeq, text: JSON.stringify(body) };
         }
 
         if (gistId) {
@@ -850,6 +962,7 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
                 updatedAt: updated.data?.updated_at ?? null,
                 etag: updated.etag,
                 files: fileSizes(updated.data?.files),
+                syncSeq: serialized.syncSeq,
             };
         }
 
@@ -860,6 +973,7 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
             updatedAt: created.data.updated_at ?? null,
             etag: created.etag,
             files: fileSizes(created.data.files),
+            syncSeq: serialized.syncSeq,
         };
     };
 
@@ -897,15 +1011,25 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
  * @param {{etag: string, files: Record<string, number>}|null} previous - Listing to revalidate
- * @returns {Promise<{gistId: string, etag: string|null, files: Record<string, number>}|null>} The listing
+ * @returns {Promise<{gistId: string, etag: string|null, files: Record<string, number>, syncSeq: number|null,
+ *   encrypted: boolean|null}|null>} The listing, with what the gist's manifest says (null when unread, or kept
+ *   from `previous` on a 304)
  */
 async function listGistFiles(token, gistId, previous) {
     try {
         const ifNoneMatch = previous?.etag && previous.files ? previous.etag : null;
         const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch });
-        if (exchange.notModified) return { gistId, etag: exchange.etag, files: previous.files };
+        if (exchange.notModified) {
+            return {
+                gistId,
+                etag: exchange.etag,
+                files: previous.files,
+                syncSeq: previous.syncSeq ?? null,
+                encrypted: previous.encrypted ?? null,
+            };
+        }
         const files = fileSizes(exchange.data?.files);
-        return files ? { gistId, etag: exchange.etag, files } : null;
+        return files ? { gistId, etag: exchange.etag, files, ...listedManifest(exchange.data?.files) } : null;
     } catch (error) {
         console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
         return null;

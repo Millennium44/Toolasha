@@ -15,6 +15,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The floor map no longer re-simulates every 0% room each time the game redraws the grid, lab sims wear the loadout a room is set to even when two share a name, and the Accuracy tab opens several times faster. Fights in a room the sim hadn't run were stored as a 0% prediction, which threw the Reliability card far off; they're now stored as unpredicted, and older ones are left out with a count.
 
+### Audit round: Gist sync
+
+- A push now numbers itself above the gist's own counter, so other devices no longer skip it as older; an automatic push from a device without the passphrase no longer replaces an encrypted gist with plaintext, and a pressed push asks first; and a sync pull that cannot be applied no longer forgets which settings migrations already ran.
+
 ### Patient ±1 fills at the instant price when the spread is one tick
 
 - When stepping one tick past the best bid would reach the ask (or one tick under the ask would reach the bid), there is no queue left to jump: Patient +1 buys and Patient −1 sells now price at the instant fill instead of falling back to the plain patient price, so they are never cheaper (or richer) than what can actually be done.
