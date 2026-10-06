@@ -720,7 +720,10 @@ class SyncManager {
             return { ok: false, reason: 'unmergeable' };
         }
 
-        if (!addsToRemote(merged.text, remote.payload) && !merged.remoteAdds) {
+        // An upload that only sheds stores this device's scope no longer syncs
+        // adds nothing, yet is the write that stops every device downloading them
+        const changesRemote = merged.dropsFromRemote || addsToRemote(merged.text, remote.payload);
+        if (!changesRemote && !merged.remoteAdds) {
             // The two hold the same data: another device pushed nothing this
             // one lacks. Settle on that version exactly as a pull finding
             // nothing new would, so neither the next startup nor the interval
@@ -739,7 +742,7 @@ class SyncManager {
             return { ok: true, skipped: true, reason: 'in-step' };
         }
 
-        if (!addsToRemote(merged.text, remote.payload)) {
+        if (!changesRemote) {
             // The gist already holds everything here, and more. Nothing to
             // send, but the gist is ahead: note it for the startup pull, and
             // remember this device's data as seen so the next interval does

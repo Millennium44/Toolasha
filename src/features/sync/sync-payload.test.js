@@ -1394,6 +1394,20 @@ describe('mergeForUpload, which writes nothing local', () => {
         ).toBe(true);
     });
 
+    test('says whether it left out stores the gist holds that this scope does not sync', () => {
+        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
+        const withHistory = payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: { h: [1] } });
+        expect(mergeForUpload(local, withHistory, null).dropsFromRemote).toBe(true);
+        expect(
+            mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: {} }), null).dropsFromRemote
+        ).toBe(false);
+        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+            false
+        );
+        const everything = JSON.stringify({ ...JSON.parse(local), syncScope: 'everything' });
+        expect(mergeForUpload(everything, withHistory, null).dropsFromRemote).toBe(false);
+    });
+
     test('a gist that differs only where this device won the merge holds nothing for it', () => {
         // The gist's X is older than this device's, and its panel position is
         // the one this device last exchanged: this device wins both, so a

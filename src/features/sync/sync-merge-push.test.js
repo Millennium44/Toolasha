@@ -771,6 +771,29 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(merged.stores.settings[MAP]).toMatchObject({ X: { isTrue: true }, Y: { isTrue: true } });
     });
 
+    test('a Settings-only merge that changes nothing but drops history stores still uploads', async () => {
+        const { a, b } = await syncedPair();
+        await as(b, async () => {
+            b.db.settings.panelSizeMemory = 1;
+            b.db.xpHistory.testHistory_c1 = ['s1', 'b-sample'];
+            await auto.push();
+        });
+        // A, now Settings only, recorded the very setting B pushed: its merge
+        // adds nothing to the gist, but sheds the history stores it no longer syncs
+        a.settings.sync_scope = 'settings';
+        a.db.settings.panelSizeMemory = 1;
+        const result = await as(a, auto.push);
+
+        expect(result.ok).toBe(true);
+        expect(result.skipped).toBeFalsy();
+        expect(Object.keys(gistStores())).toEqual(['settings']);
+        expect(gistStores().settings.panelSizeMemory).toBe(1);
+        // ...and the next tick, with nothing changed, writes nothing
+        const writes = gist.writes;
+        expect((await as(a, auto.push)).reason).toBe('unchanged');
+        expect(gist.writes).toBe(writes);
+    });
+
     test('a newer push identical in content settles quietly: no note, and no reload at the next startup', async () => {
         const { a, b } = await syncedPair();
         // B re-pushes the same data under a newer counter
