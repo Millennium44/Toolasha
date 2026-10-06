@@ -61,6 +61,7 @@ import {
     mergeForUpload,
     wholeKeyHashes,
     exchangeBaseline,
+    registeredKeysDiverge,
     restampRestoredSettings,
     RESTORED_BASELINE,
 } from './sync-payload.js';
@@ -462,6 +463,21 @@ class SyncManager {
         const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
         if (unattended && unapplied && !merged && gistId) return this._mergeIntoUpload(localPayload, opToken, silent);
 
+        // Nor can it go plain when a registered history here is no longer the
+        // copy the gist held at the last exchange: a device keeping 20 sessions,
+        // after a startup pull of a gist holding 500, would replace the 500 with
+        // its 20. A hash cannot tell an addition from a trim, so this costs one
+        // gist download on every automatic push whose histories moved since the
+        // last exchange; a push that moved only settings or whole keys stays
+        // plain. A pressed Push still means this device's copy (see `push`).
+        if (unattended && !merged && gistId) {
+            const baseline = await storage.get(KEY_BASELINE, STORE, null);
+            if (registeredKeysDiverge(localPayload, baseline)) {
+                traceSync('history-diverged');
+                return this._mergeIntoUpload(localPayload, opToken, silent);
+            }
+        }
+
         // The hash above is always of the plaintext — compression and
         // encryption both change the bytes without changing the data (and a
         // fresh salt makes ciphertext different every push), so hashing
@@ -734,7 +750,11 @@ class SyncManager {
                 chunkCount: Number(remote.manifest?.chunks) || 0,
                 syncSeq: advanceSeq(lastSeq, readSeq(remote.manifest?.syncSeq)),
                 version: remote.seen ? { ...remote.seen, current: true } : null,
-                extra: { [KEY_BASELINE]: wholeKeyHashes(localText), [KEY_UNAPPLIED]: null },
+                // The gist's side is what the gist holds, not this device's copy:
+                // a history trimmed here to this device's retention, recorded as
+                // the gist's, would let the next plain push replace the gist's
+                // longer copy with it (see `registeredKeysDiverge`)
+                extra: { [KEY_BASELINE]: exchangeBaseline(remote.payload, localText), [KEY_UNAPPLIED]: null },
             });
             return { ok: true, skipped: true, reason: 'in-step' };
         }

@@ -103,6 +103,7 @@ const gist = vi.hoisted(() => ({
     writes: 0,
     revisions: [],
     requests: 0,
+    downloads: 0,
     revisionReads: [],
     betweenListAndWrite: null,
 }));
@@ -127,6 +128,7 @@ vi.mock('./gist-client.js', async () => {
             if (!gist.state) throw new GistError('not-found', 'no gist');
             const current = `W/"${gist.etag}"`;
             if (etag && etag === current) return { notModified: true, etag };
+            gist.downloads += 1;
             return {
                 manifest: gist.state.manifest,
                 payload: gist.state.payload,
@@ -329,6 +331,7 @@ beforeEach(() => {
     gist.writes = 0;
     gist.revisions = [];
     gist.requests = 0;
+    gist.downloads = 0;
     gist.revisionReads = [];
     gist.betweenListAndWrite = null;
     toasts.length = 0;
@@ -802,6 +805,127 @@ describe('an automatic push merges a gist that moved past it', () => {
     });
 });
 
+describe('an automatic push that would cut a history the gist holds merges instead', () => {
+    const range = (from, count) => Array.from({ length: count }, (_, index) => from + index);
+
+    /**
+     * B keeps 500 sessions and pushed them; A keeps 20 and startup-pulled them.
+     * @returns {Promise<{a: Object, b: Object}>} Devices
+     */
+    async function cappedAfterStartup() {
+        const { a, b } = await syncedPair();
+        a.settings.logCap = 20;
+        b.settings.logCap = 500;
+        a.db.xpHistory.cappedLog_c1 = range(1, 20);
+        // Newest first, the order the log keeps
+        await as(b, async () => {
+            b.db.xpHistory.cappedLog_c1 = range(1000, 500).reverse();
+            await auto.push();
+        });
+        await as(a, auto.startup);
+        expect(a.db.xpHistory.cappedLog_c1).toHaveLength(20);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        return { a, b };
+    }
+
+    test('a device keeping 20 sessions records one after a startup pull of 500: the gist keeps all 500', async () => {
+        const { a } = await cappedAfterStartup();
+        a.latches = 0;
+        toasts.length = 0;
+
+        // Nothing moved the gist since A's startup, so this used to be a plain push of A's 20
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        const log = gistStores().xpHistory.cappedLog_c1;
+        expect(log).toContain(5000);
+        expect(log).toEqual(expect.arrayContaining(range(1000, 500)));
+        expect(log).toHaveLength(501);
+        // The cost: one download of the gist to merge with
+        expect(gist.downloads).toBeGreaterThan(0);
+    });
+
+    test('the merged automatic push writes nothing here: no latch, no "Reload now", local copy untouched', async () => {
+        const { a } = await cappedAfterStartup();
+        a.latches = 0;
+        toasts.length = 0;
+        const before = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [...before];
+            await auto.push();
+        });
+
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+        expect(a.latches).toBe(0);
+        expect(toasts.filter((toast) => /Reload/.test(toast.message))).toHaveLength(0);
+        expect(toasts).toHaveLength(0);
+        expect(a.db.xpHistory.cappedLog_c1).toEqual(before);
+    });
+
+    test('a later push that changes only a setting still keeps the 500', async () => {
+        const { a } = await cappedAfterStartup();
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+            await auto.push();
+        });
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await auto.push();
+        });
+
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+        expect(gistStores().xpHistory.cappedLog_c1).toEqual(expect.arrayContaining([5000, ...range(1000, 500)]));
+    });
+
+    test('a merge that settled in step records the gist it settled on, so the next plain push cannot cut it', async () => {
+        const { a, b } = await cappedAfterStartup();
+        // Both devices set the same whole key; A's push finds the gist ahead and the merge adds nothing
+        await as(b, async () => {
+            b.db.settings.panelSizeMemory = 1;
+            await auto.push();
+        });
+        await as(a, async () => {
+            a.db.settings.panelSizeMemory = 1;
+            expect((await auto.push()).reason).toBe('in-step');
+        });
+
+        // A changes only a setting: nothing moved the gist, and A's log is still its 20
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await auto.push();
+        });
+
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+        expect(gistStores().xpHistory.cappedLog_c1).toEqual(expect.arrayContaining(range(1000, 500)));
+    });
+
+    test('a push that moved no registered history stays plain and downloads nothing', async () => {
+        const { a } = await syncedPair();
+        gist.downloads = 0;
+        const writes = gist.writes;
+        await as(a, async () => {
+            changeSetting(a, 'X', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        expect(gist.writes).toBe(writes + 1);
+        expect(gist.downloads).toBe(0);
+        expect(gistStores().settings[MAP].X.isTrue).toBe(true);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
+    });
+
+    test('a pressed Push on the 20-session device still means this device, and overwrites', async () => {
+        const { a } = await cappedAfterStartup();
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await syncManager.push();
+        });
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(20);
+    });
+});
+
 describe('mixed versions', () => {
     test("an older build's payload, with no stamps and no counter, merges by the rule that a stamp wins", async () => {
         const { a } = await syncedPair();
@@ -1050,7 +1174,8 @@ describe('two devices writing at the same moment', () => {
 
     test('a push nobody raced makes no extra request', async () => {
         const { a } = await syncedPair();
-        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        // A setting, not a history: a moved history costs a download to merge with (see above)
+        await as(a, () => changeSetting(a, 'X', true));
         const before = gist.requests;
 
         expect((await as(a, auto.push)).ok).toBe(true);

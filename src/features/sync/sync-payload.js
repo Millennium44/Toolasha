@@ -929,6 +929,56 @@ export function exchangeBaseline(uploadedText, localText) {
 }
 
 /**
+ * Whether a plain push of this device's payload could drop history the gist
+ * holds: a key with a registered merge whose value here is no longer the one
+ * the gist held at the last exchange (or that this device no longer has).
+ *
+ * A plain push replaces the gist with this device's copy, and a registered
+ * history here can be trimmed to this device's own retention — a device
+ * keeping 20 sessions, after a startup pull of a gist holding 500, would
+ * upload its 20. Only a value still hashing to the gist side of the baseline
+ * proves the gist holds nothing this copy lacks; a hash cannot tell an
+ * addition from a trim, so any other value counts. A key the baseline does
+ * not list was not in the gist at the last exchange, so it cannot drop
+ * anything there; a store the payload does not carry at all is one this
+ * device's scope does not sync. With no baseline, any registered key counts.
+ *
+ * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
+ * @param {Record<string, string|{gist: string, local: string|null}>|null} baseline - Hashes at the last exchange
+ * @returns {boolean} True when the push should merge the gist into its upload first
+ */
+export function registeredKeysDiverge(localText, baseline) {
+    let stores;
+    try {
+        stores = JSON.parse(localText)?.stores || {};
+    } catch {
+        return false;
+    }
+    const hasBaseline = Boolean(baseline && typeof baseline === 'object');
+    for (const [storeName, entries] of Object.entries(stores)) {
+        if (!entries || typeof entries !== 'object') continue;
+        for (const [key, value] of Object.entries(entries)) {
+            if (!mergeForKey(storeName, key)) continue;
+            if (!hasBaseline) return true;
+            const was = readBaselineEntry(baseline[baselineId(storeName, key)]);
+            if (was && valueHash(value) !== was.gist) return true;
+        }
+    }
+    if (!hasBaseline) return false;
+    for (const id of Object.keys(baseline)) {
+        if (id === RESTORED_BASELINE) continue;
+        const split = id.indexOf('\u0000');
+        if (split <= 0) continue;
+        const storeName = id.slice(0, split);
+        const key = id.slice(split + 1);
+        const entries = stores[storeName];
+        if (!entries || typeof entries !== 'object' || Object.hasOwn(entries, key)) continue;
+        if (mergeForKey(storeName, key) && readBaselineEntry(baseline[id])) return true;
+    }
+    return false;
+}
+
+/**
  * The baseline entry a full-backup restore adds: the keys it wrote, per
  * store (`{at, keys: {store: [key]}}`), each of which the next merge takes as
  * this device's newer copy, so it neither reverts the restore nor counts it
@@ -1275,6 +1325,7 @@ export default {
     mergeForUpload,
     wholeKeyHashes,
     exchangeBaseline,
+    registeredKeysDiverge,
     restampRestoredSettings,
     addsToRemote,
     hashPayload,

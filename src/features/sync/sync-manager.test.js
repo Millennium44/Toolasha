@@ -99,6 +99,8 @@ vi.mock('./sync-payload.js', () => ({
     restampRestoredSettings: () => {},
     RESTORED_BASELINE: '\u0000restoredAt',
     exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+    // Opaque payloads hold no registered history to cut
+    registeredKeysDiverge: (local, baseline) => payload.registeredDiverge?.(local, baseline) ?? false,
     wholeKeyHashes: (text) => ({ of: text }),
     // The older raw-text hash, which the manifest gate also accepts
     hashPayload: (text) => `raw:${text}`,

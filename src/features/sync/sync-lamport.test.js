@@ -105,6 +105,8 @@ vi.mock('./sync-payload.js', () => ({
     restampRestoredSettings: () => {},
     RESTORED_BASELINE: '\u0000restoredAt',
     exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+    // Opaque payloads hold no registered history to cut
+    registeredKeysDiverge: () => false,
     wholeKeyHashes: () => ({}),
 }));
 
