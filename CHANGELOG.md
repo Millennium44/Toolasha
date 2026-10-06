@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltip marks partly priced alchemy profits
+
+- In the item tooltip's Coinify/Decompose/Transmute list, a profit with an unpriced output now shows as a floor ("≥ 9.0K/hr (unpriced output)"), one with an unpriced tea as a ceiling ("≤"), and both sort after fully priced rows instead of ranking as if complete.
+
 ### Labyrinth badges cover rooms revealed mid-calculation
 
 - Rooms revealed by a beacon while Auto-calc was still working through the floor never got a clear-rate badge; the calculation now runs once more for them, and a result computed while the game redrew the grid is kept and painted.

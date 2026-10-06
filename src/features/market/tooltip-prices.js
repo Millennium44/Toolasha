@@ -1564,8 +1564,13 @@ class TooltipPrices {
             return;
         }
 
-        // Sort by profitPerHour descending
-        allProfits.sort((a, b) => b.profitPerHour - a.profitPerHour);
+        // A profit with an unpriced output or tea is a floor, not a figure: complete rows sort first
+        // by profit, partial rows after them
+        const isPartialProfit = (p) => Boolean(p.hasMissingPrices) || (p.unpricedOutputs?.length ?? 0) > 0;
+        allProfits.sort((a, b) => {
+            const partialDiff = Number(isPartialProfit(a)) - Number(isPartialProfit(b));
+            return partialDiff !== 0 ? partialDiff : b.profitPerHour - a.profitPerHour;
+        });
 
         // Check if item is craftable (has a production action)
         const isCraftable = profitCalculator.findProductionAction(itemHrid) !== null;
@@ -1590,12 +1595,33 @@ class TooltipPrices {
             const profit = allProfits[i];
             const label = profit.actionType.charAt(0).toUpperCase() + profit.actionType.slice(1);
             const color = profit.profitPerHour >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS;
-            html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
+            // The per-action figure comes from the same incomplete total, so it carries the same mark
+            let boundMark = '';
+            if (isPartialProfit(profit)) {
+                // An unpriced output counts as 0 revenue (a floor); an unpriced tea counts as 0 cost (a ceiling);
+                // with both, no bound holds
+                const missingOutput = (profit.unpricedOutputs?.length ?? 0) > 0;
+                const missingTea = Boolean(profit.hasMissingPrices);
+                const [mark, note, title] =
+                    missingOutput && missingTea
+                        ? [
+                              '~ ',
+                              'unpriced output and tea',
+                              'An output and a tea have no market price, so this is rough',
+                          ]
+                        : missingTea
+                          ? ['≤ ', 'unpriced tea', 'A tea has no market price, so its cost is left out: a ceiling']
+                          : ['≥ ', 'unpriced output', 'An output has no market price, so this is a floor'];
+                boundMark = mark;
+                html += `<div style="color: ${color};" title="${title}">• ${label}: ${mark}${formatKMB(profit.profitPerHour)}/hr (${note})`;
+            } else {
+                html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
+            }
 
             // Show profit per action for alchemy actions
             if (profit.profitPerAction !== undefined) {
                 const perActionColor = profit.profitPerAction >= 0 ? 'inherit' : config.COLOR_TOOLTIP_LOSS;
-                html += ` <span style="opacity: 0.7; color: ${perActionColor};">(${formatKMB(profit.profitPerAction)}/action)</span>`;
+                html += ` <span style="opacity: 0.7; color: ${perActionColor};">(${boundMark}${formatKMB(profit.profitPerAction)}/action)</span>`;
             }
 
             // Show item icons for the winning catalyst and/or tea (silence = no modifiers needed)
