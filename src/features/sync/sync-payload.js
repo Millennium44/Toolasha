@@ -827,11 +827,58 @@ export function wholeKeyHashes(text) {
  * @param {Record<string, string>|null} baseline - Hashes at the last exchange
  * @returns {boolean} True to keep `mine`
  */
-function keepMine(id, mine, theirs, baseline) {
+function keepMine(id, mine, theirs, baseline, { allowRestored = false } = {}) {
+    // A full-backup restore made this device's whole-value keys a choice made
+    // now, whatever the last exchange was (see RESTORED_BASELINE)
+    if (allowRestored && baseline?.[RESTORED_BASELINE]) return valueHash(mine) !== valueHash(theirs);
     const was = baseline?.[id];
     if (!was) return false;
     const mineHash = valueHash(mine);
     return mineHash !== was && valueHash(theirs) === was;
+}
+
+/**
+ * The baseline a full-backup restore leaves: no exchange to compare with, and
+ * an instruction that every whole-value key this device holds is the newer
+ * copy, so the next merge neither reverts the restore nor counts it as
+ * unmoved. A key with a registered merge is still folded — a restore must not
+ * drop entries the other device recorded. Replaced by the next exchange's
+ * real baseline.
+ */
+export const RESTORED_BASELINE = '\u0000restoredAt';
+
+/**
+ * Stamp every setting a full-backup restore is about to land as changed now.
+ *
+ * A backup's stamps are as old as the backup (or absent, from an older
+ * build), so the gist's newer stamps would take every setting back at the
+ * next merge and silently undo the restore. Restoring is a choice made now,
+ * exactly as importing a settings file is, and is stamped the same way.
+ *
+ * @param {{stores?: Object}} payload - The backup, mutated in place
+ * @param {number} [now] - The time to stamp
+ * @returns {void}
+ */
+export function restampRestoredSettings(payload, now = Date.now()) {
+    const settings = payload?.stores?.[SETTINGS_STORE];
+    if (!settings || typeof settings !== 'object') return;
+    for (const [key, value] of Object.entries(settings)) {
+        if (!key.startsWith('script_settingsMap')) continue;
+        let map = value;
+        if (typeof value === 'string') {
+            try {
+                map = JSON.parse(value);
+            } catch {
+                continue;
+            }
+        }
+        if (!map || typeof map !== 'object' || Array.isArray(map)) continue;
+        const stamps = {};
+        for (const settingId of Object.keys(map)) {
+            if (!LOCAL_ONLY_SETTING_IDS.includes(settingId)) stamps[settingId] = { at: now, seq: null };
+        }
+        settings[`${SETTING_STAMPS_PREFIX}${key}`] = stamps;
+    }
 }
 
 /**
@@ -849,7 +896,9 @@ async function keepMovedLocalWholeKeys(payload, baseline) {
         const local = await storage.getAll(storeName);
         for (const key of Object.keys(entries)) {
             if (!isWholeKey(storeName, key) || !Object.hasOwn(local || {}, key)) continue;
-            if (keepMine(baselineId(storeName, key), local[key], entries[key], baseline)) delete entries[key];
+            if (keepMine(baselineId(storeName, key), local[key], entries[key], baseline, { allowRestored: true })) {
+                delete entries[key];
+            }
         }
     }
 }
@@ -926,11 +975,11 @@ export function mergeForUpload(localText, remoteText, baseline) {
             }
             // The gist moved nowhere since this device last exchanged it: this
             // device's copy is the newer one whole, folded or not
-            if (keepMine(baselineId(storeName, key), value, theirs[key], baseline)) {
+            const registration = mergeForKey(storeName, key);
+            if (keepMine(baselineId(storeName, key), value, theirs[key], baseline, { allowRestored: !registration })) {
                 out[key] = value;
                 continue;
             }
-            const registration = mergeForKey(storeName, key);
             if (registration) {
                 try {
                     // This device as the base and the gist as the incoming side,
@@ -1090,6 +1139,7 @@ export default {
     applyPayload,
     mergeForUpload,
     wholeKeyHashes,
+    restampRestoredSettings,
     addsToRemote,
     hashPayload,
     readExportedAt,

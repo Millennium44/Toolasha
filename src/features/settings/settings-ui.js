@@ -1865,6 +1865,10 @@ class SettingsUI {
                     ],
                 });
                 if (confirmed !== 'restore') return;
+                // A restore is a choice made now: its settings must not lose to
+                // the sync gist's newer stamps, nor its other keys to the gist's
+                // copies, at the next automatic merge
+                syncManager.prepareFullRestore?.(payload);
                 const { restored, failed, complete } = await importEverything(payload);
                 const total = Object.values(restored).reduce((sum, n) => sum + n, 0);
 
@@ -1884,6 +1888,7 @@ class SettingsUI {
                     return;
                 }
 
+                await syncManager.noteFullRestore?.();
                 alert(
                     `Restored ${total} entries across ${Object.keys(restored).length} stores. ` +
                         'Reload now — changes made before reloading will not be kept.'

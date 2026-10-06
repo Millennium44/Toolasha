@@ -53,6 +53,8 @@ import {
     addsToRemote,
     mergeForUpload,
     wholeKeyHashes,
+    restampRestoredSettings,
+    RESTORED_BASELINE,
 } from './sync-payload.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { flushPersistedRecords } from '../../utils/persisted-record.js';
@@ -1063,6 +1065,26 @@ class SyncManager {
         if (pushBack && mergeHeld?.length) return { ok: true, merged: merged?.length || 0, pushedBack: false };
 
         return { ok: true, merged: merged?.length || 0 };
+    }
+
+    /**
+     * Ready a full backup for restoring: stamp the settings it lands as
+     * changed now (see `restampRestoredSettings`). Call before importing it.
+     * @param {Object} payload - The parsed backup, mutated in place
+     * @returns {void}
+     */
+    prepareFullRestore(payload) {
+        restampRestoredSettings(payload);
+    }
+
+    /**
+     * Record that a full backup was restored, so the next merge takes this
+     * device's whole-value keys as the newer copy instead of reverting them to
+     * the gist's (see `RESTORED_BASELINE`). Call after the restore landed.
+     * @returns {Promise<void>}
+     */
+    async noteFullRestore() {
+        await rememberLocal({ [KEY_BASELINE]: { [RESTORED_BASELINE]: Date.now() } });
     }
 
     /**

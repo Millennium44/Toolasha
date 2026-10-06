@@ -452,6 +452,43 @@ describe('an automatic push merges a gist that moved past it', () => {
         expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1', 'b-sample']);
     });
 
+    test("a full-backup restore on A is not undone by the gist's newer copies at A's next push", async () => {
+        const { importEverything } = await import('../../utils/full-backup.js');
+        const { a, b } = await syncedPair();
+        // A backup taken now, with an old stamp on X
+        const backup = {
+            formatVersion: 1,
+            exportedAt: 'x',
+            stores: {
+                settings: {
+                    [MAP]: { X: { id: 'X', isTrue: false }, Y: { id: 'Y', isTrue: true } },
+                    [STAMPS]: { X: { at: 1, seq: null } },
+                    panelGeometry: { from: 'backup' },
+                },
+            },
+        };
+        // B changes X and a panel position, and pushes, after the backup was taken
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            b.db.settings.panelGeometry = { from: 'b' };
+            await auto.push();
+        });
+
+        await as(a, async () => {
+            syncManager.prepareFullRestore(backup);
+            expect((await importEverything(backup)).complete).toBe(true);
+            await syncManager.noteFullRestore();
+        });
+        await as(a, auto.push);
+
+        const onGist = gistStores().settings;
+        expect(onGist[MAP]).toMatchObject({ X: { isTrue: false }, Y: { isTrue: true } });
+        expect(onGist.panelGeometry).toEqual({ from: 'backup' });
+        // Histories still fold: nothing the other device recorded is dropped
+        expect(onGist.xpHistory).toBeUndefined();
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
+    });
+
     test('a pressed Push still means this device, and overwrites', async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {
