@@ -378,6 +378,10 @@ export function combatRatesFromSnapshot(snapshot, { now = Date.now(), loadout = 
  * @returns {Promise<{rates: Array<Object>, best: Object|null, status: Object}>} As above
  */
 export async function loadCombatRates({ now = Date.now(), compareGear = true } = {}) {
+    // Who this read is for, fixed before the first await. The snapshot comes from the character
+    // who was current when it started; the loadout, the stored pick and the baseline write below
+    // all resolve whoever is current when they run.
+    const owner = dataManager.getCurrentCharacterId?.() || null;
     let snapshot = null;
     try {
         snapshot = await combatSimUI.loadAllZonesSnapshot();
@@ -392,6 +396,14 @@ export async function loadCombatRates({ now = Date.now(), compareGear = true } =
         stored = await loadCombatGear();
     } catch (error) {
         console.error('[GoalPlanner] Reading the combat gear record failed:', error);
+    }
+
+    // A switch inside the reads leaves a snapshot from one character beside a loadout and gear
+    // record from another. Nothing here can be trusted as either's, so it is not ranked and
+    // above all not recorded: the baseline write below would file the departing character's run
+    // under the arriving character's gear record.
+    if ((dataManager.getCurrentCharacterId?.() || null) !== owner) {
+        return combatRatesFromSnapshot(null, { now });
     }
 
     const loadout = readCombatLoadout(stored.preferred);
