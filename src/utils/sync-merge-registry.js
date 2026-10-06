@@ -37,7 +37,14 @@
  * union, not the precedence.
  */
 
-/** @typedef {(local: *, incoming: *) => *} SyncMerge */
+/**
+ * @typedef {(local: *, incoming: *, context?: {forUpload?: boolean}) => *} SyncMerge
+ * `context.forUpload` is set when the fold builds an automatic upload rather
+ * than a local apply. A merge that caps or prunes by this device's live
+ * settings must keep everything then — the gist is every device's copy, and
+ * one device's retention choice is not the others'. Constant, build-wide caps
+ * fold identically everywhere and may ignore it.
+ */
 
 /**
  * @typedef {Object} SyncMergeRegistration

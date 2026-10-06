@@ -151,6 +151,19 @@ vi.mock('./gist-client.js', async () => {
 
 const { default: syncManager } = await import('./sync-manager.js');
 const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
+// A history capped by this device's own live setting, written the way the
+// labyrinth room log registers (newest first, trimmed to the player's choice
+// except when the fold builds an upload)
+registerSyncMerge({
+    store: 'xpHistory',
+    base: 'cappedLog',
+    merge: (local, incoming, context) =>
+        [...new Set([...(local || []), ...(incoming || [])])]
+            .sort((x, y) => y - x)
+            .slice(0, context?.forUpload ? Infinity : (world.device.settings.logCap ?? Infinity)),
+    label: 'Capped log',
+});
+
 // A real fold with a scalar it cannot combine (`sortBy`), registered the way a page load does
 await import('../../utils/watchlist.js');
 
@@ -607,6 +620,42 @@ describe('an automatic push merges a gist that moved past it', () => {
 
         expect(gistStores().settings.panelSizeMemory).toBe('b-newer');
         expect(gistStores().settings.panelGeometry).toEqual({ from: 'backup' });
+    });
+
+    test("a device keeping 20 sessions merges a gist holding 500 without cutting the other device's history", async () => {
+        const { a, b } = await syncedPair();
+        const range = (from, count) => Array.from({ length: count }, (_, index) => from + index);
+        a.settings.logCap = 20;
+        b.settings.logCap = 500;
+        // B keeps 500, all newer than A's own 20
+        await as(b, async () => {
+            b.db.xpHistory.cappedLog_c1 = range(1000, 500);
+            await auto.push();
+        });
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = range(1, 20);
+            await auto.push();
+        });
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(520);
+
+        // A's reload trims its own copy to its setting; the gist keeps them all
+        await as(a, auto.startup);
+        expect(a.db.xpHistory.cappedLog_c1).toHaveLength(20);
+
+        // ...and nothing loops: no uploads, no note, no reload asked again
+        const writes = gist.writes;
+        for (let tick = 0; tick < 3; tick += 1) {
+            await as(a, auto.pull);
+            await as(a, auto.push);
+            await as(b, auto.pull);
+            await as(b, auto.push);
+        }
+        expect(gist.writes).toBe(writes);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(520);
+        expect(a.db.settings.toolasha_sync_unapplied ?? null).toBeNull();
+        a.latches = 0;
+        await as(a, auto.startup);
+        expect(a.latches).toBe(0);
     });
 
     test('a device switched to Settings only does not carry the gist history stores in its merged upload', async () => {

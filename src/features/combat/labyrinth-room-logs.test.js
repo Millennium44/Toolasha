@@ -1685,3 +1685,20 @@ describe('teardown is awaitable, so the switch waits for the log to land', () =>
         expect(labyrinthRoomLogs.replayResult).toBeNull();
     });
 });
+
+describe('the sync merge keeps this device’s log size out of the upload', () => {
+    const sessions = (from, count) =>
+        Array.from({ length: count }, (_, index) => ({ runKey: 'run', startedAt: from + index }));
+
+    test('a pull trims to this device’s setting; an upload keeps every session either side has', async () => {
+        await import('./labyrinth-room-logs.js');
+        const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+        const registration = mergeForKey('settings', 'labyrinthRoomLogs_c1');
+        // This device keeps the default 120; the gist came from one keeping 500
+        const local = { sessions: sessions(1, 20) };
+        const gist = { sessions: sessions(1000, 480) };
+
+        expect(registration.merge(local, gist).sessions).toHaveLength(120);
+        expect(registration.merge(local, gist, { forUpload: true }).sessions).toHaveLength(500);
+    });
+});

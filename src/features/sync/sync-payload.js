@@ -758,6 +758,19 @@ function foldSettingsMap(localValue, incomingValue, localStamps, incomingStamps,
 }
 
 /**
+ * Handed to a registered merge as its third argument when the fold builds an
+ * upload rather than a local apply.
+ *
+ * A merge may cap what it keeps by this device's own settings (the labyrinth
+ * room log keeps the player's chosen number of sessions). That is right for
+ * local storage and wrong for the gist: a device set to keep 20 would upload
+ * 20 and delete the other device's 480 from the gist. A merge that caps by
+ * live local config skips the cap when it sees `forUpload`; a merge with a
+ * build-wide constant cap folds the same on every device and needs nothing.
+ */
+const UPLOAD_CONTEXT = Object.freeze({ forUpload: true });
+
+/**
  * Whether a key is written whole by sync — neither a settings map (merged per
  * setting), nor a settings map's stamps, nor a key with a registered merge.
  * @param {string} storeName - Object store
@@ -1087,7 +1100,10 @@ export function mergeForUpload(localText, remoteText, baseline) {
                     // The other way round, each device's scalar beat the
                     // gist's on every upload, the next device's beat that,
                     // and two devices traded one setting every interval.
-                    out[key] = registration.merge(value, theirs[key]);
+                    // Uncapped: a fold that trims to this device's own retention
+                    // setting would upload the trimmed copy and delete, from the
+                    // gist, history the other device keeps (see UPLOAD_CONTEXT)
+                    out[key] = registration.merge(value, theirs[key], UPLOAD_CONTEXT);
                 } catch (error) {
                     console.error(
                         `[Sync] Merging ${storeName}/${key} for upload failed; keeping the gist's copy:`,
@@ -1113,7 +1129,9 @@ export function mergeForUpload(localText, remoteText, baseline) {
     // won every difference. That case left a note that the gist held news,
     // and the next startup imported an identical payload, latched the stores
     // and asked for a reload over nothing.
-    return { text, remoteAdds: addsToRemote(text, localText) };
+    // Asked the way a local apply would fold, retention and all: entries this
+    // device's own cap would drop on arrival are not news it can take
+    return { text, remoteAdds: addsToRemote(text, localText, { forUpload: false }) };
 }
 
 /**
@@ -1141,9 +1159,12 @@ export function mergeForUpload(localText, remoteText, baseline) {
  *
  * @param {string} localText - This device's payload, rebuilt after the merge
  * @param {string} remoteText - The gist's payload, as downloaded
+ * @param {{forUpload?: boolean}} [options] - `forUpload` (the default) folds the way the upload does, with no
+ *   retention cap; false folds the way a pull applies here, cap included — for asking whether a local apply
+ *   would change anything
  * @returns {boolean} True when pushing would change what the gist holds
  */
-export function addsToRemote(localText, remoteText) {
+export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
     let local;
     let remote;
     try {
@@ -1160,7 +1181,7 @@ export function addsToRemote(localText, remoteText) {
             let folded = value;
             if (registration) {
                 try {
-                    folded = registration.merge(theirs[key], value);
+                    folded = registration.merge(theirs[key], value, forUpload ? UPLOAD_CONTEXT : undefined);
                 } catch {
                     folded = value;
                 }
