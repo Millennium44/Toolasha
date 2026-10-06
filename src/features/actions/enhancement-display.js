@@ -196,11 +196,12 @@ export async function displayEnhancementStats(panel, itemHrid) {
  * @param {number} mirrorPrice - What one Philosopher's Mirror costs
  * @param {number} [toLevel] - Level the summary is taken to (default: the last level in `costs`)
  * @returns {{levels: Array<{mirrorCost: number|null, isMirrorCheaper: boolean}|undefined>,
- *   mirrorStartLevel: number|null, totalSavings: number, toLevel: number}} `levels` is indexed
- *   like `costs`; `mirrorCost` is on the Total Cost column's footing (the held base item not
- *   counted), and null when the base item or the mirror has no price — a route missing one of
- *   its inputs would be quoted too cheap, which is worse than no quote. `mirrorStartLevel` and
- *   `totalSavings` cover levels up to `toLevel` only
+ *   mirrorStartLevel: number|null, totalSavings: number, toLevel: number,
+ *   savingsLevel: number|null}} `levels` is indexed like `costs`; `mirrorCost` is on the Total
+ *   Cost column's footing (the held base item not counted), and null when the base item or the
+ *   mirror has no price — a route missing one of its inputs would be quoted too cheap, which is
+ *   worse than no quote. `mirrorStartLevel` and `totalSavings` cover levels up to `toLevel` only;
+ *   `totalSavings` is the saving at `savingsLevel`, the highest mirror-cheaper level up to it
  */
 export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.length) {
     const cap = Number.isFinite(toLevel) ? Math.max(1, Math.min(costs.length, Math.floor(toLevel))) : costs.length;
@@ -228,10 +229,17 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.
         }
     }
 
-    const last = cap - 1;
-    const totalSavings =
-        mirrorStartLevel !== null && levels[last] ? costs[last] - Math.min(costs[last], levels[last].mirrorCost) : 0;
-    return { levels, mirrorStartLevel, totalSavings, toLevel: cap };
+    // Quoted at the highest mirror-cheaper level up to the cap. At the cap itself the mirror may be
+    // dearer even though it is cheaper below it, and the saving there would read as zero.
+    let savingsLevel = null;
+    for (let level = cap; level >= 3; level--) {
+        if (levels[level - 1]?.isMirrorCheaper) {
+            savingsLevel = level;
+            break;
+        }
+    }
+    const totalSavings = savingsLevel !== null ? costs[savingsLevel - 1] - levels[savingsLevel - 1].mirrorCost : 0;
+    return { levels, mirrorStartLevel, totalSavings, toLevel: cap, savingsLevel };
 }
 
 /**
@@ -433,6 +441,7 @@ function generateCostsByLevelTable(
         mirrorStartLevel,
         totalSavings,
         targetLevel: column.toLevel,
+        savingsLevel: column.savingsLevel,
         isPhilosopherMirror,
     };
 
@@ -448,7 +457,7 @@ function generateCostsByLevelTable(
             `<div style="color: #fff; font-size: 0.85em; margin-top: 4px;">• Use mirrors starting at <strong>+${mirrorStartLevel}</strong></div>`
         );
         lines.push(
-            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +${column.toLevel}: <strong>${formatLargeNumber(Math.round(totalSavings))}</strong> coins</div>`
+            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +${column.savingsLevel ?? column.toLevel}: <strong>${formatLargeNumber(Math.round(totalSavings))}</strong> coins</div>`
         );
         lines.push(
             `<div style="color: #aaa; font-size: 0.75em; margin-top: 4px; font-style: italic;">Rows highlighted in gold show where mirror is cheaper</div>`
@@ -881,13 +890,14 @@ function levelRanges(levels) {
  * The Philosopher's Mirror line set beside the protect-from plans. Quoted to the panel's target
  * level, and left out entirely when mirrors are not cheaper at any level up to it.
  * @param {{priced: boolean, cheaperLevels?: number[], mirrorStartLevel: number|null,
- *   totalSavings: number, targetLevel?: number}|null} summary
+ *   totalSavings: number, targetLevel?: number, savingsLevel?: number|null}|null} summary - The
+ *   saving is quoted at `savingsLevel`, the highest mirror-cheaper level up to the target
  * @param {function(number): string} coins - Coin formatter
  * @returns {string} HTML; '' without a summary, or when no level up to the target is mirror-cheaper
  */
 export function mirrorSummaryLine(summary, coins) {
     if (!summary) return '';
-    const toLevel = summary.targetLevel || 20;
+    const toLevel = summary.savingsLevel || summary.targetLevel || 20;
     let text;
     if (!summary.priced) {
         text = "Philosopher's Mirror: no quote — the base item or the mirror has no market price.";

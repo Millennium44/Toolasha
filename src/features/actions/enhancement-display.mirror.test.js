@@ -20,7 +20,7 @@ vi.mock('../../utils/tester-shop.js', () => ({
 vi.mock('../../utils/bundle-bridge.js', () => ({ missingMaterialsButton: () => null }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 
-import { mirrorCostColumn } from './enhancement-display.js';
+import { mirrorCostColumn, mirrorSummaryLine } from './enhancement-display.js';
 
 /** Twenty levels of a steep hard-way climb */
 const steep = Array.from({ length: 20 }, (_, i) => 1000 * 2 ** i);
@@ -83,6 +83,31 @@ describe('mirrorCostColumn', () => {
         expect(atTwelve.mirrorStartLevel).toBe(10);
         expect(atTwelve.totalSavings).toBe(late[11] - full.levels[11].mirrorCost);
         expect(atTwelve.totalSavings).toBeLessThan(full.totalSavings);
+    });
+
+    test('cheaper at +5 but not at a +6 target: the saving is quoted at +5, never as zero', () => {
+        // +5 is a wall the mirror gets round; +6 is cheap again the hard way
+        const costs = [100, 200, 300, 400, 100_000, 1000, ...Array.from({ length: 14 }, () => 1e9)];
+        const column = mirrorCostColumn(costs, 10, 10, 6);
+        expect(column.levels[4].isMirrorCheaper).toBe(true);
+        expect(column.levels[5].isMirrorCheaper).toBe(false);
+        expect(column.mirrorStartLevel).toBe(5);
+        expect(column.savingsLevel).toBe(5);
+        // +5 the hard way 100,000; mirrored: +4 (410) + +3 (310) + mirror 10 - base 10 = 720
+        expect(column.totalSavings).toBe(100_000 - 720);
+
+        const line = mirrorSummaryLine(
+            {
+                priced: true,
+                cheaperLevels: [5],
+                mirrorStartLevel: 5,
+                totalSavings: column.totalSavings,
+                targetLevel: 6,
+                savingsLevel: column.savingsLevel,
+            },
+            String
+        );
+        expect(line).toContain('saves <strong>99280</strong> to +5.');
     });
 
     test('an unpriced mirror is not a free one', () => {
