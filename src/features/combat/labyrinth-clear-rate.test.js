@@ -5039,20 +5039,52 @@ describe('a floor with a 0% room settles once its retries are spent', () => {
         expect(parent.children[1].textContent).toContain('0%');
     });
 
-    test('a room whose sim cannot run stops being retried once its retries are spent', async () => {
-        mountFloor();
-        const sims = vi
-            .spyOn(labyrinthClearRate, 'computeCombatClear')
-            .mockImplementation(async (_hrid, lvl) =>
-                lvl === 110
-                    ? { failed: true, clearChance: 0, expectedSeconds: Infinity }
-                    : { clearChance: 0.9, expectedSeconds: 30 }
-            );
+    test('a room that could not sim is retried by a later trigger once ready, and the 0% room is not', async () => {
+        // Codex P2 on #364: readiness is not in the fingerprint, so settling
+        // over a room whose inputs were not ready left it unbadged until a
+        // manual Calculate. Lv.110 is a genuine 0%; Lv.120 fails until ready.
+        const parent = document.createElement('div');
+        for (let i = 0; i < 3; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [100, 110, 120].map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false })),
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.autoTileRetryCount = 0;
+        let ready = false;
+        const sims = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (_hrid, lvl) => {
+            if (lvl === 110) return { clearChance: 0, expectedSeconds: Infinity };
+            if (lvl === 120 && !ready) return { failed: true, clearChance: 0, expectedSeconds: Infinity };
+            return { clearChance: 0.9, expectedSeconds: 30 };
+        });
 
         await runPassAndRetries();
-        const settledAfter = sims.mock.calls.length;
-        for (let i = 0; i < 5; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
-        expect(sims.mock.calls.length).toBe(settledAfter);
+        // Not settled while a room is still unjudged
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+        expect(parent.children[2].querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
+
+        // The store finishes loading; the next trigger, after a re-render wiped
+        // every badge, sims only the room that never ran
+        ready = true;
+        parent.querySelectorAll('.mwi-labyrinth-tile-badge').forEach((el) => el.remove());
+        sims.mockClear();
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(sims.mock.calls.map(([, lvl]) => lvl)).toEqual([120]);
+        expect(parent.children[2].textContent).toContain('90%');
+        expect(parent.children[1].textContent).toContain('0%');
+        expect(labyrinthClearRate._autoCalcFingerprint).not.toBeNull();
+
+        // Settled now: further triggers sim nothing
+        sims.mockClear();
+        for (let i = 0; i < 3; i++) await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(sims).not.toHaveBeenCalled();
     });
 
     test('a manual Calculate still re-sims the settled 0% room', async () => {

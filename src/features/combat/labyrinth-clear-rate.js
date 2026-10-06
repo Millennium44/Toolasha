@@ -3274,9 +3274,21 @@ class LabyrinthClearRate {
             const tileKey = `${i % cols},${Math.floor(i / cols)}`;
             if (!room.skillHrid && !room.monsterHrid) continue;
             eligible++;
-            if (auto && this.calculatedTileKeys.has(tileKey) && cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
-                doneUpFront++;
-                continue;
+            if (auto && this.calculatedTileKeys.has(tileKey)) {
+                if (cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
+                    doneUpFront++;
+                    continue;
+                }
+                // Settled by an earlier pass and wiped by a re-render: redraw it
+                // from that pass rather than sim it again. This is what keeps a
+                // settled 0% room from being re-simmed while passes still run for
+                // some other room whose inputs were not ready.
+                const settled = this._tileResults.get(tileKey);
+                if (settled) {
+                    this.appendTileBadge(cell, settled);
+                    doneUpFront++;
+                    continue;
+                }
             }
 
             if (room.skillHrid) {
@@ -3333,6 +3345,13 @@ class LabyrinthClearRate {
             }
 
             let combatRetryNeeded = 0;
+            // Rooms this pass could not judge at all (sim inputs not ready, or
+            // the cell went away), apart from the genuine 0% rooms it did judge.
+            // Only judged rooms may settle: readiness is not in the fingerprint,
+            // so settling over an unjudged room left it unbadged until a manual
+            // Calculate.
+            let unjudged = 0;
+            const judgedKeys = [];
             // Drawn once a room is judged, net of every room left for a retry: a
             // failed last room otherwise touched 100% and dropped back when the
             // retry was scheduled
@@ -3358,16 +3377,19 @@ class LabyrinthClearRate {
                     // Sim inputs not ready (e.g. loadout snapshots still loading) —
                     // leave the tile unbadged and unmarked so a retry picks it up
                     combatRetryNeeded++;
+                    unjudged++;
                     step();
                     continue;
                 }
                 if (!target.cell.isConnected) {
+                    unjudged++;
                     step();
                     continue;
                 }
 
                 this.appendTileBadge(target.cell, result);
                 this._tileResults.set(target.tileKey, result);
+                judgedKeys.push(target.tileKey);
                 if (result.clearChance > 0 || !auto) {
                     this.calculatedTileKeys.add(target.tileKey);
                 } else {
@@ -3409,22 +3431,21 @@ class LabyrinthClearRate {
                     this.runTileCalculation({ auto: true });
                 }, 2500);
             } else if (combatRetryNeeded === 0 || auto) {
-                // Settled: every calculable tile is badged from a full pass, or —
-                // for an auto pass — its retries are spent and what is left is a
-                // genuine 0% (never cached, see computeCombatClear) or a room
-                // whose sim could not run. Record the inputs either way, so
-                // further auto triggers restore from cache instead of re-simming.
-                // Without this a floor holding a single 0% room re-simmed it,
-                // and refilled the bar, on every grid re-render and every
-                // labyrinth_updated for as long as the floor map was open. A
-                // changed room, gear, loadout or precision changes the
-                // fingerprint and runs a fresh pass with fresh retries; a manual
-                // Calculate always re-sims everything.
+                // Retries spent (or none needed). A genuine 0% (never cached,
+                // see computeCombatClear) is settled here: its tile is marked
+                // calculated so no later auto pass sims it again. Without this a
+                // floor holding a single 0% room re-simmed it, and refilled the
+                // bar, on every grid re-render and every labyrinth_updated for as
+                // long as the floor map was open.
                 this.autoTileRetryCount = 0;
-                for (const target of combatTargets) {
-                    if (this._tileResults.has(target.tileKey)) this.calculatedTileKeys.add(target.tileKey);
-                }
-                this._autoCalcFingerprint = fingerprint;
+                for (const tileKey of judgedKeys) this.calculatedTileKeys.add(tileKey);
+                // The floor as a whole settles only if every room was judged. A
+                // room whose sim could not run leaves the fingerprint unset, so a
+                // later trigger (once the loadouts have loaded, say) tries it
+                // again, and skips the rooms settled above. A changed room, gear,
+                // loadout or precision changes the fingerprint and runs a fresh
+                // pass; a manual Calculate always re-sims everything.
+                this._autoCalcFingerprint = unjudged === 0 ? fingerprint : null;
             }
         } catch (error) {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
