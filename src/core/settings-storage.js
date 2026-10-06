@@ -908,17 +908,20 @@ class SettingsStorage {
      *
      * @param {Object} settings - The caller's settings map
      * @param {Iterable<string>} settingIds - Shared ids this save is carrying
+     * @param {Iterable<string>|null} [userIds] - The ids the player asked to change, for the stamps; every
+     *   carried id when omitted. Null: only ids already stored whose value moved (see `_stampDiff`).
      * @returns {Promise<boolean>} Whether every requested shared entry was written
      * @private
      */
-    async _writeSharedEntries(settings, settingIds) {
+    async _writeSharedEntries(settings, settingIds, userIds = undefined) {
         const ids = [...settingIds].filter((id) => settings?.[id]);
         if (ids.length === 0) return true;
         const stored = (await this._loadSharedSettings()) ?? {};
         const next = { ...stored };
         for (const id of ids) next[id] = { ...settings[id] };
         if ((await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true)) === false) return false;
-        await this._stampDiff(SHARED_SETTINGS_KEY, stored, next);
+        const stampIds = userIds === undefined ? ids : userIds;
+        await this._stampDiff(SHARED_SETTINGS_KEY, stored, next, { ids: stampIds ? new Set(stampIds) : null });
         return true;
     }
 
@@ -1306,7 +1309,14 @@ class SettingsStorage {
 
         const written = await storage.setJSON(characterKey, toWrite, this.storageArea, true);
         if (written === false) return false;
-        await this._stampDiff(characterKey, stored, toWrite);
+        // Stamped as the player's: what this save was asked to change (a reset
+        // is asked to change everything) and whose value moved. An id written
+        // only because the stored map lacked it — a setting newer than the
+        // save file, filled in from its default — is not a choice and is not
+        // stamped. Without dirty tracking the save says nothing about intent,
+        // so only ids already stored whose value moved count.
+        const userIds = this._userIds(settings, dirtyKeys);
+        await this._stampDiff(characterKey, stored, toWrite, { ids: userIds });
 
         // The account-wide settings go to their own key as well as staying in
         // this character's map. Staying keeps a downgrade working and adds no
@@ -1320,16 +1330,38 @@ class SettingsStorage {
         const sharedToWrite = scopedSave
             ? sharedIds.filter((id) => (dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys)).has(id))
             : sharedIds;
-        return this._writeSharedEntries(settings, sharedToWrite);
+        return this._writeSharedEntries(settings, sharedToWrite, userIds ? sharedToWrite : null);
     }
 
     /**
-     * Stamp every setting whose stored entry a write just changed.
+     * The ids a save was asked to change, for the change stamps.
+     * @param {Object} settings - The map being saved
+     * @param {Iterable<string>|symbol|null} dirtyKeys - As for saveSettings
+     * @returns {Set<string>|null} The ids, or null for a save with no dirty tracking
+     * @private
+     */
+    _userIds(settings, dirtyKeys) {
+        if (dirtyKeys === null || dirtyKeys === undefined) return null;
+        if (dirtyKeys === SAVE_ALL_KEYS) return new Set(Object.keys(settings || {}));
+        return dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys);
+    }
+
+    /**
+     * Stamp the settings whose VALUE a write just changed.
      *
-     * Compares the map before and after rather than trusting a caller's list
-     * of "dirty" ids: every write path ends here, so none can forget an id,
-     * and an id saved with the value it already had is not a change and is not
-     * stamped. A setting the write removed loses its stamp with it.
+     * Values, not entries: an entry also carries its label and option list,
+     * which change between builds without anyone choosing anything.
+     *
+     * Which ids may count is the caller's to say. `ids` names the ones a
+     * person asked to change; one of those that was missing before counts too,
+     * since turning on a setting newer than the save file is a choice. Without
+     * `ids`, only an id already stored whose value moved counts — unless
+     * `absentIsChange` (a whole map the player chose to land: an import, a
+     * copy) or `system` (the seed, a migration, a rewrite), where everything
+     * written counts.
+     *
+     * System writes stamp `{at: 0, system: true}`: older than any change a
+     * person made, so they never beat one in a merge.
      *
      * Best effort: a stamp that fails to land costs only the tie-break on a
      * setting two devices both changed, and must never fail the write itself.
@@ -1337,15 +1369,19 @@ class SettingsStorage {
      * @param {string} mapKey - The settings map's storage key
      * @param {Object|null} before - The map as stored before the write
      * @param {Object|null} after - The map as written
-     * @param {{system?: boolean}} [options] - `system` for a write the player did not make
+     * @param {{system?: boolean, ids?: Set<string>|null, absentIsChange?: boolean}} [options] - What may count
      * @returns {Promise<void>}
      * @private
      */
-    async _stampDiff(mapKey, before, after, { system = false } = {}) {
+    async _stampDiff(mapKey, before, after, { system = false, ids = null, absentIsChange = false } = {}) {
         try {
             const old = before && typeof before === 'object' ? before : {};
             const next = after && typeof after === 'object' ? after : {};
-            const changed = Object.keys(next).filter((id) => canonical(old[id]) !== canonical(next[id]));
+            const absentCounts = system || absentIsChange || Boolean(ids);
+            const candidates = ids ? [...ids].filter((id) => Object.hasOwn(next, id)) : Object.keys(next);
+            const changed = candidates.filter((id) =>
+                Object.hasOwn(old, id) ? canonical(valueOf(old[id])) !== canonical(valueOf(next[id])) : absentCounts
+            );
             const removed = Object.keys(old).filter((id) => !Object.hasOwn(next, id));
             if (changed.length === 0 && removed.length === 0) return;
 
@@ -1417,10 +1453,17 @@ class SettingsStorage {
             (id) => settings?.[id] && id in defaults && valueOf(settings[id]) !== valueOf(defaults[id])
         );
 
+        // A choice this session made is a value moved off its default; the rest
+        // of this map is defaults standing in for settings never read
+        const chosen = new Set(
+            Object.keys(settings || {}).filter(
+                (id) => !(id in defaults) || valueOf(settings[id]) !== valueOf(defaults[id])
+            )
+        );
         if (!stored || typeof stored !== 'object') {
             const written = await storage.setJSON(characterKey, settings, this.storageArea, true);
             if (written === false) return false;
-            await this._stampDiff(characterKey, null, settings);
+            await this._stampDiff(characterKey, null, settings, { ids: chosen });
             return this._writeSharedEntries(settings, touchedShared);
         }
 
@@ -1431,7 +1474,7 @@ class SettingsStorage {
         }
         const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
         if (written === false) return false;
-        await this._stampDiff(characterKey, stored, merged);
+        await this._stampDiff(characterKey, stored, merged, { ids: chosen });
         return this._writeSharedEntries(settings, touchedShared);
     }
 
@@ -1543,7 +1586,7 @@ class SettingsStorage {
             const characterKey = `${this.storageKey}_${character.id}`;
             const before = await storage.getJSON(characterKey, this.storageArea, null);
             let targetWritten = (await storage.setJSON(characterKey, settings, this.storageArea, true)) !== false;
-            if (targetWritten) await this._stampDiff(characterKey, before, settings);
+            if (targetWritten) await this._stampDiff(characterKey, before, settings, { absentIsChange: true });
 
             for (let i = 0; i < TASK_CHARACTER_SCOPED_PREFIXES.length; i++) {
                 if (taskScopedValues[i] === null) continue;
@@ -1606,7 +1649,7 @@ class SettingsStorage {
             if (written === false) {
                 skipped.push(character);
             } else {
-                await this._stampDiff(characterKey, stored, merged);
+                await this._stampDiff(characterKey, stored, merged, { ids: new Set(ids) });
                 copied.push(character);
             }
         }
@@ -1645,7 +1688,7 @@ class SettingsStorage {
         const before = await storage.getJSON(destinationKey, this.storageArea, null);
         const written = await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
         if (written === false) return false;
-        await this._stampDiff(destinationKey, before, sourceMap);
+        await this._stampDiff(destinationKey, before, sourceMap, { absentIsChange: true });
         // The map is the source character's; the migration record left behind is
         // this character's, and it describes a map that is no longer here. A
         // source last written by a build that predates a merge would otherwise
@@ -1848,7 +1891,9 @@ class SettingsStorage {
                 const isMap = key.startsWith(this.storageKey);
                 const before = isMap ? await storage.getJSON(key, this.storageArea, null) : null;
                 const written = await storage.setJSON(key, value, this.storageArea, true);
-                if (written !== false && isMap) await this._stampDiff(key, before, parseMap(value));
+                if (written !== false && isMap) {
+                    await this._stampDiff(key, before, parseMap(value), { absentIsChange: true });
+                }
                 if (written === false) {
                     await this.reconcileKeyMigrationState(importedKeys);
                     console.error(`[Settings Storage] Import stopped: ${key} could not be written`);
