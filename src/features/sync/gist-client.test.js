@@ -785,7 +785,7 @@ describe('writeSyncGist', () => {
             0,
             null,
             {
-                keepEncryption: true,
+                unattended: true,
             }
         ).catch((caught) => caught);
 
@@ -809,12 +809,97 @@ describe('writeSyncGist', () => {
         });
         responses.push(encryptedGist(), { status: 200, body: { id: 'abc' } });
         await writeSyncGist('tok', 'abc', { chunks: 1, encrypted: { v: 1 } }, ['sealed'], 0, null, {
-            keepEncryption: true,
+            unattended: true,
         });
         responses.push(encryptedGist(), { status: 200, body: { id: 'abc' } });
-        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain']);
+        let asked = 0;
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            confirmPlaintext: async () => {
+                asked += 1;
+                return true;
+            },
+        });
 
         expect(calls.map((call) => call.method)).toEqual(['GET', 'PATCH', 'GET', 'PATCH']);
+        expect(asked).toBe(1);
+    });
+
+    test('a pressed push over an encrypted gist that is not confirmed writes nothing', async () => {
+        responses.push({
+            status: 200,
+            body: { files: { [MANIFEST_FILE]: { size: 90, content: JSON.stringify({ chunks: 1, encrypted: {} }) } } },
+        });
+
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            confirmPlaintext: async () => false,
+        }).catch((caught) => caught);
+
+        expect(error.kind).toBe('cancelled');
+        expect(calls).toHaveLength(1);
+    });
+
+    test('a 304 against a remembered version reads its counter and encryption from that version', async () => {
+        // The cached path: nothing about the gist comes down, so what the
+        // remembered record says is all the write has to go on
+        responses.push({ status: 304, headers: { etag: 'W/"e1"' } });
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: {}, current: true, syncSeq: 7, encrypted: true };
+
+        const refused = await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 1 }, ['plain'], 0, known, {
+            unattended: true,
+        }).catch((caught) => caught);
+        expect(refused.kind).toBe('passphrase');
+
+        responses.push({ status: 304, headers: { etag: 'W/"e1"' } });
+        responses.push({ status: 200, body: { id: 'abc' } });
+        const result = await writeSyncGist(
+            'tok',
+            'abc',
+            { chunks: 1, syncSeq: 1, encrypted: { v: 1 } },
+            ['x'],
+            0,
+            known
+        );
+        expect(result.syncSeq).toBe(8);
+    });
+
+    test('an unattended push does not write a gist it could not list', async () => {
+        responses.push({ status: 502, body: {} });
+
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 1 }, ['data'], 0, null, {
+            unattended: true,
+        }).catch((caught) => caught);
+
+        expect(error.kind).toBe('unlisted');
+        expect(calls).toHaveLength(1);
+    });
+
+    test('a failed re-list on a conflict retry keeps the listing the first attempt got', async () => {
+        vi.useFakeTimers();
+        try {
+            responses.push({
+                status: 200,
+                body: {
+                    files: {
+                        [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ chunks: 1, syncSeq: 7 }) },
+                        [chunkFileName(1)]: { size: 10 },
+                    },
+                },
+            });
+            responses.push({ status: 409, body: { message: 'Conflict' } });
+            responses.push({ status: 502, body: {} });
+            responses.push({ status: 200, body: { id: 'abc' } });
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 3 }, ['data']);
+            await vi.advanceTimersByTimeAsync(3000);
+            const result = await pending;
+
+            const { files } = JSON.parse(calls[3].data);
+            // Still raised above the gist, and the orphan still named
+            expect(result.syncSeq).toBe(8);
+            expect(files[chunkFileName(1)]).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('falls back to the remembered count when the gist cannot be listed', async () => {

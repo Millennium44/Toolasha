@@ -804,9 +804,13 @@ async function readFileContent(token, file) {
  * @param {{gistId: string, etag: string, files: Record<string, number>}|null} [known] - A remembered
  *   listing: the gist's ETag and the file sizes it had at that ETag
  * @param {Object} [options] - Options
- * @param {boolean} [options.keepEncryption=false] - Refuse to replace an encrypted gist with a payload in the
- *   clear. For the pushes nobody pressed a button for: a device whose passphrase was never entered would
- *   otherwise turn every other device's encryption off on its next interval, without a word.
+ * @param {boolean} [options.unattended=false] - A push nobody pressed a button for (interval, character
+ *   switch, session handoff). It refuses to replace an encrypted gist with a payload in the clear — a device
+ *   whose passphrase was never entered would otherwise turn every other device's encryption off on its next
+ *   interval, without a word — and it refuses to write a gist it could not list, since it cannot then tell
+ *   what it would be writing over.
+ * @param {(() => Promise<boolean>)|null} [options.confirmPlaintext=null] - For a push someone did press:
+ *   asked before a payload in the clear replaces an encrypted gist. False cancels the write.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
  *   syncSeq: number|undefined}>} The gist that was written, with the ETag and file sizes of the version the
  *   write produced, and the counter its manifest actually carries (raised above the gist's own, see below)
@@ -818,7 +822,7 @@ export async function writeSyncGist(
     chunks,
     previousChunkCount = 0,
     known = null,
-    { keepEncryption = false } = {}
+    { unattended = false, confirmPlaintext = null } = {}
 ) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
 
@@ -832,12 +836,23 @@ export async function writeSyncGist(
     });
     const payloadBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     let serialized = null;
+    let plaintextConfirmed = false;
 
     const attempt = async () => {
         // Listed before the size guard, because what survives the write counts
         // towards the ceiling as much as what is being written. Inside the
         // attempt so a conflict retry sees the file set that just beat it.
-        if (gistId) listing = await listGistFiles(token, gistId, listing);
+        if (gistId) {
+            const fresh = await listGistFiles(token, gistId, listing);
+            // Fail closed for a push nobody asked for: with no listing it
+            // cannot see the counter or the encryption it would be writing over
+            if (!fresh && unattended) {
+                throw new GistError('unlisted', 'The sync gist could not be listed before writing it.');
+            }
+            // A failed re-list on a conflict retry must not throw away the
+            // listing the first attempt did get
+            if (fresh || !listing) listing = fresh;
+        }
         const existingFiles = listing?.files ?? null;
 
         const orphans = [];
@@ -875,12 +890,19 @@ export async function writeSyncGist(
         // as *older* — skipped as "not newer", marked current, and never
         // downloaded again — while its contents are now the gist's. Lamport's
         // send rule is one above everything seen, and the listing just saw it.
-        if (keepEncryption && listing?.encrypted === true && !manifest?.encrypted) {
-            throw new GistError(
-                'passphrase',
-                'The sync gist is encrypted and this device has no sync passphrase, so pushing would replace it ' +
-                    'unencrypted. Automatic pushes from this device are skipped until the passphrase is entered.'
-            );
+        if (listing?.encrypted === true && !manifest?.encrypted) {
+            if (unattended) {
+                throw new GistError(
+                    'passphrase',
+                    'The sync gist is encrypted and this device has no sync passphrase, so pushing would replace ' +
+                        'it unencrypted. Automatic pushes from this device are skipped until the passphrase is entered.'
+                );
+            }
+            if (confirmPlaintext && !plaintextConfirmed) {
+                if (!(await confirmPlaintext())) throw new GistError('cancelled', 'The push was cancelled.');
+                // Asked once per push, not again on a conflict retry
+                plaintextConfirmed = true;
+            }
         }
 
         const remoteSeq = listing?.syncSeq ?? null;

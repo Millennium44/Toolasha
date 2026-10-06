@@ -924,7 +924,7 @@ describe('push on character switch', () => {
             await syncManager.initialize();
             await vi.advanceTimersByTimeAsync(6 * 1000);
             expect(pushes).toHaveBeenCalledTimes(1);
-            expect(pushes).toHaveBeenCalledWith({ silent: true });
+            expect(pushes).toHaveBeenCalledWith({ silent: true, unattended: true });
 
             // The same character again is not a switch
             syncManager.cleanup();
@@ -1407,6 +1407,8 @@ describe('the remembered gist version', () => {
             etag: 'W/"e1"',
             files: FILES,
             current: true,
+            syncSeq: null,
+            encrypted: false,
         });
 
         expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true, reason: 'not-modified' });
@@ -1467,7 +1469,7 @@ describe('the remembered gist version', () => {
     });
 
     test('a push hands the remembered listing to the write and remembers the version it produced', async () => {
-        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true, syncSeq: 3, encrypted: false };
         stored.map.toolasha_sync_gistVersion = known;
         payload.text = '{"local":2}';
         gist.writeEtag = 'W/"e9"';
@@ -1480,6 +1482,8 @@ describe('the remembered gist version', () => {
             etag: 'W/"e9"',
             files: gist.writeFiles,
             current: true,
+            syncSeq: 1,
+            encrypted: false,
         });
     });
 
@@ -1505,17 +1509,58 @@ describe('the remembered gist version', () => {
         expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(8);
     });
 
-    test('only an unattended push asks the write to keep an encrypted gist encrypted', async () => {
+    test('an unattended push is refused the plaintext write; a pressed one is asked first', async () => {
         stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
         payload.text = '{"local":2}';
-        await syncManager.push({ silent: true });
+        await syncManager.push({ silent: true, unattended: true });
         payload.text = '{"local":3}';
         await syncManager.push();
 
-        expect(gist.writes.map((write) => write.options)).toEqual([
-            { keepEncryption: true },
-            { keepEncryption: false },
-        ]);
+        expect(gist.writes.map((write) => write.options.unattended)).toEqual([true, false]);
+        expect(gist.writes[0].options.confirmPlaintext).toBeNull();
+        expect(typeof gist.writes[1].options.confirmPlaintext).toBe('function');
+        // A silent push is not by that alone an unattended one
+        payload.text = '{"local":4}';
+        await syncManager.push({ silent: true });
+        expect(gist.writes[2].options.unattended).toBe(false);
+    });
+
+    test('the plaintext question says what it does, and only an explicit yes goes ahead', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        await syncManager.push();
+        const confirm = gist.writes[0].options.confirmPlaintext;
+
+        syncManager.busy = 0;
+        dialog.answer = null;
+        expect(await confirm()).toBe(false);
+        expect(dialog.last.message).toMatch(/removes the encryption for every device/);
+    });
+
+    test('a pressed push the player declines over an encrypted gist writes nothing and records nothing', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError('cancelled', 'cancelled');
+
+        expect(await syncManager.push()).toEqual({ ok: true, skipped: true, reason: 'cancelled' });
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
+    });
+
+    test('a remembered version from before it carried counter and encryption is not handed to the write', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        payload.text = '{"local":2}';
+
+        await syncManager.push({ silent: true, unattended: true });
+        expect(gist.writes[0].known).toBeNull();
+    });
+
+    test('an unattended push that could not list the gist skips quietly', async () => {
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        payload.text = '{"local":2}';
+        gist.writeError = new FakeGistError('unlisted', 'could not list');
+
+        expect(await syncManager.push({ silent: true, unattended: true })).toEqual({ ok: false, reason: 'unlisted' });
+        expect(toasts).toHaveLength(0);
     });
 
     test('an unattended push refused for keeping encryption stays quiet; a pressed one is told', async () => {
@@ -1523,7 +1568,7 @@ describe('the remembered gist version', () => {
         payload.text = '{"local":2}';
         gist.writeError = new FakeGistError('passphrase', 'encrypted gist');
 
-        expect(await syncManager.push({ silent: true })).toEqual({ ok: false, reason: 'passphrase' });
+        expect(await syncManager.push({ silent: true, unattended: true })).toEqual({ ok: false, reason: 'passphrase' });
         expect(toasts).toHaveLength(0);
         expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
 
