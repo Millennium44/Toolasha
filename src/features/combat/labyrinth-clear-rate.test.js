@@ -1600,6 +1600,16 @@ describe('the beacon count as a per-floor override', () => {
         expect(labyrinthClearRate._tileResults.size).toBe(0);
     });
 
+    test('a new floor forgets the settled auto-calc fingerprint, so its rooms are not restored from nothing', () => {
+        buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._autoCalcFingerprint = 'same-rooms-same-inputs';
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+    });
+
     test('a new floor redraws an open distribution panel from the cleared results', () => {
         buildToolbar(4);
         labyrinthClearRate.currentFloor = 3;

@@ -729,6 +729,9 @@ class LabyrinthClearRate {
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
                 this._calculatedTileInputs?.clear();
+                // The fingerprint omits the floor, so a new floor whose rooms match
+                // the last one would take the restore path over the emptied results
+                this._autoCalcFingerprint = null;
                 // A pass still awaiting a sim belongs to the floor just left; its
                 // cells stay connected until React repaints, so without a fence it
                 // resumes and writes the old floor's result under a coordinate the
