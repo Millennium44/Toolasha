@@ -2004,6 +2004,88 @@ describe('automatic pushes merge into the upload, never into this device', () =>
         expect(toasts).toHaveLength(2);
     });
 
+    describe('a gist whose manifest gives no order', () => {
+        const unordered = { exportedAt: null, syncSeq: null, unordered: true, fresh: true };
+        const FILES = { 'toolasha-sync.json': 1 };
+        /** The write's ahead check, as an automatic push hands it over */
+        const aheadCheck = async () => {
+            let check = null;
+            gist.writeHook = (options) => {
+                check = options?.isAhead;
+            };
+            await syncManager.push({ silent: true, unattended: true });
+            return check;
+        };
+
+        test('that changed since this device last saw it is ahead: the push merges instead of writing', async () => {
+            stored.map.toolasha_sync_gistVersion = {
+                gistId: 'abc',
+                etag: 'W/"e1"',
+                files: FILES,
+                current: true,
+                version: 'v1',
+            };
+            const check = await aheadCheck();
+            expect(check({ ...unordered, version: 'v2', etag: 'W/"e2"' })).toBe(true);
+            // No version on either side: the ETag decides
+            expect(check({ ...unordered, version: null, etag: 'W/"e2"' })).toBe(true);
+        });
+
+        test('with no record of what this device saw, it may have moved, so it is ahead', async () => {
+            const check = await aheadCheck();
+            expect(check({ ...unordered, version: 'v2', etag: 'W/"e2"' })).toBe(true);
+        });
+
+        test('that is the version this device already saw is not ahead', async () => {
+            stored.map.toolasha_sync_gistVersion = {
+                gistId: 'abc',
+                etag: 'W/"e1"',
+                files: FILES,
+                current: false,
+                version: 'v1',
+            };
+            const check = await aheadCheck();
+            expect(check({ ...unordered, version: 'v1', etag: 'W/"other"' })).toBe(false);
+            expect(check({ ...unordered, version: null, etag: 'W/"e1"' })).toBe(false);
+        });
+
+        test('a gist this sync never wrote, or one with a readable order, is decided as before', async () => {
+            const check = await aheadCheck();
+            expect(check({ exportedAt: null, syncSeq: null, unordered: false, fresh: true, version: 'v9' })).toBe(
+                false
+            );
+            expect(check({ exportedAt: null, syncSeq: 3, unordered: false, fresh: true, version: 'v9' })).toBe(false);
+        });
+
+        test('one the merge then cannot read holds automatic pushes, logged once; a pressed Push still writes', async () => {
+            gist.writeHook = (options) => {
+                if (options?.isAhead?.({ ...unordered, version: 'v2', etag: 'W/"e2"' })) {
+                    throw new FakeGistError('behind', 'ahead');
+                }
+            };
+            gist.readError = new FakeGistError('parse', 'The sync gist manifest is unreadable.');
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            try {
+                for (let tick = 0; tick < 2; tick += 1) {
+                    payload.text = `{"local":${tick + 3}}`;
+                    expect(await syncManager.push({ silent: true, unattended: true })).toEqual({
+                        ok: false,
+                        reason: 'parse',
+                    });
+                }
+                expect(gist.writes).toHaveLength(0);
+                expect(
+                    warn.mock.calls.filter(([line]) => String(line).includes('Automatic pushes are held'))
+                ).toHaveLength(1);
+            } finally {
+                warn.mockRestore();
+            }
+
+            await syncManager.push();
+            expect(gist.writes).toHaveLength(1);
+        });
+    });
+
     test('a pressed Push still replaces the gist, and clears the note', async () => {
         stored.map.toolasha_sync_unapplied = { since: remoteAt };
         await syncManager.push();

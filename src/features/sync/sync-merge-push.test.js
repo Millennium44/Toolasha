@@ -162,6 +162,10 @@ vi.mock('./gist-client.js', async () => {
                               syncSeq: gist.state.manifest.syncSeq ?? null,
                               encrypted: Boolean(gist.state.manifest.encrypted),
                               exportedAt: gist.state.manifest.exportedAt,
+                              // As the real listing reads it: sync data with no counter and no timestamp
+                              unordered:
+                                  gist.state.manifest.syncSeq == null &&
+                                  !Number.isFinite(Date.parse(gist.state.manifest.exportedAt ?? '')),
                               version: versionOf(gist.etag),
                               fresh: true,
                           };
@@ -912,6 +916,35 @@ describe('an encrypted gist and a device without the passphrase', () => {
         expect(gist.writes).toBe(writes);
         expect(gist.state.manifest.encrypted).toBeTruthy();
         expect(toasts).toHaveLength(0);
+    });
+});
+
+describe('a gist whose manifest lost its order', () => {
+    test("an automatic push merges it rather than writing over the other device's push", async () => {
+        // The real WebCrypto; fake timers would starve its promises
+        vi.useRealTimers();
+        const { a, b } = await syncedPair({ sync_passphrase: 'pw' }, { sync_passphrase: 'pw' });
+        await as(b, async () => {
+            changeSetting(b, 'X', true);
+            await auto.push();
+        });
+        // The manifest is damaged: its counter and timestamp are gone. A's
+        // passphrase means the plaintext refusal does not stop its write
+        const { syncSeq: _seq, exportedAt: _at, ...damaged } = gist.state.manifest;
+        gist.state = { ...gist.state, manifest: damaged };
+        gist.etag += 1;
+        gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+        expect(gist.state.manifest.encrypted).toBeTruthy();
+
+        // The gist holds both edits: A's startup pull takes B's
+        await as(a, auto.startup);
+        expect(a.db.settings[MAP].X.isTrue).toBe(true);
+        expect(a.db.settings[MAP].Y.isTrue).toBe(true);
     });
 });
 

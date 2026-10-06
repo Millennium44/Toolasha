@@ -564,9 +564,14 @@ class SyncManager {
                 // not taken: that is how a setting changed on the other device
                 // was lost on both. It merges first (below). A pressed Push
                 // still means "this device's copy", and overwrites.
+                // A changed gist whose manifest gives no order at all — damaged, or
+                // edited by hand — may hold a newer exchange, so it counts as ahead:
+                // the merge then either folds it in or, unable to read it, holds
+                // automatic pushes until someone presses Push
                 isAhead: unattended
                     ? (listed) =>
                           (!merged && Boolean(unapplied)) ||
+                          (Boolean(listed.unordered) && listingMoved(listed, known)) ||
                           isNewer(listed.exportedAt, aheadOf.at, listed.syncSeq, aheadOf.seq)
                     : null,
             });
@@ -1989,6 +1994,24 @@ function gistVersion(gistId, etag, files, current, manifest) {
         // still knows what it was based on
         version: typeof manifest?.version === 'string' ? manifest.version : null,
     };
+}
+
+/**
+ * Whether a gist listing is a different version from the one this device last
+ * saw. Only a matching history version, or failing that a matching ETag, proves
+ * it is the same; with no record to compare against, it may have moved.
+ * @param {{version?: string|null, etag?: string|null}} listed - The fresh listing
+ * @param {{version?: string|null, etag?: string|null}|null} seen - The version record this device holds
+ * @returns {boolean} True unless the listing is provably the version already seen
+ */
+function listingMoved(listed, seen) {
+    if (typeof listed?.version === 'string' && typeof seen?.version === 'string') {
+        return listed.version !== seen.version;
+    }
+    if (typeof listed?.etag === 'string' && listed.etag && typeof seen?.etag === 'string') {
+        return listed.etag !== seen.etag;
+    }
+    return true;
 }
 
 /**

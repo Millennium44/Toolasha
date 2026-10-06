@@ -984,6 +984,36 @@ describe('writeSyncGist', () => {
         expect(calls).toHaveLength(1);
     });
 
+    test('a listing says when the sync data it holds gives no order', async () => {
+        const manifestOf = (content) => ({ [MANIFEST_FILE]: { size: 9, content } });
+        const cases = [
+            // Sync data with no counter and no readable timestamp
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1 })), true],
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1, exportedAt: 'soon', syncSeq: -1 })), true],
+            [manifestOf('{not json'), true],
+            [manifestOf('{}'), true],
+            [{ 'toolasha-data-000.json': { size: 4, content: 'data' } }, true],
+            // An order: a counter, or a timestamp from an older build
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1, syncSeq: 0 })), false],
+            [manifestOf(JSON.stringify({ toolashaSync: 1, chunks: 1, exportedAt: '2026-05-01T00:00:00.000Z' })), false],
+            // A gist this sync never wrote
+            [{ 'notes.txt': { size: 4, content: 'mine' } }, false],
+            [{}, false],
+        ];
+        for (const [files, expected] of cases) {
+            responses.push({ status: 200, body: { files } });
+            responses.push({ status: 200, body: { id: 'abc' } });
+            const seen = [];
+            await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 4, encrypted: { v: 1 } }, ['data'], 0, null, {
+                isAhead: (listed) => {
+                    seen.push(listed);
+                    return false;
+                },
+            });
+            expect(seen[0]?.unordered).toBe(expected);
+        }
+    });
+
     test('a 304 against a version the caller already reflects is never ahead', async () => {
         responses.push({ status: 304, headers: { etag: 'W/"e1"' } });
         responses.push({ status: 200, body: { id: 'abc' } });
