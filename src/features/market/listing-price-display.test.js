@@ -111,6 +111,17 @@ describe('_getTopOrderPrice — fresh undercut over a stale book', () => {
         expect(price).toBe(15_000_000);
     });
 
+    test('a book showing you alone on the side never falls back to the snapshot echoing your own price', () => {
+        ageMock.orderBooksCache[ITEM] = bookWithOwnOnly(true, 920_000, 1000);
+        // The snapshot's ask is your own resting order: it cannot beat you, and must not be shown as a rival
+        const priceCache = new Map([[`${ITEM}:0`, { ask: 920_000, bid: null }]]);
+        marketMock.getPrice.mockReturnValue({ ask: 920_000, bid: null });
+        marketMock.getPriceTimestamp.mockReturnValue(2000);
+
+        const price = listingPriceDisplay._getTopOrderPrice(ITEM, 0, true, priceCache, new Set([1]), 920_000);
+        expect(price).toBeNull();
+    });
+
     test('with no opened book, a snapshot undercut is surfaced directly', () => {
         marketMock.getPrice.mockReturnValue({ ask: null, bid: 17_000_000 });
         marketMock.getPriceTimestamp.mockReturnValue(2000);

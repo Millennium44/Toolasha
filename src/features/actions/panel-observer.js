@@ -27,6 +27,7 @@ import {
 } from '../../utils/game-lookups.js';
 import { onActionTile } from '../../utils/action-panel-helper.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 
 /**
@@ -468,10 +469,7 @@ function autoFillProtectFrom(panel, itemHrid) {
     const protectionItemHrid = getProtectionItemFromUI(panel);
     if (!protectionItemHrid) return;
 
-    const targetLabels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
-    );
-    const targetInput = targetLabels[0]?.parentElement?.querySelector('input[type="number"], input[type="text"]');
+    const targetInput = findEnhancingInput(panel, 'target');
     const targetLevel = targetInput ? parseInt(targetInput.value, 10) : 0;
     if (!targetLevel || targetLevel < 1) return;
 
@@ -481,10 +479,7 @@ function autoFillProtectFrom(panel, itemHrid) {
 
     const optimalProtectFrom = pathResult.optimalStrategy.protectFrom;
 
-    const protectLabels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Protect From Level' && el.children.length === 0
-    );
-    const protectInput = protectLabels[0]?.parentElement?.querySelector('input[type="number"], input[type="text"]');
+    const protectInput = findEnhancingInput(panel, 'protectFrom');
     if (!protectInput) return;
 
     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -615,11 +610,8 @@ async function handleEnhancingPanel(panel) {
     if (panel.dataset.mwiAutoTargetFilledFor !== itemHrid) {
         const autoTargetLevel = config.getSettingValue('enhanceSim_autoTargetLevel', 0);
         if (autoTargetLevel >= 1 && autoTargetLevel <= 20) {
-            const labels = Array.from(panel.querySelectorAll('*')).filter(
-                (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
-            );
-            if (labels.length > 0) {
-                const input = labels[0].parentElement?.querySelector('input[type="number"], input[type="text"]');
+            {
+                const input = findEnhancingInput(panel, 'target');
                 if (input) {
                     const nativeSetter = Object.getOwnPropertyDescriptor(
                         window.HTMLInputElement.prototype,
@@ -657,10 +649,7 @@ async function handleEnhancingPanel(panel) {
     // Re-trigger auto-fill when target level changes (handles race where target level loads after initial auto-fill)
     if (!panel.dataset.mwiAutoProtectTargetListenerAdded) {
         panel.dataset.mwiAutoProtectTargetListenerAdded = 'true';
-        const targetLabels = Array.from(panel.querySelectorAll('*')).filter(
-            (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
-        );
-        const targetInput = targetLabels[0]?.parentElement?.querySelector('input[type="number"], input[type="text"]');
+        const targetInput = findEnhancingInput(panel, 'target');
         if (targetInput) {
             targetInput.addEventListener('change', () => {
                 if (config.getSetting('enhanceSim_autoProtectFrom')) {

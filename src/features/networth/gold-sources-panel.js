@@ -680,6 +680,20 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
         body.appendChild(warning);
     }
 
+    // A merged or resumed session is valued leg by leg; a leg the market cannot price is left out
+    // on its own while the session's other legs are counted
+    const partlyPriced = attribution?.partlyPricedEnhancementSessions || 0;
+    if (partlyPriced > 0) {
+        const warning = document.createElement('div');
+        warning.className = 'mwi-gold-sources-partly-priced';
+        warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
+        warning.textContent =
+            `${partlyPriced} enhancement session${partlyPriced === 1 ? ' was' : 's were'} only partly valued — ` +
+            'one of its runs has no market price at one of its levels and no material cost to fall back to — ' +
+            'so that run is in the residual while the others are in the enhancement row.';
+        body.appendChild(warning);
+    }
+
     // The marketplace row's own version of the same warning: a fill nothing
     // could price never reaches `add()` at all, so it is not short in the row —
     // it is entirely absent from it, and silently so without this line
