@@ -159,7 +159,14 @@ export function getItemPriceInfo(itemHrid, options = {}) {
         }
         const price =
             tickable && source === 'book'
-                ? patientTickPrice(value, side, basis, { ask, bid, itemHrid, enhancementLevel })
+                ? patientTickPrice(value, side, basis, {
+                      ask,
+                      bid,
+                      askEstimated: askSource === 'value',
+                      bidEstimated: bidSource === 'value',
+                      itemHrid,
+                      enhancementLevel,
+                  })
                 : value;
         return { price, source, estimated: source === 'value' };
     };
