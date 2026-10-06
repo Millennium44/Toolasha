@@ -728,22 +728,30 @@ describe('extractPlayerAttacks — bleed chains and parry counters', () => {
         expect(byAbility.unattributed).toBeUndefined();
     });
 
-    test('a monster buff cast is not evidence of a parry', () => {
+    test('a monster buff cast is not evidence of a parry (the swing belongs to the ability prepared a tick earlier)', () => {
+        // Wire shape: precision is prepared on tick 1000; the counter advances on
+        // tick 2000, by which time abilityHrid already advertises the NEXT action.
+        const p = { atkCounter: 41, isAutoAtk: true, dmgCounter: 19, cHP: 66 };
         const ticks = [
-            both(
-                0,
-                { atkCounter: 41, isAutoAtk: true, dmgCounter: 19, cHP: 66 },
-                { atkCounter: 22, dmgCounter: 43, cHP: 3386 }
-            ),
-            both(
-                1000,
-                { atkCounter: 41, isAutoAtk: true, dmgCounter: 19, cHP: 66 },
-                { atkCounter: 23, abilityHrid: '/abilities/precision', dmgCounter: 44, cHP: 3277 }
-            ),
+            both(0, p, { atkCounter: 22, isAutoAtk: true, dmgCounter: 43, cHP: 3386 }),
+            both(1000, p, { atkCounter: 22, abilityHrid: '/abilities/precision', dmgCounter: 43, cHP: 3386 }),
+            both(2000, p, { atkCounter: 23, abilityHrid: '/abilities/flame_arrow', dmgCounter: 44, cHP: 3277 }),
         ];
         const { byAbility } = extractPlayerAttacks(ticks, { monsterNonDamaging: new Set(['/abilities/precision']) });
         expect(byAbility.parry).toBeUndefined();
         expect(byAbility.unattributed).toMatchObject({ hits: 1, damage: 109 });
+    });
+
+    test('a damaging monster swing completing on a tick that advertises a buff is still parry evidence', () => {
+        const p = { atkCounter: 41, isAutoAtk: true, dmgCounter: 19, cHP: 66 };
+        const ticks = [
+            both(0, p, { atkCounter: 22, isAutoAtk: true, dmgCounter: 43, cHP: 3386 }),
+            both(1000, p, { atkCounter: 22, abilityHrid: '/abilities/flame_arrow', dmgCounter: 43, cHP: 3386 }),
+            // the flame arrow swing completes; the NEXT action advertised is precision
+            both(2000, p, { atkCounter: 23, abilityHrid: '/abilities/precision', dmgCounter: 44, cHP: 3277 }),
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks, { monsterNonDamaging: new Set(['/abilities/precision']) });
+        expect(byAbility.parry).toMatchObject({ hits: 1, damage: 109 });
     });
 
     test('the DoT row compares bleed ticks only; parry matches the sim parry row; unattributed is never graded', () => {

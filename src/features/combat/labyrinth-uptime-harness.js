@@ -152,6 +152,9 @@ function extractAttacks(ticks, opts) {
     let hitLog = [];
     let chains = [];
     let prevMonAtk;
+    // What the monster was preparing on the previous tick — the ability the swing
+    // that completes now belongs to (the same timing `prevLabel` reads).
+    let prevMonLabel;
     let prevPlayerDmg;
     let parryBalance = 0;
     let parryBalanceAt = 0;
@@ -165,6 +168,7 @@ function extractAttacks(ticks, opts) {
         hitLog = [];
         chains = [];
         prevMonAtk = undefined;
+        prevMonLabel = undefined;
         prevPlayerDmg = undefined;
         parryBalance = 0;
     };
@@ -352,6 +356,7 @@ function extractAttacks(ticks, opts) {
                 current.lastMHP = Number(startMonster.currentHitpoints);
             }
             if (playerAttacks) {
+                if (startMonster?.preparingAbilityHrid) prevMonLabel = startMonster.preparingAbilityHrid;
                 if (Number.isFinite(Number(startMonster?.attackAttemptCounter))) {
                     prevMonAtk = Number(startMonster.attackAttemptCounter);
                 }
@@ -426,13 +431,15 @@ function extractAttacks(ticks, opts) {
                 if (Number.isFinite(at) && at - parryBalanceAt > PARRY_WINDOW_MS) parryBalance = 0;
                 if (prevMonAtk !== undefined && Number.isFinite(monAtk) && prevPlayerDmg !== undefined) {
                     let swings = Math.max(0, monAtk - prevMonAtk);
-                    if (swings > 0 && monster.abilityHrid && monsterNonDamaging.has(monster.abilityHrid)) swings -= 1;
+                    if (swings > 0 && prevMonLabel && monsterNonDamaging.has(prevMonLabel)) swings -= 1;
                     const splats = Number.isFinite(plDmg) ? Math.max(0, plDmg - prevPlayerDmg) : 0;
                     parryBalance = Math.max(0, parryBalance + swings - splats);
                     if (swings > 0 && Number.isFinite(at)) parryBalanceAt = at;
                 }
                 if (Number.isFinite(monAtk)) prevMonAtk = monAtk;
                 if (Number.isFinite(plDmg)) prevPlayerDmg = plDmg;
+                if (monster.abilityHrid) prevMonLabel = monster.abilityHrid;
+                else if (monster.isAutoAtk) prevMonLabel = 'autoAttack';
             }
             // The attacks that actually connected this tick, from the exact
             // counter. Each pays off the oldest pending swing. A resolution with
