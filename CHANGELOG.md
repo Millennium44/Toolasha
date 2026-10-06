@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Monster stat check files bleeds and parry counters correctly
+
+- The stat check's uptime table no longer lumps parry counter-attacks and stray ticks into your damage-over-time row: bleed ticks are matched to the maim hit that started them, parry counters go to their own row (the one the sim reports), and anything left unexplained shows as an ungraded "unattributed" row instead of making the sim look wrong.
+
 ### Leaderboard Next board shows how stale the oldest board is
 
 - The Next board bar now shows the oldest board's age inline ("24/24 boards cached · oldest 1d 18h"), and Steam tabs count boards across reloads — from the badge cache when Steam badges are on, otherwise from the leaderboard XP tracker's history — instead of only those opened since the game loaded.
