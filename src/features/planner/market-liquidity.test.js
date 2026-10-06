@@ -502,6 +502,27 @@ describe('bounding a whole ranking', () => {
         expect(mystery.goldPerHour).toBe(9_000_000);
     });
 
+    test('an unmeasured co-product is marked even when a measured output already limits the rate', async () => {
+        history.rows['/items/milk'] = tradedAt(10);
+
+        const { rates } = await applyLiquidityLimits([
+            {
+                label: 'Milk and Mystery',
+                goldPerHour: 12_400_000,
+                sells: [
+                    { itemHrid: '/items/milk', unitsPerHour: 400 },
+                    { itemHrid: '/items/mystery', unitsPerHour: 10 },
+                ],
+            },
+        ]);
+
+        const kinds = rates[0].limits.map((limit) => limit.kind);
+        expect(kinds).toContain('volume');
+        expect(rates[0].limits).toContainEqual(
+            expect.objectContaining({ kind: 'unmeasured', itemHrid: '/items/mystery' })
+        );
+    });
+
     test('a run where nothing could be measured says so, and changes nothing', async () => {
         const original = [
             { label: 'Milk a Cow', goldPerHour: 12_400_000, sells: [{ itemHrid: '/items/milk', unitsPerHour: 400 }] },

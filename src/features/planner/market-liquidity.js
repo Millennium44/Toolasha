@@ -465,9 +465,9 @@ async function prefetchVolumes(rates) {
 /**
  * Mark a rate whose sold outputs include one with no volume measurement.
  *
- * Only a rate that was not already cut by a volume limit is marked — a rate with a `volume` limit
- * has said what bound it. The rate is copied, never edited, for the reason {@link applySellLimit}
- * gives.
+ * A rate cut by a measured output's `volume` limit is still marked when a co-product went unmeasured:
+ * the measured limit says nothing about the other output's market. The rate is copied, never edited,
+ * for the reason {@link applySellLimit} gives.
  *
  * @param {Object} rate - A bounded gold rate
  * @returns {Object} The rate, with an `unmeasured` limit when one of its outputs was not checked
@@ -484,8 +484,6 @@ function markUnmeasured(rate) {
 /** @param {Object} rate - See {@link markUnmeasured} @returns {Object} The rate, marked or not */
 function markUnmeasuredUnsafe(rate) {
     const sells = Array.isArray(rate?.sells) ? rate.sells : [];
-    if ((rate.limits || []).some((limit) => limit?.kind === 'volume')) return rate;
-
     const unmeasured = sells.find(
         (sold) =>
             sold?.itemHrid &&
