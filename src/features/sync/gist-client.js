@@ -596,9 +596,13 @@ function fileSizes(files) {
  */
 function listedManifest(files) {
     const file = files?.[MANIFEST_FILE];
-    // No manifest at all is a gist this sync never wrote: nothing in it can be encrypted. A manifest
-    // that is there but unreadable leaves the encryption unknown, which the push treats as unsafe.
-    if (files && !file) return { syncSeq: null, encrypted: false };
+    // No manifest and no sync chunks is a gist this sync never wrote: nothing in it can be encrypted.
+    // Sync chunks without a manifest are an encrypted gist whose manifest was deleted, so the encryption
+    // is unknown, as it is for a manifest that is there but unreadable; the push treats both as unsafe.
+    if (files && !file) {
+        const hasChunks = Object.keys(files).some((name) => chunkIndexFromName(name) !== null);
+        return { syncSeq: null, encrypted: hasChunks ? null : false };
+    }
     if (!file || file.truncated || typeof file.content !== 'string') return { syncSeq: null, encrypted: null };
     try {
         const manifest = JSON.parse(file.content);
