@@ -858,6 +858,43 @@ describe('self-use alchemy lines', () => {
         );
     });
 
+    test('a partial alchemy profit is a floor and sorts after complete rows', async () => {
+        alchemyState.profits = {
+            decompose: { ...cheeseSwordDecompose(), profitPerHour: 9000, unpricedOutputs: ['/items/cheese'] },
+            coinify: { ...cheeseSwordDecompose(), actionType: 'coinify', profitPerHour: 100 },
+            transmute: {
+                ...cheeseSwordDecompose(),
+                actionType: 'transmute',
+                profitPerHour: 50,
+                hasMissingPrices: true,
+            },
+        };
+        const text = (await blockFor('/items/cheese_sword')).textContent;
+        expect(text).toContain('Decompose: ≥ 9.0K/hr (unpriced output)');
+        // An unpriced tea is left out as a cost, so its profit is a ceiling, not a floor
+        expect(text).toContain('Transmute: ≤ 50/hr (unpriced tea)');
+        expect(text).toContain('Coinify: 100/hr');
+        expect(text).not.toContain('Coinify: ≥');
+        expect(text.indexOf('Coinify')).toBeLessThan(text.indexOf('Decompose'));
+        expect(text.indexOf('Decompose')).toBeLessThan(text.indexOf('Transmute'));
+    });
+
+    test('an alchemy profit missing both an output and a tea price claims no bound', async () => {
+        alchemyState.profits = {
+            decompose: {
+                ...cheeseSwordDecompose(),
+                profitPerHour: 9000,
+                unpricedOutputs: ['/items/cheese'],
+                hasMissingPrices: true,
+            },
+        };
+        const text = (await blockFor('/items/cheese_sword')).textContent;
+        expect(text).toContain('Decompose: ~ 9.0K/hr (unpriced output and tea)');
+        // The per-action figure comes from the same incomplete total and is qualified the same way
+        expect(text).toContain('(~ -5/action)');
+        expect(text).not.toContain('≥');
+    });
+
     test('the setting on adds the labelled self-use line and its footnote', async () => {
         settings.selfUseAlchemy = true;
         alchemyState.profits = { decompose: cheeseSwordDecompose() };

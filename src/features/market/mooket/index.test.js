@@ -102,7 +102,7 @@ vi.mock('./market-history-api.js', () => ({
     },
 }));
 
-const { default: panel, gameModalIsOpen, splitLegacyWatchlist } = await import('./index.js');
+const { default: panel, gameModalIsOpen, splitLegacyWatchlist, ingestMarketSnapshot } = await import('./index.js');
 const { _resetAdoptionCache } = await import('../../../utils/character-key.js');
 
 const settings = () => storageMock.storeFor('settings');
@@ -443,5 +443,26 @@ describe('the per-tick modal check reads the watched set, not the document', () 
         panel.followMarketplace();
 
         expect(panel.pinButton.style.display).toBe('none');
+    });
+});
+
+describe('ingestMarketSnapshot', () => {
+    test('stamps the snapshot with when it was taken, not when it was read', () => {
+        const store = { ingestSnapshot: vi.fn() };
+        const data = { '/items/plank': { 0: { a: 50, b: 40 } } };
+        const takenAt = Date.now() - 14 * 60 * 1000;
+
+        ingestMarketSnapshot(store, { marketData: data, lastFetchTimestamp: takenAt });
+
+        expect(store.ingestSnapshot).toHaveBeenCalledWith(data, takenAt);
+    });
+
+    test('falls back to now only when the snapshot carries no time', () => {
+        const store = { ingestSnapshot: vi.fn() };
+        const before = Date.now();
+
+        ingestMarketSnapshot(store, { marketData: {}, lastFetchTimestamp: null });
+
+        expect(store.ingestSnapshot.mock.calls[0][1]).toBeGreaterThanOrEqual(before);
     });
 });

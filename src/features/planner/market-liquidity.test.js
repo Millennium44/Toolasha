@@ -482,6 +482,47 @@ describe('bounding a whole ranking', () => {
         expect(rates.map((rate) => rate.label)).toEqual(['Milk a Cow', 'Decompose Master Tailoring Charm']);
     });
 
+    test('a rate whose output has no volume is marked when others were measured, not left looking checked', async () => {
+        history.rows['/items/milk'] = tradedAt(50_000);
+
+        const { rates, measured } = await applyLiquidityLimits([
+            { label: 'Milk a Cow', goldPerHour: 12_400_000, sells: [{ itemHrid: '/items/milk', unitsPerHour: 400 }] },
+            {
+                label: 'Brew Mystery',
+                goldPerHour: 9_000_000,
+                sells: [{ itemHrid: '/items/mystery', unitsPerHour: 10 }],
+            },
+        ]);
+
+        expect(measured).toBe(true);
+        const milk = rates.find((rate) => rate.label === 'Milk a Cow');
+        const mystery = rates.find((rate) => rate.label === 'Brew Mystery');
+        expect(milk.limits).toBeUndefined();
+        expect(mystery.limits).toEqual([expect.objectContaining({ kind: 'unmeasured', itemHrid: '/items/mystery' })]);
+        expect(mystery.goldPerHour).toBe(9_000_000);
+    });
+
+    test('an unmeasured co-product is marked even when a measured output already limits the rate', async () => {
+        history.rows['/items/milk'] = tradedAt(10);
+
+        const { rates } = await applyLiquidityLimits([
+            {
+                label: 'Milk and Mystery',
+                goldPerHour: 12_400_000,
+                sells: [
+                    { itemHrid: '/items/milk', unitsPerHour: 400 },
+                    { itemHrid: '/items/mystery', unitsPerHour: 10 },
+                ],
+            },
+        ]);
+
+        const kinds = rates[0].limits.map((limit) => limit.kind);
+        expect(kinds).toContain('volume');
+        expect(rates[0].limits).toContainEqual(
+            expect.objectContaining({ kind: 'unmeasured', itemHrid: '/items/mystery' })
+        );
+    });
+
     test('a run where nothing could be measured says so, and changes nothing', async () => {
         const original = [
             { label: 'Milk a Cow', goldPerHour: 12_400_000, sells: [{ itemHrid: '/items/milk', unitsPerHour: 400 }] },

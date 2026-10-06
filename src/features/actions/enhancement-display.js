@@ -26,6 +26,7 @@ import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -187,22 +188,30 @@ export async function displayEnhancementStats(panel, itemHrid) {
  * second base item out, so the mirror always looked one base item cheaper than it is. And each
  * route's inputs are the cheapest way to hold them, mirrored or not, so the saving compounds.
  *
+ * The summary (start level and savings) stops at `toLevel`, the player's target: a saving quoted
+ * to +20 is a figure for a level almost nobody reaches. Each level's route depends only on the
+ * levels below it, so the per-level entries are the same whatever the cap.
+ *
  * @param {number[]} costs - Total Cost column: index L-1 is the cost to climb a held +0 to +L
  * @param {number} basePrice - What one base item costs
  * @param {number} mirrorPrice - What one Philosopher's Mirror costs
+ * @param {number} [toLevel] - Level the summary is taken to (default: the last level in `costs`)
  * @returns {{levels: Array<{mirrorCost: number|null, isMirrorCheaper: boolean}|undefined>,
- *   mirrorStartLevel: number|null, totalSavings: number}} `levels` is indexed like `costs`;
- *   `mirrorCost` is on the Total Cost column's footing (the held base item not counted), and
- *   null when the base item or the mirror has no price — a route missing one of its inputs
- *   would be quoted too cheap, which is worse than no quote
+ *   mirrorStartLevel: number|null, totalSavings: number, toLevel: number,
+ *   savingsLevel: number|null}} `levels` is indexed like `costs`; `mirrorCost` is on the Total
+ *   Cost column's footing (the held base item not counted), and null when the base item or the
+ *   mirror has no price — a route missing one of its inputs would be quoted too cheap, which is
+ *   worse than no quote. `mirrorStartLevel` and `totalSavings` cover levels up to `toLevel` only;
+ *   `totalSavings` is the saving at `savingsLevel`, the highest mirror-cheaper level up to it
  */
-export function mirrorCostColumn(costs, basePrice, mirrorPrice) {
+export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.length) {
+    const cap = Number.isFinite(toLevel) ? Math.max(1, Math.min(costs.length, Math.floor(toLevel))) : costs.length;
     const levels = new Array(costs.length);
     if (!(basePrice > 0) || !(mirrorPrice > 0)) {
         for (let level = 3; level <= costs.length; level++) {
             levels[level - 1] = { mirrorCost: null, isMirrorCheaper: false };
         }
-        return { levels, mirrorStartLevel: null, totalSavings: 0 };
+        return { levels, mirrorStartLevel: null, totalSavings: 0, toLevel: cap };
     }
     // best[L]: the cheapest way to hold a +L, its base item included
     const best = [basePrice];
@@ -217,14 +226,21 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice) {
         levels[level - 1] = { mirrorCost, isMirrorCheaper };
         if (isMirrorCheaper) {
             best[level] = mirrorCost + basePrice;
-            if (mirrorStartLevel === null) mirrorStartLevel = level;
+            if (mirrorStartLevel === null && level <= cap) mirrorStartLevel = level;
         }
     }
 
-    const last = costs.length - 1;
-    const totalSavings =
-        mirrorStartLevel !== null && levels[last] ? costs[last] - Math.min(costs[last], levels[last].mirrorCost) : 0;
-    return { levels, mirrorStartLevel, totalSavings };
+    // Quoted at the highest mirror-cheaper level up to the cap. At the cap itself the mirror may be
+    // dearer even though it is cheaper below it, and the saving there would read as zero.
+    let savingsLevel = null;
+    for (let level = cap; level >= 3; level--) {
+        if (levels[level - 1]?.isMirrorCheaper) {
+            savingsLevel = level;
+            break;
+        }
+    }
+    const totalSavings = savingsLevel !== null ? costs[savingsLevel - 1] - levels[savingsLevel - 1].mirrorCost : 0;
+    return { levels, mirrorStartLevel, totalSavings, toLevel: cap, savingsLevel };
 }
 
 /**
@@ -235,9 +251,12 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice) {
  * @param {number} protectFromLevel - Protection level from UI
  * @param {Array} enhancementCosts - Array of {itemHrid, count} for materials
  * @param {string|null} protectionItemHrid - Protection item HRID (cached, avoid repeated DOM queries)
+ * @param {number} perActionTime - Seconds per attempt
+ * @param {number|null} targetLevel - The panel's Target Level; the mirror banner and summary stop
+ *   there (+20 when it cannot be read)
  * @returns {{html: string, mirrorSummary: {priced: boolean, mirrorStartLevel: number|null,
- *   totalSavings: number, isPhilosopherMirror: boolean}}} The table, and the Philosopher's
- *   Mirror route against its Total Cost column whatever the slot holds
+ *   totalSavings: number, targetLevel: number, isPhilosopherMirror: boolean}}} The table, and the
+ *   Philosopher's Mirror route against its Total Cost column whatever the slot holds
  */
 function generateCostsByLevelTable(
     panel,
@@ -246,7 +265,8 @@ function generateCostsByLevelTable(
     protectFromLevel,
     enhancementCosts,
     protectionItemHrid,
-    perActionTime
+    perActionTime,
+    targetLevel
 ) {
     const lines = [];
     const gameData = dataManager.getInitClientData();
@@ -394,10 +414,13 @@ function generateCostsByLevelTable(
     };
     const mirrorPrice = askOf('/items/philosophers_mirror');
     const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
+    // The banner and the sweep's mirror line quote the route to the player's target, not +20
+    const summaryTo = targetLevel >= 1 && targetLevel <= 20 ? targetLevel : 20;
     const column = mirrorCostColumn(
         costData.map((data) => data.mirrorFootingCost),
         basePrice,
-        mirrorPrice
+        mirrorPrice,
+        summaryTo
     );
     if (isPhilosopherMirror) {
         column.levels.forEach((entry, index) => {
@@ -413,9 +436,13 @@ function generateCostsByLevelTable(
         priced: basePrice > 0 && mirrorPrice > 0,
         // Not always one run from the start level: a protect-from threshold or a success-rate
         // bracket can make the mirror dearer at a level between two where it is cheaper
-        cheaperLevels: column.levels.flatMap((entry, index) => (entry?.isMirrorCheaper ? [index + 1] : [])),
+        cheaperLevels: column.levels.flatMap((entry, index) =>
+            entry?.isMirrorCheaper && index + 1 <= column.toLevel ? [index + 1] : []
+        ),
         mirrorStartLevel,
         totalSavings,
+        targetLevel: column.toLevel,
+        savingsLevel: column.savingsLevel,
         isPhilosopherMirror,
     };
 
@@ -431,7 +458,7 @@ function generateCostsByLevelTable(
             `<div style="color: #fff; font-size: 0.85em; margin-top: 4px;">• Use mirrors starting at <strong>+${mirrorStartLevel}</strong></div>`
         );
         lines.push(
-            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +20: <strong>${formatLargeNumber(Math.round(totalSavings))}</strong> coins</div>`
+            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +${column.savingsLevel ?? column.toLevel}: <strong>${formatLargeNumber(Math.round(totalSavings))}</strong> coins</div>`
         );
         lines.push(
             `<div style="color: #aaa; font-size: 0.75em; margin-top: 4px; font-style: italic;">Rows highlighted in gold show where mirror is cheaper</div>`
@@ -560,18 +587,12 @@ function generateCostsByLevelTable(
  * @returns {number} Protect from level (0 = never, 1-20)
  */
 export function getProtectFromLevelFromUI(panel) {
-    // Find the "Protect From Level" input
-    const labels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Protect From Level' && el.children.length === 0
-    );
-
-    if (labels.length > 0) {
-        const parent = labels[0].parentElement;
-        const input = parent.querySelector('input[type="number"], input[type="text"]');
-        if (input && input.value) {
-            const value = parseInt(input.value, 10);
-            return Math.max(0, Math.min(20, value)); // Clamp 0-20
-        }
+    // Found by the panel's structure as well as its English label: a translated client has no
+    // "Protect From Level" text to match
+    const input = findEnhancingInput(panel, 'protectFrom');
+    if (input && input.value) {
+        const value = parseInt(input.value, 10);
+        if (!Number.isNaN(value)) return Math.max(0, Math.min(20, value)); // Clamp 0-20
     }
 
     return 0; // Default to never protect
@@ -583,11 +604,9 @@ export function getProtectFromLevelFromUI(panel) {
  * @returns {number|null} Target level 1-20, or null when the input is absent or empty
  */
 export function getTargetLevelFromUI(panel) {
-    const labels = Array.from(panel.querySelectorAll('*')).filter(
-        (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
-    );
-    if (labels.length === 0) return null;
-    const input = labels[0].parentElement?.querySelector('input[type="number"], input[type="text"]');
+    // Found by the panel's structure as well as its English label: a translated client has no
+    // "Target Level" text to match, and the mirror summary then fell back to +20
+    const input = findEnhancingInput(panel, 'target');
     if (!input || !input.value) return null;
     const value = parseInt(input.value, 10);
     if (Number.isNaN(value)) return null;
@@ -861,19 +880,22 @@ function levelRanges(levels) {
 }
 
 /**
- * The Philosopher's Mirror line set beside the protect-from plans.
+ * The Philosopher's Mirror line set beside the protect-from plans. Quoted to the panel's target
+ * level, and left out entirely when mirrors are not cheaper at any level up to it.
  * @param {{priced: boolean, cheaperLevels?: number[], mirrorStartLevel: number|null,
- *   totalSavings: number}|null} summary
+ *   totalSavings: number, targetLevel?: number, savingsLevel?: number|null}|null} summary - The
+ *   saving is quoted at `savingsLevel`, the highest mirror-cheaper level up to the target
  * @param {function(number): string} coins - Coin formatter
- * @returns {string} HTML, '' without a summary
+ * @returns {string} HTML; '' without a summary, or when no level up to the target is mirror-cheaper
  */
 export function mirrorSummaryLine(summary, coins) {
     if (!summary) return '';
+    const toLevel = summary.savingsLevel || summary.targetLevel || 20;
     let text;
     if (!summary.priced) {
         text = "Philosopher's Mirror: no quote — the base item or the mirror has no market price.";
     } else if (summary.mirrorStartLevel === null) {
-        text = "Philosopher's Mirror: never cheaper than enhancing up to +20.";
+        return '';
     } else {
         const levels = summary.cheaperLevels || [];
         const contiguous = levels.length > 0 && levels.every((level, i) => level === levels[0] + i);
@@ -881,7 +903,7 @@ export function mirrorSummaryLine(summary, coins) {
             contiguous || levels.length === 0
                 ? `use mirrors starting at <strong>+${summary.mirrorStartLevel}</strong>`
                 : `mirrors are cheaper at <strong>${levelRanges(levels)}</strong>`;
-        text = `Philosopher's Mirror: ${where} — saves <strong>${coins(summary.totalSavings)}</strong> to +20.`;
+        text = `Philosopher's Mirror: ${where} — saves <strong>${coins(summary.totalSavings)}</strong> to +${toLevel}.`;
     }
     return (
         '<div class="mwi-protsweep-mirror" style="color:#FFD700; font-size:0.8em; margin-top:2px;" ' +
@@ -1447,7 +1469,8 @@ function formatEnhancementDisplay(
         protectFromLevel,
         enhancementCosts,
         protectionItemHrid,
-        perActionTime
+        perActionTime,
+        targetLevelForPanel
     );
     lines.push(costsByLevel.html);
     lines.push(testerRouteHTML(itemDetails));

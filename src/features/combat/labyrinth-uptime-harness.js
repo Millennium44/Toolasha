@@ -42,6 +42,31 @@
  * {@link extractPlayerAttacks} pick the roles.
  */
 
+/** The pseudo-ability both sides file damage-over-time under (see its note further down) */
+const DOT_ABILITY = 'damageOverTime';
+/** The sim's name for the player's counter-attack after parrying a swing */
+const PARRY_ABILITY = 'parry';
+const AUTO_ABILITY = 'autoAttack';
+/**
+ * Boss damage no swing, bleed or parry accounts for. The sim has no such row,
+ * so it is shown but never compared and never counted in the share totals.
+ */
+export const UNATTRIBUTED_ABILITY = 'unattributed';
+/**
+ * Reflected damage the sim records (thorns, retaliation). The wire gives no way
+ * to tell a reflect tick from other damage, so these rows are shown but never
+ * graded and left out of the share totals — the same way `unattributed` is on
+ * the real side — keeping both sides' denominators to damage that can be read.
+ */
+const REFLECT_ABILITIES = new Set(['physicalThorns', 'elementalThorns', 'retaliation']);
+/** A bleed ticks three times, three seconds apart (the sim's DOT_TICK_INTERVAL) */
+const BLEED_TICKS = 3;
+const BLEED_INTERVAL_MS = 3000;
+/** The capture stamps ticks when the client saw them, so allow for a late one */
+const BLEED_TOLERANCE_MS = 400;
+/** How long an unanswered monster swing stays evidence of a parry */
+const PARRY_WINDOW_MS = 700;
+
 /**
  * Extract one side's outgoing attacks (the other side's incoming damage) from a
  * tick-capture tick list.
@@ -72,7 +97,11 @@
  *   hrids that deal no damage (buffs, heals, debuffs) — counted as casts but
  *   never credited damage; `playerAttacks` picks the direction — false reads
  *   the monster's swings paid off by the player's dmgCounter, true the
- *   player's swings paid off by the monster's.
+ *   player's swings paid off by the monster's. Outgoing only: `dotAbilities`
+ *   is a Map of the player's DoT-applying abilities to `{ratio, ticks}` (a Set
+ *   of hrids reads as plain 3-tick bleeds),
+ *   and `monsterNonDamaging` a Set of the monster's non-damaging ability hrids
+ *   (they cannot be parried, so they are not evidence of a parry)
  * @returns {{durationMs: number, fights: number, partialFights: number,
  *   captureStartedMidFight: boolean, attempts: Array<Object>, byAbility: Object}}
  *   `byAbility[ability] = {casts, hits, misses, damage, samples: number[]}`,
@@ -122,6 +151,39 @@ function extractAttacks(ticks, opts) {
     // Swings awaiting their resolution, oldest first — each holds the ability the
     // attacker was preparing when it swung.
     const pending = [];
+    // The player's DoT-applying abilities, each with the share of the hit one bleed
+    // tick takes (damageOverTimeRatio / ticks) and its tick count. A Set (no
+    // game data) means a plain 3-tick, third-per-tick bleed. With none equipped,
+    // no damage is ever read as a bleed.
+    const dotCandidates = [];
+    if (opts.dotAbilities instanceof Map) {
+        for (const [name, d] of opts.dotAbilities) {
+            const ticks = Math.max(1, Math.round(Number(d?.ticks) || BLEED_TICKS));
+            const ratio = Number(d?.ratio) > 0 ? Number(d.ratio) : 1;
+            dotCandidates.push({ name, frac: ratio / ticks, ticks });
+        }
+    } else if (opts.dotAbilities instanceof Set) {
+        for (const name of opts.dotAbilities) dotCandidates.push({ name, frac: 1 / BLEED_TICKS, ticks: BLEED_TICKS });
+    }
+    const dotNames = new Set(dotCandidates.map((c) => c.name));
+    const monsterNonDamaging = opts.monsterNonDamaging instanceof Set ? opts.monsterNonDamaging : new Set();
+
+    // Outgoing direction only — the monster's damage taken from sources that
+    // are not a queued swing of the player's. Resolved hits seen recently (a
+    // bleed's possible source), bleed chains in flight, and the parried swings
+    // the monster's counters and the player's dmgCounter imply.
+    let hitLog = [];
+    let chains = [];
+    let prevMonAtk;
+    // What the monster was preparing on the previous tick — the ability the swing
+    // that completes now belongs to (the same timing `prevLabel` reads).
+    let prevMonLabel;
+    let prevPlayerDmg;
+    let parryBalance = 0;
+    let parryBalanceAt = 0;
+    // Whether the swing behind the parry credit was an ordinary one (the sim files
+    // its counter under autoAttack) or an ability (under parry)
+    let parryWasAbility = false;
 
     const resetBaselines = () => {
         prevAtk = undefined;
@@ -129,6 +191,12 @@ function extractAttacks(ticks, opts) {
         prevDefHP = undefined;
         prevDefDmg = undefined;
         pending.length = 0;
+        hitLog = [];
+        chains = [];
+        prevMonAtk = undefined;
+        prevMonLabel = undefined;
+        prevPlayerDmg = undefined;
+        parryBalance = 0;
     };
 
     // The attempt being accumulated, and the ones already closed. The first
@@ -160,6 +228,156 @@ function extractAttacks(ticks, opts) {
     const unitAt = (units, index) => {
         if (Array.isArray(units)) return units[Number(index)];
         return units ? units[index] : undefined;
+    };
+
+    /** Remove a row a relabel just emptied, so no all-zero row is reported. */
+    const dropIfEmpty = (ability, r) => {
+        if (!r.casts && !r.hits && !r.misses && byAbility[ability] === r) delete byAbility[ability];
+    };
+
+    /** One resolved tick on a tick-counted row: a hit with its damage, or a miss. */
+    const fileTick = (r, per) => {
+        if (per > 0) {
+            r.hits += 1;
+            r.damage += per;
+            r.samples.push(per);
+        } else {
+            r.misses += 1;
+        }
+    };
+
+    /**
+     * Move a hit already filed under another label to the DoT-applying ability:
+     * the game labels some maim casts as auto-attacks, and the bleed that follows
+     * is what gives them away. Only done when one DoT ability alone fits the
+     * bleed's size; abilities that cannot be told apart leave the hit where it was.
+     */
+    const relabelAsDotCast = (hit, name) => {
+        if (!name || dotNames.has(hit.label)) return;
+        const from = hit.rec;
+        const to = rec(name);
+        if (from.casts > 0) from.casts -= 1;
+        from.hits = Math.max(0, from.hits - 1);
+        from.damage -= hit.dmg;
+        const at = from.samples.lastIndexOf(hit.dmg);
+        if (at >= 0) from.samples.splice(at, 1);
+        to.casts += 1;
+        to.hits += 1;
+        to.damage += hit.dmg;
+        to.samples.push(hit.dmg);
+        dropIfEmpty(hit.label, from);
+        hit.label = name;
+        hit.rec = to;
+    };
+
+    /**
+     * File a damage tick on the monster that no queued player swing accounts
+     * for. In order: a bleed tick (the chain of three 3 s apart, each a third
+     * of the maim hit that started it), a parry counter-attack (the sim's own
+     * `parry` row), else `unattributed` — kept apart so it is never compared.
+     */
+    const fileUnexplained = (per, at) => {
+        if (dotCandidates.length && per > 0 && Number.isFinite(at)) {
+            hitLog = hitLog.filter((h) => at - h.at <= BLEED_INTERVAL_MS + BLEED_TOLERANCE_MS);
+            chains = chains.filter((c) => at - c.lastAt <= BLEED_INTERVAL_MS + BLEED_TOLERANCE_MS);
+            const chain = chains.find(
+                (c) =>
+                    Math.abs(at - c.lastAt - BLEED_INTERVAL_MS) <= BLEED_TOLERANCE_MS &&
+                    Math.abs(per - c.per) <= Math.max(2, 0.03 * c.per)
+            );
+            if (chain) {
+                chain.lastAt = at;
+                chain.n += 1;
+                if (chain.n >= chain.ticks) chains.splice(chains.indexOf(chain), 1);
+                fileTick(rec(DOT_ABILITY), per);
+                return;
+            }
+            // A tick with parry evidence this tick is the counter, not the first tick
+            // of a new bleed: only a chain already established by earlier ticks (above)
+            // keeps precedence over it.
+            const startsChain = parryBalance === 0;
+            let source = null;
+            let fits = [];
+            for (const h of startsChain ? hitLog : []) {
+                if (h.used || Math.abs(at - h.at - BLEED_INTERVAL_MS) > BLEED_TOLERANCE_MS) continue;
+                // Only a hit the game could have mislabeled can be a bleed's source. One
+                // filed under an explicitly named non-DoT ability (a Cleave) is never
+                // rewritten, and a tick whose only timing match is such a hit stays
+                // unattributed rather than being taken as a bleed on weak evidence.
+                if (h.label !== AUTO_ABILITY && h.label !== UNATTRIBUTED_ABILITY && !dotNames.has(h.label)) continue;
+                const matching = dotCandidates.filter(
+                    (cand) => Math.abs(per - h.dmg * cand.frac) <= Math.max(3, 0.02 * h.dmg) * cand.frac
+                );
+                if (!matching.length) continue;
+                const err = Math.abs(per - h.dmg * matching[0].frac);
+                if (!source || err < source.err) {
+                    source = { h, err };
+                    fits = matching;
+                }
+            }
+            if (source) {
+                const hit = source.h;
+                hit.used = true;
+                // Relabel only when exactly one DoT ability's bleed fits this size
+                const distinct = new Set(fits.map((f) => f.name));
+                if (distinct.size === 1) relabelAsDotCast(hit, fits[0].name);
+                chains.push({
+                    per: per,
+                    lastAt: at,
+                    n: 1,
+                    ticks: Math.max(...fits.map((f) => f.ticks)),
+                });
+                fileTick(rec(DOT_ABILITY), per);
+                return;
+            }
+        }
+        if (dotCandidates.length && parryBalance === 0 && per > 0 && Number.isFinite(at)) {
+            // A bleed whose source hit was never seen (a gap in the capture, a
+            // merged tick): its first tick is still unexplained, so the second
+            // — the same damage exactly three seconds on — proves both.
+            const first = hitLog.find(
+                (h) =>
+                    h.label === UNATTRIBUTED_ABILITY &&
+                    !h.used &&
+                    Math.abs(at - h.at - BLEED_INTERVAL_MS) <= BLEED_TOLERANCE_MS &&
+                    Math.abs(per - h.dmg) <= Math.max(2, 0.03 * per)
+            );
+            if (first) {
+                first.used = true;
+                first.label = DOT_ABILITY;
+                const from = first.rec;
+                from.hits = Math.max(0, from.hits - 1);
+                from.damage -= first.dmg;
+                const idx = from.samples.lastIndexOf(first.dmg);
+                if (idx >= 0) from.samples.splice(idx, 1);
+                dropIfEmpty(UNATTRIBUTED_ABILITY, from);
+                fileTick(rec(DOT_ABILITY), first.dmg);
+                chains.push({
+                    per: first.dmg,
+                    lastAt: at,
+                    n: 2,
+                    ticks: Math.max(...dotCandidates.map((cand) => cand.ticks)),
+                });
+                fileTick(rec(DOT_ABILITY), per);
+                return;
+            }
+        }
+        if (parryBalance > 0) {
+            parryBalance -= 1;
+            // The sim files a parried ordinary swing's counter under autoAttack and
+            // only a parried ability's under parry
+            const r = rec(parryWasAbility ? PARRY_ABILITY : AUTO_ABILITY);
+            r.casts += 1;
+            fileTick(r, per);
+            return;
+        }
+        // It may itself be a maim cast the game labeled as a buff, whose bleed
+        // is about to prove it — so it stays a candidate source.
+        const r = rec(UNATTRIBUTED_ABILITY);
+        fileTick(r, per);
+        if (dotCandidates.length && per > 0 && Number.isFinite(at)) {
+            hitLog.push({ at, dmg: per, label: UNATTRIBUTED_ABILITY, rec: r });
+        }
     };
 
     for (const tick of ticks || []) {
@@ -196,6 +414,15 @@ function extractAttacks(ticks, opts) {
             }
             if (Number.isFinite(Number(startMonster?.currentHitpoints))) {
                 current.lastMHP = Number(startMonster.currentHitpoints);
+            }
+            if (playerAttacks) {
+                if (startMonster?.preparingAbilityHrid) prevMonLabel = startMonster.preparingAbilityHrid;
+                if (Number.isFinite(Number(startMonster?.attackAttemptCounter))) {
+                    prevMonAtk = Number(startMonster.attackAttemptCounter);
+                }
+                if (Number.isFinite(Number(startPlayer?.damageSplatCounter))) {
+                    prevPlayerDmg = Number(startPlayer.damageSplatCounter);
+                }
             }
             if (startAttacker?.preparingAbilityHrid) prevLabel = startAttacker.preparingAbilityHrid;
             else if (startAttacker?.isPreparingAutoAttack) prevLabel = 'autoAttack';
@@ -252,22 +479,55 @@ function extractAttacks(ticks, opts) {
                 }
                 current.sawAttack = true;
             }
+            // Parried swings of the monster's, for the outgoing direction: a
+            // monster swing the player's dmgCounter never answers (a parry is
+            // not a splat on the player) rings a counter-attack on the monster
+            // in the same tick, with no player swing behind it. Net of the
+            // player's splats so a splat landing a tick after its swing cancels
+            // out, and aged out so a stray swing is never credited later.
+            if (playerAttacks) {
+                const monAtk = Number(monster.atkCounter);
+                const plDmg = player && Number.isFinite(Number(player.dmgCounter)) ? Number(player.dmgCounter) : NaN;
+                if (Number.isFinite(at) && at - parryBalanceAt > PARRY_WINDOW_MS) parryBalance = 0;
+                if (prevMonAtk !== undefined && Number.isFinite(monAtk) && prevPlayerDmg !== undefined) {
+                    let swings = Math.max(0, monAtk - prevMonAtk);
+                    if (swings > 0 && prevMonLabel && monsterNonDamaging.has(prevMonLabel)) swings -= 1;
+                    const splats = Number.isFinite(plDmg) ? Math.max(0, plDmg - prevPlayerDmg) : 0;
+                    parryBalance = Math.max(0, parryBalance + swings - splats);
+                    if (swings > 0 && Number.isFinite(at)) {
+                        parryBalanceAt = at;
+                        parryWasAbility = !!prevMonLabel && prevMonLabel !== AUTO_ABILITY;
+                    }
+                }
+                if (Number.isFinite(monAtk)) prevMonAtk = monAtk;
+                if (Number.isFinite(plDmg)) prevPlayerDmg = plDmg;
+                if (monster.abilityHrid) prevMonLabel = monster.abilityHrid;
+                else if (monster.isAutoAtk) prevMonLabel = 'autoAttack';
+            }
             // The attacks that actually connected this tick, from the exact
-            // counter. Each pays off the oldest pending swing; a resolution with
-            // no swing waiting is a damage-over-time tick.
+            // counter. Each pays off the oldest pending swing. A resolution with
+            // no swing waiting is, on the incoming side, a damage-over-time tick;
+            // on the outgoing side it is told apart (see `fileUnexplained`).
             if (prevDefDmg !== undefined && ddmg !== null && ddmg > prevDefDmg) {
                 const count = ddmg - prevDefDmg;
                 const drop = prevDefHP != null && dhp != null ? Math.max(0, prevDefHP - dhp) : 0;
                 const per = count > 0 ? drop / count : 0; // even split across a merged tick
                 for (let n = 0; n < count; n++) {
-                    const label = pending.length ? pending.shift() : 'damageOverTime';
-                    const r = rec(label);
-                    if (per > 0) {
-                        r.hits += 1;
-                        r.damage += per;
-                        r.samples.push(per);
+                    if (pending.length) {
+                        const label = pending.shift();
+                        const r = rec(label);
+                        if (per > 0) {
+                            r.hits += 1;
+                            r.damage += per;
+                            r.samples.push(per);
+                            if (playerAttacks && Number.isFinite(at)) hitLog.push({ at, dmg: per, label, rec: r });
+                        } else {
+                            r.misses += 1;
+                        }
+                    } else if (playerAttacks) {
+                        fileUnexplained(per, at);
                     } else {
-                        r.misses += 1;
+                        fileTick(rec(DOT_ABILITY), per);
                     }
                 }
                 current.sawAttack = true;
@@ -438,7 +698,6 @@ export const MEAN_PER_CAST_TOLERANCE_PCT = 25;
  * its cast count on both sides and is excluded from the cast-share
  * denominators entirely (its cast share is null, not a number).
  */
-const DOT_ABILITY = 'damageOverTime';
 
 /** Totals across a `byAbility` map, for the share denominators. */
 function totalsOf(byAbility) {
@@ -447,6 +706,7 @@ function totalsOf(byAbility) {
     for (const [ability, r] of Object.entries(byAbility || {})) {
         // DoT ticks are not casts (see DOT_ABILITY) — counting the sim's tick
         // entries as casts would deflate every real ability's sim cast share
+        if (ability === UNATTRIBUTED_ABILITY || REFLECT_ABILITIES.has(ability)) continue;
         if (ability !== DOT_ABILITY) casts += r.casts || 0;
         damage += r.damage || 0;
     }
@@ -490,7 +750,7 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
     const simT = totalsOf(sim?.byAbility);
     const abilities = [...new Set([...Object.keys(real?.byAbility || {}), ...Object.keys(sim?.byAbility || {})])];
 
-    const side = (r, tot, isDot) => {
+    const side = (r, tot, isDot, isUnattributed) => {
         if (!r) return null;
         // A DoT row's "casts" are its ticks — the only per-event count either
         // side has for it (see DOT_ABILITY)
@@ -499,22 +759,26 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
             casts,
             hits: r.hits,
             damage: Math.round(r.damage),
-            castSharePct: isDot ? null : tot.casts ? (100 * r.casts) / tot.casts : 0,
-            dmgSharePct: tot.damage ? (100 * r.damage) / tot.damage : 0,
+            castSharePct: isDot || isUnattributed ? null : tot.casts ? (100 * r.casts) / tot.casts : 0,
+            dmgSharePct: isUnattributed ? null : tot.damage ? (100 * r.damage) / tot.damage : 0,
             meanDmgPerCast: casts ? r.damage / casts : r.hits ? r.damage / r.hits : 0,
             meanDmgPerHit: r.hits ? r.damage / r.hits : 0,
         };
     };
 
     const rows = abilities.map((ability) => {
-        const isDot = ability === DOT_ABILITY;
+        const isReflect = REFLECT_ABILITIES.has(ability);
+        const isUnattributed = ability === UNATTRIBUTED_ABILITY;
+        const ungraded = isUnattributed || isReflect;
+        // Unattributed ticks are counted like a DoT's: per tick, not per cast
+        const isDot = ability === DOT_ABILITY || isUnattributed;
         const rawReal = real?.byAbility?.[ability];
-        const r = side(rawReal, realT, isDot);
-        const s = side(sim?.byAbility?.[ability], simT, isDot);
+        const r = side(rawReal, realT, isDot, ungraded);
+        const s = side(sim?.byAbility?.[ability], simT, isDot, ungraded);
         // How many real casts (DoT: ticks) stand behind this row's numbers.
         const samples = rawReal ? (isDot ? rawReal.hits + rawReal.misses : rawReal.casts) : 0;
         // The headline gap: how the ability's share of incoming damage differs.
-        const dmgShareGap = (s?.dmgSharePct ?? 0) - (r?.dmgSharePct ?? 0);
+        const dmgShareGap = ungraded ? 0 : (s?.dmgSharePct ?? 0) - (r?.dmgSharePct ?? 0);
         // Cadence, read straight off the attack counter — the reliable half. A
         // damage-share gap on an ability whose cast share matches is a magnitude
         // question (per-cast damage), not a rotation one. Null for the DoT row,
@@ -524,9 +788,18 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
         // Magnitude gap relative to the real mean; needs both means, and a real
         // mean of zero (an all-miss row) has no scale to compare against.
         const meanPerCastGapPct =
-            r && s && r.meanDmgPerCast > 0 ? (100 * (s.meanDmgPerCast - r.meanDmgPerCast)) / r.meanDmgPerCast : null;
+            !ungraded && r && s && r.meanDmgPerCast > 0
+                ? (100 * (s.meanDmgPerCast - r.meanDmgPerCast)) / r.meanDmgPerCast
+                : null;
         let verdict = 'ok';
-        if (!s) {
+        if (isReflect) {
+            // Reflected damage the wire cannot identify: reported, never graded
+            verdict = 'reflect';
+        } else if (isUnattributed) {
+            // Real damage nothing explains: reported, never graded against a sim
+            // row the sim has no way to produce
+            verdict = 'unattributed';
+        } else if (!s) {
             // A self-buff (precision, a fierce/guardian aura) casts but deals no
             // damage, so it never enters the sim's attack tally — that is the
             // tally correctly omitting a non-damaging ability, not the sim

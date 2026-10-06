@@ -1944,15 +1944,22 @@ export function taxedDropValue(itemHrid, grossValue) {
  * @param {string} playerHrid - Player HRID to read drop multipliers and consumables for
  * @param {number} hours - Number of hours simulated
  * @returns {{ revenuePerHour: number, costPerHour: number, keyCostPerHour: number, netPerHour: number,
- *             dropEntries: Array, consumableEntries: Array }}
+ *             dropEntries: Array, consumableEntries: Array, unpricedDrops: string[],
+ *             unpricedConsumables: string[] }} `unpricedDrops` and `unpricedConsumables` name the
+ *             items nothing could price — they are counted at zero in the totals, so a drop total
+ *             that has any is a floor and a cost total that has any is a lower bound on the cost
  */
 export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     let revenuePerHour = 0;
     const dropEntries = [];
+    const unpricedDrops = [];
 
     const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
     for (const [itemHrid, total] of dropMap.entries()) {
         if (total <= 0) continue;
+        // A price of 0 (e.g. a custom override) is a price; only a missing one makes the total a floor
+        const priced =
+            itemHrid === '/items/coin' || getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
         let unitValue = itemHrid === '/items/coin' ? 1 : taxedDropValue(itemHrid, getSellPrice(itemHrid));
         if (unitValue === 0) {
             // The EV fallback already nets the sale tax (see expected-value-calculator),
@@ -1963,25 +1970,32 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         }
         const perHour = (total / hours) * unitValue;
         revenuePerHour += perHour;
-        if (unitValue > 0) {
+        if (unitValue > 0 || priced) {
             const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
             // itemHrid rides along so display surfaces can bound the quoted
             // pace by the item's observed trade volume
             dropEntries.push({ itemHrid, name: itemName, countPerHour: total / hours, unitValue, totalValue: perHour });
+        } else {
+            unpricedDrops.push(itemHrid);
         }
     }
     dropEntries.sort((a, b) => b.totalValue - a.totalValue);
 
     let costPerHour = 0;
     const consumableEntries = [];
+    const unpricedConsumables = [];
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
         const unitCost = getBuyPrice(itemHrid);
         const perHour = (count / hours) * unitCost;
         costPerHour += perHour;
-        if (unitCost > 0) {
+        // A custom price of 0 is a price, not a missing one
+        const priced = getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null;
+        if (unitCost > 0 || priced) {
             const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
             consumableEntries.push({ name: itemName, countPerHour: count / hours, unitCost, totalCost: perHour });
+        } else if (count > 0) {
+            unpricedConsumables.push(itemHrid);
         }
     }
 
@@ -2007,6 +2021,8 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         netPerHour: revenuePerHour - costPerHour,
         dropEntries,
         consumableEntries,
+        unpricedDrops,
+        unpricedConsumables,
     };
 }
 

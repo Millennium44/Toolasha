@@ -5,7 +5,13 @@
  */
 
 import enhancementTracker from './enhancement-tracker.js';
-import { SessionState, getSessionDuration, getCurrentLegCounters, mergeSessions } from './enhancement-session.js';
+import {
+    SessionState,
+    getSessionDuration,
+    getCurrentLegCounters,
+    getProtectionBreakdown,
+    mergeSessions,
+} from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
 import { costVsExpected, valueVsCost } from './enhancement-profit.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -1183,7 +1189,7 @@ class EnhancementUI {
                 </div>
                 <div style="display: flex; justify-content: space-between;">
                     <span>Prot:</span>
-                    <span>+${session.protectFrom}</span>
+                    <span>+${session.protectFrom}${session.mixedProtection ? ' (merged runs differ)' : ''}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-top: 5px; color: ${statusColor};">
                     <span>Status:</span>
@@ -1307,6 +1313,14 @@ class EnhancementUI {
                 ${predictions.paramsNote}
             </div>`;
             }
+        } else if (session.mergedFrom?.length > 0) {
+            // Merged from several runs, each made on the stats the player had then: no one
+            // prediction covers them, so no expected figures and no factors
+            html += `
+            <div class="enh-merged-runs" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+                <span>Expected Attempts:</span>
+                <span title="Merged from several runs, made on the stats you had at the time, so no one prediction covers them">— (merged runs)</span>
+            </div>`;
         }
 
         html += `
@@ -1351,8 +1365,76 @@ class EnhancementUI {
         const chosen = sessions.filter((session) => this.mergeSelected.has(session.id));
         const merged = mergeSessions(chosen);
 
+        // This view is redrawn on every attempt while a picked session is live, so it keeps what
+        // the user had in hand: where the panel and the pick-list were scrolled to, and whether
+        // the cost breakdown was open
+        const listScroll = content.querySelector('.enh-merge-list')?.scrollTop || 0;
+        const contentScroll = content.scrollTop || 0;
+        const details = content.querySelector('#cost-details-merged');
+        const detailsOpen = Boolean(details) && details.style.display !== 'none';
+
         content.innerHTML = this.generateMergeListHTML(sessions) + this.generateMergedSummaryHTML(merged);
         this.wireMergeControls(content, sessions);
+
+        const list = content.querySelector('.enh-merge-list');
+        if (list) list.scrollTop = listScroll;
+        const newDetails = content.querySelector('#cost-details-merged');
+        if (detailsOpen && newDetails) newDetails.style.display = 'block';
+        content.scrollTop = contentScroll;
+    }
+
+    /**
+     * Turn the picked sessions into one persisted session, after confirmation.
+     * @returns {Promise<void>}
+     */
+    async commitMerge() {
+        const ids = [...this.mergeSelected];
+        const plan = enhancementTracker.planMerge(ids);
+        if (!plan.ok) {
+            alert(plan.reason);
+            return;
+        }
+        const newest = plan.ordered[plan.ordered.length - 1];
+        const name =
+            dataManager.getInitClientData()?.itemDetailMap?.[newest.itemHrid]?.name || newest.itemName || 'item';
+        const protect = newest.protectFrom ? `protect from +${newest.protectFrom}` : 'no protection';
+        // Only runs that continue each other merge; show the chain so the player sees what is joined
+        const chain = [plan.ordered[0].startLevel, ...plan.ordered.map((session) => session.currentLevel)]
+            .map((level) => `+${level}`)
+            .join(' → ');
+        let message =
+            `Merge ${plan.ordered.length} ${name} sessions into one?\n\n` +
+            `They continue one another: ${chain}.\n\n` +
+            'Their attempts, per-level results, costs, protections, XP and active time are combined, ' +
+            'and the originals are removed. This cannot be undone.';
+        if (plan.settingsDiffer) {
+            message += `\n\nThey do not share one target and protection setup; the merged session keeps the most recent one's (+${newest.targetLevel}, ${protect}).`;
+        }
+        message +=
+            '\n\nThe merged session shows no expected attempts, protections or factors, and is not used ' +
+            'for prediction calibration: its runs were made on the stats you had at the time, which no ' +
+            'one prediction covers.';
+        if (plan.protectionItemsDiffer) {
+            message +=
+                '\n\nThey used different protection items. The merged session lists the protection used ' +
+                'per item, and a later auto-resume matches only the most recent one.';
+        }
+        if (newest.state === SessionState.TRACKING) {
+            message += '\n\nThe most recent one is still in progress and keeps receiving attempts.';
+        }
+        if (!confirm(message)) return;
+
+        const result = await enhancementTracker.mergeSessionsIntoOne(ids);
+        if (!result.ok) {
+            alert(result.reason);
+            return;
+        }
+        // Show the merged session itself
+        this.mergeMode = false;
+        this.mergeSelected = new Set();
+        this.styleMergeButton();
+        this.switchToSession(result.id);
+        this.updateUI();
     }
 
     /**
@@ -1388,9 +1470,14 @@ class EnhancementUI {
                         <button class="enh-merge-none" style="${mergeChipStyle}">None</button>
                     </span>
                 </div>
-                <div style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
+                <div class="enh-merge-list" style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
                     ${rows}
                 </div>
+                ${
+                    this.mergeSelected.size >= 2
+                        ? `<button class="enh-merge-commit" style="${mergeChipStyle} margin-top: 6px; width: 100%;" title="Combine the picked sessions into one stored session. The originals are removed.">Merge into one session</button>`
+                        : ''
+                }
             </div>`;
     }
 
@@ -1424,7 +1511,7 @@ class EnhancementUI {
             <div style="border-top: 1px solid ${STYLE.colors.border}; padding-top: 8px;">
                 <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
                     <span>Combined:</span>
-                    <strong>${merged.count} session${merged.count === 1 ? '' : 's'}</strong>
+                    <strong>${merged.count} session${merged.count === 1 ? '' : 's'}${merged.live ? ` <span style="color: ${STYLE.colors.accent};" title="A picked session is in progress; this view updates as attempts land">· live</span>` : ''}</strong>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 13px;">
                     <span>Items:</span>
@@ -1497,6 +1584,16 @@ class EnhancementUI {
                 for (const session of sessions) this.mergeSelected.add(session.id);
                 this.updateSessionCounter();
                 this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+            });
+        }
+        const commit = content.querySelector('.enh-merge-commit');
+        if (commit) {
+            commit.addEventListener('click', async () => {
+                try {
+                    await this.commitMerge();
+                } catch (error) {
+                    console.error('[EnhancementUI] Merging sessions failed:', error);
+                }
             });
         }
         const none = content.querySelector('.enh-merge-none');
@@ -1700,16 +1797,17 @@ class EnhancementUI {
 
         // Protection costs
         if (hasProtection) {
-            const protectionItemName = session.protectionItemHrid
-                ? gameData?.itemDetailMap?.[session.protectionItemHrid]?.name || 'Protection'
-                : 'Protection';
+            // One row per protection item: a merged session can hold runs protected by different ones
+            for (const [hrid, entry] of Object.entries(getProtectionBreakdown(session))) {
+                const protectionItemName = hrid ? gameData?.itemDetailMap?.[hrid]?.name || 'Protection' : 'Protection';
 
-            html += `
-                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
-                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${session.protectionCount || 0}×):</span>
-                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.protectionCost)}</span>
+                html += `
+                <div class="enh-protection-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${entry.count || 0}×):</span>
+                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(entry.totalCost || 0)}</span>
                 </div>
             `;
+            }
         }
 
         html += '</div>'; // Close details
