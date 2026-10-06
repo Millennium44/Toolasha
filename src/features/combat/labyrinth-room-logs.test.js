@@ -885,6 +885,23 @@ describe('the accuracy view keeps sim-model cohorts apart', () => {
         expect(card.textContent).not.toContain('Brier');
     });
 
+    test('an unsimmed room filed as 0% by an older build is excluded and counted, not judged', () => {
+        const preFix = (predicted, cleared) => ({
+            ...fight(predicted, cleared),
+            model: { fullKit: true, version: '3.61.2' },
+            fingerprintVersion: FINGERPRINT_VERSION,
+        });
+        const pool = [];
+        for (let i = 0; i < 25; i++) pool.push(preFix(0.95, true));
+        for (let i = 0; i < 9; i++) pool.push(preFix(0, true));
+        const card = labyrinthRoomLogs.renderReliability(pool);
+
+        expect(card.textContent).toContain('25 fights with a stored prediction');
+        expect(card.textContent).toContain(
+            '9 older fights stored as 0% because their room had not been simmed excluded'
+        );
+    });
+
     test('the sanitized export is offered on the accuracy view, labelled for public bug reports', async () => {
         await setup(snapshot(undefined));
         expect(labyrinthRoomLogs.sanitizedButton.style.display).not.toBe('none');

@@ -3448,6 +3448,11 @@ class LabyrinthRoomLogs {
 
         const notes = [];
         if (report.unpredicted > 0) notes.push(`${report.unpredicted} without a stored prediction`);
+        if (report.coercedZero > 0) {
+            notes.push(
+                `${report.coercedZero} older fights stored as 0% because their room had not been simmed excluded`
+            );
+        }
         // Named apart because the two exclusions are different problems with
         // different cures: a previous sim model is gone for good, where a
         // previous fingerprint just means those fights were fought on a build

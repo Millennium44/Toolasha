@@ -486,7 +486,10 @@ let loading = null;
  * @returns {{fullKit: boolean, version: string|null}}
  */
 function modelMarker() {
-    return { fullKit: true, version: scriptVersion() };
+    // `nullSafePrediction`: written by a build that keeps an absent prediction
+    // null. Records without it may carry a 0 that was really a null — see
+    // `calibrationReport`, which sets those aside rather than judging them.
+    return { fullKit: true, version: scriptVersion(), nullSafePrediction: true };
 }
 
 /**
@@ -613,7 +616,12 @@ export function noteAttempt(attempt) {
     const playerMisses = Number(attempt.playerMisses);
     const playerCrits = Number(attempt.playerCrits);
     const playerDotTicks = Number(attempt.playerDotTicks);
-    const predicted = Number(attempt.predicted);
+    // Null is "no sim had run for the room" and must stay null. Number(null) is
+    // 0, so coercing first stamped every unsimmed room as a certain loss — the
+    // 0–10% band filled with rooms that cleared nine times in ten.
+    const rawPredicted = attempt.predicted;
+    const predicted =
+        rawPredicted === null || rawPredicted === undefined || rawPredicted === '' ? NaN : Number(rawPredicted);
     // Null when not measured, so a reader can tell "absent" from zero
     const nonNegOrNull = (v) => {
         const n = Number(v);
