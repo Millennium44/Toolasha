@@ -848,18 +848,6 @@ describe('writeSyncGist', () => {
         expect(calls.at(-1).method).toBe('PATCH');
     });
 
-    test('a pressed push whose listing failed asks before writing plaintext', async () => {
-        responses.push({ status: 500, body: {} }, { status: 200, body: { id: 'abc' } });
-        let asked = 0;
-        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
-            confirmPlaintext: async () => {
-                asked += 1;
-                return true;
-            },
-        });
-        expect(asked).toBe(1);
-    });
-
     test('a pressed push over an encrypted gist that is not confirmed writes nothing', async () => {
         responses.push({
             status: 200,
@@ -1049,15 +1037,35 @@ describe('writeSyncGist', () => {
         expect(calls[2].method).toBe('GET');
     });
 
-    test('falls back to the remembered count when the gist cannot be listed', async () => {
+    test('a pressed push that cannot list the gist writes nothing', async () => {
+        // A stale device would write its lower counter over a gist further along,
+        // and every device holding the higher one would skip the gist as older
         responses.push({ status: 500, body: {} });
-        responses.push({ status: 200, body: { id: 'abc' } });
 
-        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 3);
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1, syncSeq: 2 }, ['data'], 3).catch(
+            (caught) => caught
+        );
 
-        const { files } = JSON.parse(calls[1].data);
-        expect(files[chunkFileName(1)]).toBeNull();
-        expect(files[chunkFileName(2)]).toBeNull();
+        expect(error).toBeInstanceOf(GistError);
+        expect(error.kind).toBe('unlisted');
+        expect(error.message).toMatch(/try again/i);
+        expect(calls).toHaveLength(1);
+    });
+
+    test('a confirmed push in the clear that cannot list the gist writes nothing either', async () => {
+        responses.push({ status: 502, body: {} });
+        let asked = 0;
+
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['plain'], 0, null, {
+            confirmPlaintext: async () => {
+                asked += 1;
+                return true;
+            },
+        }).catch((caught) => caught);
+
+        expect(error.kind).toBe('unlisted');
+        expect(asked).toBe(0);
+        expect(calls).toHaveLength(1);
     });
 
     test('counts files it is leaving in place towards the gist ceiling', async () => {

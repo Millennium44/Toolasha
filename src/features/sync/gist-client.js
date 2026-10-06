@@ -925,10 +925,18 @@ export async function writeSyncGist(
         // attempt so a conflict retry sees the file set that just beat it.
         if (gistId) {
             const fresh = await listGistFiles(token, gistId, listing);
-            // Fail closed for a push nobody asked for: with no listing it
-            // cannot see the counter or the encryption it would be writing over
-            if (!fresh && unattended) {
-                throw new GistError('unlisted', 'The sync gist could not be listed before writing it.');
+            // Fail closed, pressed push or not: with no listing the write cannot
+            // see the counter or the encryption it would be writing over. A
+            // device with a stale counter would write it below the gist's, and
+            // every device holding the higher one would read the gist as older
+            // and skip it — for as many pushes as the gap is wide.
+            if (!fresh) {
+                throw new GistError(
+                    'unlisted',
+                    unattended
+                        ? 'The sync gist could not be listed before writing it.'
+                        : "Couldn't read the gist's current state, so nothing was pushed. Try again."
+                );
             }
             // A conflict means another device just wrote: the first attempt's listing predates it, so
             // its counter and encryption cannot be trusted. Without a fresh one the retry stops.
