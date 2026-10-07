@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing dropdowns on the Marketplace page
+
+- An optional Buy/Sell pricing dropdown pair and Craft toggle can sit beside the Marketplace title (Skill Page and Tiles settings, off by default), so you can change how item tooltips are priced without opening a skill page.
+
 ### Monster stat check credits hits after a parry correctly
 
 - The monster stat check no longer credits a hit that lands on you to the ability of an earlier monster swing you parried.
