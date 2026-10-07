@@ -286,6 +286,75 @@ describe('two tabs whose saves overlap', () => {
     });
 });
 
+describe('a deleted session a stale tab wrote back', () => {
+    test('stays gone once its tombstone has expired, and the tombstone is pruned only after', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
+        settings().set(SESSIONS, { s1: session('s1', 100), s2: session('s2', 200) });
+        const a = await openTab();
+        const b = await openTab();
+
+        await a.deleteSession(a.sessions, 's1');
+        await a.flushSessionWrites();
+        expect(Object.keys(stored())).toEqual(['s2']);
+
+        // B, which never read A's tombstone, closes inside its save delay: the page-close
+        // write folds with B's old tombstones and puts s1 back under the sessions key
+        b.sessions.s2.lastUpdateTime = 300;
+        await b.saveSessions(b.sessions);
+        storageMock.teardownListeners[1]('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(stored())).toEqual(['s2', 's1']);
+
+        // Long after the tombstone's time to live, a tab opens and saves twice
+        vi.setSystemTime(Date.now() + a.TOMBSTONE_TTL_MS + 1);
+        const c = await openTab();
+        expect(Object.keys(c.sessions)).toEqual(['s2']);
+
+        await c.saveSessions(c.sessions);
+        await c.flushSessionWrites();
+        // The fold dropped s1 from what it wrote, and kept the tombstone it read s1 under
+        expect(Object.keys(stored())).toEqual(['s2']);
+        expect(Object.keys(settings().get(TOMBSTONES))).toEqual(['s1']);
+
+        await c.saveSessions(c.sessions);
+        await c.flushSessionWrites();
+        // Nothing left to hide: the tombstone goes, and s1 does not come back
+        expect(settings().get(TOMBSTONES)).toEqual({});
+        expect(Object.keys(stored())).toEqual(['s2']);
+        const reloaded = await openTab();
+        expect(Object.keys(reloaded.sessions)).toEqual(['s2']);
+    });
+
+    test('an expired tombstone of the departing character still hides a session a switch wrote back', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
+        settings().set(SESSIONS, { s1: session('s1', 100), s2: session('s2', 200) });
+        const a = await openTab();
+        const b = await openTab();
+        await a.deleteSession(a.sessions, 's1');
+        await a.flushSessionWrites();
+
+        // B's departing write, overtaken by a switch, folds with B's stale tombstones
+        b.sessions.s2.lastUpdateTime = 300;
+        await b.saveSessions(b.sessions);
+        b.resetPendingSessionCache();
+        await vi.advanceTimersByTimeAsync(10_000);
+        await b.flushSessionWrites();
+        expect(Object.keys(stored())).toEqual(['s2', 's1']);
+
+        vi.setSystemTime(Date.now() + a.TOMBSTONE_TTL_MS + 1);
+        const c = await openTab();
+        expect(Object.keys(c.sessions)).toEqual(['s2']);
+        await c.saveSessions(c.sessions);
+        await c.flushSessionWrites();
+        await c.saveSessions(c.sessions);
+        await c.flushSessionWrites();
+        expect(Object.keys(stored())).toEqual(['s2']);
+        expect(settings().get(TOMBSTONES)).toEqual({});
+    });
+});
+
 describe('a character switch inside the save delay', () => {
     test('a session deleted just before switching is not folded back out of storage', async () => {
         vi.useFakeTimers();

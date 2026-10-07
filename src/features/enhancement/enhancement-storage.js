@@ -23,8 +23,12 @@
  *   a tie the one with more attempts (a merge folds attempts in without moving
  *   the stamp); otherwise this tab's copy stands;
  * - a removal, from either tab, is a tombstone under its own key: the id and
- *   when it went. Tombstones are read fresh before every merge and pruned after
- *   {@link TOMBSTONE_TTL_MS}.
+ *   when it went. Tombstones are read fresh before every merge. One older than
+ *   {@link TOMBSTONE_TTL_MS} is pruned by a sessions fold that reads the stored
+ *   map without its id — never on age alone, since a stale writer (a closing
+ *   tab, a departing character) can have put the session back meanwhile, and
+ *   the tombstone is all that hides it. The fold drops graved ids from what it
+ *   writes, so the stored copy goes first and the tombstone after.
  *
  * This tab's removals are the ids it has held — loaded, saved or adopted — and
  * no longer holds. The fold mutates the tracker's live map in place, so what
@@ -76,18 +80,24 @@ function storedIsNewer(stored, held) {
 }
 
 /**
- * Tombstones from both sides, each id at its latest removal, the expired ones dropped.
+ * Expired tombstones a sessions fold has found nothing left to hide: `{id: removedAt}`.
+ * The tombstone fold drops them on both sides — the other tab's copy included.
+ */
+let prunedGraves = {};
+
+/**
+ * Tombstones from both sides, each id at its latest removal, less the ones a
+ * sessions fold pruned (see {@link pruneExpiredGraves}). Age alone drops nothing.
  * @param {Object} stored - `{id: removedAt}`
  * @param {Object} memory - `{id: removedAt}`
  * @returns {Object}
  */
 function mergeTombstones(stored, memory) {
-    const cutoff = Date.now() - TOMBSTONE_TTL_MS;
     const out = {};
     for (const side of [stored, memory]) {
         if (!side || typeof side !== 'object') continue;
         for (const [id, at] of Object.entries(side)) {
-            if (!Number.isFinite(at) || at < cutoff) continue;
+            if (!Number.isFinite(at) || prunedGraves[id] >= at) continue;
             if (!(out[id] >= at)) out[id] = at;
         }
     }
@@ -189,7 +199,29 @@ function mergeSessions(stored, memory) {
     noteRemovals(held);
     foldSessions(stored, held, tombstoneRecord.get());
     knownIds = new Set(Object.keys(held));
+    pruneExpiredGraves(stored);
     return held;
+}
+
+/**
+ * Prune the tombstones past {@link TOMBSTONE_TTL_MS} whose session the stored map,
+ * as this fold read it, no longer holds. One it still holds — written back by a
+ * stale tab after the removal — stays: this fold drops the session from what it
+ * writes, and the next fold, finding it gone, prunes the tombstone.
+ * @param {Object} stored - The stored sessions map this fold read
+ */
+function pruneExpiredGraves(stored) {
+    const cutoff = Date.now() - TOMBSTONE_TTL_MS;
+    const graves = tombstoneRecord.get();
+    let pruned = false;
+    for (const [id, at] of Object.entries(graves)) {
+        if (!(at < cutoff)) continue;
+        if (stored && typeof stored === 'object' && Object.hasOwn(stored, id)) continue;
+        if (!(prunedGraves[id] >= at)) prunedGraves[id] = at;
+        delete graves[id];
+        pruned = true;
+    }
+    if (pruned) tombstoneRecord.save();
 }
 
 /** The departing character's tombstones, captured when a switch resets the records */
@@ -388,6 +420,8 @@ export function resetPendingSessionCache() {
     departingGraves = { ...tombstoneRecord.get() };
     sessionsRecord.reset();
     tombstoneRecord.reset();
+    // Pruning is per character; one left unpruned is pruned again by its next fold
+    prunedGraves = {};
     knownIds = new Set();
     sessionsHeld = false;
     pendingCurrentSessionId = undefined;
