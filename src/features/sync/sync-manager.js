@@ -62,7 +62,7 @@ import {
     wholeKeyHashes,
     exchangeBaseline,
     registeredKeysDiverge,
-    pushTrimsRegisteredKeys,
+    trimmedRegisteredKeys,
     restampRestoredSettings,
     RESTORED_BASELINE,
 } from './sync-payload.js';
@@ -155,6 +155,13 @@ const MAX_RACE_ROUNDS = 2;
  * ancestor the merge asks "which side moved this?" of. See `wholeKeyHashes`.
  */
 const KEY_BASELINE = 'toolasha_sync_baseline';
+
+/**
+ * "Merge and push" remembered for a pressed Push that would trim: `{gistId, scope}` of the answer.
+ * Device-local like the rest of this bookkeeping. Honored only for the same gist and scope, and cleared
+ * when the token, the scope or the gist link changes, so a new situation is asked about afresh.
+ */
+const KEY_MERGE_ON_TRIM = 'toolasha_sync_mergeOnTrim';
 
 /** How many chunk files the gist holds, so a shrinking payload can delete the rest */
 const KEY_CHUNK_COUNT = 'toolasha_sync_chunkCount';
@@ -276,6 +283,18 @@ class SyncManager {
         for (const key of ['sync_enabled', 'sync_auto']) {
             config.onSettingChange(key, restart);
             this.settingListeners.push([key, restart]);
+        }
+        // A different token or scope is a different situation: the remembered "Merge and push" no longer applies
+        const forgetMergeChoice = async () => {
+            try {
+                await rememberLocal({ [KEY_MERGE_ON_TRIM]: null });
+            } catch (error) {
+                console.warn('[Sync] Could not clear the remembered merge choice:', error);
+            }
+        };
+        for (const key of ['sync_token', 'sync_scope']) {
+            config.onSettingChange(key, forgetMergeChoice);
+            this.settingListeners.push([key, forgetMergeChoice]);
         }
 
         this._startAuto();
@@ -467,7 +486,7 @@ class SyncManager {
         // The version that check read is the one the answer applies to: the write below is held to it
         let checked = null;
         if (!unattended && !merged && gistId) {
-            const asked = await this._askBeforeTrimming(token, gistId, localPayload, opToken);
+            const asked = await this._askBeforeTrimming(token, gistId, localPayload, scope, opToken);
             if (asked.choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
             if (asked.choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
             if (asked.choice === 'merge') {
@@ -1140,12 +1159,14 @@ class SyncManager {
      * @param {string} token - GitHub token
      * @param {string} gistId - Gist id
      * @param {string} localPayload - This device's payload
+     * @param {string} scope - The scope `localPayload` was built for, which the remembered answer is keyed to:
+     *   rereading the setting here would key it to a scope changed while the gist was downloading
      * @param {number} opToken - The push's ownership token; a takeover during the dialog stands the push down
      * @returns {Promise<{choice: 'push'|'merge'|'cancel'|'superseded', remote: Object|null}>} What to do ('push'
      *   replaces as before), and the download it was decided on; null when the gist could not be read
      * @private
      */
-    async _askBeforeTrimming(token, gistId, localPayload, opToken) {
+    async _askBeforeTrimming(token, gistId, localPayload, scope, opToken) {
         let remote;
         try {
             remote = await this._readRemote(token, gistId, null);
@@ -1153,16 +1174,26 @@ class SyncManager {
             console.warn('[Sync] Could not check whether a push would trim the gist; pushing as asked:', error);
             return { choice: 'push', remote: null };
         }
-        if (!remote?.payload || !pushTrimsRegisteredKeys(localPayload, remote.payload)) {
-            return { choice: 'push', remote: remote ?? null };
-        }
+        const trimmed = remote?.payload ? trimmedRegisteredKeys(localPayload, remote.payload) : [];
+        if (!trimmed.length) return { choice: 'push', remote: remote ?? null };
+        const remembered = await storage.get(KEY_MERGE_ON_TRIM, STORE, null);
+        const rememberedHere = remembered?.gistId === gistId && remembered?.scope === scope;
+        traceSync('push-would-trim', {
+            keys: trimmed.map(({ store, key }) => `${store}/${key}`),
+            remembered: rememberedHere,
+        });
+        if (rememberedHere) return { choice: 'merge', remote };
+        const labels = [...new Set(trimmed.map(({ label }) => label))];
+        const named = labels.slice(0, 4).join(', ') + (labels.length > 4 ? `, and ${labels.length - 4} more` : '');
         const answer = await askChoice({
             title: 'Replace longer history on GitHub?',
             message:
+                `GitHub has more: ${named}.\n\n` +
                 'The copy on GitHub holds more history than this device does (for example, older sessions or ' +
                 'records this device no longer keeps). Pushing as is replaces it with this device’s ' +
                 'shorter copy, and the extra history is gone from GitHub.\n\n' +
-                'Merging keeps everything from both sides and pushes the result.',
+                'Merging keeps everything from both sides and pushes the result. Choosing it also merges ' +
+                'future pushes from this device without asking.',
             choices: [
                 { value: 'merge', label: 'Merge and push (recommended)', tone: 'primary' },
                 { value: 'replace', label: 'Replace anyway', tone: 'danger' },
@@ -1170,7 +1201,10 @@ class SyncManager {
             ],
         });
         if (!this._stillOwns(opToken)) return { choice: 'superseded', remote };
-        if (answer === 'merge') return { choice: 'merge', remote };
+        if (answer === 'merge') {
+            await rememberLocal({ [KEY_MERGE_ON_TRIM]: { gistId, scope } });
+            return { choice: 'merge', remote };
+        }
         if (answer === 'replace') return { choice: 'push', remote };
         return { choice: 'cancel', remote };
     }
@@ -1618,6 +1652,7 @@ class SyncManager {
             [KEY_UNAPPLIED]: null,
             [KEY_BASELINE]: null,
             [KEY_LAST_PUSHED_VERSION]: null,
+            [KEY_MERGE_ON_TRIM]: null,
         });
     }
 

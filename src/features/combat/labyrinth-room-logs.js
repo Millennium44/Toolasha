@@ -3784,6 +3784,7 @@ registerSyncMerge({
     merge: (local, incoming, context) =>
         mergeRoomLogs(local, incoming, context?.forUpload ? Infinity : labyrinthRoomLogs.logSize()),
     label: 'Labyrinth room logs',
+    capsLocally: true,
 });
 
 /** The singleton itself, for tests — the default export is the feature shell */
