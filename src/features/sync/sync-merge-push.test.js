@@ -1089,6 +1089,37 @@ describe('an automatic push that would cut a history the gist holds merges inste
         expect(gistStores().xpHistory.cappedLog_c1).toContain(7000);
     });
 
+    test('Merge and push with another device pushing meanwhile merges again and still uploads', async () => {
+        const { a } = await cappedAfterStartup();
+        dialog.calls = 0;
+        dialog.answer = 'merge';
+        dialog.whileOpen = () => {
+            const payload = JSON.parse(gist.state.payload);
+            payload.stores.xpHistory.cappedLog_c1 = [7000, ...payload.stores.xpHistory.cappedLog_c1];
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(payload),
+            };
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        };
+        const result = await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            return syncManager.push();
+        });
+
+        // The pressed merge is not left for an interval: it reads the new version and sends the edit
+        expect(result.ok).toBe(true);
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+        expect(gistStores().xpHistory.cappedLog_c1).toContain(7000);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+    });
+
     test('Cancel writes nothing', async () => {
         const { result, wrote } = await pressPush(null);
         expect(dialog.calls).toBe(1);

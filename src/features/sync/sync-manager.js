@@ -470,7 +470,9 @@ class SyncManager {
             const asked = await this._askBeforeTrimming(token, gistId, localPayload, opToken);
             if (asked.choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
             if (asked.choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
-            if (asked.choice === 'merge') return this._mergeIntoUpload(localPayload, opToken, silent, asked.remote);
+            if (asked.choice === 'merge') {
+                return this._mergeIntoUpload(localPayload, opToken, silent, asked.remote, false);
+            }
             checked = asked.remote?.seen ?? null;
         }
 
@@ -601,8 +603,11 @@ class SyncManager {
             if (!unattended && error instanceof GistError && error.kind === 'behind') {
                 // The gist moved after what the answer was about was read: look again, and ask again if it
                 // would now trim. A merge is rebuilt from the new version.
-                if (merged) return this._mergeIntoUpload(localPayload, opToken, silent);
-                if (checkRounds < 3) return this._doPush(silent, opToken, false, null, checkRounds + 1);
+                if (checkRounds < 3) {
+                    if (merged)
+                        return this._mergeIntoUpload(localPayload, opToken, silent, null, false, checkRounds + 1);
+                    return this._doPush(silent, opToken, false, null, checkRounds + 1);
+                }
                 if (!silent) {
                     showToast('Sync push stopped: the gist kept changing while it was being checked. Try again.', {
                         kind: 'warn',
@@ -724,10 +729,13 @@ class SyncManager {
      * @param {boolean} silent - Whether to stay quiet on success
      * @param {{manifest?: Object, payload?: string, seen?: Object|null}|null} [downloaded=null] - A download of the
      *   gist the caller just made; used instead of reading it again
+     * @param {boolean} [unattended=true] - False for a pressed Merge, so a gist that moves before the write is
+     *   merged again rather than left for the next interval
+     * @param {number} [checkRounds=0] - How many times a pressed push has already gone round
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _mergeIntoUpload(localText, opToken, silent, downloaded = null) {
+    async _mergeIntoUpload(localText, opToken, silent, downloaded = null, unattended = true, checkRounds = 0) {
         traceSync('merge-into-upload');
         const token = this._token();
         const gistId = await this._resolveGistId(token);
@@ -798,14 +806,21 @@ class SyncManager {
             return { ok: true, skipped: true, reason: 'gist-has-it' };
         }
 
-        return this._doPush(silent, opToken, true, {
-            text: merged.text,
-            localText,
-            known: remote.seen,
-            remoteAdds: merged.remoteAdds,
-            remoteAt: remote.manifest?.exportedAt ?? null,
-            remoteSeq: readSeq(remote.manifest?.syncSeq),
-        });
+        // A pressed Merge stays a pressed push, so a gist that moves before the write is merged again
+        return this._doPush(
+            silent,
+            opToken,
+            unattended,
+            {
+                text: merged.text,
+                localText,
+                known: remote.seen,
+                remoteAdds: merged.remoteAdds,
+                remoteAt: remote.manifest?.exportedAt ?? null,
+                remoteSeq: readSeq(remote.manifest?.syncSeq),
+            },
+            checkRounds
+        );
     }
 
     /**
