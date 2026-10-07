@@ -10,6 +10,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Enhancing sessions deleted, merged or started in one game tab are no longer undone by a second tab open on the same character; saves now merge by session and remember deletions.
 
+### Monster stat check credits hits after a parry correctly
+
+- The monster stat check no longer credits a hit that lands on you to the ability of an earlier monster swing you parried.
+
+### Combat levels ranked by hours per 0.01%
+
+- The upgrade analyzer's Combat levels table adds Hours/0.01% columns for DPS, EXP and Profit and sorts by hours of grind per 0.01% DPS, so the level-up that pays off fastest comes first.
+
 ### Gist sync merges instead of overwriting another device's changes
 
 - When two devices are in use, an automatic push that finds the gist ahead now merges the other device's changes into what it uploads instead of overwriting them: each setting keeps whichever device changed it last, histories and other mergeable records are combined, and other saved data keeps this device's copy only if the other side didn't change it. Nothing is applied to the device you're using until its next reload (no "Reload now" prompts mid-session); a restored backup counts as a new change, and a damaged gist now warns once per session instead of every interval.
