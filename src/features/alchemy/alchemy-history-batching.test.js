@@ -65,6 +65,7 @@ vi.mock('./alchemy-session-store.js', () => ({
             store.forgotten += 1;
         },
     }),
+    mergeSessionCopies: (a) => a,
     NO_CHARACTER: 'none',
 }));
 

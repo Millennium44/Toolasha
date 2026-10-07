@@ -47,6 +47,7 @@ vi.mock('./alchemy-session-store.js', () => ({
         clear: async () => {},
         setCharacter: () => {},
     }),
+    mergeSessionCopies: (a) => a,
     NO_CHARACTER: 'none',
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({

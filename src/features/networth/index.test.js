@@ -55,9 +55,18 @@ vi.mock('./networth-history.js', () => ({ default: { initialize: vi.fn(), disabl
 vi.mock('./networth-history-chart.js', () => ({
     default: { setNetworthFeature: vi.fn(), toggleModal: vi.fn(), closeModal: vi.fn() },
 }));
-vi.mock('./production-income-recorder.js', () => ({ default: { initialize: vi.fn(), cleanup: vi.fn() } }));
-vi.mock('./chest-opening-recorder.js', () => ({ default: { initialize: vi.fn(), cleanup: vi.fn() } }));
-vi.mock('./combat-loot-recorder.js', () => ({ default: { initialize: vi.fn(), cleanup: vi.fn() } }));
+vi.mock('./production-income-recorder.js', () => ({
+    default: { initialize: vi.fn(), cleanup: vi.fn() },
+    mergeProductionDays: (a) => a,
+}));
+vi.mock('./chest-opening-recorder.js', () => ({
+    default: { initialize: vi.fn(), cleanup: vi.fn() },
+    mergeChestOpeningDays: (a) => a,
+}));
+vi.mock('./combat-loot-recorder.js', () => ({
+    default: { initialize: vi.fn(), cleanup: vi.fn() },
+    mergeCombatLootDays: (a) => a,
+}));
 vi.mock('./item-flow-recorder.js', () => ({ default: { initialize: vi.fn(), cleanup: vi.fn() } }));
 vi.mock('./gold-sources-panel.js', () => ({ default: { closeModal: vi.fn() } }));
 vi.mock('./networth-exclusions.js', () => ({ initExclusions: vi.fn() }));

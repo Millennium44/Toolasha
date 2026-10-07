@@ -41,15 +41,25 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
 vi.mock('../enhancement/enhancement-storage.js', () => ({ loadSessions: async () => ({}) }));
 vi.mock('../alchemy/alchemy-session-store.js', () => ({
     createAlchemySessionStore: () => ({ load: async () => [] }),
+    mergeSessionCopies: (a) => a,
     NO_CHARACTER: 'none',
 }));
 vi.mock('../actions/loot-log-history.js', () => ({
     default: { getHistoricalEntries: async () => [] },
 }));
 vi.mock('./networth-history.js', () => ({ default: { getHistory: () => [] } }));
-vi.mock('./production-income-recorder.js', () => ({ default: { load: async () => [] } }));
-vi.mock('./chest-opening-recorder.js', () => ({ default: { load: async () => [] } }));
-vi.mock('./combat-loot-recorder.js', () => ({ default: { load: async () => game.liveDays } }));
+vi.mock('./production-income-recorder.js', () => ({
+    default: { load: async () => [] },
+    mergeProductionDays: (a) => a,
+}));
+vi.mock('./chest-opening-recorder.js', () => ({
+    default: { load: async () => [] },
+    mergeChestOpeningDays: (a) => a,
+}));
+vi.mock('./combat-loot-recorder.js', () => ({
+    default: { load: async () => game.liveDays },
+    mergeCombatLootDays: (a) => a,
+}));
 vi.mock('./item-flow-recorder.js', () => ({ default: { load: async () => [] } }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0 }));
 vi.mock('./networth-calculator.js', () => ({
