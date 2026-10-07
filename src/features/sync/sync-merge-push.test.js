@@ -1205,9 +1205,11 @@ describe('two devices writing at the same moment', () => {
         // A's listing and A's write: one more than the check reads back
         let newest;
         gist.betweenListAndWrite = async () => {
+            // Each push is built on the gist as A listed it, so what only one of them holds is its own
+            const original = gist.state.payload;
             for (let i = 1; i <= 6; i += 1) {
                 const based = `v${gist.etag}`;
-                const payload = JSON.parse(gist.state.payload);
+                const payload = JSON.parse(original);
                 payload.stores.xpHistory = { ...payload.stores.xpHistory, testHistory_c1: [`other-${i}`] };
                 gist.etag += 1;
                 gist.state = {
@@ -1232,8 +1234,12 @@ describe('two devices writing at the same moment', () => {
         expect(result).toEqual({ ok: false, reason: 'raced' });
         expect(aWrite).toBeTruthy();
         expect(gist.revisions.filter((revision) => revision.payload.includes('a-sample'))).toHaveLength(1);
-        // The newest other push is the gist again, numbered above A's write
-        expect(gist.state.payload).toBe(newest);
+        // The gist is the other pushes folded together, numbered above A's write: the newest, and data only
+        // an older readable one held (the 2nd of the five), without A's own sample
+        expect(newest).toBeTruthy();
+        expect(gist.state.payload).toContain('other-6');
+        expect(gist.state.payload).toContain('other-2');
+        expect(gist.state.payload).not.toContain('a-sample');
         expect(gist.state.manifest.syncSeq).toBeGreaterThan(aWrite.manifest.syncSeq);
 
         // ...and A's next tick merges its sample onto that revision as an ordinary push
