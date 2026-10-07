@@ -102,6 +102,7 @@ vi.mock('./sync-payload.js', () => ({
     // Opaque payloads hold no registered history to cut
     registeredKeysDiverge: (local, baseline) => payload.registeredDiverge?.(local, baseline) ?? false,
     pushTrimsRegisteredKeys: () => false,
+    trimmedRegisteredKeys: () => [],
     wholeKeyHashes: (text) => ({ of: text }),
     // The older raw-text hash, which the manifest gate also accepts
     hashPayload: (text) => `raw:${text}`,

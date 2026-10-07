@@ -93,6 +93,8 @@ const { registerSyncMerge, mergeForKey } = await import('../../utils/sync-merge-
 // time, which is exactly how a real page assembles the registry
 await import('../../utils/chest-tally.js');
 await import('../market/trade-history.js');
+await import('../guild/guild-xp-tracker.js');
+await import('../guild/guild-trials-store.js');
 
 const {
     buildPayloadJSON,
@@ -103,6 +105,8 @@ const {
     localStampWins,
     addsToRemote,
     mergeForUpload,
+    trimmedRegisteredKeys,
+    pushTrimsRegisteredKeys,
     wholeKeyHashes,
     SETTING_STAMPS_PREFIX,
     RESTORED_BASELINE,
@@ -1484,5 +1488,158 @@ describe('mergeForUpload, which writes nothing local', () => {
         const merged = JSON.parse(mergeForUpload(local, payloadOf({ settings: {} }), null).text);
         expect(merged.formatVersion).toBe(1);
         expect(merged.stores.settings[MAP].A).toEqual({ isTrue: true });
+    });
+});
+
+describe('trimmedRegisteredKeys, which asks only about histories a device caps', () => {
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: 'x', syncScope: 'everything', stores });
+    const DAY = 24 * 60 * 60 * 1000;
+
+    test('a history this device caps by its own setting reports, named by its label', () => {
+        const off = registerSyncMerge({
+            store: 'xpHistory',
+            base: 'deviceCappedRuns',
+            merge: (local, incoming, context) =>
+                [...new Set([...(local || []), ...(incoming || [])])]
+                    .sort((x, y) => y - x)
+                    .slice(0, context?.forUpload ? Infinity : 2),
+            label: 'Device capped runs',
+            capsLocally: true,
+        });
+        try {
+            const local = payloadOf({ xpHistory: { deviceCappedRuns_c1: [9, 8] } });
+            const remote = payloadOf({ xpHistory: { deviceCappedRuns_c1: [9, 8, 7, 6, 5] } });
+            expect(trimmedRegisteredKeys(local, remote)).toEqual([
+                { store: 'xpHistory', key: 'deviceCappedRuns_c1', label: 'Device capped runs' },
+            ]);
+            expect(pushTrimsRegisteredKeys(local, remote)).toBe(true);
+            // Nothing on the gist beyond the cap: nothing to lose
+            expect(trimmedRegisteredKeys(local, payloadOf({ xpHistory: { deviceCappedRuns_c1: [9] } }))).toEqual([]);
+        } finally {
+            off();
+        }
+    });
+
+    test('guild XP the push compacted away does not report: no cap dropped it', () => {
+        const sample = (hours, xp) => ({ t: Date.parse('2026-10-01T00:00:00Z') + hours * 3600 * 1000, xp });
+        // This device compacted its recent samples; the gist still holds the in-between readings
+        const local = payloadOf({ guildHistory: { guildXP_Foo: { Foo: [sample(0, 1000), sample(5, 1500)] } } });
+        const remote = payloadOf({
+            guildHistory: {
+                guildXP_Foo: { Foo: [sample(0, 1000), sample(1, 1100), sample(2, 1200), sample(5, 1500)] },
+            },
+        });
+        expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
+    });
+
+    test('member XP with a stale same-day row on the gist does not report', () => {
+        const noon = Date.parse('2026-10-01T12:00:00Z');
+        const local = payloadOf({ guildHistory: { memberXP_Foo: { 123: [{ t: noon + DAY, xp: 9000 }] } } });
+        const remote = payloadOf({
+            guildHistory: {
+                memberXP_Foo: {
+                    123: [
+                        { t: noon, xp: 8000 },
+                        { t: noon + 3600000, xp: 8100 },
+                    ],
+                },
+            },
+        });
+        expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
+    });
+
+    test('a guild trial record the fold normalizes does not report', () => {
+        const record = (samples) => ({
+            weekStart: 1790000000000,
+            guildId: 7,
+            guildName: 'Foo',
+            history: [],
+            tiles: { 'combat:1': { samples } },
+        });
+        const local = payloadOf({
+            guildHistory: {
+                guildTrials_Foo: record([
+                    { t: 30, v: 3 },
+                    { t: 10, v: 1 },
+                ]),
+            },
+        });
+        const remote = payloadOf({ guildHistory: { guildTrials_Foo: record([{ t: 20, v: 2 }]) } });
+        expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
+    });
+
+    test('rank badges with a stale gist copy do not report: the fold clamps capture times to a moving clock', async () => {
+        const { mergeBoards, boardKey, RANK_BOARD_TYPES, RANK_CATEGORIES } =
+            await import('../../utils/rank-badge-data.js');
+        const rows = [['Alice', 1]];
+        // A board captured "in the future" (fast clock) is clamped to now, and now moves between the two calls
+        let tickClock = 1_000_000;
+        const spy = vi.spyOn(Date, 'now').mockImplementation(() => (tickClock += 7));
+        const off = registerSyncMerge({
+            store: 'rankStore',
+            key: 'rankBoards',
+            merge: mergeBoards,
+            label: 'Leaderboard rank badges',
+        });
+        try {
+            const k = boardKey(RANK_BOARD_TYPES[0], RANK_CATEGORIES[0]);
+            const local = payloadOf({
+                rankStore: { rankBoards: { [k]: { at: 9_000_000_000, source: 'local', rows } } },
+            });
+            const remote = payloadOf({
+                rankStore: { rankBoards: { [k]: { at: 9_000_000_500, source: 'server', rows } } },
+            });
+            expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
+        } finally {
+            off();
+            spy.mockRestore();
+        }
+    });
+
+    test('a registration that does not opt in never reports, even when its fold mutates its input', () => {
+        const off = registerSyncMerge({
+            store: 'xpHistory',
+            base: 'mutatingFold',
+            merge: (local, incoming, context) => {
+                const list = local || [];
+                list.push(...(incoming || []));
+                return context?.forUpload ? list : list.slice(0, 1);
+            },
+            label: 'Mutating fold',
+        });
+        try {
+            const local = payloadOf({ xpHistory: { mutatingFold_c1: [1] } });
+            const remote = payloadOf({ xpHistory: { mutatingFold_c1: [2, 3] } });
+            expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
+        } finally {
+            off();
+        }
+    });
+
+    test('a device-capped history identical on both sides does not report: the push loses nothing', () => {
+        const off = registerSyncMerge({
+            store: 'xpHistory',
+            base: 'sameBothSides',
+            merge: (local, incoming, context) =>
+                [...new Set([...(local || []), ...(incoming || [])])]
+                    .sort((x, y) => y - x)
+                    .slice(0, context?.forUpload ? Infinity : 20),
+            label: 'Same both sides',
+            capsLocally: true,
+        });
+        try {
+            const sessions = Array.from({ length: 500 }, (_, i) => 1000 - i);
+            const both = payloadOf({ xpHistory: { sameBothSides_c1: sessions } });
+            expect(trimmedRegisteredKeys(both, both)).toEqual([]);
+        } finally {
+            off();
+        }
+    });
+
+    test('a key this device does not carry reports only when it caps one', () => {
+        const local = payloadOf({ guildHistory: {} });
+        const remote = payloadOf({ guildHistory: { guildXP_Foo: { Foo: [{ t: 1, xp: 1 }] } } });
+        expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
     });
 });

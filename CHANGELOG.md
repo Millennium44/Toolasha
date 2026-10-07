@@ -10,6 +10,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.
 
+### Push confirmation asks once
+
+- A pressed Push asks before cutting GitHub's history only for logs this device deliberately keeps shorter (not guild XP, day rows or trial records), asks once, remembers "Merge and push" for that gist and scope, and names the histories involved.
+
+### Combat levels get a combined Score
+
+- The upgrade analyzer's Combat levels table adds a Score column that combines the Hours/0.01% placings with the same points and metric choices as the gold table, and sorts by it by default.
+
 ### Trial Sim uses the game's sign-up levels
 
 - The Assign skilling optimizer now uses the level the game recorded at sign-up for each member's signed-up trial (marked S) instead of estimating it from their profile.

@@ -1322,47 +1322,82 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
 }
 
 /**
- * Whether replacing the gist with this device's payload would cut a registered
- * history: a key with a registered merge that the gist holds entries of which
- * this device's copy lacks (a device keeping 20 sessions against a gist
- * holding 500). Asked of a pressed Push, which overwrites by design, so the
- * player can be told before it happens.
+ * Whether replacing the gist with this device's payload would cut a history this
+ * device deliberately keeps shorter: a registered key whose fold caps by a device-local
+ * setting (a device keeping 20 sessions against a gist holding 500). Asked of a pressed
+ * Push, which overwrites by design, so the player can be told before it happens.
  *
- * The gist's value is folded into this device's the way an upload folds it; a
- * copy that comes out different has taken entries from the gist. A store this
- * device's payload does not carry is one its scope does not sync, which is a
- * choice and not a trim. A fold that cannot combine a scalar (a sort order) gives
- * the gist's value, so such a key can report a trim over a copy that merely differs.
+ * A key counts only when the fold of the gist onto this device's copy comes out different
+ * as an upload (no cap) than with the default, capped context. A fold with no
+ * context-dependent cap never reports, whatever else differs between the copies
+ * (compaction, a stale same-day row, normalization).
  *
  * @param {string} localText - This device's payload
  * @param {string} remoteText - The gist's payload, as downloaded
  * @returns {boolean} True when the gist holds history this device's copy lacks
  */
 export function pushTrimsRegisteredKeys(localText, remoteText) {
+    return trimmedRegisteredKeys(localText, remoteText).length > 0;
+}
+
+/**
+ * Which registered keys a push replacing the gist would cut: the same test as
+ * {@link pushTrimsRegisteredKeys}, naming each key so the question can say what
+ * GitHub holds more of and a trace can show which key raised it.
+ *
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload, as downloaded
+ * @returns {Array<{store: string, key: string, label: string}>} The keys the gist holds more of, with the
+ *   registration's label
+ */
+export function trimmedRegisteredKeys(localText, remoteText) {
     let local;
     let remote;
     try {
         local = JSON.parse(localText)?.stores || {};
         remote = JSON.parse(remoteText)?.stores || {};
     } catch {
-        return false;
+        return [];
     }
+    const trimmed = [];
     for (const [storeName, theirs] of Object.entries(remote)) {
         if (!theirs || typeof theirs !== 'object' || !local[storeName]) continue;
         const mine = local[storeName];
         for (const [key, theirValue] of Object.entries(theirs)) {
             const registration = mergeForKey(storeName, key);
-            if (!registration) continue;
-            if (!Object.hasOwn(mine, key)) return true;
+            // Opt-in: only a registration that says it caps by this device's own setting can report a trim.
+            // A generic "uncapped differs from capped" test misfires on folds that stamp a time, mutate
+            // their inputs or order unstably
+            if (!registration?.capsLocally) continue;
             try {
-                const folded = registration.merge(mine[key], theirValue, UPLOAD_CONTEXT);
-                if (stableStringify(folded) !== stableStringify(mine[key])) return true;
+                const mineValue = Object.hasOwn(mine, key) ? mine[key] : undefined;
+                // Deep clones into every call so a fold that mutates its inputs cannot skew the comparison
+                const fold = (context) => registration.merge(clone(mineValue), clone(theirValue), context);
+                const uncapped = fold(UPLOAD_CONTEXT);
+                // The gist must hold something this device's copy lacks, else a push loses nothing. This
+                // device's copy folded onto itself is the baseline, so normalization is not read as news
+                const alone = registration.merge(clone(mineValue), clone(mineValue), UPLOAD_CONTEXT);
+                if (stableStringify(uncapped) === stableStringify(alone)) continue;
+                // ...and this device's own cap must be what would drop it
+                const capped = fold(undefined);
+                if (stableStringify(uncapped) !== stableStringify(capped)) {
+                    trimmed.push({ store: storeName, key, label: registration.label });
+                }
             } catch {
                 // A fold that throws is not evidence of a trim
             }
         }
     }
-    return false;
+    return trimmed;
+}
+
+/**
+ * A deep copy of a JSON value (undefined stays undefined).
+ * @param {*} value - Any JSON value
+ * @returns {*} An independent copy
+ */
+function clone(value) {
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
 /**
@@ -1440,6 +1475,7 @@ export default {
     exchangeBaseline,
     registeredKeysDiverge,
     pushTrimsRegisteredKeys,
+    trimmedRegisteredKeys,
     restampRestoredSettings,
     addsToRemote,
     hashPayload,

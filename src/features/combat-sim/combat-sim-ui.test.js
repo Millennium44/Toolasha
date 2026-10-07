@@ -1230,15 +1230,17 @@ describe('the panel', () => {
             expect(formatCompactHours(Infinity)).toBe('—');
         });
 
-        test('the default order is Hours/0.01% DPS, cheapest first, so Magic leads', () => {
+        test('Hours/0.01% DPS sorts cheapest first, so Magic leads', () => {
+            ui._upgradeLevelSort = { key: 'hpDps', asc: true };
             const order = names(render());
             expect(order[0]).toContain('Magic');
             expect(order.at(-1)).toContain('Intelligence');
         });
 
         test('reversing an hours sort keeps the no-gain rows last', () => {
+            ui._upgradeLevelSort = { key: 'hpDps', asc: true };
             const c = render();
-            // Hours/0.01% DPS is the default sort: a second click reverses it
+            // A second click on the sorted column reverses it
             c.querySelector('[data-level-sort-key="hpDps"]').click();
             const after = names(ui.panel.querySelector('#mwi-csim-upgrade-results'));
             expect(after[0]).toContain('Stamina');
@@ -1252,6 +1254,105 @@ describe('the panel', () => {
             expect(after[0]).toContain('Intelligence');
             expect(text()).not.toContain('could not be drawn');
             expect(text()).toContain('Hours/0.01% DPS');
+        });
+    });
+
+    describe('combat levels: Score', () => {
+        const levelRow = (description, days, { dps = 0, xp = 0, profit = 0 } = {}) => ({
+            candidate: { description, type: 'combat_level', slot: 'attack', upgradeLevel: 5 },
+            cost: 0,
+            levelTimeHours: days * 24,
+            metrics: {
+                dps: BASELINE.dps * (1 + dps / 100),
+                xpPerHour: BASELINE.xpPerHour * (1 + xp / 100),
+                profitPerHour: BASELINE.profitPerHour * (1 + profit / 100),
+                deathsPerHour: 0,
+                encountersPerHour: 10,
+            },
+            deltas: { dps, xp, profit, deaths: 0, encounters: 0 },
+            goldPer: { dps: 0, xp: 0, profit: 0, deaths: Infinity, encounters: Infinity },
+            economics: {},
+        });
+        // Equal days, so hours per 0.01% orders by the gain alone.
+        // A: best DPS, worst Profit. B: second on both. C: third DPS, best Profit. D: nothing.
+        const rows = () => [
+            levelRow('A skill', 10, { dps: 3, profit: 0.1 }),
+            levelRow('B skill', 10, { dps: 2, profit: 0.2 }),
+            levelRow('C skill', 10, { dps: 1, profit: 0.5 }),
+            levelRow('D skill', 10),
+        ];
+        const render = (results = rows()) => {
+            ui._renderUpgradeResults({ baseline: BASELINE, results, food: null });
+            return ui.panel.querySelector('#mwi-csim-upgrade-results');
+        };
+        const levelTr = (c, name) =>
+            [...c.querySelectorAll('[data-level-row]')].find((t) => t.children[0].textContent.includes(name));
+        const scoreOf = (c, name) => levelTr(c, name).querySelector('[data-level-score]').textContent.trim();
+        const names = (c) => [...c.querySelectorAll('[data-level-row]')].map((t) => t.children[0].textContent.trim());
+
+        test('the Score ranks by combined points and the breakdown says where they came from', () => {
+            const c = render();
+            // DPS: A 5, B 4, C 3. Profit: C 5, B 4, A 3. EXP: nobody.
+            expect(scoreOf(c, 'A skill')).toBe('8');
+            expect(scoreOf(c, 'B skill')).toBe('8');
+            expect(scoreOf(c, 'C skill')).toBe('8');
+            const a = rows();
+            a[1] = levelRow('B skill', 10, { dps: 2, profit: 0.6 });
+            const c2 = render(a);
+            // B: DPS 4 + Profit 5 -> 9; C: DPS 3 + Profit 4 -> 7; A: 5 + 3 -> 8
+            expect(scoreOf(c2, 'B skill')).toBe('9');
+            expect(scoreOf(c2, 'A skill')).toBe('8');
+            expect(scoreOf(c2, 'C skill')).toBe('7');
+            expect(names(c2)).toEqual(['B skill', 'A skill', 'C skill', 'D skill']);
+            const detail = [...c2.querySelectorAll('[data-level-detail]')][names(c2).indexOf('B skill')];
+            expect(detail.textContent).toContain('Score 9');
+            expect(detail.textContent).toContain('Hours/0.01% DPS #2 (+4)');
+            expect(detail.textContent).toContain('Hours/0.01% Profit #1 (+5)');
+            expect(detail.textContent).not.toContain('Hours/0.01% EXP');
+        });
+
+        test('Score is the default order, highest first', () => {
+            const a = rows();
+            a[1] = levelRow('B skill', 10, { dps: 2, profit: 0.6 });
+            expect(names(render(a))[0]).toBe('B skill');
+        });
+
+        test('a row with nothing to place gets no score and sorts last, even reversed', () => {
+            const c = render();
+            expect(scoreOf(c, 'D skill')).toBe('—');
+            expect(names(c).at(-1)).toBe('D skill');
+            c.querySelector('[data-level-sort-key="score"]').click();
+            expect(names(ui.panel.querySelector('#mwi-csim-upgrade-results')).at(-1)).toBe('D skill');
+        });
+
+        test('a saved level sort from before is kept', () => {
+            ui._upgradeLevelSort = { key: 'hpDps', asc: true };
+            expect(names(render())[0]).toBe('A skill');
+        });
+
+        test('with only level rows the ⚙ Columns control is there and rescoring the table works', () => {
+            const c = render();
+            expect(c.querySelectorAll('#mwi-csim-upgrade-cols-btn')).toHaveLength(1);
+            expect(c.querySelector('[data-upgrade-score="profit"]')).not.toBeNull();
+            expect(scoreOf(c, 'A skill')).toBe('8');
+
+            const box = c.querySelector('[data-upgrade-score="profit"]');
+            box.checked = false;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+
+            const after = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(scoreOf(after, 'A skill')).toBe('5');
+            expect(scoreOf(after, 'C skill')).toBe('3');
+            expect(after.querySelectorAll('#mwi-csim-upgrade-cols-btn')).toHaveLength(1);
+        });
+
+        test('only the scored metrics count, and the header explains the Score', () => {
+            ui._upgradeScoreKeys = ['dps'];
+            const c = render();
+            expect(scoreOf(c, 'A skill')).toBe('5');
+            expect(c.querySelector('[data-level-sort-key="score"]').getAttribute('title')).toContain(
+                'Points for placing'
+            );
         });
     });
 
