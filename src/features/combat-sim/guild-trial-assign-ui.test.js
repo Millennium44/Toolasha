@@ -58,6 +58,7 @@ import {
     drawnSkillingTrials,
     FALLBACK_ASSUMPTION,
     parseTrialMinLevels,
+    signupSkillingLevel,
 } from './guild-trial-assign-ui.js';
 import { GUILD_SKILLING_TICKS, CURRENT_TRIALS_DATA_SKILLING } from '../guild/guild-trial-messages.fixture.js';
 import { optimizeTrialAssignment } from './guild-trial-assign.js';
@@ -259,6 +260,66 @@ describe('cycle inputs', () => {
         expect(assumed[MILKING].source).toContain('another trial');
         expect(assumed[MILKING].levelBonus).toBe(0);
         expect(defaultAssumptions([MILKING], {})[MILKING]).toMatchObject({ ...FALLBACK_ASSUMPTION, levelBonus: 0 });
+    });
+});
+
+describe('sign-up levels from the game', () => {
+    // The live shape: characterId string -> { combatLevel, skillingTrialLevel }
+    const MAP = {
+        900002: { combatLevel: 153, skillingTrialLevel: 132 },
+        900003: { combatLevel: 90, skillingTrialLevel: 154 },
+    };
+
+    test('reads the skilling level, rejecting anything that is not a level', () => {
+        expect(signupSkillingLevel(MAP, '900002')).toBe(132);
+        expect(signupSkillingLevel(MAP, '1')).toBeNull();
+        expect(signupSkillingLevel(null, '900002')).toBeNull();
+        expect(signupSkillingLevel({ 5: { skillingTrialLevel: 0 } }, '5')).toBeNull();
+    });
+
+    test('is the level for the signed-up trial only, ahead of the profile reading, marked S', () => {
+        game.characterData.guildTrialSignupLevelMap = MAP;
+        const { shell, sim, planner } = makeSim();
+        sim.panel.render();
+        const crafter = planner.context().members.find((m) => m.id === '900002');
+        // Crafter signed up for Milking: the sign-up level replaces their profile's 95 there, not for Crafting
+        expect(crafter.coverage[MILKING]).toMatchObject({ kind: 'signup', level: 132, base: 132 });
+        expect(crafter.coverage[CRAFTING]).toMatchObject({ kind: 'level', level: 140 });
+        expect(markers(shell, '900002')).toEqual(['signup', 'level']);
+        // Milker never signed up for a skilling trial, so their entry is not tied to any skill
+        const milker = planner.context().members.find((m) => m.id === '900003');
+        expect(milker.coverage[MILKING]).toMatchObject({ kind: 'level', level: 150 });
+        expect(text(shell)).toContain('S = level the game recorded at sign-up');
+    });
+
+    test('a typed level still wins, and the planner map overrides the login payload copy', () => {
+        game.characterData.guildTrialSignupLevelMap = MAP;
+        const { planner } = makeSim();
+        planner.manual['900002'] = { [MILKING]: '120' };
+        expect(planner.context().members.find((m) => m.id === '900002').coverage[MILKING]).toMatchObject({
+            kind: 'manual',
+            level: 120,
+        });
+        planner.manual = {};
+        planner.signupLevelMap = { 900002: { combatLevel: 1, skillingTrialLevel: 141 } };
+        expect(planner.context().members.find((m) => m.id === '900002').coverage[MILKING].level).toBe(141);
+        planner.reset();
+        expect(planner.signupLevelMap).toBeNull();
+    });
+
+    test('a sign-up level under the trial minimum closes the trial', () => {
+        game.characterData.guildTrialSignupLevelMap = { 900002: { combatLevel: 153, skillingTrialLevel: 100 } };
+        const { planner } = makeSim();
+        planner.trialMinLevelsData = JSON.stringify({ [MILKING]: 120 });
+        expect(planner.context().members.find((m) => m.id === '900002').coverage[MILKING].kind).toBe('below-min');
+    });
+
+    test('our own level still comes from our character', () => {
+        game.characterData.guildTrialSignupLevelMap = { 900001: { combatLevel: 153, skillingTrialLevel: 132 } };
+        game.characterSkills = [{ skillHrid: '/skills/milking', level: 77 }];
+        META[900001] = { ...META[900001], signupWeekStartAt: WEEK, signedUpSkillingTrialHrid: MILKING };
+        const { planner } = makeSim();
+        expect(planner.context().members.find((m) => m.id === '900001').coverage[MILKING].level).toBe(77);
     });
 });
 

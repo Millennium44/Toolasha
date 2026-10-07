@@ -287,6 +287,7 @@ export class GuildTrialSim {
                 if (guildId != null && String(arriving) !== String(guildId)) {
                     this.readings = {};
                     this.successReadings = {};
+                    this.assign.signupLevelMap = {};
                 }
                 guildId = arriving;
             }
@@ -294,6 +295,8 @@ export class GuildTrialSim {
                 this.assign.setWeeklyTrialSet(data.guildWeeklyTrialSet);
             if (typeof data?.guild?.trialMinLevelsData === 'string')
                 this.assign.trialMinLevelsData = data.guild.trialMinLevelsData;
+            if (data?.guildTrialSignupLevelMap && typeof data.guildTrialSignupLevelMap === 'object')
+                this.assign.signupLevelMap = data.guildTrialSignupLevelMap;
             // Minimums, the draw, the week and the building levels behind the slot cap all ride here
             notifyInputs();
         };
@@ -313,8 +316,39 @@ export class GuildTrialSim {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             notifyInputs();
         };
+        // A member who moves to another skilling trial has a level in the map for the trial they left:
+        // drop it (or take the message's own level, if it carries one) so it is never read against the
+        // new trial's skill. A combat-only change leaves it alone. The skilling trial each member was
+        // last seen on comes from this message, else from the login guild roster.
+        const lastSkillingTrial = {};
+        const signupChanged = (data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            const id = data?.characterId != null ? String(data.characterId) : null;
+            const held = this.assign.signupLevelMap ?? dataManager.characterData?.guildTrialSignupLevelMap;
+            const incoming = data?.signedUpSkillingTrialHrid;
+            const previous = id
+                ? (lastSkillingTrial[id] ??
+                  dataManager.characterData?.guildCharacterMap?.[id]?.signedUpSkillingTrialHrid)
+                : undefined;
+            if (id && incoming !== undefined) lastSkillingTrial[id] = incoming || '';
+            const movedSkilling =
+                incoming !== undefined && previous !== undefined && (incoming || '') !== (previous || '');
+            const level = Number(data?.skillingTrialLevel);
+            const carriesLevel = Number.isFinite(level) && level > 0;
+            if (id && (carriesLevel || (held && Object.hasOwn(held, id) && movedSkilling))) {
+                const next = { ...(held || {}) };
+                if (carriesLevel) next[id] = { ...next[id], skillingTrialLevel: level };
+                else delete next[id];
+                this.assign.signupLevelMap = next;
+                notifyInputs();
+            } else if (!offTracker) {
+                notifyInputs();
+            }
+        };
+        webSocketHook.on('guild_trial_signup_updated', signupChanged);
+        this.handlers.push(() => webSocketHook.off('guild_trial_signup_updated', signupChanged));
         for (const type of [
-            ...(offTracker ? [] : ['guild_trial_signup_updated', 'guild_characters_updated']),
+            ...(offTracker ? [] : ['guild_characters_updated']),
             ...(offSkills ? [] : ['profile_shared']),
             'action_completed',
         ]) {

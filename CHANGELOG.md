@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Sim uses the game's sign-up levels
+
+- The Assign skilling optimizer now uses the level the game recorded at sign-up for each member's signed-up trial (marked S) instead of estimating it from their profile.
+
 ### Pricing dropdowns on the Marketplace page
 
 - An optional Buy/Sell pricing dropdown pair and Craft toggle can sit beside the Marketplace title (Skill Page and Tiles settings, off by default), so you can change how item tooltips are priced without opening a skill page.

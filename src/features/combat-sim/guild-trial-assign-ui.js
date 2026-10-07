@@ -247,7 +247,7 @@ export function defaultAssumptions(
 export function memberRates(
     member,
     trials,
-    { ownId, ownLevels, readings, successReadings, manual, levelFor, assumed, clientData, minLevels }
+    { ownId, ownLevels, readings, successReadings, manual, levelFor, assumed, clientData, minLevels, signupLevels }
 ) {
     const rates = {};
     const coverage = {};
@@ -258,8 +258,15 @@ export function memberRates(
         const typedNumber = typedRaw === '' || typedRaw == null ? NaN : Number(typedRaw);
         // A typed level that is not a whole number within any skill's range is ignored rather than scored
         const typed = validTypedLevel(typedNumber) ? typedNumber : NaN;
-        let base = Number.isFinite(typed) ? typed : own ? ownLevels?.[skill] : levelFor?.(member.name, skill);
+        // The game's own figure for the skill of the trial they signed up for, and only for that trial
+        const signupLevel = member.current === trial ? signupSkillingLevel(signupLevels, member.id) : null;
+        let base = Number.isFinite(typed)
+            ? typed
+            : own
+              ? ownLevels?.[skill]
+              : (signupLevel ?? levelFor?.(member.name, skill));
         if (!Number.isFinite(base)) base = null;
+        const fromSignup = signupLevel != null && !Number.isFinite(typed) && !own && base === signupLevel;
         const min = minLevels?.[trial] || 0;
         const reading = own ? readings?.[trial] : null;
         const fromReading = reading
@@ -274,7 +281,8 @@ export function memberRates(
             entry = { kind: 'reading', level: fromReading.effectiveLevel ?? null };
         } else if (base != null) {
             rates[trial] = rateInputFromLevel(base + (assumed[trial]?.levelBonus || 0), assumed[trial]);
-            entry = { kind: rates[trial] ? (Number.isFinite(typed) ? 'manual' : 'level') : 'missing', level: base };
+            const kind = Number.isFinite(typed) ? 'manual' : fromSignup ? 'signup' : 'level';
+            entry = { kind: rates[trial] ? kind : 'missing', level: base };
         } else {
             rates[trial] = null;
             entry = { kind: 'missing', level: null };
@@ -284,7 +292,20 @@ export function memberRates(
     return { rates, coverage };
 }
 
-const MARKERS = { reading: 'R', manual: 'M', level: 'L', 'below-min': '<min', missing: '—' };
+/**
+ * A member's skilling level as the game reports it at sign-up, out of `guildTrialSignupLevelMap`
+ * (characterId → `{ combatLevel, skillingTrialLevel }`). It is the level in the skill of the
+ * skilling trial they signed up for, so the caller may use it for that trial only.
+ * @param {Object|null} map - The map as the game sends it
+ * @param {string} id - Character id
+ * @returns {number|null}
+ */
+export function signupSkillingLevel(map, id) {
+    const level = Number(map?.[id]?.skillingTrialLevel);
+    return Number.isFinite(level) && level >= 1 && level <= 1000 ? level : null;
+}
+
+const MARKERS = { reading: 'R', manual: 'M', level: 'L', signup: 'S', 'below-min': '<min', missing: '—' };
 
 /** Copy text, falling back to a selected text area */
 async function copyText(text, area) {
@@ -334,6 +355,8 @@ export class TrialAssignPlanner {
         this.manual = {};
         this.weeklyTrialSet = null;
         this.trialMinLevelsData = null;
+        // `guildTrialSignupLevelMap`; null falls back to the login payload's copy
+        this.signupLevelMap = null;
         this.result = null;
         this.check = null;
         this.error = '';
@@ -383,6 +406,7 @@ export class TrialAssignPlanner {
         const assumed = {};
         for (const trial of trials) assumed[trial] = { ...defaults[trial], ...(this.assumed[trial] || {}) };
         const minLevels = parseTrialMinLevels(this.trialMinLevelsData ?? characterData?.guild?.trialMinLevelsData);
+        const signupLevels = this.signupLevelMap ?? characterData?.guildTrialSignupLevelMap ?? null;
         const ownId = String(dataManager.getCurrentCharacterId?.() ?? '');
         const levelFor = skills?.levelFor ? (name, skill) => skills.levelFor(name, skill) : null;
         const members = roster.members.map((member) => {
@@ -398,6 +422,7 @@ export class TrialAssignPlanner {
                     assumed,
                     clientData,
                     minLevels,
+                    signupLevels,
                 }),
             };
             const pin = this.pins[member.id];
@@ -911,7 +936,7 @@ export class TrialAssignPlanner {
         }
         roster.appendChild(
             panelNote(
-                `Levels are base skill levels. R = your trial reading · L = level from their profile (yours from your character) · M = level typed here · <min = below the trial’s minimum · ?min = minimum unverified · — = no data. ${
+                `Levels are base skill levels. R = your trial reading · L = level from their profile (yours from your character) · S = level the game recorded at sign-up (from the game, not an estimate) · M = level typed here · <min = below the trial’s minimum · ?min = minimum unverified · — = no data. ${
                     context.hasSkills
                         ? 'Open members’ profiles (the trials tab’s profile cycler) to fill in levels.'
                         : 'Skill levels need the Guild Trials feature on (and profiles opened).'
