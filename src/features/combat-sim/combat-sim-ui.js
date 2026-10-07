@@ -2079,6 +2079,33 @@ export function levelHoursPerStep(hours, pctDelta) {
 }
 
 /**
+ * Hours of combat per 0.01% of one metric for a combat-level row, reading the
+ * improvement the grind actually ends with (the weapon's primary skill included
+ * where the same hours carried it).
+ * @param {Object} r - combat_level result row
+ * @param {string} metricKey - 'dps' | 'xp' | 'profit'
+ * @returns {number} Hours, Infinity when there is no gain
+ */
+function levelRowHoursPer(r, metricKey) {
+    const e = r.alongside?.metrics ? r.alongside : r;
+    return levelHoursPerStep(r.levelTimeHours, e.deltas?.[metricKey]);
+}
+
+/**
+ * The Score metrics the Combat levels table can place on: the gold table's own
+ * Gold/0.01% metrics, read off Hours/0.01% instead. Deaths, encounters and the
+ * repay/ROI pair have no level equivalent, so a level row never earns for them.
+ */
+const LEVEL_SCORE_METRICS = ['dps', 'xp', 'profit'].map((key) => {
+    const metric = SCORE_METRICS.find((m) => m.key === key);
+    return {
+        ...metric,
+        label: metric.label.replace('Gold/0.01%', 'Hours/0.01%'),
+        value: (r) => levelRowHoursPer(r, key),
+    };
+});
+
+/**
  * Compact hours for the Hours/0.01% columns: "45m" under an hour, else "1.2h".
  * @param {number} hours - Hours
  * @returns {string} Text, or a dash when there is no figure
@@ -10503,13 +10530,22 @@ class CombatSimUI {
      * @private
      */
     _renderUpgradeLevelTable(rows, baseline) {
-        if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'hpDps', asc: true };
+        if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'score', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeLevelSort;
+        // Same points, depth and chosen metrics as the gold table's Score, placed
+        // on Hours/0.01%; written onto the rows so the detail breakdown and the
+        // CSV read them the way they read a gold row's
+        const depthKey = this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH;
+        assignRankScores(rows, {
+            metrics: LEVEL_SCORE_METRICS,
+            keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
+            places: scoreDepthPlaces(depthKey, rows.length),
+        });
         // What the grind actually ends with: the skill at its target plus the
         // weapon's primary skill wherever the same hours carried it. Rows with
         // no primary gain (or the primary skill's own row) read off the solo sim
         const effective = (r) => (r.alongside?.metrics ? r.alongside : r);
-        const hoursPer = (r, metricKey) => levelHoursPerStep(r.levelTimeHours, effective(r).deltas?.[metricKey]);
+        const hoursPer = levelRowHoursPer;
 
         const sortValue = (r) => {
             const e = effective(r);
@@ -10525,6 +10561,10 @@ class CombatSimUI {
                     return -(e.metrics.profitPerHour - baseline.profitPerHour);
                 case 'dps':
                     return -(e.metrics.dps - baseline.dps);
+                case 'score':
+                    // Higher is better, so negated; a row with no points has no
+                    // figure and stays last whichever way the column is sorted
+                    return r.score > 0 ? -r.score : null;
                 case 'hpXp':
                     return hoursPer(r, 'xp');
                 case 'hpProfit':
@@ -10555,7 +10595,12 @@ class CombatSimUI {
             bestProfitDelta = Math.max(bestProfitDelta, e.metrics.profitPerHour - baseline.profitPerHour);
         }
 
-        const detailColspan = 8;
+        const detailColspan = 9;
+        const scoreTitle =
+            `Points for placing in each scored Hours/0.01% column's ${scoreDepthLabel(depthKey).toLowerCase()}, ` +
+            'summed. Finds all-rounders that never top a single column. Ordinal, so winning a column narrowly ' +
+            'scores the same as winning it outright. Counts the same metrics as the gold table above; ' +
+            'use ⚙ Columns to choose what counts and how deep the placings go.';
         const primaryName = rows.find((r) => r.primarySkill)?.primarySkill;
         const primaryNote = primaryName
             ? ` Your weapon trains ${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done — the Δ columns are for both together.`
@@ -10578,6 +10623,7 @@ class CombatSimUI {
                 <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpXp" title="Hours of combat, at your current training rates, per 0.01% EXP/hr improvement. Lower is better.">Hours/0.01% EXP${arrow('hpXp')}</th>
                 <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
                 <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpProfit" title="Hours of combat, at your current training rates, per 0.01% Profit/hr improvement. Lower is better.">Hours/0.01% Profit${arrow('hpProfit')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="score" title="${scoreTitle}">Score<br>${scoreDepthLabel(depthKey)}${arrow('score')}</th>
             </tr></thead><tbody>`;
 
         sorted.forEach((r, i) => {
@@ -10631,6 +10677,7 @@ class CombatSimUI {
                 <td style="${tdStyle}" data-hours-per="xp">${formatCompactHours(hoursPer(r, 'xp'))}</td>
                 <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}" ${deltaTitle}>${fmtCell(profitDelta, e.deltas.profit)}</td>
                 <td style="${tdStyle}" data-hours-per="profit">${formatCompactHours(hoursPer(r, 'profit'))}</td>
+                <td style="${tdStyle}" data-level-score>${r.score > 0 ? r.score : '—'}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
                 <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
@@ -11136,6 +11183,10 @@ class CombatSimUI {
         }
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
+        // The gold table carries the ⚙ Columns popover; with no gold table the
+        // level Score would be stuck on its saved metrics and depth, so the
+        // levels table brings its own. Never both: the wiring finds it by id.
+        if (levelRows.length && !goldRows.length) html += this._renderUpgradeColumnMenu();
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
         container.innerHTML = html;
