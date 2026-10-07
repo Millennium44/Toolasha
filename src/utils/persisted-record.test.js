@@ -766,6 +766,34 @@ describe('atomic record', () => {
         expect(stored().map((e) => e.id)).toEqual([1]);
     });
 
+    test('the page-close hook lands a departing retry still waiting out its back-off', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored()).toBeUndefined();
+
+        // The page closes inside the back-off: nothing is "unwritten", the retry is all there is
+        for (const listener of storageMock.teardownListeners) listener('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('a flush lands a departing retry at once', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        await record.flushed();
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
     test('a save whose prepare cannot read is asked for again', async () => {
         vi.useFakeTimers();
         let readable = false;

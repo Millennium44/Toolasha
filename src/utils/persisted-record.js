@@ -279,6 +279,10 @@ export function createPersistedRecord({
     let directWrite = Promise.resolve(true);
     /** Atomic writes that have failed in a row since the last one committed, for the retry back-off */
     let failedWrites = 0;
+    /** Departing writes waiting out a back-off, which a page close must land at once */
+    const departingRetries = new Set();
+    /** Departing writes in flight, for `flushed()` */
+    const departingWrites = [];
 
     /**
      * Arm the delayed save: every save asked for before it fires joins it.
@@ -338,27 +342,48 @@ export function createPersistedRecord({
             return;
         }
         const delay = Math.min(ATOMIC_RETRY_MAX_MS, ATOMIC_DEFER_MS * 2 ** (attempt - 1));
-        setTimeout(() => {
-            let outcome;
-            try {
-                outcome = storage.update(
-                    writeKey,
-                    (current, found) => (!found || current == null ? held : (mergeAfterReset || merge)(current, held)),
-                    store
-                );
-            } catch (error) {
-                outcome = Promise.reject(error);
-            }
-            directWrite = Promise.resolve(outcome)
-                .then(
-                    (result) => Boolean(result?.written),
-                    () => false
-                )
-                .then((written) => {
-                    if (!written) retryDeparting(writeKey, held, attempt + 1);
-                    return written;
-                });
-        }, delay);
+        const entry = { writeKey, held, attempt, timer: null };
+        entry.timer = setTimeout(() => landDeparting(entry), delay);
+        departingRetries.add(entry);
+    };
+
+    /**
+     * Write one waiting departing retry now: stop its timer and open the
+     * transaction. Synchronous up to `storage.update`, so the page-close hook
+     * can use it; a failure schedules the next attempt.
+     * @param {{writeKey: string, held: *, attempt: number, timer: *}} entry
+     * @returns {Promise<boolean>} Whether it committed
+     */
+    const landDeparting = (entry) => {
+        clearTimeout(entry.timer);
+        if (!departingRetries.delete(entry)) return Promise.resolve(true);
+        let outcome;
+        try {
+            outcome = storage.update(
+                entry.writeKey,
+                (current, found) =>
+                    !found || current == null ? entry.held : (mergeAfterReset || merge)(current, entry.held),
+                store
+            );
+        } catch (error) {
+            outcome = Promise.reject(error);
+        }
+        const settled = Promise.resolve(outcome)
+            .then(
+                (result) => Boolean(result?.written),
+                () => false
+            )
+            .then((written) => {
+                if (!written) retryDeparting(entry.writeKey, entry.held, entry.attempt + 1);
+                return written;
+            });
+        departingWrites.push(settled);
+        settled.finally(() => {
+            const at = departingWrites.indexOf(settled);
+            if (at !== -1) departingWrites.splice(at, 1);
+        });
+        directWrite = settled;
+        return settled;
     };
 
     /**
@@ -530,6 +555,8 @@ export function createPersistedRecord({
          * so the fold uses what memory holds.
          */
         _writeBeforeTeardown() {
+            if (!isAtomic()) return;
+            for (const entry of Array.from(departingRetries)) landDeparting(entry);
             if (!unwritten || !isAtomic()) return;
             const waiting = deferred;
             deferred = null;
@@ -688,7 +715,8 @@ export function createPersistedRecord({
         flushed() {
             if (!atomic) return saveChain;
             record._releaseDeferred();
-            return Promise.all([saveChain, directWrite]).then(([chained]) => chained);
+            for (const entry of Array.from(departingRetries)) landDeparting(entry);
+            return Promise.all([saveChain, directWrite, ...departingWrites]).then(([chained]) => chained);
         },
     };
 
