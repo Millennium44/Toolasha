@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Enhancing sessions deleted, merged or started in one game tab are no longer undone by a second tab open on the same character; saves now merge by session and remember deletions.
 
+### Sync trims and Push confirmations
+
+- A Settings-only device now clears history left on the sync gist at its next automatic push, and pressing Push on a device that keeps less history than the gist asks whether to merge, replace anyway or cancel instead of silently cutting the gist's copy.
+
 ### Monster stat check credits hits after a parry correctly
 
 - The monster stat check no longer credits a hit that lands on you to the ability of an earlier monster swing you parried.
