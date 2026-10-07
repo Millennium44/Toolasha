@@ -11,10 +11,24 @@
  *
  * The sessions map lives in a persisted record (see `utils/persisted-record.js`)
  * so a read that cannot be made does not come back as "no sessions" and get
- * written over the stored ones on the next attempt, and so a second tab's
- * sessions are folded in rather than overwritten. It is a curated record: the
- * tracker deletes and archives sessions on purpose, so once a readable load has
- * completed memory is the list and a removal sticks; before that, saves merge.
+ * written over the stored ones on the next attempt.
+ *
+ * Two game tabs on one character both write this map — every attempt saves —
+ * so every save merges with what is stored, by session id, rather than writing
+ * one tab's memory whole (which put back sessions the other tab had deleted or
+ * merged away, and dropped the ones it had started):
+ *
+ * - a session only the other tab has is kept, and joins this tab's list;
+ * - a session both have goes to the copy with the later activity stamp, and on
+ *   a tie the one with more attempts (a merge folds attempts in without moving
+ *   the stamp); otherwise this tab's copy stands;
+ * - a removal, from either tab, is a tombstone under its own key: the id and
+ *   when it went. Tombstones are read fresh before every merge and pruned after
+ *   {@link TOMBSTONE_TTL_MS}.
+ *
+ * This tab's removals are the ids it has held — loaded, saved or adopted — and
+ * no longer holds. The fold mutates the tracker's live map in place, so what
+ * the tracker shows and what it saves next are the merged list.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -22,8 +36,143 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 
 const STORAGE_KEY = 'enhancementTracker_sessions';
+const TOMBSTONE_KEY = 'enhancementTracker_sessionTombstones';
 const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
 const STORAGE_STORE = 'settings'; // Use existing 'settings' store
+
+/** How long a removed session's id is remembered: far longer than any tab stays open unreloaded */
+export const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * When a session last moved — the same reading the tracker's "most recent" uses.
+ * @param {Object} session
+ * @returns {number}
+ */
+function activityOf(session) {
+    return Math.max(
+        session?.endTime || 0,
+        session?.lastAttempt?.timestamp || 0,
+        session?.lastUpdateTime || 0,
+        session?.startTime || 0
+    );
+}
+
+/**
+ * Whether the stored copy of a session should replace this tab's.
+ * @param {Object} stored
+ * @param {Object} held
+ * @returns {boolean}
+ */
+function storedIsNewer(stored, held) {
+    const storedAt = activityOf(stored);
+    const heldAt = activityOf(held);
+    if (storedAt !== heldAt) return storedAt > heldAt;
+    return (stored?.totalAttempts || 0) > (held?.totalAttempts || 0);
+}
+
+/**
+ * Tombstones from both sides, each id at its latest removal, the expired ones dropped.
+ * @param {Object} stored - `{id: removedAt}`
+ * @param {Object} memory - `{id: removedAt}`
+ * @returns {Object}
+ */
+function mergeTombstones(stored, memory) {
+    const cutoff = Date.now() - TOMBSTONE_TTL_MS;
+    const out = {};
+    for (const side of [stored, memory]) {
+        if (!side || typeof side !== 'object') continue;
+        for (const [id, at] of Object.entries(side)) {
+            if (!Number.isFinite(at) || at < cutoff) continue;
+            if (!(out[id] >= at)) out[id] = at;
+        }
+    }
+    return out;
+}
+
+/**
+ * The removed session ids. Curated with `keepMerging`, so both tabs' tombstones
+ * are always folded together; written straight away, since a sessions write
+ * landing before the tombstone that explains it would read as "the other tab
+ * has not seen this one yet".
+ */
+const tombstoneRecord = createCuratedRecord({
+    base: TOMBSTONE_KEY,
+    store: STORAGE_STORE,
+    empty: () => ({}),
+    merge: mergeTombstones,
+    keepMerging: true,
+    immediate: true,
+    label: 'EnhancementStorage',
+});
+
+/** Ids this tab has held since its last reset — a held id that disappears was removed here */
+let knownIds = new Set();
+
+/**
+ * Tombstone every id this tab held and no longer holds, and save the tombstones.
+ * @param {Object} sessions - This tab's sessions map
+ */
+function noteRemovals(sessions) {
+    const now = Date.now();
+    let removed = false;
+    for (const id of knownIds) {
+        if (sessions && Object.hasOwn(sessions, id)) continue;
+        tombstoneRecord.get()[id] = now;
+        knownIds.delete(id);
+        removed = true;
+    }
+    if (removed) tombstoneRecord.save();
+}
+
+/**
+ * Replace a held session's contents with the stored copy, keeping the object:
+ * the tracker compares the current session by identity across its awaits.
+ * @param {Object} held
+ * @param {Object} stored
+ */
+function adoptInPlace(held, stored) {
+    for (const key of Object.keys(held)) {
+        if (!Object.hasOwn(stored, key)) delete held[key];
+    }
+    Object.assign(held, stored);
+}
+
+/**
+ * Fold the stored sessions into this tab's, by id (see the module header).
+ * Mutates and returns `memory`, which is the tracker's live map.
+ * @param {Object} stored - The stored sessions map
+ * @param {Object} memory - This tab's sessions map
+ * @returns {Object} `memory`
+ */
+function mergeSessions(stored, memory) {
+    const held = memory && typeof memory === 'object' ? memory : {};
+    noteRemovals(held);
+    const graves = tombstoneRecord.get();
+    // Stored order first, then this tab's new ones — the order a plain map fold gives,
+    // and the one the panel numbers sessions by
+    const merged = new Map();
+    if (stored && typeof stored === 'object' && stored !== held) {
+        for (const [id, session] of Object.entries(stored)) {
+            if (Object.hasOwn(graves, id) || session == null) continue;
+            const mine = held[id];
+            if (mine == null) {
+                merged.set(id, session);
+            } else {
+                if (mine !== session && typeof mine === 'object' && storedIsNewer(session, mine)) {
+                    adoptInPlace(mine, session);
+                }
+                merged.set(id, mine);
+            }
+        }
+    }
+    for (const [id, session] of Object.entries(held)) {
+        if (!Object.hasOwn(graves, id) && !merged.has(id)) merged.set(id, session);
+    }
+    for (const id of Object.keys(held)) delete held[id];
+    for (const [id, session] of merged) held[id] = session;
+    knownIds = new Set(merged.keys());
+    return held;
+}
 
 /**
  * The sessions, as held in memory and folded into storage.
@@ -38,6 +187,10 @@ const sessionsRecord = createCuratedRecord({
     base: STORAGE_KEY,
     store: STORAGE_STORE,
     empty: () => ({}),
+    merge: mergeSessions,
+    keepMerging: true,
+    // The other tab's removals, read fresh before every fold
+    prepare: () => tombstoneRecord.load(),
     label: 'EnhancementStorage',
 });
 /** Whether the record's memory has been handed sessions since the last reset */
@@ -52,11 +205,15 @@ let hasPendingCurrentSessionId = false;
  * timer fires, so awaiting it would stall every caller for the debounce delay.
  * `storage.flushAll()` on `beforeunload` is what makes the last one land. The
  * write is skipped, and memory kept, when storage cannot be read first.
+ * Sessions this tab held and the map no longer has are tombstoned here.
  * @param {Object} sessions - Sessions object (keyed by session ID)
  * @returns {Promise<void>}
  */
 export async function saveSessions(sessions) {
     sessionsHeld = true;
+    noteRemovals(sessions);
+    // Held from here on, stored or not: one removed before any fold has run is still this tab's removal
+    knownIds = new Set(Object.keys(sessions || {}));
     sessionsRecord.set(sessions);
     sessionsRecord.save();
 }
@@ -84,9 +241,10 @@ export function sessionsLoaded() {
     return sessionsRecord.isLoaded();
 }
 
-/** @returns {Promise<*>} The pending session writes, for tests and shutdown */
-export function flushSessionWrites() {
-    return sessionsRecord.flushed();
+/** @returns {Promise<void>} The pending session and tombstone writes, for tests and shutdown */
+export async function flushSessionWrites() {
+    await sessionsRecord.flushed();
+    await tombstoneRecord.flushed();
 }
 
 /**
@@ -186,6 +344,8 @@ export function importSession(jsonStr) {
  */
 export function resetPendingSessionCache() {
     sessionsRecord.reset();
+    tombstoneRecord.reset();
+    knownIds = new Set();
     sessionsHeld = false;
     pendingCurrentSessionId = undefined;
     hasPendingCurrentSessionId = false;

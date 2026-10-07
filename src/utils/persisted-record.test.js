@@ -455,6 +455,29 @@ describe('curated record', () => {
         expect(storageMock.storeFor('settings').get(FAV)).toEqual({ cheese: true });
     });
 
+    test('keepMerging folds every save through the merge, after prepare has run', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true });
+        const order = [];
+        const record = createCuratedRecord({
+            base: 'fav',
+            empty: () => ({}),
+            keepMerging: true,
+            prepare: async () => order.push('prepare'),
+            merge: (stored, memory) => {
+                order.push('merge');
+                return { ...stored, ...memory };
+            },
+            label: 'Test',
+        });
+        await record.load();
+        storageMock.storeFor('settings').set(FAV, { milk: true, butter: true });
+        record.get().cheese = true;
+
+        await record.save();
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true, butter: true, cheese: true });
+        expect(order).toEqual(['prepare', 'merge', 'prepare', 'merge']);
+    });
+
     test('an unreadable store still refuses the save, and memory is kept', async () => {
         storageMock.storeFor('settings').set(FAV, { milk: true });
         const record = curated();

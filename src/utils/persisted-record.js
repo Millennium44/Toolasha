@@ -152,6 +152,9 @@ export function mergeSeriesMaps(keyOf, sort = null) {
  * @param {'adopt'|'discard'} [options.migrate='adopt'] - Legacy-adoption mode for scoped reads
  * @param {boolean} [options.immediate=false] - Write without debouncing
  * @param {string} [options.label='PersistedRecord'] - Log prefix
+ * @param {() => Promise<*>} [options.prepare] - Run after every readable probe and before the
+ *   merge it feeds, for a merge that needs something else read fresh first (another key's
+ *   tombstones, say). Its result is ignored; a reset during it stands the load or save down.
  * @returns {Object} The record handle — see methods below
  */
 export function createPersistedRecord({
@@ -163,6 +166,7 @@ export function createPersistedRecord({
     migrate = 'adopt',
     immediate = false,
     label = 'PersistedRecord',
+    prepare = null,
 }) {
     if (typeof empty !== 'function') throw new Error(`[${label}] createPersistedRecord needs an empty() factory`);
     if (typeof merge !== 'function') throw new Error(`[${label}] createPersistedRecord needs a merge(stored, memory)`);
@@ -258,6 +262,10 @@ export function createPersistedRecord({
                 } else {
                     stored = null;
                 }
+                if (prepare) {
+                    await prepare();
+                    if (started !== generation) return false;
+                }
                 const under = authoritative && memoryVersion === startedVersion ? empty() : memory;
                 memory = stored == null ? merge(empty(), under) : merge(stored, under);
                 memoryVersion += 1;
@@ -317,6 +325,10 @@ export function createPersistedRecord({
                             return false;
                         }
                         if (started !== generation) return false;
+                        if (prepare && probed.found) {
+                            await prepare();
+                            if (started !== generation) return false;
+                        }
                         if (probed.found) {
                             memory = merge(probed.value, memory);
                             memoryVersion += 1;
@@ -409,15 +421,22 @@ export function createPersistedRecord({
  * store still applies, which is the protection that matters. `reset()` (a
  * character switch) goes back to merging until the next readable load.
  *
+ * `keepMerging: true` opts out of trusting memory: every save folds through
+ * `merge`, which must then carry removals itself (the enhancement sessions
+ * keep tombstones). That is for a list two tabs edit at once, where memory
+ * written whole puts back what the other tab removed and drops what it added.
+ *
  * @param {Object} options - As {@link createPersistedRecord}; `merge` defaults
  *   to {@link mergeMaps} and is only consulted before the first readable load
+ *   unless `keepMerging` is set
+ * @param {boolean} [options.keepMerging=false] - Merge on every save, not only before the first load
  * @returns {Object} The record handle
  */
-export function createCuratedRecord({ merge = mergeMaps(), ...options }) {
+export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, ...options }) {
     let trustMemory = false;
     const record = createPersistedRecord({
         ...options,
-        merge: (stored, memory) => (trustMemory ? memory : merge(stored, memory)),
+        merge: (stored, memory) => (trustMemory && !keepMerging ? memory : merge(stored, memory)),
     });
     const { load, reset } = record;
     record.load = async (options) => {
