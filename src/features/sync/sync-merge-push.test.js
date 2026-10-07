@@ -20,13 +20,17 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** The device at the keyboard: its database, its settings */
-const world = vi.hoisted(() => ({ device: null, gzip: false }));
+const world = vi.hoisted(() => ({ device: null, gzip: false, listeners: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key, fallback) => world.device.settings[key] ?? fallback,
-        onSettingChange: () => {},
-        offSettingChange: () => {},
+        onSettingChange: (key, callback) => {
+            (world.listeners[key] ||= []).push(callback);
+        },
+        offSettingChange: (key, callback) => {
+            world.listeners[key] = (world.listeners[key] || []).filter((cb) => cb !== callback);
+        },
     },
 }));
 
@@ -77,10 +81,11 @@ vi.mock('../../utils/toast.js', () => ({
     },
 }));
 
-const dialog = vi.hoisted(() => ({ calls: 0, answer: null, answers: [], whileOpen: null }));
+const dialog = vi.hoisted(() => ({ calls: 0, answer: null, answers: [], whileOpen: null, last: null }));
 vi.mock('../../utils/choice-dialog.js', () => ({
-    askChoice: async () => {
+    askChoice: async (question) => {
         dialog.calls += 1;
+        dialog.last = question;
         // Something that happens while the dialog sits open, such as another device pushing
         if (dialog.whileOpen) {
             const run = dialog.whileOpen;
@@ -223,7 +228,7 @@ vi.mock('./gist-client.js', async () => {
     };
 });
 
-const { default: syncManager, SyncManager } = await import('./sync-manager.js');
+const { default: syncManager, SyncManager, getSyncTrace } = await import('./sync-manager.js');
 const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
 // A history capped by this device's own live setting, written the way the
 // labyrinth room log registers (newest first, trimmed to the player's choice
@@ -1118,6 +1123,80 @@ describe('an automatic push that would cut a history the gist holds merges inste
         expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
         expect(gistStores().xpHistory.cappedLog_c1).toContain(7000);
         expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+    });
+
+    describe('remembering Merge and push', () => {
+        /** A presses Push (editing a setting first), answering `answer` if asked */
+        async function press(a, answer) {
+            dialog.answer = answer;
+            dialog.calls = 0;
+            return as(a, async () => {
+                changeSetting(a, `S${elapsed}`, true);
+                return syncManager.push();
+            });
+        }
+
+        test('asked once; the next pressed Push merges silently', async () => {
+            const { a } = await cappedAfterStartup();
+            await press(a, 'merge');
+            expect(dialog.calls).toBe(1);
+
+            const writes = gist.writes;
+            const result = await press(a, null);
+            expect(dialog.calls).toBe(0);
+            expect(result.ok).toBe(true);
+            expect(gist.writes).toBe(writes + 1);
+            expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        });
+
+        test('Replace anyway is not remembered, and neither is Cancel', async () => {
+            const { a } = await cappedAfterStartup();
+            await press(a, null);
+            expect(dialog.calls).toBe(1);
+            expect(a.db.settings.toolasha_sync_mergeOnTrim ?? null).toBeNull();
+            await press(a, 'replace');
+            expect(dialog.calls).toBe(1);
+            expect(a.db.settings.toolasha_sync_mergeOnTrim ?? null).toBeNull();
+        });
+
+        test('a scope change clears it, and so does unlinking the gist', async () => {
+            const { a } = await cappedAfterStartup();
+            syncManager.isInitialized = false;
+            await syncManager.initialize();
+            try {
+                await press(a, 'merge');
+                expect(a.db.settings.toolasha_sync_mergeOnTrim).toBeTruthy();
+                await as(a, async () => {
+                    for (const callback of world.listeners.sync_scope) await callback();
+                });
+                expect(a.db.settings.toolasha_sync_mergeOnTrim).toBeNull();
+                await press(a, 'merge');
+                expect(dialog.calls).toBe(1);
+
+                expect(a.db.settings.toolasha_sync_mergeOnTrim).toBeTruthy();
+                await as(a, () => syncManager.forgetGist());
+                expect(a.db.settings.toolasha_sync_mergeOnTrim).toBeNull();
+            } finally {
+                syncManager.cleanup();
+                syncManager.isInitialized = false;
+            }
+        });
+
+        test('the remembered answer is not honored under a different scope', async () => {
+            const { a } = await cappedAfterStartup();
+            await press(a, 'merge');
+            a.db.settings.toolasha_sync_mergeOnTrim = { gistId: 'g1', scope: 'settings' };
+            await press(a, 'merge');
+            expect(dialog.calls).toBe(1);
+        });
+    });
+
+    test('the dialog names what GitHub has more of, and the trace lists the keys', async () => {
+        await pressPush('merge');
+        expect(dialog.last.message).toContain('GitHub has more: ');
+        expect(dialog.last.message).toContain('Capped log');
+        const entry = getSyncTrace().findLast((item) => item.event === 'push-would-trim');
+        expect(entry.keys).toEqual(['xpHistory/cappedLog_c1']);
     });
 
     test('Cancel writes nothing', async () => {

@@ -1339,30 +1339,50 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
  * @returns {boolean} True when the gist holds history this device's copy lacks
  */
 export function pushTrimsRegisteredKeys(localText, remoteText) {
+    return trimmedRegisteredKeys(localText, remoteText).length > 0;
+}
+
+/**
+ * Which registered keys a push replacing the gist would cut: the same test as
+ * {@link pushTrimsRegisteredKeys}, naming each key so the question can say what
+ * GitHub holds more of and a trace can show which key raised it.
+ *
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload, as downloaded
+ * @returns {Array<{store: string, key: string, label: string}>} The keys the gist holds more of, with the
+ *   registration's label
+ */
+export function trimmedRegisteredKeys(localText, remoteText) {
     let local;
     let remote;
     try {
         local = JSON.parse(localText)?.stores || {};
         remote = JSON.parse(remoteText)?.stores || {};
     } catch {
-        return false;
+        return [];
     }
+    const trimmed = [];
     for (const [storeName, theirs] of Object.entries(remote)) {
         if (!theirs || typeof theirs !== 'object' || !local[storeName]) continue;
         const mine = local[storeName];
         for (const [key, theirValue] of Object.entries(theirs)) {
             const registration = mergeForKey(storeName, key);
             if (!registration) continue;
-            if (!Object.hasOwn(mine, key)) return true;
+            if (!Object.hasOwn(mine, key)) {
+                trimmed.push({ store: storeName, key, label: registration.label });
+                continue;
+            }
             try {
                 const folded = registration.merge(mine[key], theirValue, UPLOAD_CONTEXT);
-                if (stableStringify(folded) !== stableStringify(mine[key])) return true;
+                if (stableStringify(folded) !== stableStringify(mine[key])) {
+                    trimmed.push({ store: storeName, key, label: registration.label });
+                }
             } catch {
                 // A fold that throws is not evidence of a trim
             }
         }
     }
-    return false;
+    return trimmed;
 }
 
 /**
@@ -1440,6 +1460,7 @@ export default {
     exchangeBaseline,
     registeredKeysDiverge,
     pushTrimsRegisteredKeys,
+    trimmedRegisteredKeys,
     restampRestoredSettings,
     addsToRemote,
     hashPayload,
