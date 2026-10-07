@@ -1052,6 +1052,28 @@ describe('writeSyncGist', () => {
         expect(calls).toHaveLength(2);
     });
 
+    test('a write that replaced more than five pushes reports the newest five and that it left some out', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: { [MANIFEST_FILE]: { size: 60, content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+                history: [{ version: 'v1' }],
+            },
+        });
+        responses.push({
+            status: 200,
+            body: {
+                id: 'abc',
+                history: ['v8', 'v7', 'v6', 'v5', 'v4', 'v3', 'v2', 'v1'].map((version) => ({ version })),
+            },
+        });
+
+        const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
+
+        expect(result.intervening).toEqual(['v3', 'v4', 'v5', 'v6', 'v7']);
+        expect(result.interveningTruncated).toBe(true);
+    });
+
     test('a write nobody raced replaced nothing, and asks nothing more', async () => {
         responses.push({
             status: 200,
@@ -1065,6 +1087,7 @@ describe('writeSyncGist', () => {
         const result = await writeSyncGist('tok', 'abc', { toolashaSync: 1, chunks: 1, syncSeq: 2 }, ['data']);
 
         expect(result.intervening).toEqual([]);
+        expect(result.interveningTruncated).toBe(false);
         expect(calls).toHaveLength(2);
     });
 

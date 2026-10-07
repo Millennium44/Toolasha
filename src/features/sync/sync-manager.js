@@ -61,6 +61,7 @@ import {
     mergeForUpload,
     wholeKeyHashes,
     exchangeBaseline,
+    registeredKeysDiverge,
     restampRestoredSettings,
     RESTORED_BASELINE,
 } from './sync-payload.js';
@@ -462,6 +463,21 @@ class SyncManager {
         const unapplied = await storage.get(KEY_UNAPPLIED, STORE, null);
         if (unattended && unapplied && !merged && gistId) return this._mergeIntoUpload(localPayload, opToken, silent);
 
+        // Nor can it go plain when a registered history here is no longer the
+        // copy the gist held at the last exchange: a device keeping 20 sessions,
+        // after a startup pull of a gist holding 500, would replace the 500 with
+        // its 20. A hash cannot tell an addition from a trim, so this costs one
+        // gist download on every automatic push whose histories moved since the
+        // last exchange; a push that moved only settings or whole keys stays
+        // plain. A pressed Push still means this device's copy (see `push`).
+        if (unattended && !merged && gistId) {
+            const baseline = await storage.get(KEY_BASELINE, STORE, null);
+            if (registeredKeysDiverge(localPayload, baseline)) {
+                traceSync('history-diverged');
+                return this._mergeIntoUpload(localPayload, opToken, silent);
+            }
+        }
+
         // The hash above is always of the plaintext — compression and
         // encryption both change the bytes without changing the data (and a
         // fresh salt makes ciphertext different every push), so hashing
@@ -470,28 +486,7 @@ class SyncManager {
         // Pipeline order is gzip first, encrypt second: JSON compresses ~5-10×
         // and ciphertext does not compress at all. This is what fits the
         // "everything" scope under the gist ceiling.
-        const passphrase = this._passphrase();
-        const compressed = compressionAvailable() ? 'gzip' : null;
-        const bodyBytes = compressed ? await gzipText(payload) : null;
-
-        let body;
-        let encrypted = null;
-        if (passphrase) {
-            const sealed = compressed
-                ? await encryptBytes(bodyBytes, passphrase)
-                : await encryptText(payload, passphrase);
-            body = sealed.ciphertext;
-            encrypted = {
-                v: 1,
-                algorithm: sealed.algorithm,
-                kdf: sealed.kdf,
-                iterations: sealed.iterations,
-                salt: sealed.salt,
-                iv: sealed.iv,
-            };
-        } else {
-            body = compressed ? bytesToBase64(bodyBytes) : payload;
-        }
+        const { body, compressed, encrypted } = await this._packBody(payload);
 
         const chunks = chunkPayload(body);
         const previousChunks = Number(await storage.get(KEY_CHUNK_COUNT, STORE, 0)) || 0;
@@ -742,7 +737,11 @@ class SyncManager {
                 chunkCount: Number(remote.manifest?.chunks) || 0,
                 syncSeq: advanceSeq(lastSeq, readSeq(remote.manifest?.syncSeq)),
                 version: remote.seen ? { ...remote.seen, current: true } : null,
-                extra: { [KEY_BASELINE]: wholeKeyHashes(localText), [KEY_UNAPPLIED]: null },
+                // The gist's side is what the gist holds, not this device's copy:
+                // a history trimmed here to this device's retention, recorded as
+                // the gist's, would let the next plain push replace the gist's
+                // longer copy with it (see `registeredKeysDiverge`)
+                extra: { [KEY_BASELINE]: exchangeBaseline(remote.payload, localText), [KEY_UNAPPLIED]: null },
             });
             return { ok: true, skipped: true, reason: 'in-step' };
         }
@@ -824,6 +823,23 @@ class SyncManager {
             return { ok: false, reason: 'raced' };
         }
 
+        // More revisions were replaced than one check reads back. The older ones
+        // cannot be folded in, and a rewrite built from the newest few would be
+        // recorded as a success that leaves them stranded in the gist's history
+        // with nothing left to look for them. Undo this write instead, the way
+        // an unreadable revision is: the gist is put back as the newest replaced
+        // push, a normal revision, so this device's fingerprint stays "changed"
+        // and the next interval merges onto it as an ordinary push. Not a hold:
+        // nothing about the gist is unmergeable, only this write's view of it.
+        if (written.interveningTruncated) {
+            console.warn(
+                `[Sync] More than ${written.intervening.length} other pushes landed while this one was written; ` +
+                    'undid it and will merge onto the latest on the next interval.'
+            );
+            await this._restoreReplaced(token, gistId, written.intervening.at(-1), written.intervening.slice(0, -1));
+            return { ok: false, reason: 'raced' };
+        }
+
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
         let text = uploadedText;
         let remoteAdds = Boolean(merged?.remoteAdds);
@@ -872,6 +888,96 @@ class SyncManager {
     }
 
     /**
+     * Run a payload through the push pipeline: gzip first, then encrypt with
+     * this device's passphrase when it has one.
+     * @param {string} payload - Plaintext payload
+     * @returns {Promise<{body: string, compressed: ?string, encrypted: ?Object}>} The wire body and its manifest flags
+     * @private
+     */
+    async _packBody(payload) {
+        const passphrase = this._passphrase();
+        const compressed = compressionAvailable() ? 'gzip' : null;
+        const bodyBytes = compressed ? await gzipText(payload) : null;
+
+        let body;
+        let encrypted = null;
+        if (passphrase) {
+            const sealed = compressed
+                ? await encryptBytes(bodyBytes, passphrase)
+                : await encryptText(payload, passphrase);
+            body = sealed.ciphertext;
+            encrypted = {
+                v: 1,
+                algorithm: sealed.algorithm,
+                kdf: sealed.kdf,
+                iterations: sealed.iterations,
+                salt: sealed.salt,
+                iv: sealed.iv,
+            };
+        } else {
+            body = compressed ? bytesToBase64(bodyBytes) : payload;
+        }
+        return { body, compressed, encrypted };
+    }
+
+    /**
+     * Restore the newest replaced revision with the older replaced ones folded
+     * into it, so data unique to any of them stays in the gist.
+     * @param {string} token - GitHub token
+     * @param {string} gistId - Gist id
+     * @param {string} version - The newest replaced revision
+     * @param {Array<string>} older - Older replaced revisions, oldest first
+     * @returns {Promise<boolean>} True when the folded restore was written; false leaves the byte restore to the caller
+     * @private
+     */
+    async _restoreFolded(token, gistId, version, older) {
+        try {
+            const newest = await this._readRemote(token, gistId, null, null, version);
+            // Oldest first, each later revision as the incoming side: a value the merges cannot combine goes
+            // to the newest revision, not the oldest. A revision fold, so this device's baseline cannot turn
+            // that round, and the result carries the newest revision's scope whatever the older ones synced
+            const scope = JSON.parse(newest.payload)?.syncScope ?? 'settings';
+            const payloads = [];
+            for (const olderVersion of older) {
+                payloads.push((await this._readRemote(token, gistId, null, null, olderVersion)).payload);
+            }
+            payloads.push(newest.payload);
+            let text = payloads[0];
+            for (const incoming of payloads.slice(1)) {
+                text = mergeForUpload(text, incoming, null, { revisionFold: true, scope }).text;
+            }
+            const { body, compressed, encrypted } = await this._packBody(text);
+            const chunks = chunkPayload(body);
+            // The manifest is the newest revision's, repacked: its size, hash and encoding describe the new body
+            const { basedOn: _basedOn, compressed: _c, encrypted: _e, ...manifest } = newest.manifest;
+            await writeSyncGist(
+                token,
+                gistId,
+                {
+                    ...manifest,
+                    chunks: chunks.length,
+                    bytes: text.length,
+                    hash: contentHash(text),
+                    ...(compressed ? { compressed } : {}),
+                    ...(encrypted ? { encrypted } : {}),
+                },
+                chunks,
+                0,
+                null,
+                { unattended: true }
+            );
+            console.warn("[Sync] Put back the other devices' pushes this device replaced, folded together.");
+            return true;
+        } catch (error) {
+            console.warn(
+                '[Sync] Could not fold the replaced pushes together; putting back the newest as it was:',
+                error
+            );
+            return false;
+        }
+    }
+
+    /**
      * Write a revision this push replaced back over it, byte for byte: its
      * manifest and its chunks as they were, under a counter above the write
      * it undoes. For a revision this device cannot decrypt, read or merge.
@@ -880,10 +986,14 @@ class SyncManager {
      * @param {string} token - GitHub token
      * @param {string} gistId - Gist id
      * @param {string} version - The newest revision the push replaced
+     * @param {Array<string>} [older=[]] - Older replaced revisions, oldest first. When given and every one
+     *   reads and merges, the restore is the newest folded with them (never this device's own payload, so
+     *   the push still backs off); otherwise it is the newest byte for byte
      * @returns {Promise<void>}
      * @private
      */
-    async _restoreReplaced(token, gistId, version) {
+    async _restoreReplaced(token, gistId, version, older = []) {
+        if (older.length && (await this._restoreFolded(token, gistId, version, older))) return;
         try {
             const revision = await readSyncGistRevision(token, gistId, version);
             const chunks = chunkPayload(revision.payload);

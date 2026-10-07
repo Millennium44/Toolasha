@@ -761,20 +761,22 @@ const MAX_INTERVENING = 5;
 
 /**
  * The versions written between a write's base and the write itself — other
- * devices' pushes this write replaced — oldest first.
+ * devices' pushes this write replaced — oldest first, the newest
+ * `MAX_INTERVENING` of them.
  *
  * Empty when there were none, and when it cannot be told: no base recorded
  * (a gist listed before versions were), or no history to read.
  *
  * @param {Array<string>|null} history - The gist's versions after the write, newest first
  * @param {string|null} basedOn - The version the write was based on
- * @returns {Array<string>} Replaced versions, oldest first
+ * @returns {{versions: Array<string>, truncated: boolean}} Replaced versions, oldest first, and whether older
+ *   ones were left out for being past the limit
  */
 function interveningVersions(history, basedOn) {
-    if (!basedOn || !Array.isArray(history) || history.length < 2) return [];
+    if (!basedOn || !Array.isArray(history) || history.length < 2) return { versions: [], truncated: false };
     const base = history.indexOf(basedOn);
     const between = base === -1 ? history.slice(1) : history.slice(1, base);
-    return between.slice(0, MAX_INTERVENING).reverse();
+    return { versions: between.slice(0, MAX_INTERVENING).reverse(), truncated: between.length > MAX_INTERVENING };
 }
 
 /**
@@ -904,7 +906,8 @@ async function readFileContent(token, file) {
  *   holds an exchange the caller has not taken, and the write stops with a `behind` GistError instead of
  *   overwriting it — the caller merges first.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
- *   syncSeq: number|undefined, version: string|null, basedOn: string|null, intervening: Array<string>}>} The
+ *   syncSeq: number|undefined, version: string|null, basedOn: string|null, intervening: Array<string>,
+ *   interveningTruncated: boolean}>} The
  *   gist that was written, with the ETag and file sizes of the version the write produced, the counter its
  *   manifest actually carries (raised above the gist's own, see below), the version it produced and the one it
  *   was based on, and any versions other devices wrote in between that this write replaced (oldest first)
@@ -1065,6 +1068,7 @@ export async function writeSyncGist(
                 const relisted = await listGistFiles(token, gistId, null);
                 history = relisted?.history ?? null;
             }
+            const intervening = interveningVersions(history, serialized.basedOn);
             return {
                 id: updated.data?.id ?? gistId,
                 updatedAt: updated.data?.updated_at ?? null,
@@ -1073,7 +1077,8 @@ export async function writeSyncGist(
                 syncSeq: serialized.syncSeq,
                 version: history?.[0] ?? null,
                 basedOn: serialized.basedOn,
-                intervening: interveningVersions(history, serialized.basedOn),
+                intervening: intervening.versions,
+                interveningTruncated: intervening.truncated,
             };
         }
 

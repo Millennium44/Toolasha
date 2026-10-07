@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Gist sync merges instead of overwriting another device's changes
 
 - When two devices are in use, an automatic push that finds the gist ahead now merges the other device's changes into what it uploads instead of overwriting them: each setting keeps whichever device changed it last, histories and other mergeable records are combined, and other saved data keeps this device's copy only if the other side didn't change it. Nothing is applied to the device you're using until its next reload (no "Reload now" prompts mid-session); a restored backup counts as a new change, and a damaged gist now warns once per session instead of every interval.
+- A device that keeps fewer history entries (or has just pulled a larger gist) now merges its automatic push instead of cutting the gist's histories down to its own copy, and a push that races many other devices at once backs off rather than dropping their changes.
 
 ### Trial Sim recommends skilling trial sign-ups
 
