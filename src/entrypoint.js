@@ -920,6 +920,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketPricingControls',
+            name: 'Market Pricing Controls',
+            category: 'Market',
+            module: Market.marketPricingControls,
+            async: false,
+        },
+        {
             key: 'bulkSellAssistant',
             name: 'Bulk Sell Assistant',
             category: 'Market',

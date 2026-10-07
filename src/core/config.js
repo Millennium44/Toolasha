@@ -269,6 +269,13 @@ class Config {
                 description: 'Step to the previous/next marketplace item without returning to the item grid',
                 settingKey: 'market_itemHop',
             },
+            marketPricingControls: {
+                enabled: false,
+                name: 'Market Pricing Controls',
+                category: 'Market',
+                description: 'Buy/Sell pricing dropdowns and the Craft toggle beside the Marketplace title',
+                settingKey: 'market_showPricingControls',
+            },
             market_showPhiloCalculator: {
                 enabled: true,
                 name: 'Philo Gamba Calculator',
