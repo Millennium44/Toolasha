@@ -2101,15 +2101,16 @@ function sortRowsBy(rows, keyOf, asc) {
     return [...rows].sort((a, b) => {
         const va = keyOf(a);
         const vb = keyOf(b);
-        let cmp;
         if (typeof va === 'string') {
-            cmp = va.localeCompare(vb);
-        } else {
-            const na = va === Infinity ? Number.MAX_VALUE : va;
-            const nb = vb === Infinity ? Number.MAX_VALUE : vb;
-            cmp = na - nb;
+            const cmp = va.localeCompare(vb);
+            return asc ? cmp : -cmp;
         }
-        return asc ? cmp : -cmp;
+        // A value with no figure behind it (a "—" cell) stays last whichever
+        // way the column is sorted, rather than leading a reversed sort
+        const fa = Number.isFinite(va);
+        const fb = Number.isFinite(vb);
+        if (!fa || !fb) return fa === fb ? 0 : fa ? -1 : 1;
+        return asc ? va - vb : vb - va;
     });
 }
 

@@ -1236,6 +1236,15 @@ describe('the panel', () => {
             expect(order.at(-1)).toContain('Intelligence');
         });
 
+        test('reversing an hours sort keeps the no-gain rows last', () => {
+            const c = render();
+            // Hours/0.01% DPS is the default sort: a second click reverses it
+            c.querySelector('[data-level-sort-key="hpDps"]').click();
+            const after = names(ui.panel.querySelector('#mwi-csim-upgrade-results'));
+            expect(after[0]).toContain('Stamina');
+            expect(after.at(-1)).toContain('Intelligence');
+        });
+
         test('a header click re-sorts, and nothing failed to draw', () => {
             const c = render();
             c.querySelector('[data-level-sort-key="hpProfit"]').click();
