@@ -44,7 +44,9 @@
  * ({@link ATOMIC_DEFER_MS}): the fold runs when the write does, not when it
  * was asked for. Storage's flushes cannot see a delay that is not theirs, so a
  * hidden tab, a closing page, a sync flush and a character switch each land
- * the waiting save from here.
+ * the waiting save from here. A write that does not commit leaves the record
+ * dirty and arms the delayed save again, backing off to
+ * {@link ATOMIC_RETRY_MAX_MS} while the database keeps refusing.
  */
 
 import storage from '../core/storage.js';
@@ -63,6 +65,8 @@ const runningHandoffs = new Map();
 
 /** How long an `atomic` record waits before it writes: the window `storage.set` debounces over */
 const ATOMIC_DEFER_MS = 3000;
+/** The longest an `atomic` record waits between retries of a write that did not commit */
+const ATOMIC_RETRY_MAX_MS = 60_000;
 
 /**
  * Every `atomic` record. Their delay is their own rather than storage's, so
@@ -271,6 +275,47 @@ export function createPersistedRecord({
     let unwrittenKey = null;
     /** The last write opened outside the save chain (page close, reset), for `flushed()` */
     let directWrite = Promise.resolve(true);
+    /** Atomic writes that have failed in a row since the last one committed, for the retry back-off */
+    let failedWrites = 0;
+
+    /**
+     * Arm the delayed save: every save asked for before it fires joins it.
+     * @param {number} delayMs
+     * @returns {Promise<boolean>} The delayed save's outcome
+     */
+    const armDeferred = (delayMs) => {
+        let resolve;
+        const promise = new Promise((r) => {
+            resolve = r;
+        });
+        deferred = { promise, resolve, timer: setTimeout(() => record._releaseDeferred(), delayMs) };
+        return promise;
+    };
+
+    /**
+     * An atomic write that did not commit — aborted, timed out, refused — leaves
+     * the record dirty and asks for the write again, backing off while the
+     * database keeps refusing. A save already waiting carries memory anyway, so
+     * none is armed then. A write a `reset()` overtook is not retried: the
+     * record it carried has left memory.
+     * @param {boolean} written - Whether the write committed
+     * @param {string} writeKey - The key it was for
+     * @param {number} askedIn - The generation it belongs to
+     */
+    const noteWriteOutcome = (written, writeKey, askedIn) => {
+        if (written) {
+            failedWrites = 0;
+            return;
+        }
+        if (askedIn !== generation) return;
+        if (!unwritten) {
+            unwritten = true;
+            unwrittenKey = writeKey;
+        }
+        failedWrites += 1;
+        if (deferred || waitingSave) return;
+        armDeferred(Math.min(ATOMIC_RETRY_MAX_MS, ATOMIC_DEFER_MS * 2 ** (failedWrites - 1)));
+    };
 
     /**
      * Open the read-merge-write transaction for memory as it is now.
@@ -280,7 +325,8 @@ export function createPersistedRecord({
      * page-close listener needs. The fold runs inside the transaction, against
      * whatever another tab committed before it. A `reset()` in between makes it
      * the departing record's write: folded with `mergeAfterReset`, and kept out
-     * of the arriving record's memory.
+     * of the arriving record's memory. One that does not commit is retried (see
+     * `noteWriteOutcome`).
      * @param {string} writeKey - The key, resolved by the caller
      * @param {number} askedIn - The generation this write belongs to
      * @returns {Promise<boolean>} Whether a write committed
@@ -307,13 +353,18 @@ export function createPersistedRecord({
         } catch (error) {
             outcome = Promise.reject(error);
         }
-        return Promise.resolve(outcome).then(
-            (result) => Boolean(result?.written),
-            (error) => {
-                console.error(`[${label}] Saving ${base} failed:`, error);
-                return false;
-            }
-        );
+        return Promise.resolve(outcome)
+            .then(
+                (result) => Boolean(result?.written),
+                (error) => {
+                    console.error(`[${label}] Saving ${base} failed:`, error);
+                    return false;
+                }
+            )
+            .then((written) => {
+                noteWriteOutcome(written, writeKey, askedIn);
+                return written;
+            });
     };
 
     const record = {
@@ -417,14 +468,7 @@ export function createPersistedRecord({
             if (!unwritten) unwrittenKey = key();
             unwritten = true;
             if (deferMs === 0) return record._queueSave({ overwrite: false });
-            if (!deferred) {
-                let resolve;
-                const promise = new Promise((r) => {
-                    resolve = r;
-                });
-                deferred = { promise, resolve, timer: setTimeout(() => record._releaseDeferred(), deferMs) };
-            }
-            return deferred.promise;
+            return deferred ? deferred.promise : armDeferred(deferMs);
         },
 
         /** Start the delayed atomic save now, if one is waiting. */

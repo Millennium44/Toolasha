@@ -729,6 +729,65 @@ describe('atomic record', () => {
         expect(record.get()).toEqual([]);
     });
 
+    test('a write that does not commit keeps the record dirty and lands on a retry', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        // The first transaction aborts: storage answers null, nothing is written
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.get().push({ id: 1 });
+        const saving = record.save();
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(await saving).toBe(false);
+        expect(stored()).toBeUndefined();
+
+        // Nothing else asks for a save: the record retries on its own
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+        expect(storageMock.update.mock.calls.filter(([key]) => key === LOG)).toHaveLength(2);
+
+        // And stops once it has landed
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(storageMock.update.mock.calls.filter(([key]) => key === LOG)).toHaveLength(2);
+    });
+
+    test('a failed write is retried by the next flush, and backs off while storage keeps refusing', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog({ immediate: true });
+        const update = storageMock.update.getMockImplementation();
+        const writesToLog = () => storageMock.update.mock.calls.filter(([key]) => key === LOG).length;
+        storageMock.update.mockImplementation(async () => null);
+        try {
+            record.get().push({ id: 1 });
+            expect(await record.save()).toBe(false);
+            // Retries at 3 s, then 6 s after that, then 12 s: never a spin
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(writesToLog()).toBe(2);
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(writesToLog()).toBe(2);
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(writesToLog()).toBe(3);
+        } finally {
+            storageMock.update.mockImplementation(update);
+        }
+        // A flush does not wait out the back-off
+        expect(await record.flushed()).toBe(true);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('the page-close hook writes a record whose last write failed', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.get().push({ id: 1 });
+        record.save();
+        expect(await record.flushed()).toBe(false);
+        expect(stored()).toBeUndefined();
+
+        for (const listener of storageMock.teardownListeners) listener('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
     test('a storage without update falls back to the probe-and-write path', async () => {
         const update = storageMock.update;
         delete storageMock.update;
