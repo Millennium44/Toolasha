@@ -486,7 +486,7 @@ class SyncManager {
         // The version that check read is the one the answer applies to: the write below is held to it
         let checked = null;
         if (!unattended && !merged && gistId) {
-            const asked = await this._askBeforeTrimming(token, gistId, localPayload, opToken);
+            const asked = await this._askBeforeTrimming(token, gistId, localPayload, scope, opToken);
             if (asked.choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
             if (asked.choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
             if (asked.choice === 'merge') {
@@ -1159,12 +1159,14 @@ class SyncManager {
      * @param {string} token - GitHub token
      * @param {string} gistId - Gist id
      * @param {string} localPayload - This device's payload
+     * @param {string} scope - The scope `localPayload` was built for, which the remembered answer is keyed to:
+     *   rereading the setting here would key it to a scope changed while the gist was downloading
      * @param {number} opToken - The push's ownership token; a takeover during the dialog stands the push down
      * @returns {Promise<{choice: 'push'|'merge'|'cancel'|'superseded', remote: Object|null}>} What to do ('push'
      *   replaces as before), and the download it was decided on; null when the gist could not be read
      * @private
      */
-    async _askBeforeTrimming(token, gistId, localPayload, opToken) {
+    async _askBeforeTrimming(token, gistId, localPayload, scope, opToken) {
         let remote;
         try {
             remote = await this._readRemote(token, gistId, null);
@@ -1174,7 +1176,6 @@ class SyncManager {
         }
         const trimmed = remote?.payload ? trimmedRegisteredKeys(localPayload, remote.payload) : [];
         if (!trimmed.length) return { choice: 'push', remote: remote ?? null };
-        const scope = config.getSetting('sync_scope', 'settings');
         const remembered = await storage.get(KEY_MERGE_ON_TRIM, STORE, null);
         const rememberedHere = remembered?.gistId === gistId && remembered?.scope === scope;
         traceSync('push-would-trim', {

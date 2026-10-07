@@ -1189,6 +1189,23 @@ describe('an automatic push that would cut a history the gist holds merges inste
             await press(a, 'merge');
             expect(dialog.calls).toBe(1);
         });
+
+        test('the answer is remembered for the scope the push was built for, not one chosen mid-download', async () => {
+            const { a } = await cappedAfterStartup();
+            const readRemote = syncManager._readRemote;
+            const spy = vi.spyOn(syncManager, '_readRemote').mockImplementation(async function (...args) {
+                // The player changes "What to sync" while the gist is downloading
+                a.settings.sync_scope = 'settings';
+                return readRemote.apply(this, args);
+            });
+            try {
+                await press(a, 'merge');
+            } finally {
+                spy.mockRestore();
+            }
+            expect(dialog.calls).toBe(1);
+            expect(a.db.settings.toolasha_sync_mergeOnTrim).toEqual({ gistId: 'g1', scope: 'everything' });
+        });
     });
 
     test('the dialog names what GitHub has more of, and the trace lists the keys', async () => {
