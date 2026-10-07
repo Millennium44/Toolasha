@@ -287,6 +287,7 @@ export class GuildTrialSim {
                 if (guildId != null && String(arriving) !== String(guildId)) {
                     this.readings = {};
                     this.successReadings = {};
+                    this.assign.signupLevelMap = {};
                 }
                 guildId = arriving;
             }
@@ -294,6 +295,8 @@ export class GuildTrialSim {
                 this.assign.setWeeklyTrialSet(data.guildWeeklyTrialSet);
             if (typeof data?.guild?.trialMinLevelsData === 'string')
                 this.assign.trialMinLevelsData = data.guild.trialMinLevelsData;
+            if (data?.guildTrialSignupLevelMap && typeof data.guildTrialSignupLevelMap === 'object')
+                this.assign.signupLevelMap = data.guildTrialSignupLevelMap;
             // Minimums, the draw, the week and the building levels behind the slot cap all ride here
             notifyInputs();
         };

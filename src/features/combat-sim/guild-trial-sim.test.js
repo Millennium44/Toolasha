@@ -793,6 +793,12 @@ describe('Assign skilling view while the planner runs', () => {
         feature.assign.controller = null;
     });
 
+    test('a guild update carries the sign-up level map to the planner', () => {
+        const map = { 10013: { combatLevel: 152, skillingTrialLevel: 154 } };
+        harness.ws.guild_updated({ guildTrialSignupLevelMap: map });
+        expect(feature.assign.signupLevelMap).toBe(map);
+    });
+
     test('a guild update carries the trial minimum levels to the planner', () => {
         harness.ws.guild_updated({ guild: { trialMinLevelsData: '{"/guild_skilling/crafting":120}' } });
         expect(feature.assign.trialMinLevelsData).toBe('{"/guild_skilling/crafting":120}');
