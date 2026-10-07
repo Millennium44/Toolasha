@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Push confirmation asks once
+
+- A pressed Push that would cut GitHub's history now asks once, remembers "Merge and push" for that gist and scope, and names which histories GitHub has more of.
+
 ### Trial Sim uses the game's sign-up levels
 
 - The Assign skilling optimizer now uses the level the game recorded at sign-up for each member's signed-up trial (marked S) instead of estimating it from their profile.
