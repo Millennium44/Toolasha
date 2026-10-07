@@ -82,6 +82,7 @@ const storageMock = vi.hoisted(() => {
         endRestore: vi.fn(async () => {}),
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        getAll: vi.fn(async (store = 'settings') => structuredClone(Object.fromEntries(storeFor(store)))),
     };
     return mock;
 });
@@ -368,6 +369,21 @@ describe('a character switch inside the save delay', () => {
         await a.flushSessionWrites();
 
         expect(Object.keys(stored())).toEqual(['s2']);
+    });
+});
+
+describe('a full backup', () => {
+    test('carries a session still waiting out its save delay', async () => {
+        vi.useFakeTimers();
+        settings().set(SESSIONS, { s1: session('s1', 100) });
+        const a = await openTab();
+        a.sessions.s2 = session('s2', 200, 1);
+        await a.saveSessions(a.sessions);
+        expect(stored().s2).toBeUndefined();
+
+        const { exportEverythingJSON } = await import('../../utils/full-backup.js');
+        const backup = JSON.parse(await exportEverythingJSON());
+        expect(Object.keys(backup.stores.settings[SESSIONS])).toEqual(['s1', 's2']);
     });
 });
 

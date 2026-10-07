@@ -8,6 +8,7 @@
  */
 
 import storage from '../core/storage.js';
+import { flushPersistedRecords } from './persisted-record.js';
 
 const FORMAT_VERSION = 1;
 
@@ -195,6 +196,8 @@ export async function listBackupStores() {
  * @returns {Promise<string>} The backup file's contents
  */
 export async function exportEverythingJSON() {
+    // A record holding its newest changes in memory for a delayed write lands them first
+    await flushPersistedRecords();
     const storeNames = await listBackupStores();
 
     const parts = [
@@ -224,6 +227,7 @@ export async function exportEverythingJSON() {
  *   Backup payload
  */
 export async function exportEverything() {
+    await flushPersistedRecords();
     const storeNames = await listBackupStores();
     const stores = {};
 
