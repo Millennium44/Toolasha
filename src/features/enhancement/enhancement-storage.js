@@ -192,17 +192,21 @@ function mergeSessions(stored, memory) {
     return held;
 }
 
+/** The departing character's tombstones, captured when a switch resets the records */
+let departingGraves = {};
+
 /**
  * The fold for the departing character's last write, which a character switch
- * overtook: its tombstones and held ids have been dropped for the arriving
- * character's by then, so this one touches neither. A session it puts back that
- * the other tab removed is still dropped by the tombstone on the next fold.
+ * overtook: its held ids have been dropped for the arriving character's by then,
+ * so this touches neither record. It still drops the departing character's
+ * tombstoned sessions from the stored side, captured at the switch, so a
+ * session deleted just before switching is not folded back out of storage.
  * @param {Object} stored
  * @param {Object} memory
  * @returns {Object}
  */
 function mergeDepartingSessions(stored, memory) {
-    return foldSessions(stored, memory && typeof memory === 'object' ? memory : {}, {});
+    return foldSessions(stored, memory && typeof memory === 'object' ? memory : {}, departingGraves);
 }
 
 /**
@@ -380,6 +384,8 @@ export function importSession(jsonStr) {
  * that needs the next load to come from storage.
  */
 export function resetPendingSessionCache() {
+    // Before the record drops them: a departing write still waiting folds with these
+    departingGraves = { ...tombstoneRecord.get() };
     sessionsRecord.reset();
     tombstoneRecord.reset();
     knownIds = new Set();

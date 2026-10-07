@@ -286,6 +286,22 @@ describe('two tabs whose saves overlap', () => {
     });
 });
 
+describe('a character switch inside the save delay', () => {
+    test('a session deleted just before switching is not folded back out of storage', async () => {
+        vi.useFakeTimers();
+        settings().set(SESSIONS, { s1: session('s1', 100), s2: session('s2', 200) });
+        const a = await openTab();
+
+        await a.deleteSession(a.sessions, 's1');
+        // The switch overtakes the delayed save: the departing write lands afterwards
+        a.resetPendingSessionCache();
+        await vi.advanceTimersByTimeAsync(10_000);
+        await a.flushSessionWrites();
+
+        expect(Object.keys(stored())).toEqual(['s2']);
+    });
+});
+
 describe('a save that cannot read the tombstones', () => {
     test('writes nothing, rather than folding against a stale set of removals', async () => {
         settings().set(SESSIONS, { s1: session('s1', 100) });
