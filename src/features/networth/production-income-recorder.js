@@ -108,7 +108,10 @@ function sessionsOf(row) {
  */
 function offlineParts(row) {
     const sessions = sessionsOf(row);
-    return sessions ? { base: num(row.offlineBase), sessions } : { base: num(row?.offlineProfit), sessions: null };
+    if (!sessions) return { base: num(row?.offlineProfit), sessions: null };
+    // The base is what the total holds beyond the sessions: the same as `offlineBase` for a row this
+    // build wrote, and for a row an older build added to by its scalar total alone, that addition too
+    return { base: num(row.offlineProfit) - sumOf(sessions), sessions };
 }
 
 /**
@@ -627,6 +630,9 @@ class ProductionIncomeRecorder {
                     // Rows from before sessions were kept apart: what is there is the base
                     row.offlineBase = num(row.offlineProfit);
                     row.offlineSessions = {};
+                } else {
+                    // An older build may have added to the total alone; that residual is base too
+                    row.offlineBase = num(row.offlineProfit) - sumOf(row.offlineSessions);
                 }
                 if (id in row.offlineSessions) return;
                 row.offlineSessions[id] = economics.profit;

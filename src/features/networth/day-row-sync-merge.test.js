@@ -149,6 +149,15 @@ describe('production income', () => {
             expect(other.offlineProfit).toBe(20);
         });
 
+        test('an older build’s addition to the total alone is kept as base, not dropped', () => {
+            // An older build pulled a sessions row and added a later Welcome Back to offlineProfit only
+            const older = { ...row({ s1: 100 }), offlineProfit: 150 };
+            for (const merged of [upload(key, [older], [row({ s1: 100 })]), upload(key, [row({ s1: 100 })], [older])]) {
+                expect(merged[0].offlineProfit).toBe(150);
+                expect(sources({ productionDays: merged }).offline).toBe(150);
+            }
+        });
+
         test('two legacy copies still keep the one further from zero', () => {
             const [merged] = upload(key, [{ ...base, offlineProfit: 100 }], [{ ...base, offlineProfit: -250 }]);
             expect(merged.offlineProfit).toBe(-250);
