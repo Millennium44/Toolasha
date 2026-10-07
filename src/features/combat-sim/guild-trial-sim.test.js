@@ -805,6 +805,19 @@ describe('Assign skilling view while the planner runs', () => {
             11519: { combatLevel: 158, skillingTrialLevel: 105 },
         };
         harness.ws.guild_updated({ guildTrialSignupLevelMap: map });
+        // A combat-only change, then the same skilling trial again: the level stands
+        harness.ws.guild_trial_signup_updated({
+            characterId: 10013,
+            signedUpSkillingTrialHrid: '/guild_skilling/enhancing',
+            signedUpCombatTrialHrid: '/guild_combat/badger',
+        });
+        harness.ws.guild_trial_signup_updated({
+            characterId: 10013,
+            signedUpSkillingTrialHrid: '/guild_skilling/enhancing',
+            signedUpCombatTrialHrid: '/guild_combat/chameleon',
+        });
+        expect(feature.assign.signupLevelMap).toBe(map);
+        // A move to another skilling trial drops it
         harness.ws.guild_trial_signup_updated({
             characterId: 10013,
             signedUpSkillingTrialHrid: '/guild_skilling/brewing',
