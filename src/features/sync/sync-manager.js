@@ -392,10 +392,12 @@ class SyncManager {
      *   this device's own payload it was built from, and the gist version it was merged with. Finding the gist
      *   moved past that version again stands down for the next interval, so one tick merges at most once.
      *   `raceRound` counts the re-merges made after finding this push's write replaced another device's.
+     * @param {number} [checkRounds=0] - How many times a pressed Push has found the gist moved since its trim
+     *   check and checked again
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _doPush(silent, opToken, unattended = false, merged = null) {
+    async _doPush(silent, opToken, unattended = false, merged = null, checkRounds = 0) {
         // A previous pull could not read a local history and deliberately held
         // its downloaded counterpart back. Uploading this incomplete union
         // would replace that counterpart in the gist before it can be retried.
@@ -462,11 +464,14 @@ class SyncManager {
         // of a registered history than the gist holds would cut the gist's copy
         // to its own. Ask first. One gist download, for a rare user-initiated
         // action; a gist that cannot be read here is left to the push's own refusals.
+        // The version that check read is the one the answer applies to: the write below is held to it
+        let checked = null;
         if (!unattended && !merged && gistId) {
-            const choice = await this._askBeforeTrimming(token, gistId, localPayload, opToken);
-            if (choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
-            if (choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
-            if (choice === 'merge') return this._mergeIntoUpload(localPayload, opToken, silent);
+            const asked = await this._askBeforeTrimming(token, gistId, localPayload, opToken);
+            if (asked.choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
+            if (asked.choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
+            if (asked.choice === 'merge') return this._mergeIntoUpload(localPayload, opToken, silent, asked.remote);
+            checked = asked.remote?.seen ?? null;
         }
 
         // The gist holds changes this device has not applied, so an automatic
@@ -558,6 +563,8 @@ class SyncManager {
         const known = merged ? merged.known : await this._knownVersion(gistId);
         const usableKnown =
             (merged || (known?.current && !unapplied)) && typeof known?.encrypted === 'boolean' ? known : null;
+        // The version a pressed push is held to: with none on record (no ETag came back) there is nothing to hold to
+        const heldTo = unattended ? null : (merged ? merged.known : checked) || null;
         const aheadOf = merged ? { at: merged.remoteAt, seq: merged.remoteSeq } : { at: lastSyncedAt, seq: lastSeq };
         let written;
         try {
@@ -575,16 +582,34 @@ class SyncManager {
                 // edited by hand — may hold a newer exchange, so it counts as ahead:
                 // the merge then either folds it in or, unable to read it, holds
                 // automatic pushes until someone presses Push
+                // A pressed Push whose gist was read for the trim check, or whose merge was built from a
+                // download, still overwrites that version on purpose, and only that one: a gist that moved
+                // since holds history the answer was never about
                 isAhead: unattended
                     ? (listed) =>
                           (!merged && Boolean(unapplied)) ||
                           (Boolean(listed.unordered) && listingMoved(listed, known)) ||
                           isNewer(listed.exportedAt, aheadOf.at, listed.syncSeq, aheadOf.seq)
-                    : null,
+                    : heldTo
+                      ? (listed) => listingMoved(listed, heldTo)
+                      : null,
             });
         } catch (error) {
             if (error instanceof GistError && error.kind === 'cancelled') {
                 return { ok: true, skipped: true, reason: 'cancelled' };
+            }
+            if (!unattended && error instanceof GistError && error.kind === 'behind') {
+                // The gist moved after what the answer was about was read: look again, and ask again if it
+                // would now trim. A merge is rebuilt from the new version.
+                if (merged) return this._mergeIntoUpload(localPayload, opToken, silent);
+                if (checkRounds < 3) return this._doPush(silent, opToken, false, null, checkRounds + 1);
+                if (!silent) {
+                    showToast('Sync push stopped: the gist kept changing while it was being checked. Try again.', {
+                        kind: 'warn',
+                        duration: 0,
+                    });
+                }
+                return { ok: false, reason: 'behind' };
             }
             if (unattended && error instanceof GistError && error.kind === 'behind') {
                 if (merged) {
@@ -697,16 +722,18 @@ class SyncManager {
      * @param {string} localText - This device's payload
      * @param {number} opToken - The push's ownership token
      * @param {boolean} silent - Whether to stay quiet on success
+     * @param {{manifest?: Object, payload?: string, seen?: Object|null}|null} [downloaded=null] - A download of the
+     *   gist the caller just made; used instead of reading it again
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _mergeIntoUpload(localText, opToken, silent) {
+    async _mergeIntoUpload(localText, opToken, silent, downloaded = null) {
         traceSync('merge-into-upload');
         const token = this._token();
         const gistId = await this._resolveGistId(token);
         let remote;
         try {
-            remote = await this._readRemote(token, gistId, null);
+            remote = downloaded?.payload ? downloaded : await this._readRemote(token, gistId, null);
         } catch (error) {
             if (error instanceof GistError && error.kind === 'passphrase') {
                 console.warn(`[Sync] Skipped an automatic merge (passphrase): ${error.message}`);
@@ -1099,7 +1126,8 @@ class SyncManager {
      * @param {string} gistId - Gist id
      * @param {string} localPayload - This device's payload
      * @param {number} opToken - The push's ownership token; a takeover during the dialog stands the push down
-     * @returns {Promise<'push'|'merge'|'cancel'|'superseded'>} What to do: 'push' replaces as before
+     * @returns {Promise<{choice: 'push'|'merge'|'cancel'|'superseded', remote: Object|null}>} What to do ('push'
+     *   replaces as before), and the download it was decided on; null when the gist could not be read
      * @private
      */
     async _askBeforeTrimming(token, gistId, localPayload, opToken) {
@@ -1108,9 +1136,11 @@ class SyncManager {
             remote = await this._readRemote(token, gistId, null);
         } catch (error) {
             console.warn('[Sync] Could not check whether a push would trim the gist; pushing as asked:', error);
-            return 'push';
+            return { choice: 'push', remote: null };
         }
-        if (!remote?.payload || !pushTrimsRegisteredKeys(localPayload, remote.payload)) return 'push';
+        if (!remote?.payload || !pushTrimsRegisteredKeys(localPayload, remote.payload)) {
+            return { choice: 'push', remote: remote ?? null };
+        }
         const answer = await askChoice({
             title: 'Replace longer history on GitHub?',
             message:
@@ -1124,10 +1154,10 @@ class SyncManager {
                 { value: null, label: 'Cancel' },
             ],
         });
-        if (!this._stillOwns(opToken)) return 'superseded';
-        if (answer === 'merge') return 'merge';
-        if (answer === 'replace') return 'push';
-        return 'cancel';
+        if (!this._stillOwns(opToken)) return { choice: 'superseded', remote };
+        if (answer === 'merge') return { choice: 'merge', remote };
+        if (answer === 'replace') return { choice: 'push', remote };
+        return { choice: 'cancel', remote };
     }
 
     /**

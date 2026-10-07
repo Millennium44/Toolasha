@@ -77,11 +77,17 @@ vi.mock('../../utils/toast.js', () => ({
     },
 }));
 
-const dialog = vi.hoisted(() => ({ calls: 0, answer: null }));
+const dialog = vi.hoisted(() => ({ calls: 0, answer: null, answers: [], whileOpen: null }));
 vi.mock('../../utils/choice-dialog.js', () => ({
     askChoice: async () => {
         dialog.calls += 1;
-        return dialog.answer;
+        // Something that happens while the dialog sits open, such as another device pushing
+        if (dialog.whileOpen) {
+            const run = dialog.whileOpen;
+            dialog.whileOpen = null;
+            await run();
+        }
+        return dialog.answers.length ? dialog.answers.shift() : dialog.answer;
     },
 }));
 
@@ -379,6 +385,8 @@ beforeEach(() => {
     toasts.length = 0;
     dialog.calls = 0;
     dialog.answer = null;
+    dialog.answers = [];
+    dialog.whileOpen = null;
     elapsed = 0;
     syncManager.busy = false;
 });
@@ -1034,6 +1042,51 @@ describe('an automatic push that would cut a history the gist holds merges inste
         expect(wrote).toBe(1);
         expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
         expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+    });
+
+    test('Merge and push downloads the gist once: the trim check is reused', async () => {
+        const { a } = await cappedAfterStartup();
+        dialog.answer = 'merge';
+        gist.downloads = 0;
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await syncManager.push();
+        });
+        expect(gist.downloads).toBe(1);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+    });
+
+    test('another device pushing while the question is open: Replace anyway does not overwrite what it never saw', async () => {
+        const { a } = await cappedAfterStartup();
+        dialog.calls = 0;
+        dialog.answer = null;
+        dialog.answers = ['replace', 'merge'];
+        // Another device adds a session to the gist while the dialog is open
+        dialog.whileOpen = () => {
+            const payload = JSON.parse(gist.state.payload);
+            payload.stores.xpHistory.cappedLog_c1 = [7000, ...payload.stores.xpHistory.cappedLog_c1];
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(payload),
+            };
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        };
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await syncManager.push();
+        });
+
+        // Asked again about the version it had not seen, instead of cutting it to 20
+        expect(dialog.calls).toBe(2);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+        expect(gistStores().xpHistory.cappedLog_c1).toContain(7000);
     });
 
     test('Cancel writes nothing', async () => {
