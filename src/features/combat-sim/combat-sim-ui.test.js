@@ -608,6 +608,8 @@ const {
     soloVsPartySets,
     mergeSoloPartySweeps,
     bestiaryPlanZoneForRow,
+    levelHoursPerStep,
+    formatCompactHours,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -1167,6 +1169,90 @@ describe('the panel', () => {
 
         const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
         expect(container.querySelectorAll('[data-csv-export]')).toHaveLength(1);
+    });
+
+    describe('combat levels: Hours/0.01% columns', () => {
+        /** A combat_level row: days of grind and percent gains on dps / xp / profit */
+        const levelRow = (description, days, { dps = 0, xp = 0, profit = 0 } = {}) => ({
+            candidate: { description, type: 'combat_level', slot: 'attack', upgradeLevel: 5 },
+            cost: 0,
+            levelTimeHours: days * 24,
+            metrics: {
+                dps: BASELINE.dps * (1 + dps / 100),
+                xpPerHour: BASELINE.xpPerHour * (1 + xp / 100),
+                profitPerHour: BASELINE.profitPerHour * (1 + profit / 100),
+                deathsPerHour: 0,
+                encountersPerHour: 10,
+            },
+            deltas: { dps, xp, profit, deaths: 0, encounters: 0 },
+            goldPer: { dps: 0, xp: 0, profit: 0, deaths: Infinity, encounters: Infinity },
+            economics: {},
+        });
+        const rows = () => [
+            levelRow('Attack 135 → 140', 29.3, { dps: 2.58 }),
+            levelRow('Stamina 100 → 105', 12.0, { dps: 0.43 }),
+            levelRow('Intelligence 115 → 120', 3.1, { profit: 0.13 }),
+            levelRow('Magic 129 → 134', 11.9, { dps: 2.39 }),
+        ];
+        const render = () => {
+            ui._renderUpgradeResults({ baseline: BASELINE, results: rows(), food: null });
+            return ui.panel.querySelector('#mwi-csim-upgrade-results');
+        };
+        const names = (container) =>
+            [...container.querySelectorAll('[data-level-row]')].map((tr) => tr.children[0].textContent.trim());
+        const cells = (container, name) => {
+            const tr = [...container.querySelectorAll('[data-level-row]')].find((t) =>
+                t.children[0].textContent.includes(name)
+            );
+            return Object.fromEntries(
+                [...tr.querySelectorAll('[data-hours-per]')].map((td) => [
+                    td.getAttribute('data-hours-per'),
+                    td.textContent.trim(),
+                ])
+            );
+        };
+
+        test('hours per 0.01% match the worked example', () => {
+            expect(levelHoursPerStep(11.9 * 24, 2.39)).toBeCloseTo(1.195, 2);
+            const c = render();
+            expect(cells(c, 'Magic').dps).toBe('1.2h');
+            expect(cells(c, 'Attack').dps).toBe('2.7h');
+            expect(cells(c, 'Stamina').dps).toBe('6.7h');
+            expect(cells(c, 'Intelligence').profit).toBe('5.7h');
+        });
+
+        test('no gain shows a dash, and short times read in minutes', () => {
+            const c = render();
+            expect(cells(c, 'Intelligence').dps).toBe('—');
+            expect(cells(c, 'Magic').xp).toBe('—');
+            expect(levelHoursPerStep(10, -1)).toBe(Infinity);
+            expect(formatCompactHours(0.75)).toBe('45m');
+            expect(formatCompactHours(Infinity)).toBe('—');
+        });
+
+        test('the default order is Hours/0.01% DPS, cheapest first, so Magic leads', () => {
+            const order = names(render());
+            expect(order[0]).toContain('Magic');
+            expect(order.at(-1)).toContain('Intelligence');
+        });
+
+        test('reversing an hours sort keeps the no-gain rows last', () => {
+            const c = render();
+            // Hours/0.01% DPS is the default sort: a second click reverses it
+            c.querySelector('[data-level-sort-key="hpDps"]').click();
+            const after = names(ui.panel.querySelector('#mwi-csim-upgrade-results'));
+            expect(after[0]).toContain('Stamina');
+            expect(after.at(-1)).toContain('Intelligence');
+        });
+
+        test('a header click re-sorts, and nothing failed to draw', () => {
+            const c = render();
+            c.querySelector('[data-level-sort-key="hpProfit"]').click();
+            const after = names(ui.panel.querySelector('#mwi-csim-upgrade-results'));
+            expect(after[0]).toContain('Intelligence');
+            expect(text()).not.toContain('could not be drawn');
+            expect(text()).toContain('Hours/0.01% DPS');
+        });
     });
 
     test('an open detail row stays open when a header re-sorts the table', () => {
