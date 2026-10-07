@@ -1528,3 +1528,25 @@ describe('two devices writing at the same moment', () => {
         expect(b.latches).toBe(0);
     });
 });
+
+describe("a Settings-only device's pull of a gist that holds histories", () => {
+    test('owes the trimmed upload once, after which the next tick is unchanged', async () => {
+        const { a } = await syncedPair();
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
+
+        const c = makeDevice('C', { sync_scope: 'settings' });
+        await as(c, auto.startup);
+
+        const first = await as(c, auto.push);
+        expect(first.ok).toBe(true);
+        expect(first.skipped).toBeUndefined();
+        expect(gistStores().xpHistory ?? {}).toEqual({});
+
+        const second = await as(c, auto.push);
+        expect(second.reason).toBe('unchanged');
+        const writes = gist.writes;
+        await as(c, auto.push);
+        expect(gist.writes).toBe(writes);
+        expect(a.db.xpHistory.testHistory_c1).toEqual(['s1']);
+    });
+});

@@ -1341,6 +1341,18 @@ class SyncManager {
         if (silent && !mergeHeld?.length) {
             mergedRebuild = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
             pushOwed = addsToRemote(mergedRebuild, payload);
+            // Also owed when this device's scope or cleaning would take something
+            // out of the gist (a Settings-only device pulling a gist that still
+            // holds history stores): the trimmed upload is what stops every
+            // device downloading them. The remembered fingerprint then stays the
+            // gist's, so the push is not 'unchanged'; once it lands, it is.
+            if (!pushOwed) {
+                try {
+                    pushOwed = mergeForUpload(mergedRebuild, payload, null).dropsFromRemote;
+                } catch (error) {
+                    console.warn('[Sync] Could not check whether the gist holds more than this device syncs:', error);
+                }
+            }
         }
 
         await this._remember({
