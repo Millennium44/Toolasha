@@ -2061,6 +2061,34 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
 // re-exported here because this is where callers and tests found it first.
 export { isSkillingGearItem, isAuraAbility, skillingGearWarnings, duplicateAuraWarnings, partyLintWarnings };
 
+/** One step of the per-0.01% columns, matching GOLD_PER_STEP_PCT in the advisor */
+const LEVEL_STEP_PCT = 0.01;
+
+/**
+ * Hours of grind per 0.01% of improvement: the combat-level counterpart of the
+ * gold table's Gold/0.01%. Lower is better. Uses the gold table's rule for a
+ * gain that is not a gain: zero, negative or unknown is Infinity (drawn as a
+ * dash, sorted last), never a free or negative-hours result.
+ * @param {number} hours - Grind time to earn the levels
+ * @param {number} pctDelta - Improvement in percent (2 = 2%)
+ * @returns {number} Hours per 0.01%, or Infinity
+ */
+export function levelHoursPerStep(hours, pctDelta) {
+    if (!Number.isFinite(hours) || !Number.isFinite(pctDelta) || pctDelta <= 0) return Infinity;
+    return hours / (pctDelta / LEVEL_STEP_PCT);
+}
+
+/**
+ * Compact hours for the Hours/0.01% columns: "45m" under an hour, else "1.2h".
+ * @param {number} hours - Hours
+ * @returns {string} Text, or a dash when there is no figure
+ */
+export function formatCompactHours(hours) {
+    if (!Number.isFinite(hours)) return '—';
+    if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+    return hours < 100 ? `${hours.toFixed(1)}h` : `${Math.round(hours)}h`;
+}
+
 /**
  * Sort result rows by a computed key, treating Infinity as "worst" so unknown
  * values land at the end rather than dominating the comparison.
@@ -2073,15 +2101,16 @@ function sortRowsBy(rows, keyOf, asc) {
     return [...rows].sort((a, b) => {
         const va = keyOf(a);
         const vb = keyOf(b);
-        let cmp;
         if (typeof va === 'string') {
-            cmp = va.localeCompare(vb);
-        } else {
-            const na = va === Infinity ? Number.MAX_VALUE : va;
-            const nb = vb === Infinity ? Number.MAX_VALUE : vb;
-            cmp = na - nb;
+            const cmp = va.localeCompare(vb);
+            return asc ? cmp : -cmp;
         }
-        return asc ? cmp : -cmp;
+        // A value with no figure behind it (a "—" cell) stays last whichever
+        // way the column is sorted, rather than leading a reversed sort
+        const fa = Number.isFinite(va);
+        const fb = Number.isFinite(vb);
+        if (!fa || !fb) return fa === fb ? 0 : fa ? -1 : 1;
+        return asc ? va - vb : vb - va;
     });
 }
 
@@ -10474,12 +10503,13 @@ class CombatSimUI {
      * @private
      */
     _renderUpgradeLevelTable(rows, baseline) {
-        if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'dps', asc: true };
+        if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'hpDps', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeLevelSort;
         // What the grind actually ends with: the skill at its target plus the
         // weapon's primary skill wherever the same hours carried it. Rows with
         // no primary gain (or the primary skill's own row) read off the solo sim
         const effective = (r) => (r.alongside?.metrics ? r.alongside : r);
+        const hoursPer = (r, metricKey) => levelHoursPerStep(r.levelTimeHours, effective(r).deltas?.[metricKey]);
 
         const sortValue = (r) => {
             const e = effective(r);
@@ -10493,8 +10523,14 @@ class CombatSimUI {
                     return -(e.metrics.xpPerHour - baseline.xpPerHour);
                 case 'profit':
                     return -(e.metrics.profitPerHour - baseline.profitPerHour);
-                default:
+                case 'dps':
                     return -(e.metrics.dps - baseline.dps);
+                case 'hpXp':
+                    return hoursPer(r, 'xp');
+                case 'hpProfit':
+                    return hoursPer(r, 'profit');
+                default:
+                    return hoursPer(r, 'dps');
             }
         };
         const sorted = sortRowsBy(rows, sortValue, sortAsc);
@@ -10519,7 +10555,7 @@ class CombatSimUI {
             bestProfitDelta = Math.max(bestProfitDelta, e.metrics.profitPerHour - baseline.profitPerHour);
         }
 
-        const detailColspan = 5;
+        const detailColspan = 8;
         const primaryName = rows.find((r) => r.primarySkill)?.primarySkill;
         const primaryNote = primaryName
             ? ` Your weapon trains ${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done — the Δ columns are for both together.`
@@ -10528,16 +10564,20 @@ class CombatSimUI {
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
             <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
-                Levels can't be bought, so these are ranked by improvement and the grind time to earn them — not
-                against the gold costs above.${primaryNote}
+                Levels can't be bought, so these are ranked by improvement per hour of grind (Hours/0.01%, lower is
+                better), not against the gold costs above. Level time assumes you train that skill at your current
+                rates, and each row is one step on its own — they don't stack.${primaryNote}
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-level-sort-key="upgrade">Skill${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-level-sort-key="time">Level Time${arrow('time')}</th>
                 <th style="${thStyle}" data-level-sort-key="dps">ΔDPS${arrow('dps')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpDps" title="Hours of combat, at your current training rates, per 0.01% DPS improvement. Lower is better.">Hours/0.01% DPS${arrow('hpDps')}</th>
                 <th style="${thStyle}" data-level-sort-key="xp">ΔEXP/hr${arrow('xp')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpXp" title="Hours of combat, at your current training rates, per 0.01% EXP/hr improvement. Lower is better.">Hours/0.01% EXP${arrow('hpXp')}</th>
                 <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpProfit" title="Hours of combat, at your current training rates, per 0.01% Profit/hr improvement. Lower is better.">Hours/0.01% Profit${arrow('hpProfit')}</th>
             </tr></thead><tbody>`;
 
         sorted.forEach((r, i) => {
@@ -10586,8 +10626,11 @@ class CombatSimUI {
                 <td style="${tdStyle}">${r.candidate.description}${alongLine}</td>
                 <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
                 <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}" ${deltaTitle}>${fmtCell(dpsDelta, e.deltas.dps)}</td>
+                <td style="${tdStyle}" data-hours-per="dps">${formatCompactHours(hoursPer(r, 'dps'))}</td>
                 <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}" ${deltaTitle}>${fmtCell(xpDelta, e.deltas.xp)}</td>
+                <td style="${tdStyle}" data-hours-per="xp">${formatCompactHours(hoursPer(r, 'xp'))}</td>
                 <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}" ${deltaTitle}>${fmtCell(profitDelta, e.deltas.profit)}</td>
+                <td style="${tdStyle}" data-hours-per="profit">${formatCompactHours(hoursPer(r, 'profit'))}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
                 <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
