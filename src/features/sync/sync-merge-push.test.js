@@ -1211,6 +1211,11 @@ describe('two devices writing at the same moment', () => {
                 const based = `v${gist.etag}`;
                 const payload = JSON.parse(original);
                 payload.stores.xpHistory = { ...payload.stores.xpHistory, testHistory_c1: [`other-${i}`] };
+                // A scalar the watchlist fold cannot combine: the newest push's value has to be the one kept
+                payload.stores.settings = {
+                    ...payload.stores.settings,
+                    watchlist_c1: { entries: [], zones: {}, chests: {}, sortBy: `sort-${i}`, direction: 'asc' },
+                };
                 gist.etag += 1;
                 gist.state = {
                     manifest: {
@@ -1240,6 +1245,7 @@ describe('two devices writing at the same moment', () => {
         expect(gist.state.payload).toContain('other-6');
         expect(gist.state.payload).toContain('other-2');
         expect(gist.state.payload).not.toContain('a-sample');
+        expect(JSON.parse(gist.state.payload).stores.settings.watchlist_c1.sortBy).toBe('sort-6');
         expect(gist.state.manifest.syncSeq).toBeGreaterThan(aWrite.manifest.syncSeq);
 
         // ...and A's next tick merges its sample onto that revision as an ordinary push

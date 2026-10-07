@@ -934,10 +934,16 @@ class SyncManager {
         try {
             const newest = await this._readRemote(token, gistId, null, null, version);
             const baseline = await storage.get(KEY_BASELINE, STORE, null);
-            let text = newest.payload;
-            for (const olderVersion of [...older].reverse()) {
-                const replaced = await this._readRemote(token, gistId, null, null, olderVersion);
-                text = mergeForUpload(text, replaced.payload, baseline).text;
+            // Oldest first, each later revision as the incoming side, as the race-recovery loop folds:
+            // a value the merges cannot combine goes to the newest revision, not the oldest
+            const payloads = [];
+            for (const olderVersion of older) {
+                payloads.push((await this._readRemote(token, gistId, null, null, olderVersion)).payload);
+            }
+            payloads.push(newest.payload);
+            let text = payloads[0];
+            for (const incoming of payloads.slice(1)) {
+                text = mergeForUpload(text, incoming, baseline).text;
             }
             const { body, compressed, encrypted } = await this._packBody(text);
             const chunks = chunkPayload(body);
