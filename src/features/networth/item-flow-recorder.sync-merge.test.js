@@ -1,8 +1,9 @@
 /**
  * A day's item flow row is rewritten all day, so two devices each hold their
- * own copy of it. A sync pull folds two copies of a chunk by union, and the
- * union — deep equality, the chunked store's default identity — keeps both
- * versions of the one row. Every reader then summed them.
+ * own copy of it. A sync folds two copies of a chunk by union, and the union
+ * used to key rows by deep equality and keep both versions of the one row —
+ * every reader then summed them. The store now names the day as the row's
+ * identity and folds the two copies with `mergeDayRow`.
  *
  * Driven through the real chunked store's registered sync merge, so what is
  * pinned is what a pull actually writes, and that the recorder reads it back
@@ -51,24 +52,32 @@ const deviceB = {
 };
 
 describe('two devices’ copies of one day', () => {
-    test('a sync pull keeps both versions of the row side by side', () => {
+    test('a sync pull folds the two versions of the row into one', () => {
         const registration = mergeForKey('networthHistory', `itemFlowRec_me_${DAY}`);
         expect(registration).toBeTruthy();
 
         const pulled = registration.merge([deviceA], [deviceB]);
-        expect(pulled.filter((row) => row.d === DAY)).toHaveLength(2);
+        expect(pulled.filter((row) => row.d === DAY)).toHaveLength(1);
 
-        // Read as stored, the pulled copy's milk is counted twice
+        // Read as stored, the run is the one run it was
         const price = () => 10;
-        const unfolded = gatheringByDay({ liveDays: pulled, price }).byDay.get(DAY);
-        expect(unfolded).toBe((100 + 170) * 10);
+        expect(gatheringByDay({ liveDays: pulled, price }).byDay.get(DAY)).toBe(170 * 10);
+        expect(pulled[0].drinks).toEqual({ '/items/milking_tea': 5 });
+    });
 
-        // Folded on load, it is the one run it was
-        const { rows, folded } = mergeDayRows(pulled);
+    test('an upload folding this device’s fresher copy into the gist’s stale one keeps the fresher', () => {
+        const registration = mergeForKey('networthHistory', `itemFlowRec_me_${DAY}`);
+        // An upload folds with the gist's copy as the base
+        const uploaded = registration.merge([deviceA], [deviceB], { forUpload: true });
+        expect(uploaded).toHaveLength(1);
+        expect(uploaded[0].gathering[RUN].stretches[0].gained).toEqual({ '/items/milk': 170 });
+    });
+
+    test('copies already side by side are folded on load', () => {
+        const { rows, folded } = mergeDayRows([deviceA, deviceB]);
         expect(rows).toHaveLength(1);
         expect(folded).toEqual([DAY]);
-        expect(gatheringByDay({ liveDays: rows, price }).byDay.get(DAY)).toBe(170 * 10);
-        expect(rows[0].drinks).toEqual({ '/items/milking_tea': 5 });
+        expect(gatheringByDay({ liveDays: rows, price: () => 10 }).byDay.get(DAY)).toBe(170 * 10);
     });
 });
 

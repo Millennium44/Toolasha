@@ -116,6 +116,45 @@ export function foldOpening(row, chestHrid, count, gainedItems) {
     return row;
 }
 
+/**
+ * Two copies of one day's row, as the one row the day has.
+ *
+ * A day's row is rewritten as chests are opened, and a sync brings two
+ * versions of it together — the one a device pushed and the one another device
+ * pulled and kept opening into. Kept side by side, the attribution summed both
+ * and the day's chests counted twice.
+ *
+ * Per chest, the copy that opened more is taken whole, so a chest's count and
+ * what came out of it always come from the same recording. The rows carry no
+ * device id, so an extended copy cannot be told from one recorded separately on
+ * another device: the larger is exact for the first, which is how a synced day
+ * diverges, and can only undercount the second — never count an opening twice.
+ * A tie keeps the first copy's entry, which in a fold is this device's.
+ *
+ * @param {ChestOpeningDay} a - One copy (this device's, in a fold)
+ * @param {ChestOpeningDay} b - The other
+ * @returns {ChestOpeningDay} The merged row
+ */
+export function mergeChestOpeningDays(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const openings = {};
+    let fromA = 0;
+    let fromB = 0;
+    const chests = new Set([...Object.keys(a.openings || {}), ...Object.keys(b.openings || {})]);
+    for (const chest of chests) {
+        const left = a.openings?.[chest];
+        const right = b.openings?.[chest];
+        const takeB = !left || (right && Number(right.count) > Number(left.count));
+        openings[chest] = takeB ? right : left;
+        if (takeB) fromB += 1;
+        else fromA += 1;
+    }
+    if (fromB === 0) return a;
+    if (fromA === 0) return b;
+    return { ...a, openings };
+}
+
 class ChestOpeningRecorder {
     constructor() {
         this._store = createChunkedHistory({
@@ -127,6 +166,10 @@ class ChestOpeningRecorder {
             legacyKey: (charId) => `chestOpenings_${charId}`,
             groupOf: rowChunkId,
             compare: (a, b) => String(a?.d || '').localeCompare(String(b?.d || '')),
+            // One row per day, rewritten as chests are opened: two copies of a
+            // day are two versions of one row, not two rows
+            identityOf: (row) => row?.d,
+            mergeCopies: mergeChestOpeningDays,
             label: 'ChestOpenings',
         });
 

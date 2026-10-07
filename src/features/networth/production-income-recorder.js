@@ -82,6 +82,68 @@ const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
  */
 
 /**
+ * Two copies of one day's row, as the one row the day has.
+ *
+ * A day's row is rewritten all day, and a sync brings two versions of it
+ * together: the one a device pushed, and the one another device pulled and
+ * kept adding to. Kept side by side, every reader summed both and the day's
+ * production and offline income counted twice.
+ *
+ * The rows carry no device id and no update stamp, so a copy that was extended
+ * cannot be told from one recorded separately on another device. Taking the
+ * further-along copy is exact for the first, which is how a synced day
+ * diverges, and can only undercount the second — never count an action twice.
+ * Summing would be exact for the second and double every synced day.
+ *
+ * Each half is taken whole from one copy, so the figures that net against each
+ * other always come from the same recording:
+ * - production (`outputValue`, `inputValue`, `actions`): the copy with more
+ *   actions; on a tie, the larger gross;
+ * - `offlineProfit`: the copy further from zero — offline sessions add a signed
+ *   net, so the copy that recorded more of them is the one that moved further;
+ * - `unpricedActions`: the larger count.
+ * A tie throughout keeps the first copy, which in a fold is this device's.
+ *
+ * @param {ProductionDay} a - One copy (this device's, in a fold)
+ * @param {ProductionDay} b - The other
+ * @returns {ProductionDay} The merged row
+ */
+export function mergeProductionDays(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const actionsA = num(a.actions);
+    const actionsB = num(b.actions);
+    const grossA = num(a.outputValue) + num(a.inputValue);
+    const grossB = num(b.outputValue) + num(b.inputValue);
+    const production = actionsB > actionsA || (actionsB === actionsA && grossB > grossA) ? b : a;
+    const offline = Math.abs(num(b.offlineProfit)) > Math.abs(num(a.offlineProfit)) ? b : a;
+    const unpriced = Math.max(num(a.unpricedActions), num(b.unpricedActions));
+
+    if (production === a && offline === a && unpriced === num(a.unpricedActions)) return a;
+    if (production === b && offline === b && unpriced === num(b.unpricedActions)) return b;
+
+    const out = {
+        ...a,
+        outputValue: num(production.outputValue),
+        inputValue: num(production.inputValue),
+        actions: num(production.actions),
+        offlineProfit: num(offline.offlineProfit),
+    };
+    if (unpriced > 0) out.unpricedActions = unpriced;
+    else delete out.unpricedActions;
+    return out;
+}
+
+/**
+ * @param {*} value
+ * @returns {number} The value, or 0 when it is not a finite number
+ */
+function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * An unenhanced unit at market; coins, which some recipes take, at face value.
  * @param {string} itemHrid - Item
  * @param {number} [enhancementLevel] - Enhancement level to price at; recipe inputs and
@@ -168,6 +230,10 @@ class ProductionIncomeRecorder {
             legacyKey: (charId) => `prodIncome_${charId}`,
             groupOf: rowChunkId,
             compare: (a, b) => String(a?.d || '').localeCompare(String(b?.d || '')),
+            // One row per day, rewritten as the day goes on: two copies of a
+            // day are two versions of one row, not two rows
+            identityOf: (row) => row?.d,
+            mergeCopies: mergeProductionDays,
             label: 'ProductionIncome',
         });
 

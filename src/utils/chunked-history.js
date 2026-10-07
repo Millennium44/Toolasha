@@ -345,6 +345,13 @@ export function maxRecordsPerCharacter(storeName, keys) {
  *   JSON, which is a deep-equality test and is right for any history whose entries are plain
  *   data; a recorder whose entries carry a mutable field (an in-progress session's `endTime`)
  *   should name its stable id instead.
+ * @param {Function} [options.mergeCopies] - `(a, b) => entry`, the one entry two copies of the
+ *   same entry (same `identityOf`) become. Without it the first copy met is kept and the other
+ *   dropped, which is right for an entry that is written once. A recorder that rewrites one
+ *   entry in place — a day's running totals — names its own rule, because the two copies a
+ *   sync brings together are an older and a newer version of it and only the recorder knows
+ *   which is which. Given one, a read also folds any copies already sitting side by side on
+ *   disk, and writes the folded chunk back.
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -361,6 +368,7 @@ class ChunkedHistory {
         compare,
         immediate = false,
         identityOf,
+        mergeCopies,
         label = 'ChunkedHistory',
     }) {
         this.storeName = storeName;
@@ -370,6 +378,9 @@ class ChunkedHistory {
         this.compare = compare;
         this.immediate = immediate;
         this.identityOf = identityOf || defaultIdentity;
+        /** True when `identityOf` is the caller's, so a stone may still be keyed by the old JSON */
+        this._customIdentity = typeof identityOf === 'function';
+        this.mergeCopies = typeof mergeCopies === 'function' ? mergeCopies : null;
         this.label = label;
 
         /** Whose records are in memory */
@@ -548,6 +559,8 @@ class ChunkedHistory {
             const id = this._identity(entry);
             if (id !== undefined && id !== null) held.add(id);
         }
+        /** id → its index in `out`, so a second copy can be folded into the first */
+        const at = new Map();
         for (const entry of [...base, ...extra]) {
             if (entry == null) continue;
             const id = this._identity(entry);
@@ -557,12 +570,81 @@ class ChunkedHistory {
                 out.push(entry);
                 continue;
             }
-            if (seen.has(id)) continue;
+            if (seen.has(id)) {
+                // A second copy of one entry: two versions of a row rewritten
+                // in place, which the recorder's rule tells apart
+                if (at.has(id)) out[at.get(id)] = this._mergeCopies(out[at.get(id)], entry);
+                continue;
+            }
             seen.add(id);
             if (!held.has(id) && this._tombstoned(id, entry, stones)) continue;
+            at.set(id, out.length);
             out.push(entry);
         }
         return this._sorted(out);
+    }
+
+    /**
+     * The one entry two copies of the same entry become.
+     *
+     * The first copy when no rule was given, which is what the union always
+     * did; and the first copy as well when the rule throws, because keeping
+     * one whole copy is never worse than keeping a half-built one.
+     * @param {Object} first - The copy met first (this device's, in a fold)
+     * @param {Object} second - The other copy
+     * @returns {Object} The entry to keep
+     * @private
+     */
+    _mergeCopies(first, second) {
+        if (!this.mergeCopies) return first;
+        try {
+            return this.mergeCopies(first, second) ?? first;
+        } catch (error) {
+            console.error(`[${this.label}] Folding two copies of one entry failed:`, error);
+            return first;
+        }
+    }
+
+    /**
+     * Fold copies of one entry that are already side by side in a history.
+     *
+     * A sync that ran before the recorder named its identity kept both copies
+     * of a rewritten row, and every reader that sums rows counted that day
+     * twice. Only a store with a `mergeCopies` rule is folded here: a store
+     * without one reads exactly what it always read.
+     * @param {Array<Object>} entries - The assembled history, sorted
+     * @returns {{entries: Array<Object>, chunks: Set<string>}} The folded history,
+     *   and the chunks that held a duplicate and so need writing back
+     * @private
+     */
+    _collapse(entries) {
+        const chunks = new Set();
+        if (!this.mergeCopies) return { entries, chunks };
+        const out = [];
+        const at = new Map();
+        for (const entry of entries) {
+            const id = this._identity(entry);
+            if (id === undefined || id === null) {
+                out.push(entry);
+                continue;
+            }
+            if (!at.has(id)) {
+                at.set(id, out.length);
+                out.push(entry);
+                continue;
+            }
+            const index = at.get(id);
+            const previous = out[index];
+            out[index] = this._mergeCopies(previous, entry);
+            try {
+                chunks.add(String(this.groupOf(previous)));
+                chunks.add(String(this.groupOf(entry)));
+            } catch {
+                // A chunk id that cannot be derived cannot be written back either
+            }
+        }
+        if (chunks.size === 0) return { entries, chunks };
+        return { entries: this._sorted(out), chunks };
     }
 
     /**
@@ -595,12 +677,39 @@ class ChunkedHistory {
      * @private
      */
     _tombstoned(id, entry, stones) {
-        const stone = stones[id];
+        const stone = stones[this._stoneKey(id, entry, stones)];
         if (!stone) return false;
         // Aged out here as well as on the way in: a fold can run for hours
         // against a map that was read when the page loaded
         if (Date.now() - stone.at >= TOMBSTONE_MAX_AGE_MS) return false;
         return stone.fp !== '' && stone.fp === fingerprintOf(entry);
+    }
+
+    /**
+     * The key an entry's tombstone is filed under, if it has one.
+     *
+     * Its identity, or — for a store that named its own `identityOf` after it
+     * had already been recording — the entry's JSON, which is what the identity
+     * was when an older deletion was made. Without the second look, a deletion
+     * recorded under the old identity would stop applying the day the store
+     * changed, and a peer still holding the entry would hand it back.
+     * @param {*} id - The entry's identity
+     * @param {Object} entry - The entry
+     * @param {Object} stones - The tombstone map
+     * @returns {string|undefined} The key in `stones`, or undefined for none
+     * @private
+     */
+    _stoneKey(id, entry, stones) {
+        if (id !== undefined && id !== null && stones[id]) return id;
+        if (!this._customIdentity) return undefined;
+        // Serialising every entry a fold meets is not free; a history nobody
+        // has deleted from has no stone to find and must not pay for it
+        for (const key in stones) {
+            if (!Object.hasOwn(stones, key)) continue;
+            const legacy = defaultIdentity(entry);
+            return legacy !== undefined && stones[legacy] ? legacy : undefined;
+        }
+        return undefined;
     }
 
     /**
@@ -701,14 +810,15 @@ class ChunkedHistory {
         const dropped = [];
         for (const entry of entries) {
             const id = this._identity(entry);
-            const stone = id === undefined || id === null ? undefined : stones[id];
+            const key = this._stoneKey(id, entry, stones);
+            const stone = key === undefined ? undefined : stones[key];
             if (!stone) {
                 kept.push(entry);
                 continue;
             }
             if (!this._tombstoned(id, entry, stones)) {
                 // Touched since the deletion, so this copy has outlived it
-                delete stones[id];
+                delete stones[key];
                 changed = true;
                 kept.push(entry);
                 continue;
@@ -716,7 +826,9 @@ class ChunkedHistory {
             dropped.push(entry);
         }
 
-        const casual = dropped.filter((entry) => stones[this._identity(entry)]?.bulk !== true).length;
+        const casual = dropped.filter(
+            (entry) => stones[this._stoneKey(this._identity(entry), entry, stones)]?.bulk !== true
+        ).length;
         if (casual > MASS_DELETE_FLOOR && casual * 2 > entries.length) {
             console.warn(
                 `[${this.label}] Refusing a fold that would delete ${casual} of ${entries.length} entries at once; ` +
@@ -832,6 +944,13 @@ class ChunkedHistory {
         if (this._loadToken !== token) return state.entries;
         this._unreadableFor = null;
 
+        // Copies of one rewritten row that an older sync left side by side.
+        // Folded before the tombstones, so a deletion judges the row as it now
+        // stands, and written back below so the disk — and the next upload —
+        // holds one row too.
+        const collapsed = this._collapse(state.entries);
+        state.entries = collapsed.entries;
+
         // A pull writes chunk keys whole, and the merge that saw them cannot
         // know whose record it was handed (`_union`), so the read is where a
         // resurrected entry is actually caught. Chunks that lost an entry drop
@@ -854,7 +973,34 @@ class ChunkedHistory {
         this._tombs = state.tombs;
         this._legacy = state.legacy;
         this._loaded = true;
+        if (collapsed.chunks.size > 0 && !state.legacy) this._writeChunks(charId, collapsed.chunks);
         return [...this._entries];
+    }
+
+    /**
+     * Rewrite named chunks from the entries in memory.
+     *
+     * Fire and forget, like the tombstone write: a write that does not land
+     * leaves the duplicate on disk, where the next read folds it again. The
+     * snapshot entry is dropped first, so a save in the meantime writes the
+     * chunk whatever its hint says.
+     * @param {string} charId - Whose history
+     * @param {Set<string>} chunkIds - Which buckets
+     * @returns {void}
+     * @private
+     */
+    _writeChunks(charId, chunkIds) {
+        const grouped = this._group(this._entries);
+        for (const chunkId of chunkIds) {
+            this._snapshot.delete(chunkId);
+            const bucket = grouped.get(chunkId);
+            if (!bucket) continue;
+            Promise.resolve(storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate)).catch(
+                (error) => {
+                    console.error(`[${this.label}] Writing back folded chunk ${chunkId} failed:`, error);
+                }
+            );
+        }
     }
 
     /**

@@ -1226,3 +1226,81 @@ describe('a history nobody has deleted from', () => {
         expect(await readBack(history)).toEqual(['2026-7-1', '2026-8-1']);
     });
 });
+
+describe('one row per day, rewritten in place', () => {
+    /** A store of running day totals: one row per day, `v` only ever grows */
+    const buildDays = (prefix, options = {}) =>
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix,
+            legacyKey: (charId) => `${prefix}Legacy_${charId}`,
+            groupOf: (row) => row.d.slice(0, 7),
+            compare: (a, b) => a.d.localeCompare(b.d),
+            identityOf: (row) => row?.d,
+            mergeCopies: (a, b) => (b.v > a.v ? b : a),
+            label: 'DayTest',
+            ...options,
+        });
+
+    test('a stale gist copy of today merges with this device’s into one row with the fresher values', async () => {
+        const { mergeForKey } = await import('./sync-merge-registry.js');
+        buildDays('dayRec');
+        const registration = mergeForKey('testStore', 'dayRec_c1_2026-10');
+        const yesterday = { d: '2026-10-06', v: 3 };
+        const gist = [yesterday, { d: '2026-10-07', v: 5 }];
+        const mine = [yesterday, { d: '2026-10-07', v: 9 }];
+
+        // An upload folds this device's copy into the gist's; a pull, the gist's into this device's
+        expect(registration.merge(gist, mine, { forUpload: true })).toEqual(mine);
+        expect(registration.mergeForPull(mine, gist)).toEqual(mine);
+        // The sum a reader takes is the day's, not the day's twice
+        const sum = registration.merge(gist, mine).reduce((total, row) => total + row.v, 0);
+        expect(sum).toBe(3 + 9);
+    });
+
+    test('a duplicate already on disk collapses on the next read, and is written back as one row', async () => {
+        const store = buildDays('dupeDayRec');
+        storageMock.store.set('dupeDayRec_c1_2026-10', [
+            { d: '2026-10-06', v: 3 },
+            { d: '2026-10-07', v: 9 },
+            { d: '2026-10-07', v: 5 },
+        ]);
+
+        const rows = await store.load('c1');
+        expect(rows).toEqual([
+            { d: '2026-10-06', v: 3 },
+            { d: '2026-10-07', v: 9 },
+        ]);
+        await Promise.resolve();
+        expect(storageMock.store.get('dupeDayRec_c1_2026-10')).toEqual(rows);
+        // Nothing was deleted, so nothing is told to a peer as a deletion
+        expect([...storageMock.store.keys()].filter((key) => key.includes('Tomb'))).toEqual([]);
+    });
+
+    test('a store with no rule for two copies reads exactly what is on disk', async () => {
+        const store = buildDays('ruleless', { mergeCopies: undefined });
+        const stored = [
+            { d: '2026-10-07', v: 9 },
+            { d: '2026-10-07', v: 5 },
+        ];
+        storageMock.store.set('ruleless_c1_2026-10', stored);
+        expect(await store.load('c1')).toHaveLength(2);
+        expect(written()).toEqual([]);
+    });
+
+    test('a rule that throws keeps the first copy whole', async () => {
+        const { mergeForKey } = await import('./sync-merge-registry.js');
+        buildDays('throwRec', {
+            mergeCopies: () => {
+                throw new Error('boom');
+            },
+        });
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const merged = mergeForKey('testStore', 'throwRec_c1_2026-10').merge(
+            [{ d: '2026-10-07', v: 9 }],
+            [{ d: '2026-10-07', v: 5 }]
+        );
+        expect(merged).toEqual([{ d: '2026-10-07', v: 9 }]);
+        spy.mockRestore();
+    });
+});
