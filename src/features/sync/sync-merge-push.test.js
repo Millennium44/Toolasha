@@ -1008,13 +1008,52 @@ describe('an automatic push that would cut a history the gist holds merges inste
         expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
     });
 
-    test('a pressed Push on the 20-session device still means this device, and overwrites', async () => {
+    /** The 20-session device presses Push, answering the question it is now asked */
+    async function pressPush(answer) {
         const { a } = await cappedAfterStartup();
-        await as(a, async () => {
+        dialog.answer = answer;
+        dialog.calls = 0;
+        const writes = gist.writes;
+        const result = await as(a, async () => {
             changeSetting(a, 'Y', true);
+            return syncManager.push();
+        });
+        return { a, result, wrote: gist.writes - writes };
+    }
+
+    test('a pressed Push on the 20-session device asks, and Replace anyway still overwrites', async () => {
+        const { wrote } = await pressPush('replace');
+        expect(dialog.calls).toBe(1);
+        expect(wrote).toBe(1);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(20);
+    });
+
+    test('Merge and push keeps the entries on GitHub and still sends this device edit', async () => {
+        const { wrote } = await pressPush('merge');
+        expect(dialog.calls).toBe(1);
+        expect(wrote).toBe(1);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+    });
+
+    test('Cancel writes nothing', async () => {
+        const { result, wrote } = await pressPush(null);
+        expect(dialog.calls).toBe(1);
+        expect(wrote).toBe(0);
+        expect(result.reason).toBe('cancelled');
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+    });
+
+    test('a pressed Push that would trim nothing asks nothing', async () => {
+        const { a } = await syncedPair();
+        dialog.calls = 0;
+        await as(a, async () => {
+            changeSetting(a, 'X', true);
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
             await syncManager.push();
         });
-        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(20);
+        expect(dialog.calls).toBe(0);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
     });
 });
 

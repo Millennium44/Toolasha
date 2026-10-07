@@ -62,6 +62,7 @@ import {
     wholeKeyHashes,
     exchangeBaseline,
     registeredKeysDiverge,
+    pushTrimsRegisteredKeys,
     restampRestoredSettings,
     RESTORED_BASELINE,
 } from './sync-payload.js';
@@ -455,6 +456,17 @@ class SyncManager {
             // database and the gist; writing now would stomp whatever it just
             // wrote. Stand down instead of overwriting a newer sync.
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+        }
+
+        // A pressed Push overwrites by design, so a device keeping fewer entries
+        // of a registered history than the gist holds would cut the gist's copy
+        // to its own. Ask first. One gist download, for a rare user-initiated
+        // action; a gist that cannot be read here is left to the push's own refusals.
+        if (!unattended && !merged && gistId) {
+            const choice = await this._askBeforeTrimming(token, gistId, localPayload, opToken);
+            if (choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
+            if (choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
+            if (choice === 'merge') return this._mergeIntoUpload(localPayload, opToken, silent);
         }
 
         // The gist holds changes this device has not applied, so an automatic
@@ -1078,6 +1090,44 @@ class SyncManager {
         const mine = history.indexOf(lastPushed);
         const base = history.indexOf(basedOn);
         return mine > 0 && base > mine;
+    }
+
+    /**
+     * For a pressed Push: when replacing the gist would cut a registered history it holds, ask whether to
+     * merge instead.
+     * @param {string} token - GitHub token
+     * @param {string} gistId - Gist id
+     * @param {string} localPayload - This device's payload
+     * @param {number} opToken - The push's ownership token; a takeover during the dialog stands the push down
+     * @returns {Promise<'push'|'merge'|'cancel'|'superseded'>} What to do: 'push' replaces as before
+     * @private
+     */
+    async _askBeforeTrimming(token, gistId, localPayload, opToken) {
+        let remote;
+        try {
+            remote = await this._readRemote(token, gistId, null);
+        } catch (error) {
+            console.warn('[Sync] Could not check whether a push would trim the gist; pushing as asked:', error);
+            return 'push';
+        }
+        if (!remote?.payload || !pushTrimsRegisteredKeys(localPayload, remote.payload)) return 'push';
+        const answer = await askChoice({
+            title: 'Replace longer history on GitHub?',
+            message:
+                'The copy on GitHub holds more history than this device does (for example, older sessions or ' +
+                'records this device no longer keeps). Pushing as is replaces it with this device’s ' +
+                'shorter copy, and the extra history is gone from GitHub.\n\n' +
+                'Merging keeps everything from both sides and pushes the result.',
+            choices: [
+                { value: 'merge', label: 'Merge and push (recommended)', tone: 'primary' },
+                { value: 'replace', label: 'Replace anyway', tone: 'danger' },
+                { value: null, label: 'Cancel' },
+            ],
+        });
+        if (!this._stillOwns(opToken)) return 'superseded';
+        if (answer === 'merge') return 'merge';
+        if (answer === 'replace') return 'push';
+        return 'cancel';
     }
 
     /**
