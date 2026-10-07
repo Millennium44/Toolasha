@@ -1112,18 +1112,39 @@ function cleaningRemoved(entries, cleaned) {
  *
  * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
  * @param {string} remoteText - The gist's payload, decrypted
+ * A revision fold (`revisionFold`) is the other use: restoring gist revisions
+ * other devices pushed, folded oldest first into the newest, with no payload of
+ * this device's in it. Two of the rules above are this device's and do not
+ * apply there. This device's baseline says nothing about which of two other
+ * devices' revisions moved, so none is used: the later revision is always the
+ * incoming side, for whole-value keys and registered folds alike. And the scope
+ * is the newest revision's (`scope`), on both sides: a Settings-only newest
+ * revision must not have older revisions' histories put back, nor an older
+ * Settings-only one strip the newest's.
+ *
  * @param {Record<string, string>|null} baseline - This device's hashes at its last exchange
+ * @param {Object} [options] - Fold options
+ * @param {boolean} [options.revisionFold=false] - Fold two gist revisions rather than this device over the gist
+ * @param {string|null} [options.scope=null] - For a revision fold, the newest revision's sync scope
  * @returns {{text: string, remoteAdds: boolean, dropsFromRemote: boolean}} The merged payload; whether it holds
  *   anything this device does not (so its next startup pull has something to take); and whether it leaves out
  *   stores the gist holds that this device's scope does not sync (so it is worth uploading even when it adds
  *   nothing)
  * @throws {Error} When the gist's payload is not one this build can apply
  */
-export function mergeForUpload(localText, remoteText, baseline) {
+export function mergeForUpload(localText, remoteText, baseline, { revisionFold = false, scope = null } = {}) {
     const local = JSON.parse(localText);
     const remote = JSON.parse(remoteText);
     const droppedUnowned = dropUnownedFromPayload(remote);
     assertApplicable(remote);
+    // A revision fold weighs no baseline of this device's (see above)
+    const exchanged = revisionFold ? null : baseline;
+    const uploadScope = revisionFold ? (scope ?? remote.syncScope ?? 'settings') : (local?.syncScope ?? 'settings');
+    if (revisionFold && uploadScope !== 'everything') {
+        for (const storeName of Object.keys(local?.stores || {})) {
+            if (storeName !== SETTINGS_STORE) delete local.stores[storeName];
+        }
+    }
     // The upload carries what this device's scope carries. A device switched
     // to "Settings only" while the gist still holds a full-scope push must not
     // keep re-uploading every history store it no longer syncs — that is the
@@ -1134,7 +1155,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
     // upload keeps — another script's keys, a device-local key or a token an
     // older build uploaded — so those count too, or the gist would keep them
     let dropsFromRemote = droppedUnowned;
-    if ((local?.syncScope ?? 'settings') !== 'everything') {
+    if (uploadScope !== 'everything') {
         for (const storeName of Object.keys(remote.stores)) {
             if (storeName === SETTINGS_STORE) continue;
             if (Object.keys(remote.stores[storeName] || {}).length) dropsFromRemote = true;
@@ -1177,7 +1198,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
             // The gist moved nowhere since this device last exchanged it: this
             // device's copy is the newer one
             const registration = mergeForKey(storeName, key);
-            const mineMoved = keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
+            const mineMoved = keepMine(baselineId(storeName, key), value, theirs[key], exchanged, {
                 allowRestored: !registration,
                 storeName,
                 key,
@@ -1225,7 +1246,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
     const text = JSON.stringify({
         formatVersion: FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
-        syncScope: local?.syncScope ?? remote.syncScope ?? 'settings',
+        syncScope: revisionFold ? uploadScope : (local?.syncScope ?? remote.syncScope ?? 'settings'),
         stores,
     });
     // Whether applying the result here would change anything — not whether

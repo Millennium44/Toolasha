@@ -330,6 +330,41 @@ async function syncedPair(settingsA = {}, settingsB = {}) {
     return { a, b };
 }
 
+/**
+ * Arm the gist so six other pushes land between the next write's listing and its write: one more than the
+ * race check reads back. Each is built on the gist as it was listed, so what only one of them holds is its own.
+ * @param {Function} [shape] - Called with each push's payload and its number (1 = oldest), to change it
+ */
+function raceSixPushes(shape = () => {}) {
+    gist.betweenListAndWrite = async () => {
+        const original = gist.state.payload;
+        for (let i = 1; i <= 6; i += 1) {
+            const based = `v${gist.etag}`;
+            const payload = JSON.parse(original);
+            payload.stores.xpHistory = { ...payload.stores.xpHistory, testHistory_c1: [`other-${i}`] };
+            // A scalar the watchlist fold cannot combine: the newest push's value has to be the one kept
+            payload.stores.settings = {
+                ...payload.stores.settings,
+                watchlist_c1: { entries: [], zones: {}, chests: {}, sortBy: `sort-${i}`, direction: 'asc' },
+            };
+            shape(payload, i);
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    exportedAt: new Date(BASE_MS + elapsed - 1000 + i).toISOString(),
+                    basedOn: based,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(payload),
+            };
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        }
+    };
+}
+
 beforeEach(() => {
     world.gzip = false;
     vi.useFakeTimers();
@@ -1204,34 +1239,9 @@ describe('two devices writing at the same moment', () => {
         // Six other pushes, each a mergeable payload of its own, land between
         // A's listing and A's write: one more than the check reads back
         let newest;
-        gist.betweenListAndWrite = async () => {
-            // Each push is built on the gist as A listed it, so what only one of them holds is its own
-            const original = gist.state.payload;
-            for (let i = 1; i <= 6; i += 1) {
-                const based = `v${gist.etag}`;
-                const payload = JSON.parse(original);
-                payload.stores.xpHistory = { ...payload.stores.xpHistory, testHistory_c1: [`other-${i}`] };
-                // A scalar the watchlist fold cannot combine: the newest push's value has to be the one kept
-                payload.stores.settings = {
-                    ...payload.stores.settings,
-                    watchlist_c1: { entries: [], zones: {}, chests: {}, sortBy: `sort-${i}`, direction: 'asc' },
-                };
-                gist.etag += 1;
-                gist.state = {
-                    manifest: {
-                        ...gist.state.manifest,
-                        syncSeq: gist.state.manifest.syncSeq + 1,
-                        exportedAt: new Date(BASE_MS + elapsed - 1000 + i).toISOString(),
-                        basedOn: based,
-                        hash: undefined,
-                        bytes: undefined,
-                    },
-                    payload: JSON.stringify(payload),
-                };
-                newest = gist.state.payload;
-                gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
-            }
-        };
+        raceSixPushes((payload) => {
+            newest = JSON.stringify(payload);
+        });
         const result = await as(a, auto.push);
         const aWrite = gist.revisions.find((revision) => revision.payload.includes('a-sample'));
 
@@ -1257,6 +1267,70 @@ describe('two devices writing at the same moment', () => {
         ).toBe(true);
         warn.mockRestore();
         error.mockRestore();
+    });
+
+    describe('the folded restore is a fold of other pushes alone', () => {
+        /**
+         * A pushes over six raced pushes and returns what the gist was restored to.
+         * @param {Object} a - Device A
+         * @param {Function} shape - Shapes each raced push, as raceSixPushes takes it
+         * @returns {Promise<Object>} The restored gist payload
+         */
+        const restoreAfterRace = async (a, shape) => {
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            raceSixPushes((payload, i) => {
+                // Only an older readable push holds this: it is in the result only if the restore folded
+                if (i === 2) payload.stores.settings.panelGeometry = 'from-2';
+                shape(payload, i);
+            });
+            expect(await as(a, auto.push)).toEqual({ ok: false, reason: 'raced' });
+            warn.mockRestore();
+            error.mockRestore();
+            const restored = JSON.parse(gist.state.payload);
+            expect(restored.stores.settings.panelGeometry).toBe('from-2');
+            return restored;
+        };
+        const settingsOnly = (payload) => {
+            payload.syncScope = 'settings';
+            delete payload.stores.xpHistory;
+        };
+
+        test("older Settings-only pushes do not strip the newest push's histories", async () => {
+            const { a } = await syncedPair();
+
+            const restored = await restoreAfterRace(a, (payload, i) => i < 6 && settingsOnly(payload));
+
+            expect(restored.syncScope).toBe('everything');
+            expect(restored.stores.xpHistory.testHistory_c1).toContain('other-6');
+            expect(restored.stores.settings.watchlist_c1.sortBy).toBe('sort-6');
+        });
+
+        test("a Settings-only newest push does not have older pushes' histories put back", async () => {
+            const { a } = await syncedPair();
+
+            const restored = await restoreAfterRace(a, (payload, i) => i === 6 && settingsOnly(payload));
+
+            expect(restored.syncScope).toBe('settings');
+            expect(restored.stores.xpHistory).toBeUndefined();
+            expect(restored.stores.settings.watchlist_c1.sortBy).toBe('sort-6');
+        });
+
+        test("this device's baseline does not hand an older push the value the newest one set back", async () => {
+            const { a } = await syncedPair();
+            // A's last exchange holds the watchlist sorted 'base'...
+            const watchlist = (sortBy) => ({ entries: [], zones: {}, chests: {}, sortBy, direction: 'asc' });
+            a.db.settings.watchlist_c1 = watchlist('base');
+            expect(await as(a, auto.push)).toEqual({ ok: true });
+
+            // ...older pushes changed it, and the newest set it back to 'base'
+            const restored = await restoreAfterRace(a, (payload, i) => {
+                if (i === 6) payload.stores.settings.watchlist_c1 = watchlist('base');
+            });
+
+            expect(restored.stores.settings.watchlist_c1.sortBy).toBe('base');
+        });
     });
 
     test('a write in the clear that replaced an encrypted push it cannot read puts that push back', async () => {
