@@ -1743,4 +1743,24 @@ describe('the sync merge keeps this device’s log size out of the upload', () =
         expect(registration.merge(local, gist).sessions).toHaveLength(120);
         expect(registration.merge(local, gist, { forUpload: true }).sessions).toHaveLength(500);
     });
+
+    test('a push over this device’s cap reports the log, and one with nothing extra on the gist does not', async () => {
+        await import('./labyrinth-room-logs.js');
+        const { trimmedRegisteredKeys } = await import('../sync/sync-payload.js');
+        const payloadOf = (log) =>
+            JSON.stringify({
+                formatVersion: 1,
+                exportedAt: 'x',
+                syncScope: 'everything',
+                stores: { settings: { labyrinthRoomLogs_c1: log } },
+            });
+        const local = payloadOf({ sessions: sessions(1, 20) });
+        const gist = payloadOf({ sessions: sessions(1000, 480) });
+        expect(trimmedRegisteredKeys(local, gist)).toEqual([
+            { store: 'settings', key: 'labyrinthRoomLogs_c1', label: 'Labyrinth room logs' },
+        ]);
+        // Both sides hold the same 500 sessions: a push keeps them all, whatever the cap says
+        const same = payloadOf({ sessions: sessions(1000, 500) });
+        expect(trimmedRegisteredKeys(same, same)).toEqual([]);
+    });
 });

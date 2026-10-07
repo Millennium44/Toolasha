@@ -1365,13 +1365,21 @@ export function trimmedRegisteredKeys(localText, remoteText) {
         const mine = local[storeName];
         for (const [key, theirValue] of Object.entries(theirs)) {
             const registration = mergeForKey(storeName, key);
-            if (!registration) continue;
+            // Opt-in: only a registration that says it caps by this device's own setting can report a trim.
+            // A generic "uncapped differs from capped" test misfires on folds that stamp a time, mutate
+            // their inputs or order unstably
+            if (!registration?.capsLocally) continue;
             try {
                 const mineValue = Object.hasOwn(mine, key) ? mine[key] : undefined;
-                // The same fold twice: as an upload (no device-local cap) and as this device's own
-                // storage would hold it (capped). A difference is entries this device's cap would drop.
-                const uncapped = registration.merge(mineValue, theirValue, UPLOAD_CONTEXT);
-                const capped = registration.merge(mineValue, theirValue);
+                // Deep clones into every call so a fold that mutates its inputs cannot skew the comparison
+                const fold = (context) => registration.merge(clone(mineValue), clone(theirValue), context);
+                const uncapped = fold(UPLOAD_CONTEXT);
+                // The gist must hold something this device's copy lacks, else a push loses nothing. This
+                // device's copy folded onto itself is the baseline, so normalization is not read as news
+                const alone = registration.merge(clone(mineValue), clone(mineValue), UPLOAD_CONTEXT);
+                if (stableStringify(uncapped) === stableStringify(alone)) continue;
+                // ...and this device's own cap must be what would drop it
+                const capped = fold(undefined);
                 if (stableStringify(uncapped) !== stableStringify(capped)) {
                     trimmed.push({ store: storeName, key, label: registration.label });
                 }
@@ -1381,6 +1389,15 @@ export function trimmedRegisteredKeys(localText, remoteText) {
         }
     }
     return trimmed;
+}
+
+/**
+ * A deep copy of a JSON value (undefined stays undefined).
+ * @param {*} value - Any JSON value
+ * @returns {*} An independent copy
+ */
+function clone(value) {
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
 /**

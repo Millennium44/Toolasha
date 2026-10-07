@@ -241,6 +241,7 @@ registerSyncMerge({
             .sort((x, y) => y - x)
             .slice(0, context?.forUpload ? Infinity : (world.device.settings.logCap ?? Infinity)),
     label: 'Capped log',
+    capsLocally: true,
 });
 
 // A real fold with a scalar it cannot combine (`sortBy`), registered the way a page load does

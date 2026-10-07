@@ -61,6 +61,8 @@
  * @property {SyncMerge} mergeForPull - The fold a pull applies: `merge`, or with `localWinsOnPull`
  *   the same fold with this device's copy as the side that wins ties
  * @property {string} label - For logging and for the apply summary
+ * @property {boolean} capsLocally - This device keeps the history shorter by its own setting, so a push
+ *   that replaces the gist can cut entries the gist holds. Only such a registration can report a trim
  */
 
 /** @type {Array<SyncMergeRegistration>} */
@@ -100,9 +102,21 @@ export function scopedKeyMatcher(base) {
  * @param {boolean} [options.localWinsOnPull] - A pull keeps this device's copy where the fold ties
  *   (`mergeForPull` folds with the arguments turned round); uploads still use `merge`
  * @param {string} [options.label] - Name for logs and the apply summary
+ * @param {boolean} [options.capsLocally] - The fold caps the history by a setting of this device (and keeps
+ *   everything for `forUpload`). Opt-in: only a flagged registration can make a pressed Push warn about a trim
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncMerge({ store, key, base, prefix, match, merge, localWinsOnPull = false, label }) {
+export function registerSyncMerge({
+    store,
+    key,
+    base,
+    prefix,
+    match,
+    merge,
+    localWinsOnPull = false,
+    label,
+    capsLocally = false,
+}) {
     if (!store) throw new Error('[SyncMergeRegistry] registerSyncMerge needs a store');
     if (typeof merge !== 'function') throw new Error('[SyncMergeRegistry] registerSyncMerge needs a merge()');
 
@@ -134,6 +148,7 @@ export function registerSyncMerge({ store, key, base, prefix, match, merge, loca
         merge,
         mergeForPull: localWinsOnPull ? (local, incoming, context) => merge(incoming, local, context) : merge,
         label: label || key || base || prefix || store,
+        capsLocally: capsLocally === true,
         claim,
     };
 
