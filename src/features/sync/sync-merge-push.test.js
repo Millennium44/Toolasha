@@ -103,6 +103,7 @@ const gist = vi.hoisted(() => ({
     writes: 0,
     revisions: [],
     requests: 0,
+    downloads: 0,
     revisionReads: [],
     betweenListAndWrite: null,
 }));
@@ -127,6 +128,7 @@ vi.mock('./gist-client.js', async () => {
             if (!gist.state) throw new GistError('not-found', 'no gist');
             const current = `W/"${gist.etag}"`;
             if (etag && etag === current) return { notModified: true, etag };
+            gist.downloads += 1;
             return {
                 manifest: gist.state.manifest,
                 payload: gist.state.payload,
@@ -197,7 +199,9 @@ vi.mock('./gist-client.js', async () => {
             // GitHub's PATCH answer carries the history: what came right before this write
             const after = history();
             const base = basedOn ? after.indexOf(basedOn) : -1;
-            const intervening = basedOn && base > 1 ? after.slice(1, base).reverse() : [];
+            // As the real write reads it: the newest five, and whether older ones were left out
+            const between = basedOn && base > 1 ? after.slice(1, base) : [];
+            const intervening = between.slice(0, 5).reverse();
             return {
                 id: id ?? 'g1',
                 updatedAt: 'now',
@@ -207,6 +211,7 @@ vi.mock('./gist-client.js', async () => {
                 version: versionOf(gist.etag),
                 basedOn,
                 intervening,
+                interveningTruncated: between.length > 5,
             };
         },
     };
@@ -325,6 +330,41 @@ async function syncedPair(settingsA = {}, settingsB = {}) {
     return { a, b };
 }
 
+/**
+ * Arm the gist so six other pushes land between the next write's listing and its write: one more than the
+ * race check reads back. Each is built on the gist as it was listed, so what only one of them holds is its own.
+ * @param {Function} [shape] - Called with each push's payload and its number (1 = oldest), to change it
+ */
+function raceSixPushes(shape = () => {}) {
+    gist.betweenListAndWrite = async () => {
+        const original = gist.state.payload;
+        for (let i = 1; i <= 6; i += 1) {
+            const based = `v${gist.etag}`;
+            const payload = JSON.parse(original);
+            payload.stores.xpHistory = { ...payload.stores.xpHistory, testHistory_c1: [`other-${i}`] };
+            // A scalar the watchlist fold cannot combine: the newest push's value has to be the one kept
+            payload.stores.settings = {
+                ...payload.stores.settings,
+                watchlist_c1: { entries: [], zones: {}, chests: {}, sortBy: `sort-${i}`, direction: 'asc' },
+            };
+            shape(payload, i);
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    exportedAt: new Date(BASE_MS + elapsed - 1000 + i).toISOString(),
+                    basedOn: based,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(payload),
+            };
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        }
+    };
+}
+
 beforeEach(() => {
     world.gzip = false;
     vi.useFakeTimers();
@@ -333,6 +373,7 @@ beforeEach(() => {
     gist.writes = 0;
     gist.revisions = [];
     gist.requests = 0;
+    gist.downloads = 0;
     gist.revisionReads = [];
     gist.betweenListAndWrite = null;
     toasts.length = 0;
@@ -856,6 +897,127 @@ describe('an automatic push merges a gist that moved past it', () => {
     });
 });
 
+describe('an automatic push that would cut a history the gist holds merges instead', () => {
+    const range = (from, count) => Array.from({ length: count }, (_, index) => from + index);
+
+    /**
+     * B keeps 500 sessions and pushed them; A keeps 20 and startup-pulled them.
+     * @returns {Promise<{a: Object, b: Object}>} Devices
+     */
+    async function cappedAfterStartup() {
+        const { a, b } = await syncedPair();
+        a.settings.logCap = 20;
+        b.settings.logCap = 500;
+        a.db.xpHistory.cappedLog_c1 = range(1, 20);
+        // Newest first, the order the log keeps
+        await as(b, async () => {
+            b.db.xpHistory.cappedLog_c1 = range(1000, 500).reverse();
+            await auto.push();
+        });
+        await as(a, auto.startup);
+        expect(a.db.xpHistory.cappedLog_c1).toHaveLength(20);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        return { a, b };
+    }
+
+    test('a device keeping 20 sessions records one after a startup pull of 500: the gist keeps all 500', async () => {
+        const { a } = await cappedAfterStartup();
+        a.latches = 0;
+        toasts.length = 0;
+
+        // Nothing moved the gist since A's startup, so this used to be a plain push of A's 20
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        const log = gistStores().xpHistory.cappedLog_c1;
+        expect(log).toContain(5000);
+        expect(log).toEqual(expect.arrayContaining(range(1000, 500)));
+        expect(log).toHaveLength(501);
+        // The cost: one download of the gist to merge with
+        expect(gist.downloads).toBeGreaterThan(0);
+    });
+
+    test('the merged automatic push writes nothing here: no latch, no "Reload now", local copy untouched', async () => {
+        const { a } = await cappedAfterStartup();
+        a.latches = 0;
+        toasts.length = 0;
+        const before = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [...before];
+            await auto.push();
+        });
+
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+        expect(a.latches).toBe(0);
+        expect(toasts.filter((toast) => /Reload/.test(toast.message))).toHaveLength(0);
+        expect(toasts).toHaveLength(0);
+        expect(a.db.xpHistory.cappedLog_c1).toEqual(before);
+    });
+
+    test('a later push that changes only a setting still keeps the 500', async () => {
+        const { a } = await cappedAfterStartup();
+        await as(a, async () => {
+            a.db.xpHistory.cappedLog_c1 = [5000, ...a.db.xpHistory.cappedLog_c1].slice(0, 20);
+            await auto.push();
+        });
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await auto.push();
+        });
+
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+        expect(gistStores().xpHistory.cappedLog_c1).toEqual(expect.arrayContaining([5000, ...range(1000, 500)]));
+    });
+
+    test('a merge that settled in step records the gist it settled on, so the next plain push cannot cut it', async () => {
+        const { a, b } = await cappedAfterStartup();
+        // Both devices set the same whole key; A's push finds the gist ahead and the merge adds nothing
+        await as(b, async () => {
+            b.db.settings.panelSizeMemory = 1;
+            await auto.push();
+        });
+        await as(a, async () => {
+            a.db.settings.panelSizeMemory = 1;
+            expect((await auto.push()).reason).toBe('in-step');
+        });
+
+        // A changes only a setting: nothing moved the gist, and A's log is still its 20
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await auto.push();
+        });
+
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+        expect(gistStores().xpHistory.cappedLog_c1).toEqual(expect.arrayContaining(range(1000, 500)));
+    });
+
+    test('a push that moved no registered history stays plain and downloads nothing', async () => {
+        const { a } = await syncedPair();
+        gist.downloads = 0;
+        const writes = gist.writes;
+        await as(a, async () => {
+            changeSetting(a, 'X', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        expect(gist.writes).toBe(writes + 1);
+        expect(gist.downloads).toBe(0);
+        expect(gistStores().settings[MAP].X.isTrue).toBe(true);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
+    });
+
+    test('a pressed Push on the 20-session device still means this device, and overwrites', async () => {
+        const { a } = await cappedAfterStartup();
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await syncManager.push();
+        });
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(20);
+    });
+});
+
 describe('mixed versions', () => {
     test("an older build's payload, with no stamps and no counter, merges by the rule that a stamp wins", async () => {
         const { a } = await syncedPair();
@@ -1068,6 +1230,109 @@ describe('two devices writing at the same moment', () => {
         expect(a.db.settings.toolasha_sync_lastHash).toBe(lastHashBefore);
     });
 
+    test('a write that replaced more pushes than one check reads back puts the newest back and retries', async () => {
+        const { a } = await syncedPair();
+        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        // Six other pushes, each a mergeable payload of its own, land between
+        // A's listing and A's write: one more than the check reads back
+        let newest;
+        raceSixPushes((payload) => {
+            newest = JSON.stringify(payload);
+        });
+        const result = await as(a, auto.push);
+        const aWrite = gist.revisions.find((revision) => revision.payload.includes('a-sample'));
+
+        // Not recorded as a success, and no rewrite built from the newest five
+        expect(result).toEqual({ ok: false, reason: 'raced' });
+        expect(aWrite).toBeTruthy();
+        expect(gist.revisions.filter((revision) => revision.payload.includes('a-sample'))).toHaveLength(1);
+        // The gist is the other pushes folded together, numbered above A's write: the newest, and data only
+        // an older readable one held (the 2nd of the five), without A's own sample
+        expect(newest).toBeTruthy();
+        expect(gist.state.payload).toContain('other-6');
+        expect(gist.state.payload).toContain('other-2');
+        expect(gist.state.payload).not.toContain('a-sample');
+        expect(JSON.parse(gist.state.payload).stores.settings.watchlist_c1.sortBy).toBe('sort-6');
+        expect(gist.state.manifest.syncSeq).toBeGreaterThan(aWrite.manifest.syncSeq);
+
+        // ...and A's next tick merges its sample onto that revision as an ordinary push
+        expect(await as(a, auto.push)).toEqual({ ok: true });
+        expect(gist.state.payload).toContain('a-sample');
+        expect(gist.state.payload).toContain('other-6');
+        expect(
+            warn.mock.calls.some(([line]) => String(line).includes('other pushes landed while this one was written'))
+        ).toBe(true);
+        warn.mockRestore();
+        error.mockRestore();
+    });
+
+    describe('the folded restore is a fold of other pushes alone', () => {
+        /**
+         * A pushes over six raced pushes and returns what the gist was restored to.
+         * @param {Object} a - Device A
+         * @param {Function} shape - Shapes each raced push, as raceSixPushes takes it
+         * @returns {Promise<Object>} The restored gist payload
+         */
+        const restoreAfterRace = async (a, shape) => {
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            raceSixPushes((payload, i) => {
+                // Only an older readable push holds this: it is in the result only if the restore folded
+                if (i === 2) payload.stores.settings.panelGeometry = 'from-2';
+                shape(payload, i);
+            });
+            expect(await as(a, auto.push)).toEqual({ ok: false, reason: 'raced' });
+            warn.mockRestore();
+            error.mockRestore();
+            const restored = JSON.parse(gist.state.payload);
+            expect(restored.stores.settings.panelGeometry).toBe('from-2');
+            return restored;
+        };
+        const settingsOnly = (payload) => {
+            payload.syncScope = 'settings';
+            delete payload.stores.xpHistory;
+        };
+
+        test("older Settings-only pushes do not strip the newest push's histories", async () => {
+            const { a } = await syncedPair();
+
+            const restored = await restoreAfterRace(a, (payload, i) => i < 6 && settingsOnly(payload));
+
+            expect(restored.syncScope).toBe('everything');
+            expect(restored.stores.xpHistory.testHistory_c1).toContain('other-6');
+            expect(restored.stores.settings.watchlist_c1.sortBy).toBe('sort-6');
+        });
+
+        test("a Settings-only newest push does not have older pushes' histories put back", async () => {
+            const { a } = await syncedPair();
+
+            const restored = await restoreAfterRace(a, (payload, i) => i === 6 && settingsOnly(payload));
+
+            expect(restored.syncScope).toBe('settings');
+            expect(restored.stores.xpHistory).toBeUndefined();
+            expect(restored.stores.settings.watchlist_c1.sortBy).toBe('sort-6');
+        });
+
+        test("this device's baseline does not hand an older push the value the newest one set back", async () => {
+            const { a } = await syncedPair();
+            // A's last exchange holds the watchlist sorted 'base'...
+            const watchlist = (sortBy) => ({ entries: [], zones: {}, chests: {}, sortBy, direction: 'asc' });
+            a.db.settings.watchlist_c1 = watchlist('base');
+            expect(await as(a, auto.push)).toEqual({ ok: true });
+
+            // ...older pushes changed it, and the newest set it back to 'base'
+            const restored = await restoreAfterRace(a, (payload, i) => {
+                if (i === 6) payload.stores.settings.watchlist_c1 = watchlist('base');
+            });
+
+            expect(restored.stores.settings.watchlist_c1.sortBy).toBe('base');
+        });
+    });
+
     test('a write in the clear that replaced an encrypted push it cannot read puts that push back', async () => {
         // The real WebCrypto; fake timers would starve its promises
         vi.useRealTimers();
@@ -1218,7 +1483,8 @@ describe('two devices writing at the same moment', () => {
 
     test('a push nobody raced makes no extra request', async () => {
         const { a } = await syncedPair();
-        a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+        // A setting, not a history: a moved history costs a download to merge with (see above)
+        await as(a, () => changeSetting(a, 'X', true));
         const before = gist.requests;
 
         expect((await as(a, auto.push)).ok).toBe(true);
