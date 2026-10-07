@@ -1216,6 +1216,28 @@ describe('an automatic push that would cut a history the gist holds merges inste
         expect(entry.keys).toEqual(['xpHistory/cappedLog_c1']);
     });
 
+    test('a history the gist holds more of but no cap dropped is neither named nor traced', async () => {
+        const { a } = await cappedAfterStartup();
+        // The gist also holds samples this device's plain history lacks, which is no trim
+        const payload = JSON.parse(gist.state.payload);
+        payload.stores.xpHistory.testHistory_c1 = ['s1', 'b-only'];
+        const text = JSON.stringify(payload);
+        gist.state = { manifest: { ...gist.state.manifest, bytes: undefined, hash: undefined }, payload: text };
+        gist.etag += 1;
+        a.db.xpHistory.testHistory_c1 = ['s1'];
+        dialog.answer = 'replace';
+        dialog.calls = 0;
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await syncManager.push();
+        });
+        expect(dialog.calls).toBe(1);
+        expect(dialog.last.message).toContain('Capped log');
+        expect(dialog.last.message).not.toContain('Test history');
+        const entry = getSyncTrace().findLast((item) => item.event === 'push-would-trim');
+        expect(entry.keys).toEqual(['xpHistory/cappedLog_c1']);
+    });
+
     test('Cancel writes nothing', async () => {
         const { result, wrote } = await pressPush(null);
         expect(dialog.calls).toBe(1);

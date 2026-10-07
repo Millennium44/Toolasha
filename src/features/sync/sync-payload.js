@@ -1322,17 +1322,15 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
 }
 
 /**
- * Whether replacing the gist with this device's payload would cut a registered
- * history: a key with a registered merge that the gist holds entries of which
- * this device's copy lacks (a device keeping 20 sessions against a gist
- * holding 500). Asked of a pressed Push, which overwrites by design, so the
- * player can be told before it happens.
+ * Whether replacing the gist with this device's payload would cut a history this
+ * device deliberately keeps shorter: a registered key whose fold caps by a device-local
+ * setting (a device keeping 20 sessions against a gist holding 500). Asked of a pressed
+ * Push, which overwrites by design, so the player can be told before it happens.
  *
- * The gist's value is folded into this device's the way an upload folds it; a
- * copy that comes out different has taken entries from the gist. A store this
- * device's payload does not carry is one its scope does not sync, which is a
- * choice and not a trim. A fold that cannot combine a scalar (a sort order) gives
- * the gist's value, so such a key can report a trim over a copy that merely differs.
+ * A key counts only when the fold of the gist onto this device's copy comes out different
+ * as an upload (no cap) than with the default, capped context. A fold with no
+ * context-dependent cap never reports, whatever else differs between the copies
+ * (compaction, a stale same-day row, normalization).
  *
  * @param {string} localText - This device's payload
  * @param {string} remoteText - The gist's payload, as downloaded
@@ -1368,13 +1366,13 @@ export function trimmedRegisteredKeys(localText, remoteText) {
         for (const [key, theirValue] of Object.entries(theirs)) {
             const registration = mergeForKey(storeName, key);
             if (!registration) continue;
-            if (!Object.hasOwn(mine, key)) {
-                trimmed.push({ store: storeName, key, label: registration.label });
-                continue;
-            }
             try {
-                const folded = registration.merge(mine[key], theirValue, UPLOAD_CONTEXT);
-                if (stableStringify(folded) !== stableStringify(mine[key])) {
+                const mineValue = Object.hasOwn(mine, key) ? mine[key] : undefined;
+                // The same fold twice: as an upload (no device-local cap) and as this device's own
+                // storage would hold it (capped). A difference is entries this device's cap would drop.
+                const uncapped = registration.merge(mineValue, theirValue, UPLOAD_CONTEXT);
+                const capped = registration.merge(mineValue, theirValue);
+                if (stableStringify(uncapped) !== stableStringify(capped)) {
                     trimmed.push({ store: storeName, key, label: registration.label });
                 }
             } catch {
