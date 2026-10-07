@@ -71,6 +71,15 @@ const storageMock = vi.hoisted(() => {
             mock.teardownListeners.push(listener);
             return () => {};
         }),
+        // What `importEverything` restores through
+        listStores: vi.fn(async () => Array.from(stores.keys())),
+        putAll: vi.fn(async (store, entries) => {
+            for (const [key, value] of Object.entries(entries)) storeFor(store).set(key, structuredClone(value));
+            return Object.keys(entries).length;
+        }),
+        beginRestore: vi.fn(async () => {}),
+        finishRestore: vi.fn(() => {}),
+        endRestore: vi.fn(async () => {}),
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
     };
@@ -298,5 +307,68 @@ describe('a save that cannot read the tombstones', () => {
         await a.saveSessions(a.sessions);
         await a.flushSessionWrites();
         expect(Object.keys(stored())).toEqual(['s1', 's2']);
+    });
+});
+
+describe('restoring a backup', () => {
+    /** A backup file of the settings store as it stands, minus the keys named */
+    const backupOf = (...without) => {
+        const entries = Object.fromEntries(settings());
+        for (const key of without) delete entries[key];
+        return {
+            formatVersion: 1,
+            exportedAt: '2026-10-01T00:00:00.000Z',
+            stores: { settings: structuredClone(entries) },
+        };
+    };
+
+    test('a backup from before a deletion, with no tombstones in it, brings the session back after a reload', async () => {
+        settings().set(SESSIONS, { s1: session('s1', 100), s2: session('s2', 200) });
+        // Taken before tombstones existed: the sessions key and nothing else
+        const backup = backupOf();
+        const a = await openTab();
+        await a.deleteSession(a.sessions, 's1');
+        await a.flushSessionWrites();
+        expect(Object.keys(settings().get(TOMBSTONES))).toEqual(['s1']);
+
+        const { importEverything } = await import('../../utils/full-backup.js');
+        expect((await importEverything(backup)).complete).toBe(true);
+
+        const reloaded = await openTab();
+        expect(Object.keys(reloaded.sessions)).toEqual(['s1', 's2']);
+    });
+
+    test('a restore keeps the tombstones of sessions it does not bring back', async () => {
+        settings().set(SESSIONS, { s1: session('s1', 100), s2: session('s2', 200), s3: session('s3', 300) });
+        const a = await openTab();
+        await a.deleteSession(a.sessions, 's1');
+        await a.flushSessionWrites();
+        // The backup holds s1 again but never had s3
+        const backup = backupOf(TOMBSTONES);
+        backup.stores.settings[SESSIONS] = { s1: session('s1', 100), s2: session('s2', 200) };
+        await a.deleteSession(a.sessions, 's3');
+        await a.flushSessionWrites();
+
+        const { importEverything } = await import('../../utils/full-backup.js');
+        await importEverything(backup);
+
+        expect(Object.keys(settings().get(TOMBSTONES))).toEqual(['s3']);
+        const reloaded = await openTab();
+        expect(Object.keys(reloaded.sessions)).toEqual(['s1', 's2']);
+    });
+
+    test('a backup that carries tombstones restores them, less any session it restores', async () => {
+        settings().set(SESSIONS, { s2: session('s2', 200) });
+        settings().set(TOMBSTONES, { s1: Date.now(), s4: Date.now() });
+        const backup = backupOf();
+        backup.stores.settings[SESSIONS] = { s1: session('s1', 100), s2: session('s2', 200) };
+        settings().set(TOMBSTONES, { s9: Date.now() });
+
+        const { importEverything } = await import('../../utils/full-backup.js');
+        await importEverything(backup);
+
+        expect(Object.keys(settings().get(TOMBSTONES))).toEqual(['s4']);
+        const reloaded = await openTab();
+        expect(Object.keys(reloaded.sessions)).toEqual(['s1', 's2']);
     });
 });

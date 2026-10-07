@@ -90,6 +90,66 @@ export const EXCLUDED_STORE_KEY_PREFIXES = {
 };
 
 /**
+ * Records whose removals live under a companion key, scoped to their store.
+ *
+ * The enhancement tracker (`features/enhancement/enhancement-storage.js`) keeps
+ * the ids of deleted sessions in `enhancementTracker_sessionTombstones`, and
+ * every load drops a stored session whose id is there. A restore writes whole
+ * keys and leaves the rest alone, so a backup made before a session was deleted
+ * — or before tombstones existed at all — put the session back under the
+ * sessions key while this device's tombstone went on hiding it. Restoring a
+ * record therefore restores its tombstones with it (see
+ * {@link reconcileRestoredTombstones}). Literal key names, duplicated from that
+ * module for the same reason {@link EXCLUDED_STORE_KEY_PREFIXES} duplicates its
+ * prefixes: a util does not import the features built on it.
+ */
+const TOMBSTONE_COMPANIONS = {
+    settings: [{ record: 'enhancementTracker_sessions', tombstones: 'enhancementTracker_sessionTombstones' }],
+};
+
+/**
+ * Make every restored record's tombstones agree with it: the tombstones the
+ * payload carries for it, or this device's when it carries none, without the
+ * ids the restored record holds. A record keyed per character
+ * (`<record>_<id>`) pairs with `<tombstones>_<id>`.
+ *
+ * Read after the restore hold has landed the write queue, so this device's
+ * tombstones are current. One that cannot be read is written empty: the
+ * restored sessions showing is the point, and a tombstone only ever hides.
+ * @param {string} storeName
+ * @param {Record<string, *>} entries - What the restore is about to write; not mutated
+ * @returns {Promise<Record<string, *>>} `entries`, or a copy with tombstone keys set
+ */
+async function reconcileRestoredTombstones(storeName, entries) {
+    const rules = TOMBSTONE_COMPANIONS[storeName];
+    if (!rules) return entries;
+    let out = entries;
+    for (const { record, tombstones } of rules) {
+        for (const key of Object.keys(entries)) {
+            if (key !== record && !key.startsWith(`${record}_`)) continue;
+            const graveKey = `${tombstones}${key.slice(record.length)}`;
+            let graves;
+            if (Object.hasOwn(entries, graveKey)) {
+                graves = entries[graveKey];
+            } else {
+                const probed = typeof storage.tryGet === 'function' ? await storage.tryGet(graveKey, storeName) : null;
+                // Nothing stored, so nothing to hide the restored record behind
+                if (probed && !probed.found) continue;
+                graves = probed?.value;
+            }
+            const restored = entries[key] && typeof entries[key] === 'object' ? entries[key] : {};
+            const kept = {};
+            for (const [id, at] of Object.entries(graves && typeof graves === 'object' ? graves : {})) {
+                if (!Object.hasOwn(restored, id)) kept[id] = at;
+            }
+            if (out === entries) out = { ...entries };
+            out[graveKey] = kept;
+        }
+    }
+    return out;
+}
+
+/**
  * Drop every key in `entries` whose store excludes it.
  * @param {string} storeName
  * @param {Record<string, *>} entries
@@ -250,7 +310,10 @@ export async function importEverything(payload, options = {}) {
             // exclusion list, can still carry one of these, and writing it here
             // would plant it on this device exactly as if it had been recorded
             // locally.
-            const entries = stripExcludedKeys(storeName, payloadStores[storeName]);
+            const entries = await reconcileRestoredTombstones(
+                storeName,
+                stripExcludedKeys(storeName, payloadStores[storeName])
+            );
             const want = Object.keys(entries).length;
             // The restore is the one writer the latch is not protecting against
             // — it is what the latch is protecting. A second pull in the same
