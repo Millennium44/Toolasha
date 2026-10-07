@@ -932,6 +932,56 @@ export function exchangeBaseline(uploadedText, localText) {
 }
 
 /**
+ * Whether a plain push of this device's payload could drop history the gist
+ * holds: a key with a registered merge whose value here is no longer the one
+ * the gist held at the last exchange (or that this device no longer has).
+ *
+ * A plain push replaces the gist with this device's copy, and a registered
+ * history here can be trimmed to this device's own retention — a device
+ * keeping 20 sessions, after a startup pull of a gist holding 500, would
+ * upload its 20. Only a value still hashing to the gist side of the baseline
+ * proves the gist holds nothing this copy lacks; a hash cannot tell an
+ * addition from a trim, so any other value counts. A key the baseline does
+ * not list was not in the gist at the last exchange, so it cannot drop
+ * anything there; a store the payload does not carry at all is one this
+ * device's scope does not sync. With no baseline, any registered key counts.
+ *
+ * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
+ * @param {Record<string, string|{gist: string, local: string|null}>|null} baseline - Hashes at the last exchange
+ * @returns {boolean} True when the push should merge the gist into its upload first
+ */
+export function registeredKeysDiverge(localText, baseline) {
+    let stores;
+    try {
+        stores = JSON.parse(localText)?.stores || {};
+    } catch {
+        return false;
+    }
+    const hasBaseline = Boolean(baseline && typeof baseline === 'object');
+    for (const [storeName, entries] of Object.entries(stores)) {
+        if (!entries || typeof entries !== 'object') continue;
+        for (const [key, value] of Object.entries(entries)) {
+            if (!mergeForKey(storeName, key)) continue;
+            if (!hasBaseline) return true;
+            const was = readBaselineEntry(baseline[baselineId(storeName, key)]);
+            if (was && valueHash(value) !== was.gist) return true;
+        }
+    }
+    if (!hasBaseline) return false;
+    for (const id of Object.keys(baseline)) {
+        if (id === RESTORED_BASELINE) continue;
+        const split = id.indexOf('\u0000');
+        if (split <= 0) continue;
+        const storeName = id.slice(0, split);
+        const key = id.slice(split + 1);
+        const entries = stores[storeName];
+        if (!entries || typeof entries !== 'object' || Object.hasOwn(entries, key)) continue;
+        if (mergeForKey(storeName, key) && readBaselineEntry(baseline[id])) return true;
+    }
+    return false;
+}
+
+/**
  * The baseline entry a full-backup restore adds: the keys it wrote, per
  * store (`{at, keys: {store: [key]}}`), each of which the next merge takes as
  * this device's newer copy, so it neither reverts the restore nor counts it
@@ -1062,18 +1112,39 @@ function cleaningRemoved(entries, cleaned) {
  *
  * @param {string} localText - This device's payload, as `buildPayloadJSON` built it
  * @param {string} remoteText - The gist's payload, decrypted
+ * A revision fold (`revisionFold`) is the other use: restoring gist revisions
+ * other devices pushed, folded oldest first into the newest, with no payload of
+ * this device's in it. Two of the rules above are this device's and do not
+ * apply there. This device's baseline says nothing about which of two other
+ * devices' revisions moved, so none is used: the later revision is always the
+ * incoming side, for whole-value keys and registered folds alike. And the scope
+ * is the newest revision's (`scope`), on both sides: a Settings-only newest
+ * revision must not have older revisions' histories put back, nor an older
+ * Settings-only one strip the newest's.
+ *
  * @param {Record<string, string>|null} baseline - This device's hashes at its last exchange
+ * @param {Object} [options] - Fold options
+ * @param {boolean} [options.revisionFold=false] - Fold two gist revisions rather than this device over the gist
+ * @param {string|null} [options.scope=null] - For a revision fold, the newest revision's sync scope
  * @returns {{text: string, remoteAdds: boolean, dropsFromRemote: boolean}} The merged payload; whether it holds
  *   anything this device does not (so its next startup pull has something to take); and whether it leaves out
  *   stores the gist holds that this device's scope does not sync (so it is worth uploading even when it adds
  *   nothing)
  * @throws {Error} When the gist's payload is not one this build can apply
  */
-export function mergeForUpload(localText, remoteText, baseline) {
+export function mergeForUpload(localText, remoteText, baseline, { revisionFold = false, scope = null } = {}) {
     const local = JSON.parse(localText);
     const remote = JSON.parse(remoteText);
     const droppedUnowned = dropUnownedFromPayload(remote);
     assertApplicable(remote);
+    // A revision fold weighs no baseline of this device's (see above)
+    const exchanged = revisionFold ? null : baseline;
+    const uploadScope = revisionFold ? (scope ?? remote.syncScope ?? 'settings') : (local?.syncScope ?? 'settings');
+    if (revisionFold && uploadScope !== 'everything') {
+        for (const storeName of Object.keys(local?.stores || {})) {
+            if (storeName !== SETTINGS_STORE) delete local.stores[storeName];
+        }
+    }
     // The upload carries what this device's scope carries. A device switched
     // to "Settings only" while the gist still holds a full-scope push must not
     // keep re-uploading every history store it no longer syncs — that is the
@@ -1084,7 +1155,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
     // upload keeps — another script's keys, a device-local key or a token an
     // older build uploaded — so those count too, or the gist would keep them
     let dropsFromRemote = droppedUnowned;
-    if ((local?.syncScope ?? 'settings') !== 'everything') {
+    if (uploadScope !== 'everything') {
         for (const storeName of Object.keys(remote.stores)) {
             if (storeName === SETTINGS_STORE) continue;
             if (Object.keys(remote.stores[storeName] || {}).length) dropsFromRemote = true;
@@ -1127,7 +1198,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
             // The gist moved nowhere since this device last exchanged it: this
             // device's copy is the newer one
             const registration = mergeForKey(storeName, key);
-            const mineMoved = keepMine(baselineId(storeName, key), value, theirs[key], baseline, {
+            const mineMoved = keepMine(baselineId(storeName, key), value, theirs[key], exchanged, {
                 allowRestored: !registration,
                 storeName,
                 key,
@@ -1175,7 +1246,7 @@ export function mergeForUpload(localText, remoteText, baseline) {
     const text = JSON.stringify({
         formatVersion: FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
-        syncScope: local?.syncScope ?? remote.syncScope ?? 'settings',
+        syncScope: revisionFold ? uploadScope : (local?.syncScope ?? remote.syncScope ?? 'settings'),
         stores,
     });
     // Whether applying the result here would change anything — not whether
@@ -1323,6 +1394,7 @@ export default {
     mergeForUpload,
     wholeKeyHashes,
     exchangeBaseline,
+    registeredKeysDiverge,
     restampRestoredSettings,
     addsToRemote,
     hashPayload,
