@@ -1322,6 +1322,50 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
 }
 
 /**
+ * Whether replacing the gist with this device's payload would cut a registered
+ * history: a key with a registered merge that the gist holds entries of which
+ * this device's copy lacks (a device keeping 20 sessions against a gist
+ * holding 500). Asked of a pressed Push, which overwrites by design, so the
+ * player can be told before it happens.
+ *
+ * The gist's value is folded into this device's the way an upload folds it; a
+ * copy that comes out different has taken entries from the gist. A store this
+ * device's payload does not carry is one its scope does not sync, which is a
+ * choice and not a trim. A fold that cannot combine a scalar (a sort order) gives
+ * the gist's value, so such a key can report a trim over a copy that merely differs.
+ *
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload, as downloaded
+ * @returns {boolean} True when the gist holds history this device's copy lacks
+ */
+export function pushTrimsRegisteredKeys(localText, remoteText) {
+    let local;
+    let remote;
+    try {
+        local = JSON.parse(localText)?.stores || {};
+        remote = JSON.parse(remoteText)?.stores || {};
+    } catch {
+        return false;
+    }
+    for (const [storeName, theirs] of Object.entries(remote)) {
+        if (!theirs || typeof theirs !== 'object' || !local[storeName]) continue;
+        const mine = local[storeName];
+        for (const [key, theirValue] of Object.entries(theirs)) {
+            const registration = mergeForKey(storeName, key);
+            if (!registration) continue;
+            if (!Object.hasOwn(mine, key)) return true;
+            try {
+                const folded = registration.merge(mine[key], theirValue, UPLOAD_CONTEXT);
+                if (stableStringify(folded) !== stableStringify(mine[key])) return true;
+            } catch {
+                // A fold that throws is not evidence of a trim
+            }
+        }
+    }
+    return false;
+}
+
+/**
  * JSON with every object's keys in sorted order, so equal values serialize equally.
  * @param {*} value - Any JSON value
  * @returns {string} Canonical text
@@ -1395,6 +1439,7 @@ export default {
     wholeKeyHashes,
     exchangeBaseline,
     registeredKeysDiverge,
+    pushTrimsRegisteredKeys,
     restampRestoredSettings,
     addsToRemote,
     hashPayload,

@@ -107,6 +107,7 @@ vi.mock('./sync-payload.js', () => ({
     exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
     // Opaque payloads hold no registered history to cut
     registeredKeysDiverge: () => false,
+    pushTrimsRegisteredKeys: () => false,
     wholeKeyHashes: () => ({}),
 }));
 

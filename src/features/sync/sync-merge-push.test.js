@@ -77,11 +77,17 @@ vi.mock('../../utils/toast.js', () => ({
     },
 }));
 
-const dialog = vi.hoisted(() => ({ calls: 0, answer: null }));
+const dialog = vi.hoisted(() => ({ calls: 0, answer: null, answers: [], whileOpen: null }));
 vi.mock('../../utils/choice-dialog.js', () => ({
     askChoice: async () => {
         dialog.calls += 1;
-        return dialog.answer;
+        // Something that happens while the dialog sits open, such as another device pushing
+        if (dialog.whileOpen) {
+            const run = dialog.whileOpen;
+            dialog.whileOpen = null;
+            await run();
+        }
+        return dialog.answers.length ? dialog.answers.shift() : dialog.answer;
     },
 }));
 
@@ -379,6 +385,8 @@ beforeEach(() => {
     toasts.length = 0;
     dialog.calls = 0;
     dialog.answer = null;
+    dialog.answers = [];
+    dialog.whileOpen = null;
     elapsed = 0;
     syncManager.busy = false;
 });
@@ -1008,13 +1016,128 @@ describe('an automatic push that would cut a history the gist holds merges inste
         expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
     });
 
-    test('a pressed Push on the 20-session device still means this device, and overwrites', async () => {
+    /** The 20-session device presses Push, answering the question it is now asked */
+    async function pressPush(answer) {
         const { a } = await cappedAfterStartup();
+        dialog.answer = answer;
+        dialog.calls = 0;
+        const writes = gist.writes;
+        const result = await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            return syncManager.push();
+        });
+        return { a, result, wrote: gist.writes - writes };
+    }
+
+    test('a pressed Push on the 20-session device asks, and Replace anyway still overwrites', async () => {
+        const { wrote } = await pressPush('replace');
+        expect(dialog.calls).toBe(1);
+        expect(wrote).toBe(1);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(20);
+    });
+
+    test('Merge and push keeps the entries on GitHub and still sends this device edit', async () => {
+        const { wrote } = await pressPush('merge');
+        expect(dialog.calls).toBe(1);
+        expect(wrote).toBe(1);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+    });
+
+    test('Merge and push downloads the gist once: the trim check is reused', async () => {
+        const { a } = await cappedAfterStartup();
+        dialog.answer = 'merge';
+        gist.downloads = 0;
         await as(a, async () => {
             changeSetting(a, 'Y', true);
             await syncManager.push();
         });
-        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(20);
+        expect(gist.downloads).toBe(1);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+    });
+
+    test('another device pushing while the question is open: Replace anyway does not overwrite what it never saw', async () => {
+        const { a } = await cappedAfterStartup();
+        dialog.calls = 0;
+        dialog.answer = null;
+        dialog.answers = ['replace', 'merge'];
+        // Another device adds a session to the gist while the dialog is open
+        dialog.whileOpen = () => {
+            const payload = JSON.parse(gist.state.payload);
+            payload.stores.xpHistory.cappedLog_c1 = [7000, ...payload.stores.xpHistory.cappedLog_c1];
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(payload),
+            };
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        };
+        await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            await syncManager.push();
+        });
+
+        // Asked again about the version it had not seen, instead of cutting it to 20
+        expect(dialog.calls).toBe(2);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+        expect(gistStores().xpHistory.cappedLog_c1).toContain(7000);
+    });
+
+    test('Merge and push with another device pushing meanwhile merges again and still uploads', async () => {
+        const { a } = await cappedAfterStartup();
+        dialog.calls = 0;
+        dialog.answer = 'merge';
+        dialog.whileOpen = () => {
+            const payload = JSON.parse(gist.state.payload);
+            payload.stores.xpHistory.cappedLog_c1 = [7000, ...payload.stores.xpHistory.cappedLog_c1];
+            gist.etag += 1;
+            gist.state = {
+                manifest: {
+                    ...gist.state.manifest,
+                    syncSeq: gist.state.manifest.syncSeq + 1,
+                    hash: undefined,
+                    bytes: undefined,
+                },
+                payload: JSON.stringify(payload),
+            };
+            gist.revisions.push({ version: `v${gist.etag}`, ...gist.state });
+        };
+        const result = await as(a, async () => {
+            changeSetting(a, 'Y', true);
+            return syncManager.push();
+        });
+
+        // The pressed merge is not left for an interval: it reads the new version and sends the edit
+        expect(result.ok).toBe(true);
+        expect(gistStores().settings[MAP].Y.isTrue).toBe(true);
+        expect(gistStores().xpHistory.cappedLog_c1).toContain(7000);
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(501);
+    });
+
+    test('Cancel writes nothing', async () => {
+        const { result, wrote } = await pressPush(null);
+        expect(dialog.calls).toBe(1);
+        expect(wrote).toBe(0);
+        expect(result.reason).toBe('cancelled');
+        expect(gistStores().xpHistory.cappedLog_c1).toHaveLength(500);
+    });
+
+    test('a pressed Push that would trim nothing asks nothing', async () => {
+        const { a } = await syncedPair();
+        dialog.calls = 0;
+        await as(a, async () => {
+            changeSetting(a, 'X', true);
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
+            await syncManager.push();
+        });
+        expect(dialog.calls).toBe(0);
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1', 'a-sample']);
     });
 });
 
@@ -1526,5 +1649,27 @@ describe('two devices writing at the same moment', () => {
         expect(pulled.reason).toBe('conflict');
         expect(b.db.settings[MAP].X.isTrue).toBe(true);
         expect(b.latches).toBe(0);
+    });
+});
+
+describe("a Settings-only device's pull of a gist that holds histories", () => {
+    test('owes the trimmed upload once, after which the next tick is unchanged', async () => {
+        const { a } = await syncedPair();
+        expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
+
+        const c = makeDevice('C', { sync_scope: 'settings' });
+        await as(c, auto.startup);
+
+        const first = await as(c, auto.push);
+        expect(first.ok).toBe(true);
+        expect(first.skipped).toBeUndefined();
+        expect(gistStores().xpHistory ?? {}).toEqual({});
+
+        const second = await as(c, auto.push);
+        expect(second.reason).toBe('unchanged');
+        const writes = gist.writes;
+        await as(c, auto.push);
+        expect(gist.writes).toBe(writes);
+        expect(a.db.xpHistory.testHistory_c1).toEqual(['s1']);
     });
 });

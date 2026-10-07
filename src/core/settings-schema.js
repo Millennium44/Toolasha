@@ -262,6 +262,17 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            market_showPricingControls: {
+                id: 'market_showPricingControls',
+                label: 'Marketplace page: Pricing dropdowns and Craft toggle',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Adds the Buy and Sell pricing dropdowns and the Craft toggle next to the Marketplace title, ' +
+                    'so you can change how item tooltips are priced without opening a skill page. They change the ' +
+                    'same settings as the skill-page controls, and the two "Skill page" toggles above still hide ' +
+                    'the matching control here.',
+            },
             actionPanel_showProfitPerHour_gathering: {
                 id: 'actionPanel_showProfitPerHour_gathering',
                 label: 'Action page: Show profit/hr on gathering tiles',

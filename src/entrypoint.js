@@ -920,6 +920,15 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketPricingControls',
+            name: 'Market Pricing Controls',
+            category: 'Market',
+            module: Market.marketPricingControls,
+            async: false,
+            // Switched off mid-session, the dropdowns come off the title at once
+            liveStop: true,
+        },
+        {
             key: 'bulkSellAssistant',
             name: 'Bulk Sell Assistant',
             category: 'Market',

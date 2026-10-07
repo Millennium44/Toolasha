@@ -60,6 +60,31 @@ describe('moveScopedData', () => {
         expect(result.skipped).toEqual(['settings:watchlist_testChar']);
     });
 
+    it('moves the enhancement tombstones with the sessions, and leaves both when the destination has sessions', async () => {
+        const settings = mockStorage.storeFor('settings');
+        settings.set('enhancementTracker_sessions_testChar', { s1: {} });
+        settings.set('enhancementTracker_sessionTombstones_testChar', { s0: 5 });
+
+        await moveScopedData('testChar', 'marketChar');
+        expect(settings.get('enhancementTracker_sessions_marketChar')).toEqual({ s1: {} });
+        expect(settings.get('enhancementTracker_sessionTombstones_marketChar')).toEqual({ s0: 5 });
+        expect(settings.has('enhancementTracker_sessionTombstones_testChar')).toBe(false);
+
+        settings.set('enhancementTracker_sessions_other', { s2: {} });
+        settings.set('enhancementTracker_sessionTombstones_other', { s9: 1 });
+        const result = await moveScopedData('other', 'marketChar');
+        expect(result.skipped).toEqual(['settings:enhancementTracker_sessions_other']);
+        expect(settings.get('enhancementTracker_sessionTombstones_other')).toEqual({ s9: 1 });
+        expect(settings.get('enhancementTracker_sessionTombstones_marketChar')).toEqual({ s0: 5 });
+    });
+
+    it('never moves tombstones on their own', async () => {
+        const settings = mockStorage.storeFor('settings');
+        settings.set('enhancementTracker_sessionTombstones_testChar', { s0: 5 });
+        await moveScopedData('testChar', 'marketChar');
+        expect(settings.has('enhancementTracker_sessionTombstones_marketChar')).toBe(false);
+    });
+
     it('dry run reports the moves without making them', async () => {
         mockStorage.storeFor('settings').set('treasureTally_testChar', { chests: 5 });
 
@@ -73,6 +98,17 @@ describe('moveScopedData', () => {
     it('rejects a missing or identical pair of ids', async () => {
         await expect(moveScopedData('same', 'same')).rejects.toThrow();
         await expect(moveScopedData('', 'x')).rejects.toThrow();
+    });
+
+    it('claimLegacyData claims the enhancement tombstones with the sessions', async () => {
+        const settings = mockStorage.storeFor('settings');
+        settings.set('enhancementTracker_sessions', { s1: {} });
+        settings.set('enhancementTracker_sessionTombstones', { s0: 5 });
+
+        await claimLegacyData('marketChar');
+
+        expect(settings.get('enhancementTracker_sessionTombstones_marketChar')).toEqual({ s0: 5 });
+        expect(settings.has('enhancementTracker_sessionTombstones')).toBe(false);
     });
 
     it('claimLegacyData overwrites a stale scoped copy with the bare value', async () => {
