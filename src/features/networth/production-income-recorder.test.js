@@ -429,6 +429,28 @@ describe('offline income', () => {
         expect(row.outputValue).toBe(0);
     });
 
+    test('two sessions on one day are kept apart, and the same session twice counts once', async () => {
+        const login = (hours) => ({
+            offlineItems: [{ itemHrid: '/items/cheese', offlineCount: 3 }],
+            currentTimestamp: new Date().toISOString(),
+            character: { lastOfflineTime: new Date(Date.now() - hours * 3600_000).toISOString() },
+        });
+        const sessionCount = () =>
+            Object.keys(state.saved?.rows.find((entry) => entry.d === TODAY)?.offlineSessions ?? {}).length;
+        const first = login(3);
+        recorder._onCharacterInitialized(first);
+        await vi.waitFor(() => expect(sessionCount()).toBe(1));
+        state.stored = state.saved.rows;
+        recorder._onCharacterInitialized(login(1));
+        await vi.waitFor(() => expect(sessionCount()).toBe(2));
+        state.stored = state.saved.rows;
+        recorder._onCharacterInitialized(first);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(sessionCount()).toBe(2);
+        const row = state.saved.rows.find((entry) => entry.d === TODAY);
+        expect(row.offlineProfit).toBe(2000);
+    });
+
     test('a login with no offline session records nothing', async () => {
         recorder._onCharacterInitialized({ offlineItems: [], currentTimestamp: new Date().toISOString() });
         expect(state.saved).toBeNull();

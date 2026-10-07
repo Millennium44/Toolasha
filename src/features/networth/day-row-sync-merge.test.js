@@ -112,6 +112,50 @@ describe('production income', () => {
         expect(row).toMatchObject({ outputValue: 9000, inputValue: 5000, actions: 90, offlineProfit: -200 });
     });
 
+    describe('offline sessions kept apart', () => {
+        const base = { d: DAY, outputValue: 0, inputValue: 0, actions: 0 };
+        const row = (sessions, offlineBase = 0) => ({
+            ...base,
+            offlineProfit: offlineBase + Object.values(sessions).reduce((a, b) => a + b, 0),
+            offlineBase,
+            offlineSessions: sessions,
+        });
+
+        test('a later session that nets toward zero is not undone by the stale copy', () => {
+            const stale = row({ s1: 100 });
+            const newer = row({ s1: 100, s2: -80 });
+            for (const merged of [
+                upload(key, [stale], [newer]),
+                pull(key, [newer], [stale]),
+                upload(key, [newer], [stale]),
+            ]) {
+                expect(merged).toHaveLength(1);
+                expect(merged[0].offlineProfit).toBe(20);
+                expect(sources({ productionDays: merged }).offline).toBe(20);
+            }
+        });
+
+        test('two devices each adding a session give the union', () => {
+            const [merged] = upload(key, [row({ s1: 100, s2: 30 })], [row({ s1: 100, s3: -80 })]);
+            expect(merged.offlineSessions).toEqual({ s1: 100, s2: 30, s3: -80 });
+            expect(merged.offlineProfit).toBe(50);
+        });
+
+        test('a legacy scalar copy is the base under the sessions', () => {
+            const legacy = { ...base, offlineProfit: 100 };
+            const [merged] = upload(key, [legacy], [row({ s2: -80 }, 100)]);
+            expect(merged.offlineProfit).toBe(20);
+            const [other] = upload(key, [row({ s2: -80 }, 100)], [legacy]);
+            expect(other.offlineProfit).toBe(20);
+        });
+
+        test('two legacy copies still keep the one further from zero', () => {
+            const [merged] = upload(key, [{ ...base, offlineProfit: 100 }], [{ ...base, offlineProfit: -250 }]);
+            expect(merged.offlineProfit).toBe(-250);
+            expect(merged.offlineSessions).toBeUndefined();
+        });
+    });
+
     test('a duplicate already on disk is read as one row and written back as one', async () => {
         storageMock.store.set(key, [stale, fresh]);
         const rows = await productionRecorder.load();

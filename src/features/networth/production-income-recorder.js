@@ -76,10 +76,71 @@ const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
  * @property {number} outputValue - What the recipes produced, at market
  * @property {number} inputValue - What they consumed, at market
  * @property {number} actions - Actions completed and valued
- * @property {number} offlineProfit - Net Welcome Back income recorded that day
+ * @property {number} offlineProfit - Net Welcome Back income recorded that day: `offlineBase` plus
+ *   every entry of `offlineSessions`
+ * @property {Object<string, number>} [offlineSessions] - Each Welcome Back session's net income, keyed
+ *   by the offline window it covered, so two copies of a day union exactly
+ * @property {number} [offlineBase] - Offline income recorded before sessions were kept apart
  * @property {number} [unpricedActions] - Actions left out because an input or
  *   output had no market price; the day's production figure is short by these
  */
+
+/**
+ * @param {Object<string, number>} sessions - Offline sessions
+ * @returns {number} Their total
+ */
+const sumOf = (sessions) => Object.values(sessions).reduce((total, value) => total + num(value), 0);
+
+/**
+ * @param {ProductionDay} row - A day row
+ * @returns {Object<string, number>|null} The row's offline sessions, or null for a legacy row
+ */
+function sessionsOf(row) {
+    const sessions = row?.offlineSessions;
+    return sessions && typeof sessions === 'object' ? sessions : null;
+}
+
+/**
+ * A row's offline income split into its base and kept-apart sessions. A row with
+ * no sessions is all base.
+ * @param {ProductionDay} row - A day row
+ * @returns {{base: number, sessions: Object<string, number>|null}} The split
+ */
+function offlineParts(row) {
+    const sessions = sessionsOf(row);
+    return sessions ? { base: num(row.offlineBase), sessions } : { base: num(row?.offlineProfit), sessions: null };
+}
+
+/**
+ * The offline income of two copies of one day.
+ * @param {ProductionDay} a - One copy
+ * @param {ProductionDay} b - The other
+ * @returns {{profit: number, base: number, sessions: Object<string, number>|null}} The merged income;
+ *   `sessions` is null when neither copy keeps sessions apart
+ */
+function mergeOffline(a, b) {
+    const pa = offlineParts(a);
+    const pb = offlineParts(b);
+    const base = Math.abs(pb.base) > Math.abs(pa.base) ? pb.base : pa.base;
+    if (!pa.sessions && !pb.sessions) return { profit: base, base, sessions: null };
+    const sessions = { ...(pb.sessions || {}), ...(pa.sessions || {}) };
+    let profit = base;
+    for (const value of Object.values(sessions)) profit += num(value);
+    return { profit, base, sessions };
+}
+
+/**
+ * @param {ProductionDay} row - A day row
+ * @param {{profit: number, sessions: Object<string, number>|null}} merged - Merged offline income
+ * @returns {boolean} Whether the row already is that offline income, so it can be returned as is
+ */
+function sameOffline(row, merged) {
+    const sessions = sessionsOf(row);
+    if (!merged.sessions) return !sessions && num(row.offlineProfit) === merged.profit;
+    if (!sessions || num(row.offlineProfit) !== merged.profit) return false;
+    const keys = Object.keys(merged.sessions);
+    return keys.length === Object.keys(sessions).length && keys.every((k) => k in sessions);
+}
 
 /**
  * Two copies of one day's row, as the one row the day has.
@@ -99,8 +160,10 @@ const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
  * other always come from the same recording:
  * - production (`outputValue`, `inputValue`, `actions`): the copy with more
  *   actions; on a tie, the larger gross;
- * - `offlineProfit`: the copy further from zero — offline sessions add a signed
- *   net, so the copy that recorded more of them is the one that moved further;
+ * - offline income: sessions are kept by id and unioned, so signed sessions that
+ *   partly cancel still merge exactly. A row from before sessions were kept apart
+ *   has only a scalar `offlineProfit`, taken as the base; of two bases the one
+ *   further from zero wins (the legacy rule);
  * - `unpricedActions`: the larger count.
  * A tie throughout keeps the first copy, which in a fold is this device's.
  *
@@ -116,19 +179,26 @@ export function mergeProductionDays(a, b) {
     const grossA = num(a.outputValue) + num(a.inputValue);
     const grossB = num(b.outputValue) + num(b.inputValue);
     const production = actionsB > actionsA || (actionsB === actionsA && grossB > grossA) ? b : a;
-    const offline = Math.abs(num(b.offlineProfit)) > Math.abs(num(a.offlineProfit)) ? b : a;
+    const offline = mergeOffline(a, b);
     const unpriced = Math.max(num(a.unpricedActions), num(b.unpricedActions));
 
-    if (production === a && offline === a && unpriced === num(a.unpricedActions)) return a;
-    if (production === b && offline === b && unpriced === num(b.unpricedActions)) return b;
+    for (const copy of [a, b]) {
+        if (production === copy && unpriced === num(copy.unpricedActions) && sameOffline(copy, offline)) return copy;
+    }
 
     const out = {
         ...a,
         outputValue: num(production.outputValue),
         inputValue: num(production.inputValue),
         actions: num(production.actions),
-        offlineProfit: num(offline.offlineProfit),
+        offlineProfit: offline.profit,
     };
+    delete out.offlineSessions;
+    delete out.offlineBase;
+    if (offline.sessions) {
+        out.offlineSessions = offline.sessions;
+        out.offlineBase = offline.base;
+    }
     if (unpriced > 0) out.unpricedActions = unpriced;
     else delete out.unpricedActions;
     return out;
@@ -551,7 +621,16 @@ class ProductionIncomeRecorder {
             const record = async () => {
                 await this.load();
                 if (this._generation !== generation) return;
-                this._rowFor(day).offlineProfit += economics.profit;
+                const row = this._rowFor(day);
+                const id = `${data.character?.lastOfflineTime ?? ''}|${data.currentTimestamp ?? ''}`;
+                if (!sessionsOf(row)) {
+                    // Rows from before sessions were kept apart: what is there is the base
+                    row.offlineBase = num(row.offlineProfit);
+                    row.offlineSessions = {};
+                }
+                if (id in row.offlineSessions) return;
+                row.offlineSessions[id] = economics.profit;
+                row.offlineProfit = num(row.offlineBase) + sumOf(row.offlineSessions);
                 this._save();
             };
             record().catch((error) => console.error('[ProductionIncome] Recording offline income failed:', error));
