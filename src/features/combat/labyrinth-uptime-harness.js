@@ -149,7 +149,7 @@ function extractAttacks(ticks, opts) {
     let firstAt;
     let lastAt;
     // Swings awaiting their resolution, oldest first — each holds the ability the
-    // attacker was preparing when it swung.
+    // attacker was preparing when it swung, and when it swung.
     const pending = [];
     // The player's DoT-applying abilities, each with the share of the hit one bleed
     // tick takes (damageOverTimeRatio / ticks) and its tick count. A Set (no
@@ -465,6 +465,17 @@ function extractAttacks(ticks, opts) {
         }
 
         if (hasDmgCounter) {
+            // Incoming direction: a monster swing the player parries is never a
+            // splat on the player, so nothing ever pays it off, and it would
+            // sit at the head of the queue and take the label of the next hit
+            // that lands. A swing resolves within a tick or two, so one still
+            // waiting past the parry window was parried; drop it. (The outgoing
+            // direction nets its parries in `parryBalance` instead.)
+            if (!playerAttacks && Number.isFinite(at)) {
+                while (pending.length && Number.isFinite(pending[0].at) && at - pending[0].at > PARRY_WINDOW_MS) {
+                    pending.shift();
+                }
+            }
             // The attacker's swings drive cast share, labelled by the ability it
             // was preparing before the swing (the hit was cast by what came
             // before it, not the next thing already being wound up).
@@ -475,7 +486,7 @@ function extractAttacks(ticks, opts) {
                     rec(label).casts += 1;
                     // A buff/heal takes a turn but lands no hit, so it never
                     // joins the queue the next resolution pays off.
-                    if (dealsDamage) pending.push(label);
+                    if (dealsDamage) pending.push({ label, at });
                 }
                 current.sawAttack = true;
             }
@@ -514,7 +525,7 @@ function extractAttacks(ticks, opts) {
                 const per = count > 0 ? drop / count : 0; // even split across a merged tick
                 for (let n = 0; n < count; n++) {
                     if (pending.length) {
-                        const label = pending.shift();
+                        const { label } = pending.shift();
                         const r = rec(label);
                         if (per > 0) {
                             r.hits += 1;

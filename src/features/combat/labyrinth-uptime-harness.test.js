@@ -122,6 +122,23 @@ describe('extractMonsterAttacks — damage-counter path', () => {
         expect(byAbility.damageOverTime).toBeUndefined();
     });
 
+    test('a parried monster swing is not left queued to take the label of the next landed hit', () => {
+        // The firestorm swing at tick 100 is parried: the player's dmgCounter
+        // never rises for it. Three seconds later the next swing (smoke_burst)
+        // lands and the counter rises. The hit belongs to smoke_burst; paying the
+        // oldest pending swing blindly handed it to the long-dead firestorm.
+        const ticks = [
+            dtick(0, 0, '/abilities/firestorm', 1000, 0),
+            dtick(100, 1, '/abilities/smoke_burst', 1000, 0), // firestorm swings, parried: no splat
+            dtick(3000, 2, '/abilities/fireball', 1000, 0), // smoke_burst swings
+            dtick(3100, 2, '/abilities/fireball', 900, 1), // smoke_burst lands for 100
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/firestorm']).toMatchObject({ casts: 1, hits: 0, misses: 0, damage: 0 });
+        expect(byAbility['/abilities/smoke_burst']).toMatchObject({ casts: 1, hits: 1, damage: 100 });
+        expect(byAbility.damageOverTime).toBeUndefined();
+    });
+
     test('a damage-counter rise with no pending swing is damage-over-time', () => {
         const ticks = [
             dtick(0, 5, '/abilities/fireball', 1000, 10),
