@@ -5594,6 +5594,8 @@ describe('the accuracy snapshot scores a skill once, not once per room', () => {
         labyrinthClearRate._outcomesLoaded = true;
         vi.spyOn(labyrinthClearRate, 'loadOutcomes').mockResolvedValue(undefined);
         const build = vi.spyOn(labyrinthClearRate, '_computeSkillingMetrics');
+        // One time slice: the memo is rebuilt per slice by design, and a slow runner would otherwise slice here
+        vi.spyOn(performance, 'now').mockReturnValue(0);
 
         const { rows } = await labyrinthClearRate.accuracySnapshot();
 
