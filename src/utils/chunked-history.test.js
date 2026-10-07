@@ -1277,6 +1277,25 @@ describe('one row per day, rewritten in place', () => {
         expect([...storageMock.store.keys()].filter((key) => key.includes('Tomb'))).toEqual([]);
     });
 
+    test('a deleted copy met first does not take an updated copy of the same day down with it', () => {
+        const store = buildDays('tombDayRec');
+        const stale = { d: '2026-10-07', v: 5 };
+        const updated = { d: '2026-10-07', v: 9 };
+        // A deletion of the stale copy, recorded the way a save records one
+        store._recordDeletions(
+            'c1',
+            [{ d: '2026-10-06', v: 3 }, stale, { d: '2026-10-08', v: 1 }],
+            [
+                { d: '2026-10-06', v: 3 },
+                { d: '2026-10-08', v: 1 },
+            ]
+        );
+
+        // A legacy chunk with the stale copy ahead of the updated one
+        const merged = store._union([], [stale, updated], store._tombs);
+        expect(merged).toEqual([updated]);
+    });
+
     test('a store with no rule for two copies reads exactly what is on disk', async () => {
         const store = buildDays('ruleless', { mergeCopies: undefined });
         const stored = [

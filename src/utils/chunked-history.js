@@ -576,8 +576,10 @@ class ChunkedHistory {
                 if (at.has(id)) out[at.get(id)] = this._mergeCopies(out[at.get(id)], entry);
                 continue;
             }
-            seen.add(id);
+            // A copy the tombstone matches is dropped without claiming the id, so a
+            // later copy that was updated after the deletion is still judged on its own
             if (!held.has(id) && this._tombstoned(id, entry, stones)) continue;
+            seen.add(id);
             at.set(id, out.length);
             out.push(entry);
         }
