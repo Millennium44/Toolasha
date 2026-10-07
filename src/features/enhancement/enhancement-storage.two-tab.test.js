@@ -21,6 +21,11 @@ const dataManagerMock = vi.hoisted(() => ({
 
 // One database for both tabs. Reads and writes copy, as IndexedDB does, so one
 // tab's in-place edits never show through in the other's memory.
+//
+// With `deferCommits`, `set` behaves as the real `Storage._debouncedSave` does: the
+// value is handed over at once and lands three seconds later, last timer wins.
+// `update` is one readwrite transaction — the read and the write with nothing
+// between them, which is what IndexedDB's per-store serialization across tabs gives.
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
     const storeFor = (name) => {
@@ -42,9 +47,29 @@ const storageMock = vi.hoisted(() => {
                 : { found: true, value: structuredClone(held) };
         }),
         getJSON: vi.fn(read),
+        deferCommits: false,
+        teardownListeners: [],
         set: vi.fn(async (key, value, store = 'settings') => {
-            storeFor(store).set(key, structuredClone(value));
+            const copy = structuredClone(value);
+            if (!mock.deferCommits) {
+                storeFor(store).set(key, copy);
+                return true;
+            }
+            setTimeout(() => storeFor(store).set(key, copy), 3000);
             return true;
+        }),
+        update: vi.fn(async (key, mutate, store = 'settings') => {
+            await Promise.resolve();
+            const held = storeFor(store).get(key);
+            const found = held !== undefined;
+            const next = mutate(found ? structuredClone(held) : undefined, found);
+            if (next === undefined) return { written: false, value: held };
+            storeFor(store).set(key, structuredClone(next));
+            return { written: true, value: next };
+        }),
+        onBeforeTeardown: vi.fn((listener) => {
+            mock.teardownListeners.push(listener);
+            return () => {};
         }),
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
@@ -76,6 +101,8 @@ const session = (id, at, attempts = 0) => ({ id, startTime: 1, lastUpdateTime: a
 
 beforeEach(() => {
     storageMock.stores.clear();
+    storageMock.deferCommits = false;
+    storageMock.teardownListeners.length = 0;
 });
 
 afterEach(() => {
@@ -198,5 +225,78 @@ describe('two tabs saving the same sessions', () => {
         await a.flushSessionWrites();
 
         expect(Object.keys(settings().get(TOMBSTONES))).toEqual(['s2']);
+    });
+});
+
+describe('two tabs whose saves overlap', () => {
+    test('both tabs’ changes survive two saves asked for before either has landed', async () => {
+        vi.useFakeTimers();
+        storageMock.deferCommits = true;
+        settings().set(SESSIONS, { s1: session('s1', 100, 1) });
+        const a = await openTab();
+        const b = await openTab();
+
+        // A starts a session; B, still holding only s1, records an attempt on it.
+        // Both ask to save before either write has reached the database.
+        a.sessions.s2 = session('s2', 200, 1);
+        await a.saveSessions(a.sessions);
+        b.sessions.s1.lastUpdateTime = 300;
+        b.sessions.s1.totalAttempts = 2;
+        await b.saveSessions(b.sessions);
+        await vi.advanceTimersByTimeAsync(10_000);
+        await a.flushSessionWrites();
+        await b.flushSessionWrites();
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(Object.keys(stored())).toEqual(['s1', 's2']);
+        expect(stored().s1.totalAttempts).toBe(2);
+    });
+
+    test('a tab that closes before its save has run still lands it, through the page-close hook', async () => {
+        vi.useFakeTimers();
+        settings().set(SESSIONS, { s1: session('s1', 100, 1) });
+        const a = await openTab();
+        const b = await openTab();
+        expect(storageMock.teardownListeners).toHaveLength(2);
+
+        a.sessions.s2 = session('s2', 200, 1);
+        await a.saveSessions(a.sessions);
+        b.sessions.s1.lastUpdateTime = 300;
+        await b.saveSessions(b.sessions);
+        expect(stored().s2).toBeUndefined();
+
+        // A's page closes inside its delay: its listener (registered first) writes now
+        storageMock.teardownListeners[0]('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(stored())).toEqual(['s1', 's2']);
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        await b.flushSessionWrites();
+        expect(Object.keys(stored())).toEqual(['s1', 's2']);
+        expect(stored().s1.lastUpdateTime).toBe(300);
+    });
+});
+
+describe('a save that cannot read the tombstones', () => {
+    test('writes nothing, rather than folding against a stale set of removals', async () => {
+        settings().set(SESSIONS, { s1: session('s1', 100) });
+        const a = await openTab();
+        const probe = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementation(async (key, store) => (key === TOMBSTONES ? null : probe(key, store)));
+        try {
+            a.sessions.s2 = session('s2', 200, 1);
+            await a.saveSessions(a.sessions);
+            await a.flushSessionWrites();
+
+            expect(Object.keys(stored())).toEqual(['s1']);
+            // Kept in memory for the next save that can read them
+            expect(Object.keys(a.sessions)).toEqual(['s1', 's2']);
+        } finally {
+            storageMock.tryGet.mockImplementation(probe);
+        }
+
+        await a.saveSessions(a.sessions);
+        await a.flushSessionWrites();
+        expect(Object.keys(stored())).toEqual(['s1', 's2']);
     });
 });

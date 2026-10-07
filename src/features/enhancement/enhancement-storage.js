@@ -29,6 +29,11 @@
  * This tab's removals are the ids it has held — loaded, saved or adopted — and
  * no longer holds. The fold mutates the tracker's live map in place, so what
  * the tracker shows and what it saves next are the merged list.
+ *
+ * Both keys are `atomic` records: each fold runs inside its write's own
+ * readwrite transaction, which IndexedDB serializes across tabs. A read and a
+ * later write would let both tabs read the same old map and the second write
+ * drop the first one's sessions.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -101,6 +106,7 @@ const tombstoneRecord = createCuratedRecord({
     empty: () => ({}),
     merge: mergeTombstones,
     keepMerging: true,
+    atomic: true,
     immediate: true,
     label: 'EnhancementStorage',
 });
@@ -138,16 +144,14 @@ function adoptInPlace(held, stored) {
 }
 
 /**
- * Fold the stored sessions into this tab's, by id (see the module header).
- * Mutates and returns `memory`, which is the tracker's live map.
+ * Fold the stored sessions into `held` by id, dropping the ones in `graves`.
+ * Mutates and returns `held`.
  * @param {Object} stored - The stored sessions map
- * @param {Object} memory - This tab's sessions map
- * @returns {Object} `memory`
+ * @param {Object} held - A tab's sessions map
+ * @param {Object} graves - `{id: removedAt}`
+ * @returns {Object} `held`
  */
-function mergeSessions(stored, memory) {
-    const held = memory && typeof memory === 'object' ? memory : {};
-    noteRemovals(held);
-    const graves = tombstoneRecord.get();
+function foldSessions(stored, held, graves) {
     // Stored order first, then this tab's new ones — the order a plain map fold gives,
     // and the one the panel numbers sessions by
     const merged = new Map();
@@ -170,8 +174,35 @@ function mergeSessions(stored, memory) {
     }
     for (const id of Object.keys(held)) delete held[id];
     for (const [id, session] of merged) held[id] = session;
-    knownIds = new Set(merged.keys());
     return held;
+}
+
+/**
+ * Fold the stored sessions into this tab's, by id (see the module header).
+ * Mutates and returns `memory`, which is the tracker's live map.
+ * @param {Object} stored - The stored sessions map
+ * @param {Object} memory - This tab's sessions map
+ * @returns {Object} `memory`
+ */
+function mergeSessions(stored, memory) {
+    const held = memory && typeof memory === 'object' ? memory : {};
+    noteRemovals(held);
+    foldSessions(stored, held, tombstoneRecord.get());
+    knownIds = new Set(Object.keys(held));
+    return held;
+}
+
+/**
+ * The fold for the departing character's last write, which a character switch
+ * overtook: its tombstones and held ids have been dropped for the arriving
+ * character's by then, so this one touches neither. A session it puts back that
+ * the other tab removed is still dropped by the tombstone on the next fold.
+ * @param {Object} stored
+ * @param {Object} memory
+ * @returns {Object}
+ */
+function mergeDepartingSessions(stored, memory) {
+    return foldSessions(stored, memory && typeof memory === 'object' ? memory : {}, {});
 }
 
 /**
@@ -179,17 +210,23 @@ function mergeSessions(stored, memory) {
  *
  * Every session update used to write all sessions as one immediate blob into
  * the settings store — an enhancement run is a write per attempt, of a document
- * containing every session ever kept. Debouncing coalesces a run into one write,
- * at the cost of storage lagging memory; the record's memory holds the truth in
- * the meantime so a load during the lag cannot read back a stale blob.
+ * containing every session ever kept. The record delays its save, which
+ * coalesces a run into one write, at the cost of storage lagging memory; the
+ * record's memory holds the truth in the meantime so a load during the lag
+ * cannot read back a stale blob.
  */
 const sessionsRecord = createCuratedRecord({
     base: STORAGE_KEY,
     store: STORAGE_STORE,
     empty: () => ({}),
     merge: mergeSessions,
+    mergeAfterReset: mergeDepartingSessions,
     keepMerging: true,
-    // The other tab's removals, read fresh before every fold
+    // The fold runs inside the write's own transaction, so a save from the other
+    // tab cannot land between this tab's read and its write
+    atomic: true,
+    // The other tab's removals, read fresh before every fold; a save that cannot
+    // read them is skipped rather than folded against a stale set
     prepare: () => tombstoneRecord.load(),
     label: 'EnhancementStorage',
 });
@@ -201,10 +238,10 @@ let hasPendingCurrentSessionId = false;
 /**
  * Save all sessions to storage.
  *
- * Queued rather than awaited: the debounced write's promise resolves when its
- * timer fires, so awaiting it would stall every caller for the debounce delay.
- * `storage.flushAll()` on `beforeunload` is what makes the last one land. The
- * write is skipped, and memory kept, when storage cannot be read first.
+ * Queued rather than awaited: the delayed write's promise resolves when it has
+ * run, so awaiting it would stall every caller for the delay. A hidden tab or a
+ * closing page lands the last one (see `utils/persisted-record.js`). The write
+ * is skipped, and memory kept, when the tombstones cannot be read first.
  * Sessions this tab held and the map no longer has are tombstoned here.
  * @param {Object} sessions - Sessions object (keyed by session ID)
  * @returns {Promise<void>}

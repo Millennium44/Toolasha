@@ -47,6 +47,16 @@ const storageMock = vi.hoisted(() => {
         storeFor(store).set(key, value);
         return true;
     };
+    // One readwrite transaction, as the real `storage.update` is
+    const update = async (key, mutate, store = 'settings') => {
+        if (mock.unavailable) return null;
+        const held = storeFor(store).get(key);
+        const found = held !== undefined && held !== null;
+        const next = mutate(found ? structuredClone(held) : undefined, found);
+        if (next === undefined) return { written: false, value: held };
+        storeFor(store).set(key, structuredClone(next));
+        return { written: true, value: next };
+    };
     const mock = {
         stores,
         storeFor,
@@ -58,6 +68,8 @@ const storageMock = vi.hoisted(() => {
         setJSON: vi.fn(write),
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        update: vi.fn(update),
+        onBeforeTeardown: vi.fn(() => () => {}),
     };
     /** Undo any per-test stub and start from an empty database. */
     mock.reset = () => {
@@ -72,6 +84,7 @@ const storageMock = vi.hoisted(() => {
         mock.getAllKeys
             .mockReset()
             .mockImplementation(async (store = 'settings') => Array.from(storeFor(store).keys()));
+        mock.update.mockReset().mockImplementation(update);
     };
     return mock;
 });
@@ -111,19 +124,26 @@ beforeEach(() => {
 });
 
 describe('session writes', () => {
-    test('sessions are queued for a debounced write, not written immediately', async () => {
-        await saveSessions({ s1: { id: 's1', startTime: 1 } });
-        await flushSessionWrites();
+    test('sessions are written after a delay, read, folded and written in one transaction', async () => {
+        vi.useFakeTimers();
+        try {
+            await saveSessions({ s1: { id: 's1', startTime: 1 } });
+            expect(storageMock.update).not.toHaveBeenCalled();
 
-        expect(storageMock.set).toHaveBeenCalledTimes(1);
-        const [key, value, store, immediate] = storageMock.set.mock.calls[0];
-        expect(key).toBe('enhancementTracker_sessions_market123');
-        expect(value).toEqual({ s1: { id: 's1', startTime: 1 } });
-        expect(store).toBe('settings');
-        expect(immediate).toBe(false);
+            await vi.advanceTimersByTimeAsync(3000);
+            const sessionWrites = storageMock.update.mock.calls.filter(([key]) => key.includes('_sessions_'));
+            expect(sessionWrites).toHaveLength(1);
+            const [key, , store] = sessionWrites[0];
+            expect(key).toBe('enhancementTracker_sessions_market123');
+            expect(store).toBe('settings');
+            expect(settings().get(key)).toEqual({ s1: { id: 's1', startTime: 1 } });
+            expect(storageMock.set).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
-    test('the current session id is queued the same way', async () => {
+    test('the current session id is queued for a debounced write', async () => {
         await saveCurrentSessionId('s1');
 
         const [key, value, store, immediate] = storageMock.set.mock.calls[0];
@@ -133,16 +153,18 @@ describe('session writes', () => {
         expect(immediate).toBe(false);
     });
 
-    test('saving does not wait for the debounce timer', async () => {
-        // A `set` held open stands in for the debounced promise, which resolves
-        // only when its timer fires — awaiting it would stall the run
+    test('saving does not wait for the write', async () => {
+        // An `update` held open stands in for a write that has not committed
         let fire;
-        storageMock.set.mockImplementation(() => new Promise((r) => (fire = r)));
+        const update = storageMock.update.getMockImplementation();
+        storageMock.update.mockImplementation((...args) => new Promise((r) => (fire = () => r(update(...args)))));
 
         await expect(saveSessions({ s1: {} })).resolves.toBeUndefined();
+        const flushing = flushSessionWrites();
         await vi.waitFor(() => expect(fire).toBeTypeOf('function'));
-        fire(true);
-        await flushSessionWrites();
+        fire();
+        await flushing;
+        expect(settings().get('enhancementTracker_sessions_market123')).toEqual({ s1: {} });
     });
 });
 
@@ -181,7 +203,7 @@ describe('the callers that write through these', () => {
         await deleteSession(sessions, 's1');
         await flushSessionWrites();
 
-        expect(storageMock.set.mock.calls.at(-1)[1]).toEqual({ s2: { id: 's2' } });
+        expect(settings().get('enhancementTracker_sessions_market123')).toEqual({ s2: { id: 's2' } });
     });
 
     test('archiving keeps the newest sessions and writes only those', async () => {
@@ -192,13 +214,14 @@ describe('the callers that write through these', () => {
         await archiveOldSessions(sessions, 3);
         await flushSessionWrites();
 
-        expect(Object.keys(storageMock.set.mock.calls.at(-1)[1])).toEqual(['s2', 's3', 's4']);
+        expect(Object.keys(settings().get('enhancementTracker_sessions_market123'))).toEqual(['s2', 's3', 's4']);
     });
 
     test('archiving under the limit writes nothing at all', async () => {
         await archiveOldSessions({ s1: { startTime: 1 } }, 3);
         await flushSessionWrites();
         expect(storageMock.set).not.toHaveBeenCalled();
+        expect(storageMock.update).not.toHaveBeenCalled();
     });
 });
 
