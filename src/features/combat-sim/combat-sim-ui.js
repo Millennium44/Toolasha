@@ -11183,6 +11183,10 @@ class CombatSimUI {
         }
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
+        // The gold table carries the ⚙ Columns popover; with no gold table the
+        // level Score would be stuck on its saved metrics and depth, so the
+        // levels table brings its own. Never both: the wiring finds it by id.
+        if (levelRows.length && !goldRows.length) html += this._renderUpgradeColumnMenu();
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
         container.innerHTML = html;

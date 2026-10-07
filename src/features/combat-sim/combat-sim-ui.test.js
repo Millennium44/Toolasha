@@ -1330,6 +1330,22 @@ describe('the panel', () => {
             expect(names(render())[0]).toBe('A skill');
         });
 
+        test('with only level rows the ⚙ Columns control is there and rescoring the table works', () => {
+            const c = render();
+            expect(c.querySelectorAll('#mwi-csim-upgrade-cols-btn')).toHaveLength(1);
+            expect(c.querySelector('[data-upgrade-score="profit"]')).not.toBeNull();
+            expect(scoreOf(c, 'A skill')).toBe('8');
+
+            const box = c.querySelector('[data-upgrade-score="profit"]');
+            box.checked = false;
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+
+            const after = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(scoreOf(after, 'A skill')).toBe('5');
+            expect(scoreOf(after, 'C skill')).toBe('3');
+            expect(after.querySelectorAll('#mwi-csim-upgrade-cols-btn')).toHaveLength(1);
+        });
+
         test('only the scored metrics count, and the header explains the Score', () => {
             ui._upgradeScoreKeys = ['dps'];
             const c = render();
