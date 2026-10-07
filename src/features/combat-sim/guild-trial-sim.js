@@ -335,8 +335,8 @@ export class GuildTrialSim {
                 incoming !== undefined && previous !== undefined && (incoming || '') !== (previous || '');
             const level = Number(data?.skillingTrialLevel);
             const carriesLevel = Number.isFinite(level) && level > 0;
-            if (id && held && Object.hasOwn(held, id) && (movedSkilling || carriesLevel)) {
-                const next = { ...held };
+            if (id && (carriesLevel || (held && Object.hasOwn(held, id) && movedSkilling))) {
+                const next = { ...(held || {}) };
                 if (carriesLevel) next[id] = { ...next[id], skillingTrialLevel: level };
                 else delete next[id];
                 this.assign.signupLevelMap = next;

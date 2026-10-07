@@ -825,6 +825,19 @@ describe('Assign skilling view while the planner runs', () => {
         expect(feature.assign.signupLevelMap).toEqual({ 11519: { combatLevel: 158, skillingTrialLevel: 105 } });
     });
 
+    test('a sign-up message that carries a level adds it for a member not yet in the map', () => {
+        harness.ws.guild_updated({
+            guildTrialSignupLevelMap: { 11519: { combatLevel: 158, skillingTrialLevel: 105 } },
+        });
+        harness.ws.guild_trial_signup_updated({
+            characterId: 20001,
+            signedUpSkillingTrialHrid: '/guild_skilling/cooking',
+            skillingTrialLevel: 140,
+        });
+        expect(feature.assign.signupLevelMap[20001]).toEqual({ skillingTrialLevel: 140 });
+        expect(feature.assign.signupLevelMap[11519].skillingTrialLevel).toBe(105);
+    });
+
     test('a guild update carries the trial minimum levels to the planner', () => {
         harness.ws.guild_updated({ guild: { trialMinLevelsData: '{"/guild_skilling/crafting":120}' } });
         expect(feature.assign.trialMinLevelsData).toBe('{"/guild_skilling/crafting":120}');
