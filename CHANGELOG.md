@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Synced days no longer count twice
+
+- A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.
+
 ### Trial Sim uses the game's sign-up levels
 
 - The Assign skilling optimizer now uses the level the game recorded at sign-up for each member's signed-up trial (marked S) instead of estimating it from their profile.
