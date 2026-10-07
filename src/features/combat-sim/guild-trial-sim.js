@@ -316,8 +316,27 @@ export class GuildTrialSim {
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             notifyInputs();
         };
+        // A member who changes sign-up has a level in the map for the trial they left: drop it (or take
+        // the message's own level, if it carries one) so it is never read against the new trial's skill
+        const signupChanged = (data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            const id = data?.characterId != null ? String(data.characterId) : null;
+            const held = this.assign.signupLevelMap ?? dataManager.characterData?.guildTrialSignupLevelMap;
+            if (id && held && Object.hasOwn(held, id)) {
+                const next = { ...held };
+                const level = Number(data?.skillingTrialLevel);
+                if (Number.isFinite(level) && level > 0) next[id] = { ...next[id], skillingTrialLevel: level };
+                else delete next[id];
+                this.assign.signupLevelMap = next;
+                notifyInputs();
+            } else if (!offTracker) {
+                notifyInputs();
+            }
+        };
+        webSocketHook.on('guild_trial_signup_updated', signupChanged);
+        this.handlers.push(() => webSocketHook.off('guild_trial_signup_updated', signupChanged));
         for (const type of [
-            ...(offTracker ? [] : ['guild_trial_signup_updated', 'guild_characters_updated']),
+            ...(offTracker ? [] : ['guild_characters_updated']),
             ...(offSkills ? [] : ['profile_shared']),
             'action_completed',
         ]) {
