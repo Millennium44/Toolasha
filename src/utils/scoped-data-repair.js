@@ -63,6 +63,19 @@ export const ADOPTED_BASES = {
     combatExport: ['allZonesSnapshot'],
 };
 
+/**
+ * Bases that travel with another, by object store: `{store: {primary: companion}}`.
+ *
+ * The enhancement sessions' tombstones are the deletion metadata of that
+ * sessions map and mean nothing apart from it, so they are moved or claimed
+ * with it — and left alone when the sessions are (a destination conflict),
+ * never moved by themselves. Not listed in {@link ADOPTED_BASES}, so no loop
+ * visits them twice.
+ */
+export const COMPANION_BASES = {
+    settings: { enhancementTracker_sessions: 'enhancementTracker_sessionTombstones' },
+};
+
 /** Bases whose bare and scoped arrays are merged (deduped by id) rather than overwritten. */
 const MERGE_BASES = new Set(['marketListingTimestamps']);
 
@@ -107,6 +120,16 @@ export async function claimLegacyData(toId, options = {}) {
                 await storage.delete(base, storeName);
             }
             claimed.push(`${storeName}:${base}`);
+
+            const companion = COMPANION_BASES[storeName]?.[base];
+            const bareCompanion = companion ? await storage.get(companion, storeName, null) : null;
+            if (bareCompanion !== null) {
+                if (!dryRun) {
+                    await storage.set(`${companion}_${toId}`, bareCompanion, storeName, true);
+                    await storage.delete(companion, storeName);
+                }
+                claimed.push(`${storeName}:${companion}`);
+            }
         }
     }
 
@@ -158,6 +181,20 @@ export async function moveScopedData(fromId, toId, options = {}) {
                 await storage.delete(fromKey, storeName);
             }
             moved.push(`${storeName}:${fromKey} → ${toKey}`);
+
+            const companion = COMPANION_BASES[storeName]?.[base];
+            if (companion) {
+                const companionFrom = `${companion}_${fromId}`;
+                const companionTo = `${companion}_${toId}`;
+                const companionValue = await storage.get(companionFrom, storeName, null);
+                if (companionValue !== null) {
+                    if (!dryRun) {
+                        await storage.set(companionTo, companionValue, storeName, true);
+                        await storage.delete(companionFrom, storeName);
+                    }
+                    moved.push(`${storeName}:${companionFrom} → ${companionTo}`);
+                }
+            }
         }
     }
 
