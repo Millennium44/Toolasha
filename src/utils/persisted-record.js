@@ -67,6 +67,8 @@ const runningHandoffs = new Map();
 const ATOMIC_DEFER_MS = 3000;
 /** The longest an `atomic` record waits between retries of a write that did not commit */
 const ATOMIC_RETRY_MAX_MS = 60_000;
+/** How many times a departing character's failed write is tried again before it is given up */
+const ATOMIC_DEPARTING_RETRIES = 5;
 
 /**
  * Every `atomic` record. Their delay is their own rather than storage's, so
@@ -296,18 +298,22 @@ export function createPersistedRecord({
      * An atomic write that did not commit — aborted, timed out, refused — leaves
      * the record dirty and asks for the write again, backing off while the
      * database keeps refusing. A save already waiting carries memory anyway, so
-     * none is armed then. A write a `reset()` overtook is not retried: the
-     * record it carried has left memory.
+     * none is armed then. A write a `reset()` overtook carries a record that has
+     * left memory, so it is retried on its own (see `retryDeparting`).
      * @param {boolean} written - Whether the write committed
      * @param {string} writeKey - The key it was for
      * @param {number} askedIn - The generation it belongs to
+     * @param {*} held - The record the write carried
      */
-    const noteWriteOutcome = (written, writeKey, askedIn) => {
+    const noteWriteOutcome = (written, writeKey, askedIn, held) => {
         if (written) {
-            failedWrites = 0;
+            if (askedIn === generation) failedWrites = 0;
             return;
         }
-        if (askedIn !== generation) return;
+        if (askedIn !== generation) {
+            retryDeparting(writeKey, held, 1);
+            return;
+        }
         if (!unwritten) {
             unwritten = true;
             unwrittenKey = writeKey;
@@ -315,6 +321,44 @@ export function createPersistedRecord({
         failedWrites += 1;
         if (deferred || waitingSave) return;
         armDeferred(Math.min(ATOMIC_RETRY_MAX_MS, ATOMIC_DEFER_MS * 2 ** (failedWrites - 1)));
+    };
+
+    /**
+     * Write a departing record again after its write failed: a character switch
+     * had already taken it out of memory, so nothing else would. Folded with
+     * `mergeAfterReset` under the key it was asked for, backing off, a bounded
+     * number of times.
+     * @param {string} writeKey
+     * @param {*} held
+     * @param {number} attempt - 1 for the first retry
+     */
+    const retryDeparting = (writeKey, held, attempt) => {
+        if (attempt > ATOMIC_DEPARTING_RETRIES) {
+            console.error(`[${label}] ${base}: the departing character's last write could not be saved`);
+            return;
+        }
+        const delay = Math.min(ATOMIC_RETRY_MAX_MS, ATOMIC_DEFER_MS * 2 ** (attempt - 1));
+        setTimeout(() => {
+            let outcome;
+            try {
+                outcome = storage.update(
+                    writeKey,
+                    (current, found) => (!found || current == null ? held : (mergeAfterReset || merge)(current, held)),
+                    store
+                );
+            } catch (error) {
+                outcome = Promise.reject(error);
+            }
+            directWrite = Promise.resolve(outcome)
+                .then(
+                    (result) => Boolean(result?.written),
+                    () => false
+                )
+                .then((written) => {
+                    if (!written) retryDeparting(writeKey, held, attempt + 1);
+                    return written;
+                });
+        }, delay);
     };
 
     /**
@@ -362,7 +406,7 @@ export function createPersistedRecord({
                 }
             )
             .then((written) => {
-                noteWriteOutcome(written, writeKey, askedIn);
+                noteWriteOutcome(written, writeKey, askedIn, held);
                 return written;
             });
     };
@@ -534,6 +578,8 @@ export function createPersistedRecord({
                         if (prepare) {
                             if ((await prepare()) === false) {
                                 console.warn(`[${label}] ${base} not saved: what its merge needs could not be read`);
+                                // Still dirty, and its timer is spent: ask again, as for a write that failed
+                                if (started === generation) noteWriteOutcome(false, writeKey, started, memory);
                                 return false;
                             }
                             if (started !== generation) return false;

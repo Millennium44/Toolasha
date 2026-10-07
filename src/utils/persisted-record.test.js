@@ -750,6 +750,37 @@ describe('atomic record', () => {
         expect(storageMock.update.mock.calls.filter(([key]) => key === LOG)).toHaveLength(2);
     });
 
+    test('a departing write a character switch forced out is retried when it does not commit', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        // The switch lands the waiting save at once, and that transaction aborts
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored()).toBeUndefined();
+
+        // Nothing in memory carries it any more: the record writes it again on its own
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('a save whose prepare cannot read is asked for again', async () => {
+        vi.useFakeTimers();
+        let readable = false;
+        const record = atomicLog({ prepare: async () => readable });
+        record.get().push({ id: 1 });
+        const saving = record.save();
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(await saving).toBe(false);
+        expect(stored()).toBeUndefined();
+
+        readable = true;
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
     test('a failed write is retried by the next flush, and backs off while storage keeps refusing', async () => {
         vi.useFakeTimers();
         const record = atomicLog({ immediate: true });
