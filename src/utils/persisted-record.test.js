@@ -2,7 +2,7 @@
  * persisted-record: the load/save discipline that keeps a stored history from
  * being wiped by a read that could not be made, or by a stale second tab.
  */
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -40,6 +40,22 @@ const storageMock = vi.hoisted(() => {
         }),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
         flushAll: vi.fn(async () => {}),
+        // One readwrite transaction: the read and the write with nothing between them
+        update: vi.fn(async (key, mutate, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            await Promise.resolve();
+            const map = storeFor(store);
+            const found = map.has(key) && map.get(key) != null;
+            const next = mutate(found ? structuredClone(map.get(key)) : undefined, found);
+            if (next === undefined) return { written: false, value: map.get(key) };
+            map.set(key, structuredClone(next));
+            return { written: true, value: next };
+        }),
+        teardownListeners: [],
+        onBeforeTeardown: vi.fn((listener) => {
+            storageMock.teardownListeners.push(listener);
+            return () => {};
+        }),
     };
 });
 
@@ -83,9 +99,20 @@ const byId = () =>
 beforeEach(() => {
     storageMock.reset();
     dataManagerMock.characterId = 'char1';
-    for (const fn of [storageMock.get, storageMock.tryGet, storageMock.set, storageMock.delete, storageMock.flushAll]) {
+    for (const fn of [
+        storageMock.get,
+        storageMock.tryGet,
+        storageMock.set,
+        storageMock.delete,
+        storageMock.flushAll,
+        storageMock.update,
+    ]) {
         fn.mockReset();
     }
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe('merges', () => {
@@ -455,6 +482,29 @@ describe('curated record', () => {
         expect(storageMock.storeFor('settings').get(FAV)).toEqual({ cheese: true });
     });
 
+    test('keepMerging folds every save through the merge, after prepare has run', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true });
+        const order = [];
+        const record = createCuratedRecord({
+            base: 'fav',
+            empty: () => ({}),
+            keepMerging: true,
+            prepare: async () => order.push('prepare'),
+            merge: (stored, memory) => {
+                order.push('merge');
+                return { ...stored, ...memory };
+            },
+            label: 'Test',
+        });
+        await record.load();
+        storageMock.storeFor('settings').set(FAV, { milk: true, butter: true });
+        record.get().cheese = true;
+
+        await record.save();
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true, butter: true, cheese: true });
+        expect(order).toEqual(['prepare', 'merge', 'prepare', 'merge']);
+    });
+
     test('an unreadable store still refuses the save, and memory is kept', async () => {
         storageMock.storeFor('settings').set(FAV, { milk: true });
         const record = curated();
@@ -527,5 +577,286 @@ describe('a character switch landing between a clear and its turn to run', () =>
         await clearing;
 
         expect(settings.get('log_char2')).toEqual([{ id: 9 }]);
+    });
+});
+
+describe('prepare', () => {
+    const prepared = (prepare) =>
+        createCuratedRecord({ base: 'fav', empty: () => ({}), keepMerging: true, prepare, label: 'Test' });
+
+    test('a prepare that could not read stands the save down, and nothing is written', async () => {
+        const settings = storageMock.storeFor('settings');
+        settings.set('fav_char1', { milk: true });
+        const record = prepared(async () => false);
+        record.set({ cheese: true });
+
+        expect(await record.save()).toBe(false);
+        expect(settings.get('fav_char1')).toEqual({ milk: true });
+        expect(storageMock.set).not.toHaveBeenCalled();
+        expect(record.get()).toEqual({ cheese: true });
+    });
+
+    test('a prepare that could not read stands the load down, keeping memory', async () => {
+        storageMock.storeFor('settings').set('fav_char1', { milk: true });
+        const record = prepared(async () => false);
+        record.set({ cheese: true });
+
+        expect(await record.load()).toBe(false);
+        expect(record.isLoaded()).toBe(false);
+        expect(record.get()).toEqual({ cheese: true });
+    });
+
+    test('an atomic save whose prepare could not read opens no transaction', async () => {
+        storageMock.storeFor('settings').set('fav_char1', { milk: true });
+        const record = createCuratedRecord({
+            base: 'fav',
+            empty: () => ({}),
+            keepMerging: true,
+            atomic: true,
+            immediate: true,
+            prepare: async () => false,
+            label: 'Test',
+        });
+        record.set({ cheese: true });
+
+        expect(await record.save()).toBe(false);
+        expect(storageMock.update).not.toHaveBeenCalled();
+        expect(storageMock.storeFor('settings').get('fav_char1')).toEqual({ milk: true });
+    });
+});
+
+describe('atomic record', () => {
+    const atomicLog = (options = {}) =>
+        createPersistedRecord({
+            base: 'log',
+            empty: () => [],
+            merge: mergeById((e) => e.id),
+            atomic: true,
+            label: 'Test',
+            ...options,
+        });
+
+    test('folds against what is stored when the write runs, inside one update', async () => {
+        vi.useFakeTimers();
+        const settings = storageMock.storeFor('settings');
+        settings.set(LOG, [{ id: 1 }]);
+        const record = atomicLog();
+        record.get().push({ id: 2 });
+        const saving = record.save();
+
+        // Another tab commits while this save is still waiting
+        settings.set(LOG, [{ id: 1 }, { id: 3 }]);
+        await vi.advanceTimersByTimeAsync(3000);
+
+        expect(await saving).toBe(true);
+        expect(storageMock.tryGet).not.toHaveBeenCalled();
+        expect(storageMock.set).not.toHaveBeenCalled();
+        expect(stored().map((e) => e.id)).toEqual([1, 3, 2]);
+        expect(record.get().map((e) => e.id)).toEqual([1, 3, 2]);
+    });
+
+    test('saves asked for during the delay join one write', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        const first = record.save();
+        record.get().push({ id: 2 });
+        const second = record.save();
+
+        expect(second).toBe(first);
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(await first).toBe(true);
+        expect(storageMock.update).toHaveBeenCalledTimes(1);
+        expect(stored().map((e) => e.id)).toEqual([1, 2]);
+    });
+
+    test('the global flush starts a waiting save without its delay', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+
+        await flushPersistedRecords();
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('the page-close hook opens the transaction synchronously', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        const saving = record.save();
+        storageMock.update.mockClear();
+
+        // Earlier tests' records are registered too; only this one's key is counted
+        const writesToLog = () => storageMock.update.mock.calls.filter(([key]) => key === LOG).length;
+        for (const listener of storageMock.teardownListeners) listener('pagehide');
+        expect(writesToLog()).toBe(1);
+        expect(await saving).toBe(true);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+
+        // Nothing is left waiting to write again
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(writesToLog()).toBe(1);
+    });
+
+    test('a reset lands a waiting save under the departing key, folded with mergeAfterReset', async () => {
+        vi.useFakeTimers();
+        const settings = storageMock.storeFor('settings');
+        settings.set(LOG, [{ id: 1 }]);
+        settings.set('log_char2', [{ id: 9 }]);
+        const folds = [];
+        const record = atomicLog({
+            merge: (stored, memory) => {
+                folds.push('merge');
+                return mergeById((e) => e.id)(stored, memory);
+            },
+            mergeAfterReset: (stored, memory) => {
+                folds.push('after reset');
+                return mergeById((e) => e.id)(stored, memory);
+            },
+        });
+        record.get().push({ id: 2 });
+        const saving = record.save();
+
+        record.reset();
+        dataManagerMock.characterId = 'char2';
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(await saving).toBe(true);
+        expect(stored().map((e) => e.id)).toEqual([1, 2]);
+        expect(settings.get('log_char2')).toEqual([{ id: 9 }]);
+        expect(folds).toEqual(['after reset']);
+        expect(record.get()).toEqual([]);
+    });
+
+    test('a write that does not commit keeps the record dirty and lands on a retry', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        // The first transaction aborts: storage answers null, nothing is written
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.get().push({ id: 1 });
+        const saving = record.save();
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(await saving).toBe(false);
+        expect(stored()).toBeUndefined();
+
+        // Nothing else asks for a save: the record retries on its own
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+        expect(storageMock.update.mock.calls.filter(([key]) => key === LOG)).toHaveLength(2);
+
+        // And stops once it has landed
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(storageMock.update.mock.calls.filter(([key]) => key === LOG)).toHaveLength(2);
+    });
+
+    test('a departing write a character switch forced out is retried when it does not commit', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        // The switch lands the waiting save at once, and that transaction aborts
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored()).toBeUndefined();
+
+        // Nothing in memory carries it any more: the record writes it again on its own
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('the page-close hook lands a departing retry still waiting out its back-off', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored()).toBeUndefined();
+
+        // The page closes inside the back-off: nothing is "unwritten", the retry is all there is
+        for (const listener of storageMock.teardownListeners) listener('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('a flush lands a departing retry at once', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        await record.flushed();
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('a save whose prepare cannot read is asked for again', async () => {
+        vi.useFakeTimers();
+        let readable = false;
+        const record = atomicLog({ prepare: async () => readable });
+        record.get().push({ id: 1 });
+        const saving = record.save();
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(await saving).toBe(false);
+        expect(stored()).toBeUndefined();
+
+        readable = true;
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('a failed write is retried by the next flush, and backs off while storage keeps refusing', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog({ immediate: true });
+        const update = storageMock.update.getMockImplementation();
+        const writesToLog = () => storageMock.update.mock.calls.filter(([key]) => key === LOG).length;
+        storageMock.update.mockImplementation(async () => null);
+        try {
+            record.get().push({ id: 1 });
+            expect(await record.save()).toBe(false);
+            // Retries at 3 s, then 6 s after that, then 12 s: never a spin
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(writesToLog()).toBe(2);
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(writesToLog()).toBe(2);
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(writesToLog()).toBe(3);
+        } finally {
+            storageMock.update.mockImplementation(update);
+        }
+        // A flush does not wait out the back-off
+        expect(await record.flushed()).toBe(true);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('the page-close hook writes a record whose last write failed', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.get().push({ id: 1 });
+        record.save();
+        expect(await record.flushed()).toBe(false);
+        expect(stored()).toBeUndefined();
+
+        for (const listener of storageMock.teardownListeners) listener('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
+    test('a storage without update falls back to the probe-and-write path', async () => {
+        const update = storageMock.update;
+        delete storageMock.update;
+        try {
+            const record = atomicLog({ immediate: true });
+            record.get().push({ id: 1 });
+            expect(await record.save()).toBe(true);
+            expect(stored().map((e) => e.id)).toEqual([1]);
+        } finally {
+            storageMock.update = update;
+        }
     });
 });

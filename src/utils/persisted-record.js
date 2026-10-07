@@ -33,6 +33,20 @@
  * Scoping: `scoped: true` (the default) keys the record per character through
  * `character-key.js`, including the one-time legacy adoption `readScoped`
  * performs; `scoped: false` uses the bare key for global records.
+ *
+ * `atomic: true` is for a record several tabs write. The probe-merge-write
+ * above is two transactions: two tabs that both probe before either write
+ * commits each write a fold that lacks the other's entries, and the later
+ * write wins. An atomic record folds and writes inside one readwrite
+ * transaction (`storage.update`), which IndexedDB serializes across every tab,
+ * so each fold sees whatever the other tab committed. The coalescing window
+ * `storage.set`'s debounce gave is kept by delaying the save itself
+ * ({@link ATOMIC_DEFER_MS}): the fold runs when the write does, not when it
+ * was asked for. Storage's flushes cannot see a delay that is not theirs, so a
+ * hidden tab, a closing page, a sync flush and a character switch each land
+ * the waiting save from here. A write that does not commit leaves the record
+ * dirty and arms the delayed save again, backing off to
+ * {@link ATOMIC_RETRY_MAX_MS} while the database keeps refusing.
  */
 
 import storage from '../core/storage.js';
@@ -48,6 +62,44 @@ import { characterKey, readScoped } from './character-key.js';
 const pendingHandoffs = new Map();
 /** Record → handoff of the save currently running, which waits on nothing else. */
 const runningHandoffs = new Map();
+
+/** How long an `atomic` record waits before it writes: the window `storage.set` debounces over */
+const ATOMIC_DEFER_MS = 3000;
+/** The longest an `atomic` record waits between retries of a write that did not commit */
+const ATOMIC_RETRY_MAX_MS = 60_000;
+/** How many times a departing character's failed write is tried again before it is given up */
+const ATOMIC_DEPARTING_RETRIES = 5;
+
+/**
+ * Every `atomic` record. Their delay is their own rather than storage's, so
+ * `storage.flushAll()` cannot see a save still waiting; the flushes that must
+ * land one reach it through here.
+ */
+const atomicRecords = new Set();
+let atomicLifecycleHooked = false;
+
+/**
+ * Land the waiting atomic saves when the tab is hidden (the last event a
+ * discarded tab reliably gets, which is why the entrypoint flushes storage
+ * then too) and when the page closes. The close is synchronous on purpose:
+ * `storage.onBeforeTeardown` listeners run before the connection closes, and
+ * only a transaction opened before their first `await` lands.
+ */
+function hookAtomicLifecycle() {
+    if (atomicLifecycleHooked) return;
+    atomicLifecycleHooked = true;
+    if (typeof storage.onBeforeTeardown === 'function') {
+        storage.onBeforeTeardown(() => {
+            for (const record of atomicRecords) record._writeBeforeTeardown();
+        });
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'hidden') return;
+            for (const record of atomicRecords) record._releaseDeferred();
+        });
+    }
+}
 
 /**
  * Wait until every persisted-record save requested so far has handed its
@@ -66,6 +118,8 @@ const runningHandoffs = new Map();
  * @returns {Promise<void>}
  */
 export async function flushPersistedRecords() {
+    // An atomic record's delayed save has not asked storage for anything yet
+    for (const record of atomicRecords) record._releaseDeferred();
     if (pendingHandoffs.size === 0) return;
     await Promise.allSettled(Array.from(runningHandoffs.values()));
     await storage.flushAll?.();
@@ -152,6 +206,15 @@ export function mergeSeriesMaps(keyOf, sort = null) {
  * @param {'adopt'|'discard'} [options.migrate='adopt'] - Legacy-adoption mode for scoped reads
  * @param {boolean} [options.immediate=false] - Write without debouncing
  * @param {string} [options.label='PersistedRecord'] - Log prefix
+ * @param {() => Promise<*>} [options.prepare] - Run after every readable probe and before the
+ *   merge it feeds, for a merge that needs something else read fresh first (another key's
+ *   tombstones, say). Resolving `false` says that read could not be made, and stands the load
+ *   or save down exactly as an unreadable probe does; a reset during it does the same.
+ * @param {boolean} [options.atomic=false] - Fold and write in one `storage.update` transaction,
+ *   delayed by {@link ATOMIC_DEFER_MS} unless `immediate` (see the module header)
+ * @param {(stored: *, memory: *) => *} [options.mergeAfterReset] - The fold for an atomic write a
+ *   `reset()` overtook: it lands the departing record under the departing key, so it must not
+ *   touch state the arriving record owns. Defaults to `merge`
  * @returns {Object} The record handle — see methods below
  */
 export function createPersistedRecord({
@@ -163,6 +226,9 @@ export function createPersistedRecord({
     migrate = 'adopt',
     immediate = false,
     label = 'PersistedRecord',
+    prepare = null,
+    atomic = false,
+    mergeAfterReset = null,
 }) {
     if (typeof empty !== 'function') throw new Error(`[${label}] createPersistedRecord needs an empty() factory`);
     if (typeof merge !== 'function') throw new Error(`[${label}] createPersistedRecord needs a merge(stored, memory)`);
@@ -195,6 +261,180 @@ export function createPersistedRecord({
      * @returns {Promise<{found: boolean, value: *}|null>}
      */
     const probe = () => storage.tryGet(key(), store);
+
+    /**
+     * Whether saves take the one-transaction path. A storage without `update`
+     * (a test double) gets the probe-and-write path instead.
+     * @returns {boolean}
+     */
+    const isAtomic = () => atomic && typeof storage.update === 'function';
+    const deferMs = atomic && !immediate ? ATOMIC_DEFER_MS : 0;
+    /** The delayed save that every save asked for meanwhile joins: `{promise, resolve, timer}` */
+    let deferred = null;
+    /** An atomic save has been asked for and its transaction not yet opened */
+    let unwritten = false;
+    /** The key that unwritten save was asked for under, which a reset must still write to */
+    let unwrittenKey = null;
+    /** The last write opened outside the save chain (page close, reset), for `flushed()` */
+    let directWrite = Promise.resolve(true);
+    /** Atomic writes that have failed in a row since the last one committed, for the retry back-off */
+    let failedWrites = 0;
+    /** Departing writes waiting out a back-off, which a page close must land at once */
+    const departingRetries = new Set();
+    /** Departing writes in flight, for `flushed()` */
+    const departingWrites = [];
+
+    /**
+     * Arm the delayed save: every save asked for before it fires joins it.
+     * @param {number} delayMs
+     * @returns {Promise<boolean>} The delayed save's outcome
+     */
+    const armDeferred = (delayMs) => {
+        let resolve;
+        const promise = new Promise((r) => {
+            resolve = r;
+        });
+        deferred = { promise, resolve, timer: setTimeout(() => record._releaseDeferred(), delayMs) };
+        return promise;
+    };
+
+    /**
+     * An atomic write that did not commit — aborted, timed out, refused — leaves
+     * the record dirty and asks for the write again, backing off while the
+     * database keeps refusing. A save already waiting carries memory anyway, so
+     * none is armed then. A write a `reset()` overtook carries a record that has
+     * left memory, so it is retried on its own (see `retryDeparting`).
+     * @param {boolean} written - Whether the write committed
+     * @param {string} writeKey - The key it was for
+     * @param {number} askedIn - The generation it belongs to
+     * @param {*} held - The record the write carried
+     */
+    const noteWriteOutcome = (written, writeKey, askedIn, held) => {
+        if (written) {
+            if (askedIn === generation) failedWrites = 0;
+            return;
+        }
+        if (askedIn !== generation) {
+            retryDeparting(writeKey, held, 1);
+            return;
+        }
+        if (!unwritten) {
+            unwritten = true;
+            unwrittenKey = writeKey;
+        }
+        failedWrites += 1;
+        if (deferred || waitingSave) return;
+        armDeferred(Math.min(ATOMIC_RETRY_MAX_MS, ATOMIC_DEFER_MS * 2 ** (failedWrites - 1)));
+    };
+
+    /**
+     * Write a departing record again after its write failed: a character switch
+     * had already taken it out of memory, so nothing else would. Folded with
+     * `mergeAfterReset` under the key it was asked for, backing off, a bounded
+     * number of times.
+     * @param {string} writeKey
+     * @param {*} held
+     * @param {number} attempt - 1 for the first retry
+     */
+    const retryDeparting = (writeKey, held, attempt) => {
+        if (attempt > ATOMIC_DEPARTING_RETRIES) {
+            console.error(`[${label}] ${base}: the departing character's last write could not be saved`);
+            return;
+        }
+        const delay = Math.min(ATOMIC_RETRY_MAX_MS, ATOMIC_DEFER_MS * 2 ** (attempt - 1));
+        const entry = { writeKey, held, attempt, timer: null };
+        entry.timer = setTimeout(() => landDeparting(entry), delay);
+        departingRetries.add(entry);
+    };
+
+    /**
+     * Write one waiting departing retry now: stop its timer and open the
+     * transaction. Synchronous up to `storage.update`, so the page-close hook
+     * can use it; a failure schedules the next attempt.
+     * @param {{writeKey: string, held: *, attempt: number, timer: *}} entry
+     * @returns {Promise<boolean>} Whether it committed
+     */
+    const landDeparting = (entry) => {
+        clearTimeout(entry.timer);
+        if (!departingRetries.delete(entry)) return Promise.resolve(true);
+        let outcome;
+        try {
+            outcome = storage.update(
+                entry.writeKey,
+                (current, found) =>
+                    !found || current == null ? entry.held : (mergeAfterReset || merge)(current, entry.held),
+                store
+            );
+        } catch (error) {
+            outcome = Promise.reject(error);
+        }
+        const settled = Promise.resolve(outcome)
+            .then(
+                (result) => Boolean(result?.written),
+                () => false
+            )
+            .then((written) => {
+                if (!written) retryDeparting(entry.writeKey, entry.held, entry.attempt + 1);
+                return written;
+            });
+        departingWrites.push(settled);
+        settled.finally(() => {
+            const at = departingWrites.indexOf(settled);
+            if (at !== -1) departingWrites.splice(at, 1);
+        });
+        directWrite = settled;
+        return settled;
+    };
+
+    /**
+     * Open the read-merge-write transaction for memory as it is now.
+     *
+     * Synchronous up to `storage.update`'s first `await`, which comes after it
+     * has opened the transaction whenever the connection is up — what a
+     * page-close listener needs. The fold runs inside the transaction, against
+     * whatever another tab committed before it. A `reset()` in between makes it
+     * the departing record's write: folded with `mergeAfterReset`, and kept out
+     * of the arriving record's memory. One that does not commit is retried (see
+     * `noteWriteOutcome`).
+     * @param {string} writeKey - The key, resolved by the caller
+     * @param {number} askedIn - The generation this write belongs to
+     * @returns {Promise<boolean>} Whether a write committed
+     */
+    const issueUpdate = (writeKey, askedIn) => {
+        const held = memory;
+        unwritten = false;
+        let outcome;
+        try {
+            outcome = storage.update(
+                writeKey,
+                (current, found) => {
+                    if (!found || current == null) return held;
+                    const live = askedIn === generation;
+                    const folded = (live ? merge : mergeAfterReset || merge)(current, held);
+                    if (live && memory === held) {
+                        memory = folded;
+                        memoryVersion += 1;
+                    }
+                    return folded;
+                },
+                store
+            );
+        } catch (error) {
+            outcome = Promise.reject(error);
+        }
+        return Promise.resolve(outcome)
+            .then(
+                (result) => Boolean(result?.written),
+                (error) => {
+                    console.error(`[${label}] Saving ${base} failed:`, error);
+                    return false;
+                }
+            )
+            .then((written) => {
+                noteWriteOutcome(written, writeKey, askedIn, held);
+                return written;
+            });
+    };
 
     const record = {
         /** @returns {*} The in-memory record (live reference) */
@@ -258,6 +498,13 @@ export function createPersistedRecord({
                 } else {
                     stored = null;
                 }
+                if (prepare) {
+                    if ((await prepare()) === false) {
+                        console.warn(`[${label}] ${base} not loaded: what its merge needs could not be read`);
+                        return false;
+                    }
+                    if (started !== generation) return false;
+                }
                 const under = authoritative && memoryVersion === startedVersion ? empty() : memory;
                 memory = stored == null ? merge(empty(), under) : merge(stored, under);
                 memoryVersion += 1;
@@ -277,12 +524,56 @@ export function createPersistedRecord({
          * coalesced: a save asked for while one runs and another waits
          * returns the waiting one, since that will fold in the memory of the
          * moment it runs.
+         *
+         * An `atomic` record's save waits {@link ATOMIC_DEFER_MS} first (not
+         * when `immediate`), and every save asked for meanwhile joins it.
          * @param {Object} [options]
          * @param {boolean} [options.overwrite=false] - Write memory as-is; for
          *   intentional removals only
          * @returns {Promise<boolean>} Whether a write landed
          */
         save({ overwrite = false } = {}) {
+            if (overwrite || !isAtomic()) return record._queueSave({ overwrite });
+            if (!unwritten) unwrittenKey = key();
+            unwritten = true;
+            if (deferMs === 0) return record._queueSave({ overwrite: false });
+            return deferred ? deferred.promise : armDeferred(deferMs);
+        },
+
+        /** Start the delayed atomic save now, if one is waiting. */
+        _releaseDeferred() {
+            const waiting = deferred;
+            if (!waiting) return;
+            deferred = null;
+            clearTimeout(waiting.timer);
+            waiting.resolve(record._queueSave({ overwrite: false }));
+        },
+
+        /**
+         * The page is closing: open the transaction for an unwritten atomic
+         * save before the connection goes. There is no awaiting `prepare` now,
+         * so the fold uses what memory holds.
+         */
+        _writeBeforeTeardown() {
+            if (!isAtomic()) return;
+            for (const entry of Array.from(departingRetries)) landDeparting(entry);
+            if (!unwritten || !isAtomic()) return;
+            const waiting = deferred;
+            deferred = null;
+            if (waiting) clearTimeout(waiting.timer);
+            directWrite = issueUpdate(key(), generation);
+            waiting?.resolve(directWrite);
+        },
+
+        /**
+         * One probe-merge-write — or, atomic, one `storage.update` — queued
+         * behind the saves already asked for. See `save`.
+         * @param {Object} [options]
+         * @param {boolean} [options.overwrite=false] - As `save`
+         * @returns {Promise<boolean>} Whether a write landed
+         * @private
+         */
+        _queueSave({ overwrite = false } = {}) {
             if (!overwrite && saving && waitingSave) return waitingSave;
             /**
              * The generation the save was ASKED FOR in, not the one its queued
@@ -310,6 +601,20 @@ export function createPersistedRecord({
                 const writeKey = scoped ? characterKey(base) : base;
                 try {
                     if (overwrite && askedIn !== generation) return false;
+                    if (!overwrite && isAtomic()) {
+                        if (prepare) {
+                            if ((await prepare()) === false) {
+                                console.warn(`[${label}] ${base} not saved: what its merge needs could not be read`);
+                                // Still dirty, and its timer is spent: ask again, as for a write that failed
+                                if (started === generation) noteWriteOutcome(false, writeKey, started, memory);
+                                return false;
+                            }
+                            if (started !== generation) return false;
+                        }
+                        const written = await issueUpdate(writeKey, started);
+                        handOff();
+                        return written;
+                    }
                     if (!overwrite) {
                         const probed = await storage.tryGet(writeKey, store);
                         if (probed === null) {
@@ -317,6 +622,13 @@ export function createPersistedRecord({
                             return false;
                         }
                         if (started !== generation) return false;
+                        if (prepare && probed.found) {
+                            if ((await prepare()) === false) {
+                                console.warn(`[${label}] ${base} not saved: what its merge needs could not be read`);
+                                return false;
+                            }
+                            if (started !== generation) return false;
+                        }
                         if (probed.found) {
                             memory = merge(probed.value, memory);
                             memoryVersion += 1;
@@ -377,21 +689,41 @@ export function createPersistedRecord({
         /**
          * Forget the in-memory record without touching storage — for a
          * character switch, before the next load reads the other character's
-         * key. Nothing is written.
+         * key. Nothing is written — except by an `atomic` record holding a
+         * save it has not written yet, which writes it now, under the key it
+         * was asked for under, rather than lose the departing record's last
+         * changes to its own delay.
          */
         reset() {
+            if (unwritten && isAtomic()) {
+                const waiting = deferred;
+                deferred = null;
+                if (waiting) clearTimeout(waiting.timer);
+                directWrite = issueUpdate(unwrittenKey ?? key(), generation);
+                waiting?.resolve(directWrite);
+            }
             memory = empty();
             memoryVersion += 1;
             loaded = false;
             generation += 1;
         },
 
-        /** @returns {Promise<*>} The pending save chain, for tests and shutdown */
+        /**
+         * Start a delayed save now, and wait for every write asked for so far.
+         * @returns {Promise<*>} The pending saves, for tests and shutdown
+         */
         flushed() {
-            return saveChain;
+            if (!atomic) return saveChain;
+            record._releaseDeferred();
+            for (const entry of Array.from(departingRetries)) landDeparting(entry);
+            return Promise.all([saveChain, directWrite, ...departingWrites]).then(([chained]) => chained);
         },
     };
 
+    if (atomic) {
+        atomicRecords.add(record);
+        hookAtomicLifecycle();
+    }
     return record;
 }
 
@@ -409,15 +741,22 @@ export function createPersistedRecord({
  * store still applies, which is the protection that matters. `reset()` (a
  * character switch) goes back to merging until the next readable load.
  *
+ * `keepMerging: true` opts out of trusting memory: every save folds through
+ * `merge`, which must then carry removals itself (the enhancement sessions
+ * keep tombstones). That is for a list two tabs edit at once, where memory
+ * written whole puts back what the other tab removed and drops what it added.
+ *
  * @param {Object} options - As {@link createPersistedRecord}; `merge` defaults
  *   to {@link mergeMaps} and is only consulted before the first readable load
+ *   unless `keepMerging` is set
+ * @param {boolean} [options.keepMerging=false] - Merge on every save, not only before the first load
  * @returns {Object} The record handle
  */
-export function createCuratedRecord({ merge = mergeMaps(), ...options }) {
+export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, ...options }) {
     let trustMemory = false;
     const record = createPersistedRecord({
         ...options,
-        merge: (stored, memory) => (trustMemory ? memory : merge(stored, memory)),
+        merge: (stored, memory) => (trustMemory && !keepMerging ? memory : merge(stored, memory)),
     });
     const { load, reset } = record;
     record.load = async (options) => {
