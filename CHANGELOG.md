@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing dropdowns on the Marketplace page
+
+- An optional Buy/Sell pricing dropdown pair and Craft toggle can sit beside the Marketplace title (Skill Page and Tiles settings, off by default), so you can change how item tooltips are priced without opening a skill page.
+
 ### Gist sync merges instead of overwriting another device's changes
 
 - When two devices are in use, an automatic push that finds the gist ahead now merges the other device's changes into what it uploads instead of overwriting them: each setting keeps whichever device changed it last, histories and other mergeable records are combined, and other saved data keeps this device's copy only if the other side didn't change it. Nothing is applied to the device you're using until its next reload (no "Reload now" prompts mid-session); a restored backup counts as a new change, and a damaged gist now warns once per session instead of every interval.
