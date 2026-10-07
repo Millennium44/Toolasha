@@ -139,6 +139,19 @@ describe('extractMonsterAttacks — damage-counter path', () => {
         expect(byAbility.damageOverTime).toBeUndefined();
     });
 
+    test('a swing whose hit arrives in a delayed frame, past the parry window, still takes its hit', () => {
+        // No newer swing comes between, so the late resolution is the firestorm's,
+        // however long the frame took to arrive
+        const ticks = [
+            dtick(0, 0, '/abilities/firestorm', 1000, 0),
+            dtick(100, 1, '/abilities/smoke_burst', 1000, 0), // firestorm swings
+            dtick(1500, 1, '/abilities/smoke_burst', 880, 1), // its hit, 1.4 s later
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/firestorm']).toMatchObject({ casts: 1, hits: 1, damage: 120 });
+        expect(byAbility.damageOverTime).toBeUndefined();
+    });
+
     test('a damage-counter rise with no pending swing is damage-over-time', () => {
         const ticks = [
             dtick(0, 5, '/abilities/fireball', 1000, 10),

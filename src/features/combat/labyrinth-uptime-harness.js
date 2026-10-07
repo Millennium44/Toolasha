@@ -468,13 +468,15 @@ function extractAttacks(ticks, opts) {
             // Incoming direction: a monster swing the player parries is never a
             // splat on the player, so nothing ever pays it off, and it would
             // sit at the head of the queue and take the label of the next hit
-            // that lands. A swing resolves within a tick or two, so one still
-            // waiting past the parry window was parried; drop it. (The outgoing
-            // direction nets its parries in `parryBalance` instead.)
-            if (!playerAttacks && Number.isFinite(at)) {
-                while (pending.length && Number.isFinite(pending[0].at) && at - pending[0].at > PARRY_WINDOW_MS) {
-                    pending.shift();
-                }
+            // that lands. A monster has one swing in flight at a time, so when
+            // it swings again every older swing has resolved or was parried:
+            // keep only as many as this tick's splats still pay off, however
+            // late they arrive. (The outgoing direction nets its parries in
+            // `parryBalance` instead.)
+            if (!playerAttacks && prevAtk !== undefined && Number.isFinite(atk) && atk > prevAtk) {
+                const resolving =
+                    prevDefDmg !== undefined && ddmg !== null && ddmg > prevDefDmg ? ddmg - prevDefDmg : 0;
+                while (pending.length > resolving) pending.shift();
             }
             // The attacker's swings drive cast share, labelled by the ability it
             // was preparing before the swing (the hit was cast by what came
