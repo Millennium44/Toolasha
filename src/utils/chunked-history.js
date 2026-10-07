@@ -1020,12 +1020,14 @@ class ChunkedHistory {
         for (const chunkId of chunkIds) {
             this._snapshot.delete(chunkId);
             const bucket = grouped.get(chunkId);
-            if (!bucket) continue;
-            Promise.resolve(storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate)).catch(
-                (error) => {
-                    console.error(`[${this.label}] Writing back folded chunk ${chunkId} failed:`, error);
-                }
-            );
+            // Every copy this chunk held folded into another chunk's: the key goes, rather than
+            // staying on disk to be read and folded again on every load
+            const write = bucket
+                ? storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate)
+                : storage.delete(this.keyFor(charId, chunkId), this.storeName);
+            Promise.resolve(write).catch((error) => {
+                console.error(`[${this.label}] Writing back folded chunk ${chunkId} failed:`, error);
+            });
         }
     }
 

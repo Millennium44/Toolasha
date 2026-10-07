@@ -1317,6 +1317,18 @@ describe('one row per day, rewritten in place', () => {
         expect(store._union([], [c], stones)).toEqual([c]);
     });
 
+    test('a chunk whose only copy folded into another chunk is deleted, not left to fold again', async () => {
+        const store = buildDays('movedRec', { identityOf: (row) => row?.id });
+        storageMock.store.set('movedRec_c1_2026-09', [{ id: 'x', d: '2026-09-30', v: 3 }]);
+        storageMock.store.set('movedRec_c1_2026-10', [{ id: 'x', d: '2026-10-01', v: 9 }]);
+
+        expect(await store.load('c1')).toEqual([{ id: 'x', d: '2026-10-01', v: 9 }]);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(storageMock.store.has('movedRec_c1_2026-09')).toBe(false);
+        expect(storageMock.store.get('movedRec_c1_2026-10')).toEqual([{ id: 'x', d: '2026-10-01', v: 9 }]);
+    });
+
     test('a store with no rule for two copies reads exactly what is on disk', async () => {
         const store = buildDays('ruleless', { mergeCopies: undefined });
         const stored = [
