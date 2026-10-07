@@ -679,18 +679,40 @@ class ChunkedHistory {
      * @private
      */
     _tombstoned(id, entry, stones) {
-        const stone = stones[this._stoneKey(id, entry, stones)];
-        if (!stone) return false;
-        // Aged out here as well as on the way in: a fold can run for hours
-        // against a map that was read when the page loaded
-        if (Date.now() - stone.at >= TOMBSTONE_MAX_AGE_MS) return false;
-        return stone.fp !== '' && stone.fp === fingerprintOf(entry);
+        return this._matchingStone(id, entry, stones) !== undefined;
     }
 
     /**
-     * The key an entry's tombstone is filed under, if it has one.
+     * The key of the tombstone that deletes this exact copy, if any.
      *
-     * Its identity, or — for a store that named its own `identityOf` after it
+     * Both candidate keys are judged: an old build can leave a legacy-keyed
+     * tombstone for one version of an entry while the current build files a
+     * stable-id tombstone for another version of the same session, and a copy
+     * must be dropped when either one matches its fingerprint.
+     * @param {*} id - The entry's identity
+     * @param {Object} entry - The copy being judged
+     * @param {Object} stones - The tombstone map
+     * @returns {string|undefined} The matching key in `stones`, or undefined
+     * @private
+     */
+    _matchingStone(id, entry, stones) {
+        const keys = this._stoneKeys(id, entry, stones);
+        if (keys.length === 0) return undefined;
+        const fp = fingerprintOf(entry);
+        for (const key of keys) {
+            const stone = stones[key];
+            // Aged out here as well as on the way in: a fold can run for hours
+            // against a map that was read when the page loaded
+            if (Date.now() - stone.at >= TOMBSTONE_MAX_AGE_MS) continue;
+            if (stone.fp !== '' && stone.fp === fp) return key;
+        }
+        return undefined;
+    }
+
+    /**
+     * Every key an entry's tombstone could be filed under that exists.
+     *
+     * Its identity, and — for a store that named its own `identityOf` after it
      * had already been recording — the entry's JSON, which is what the identity
      * was when an older deletion was made. Without the second look, a deletion
      * recorded under the old identity would stop applying the day the store
@@ -698,20 +720,22 @@ class ChunkedHistory {
      * @param {*} id - The entry's identity
      * @param {Object} entry - The entry
      * @param {Object} stones - The tombstone map
-     * @returns {string|undefined} The key in `stones`, or undefined for none
+     * @returns {string[]} Keys present in `stones`, identity first
      * @private
      */
-    _stoneKey(id, entry, stones) {
-        if (id !== undefined && id !== null && stones[id]) return id;
-        if (!this._customIdentity) return undefined;
+    _stoneKeys(id, entry, stones) {
+        const keys = [];
+        if (id !== undefined && id !== null && stones[id]) keys.push(id);
+        if (!this._customIdentity) return keys;
         // Serialising every entry a fold meets is not free; a history nobody
         // has deleted from has no stone to find and must not pay for it
         for (const key in stones) {
             if (!Object.hasOwn(stones, key)) continue;
             const legacy = defaultIdentity(entry);
-            return legacy !== undefined && stones[legacy] ? legacy : undefined;
+            if (legacy !== undefined && legacy !== id && stones[legacy]) keys.push(legacy);
+            break;
         }
-        return undefined;
+        return keys;
     }
 
     /**
@@ -812,15 +836,14 @@ class ChunkedHistory {
         const dropped = [];
         for (const entry of entries) {
             const id = this._identity(entry);
-            const key = this._stoneKey(id, entry, stones);
-            const stone = key === undefined ? undefined : stones[key];
-            if (!stone) {
+            const keys = this._stoneKeys(id, entry, stones);
+            if (keys.length === 0) {
                 kept.push(entry);
                 continue;
             }
-            if (!this._tombstoned(id, entry, stones)) {
+            if (this._matchingStone(id, entry, stones) === undefined) {
                 // Touched since the deletion, so this copy has outlived it
-                delete stones[key];
+                for (const key of keys) delete stones[key];
                 changed = true;
                 kept.push(entry);
                 continue;
@@ -828,9 +851,10 @@ class ChunkedHistory {
             dropped.push(entry);
         }
 
-        const casual = dropped.filter(
-            (entry) => stones[this._stoneKey(this._identity(entry), entry, stones)]?.bulk !== true
-        ).length;
+        const casual = dropped.filter((entry) => {
+            const key = this._matchingStone(this._identity(entry), entry, stones);
+            return stones[key]?.bulk !== true;
+        }).length;
         if (casual > MASS_DELETE_FLOOR && casual * 2 > entries.length) {
             console.warn(
                 `[${this.label}] Refusing a fold that would delete ${casual} of ${entries.length} entries at once; ` +

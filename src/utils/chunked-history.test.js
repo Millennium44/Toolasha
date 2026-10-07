@@ -1296,6 +1296,27 @@ describe('one row per day, rewritten in place', () => {
         expect(merged).toEqual([updated]);
     });
 
+    test('an id-keyed tombstone for one version does not hide a legacy tombstone for another', () => {
+        const store = buildDays('bothStonesRec', { mergeCopies: undefined });
+        const a = { d: '2026-10-07', v: 5 };
+        const b = { d: '2026-10-07', v: 9 };
+        const c = { d: '2026-10-07', v: 12 };
+        const keep = { d: '2026-10-06', v: 3 };
+        const after = { d: '2026-10-08', v: 1 };
+        // The current build deletes version B: a stable-id tombstone
+        store._recordDeletions('c1', [keep, b, after], [keep, after]);
+        const idStone = store._tombs['2026-10-07'];
+        // An old build left a JSON-keyed tombstone for version A of the same day
+        store._recordDeletions('c1', [keep, a, after], [keep, after]);
+        const legacyStone = store._tombs['2026-10-07'];
+        const stones = { '2026-10-07': idStone, [JSON.stringify(a)]: legacyStone };
+
+        // A peer still holding A: the exact legacy tombstone drops it
+        expect(store._union([], [a], stones)).toEqual([]);
+        // A third version matches neither stone, so it is kept
+        expect(store._union([], [c], stones)).toEqual([c]);
+    });
+
     test('a store with no rule for two copies reads exactly what is on disk', async () => {
         const store = buildDays('ruleless', { mergeCopies: undefined });
         const stored = [
