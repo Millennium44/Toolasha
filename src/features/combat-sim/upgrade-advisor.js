@@ -4014,12 +4014,14 @@ export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'encounters', 'deaths'
  * @param {Object} [options]
  * @param {Array<string>} [options.keys=DEFAULT_SCORE_KEYS] - SCORE_METRICS keys to count
  * @param {number} [options.places=RANK_PLACES] - How many placings earn points
+ * @param {Array<Object>} [options.metrics=SCORE_METRICS] - Metric definitions to choose from, for a table
+ *   that reads the same keys off different figures (the Combat levels table's Hours/0.01%)
  * @returns {Array<Object>} The same rows
  */
 export function assignRankScores(results, options = {}) {
     const places = options.places ?? RANK_PLACES;
     const keys = options.keys ?? DEFAULT_SCORE_KEYS;
-    const metrics = SCORE_METRICS.filter((m) => keys.includes(m.key));
+    const metrics = (options.metrics ?? SCORE_METRICS).filter((m) => keys.includes(m.key));
 
     for (const row of results) {
         row.rankPoints = {};
