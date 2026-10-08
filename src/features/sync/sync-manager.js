@@ -25,9 +25,12 @@
  * the records that *cannot* be combined — settings, watchlists, plans — and
  * whether the union goes straight back up to the gist.
  *
- * "Has this device changed" is answered by fingerprinting the payload rather
- * than by watching writes. Watching writes would mean a hook on every store; the
- * fingerprint costs one build of a payload we were about to build anyway.
+ * "Has this device changed" is answered by fingerprinting the payload. An
+ * automatic push first asks a write counter (`sync-dirty.js`, fed by
+ * `storage.onWrite`) whether anything synced was written since a build last
+ * matched the stored fingerprint, and skips the build when nothing was: the
+ * build serializes and hashes every synced store on the main thread, and most
+ * ticks it would only confirm that nothing moved.
  *
  * Everything fails soft. A missing token, a spent rate limit, a plane with no
  * wifi — each is a toast and a no-op, never a thrown error into whatever called
@@ -66,6 +69,7 @@ import {
     restampRestoredSettings,
     RESTORED_BASELINE,
 } from './sync-payload.js';
+import { startSyncDirtyTracker, syncWriteGeneration, markSyncClean, unchangedSinceClean } from './sync-dirty.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { flushPersistedRecords } from '../../utils/persisted-record.js';
 import {
@@ -185,9 +189,11 @@ const KEY_GIST_VERSION = 'toolasha_sync_gistVersion';
 /**
  * How often auto-sync considers pushing.
  *
- * Long, on purpose. Each tick rebuilds the payload to fingerprint it, which for
- * the `everything` scope is a full database read; doing that every minute would
- * be a visible stutter in exchange for freshness nobody asked for.
+ * Long, on purpose. A tick after any synced write rebuilds the payload to
+ * fingerprint it, which for the `everything` scope is a full database read;
+ * doing that every minute would be a visible stutter in exchange for freshness
+ * nobody asked for. A tick with no write since the last clean build skips it
+ * (see `sync-dirty.js`).
  */
 /**
  * What this tab's sync did and why, newest last: leadership changes, the schedule starting, and every
@@ -433,11 +439,25 @@ class SyncManager {
         // session over, and the character-switch push fires as the character
         // being left goes away. Both would upload a copy with the final
         // seconds cut off, and nothing would ever put them back.
+        //
+        // An automatic push first asks the write counter (see `sync-dirty.js`)
+        // whether anything synced was written since the last build proved this
+        // device matched the stored fingerprint. If not, the build would only
+        // find that out again, at the cost of serializing every store on the
+        // main thread. The count is taken before the flush, so a write that
+        // lands during the build is never counted into the clean point.
         let localPayload = merged?.localText;
+        let builtAtGeneration = null;
         if (!merged) {
+            startSyncDirtyTracker();
+            const generation = syncWriteGeneration();
             await flushPersistedRecords();
+            if (silent && unchangedSinceClean(scope, await storage.get(KEY_LAST_HASH, STORE, null))) {
+                return { ok: true, skipped: true, reason: 'unchanged' };
+            }
             await storage.flushAll?.();
             localPayload = await buildPayloadJSON(scope);
+            builtAtGeneration = generation;
         }
         // What goes up, and what this device holds. They differ only for a
         // merged upload; the fingerprint remembered is always this device's,
@@ -447,6 +467,7 @@ class SyncManager {
         const localHash = merged ? contentHash(localPayload) : hash;
 
         if (!merged && silent && localHash === (await storage.get(KEY_LAST_HASH, STORE, null))) {
+            markSyncClean({ generation: builtAtGeneration, lastHash: localHash, scope });
             return { ok: true, skipped: true, reason: 'unchanged' };
         }
 
@@ -720,6 +741,10 @@ class SyncManager {
                 [KEY_UNAPPLIED]: merged?.remoteAdds ? { since: exportedAt } : null,
             },
         });
+        // The fingerprint just stored is of the payload built above, so the
+        // database as it stood then is clean. A merged upload's local text was
+        // built by an earlier call; its next push builds once to say so.
+        if (builtAtGeneration !== null) markSyncClean({ generation: builtAtGeneration, lastHash: localHash, scope });
 
         if (!silent) {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);
