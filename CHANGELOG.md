@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Missing Mats shows what it will buy
+
+- The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).
+
 ### Synced days no longer count twice
 
 - A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.
