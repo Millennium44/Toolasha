@@ -350,6 +350,69 @@ describe('enhancement missing-material reservation handoff', () => {
     });
 });
 
+describe('the button says what it will buy', () => {
+    const line = (itemHrid, itemName, required, missing, extra = {}) => ({
+        itemHrid,
+        itemName,
+        required,
+        have: required - missing,
+        queued: 0,
+        available: required - missing,
+        missing,
+        isTradeable: true,
+        isUpgradeItem: false,
+        ...extra,
+    });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        state.settingsEnabled = true;
+        state.enhancementCalls = [];
+        buildMarketplaceDom();
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            '<div class="SkillActionDetail_enhancingComponent__17bOx" data-mwi-item-hrid="/items/sword">' +
+                '<div><span>Target Level</span><input type="number" value="5"></div>' +
+                '<div><span>Repeat</span><input type="text" value="∞"></div>' +
+                '</div>'
+        );
+    });
+
+    afterEach(() => {
+        missingMaterials.cleanup?.();
+        vi.useRealTimers();
+        state.settingsEnabled = false;
+    });
+
+    test('counts and lists the missing lines, leaves out coin and covered lines, and notes the infinite repeat', async () => {
+        state.enhancementMaterials = [
+            line('/items/sinister_essence', 'Sinister Essence', 8, 8),
+            line('/items/sorcerer_essence', 'Sorcerer Essence', 2000, 2000),
+            line('/items/gobo_essence', 'Gobo Essence', 2000, 0),
+            line('/items/coin', 'Coin', 1345, 1345, { isTradeable: false }),
+        ];
+        missingMaterials.initialize();
+        await vi.advanceTimersByTimeAsync(600);
+
+        const button = document.querySelector('#mwi-missing-mats-button');
+        expect(button.textContent).toBe('Missing Mats Marketplace · 2 items');
+        expect(button.title).toContain('Sinister Essence ×8, Sorcerer Essence ×2,000');
+        expect(button.title).not.toContain('Gobo');
+        expect(button.title).not.toContain('Coin');
+        expect(button.title).toContain('expected attempts');
+    });
+
+    test('nothing missing shows no count', async () => {
+        state.enhancementMaterials = [line('/items/gobo_essence', 'Gobo Essence', 2000, 0)];
+        missingMaterials.initialize();
+        await vi.advanceTimersByTimeAsync(600);
+
+        const button = document.querySelector('#mwi-missing-mats-button');
+        expect(button.textContent).toBe('Missing Mats Marketplace');
+        expect(button.title).toBe('');
+    });
+});
+
 /** A navbar marketplace button plus a visible tab strip carrying the two
  * native tabs ("My Listings" is the clone template, "Market Listings" is
  * where a clear-all should land the player). happy-dom does no real layout,
