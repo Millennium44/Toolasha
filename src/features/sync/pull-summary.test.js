@@ -1,9 +1,10 @@
 /**
  * What a pull is allowed to claim it did.
  *
- * The counts here are the ones the apply result can actually support. The test
- * that matters most is the one that pins `unchanged` to unknown: a zero there
- * would read as "nothing else moved", which the pull result cannot say.
+ * The counts here are the ones the apply result can actually support. A result
+ * that reports which keys it left as they were gives an unchanged count; one that
+ * does not keeps it unknown: a zero there would read as "nothing else moved",
+ * which such a result cannot say.
  */
 
 import { describe, test, expect, beforeEach } from 'vitest';
@@ -53,11 +54,29 @@ describe('the counts', () => {
         expect(summary.stores[0].heldRecords).toEqual([{ key: 'chests', label: 'chest tallies' }]);
     });
 
-    test('unchanged is unknown, never zero', () => {
+    test('unchanged is unknown, never zero, when the result does not report it', () => {
         const summary = buildPullSummary(oneOfEach);
         expect(summary.unchanged).toBeNull();
         expect(summary.stores[0].unchanged).toBeNull();
         expect(formatPullStoreLine(summary.stores[0])).toContain('unchanged unknown');
+    });
+
+    test('unchanged is counted per store when the result reports it', () => {
+        const summary = buildPullSummary({ ...oneOfEach, unchanged: { guildHistory: 3, settings: 4 } });
+        expect(summary.unchanged).toBe(7);
+        expect(summary.stores.map((store) => [store.store, store.unchanged])).toEqual([
+            ['guildHistory', 3],
+            ['settings', 4],
+        ]);
+        expect(formatPullStoreLine(summary.stores[0])).toContain('3 unchanged');
+        expect(formatPullSummaryLine(summary)).toContain('7 already the same');
+    });
+
+    test('a reported empty unchanged count is zero, not unknown', () => {
+        const summary = buildPullSummary({ ...oneOfEach, unchanged: {} });
+        expect(summary.unchanged).toBe(0);
+        expect(summary.stores[0].unchanged).toBe(0);
+        expect(formatPullSummaryLine(summary)).not.toContain('already the same');
     });
 
     test('a fold that threw is written whole and named separately', () => {

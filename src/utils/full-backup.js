@@ -109,6 +109,22 @@ const TOMBSTONE_COMPANIONS = {
 };
 
 /**
+ * The key a restore writes together with this one: a record's tombstones, or
+ * the record a tombstones key belongs to. A caller that leaves keys out of a
+ * restore keeps each pair whole, so the reconciling below still sees both.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {string|null} The companion key, or null when the key has none
+ */
+export function tombstoneCompanionKey(storeName, key) {
+    for (const { record, tombstones } of TOMBSTONE_COMPANIONS[storeName] || []) {
+        if (key === record || key.startsWith(`${record}_`)) return `${tombstones}${key.slice(record.length)}`;
+        if (key === tombstones || key.startsWith(`${tombstones}_`)) return `${record}${key.slice(tombstones.length)}`;
+    }
+    return null;
+}
+
+/**
  * Make every restored record's tombstones agree with it: the tombstones the
  * payload carries for it, or this device's when it carries none, without the
  * ids the restored record holds. A record keyed per character

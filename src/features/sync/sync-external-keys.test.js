@@ -46,6 +46,7 @@ vi.mock('../../core/settings-storage.js', () => ({
 
 const importedPayloads = vi.hoisted(() => []);
 vi.mock('../../utils/full-backup.js', () => ({
+    tombstoneCompanionKey: () => null,
     importEverything: async (payload) => {
         importedPayloads.push(payload);
         for (const [name, entries] of Object.entries(payload.stores || {})) {

@@ -133,7 +133,7 @@ describe('chat history never reaches a sync payload', () => {
             syncScope: 'everything',
             stores: {
                 settings: {
-                    script_settingsMap: JSON.stringify({ chatHistoryExtender: true }),
+                    script_settingsMap: JSON.stringify({ chatHistoryExtender: true, fromOtherDevice: true }),
                     [HISTORY_KEY]: { v: 1, savedAt: 2, tabs: { 'tab:Whispers': ['<div>someone else</div>'] } },
                 },
             },
@@ -143,7 +143,7 @@ describe('chat history never reaches a sync payload', () => {
 
         expect(Object.keys(state.written.settings || {})).not.toContain(HISTORY_KEY);
         expect(JSON.stringify(state.written)).not.toContain('someone else');
-        // The rest of the payload still landed
+        // The rest of the payload still landed (the map differs from this device's, so it is written)
         expect(state.written.settings.script_settingsMap).toContain('chatHistoryExtender');
     });
 

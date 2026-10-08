@@ -5,7 +5,10 @@ const storeState = vi.hoisted(() => ({ stores: {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         listStores: async () => Object.keys(storeState.stores),
-        getAll: async (name) => ({ ...(storeState.stores[name] || {}) }),
+        getAll: async (name) => {
+            if (storeState.getAllThrows === name) throw new Error('unreadable store');
+            return { ...(storeState.stores[name] || {}) };
+        },
         tryGet: async (key, name) => {
             // Unreadable histories, not the sync's own registry record (whose
             // failed read is its own case, in sync-external-keys.test.js)
@@ -62,6 +65,12 @@ const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
     guildHistory: ['trialTraceManifest', 'trialTraceChunk_'],
 }));
 vi.mock('../../utils/full-backup.js', () => ({
+    // One pair, as the real one declares for the settings store
+    tombstoneCompanionKey: (store, key) => {
+        if (store !== 'settings') return null;
+        if (key === 'enhancementTracker_sessions') return 'enhancementTracker_sessionTombstones';
+        return key === 'enhancementTracker_sessionTombstones' ? 'enhancementTracker_sessions' : null;
+    },
     importEverything: async (payload) => {
         if (importOutcome.throws) throw importOutcome.throws;
         // The real `importEverything` quiesces live writers first
@@ -495,7 +504,9 @@ describe('applyPayload', () => {
 
         await applyPayload(json);
 
-        expect(importedPayloads[0].stores.settings.script_settingsMap_abc.sync_token).toBeUndefined();
+        // The fold keeps this device's map, which then has nothing to write
+        expect(importedPayloads[0].stores.settings.script_settingsMap_abc?.sync_token).toBeUndefined();
+        expect(storeState.stores.settings.script_settingsMap_abc).toEqual({ chatCommands: { isTrue: true } });
     });
 
     test('never restores sync bookkeeping from a payload', async () => {
@@ -1020,6 +1031,83 @@ describe('what applyPayload reports as applied', () => {
     });
 });
 
+describe('applyPayload writes only what it changes', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+
+    test('a download of what this device holds writes nothing, and says how much it left alone', async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...new Set([...local, ...incoming])],
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['a', 'b'], plan: { b: 2, a: 1 } };
+
+        try {
+            const json = payloadOf({ dungeonRuns: { run_char: ['a', 'b'], plan: { a: 1, b: 2 } } });
+            const result = await applyPayload(json);
+
+            expect(importedPayloads[0].stores.dungeonRuns).toEqual({});
+            expect(result.unchanged).toEqual({ dungeonRuns: 2 });
+            // A fold that changed nothing is not reported as combined
+            expect(result.merged).toEqual([]);
+            // What this device holds is still the whole payload
+            expect(JSON.parse(result.applied).stores.dungeonRuns).toEqual({
+                run_char: ['a', 'b'],
+                plan: { a: 1, b: 2 },
+            });
+        } finally {
+            off();
+        }
+    });
+
+    test('a key that moved is written and counted, beside the ones left alone', async () => {
+        storeState.stores.dungeonRuns = { same: 1, moved: 1 };
+
+        const result = await applyPayload(payloadOf({ dungeonRuns: { same: 1, moved: 2, added: 3 } }));
+
+        expect(importedPayloads[0].stores.dungeonRuns).toEqual({ moved: 2, added: 3 });
+        expect(result.unchanged).toEqual({ dungeonRuns: 1 });
+    });
+
+    test('a store that cannot be read writes all of it, as a pull always did', async () => {
+        storeState.stores.dungeonRuns = { same: 1 };
+        storeState.getAllThrows = 'dungeonRuns';
+
+        try {
+            const result = await applyPayload(payloadOf({ dungeonRuns: { same: 1 } }));
+            expect(importedPayloads[0].stores.dungeonRuns).toEqual({ same: 1 });
+            expect(result.unchanged).toEqual({});
+        } finally {
+            storeState.getAllThrows = null;
+        }
+    });
+
+    test('a record and its tombstones are written together when either moved', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s0: 1 };
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 }, [GRAVES]: { s0: 1, s1: 2 } } }));
+
+        // The record did not move, but goes in with its tombstones so the restore reconciles the pair
+        expect(Object.keys(importedPayloads[0].stores.settings).sort()).toEqual([GRAVES, RECORD]);
+    });
+
+    test('a settings map that comes down unchanged is not handed over as landing', async () => {
+        storeState.stores.settings.script_settingsMap_abc = { chatCommands: { isTrue: true } };
+
+        await applyPayload(
+            payloadOf({
+                settings: { script_settingsMap_abc: { chatCommands: { isTrue: true } }, panelSizeMemory: 1 },
+            })
+        );
+
+        expect([...reconcileKeyMigrationState.mock.calls.at(-1)[0]]).toEqual(['panelSizeMemory']);
+    });
+});
+
 describe('what belongs to this script', () => {
     /**
      * The database is shared with other userscripts. Before the ownership
@@ -1193,7 +1281,9 @@ describe('settings change stamps', () => {
             'merge'
         );
 
-        expect(landed()[MAP]).toEqual({ sync_token: { value: 'ghp_mine' } });
+        // The map folds back to this device's own, so it is left as it is rather than written
+        expect(Object.hasOwn(landed(), MAP)).toBe(false);
+        expect(storeState.stores.settings[MAP]).toEqual({ sync_token: { value: 'ghp_mine' } });
         expect(landed()[STAMPS]).toEqual({});
     });
 

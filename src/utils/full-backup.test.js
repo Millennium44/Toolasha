@@ -39,8 +39,14 @@ vi.mock('../core/storage.js', () => ({
     default: Object.fromEntries(Object.entries(storageDefaults()).map(([name, impl]) => [name, vi.fn(impl)])),
 }));
 
-const { listBackupStores, exportEverything, exportEverythingJSON, importEverything, stripExcludedKeys } =
-    await import('./full-backup.js');
+const {
+    listBackupStores,
+    exportEverything,
+    exportEverythingJSON,
+    importEverything,
+    stripExcludedKeys,
+    tombstoneCompanionKey,
+} = await import('./full-backup.js');
 const storageMock = (await import('../core/storage.js')).default;
 
 /**
@@ -576,5 +582,24 @@ describe('importEverything reports what did not land', () => {
         expect(storageMock.putAll).not.toHaveBeenCalled();
         expect(storageMock.finishRestore).not.toHaveBeenCalled();
         expect(storageMock.endRestore).toHaveBeenCalledOnce();
+    });
+});
+
+describe('tombstoneCompanionKey', () => {
+    test('pairs a record with its tombstones and back, per character', () => {
+        expect(tombstoneCompanionKey('settings', 'enhancementTracker_sessions')).toBe(
+            'enhancementTracker_sessionTombstones'
+        );
+        expect(tombstoneCompanionKey('settings', 'enhancementTracker_sessions_abc')).toBe(
+            'enhancementTracker_sessionTombstones_abc'
+        );
+        expect(tombstoneCompanionKey('settings', 'enhancementTracker_sessionTombstones_abc')).toBe(
+            'enhancementTracker_sessions_abc'
+        );
+    });
+
+    test('anything else has no companion', () => {
+        expect(tombstoneCompanionKey('settings', 'panelSizeMemory')).toBeNull();
+        expect(tombstoneCompanionKey('dungeonRuns', 'enhancementTracker_sessions')).toBeNull();
     });
 });

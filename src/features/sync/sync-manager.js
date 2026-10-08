@@ -74,6 +74,7 @@ import {
 import { startSyncDirtyTracker, syncWriteGeneration, markSyncClean, unchangedSinceClean } from './sync-dirty.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { flushPersistedRecords } from '../../utils/persisted-record.js';
+import { stableStringify } from '../../utils/stable-stringify.js';
 import {
     buildPullSummary,
     formatPullSummaryLine,
@@ -1430,7 +1431,37 @@ class SyncManager {
         // synced copy and replace it without the conflict decision.
         await flushPersistedRecords();
         await storage.flushAll?.();
-        const localHash = contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
+        const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
+        const localHash = contentHash(localText);
+
+        // The gist holds exactly what this device would build now: in one
+        // browser, the leader tab's own merged push. Its text is ordered by the
+        // merge, so the fingerprint above rarely matches it, and the note an
+        // automatic merge leaves (`KEY_UNAPPLIED`) sent every reload here to
+        // import an identical payload, latch the stores and ask for a reload
+        // over nothing. Settled the way an upload merge that adds nothing
+        // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
+        // Held-back records and a replaced push keep their own paths.
+        if (!retryHeld && !replaced && this._sameContent(payload, localText, localHash)) {
+            // The flush and the build above can outlast a takeover, whose own
+            // record this one would roll back
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
+            await this._remember({
+                gistId,
+                exportedAt: remoteAt,
+                hash: localHash,
+                chunkCount: Number(manifest?.chunks) || 0,
+                syncSeq: advanceSeq(lastSeq, remoteSeq),
+                version: seen ? { ...seen, current: true } : null,
+                // A hold from an earlier version has nothing left to wait for:
+                // this device's copy was just read whole, and it is the gist's
+                mergeHeld: null,
+                extra: { [KEY_BASELINE]: exchangeBaseline(payload, localText), [KEY_UNAPPLIED]: null },
+            });
+            if (!silent) showToast('Already up to date with GitHub.');
+            return { ok: true, skipped: true, reason: 'same-content' };
+        }
+
         const localChanged = replaced || (Boolean(lastHash) && localHash !== lastHash);
 
         /** Whether the union this pull produces is sent straight back up */
@@ -1495,10 +1526,13 @@ class SyncManager {
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
-        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload, {
-            mode: silent ? 'merge' : 'pull',
-            baseline,
-        });
+        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected, unchanged } = await applyPayload(
+            payload,
+            {
+                mode: silent ? 'merge' : 'pull',
+                baseline,
+            }
+        );
         const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
 
         // An import already in progress cannot be cancelled between its store
@@ -1606,15 +1640,35 @@ class SyncManager {
         });
 
         // Every figure below comes out of the apply result; nothing here re-reads
-        // storage to find out what changed. See `pull-summary.js` for what that
-        // bounds — the unchanged count among them, which is reported as unknown.
+        // storage to find out what changed. The apply left out every key this
+        // device already held with the same value, so what it wrote is what changed
+        // (see `pull-summary.js`).
         const summary = buildPullSummary({
             merged,
             mergeFailed,
             mergeHeld,
             expected,
+            unchanged,
             at: new Date().toISOString(),
         });
+
+        // Nothing written means nothing latched, so there is nothing to reload
+        // for. An apply result without the counts is taken as having written.
+        // Nor is its summary kept: an earlier pull's "Reload now" toast may
+        // still be on screen, and its "What changed?" has to show that pull.
+        const wroteNothing =
+            Boolean(expected) &&
+            !mergeHeld?.length &&
+            Object.values(expected).every((count) => !Number.isFinite(count) || count === 0);
+        if (wroteNothing) {
+            console.debug('[Sync] Pull matched this device; nothing written.', summary);
+            if (!silent) showToast('Already up to date with GitHub.');
+            if (pushBack) {
+                const pushed = await this._doPush(false, opToken);
+                return { ok: true, merged: 0, pushedBack: pushed?.ok === true && !pushed?.skipped };
+            }
+            return { ok: true, merged: 0, reason: 'wrote-nothing' };
+        }
         rememberPullSummary(summary);
 
         // A record whose fold threw took the remote copy whole, which is this
@@ -1665,6 +1719,36 @@ class SyncManager {
         if (pushBack && mergeHeld?.length) return { ok: true, merged: merged?.length || 0, pushedBack: false };
 
         return { ok: true, merged: merged?.length || 0 };
+    }
+
+    /**
+     * Whether a download holds the same data as this device's own payload: neither would change anything
+     * applied to the other. The fingerprint answers when the texts match; otherwise the comparison is by
+     * value, key by key, folded the way each side would take the other (see `addsToRemote`), because a merged
+     * upload lists the same keys in another order. Anything it cannot read counts as different.
+     * @param {string} remoteText - The gist's payload, as downloaded
+     * @param {string} localText - This device's payload, just built
+     * @param {string} localHash - `contentHash(localText)`
+     * @returns {boolean} True when the two hold the same data
+     * @private
+     */
+    _sameContent(remoteText, localText, localHash) {
+        if (contentHash(remoteText) === localHash) return true;
+        try {
+            // The store comparison reads only `stores`. A download whose format
+            // or registry differs must reach the apply, which refuses a newer
+            // format and learns the registry
+            const remote = JSON.parse(remoteText);
+            const local = JSON.parse(localText);
+            if (remote?.formatVersion !== local?.formatVersion) return false;
+            if (stableStringify(remote?.externalKeys ?? null) !== stableStringify(local?.externalKeys ?? null)) {
+                return false;
+            }
+            return !addsToRemote(remoteText, localText, { forUpload: false }) && !addsToRemote(localText, remoteText);
+        } catch (error) {
+            console.warn('[Sync] Could not compare the download with this device; applying it:', error);
+            return false;
+        }
     }
 
     /**

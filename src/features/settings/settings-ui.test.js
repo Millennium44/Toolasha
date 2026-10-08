@@ -491,6 +491,7 @@ vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: () => ({}),
 }));
 vi.mock('../../utils/full-backup.js', () => ({
+    tombstoneCompanionKey: () => null,
     exportEverythingJSON: async () => '{}',
     importEverything: async () => mocks.importResult,
 }));

@@ -31,13 +31,14 @@ function draw(body) {
     head.appendChild(panelLine('Summary', formatPullSummaryLine(summary)));
     if (summary.at) head.appendChild(panelLine('Applied', summary.at));
     head.appendChild(
-        panelLine(
-            'Unchanged',
-            'unknown',
-            ROW_COLORS.dim,
-            `Unchanged records are ${UNCHANGED_UNKNOWN}. Counting them would mean re-reading every ` +
-                'key after the write, which cannot answer the question anyway.'
-        )
+        summary.unchanged === null || summary.unchanged === undefined
+            ? panelLine('Unchanged', 'unknown', ROW_COLORS.dim, `Unchanged records are ${UNCHANGED_UNKNOWN}.`)
+            : panelLine(
+                  'Unchanged',
+                  String(summary.unchanged),
+                  ROW_COLORS.dim,
+                  'Records this device already held with the downloaded value. They were not written.'
+              )
     );
 
     for (const store of summary.stores) {
@@ -73,7 +74,11 @@ function draw(body) {
                 )
             );
         }
-        card.appendChild(panelLine('Unchanged', 'unknown', undefined, UNCHANGED_UNKNOWN));
+        card.appendChild(
+            store.unchanged === null || store.unchanged === undefined
+                ? panelLine('Unchanged', 'unknown', undefined, UNCHANGED_UNKNOWN)
+                : panelLine('Unchanged', String(store.unchanged), undefined, 'Already the same here; not written.')
+        );
 
         for (const record of store.combinedRecords) {
             card.appendChild(panelNote(`· ${record.key}${record.label ? ` — ${record.label}` : ''}`));
