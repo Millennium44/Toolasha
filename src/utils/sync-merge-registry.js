@@ -256,8 +256,8 @@ export function listSyncMerges() {
  *   belongs to and where it sorts in it (larger is newer); null for a key the rule does not judge. `end` is the
  *   latest moment the key can hold, when that is later than `order` (a month key's last day); defaults to `order`
  * @property {number} [keep] - How many of the newest keys each window keeps
- * @property {{span: number, now: () => number}} [maxAge] - Keys whose `end` is more than `span` before the
- *   window's reference moment are dropped; the reference is `now()`, capped at the newest `end` in the window
+ * @property {{floor: (newestEnd: number) => number}} [maxAge] - Keys whose `end` is before `floor(newestEnd)`
+ *   are dropped, `newestEnd` being the newest `end` in the key's window
  */
 
 /** @type {Array<SyncRetention>} */
@@ -283,9 +283,10 @@ const retentions = [];
  *
  * A rule is a count (`keep`), an age (`maxAge`), or both. An age rule is for an owner that prunes by date, not
  * by count: it keeps a row for a number of days whether it has written one a day or one a week, so a count of
- * keys cannot say what it keeps. Its reference moment is the clock, but never later than the newest key in the
- * window: a device that has been idle (or whose clock is ahead) keeps more than the owner's own pruning would,
- * never less, and a rule only deletes what its owner would delete anyway.
+ * keys cannot say what it keeps. The owner supplies the cut itself, given the newest key in the window, so it
+ * can be the owner's own clock-based cut capped by that newest key: a device that has been idle (or whose clock
+ * is ahead) then keeps more than the owner's own pruning would, never less, and a rule only deletes what its
+ * owner would delete anyway.
  *
  * @param {Object} options - The rule
  * @param {string} options.store - Object store name
@@ -293,7 +294,7 @@ const retentions = [];
  * @param {(key: string) => {group: string, order: number, end?: number}|null} options.parse - Window, order and
  *   latest moment of a key
  * @param {number} [options.keep] - Newest keys kept per window
- * @param {{span: number, now: () => number}} [options.maxAge] - Age cutoff, in the units `parse` returns
+ * @param {{floor: (newestEnd: number) => number}} [options.maxAge] - The age cut, in the units `parse` returns
  * @returns {() => void} Unregister, mostly for tests
  */
 export function registerSyncRetention({ store, prefix, parse, keep, maxAge }) {
@@ -301,7 +302,7 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge }) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
     }
     if (typeof parse !== 'function') throw new Error('[SyncMergeRegistry] registerSyncRetention needs a parse()');
-    const hasAge = Boolean(maxAge) && Number.isFinite(maxAge.span) && typeof maxAge.now === 'function';
+    const hasAge = Boolean(maxAge) && typeof maxAge.floor === 'function';
     if (keep !== undefined && (!Number.isInteger(keep) || keep < 1)) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a positive keep');
     }
@@ -354,7 +355,7 @@ export function retentionDrops(store, keys) {
             if (rule.maxAge) {
                 let newest = -Infinity;
                 for (const { end } of members) newest = Math.max(newest, end);
-                const floor = Math.min(rule.maxAge.now(), newest) - rule.maxAge.span;
+                const floor = rule.maxAge.floor(newest);
                 for (const { key, end } of members) if (end < floor) dropped.add(key);
             }
             if (rule.keep === undefined || members.length <= rule.keep) continue;

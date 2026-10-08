@@ -481,7 +481,9 @@ class ChunkedHistory {
             if (!this.pruneEntries) return united;
             try {
                 const pruned = this.pruneEntries(united);
-                return Array.isArray(pruned) ? pruned : united;
+                // Never an empty husk where the owner would have no key (or still has the history):
+                // dropping a whole chunk is the key rule's call, not the fold's
+                return Array.isArray(pruned) && (pruned.length > 0 || united.length === 0) ? pruned : united;
             } catch (error) {
                 console.error(`[${this.label}] Pruning a folded chunk failed; keeping the union:`, error);
                 return united;
