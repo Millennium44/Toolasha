@@ -12,6 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Guild tokens count 0 in net worth until a Guild Shop exchange rate has been read, instead of using an assumed rate.
 - The Action Timing Monitor no longer reports the labyrinth's full bar as a stall, and sync's left-out summary is logged only when it changes.
 
+### Sync skips idle pushes
+
+- An automatic sync push no longer reads and hashes every synced store when nothing it carries has been written since the last check, so idle 15-minute pushes stop stalling the page; a pressed Push always builds.
+
 ### Guild building dialogs scroll on Firefox
 
 - The guild building and shrine upgrade dialog, with its gold-cost table, now scrolls to the bottom on Firefox (mobile included), and the cost table scrolls sideways on narrow screens instead of being cut off.

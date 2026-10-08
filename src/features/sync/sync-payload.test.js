@@ -97,6 +97,7 @@ await import('../guild/guild-xp-tracker.js');
 await import('../guild/guild-trials-store.js');
 
 const {
+    payloadCarriesKey,
     buildPayloadJSON,
     resetLeftOutLogForTests,
     applyPayload,
@@ -1680,5 +1681,24 @@ describe('trimmedRegisteredKeys, which asks only about histories a device caps',
         const local = payloadOf({ guildHistory: {} });
         const remote = payloadOf({ guildHistory: { guildXP_Foo: { Foo: [{ t: 1, xp: 1 }] } } });
         expect(trimmedRegisteredKeys(local, remote)).toEqual([]);
+    });
+});
+
+describe('payloadCarriesKey', () => {
+    test('a setting this script owns travels', () => {
+        expect(payloadCarriesKey('settings', 'script_settingsMap_603281')).toBe(true);
+        expect(payloadCarriesKey('xpHistory', 'anything')).toBe(true);
+    });
+
+    test.each([
+        ['settings', 'sessionBriefingLastAlive_603281'],
+        ['settings', 'toolasha_local_liveGraph_603281'],
+        ['settings', 'toolasha_sync_lastHash'],
+        ['settings', 'waveGapTally'],
+        ['settings', 'otherScriptStats'],
+        ['guildHistory', 'trialTraceChunk_7'],
+        ['openableAnalytics', 'anything'],
+    ])('%s/%s never reaches a payload', (storeName, key) => {
+        expect(payloadCarriesKey(storeName, key)).toBe(false);
     });
 });

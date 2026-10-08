@@ -221,6 +221,16 @@ const LOST_WINDOWS_KEPT = 20;
 /** How many distinct keys the write-rate census will track before it stops adding */
 const WRITE_RATE_KEYS_TRACKED = 400;
 
+/**
+ * The channel every tab announces its committed writes on — see `onWrite()`.
+ *
+ * Origin-wide, like the database: every game tab of this script shares both.
+ */
+const WRITE_CHANNEL_NAME = 'toolasha-storage-writes';
+
+/** A bulk write naming more keys than this is announced as "keys unknown" rather than listed */
+const WRITE_CHANNEL_KEYS_MAX = 64;
+
 class Storage {
     constructor() {
         this.db = null;
@@ -433,6 +443,17 @@ class Storage {
         this.ready = new Promise((resolve) => {
             this._markReady = resolve;
         });
+
+        /**
+         * Who wants to hear about writes — see `onWrite()`.
+         * @type {Set<Function>}
+         */
+        this._writeListeners = new Set();
+        /**
+         * The cross-tab write announcements: `undefined` until first needed,
+         * `null` where a channel cannot be had, else the open BroadcastChannel.
+         */
+        this._writeChannel = undefined;
     }
 
     /**
@@ -1304,6 +1325,10 @@ class Storage {
      */
     async set(key, value, storeName = 'settings', immediate = false) {
         if (this._refuseDuringRestore(key, storeName, 'save')) return false;
+        // Told now, not at commit: a debounced value sits here for seconds
+        // before IndexedDB sees it, and a listener asking "has anything been
+        // written?" in that window must hear yes. The commit announces again.
+        this._emitWrite(storeName, [key], 'local');
 
         // The page has said goodbye and the connection is closing (see
         // `closeForTeardown`), so this cannot be written now — but writers do
@@ -1448,6 +1473,7 @@ class Storage {
                 // The commit, not the request, is what proves there was room
                 transaction.oncomplete = () => {
                     this._noteWriteCommitted(failuresAtStart);
+                    this._announceCommit(storeName, [key]);
                 };
 
                 // A quota failure aborts the whole transaction; without this the
@@ -1500,6 +1526,7 @@ class Storage {
         }
         if (this._refuseDuringRestore(key, storeName, 'save')) return null;
 
+        this._emitWrite(storeName, [key], 'local');
         const superseded = this._supersedePending(`${storeName}:${key}`);
         const result = await this._guardedWrite('update', key, storeName, null, () =>
             this._runUpdate(key, mutate, storeName, superseded)
@@ -1581,6 +1608,7 @@ class Storage {
                 transaction.oncomplete = () => {
                     if (written !== NOT_WRITTEN) {
                         this._noteWriteCommitted(failuresAtStart);
+                        this._announceCommit(storeName, [key]);
                         settle({ written: true, value: written }, null);
                     } else if (unchanged) settle(unchanged, null);
                     else settle(null, null);
@@ -2073,6 +2101,7 @@ class Storage {
             return false;
         }
         if (this._refuseDuringRestore(key, storeName, 'delete')) return false;
+        this._emitWrite(storeName, [key], 'local');
 
         // A queued debounced write to this key predates the delete, and used to
         // land three seconds after it — so a prune, or a "clear this character's
@@ -2101,6 +2130,10 @@ class Storage {
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
                 const request = store.delete(key);
+
+                transaction.oncomplete = () => {
+                    this._announceCommit(storeName, [key]);
+                };
 
                 request.onsuccess = () => {
                     // Deleting is the one operation that makes "storage is full"
@@ -2343,6 +2376,8 @@ class Storage {
             // chunks would otherwise fill the console with the same sentence
             if (this._refuseDuringRestore('(bulk write)', storeName, 'save')) return 0;
         }
+        const keys = Object.keys(entries || {});
+        if (keys.length > 0) this._emitWrite(storeName, keys.length > WRITE_CHANNEL_KEYS_MAX ? null : keys, 'local');
         const written = await this._putAllWritten(storeName, entries, options);
         return written.length;
     }
@@ -2410,7 +2445,10 @@ class Storage {
                 }
 
                 transaction.oncomplete = () => {
-                    if (written.length > 0) this._noteWriteCommitted(failuresAtStart);
+                    if (written.length > 0) {
+                        this._noteWriteCommitted(failuresAtStart);
+                        this._announceCommit(storeName, written);
+                    }
                     resolve(written);
                 };
                 // A quota abort fires `abort` and never `complete` or `error`;
@@ -2671,6 +2709,7 @@ class Storage {
             this._runningTeardownListeners = false;
         }
         this._closingForTeardown = true;
+        this._closeWriteChannel();
 
         // Deliberately not awaited — see above. Its rejection is not anyone's to
         // handle at this point, but an unhandled one would be logged as a script
@@ -2720,6 +2759,162 @@ class Storage {
     }
 
     /**
+     * Hear about every write to the database — this tab's and, once committed,
+     * every other tab's.
+     *
+     * For a reader that wants to know "has anything changed since I last
+     * looked?" without reading everything to find out: the sync push, which
+     * otherwise serializes and hashes every store each interval just to learn
+     * that nothing moved. This tab's writes are reported when they are asked
+     * for (`origin: 'local'`, before a debounced value reaches IndexedDB) and
+     * again when they commit (`'commit'`). Other tabs' writes arrive over a
+     * BroadcastChannel after they commit (`'remote'`) — never before, so a
+     * listener that has heard nothing since it began a read of a store knows
+     * the read saw every committed write.
+     *
+     * `storeName: null` means "something may have changed that was not
+     * reported" — the page coming back from the bfcache, where it could not
+     * hear the other tabs — and a counter must treat it as a write to every
+     * store. `keys: null` means the keys are not listed (a bulk write).
+     *
+     * A listener cannot rely on hearing other tabs unless
+     * {@link Storage#crossTabWritesVisible} says so.
+     * @param {(write: {storeName: string|null, keys: Array<string>|null, origin: string}) => void} listener
+     *   Called synchronously for each write
+     * @returns {Function} Unsubscribe
+     */
+    onWrite(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this._writeListeners.add(listener);
+        this._listenForOtherTabs();
+        return () => this._writeListeners.delete(listener);
+    }
+
+    /**
+     * Whether other tabs' writes reach `onWrite` listeners in this tab.
+     * @returns {boolean} True when a listener is registered and the channel is open and heard
+     */
+    crossTabWritesVisible() {
+        if (this._writeListeners.size === 0) return false;
+        return Boolean(this._listenForOtherTabs()?.onmessage);
+    }
+
+    /**
+     * Open the cross-tab write channel, or learn it cannot be had.
+     *
+     * Every tab that commits a write opens it to post — a tab with sync off, or
+     * not the one running the schedule, still writes records the scheduling tab
+     * must hear about. Only a tab with an `onWrite` listener also listens on it
+     * (see `_listenForOtherTabs`); one that merely posts carries no handler.
+     * Closed while the page says goodbye (`closeForTeardown`) — an open channel
+     * can keep a page out of the bfcache — and opened again on the next use.
+     * @returns {BroadcastChannel|null} The channel, or null
+     * @private
+     */
+    _openWriteChannel() {
+        if (this._writeChannel !== undefined) return this._writeChannel;
+        if (this._closingForTeardown) return null;
+        this._writeChannel = this._createWriteChannel();
+        return this._writeChannel;
+    }
+
+    /**
+     * A new channel on the write announcements' name, or null where there can be none.
+     * @returns {BroadcastChannel|null} The channel, or null
+     * @private
+     */
+    _createWriteChannel() {
+        // A page only: under the test runner there are no other tabs, and an
+        // open channel would hold the process up
+        if (typeof window === 'undefined' || typeof BroadcastChannel !== 'function') return null;
+        try {
+            const channel = new BroadcastChannel(WRITE_CHANNEL_NAME);
+            // Node's channel (a DOM-emulating test) keeps the process alive unless told not to
+            channel.unref?.();
+            return channel;
+        } catch (error) {
+            console.warn('[Storage] Cross-tab write announcements are unavailable:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Open the write channel with a handler that passes other tabs' commits to
+     * this tab's listeners.
+     * @returns {BroadcastChannel|null} The channel, or null
+     * @private
+     */
+    _listenForOtherTabs() {
+        const channel = this._openWriteChannel();
+        if (channel && !channel.onmessage) {
+            channel.onmessage = (event) => {
+                const data = event?.data;
+                if (!data || typeof data.storeName !== 'string') return;
+                this._emitWrite(data.storeName, Array.isArray(data.keys) ? data.keys : null, 'remote');
+            };
+        }
+        return channel;
+    }
+
+    /**
+     * Close the write channel for the page's goodbye. Its next use reopens it.
+     * @private
+     */
+    _closeWriteChannel() {
+        const channel = this._writeChannel;
+        if (!channel) return;
+        this._writeChannel = undefined;
+        try {
+            channel.onmessage = null;
+            channel.close();
+        } catch (error) {
+            console.warn('[Storage] Closing the write channel failed:', error);
+        }
+    }
+
+    /**
+     * Tell this tab's write listeners about a write.
+     * @param {string|null} storeName - The store written, or null for "unknown"
+     * @param {Array<string>|null} keys - The keys written, or null when not listed
+     * @param {string} origin - 'local', 'commit', 'remote' or 'resumed'
+     * @private
+     */
+    _emitWrite(storeName, keys, origin) {
+        if (this._writeListeners.size === 0) return;
+        for (const listener of this._writeListeners) {
+            try {
+                listener({ storeName, keys, origin });
+            } catch (error) {
+                console.error('[Storage] A write listener failed:', error);
+            }
+        }
+    }
+
+    /**
+     * A write committed: tell this tab's listeners, and every other tab.
+     * @param {string} storeName - The store written
+     * @param {Array<string>} keys - The keys that landed
+     * @private
+     */
+    _announceCommit(storeName, keys) {
+        const listed = keys.length > WRITE_CHANNEL_KEYS_MAX ? null : keys;
+        this._emitWrite(storeName, listed, 'commit');
+        // The teardown flush's own commits land after the channel was closed.
+        // They still go out, on a channel opened for the one message: a
+        // message posted before close is delivered.
+        const closing = this._closingForTeardown;
+        const channel = closing ? this._createWriteChannel() : this._openWriteChannel();
+        if (!channel) return;
+        try {
+            channel.postMessage({ storeName, keys: listed });
+        } catch (error) {
+            console.warn('[Storage] Could not announce a write to other tabs:', error);
+        } finally {
+            if (closing) channel.close?.();
+        }
+    }
+
+    /**
      * Open a connection again after a page that said goodbye came back.
      *
      * `pagehide` fires for two different endings. One is the page being
@@ -2741,6 +2936,10 @@ class Storage {
     async reopenAfterRestore() {
         if (!this._closingForTeardown) return Boolean(this.db);
         this._closingForTeardown = false;
+        // Frozen, this page may have missed other tabs' write announcements;
+        // anyone counting them is told it can no longer vouch for the count.
+        this._emitWrite(null, null, 'resumed');
+        if (this._writeListeners.size > 0) this._listenForOtherTabs();
         // A reconnect that gave up before the page was frozen says nothing about
         // now, and the wait it suppresses is the one this needs.
         this._lastReconnectFailureAt = 0;
