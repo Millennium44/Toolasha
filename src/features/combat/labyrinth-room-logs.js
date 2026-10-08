@@ -1419,7 +1419,7 @@ class LabyrinthRoomLogs {
         });
 
         this.persist();
-        this.renderIfOpen();
+        this.renderIfOpen({ fightRecord: true });
     }
 
     isSessionComplete(session) {
@@ -1581,7 +1581,7 @@ class LabyrinthRoomLogs {
         this.activeSession = null;
         this.fight = null;
         this.record.clear().catch((error) => console.error('[LabyrinthRoomLogs] Failed to clear logs:', error));
-        this.renderIfOpen();
+        this.renderIfOpen({ fightRecord: true });
     }
 
     // -------------------------------------------------------------------------
@@ -2350,10 +2350,20 @@ class LabyrinthRoomLogs {
         header.addEventListener('pointerdown', onPointerDown);
     }
 
-    renderIfOpen() {
-        if (this.panel && this.panel.isConnected && this.panel.style.display !== 'none') {
-            this.render();
-        }
+    /**
+     * Redraw the panel when it is showing.
+     *
+     * The Accuracy view reads only the fight record, so it redraws only for an
+     * update that changed it: a skilling action or an experience tick during a
+     * lab run arrives every few seconds, and redrawing on each re-read the whole
+     * record and made the tab flash.
+     *
+     * @param {{fightRecord?: boolean}} [options] - `fightRecord`: the fight record changed
+     */
+    renderIfOpen({ fightRecord = false } = {}) {
+        if (!this.panel || !this.panel.isConnected || this.panel.style.display === 'none') return;
+        if (this.view === 'accuracy' && !fightRecord) return;
+        this.render();
     }
 
     /**
@@ -3187,13 +3197,16 @@ class LabyrinthRoomLogs {
         if (!list) return;
 
         const token = ++this.renderToken;
-        list.textContent = '';
+        // What is on screen stays until the new reading replaces it: emptying
+        // the list before the await left it blank for the length of the read.
+        //
         // Read and cleared first, so a redraw that bails below cannot leave it
         // set for the next, data-driven one
         const reuseRequested = this._reuseAccuracySnapshot === true;
         this._reuseAccuracySnapshot = false;
 
         if (!this.simSource?.accuracy) {
+            list.textContent = '';
             list.appendChild(
                 this.makeNote('The labyrinth clear rate feature is off, so no fights are being recorded.')
             );
@@ -3211,6 +3224,8 @@ class LabyrinthRoomLogs {
             snapshot = reuse ? this.lastAccuracy : await this.simSource.accuracy({ since: this.sinceBaseline });
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the fight record failed:', error);
+            if (token !== this.renderToken) return;
+            list.textContent = '';
             list.appendChild(this.makeNote('Could not read the fight record.'));
             return;
         }

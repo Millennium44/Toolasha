@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Room Logs Accuracy tab stops flashing during lab runs
+
+- The Accuracy tab now redraws only when a fight is recorded, not on every skilling action or experience tick, and keeps what it shows until the new reading is ready, so it no longer blinks blank while a lab run is going.
+
 <!-- shipped in 3.65.0 -->
 
 ### Sync stops bringing back pruned history
