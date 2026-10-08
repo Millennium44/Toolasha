@@ -149,7 +149,7 @@ describe('per-day recorder retention', () => {
         expect([...retentionDrops(STORE, [a, b, b2, tomb, legacy])]).toEqual([b]);
     });
 
-    test('a folded month chunk drops the rows past the window, so the gist cannot hand them back', () => {
+    test('a pull leaves out gist-only rows past the window, so the gist cannot hand them back', () => {
         process.env.TZ = 'UTC';
         const registration = mergeForKey(STORE, 'chestOpenRec_32030_2025-11');
         // 400 days back from 2026-12-28 is 2025-11-23: the 20th is past it, the 25th is not
@@ -157,20 +157,40 @@ describe('per-day recorder retention', () => {
         const gist = [
             { d: '2025-11-20', openings: {} },
             { d: '2025-11-25', openings: {} },
+            { d: '2025-11-28', openings: {} },
         ];
 
-        expect(registration.mergeForPull(local, gist).map((row) => row.d)).toEqual(['2025-11-25']);
+        expect(registration.mergeForPull(local, gist).map((row) => row.d)).toEqual(['2025-11-25', '2025-11-28']);
     });
 
-    test('a folded chunk of an idle character is never written empty', () => {
+    test('a pull never removes a row this device holds, even one past the window (an idle character)', () => {
         process.env.TZ = 'UTC';
         vi.setSystemTime(Date.UTC(2027, 5, 1));
-        const registration = mergeForKey(STORE, 'combatLootRec_32030_2026-10-01');
-        const local = [{ d: '2026-10-01', openings: {} }];
-        const gist = [{ d: '2026-10-01', openings: {} }];
+        const registration = mergeForKey(STORE, 'chestOpenRec_32030_2026-04');
+        // This device last recorded in January 2027: its April 2026 month still has every day
+        const days = Array.from({ length: 30 }, (_, i) => ({ d: `2026-04-${String(i + 1).padStart(2, '0')}`, n: 1 }));
+        const gist = days.filter((row) => row.d >= '2026-04-10');
 
-        const folded = registration.mergeForPull(local, gist);
+        const folded = registration.mergeForPull(days, gist);
 
-        expect(folded.map((row) => row.d)).toEqual(['2026-10-01']);
+        expect(folded.map((row) => row.d)).toEqual(days.map((row) => row.d));
+        // ...and a gist that adds nothing leaves the fold equal to the local copy: nothing to write, no toast
+        expect(JSON.stringify(folded)).toBe(JSON.stringify(days));
+    });
+
+    test('an upload fold does not prune either side', () => {
+        process.env.TZ = 'UTC';
+        const registration = mergeForKey(STORE, 'chestOpenRec_32030_2025-11');
+        const mine = [{ d: '2025-11-28', openings: {} }];
+        const gist = [{ d: '2025-11-20', openings: {} }];
+
+        expect(registration.merge(gist, mine, { forUpload: true }).map((row) => row.d)).toEqual([
+            '2025-11-20',
+            '2025-11-28',
+        ]);
+        expect(registration.merge(mine, gist, { forUpload: true }).map((row) => row.d)).toEqual([
+            '2025-11-20',
+            '2025-11-28',
+        ]);
     });
 });

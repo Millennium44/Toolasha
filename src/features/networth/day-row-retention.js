@@ -49,12 +49,12 @@ function dayId(days) {
 }
 
 /**
- * The recorders' own pruning, as a function of one chunk's rows: a row older than the window is dropped
- * (`localDayId(now - days)` is the floor, as in each recorder's `_save`). A fold of two copies of a chunk runs
- * through this, so the day rows of a month chunk the key rule keeps (the one straddling the window) are not
- * handed back by the gist either. A chunk with no row at or after the floor is returned whole: the owner
- * prunes such a chunk only by deleting its key (which the key rule judges), never by writing it empty, and a
- * character that has not recorded for longer than the window still has its history.
+ * The recorders' own pruning, as a function of rows a pull is about to take from the gist: a row older than
+ * the window is left out (`localDayId(now - days)` is the floor, as in each recorder's `_save`). Applied to
+ * the gist-only rows alone, never to what this device holds: this device's rows are its owner's to prune, and
+ * a character that has not recorded for a while still has history from before the floor that its own last
+ * prune left in place (the key rule judges that by the character's newest key, which a fold cannot see). So a
+ * pull stops taking back what the recorder pruned without ever deleting a row it holds.
  * @param {number} days - The recorder's `RETENTION_DAYS`
  * @param {() => number} [now] - The clock, for tests
  * @returns {(rows: Array<{d: string}>) => Array<{d: string}>} The pruner
@@ -62,8 +62,7 @@ function dayId(days) {
 export function pruneDayRows(days, now = () => Date.now()) {
     return (rows) => {
         const floor = localDayId(now() - days * DAY_MS);
-        const kept = rows.filter((row) => row?.d >= floor);
-        return kept.length > 0 ? kept : rows;
+        return rows.filter((row) => row?.d >= floor);
     };
 }
 

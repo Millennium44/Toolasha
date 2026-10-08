@@ -320,7 +320,7 @@ class ProductionIncomeRecorder {
             identityOf: (row) => row?.d,
             mergeCopies: mergeProductionDays,
             // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
-            pruneEntries: pruneDayRows(RETENTION_DAYS),
+            pruneIncoming: pruneDayRows(RETENTION_DAYS),
             label: 'ProductionIncome',
         });
 
