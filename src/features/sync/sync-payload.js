@@ -1253,6 +1253,9 @@ async function weighAgainstLocal(payload, baseline) {
     const sameByStore = new Map();
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
+        // Before the baseline rule removes any: a companion it kept as this
+        // device's is not one the download lacked
+        const carried = new Set(Object.keys(entries));
         let local;
         try {
             local = await storage.getAll(storeName);
@@ -1283,13 +1286,49 @@ async function weighAgainstLocal(payload, baseline) {
             )
         );
         for (const key of Object.keys(entries)) {
-            if (same.has(key)) continue;
             const companion = tombstoneCompanionKey(storeName, key);
-            if (companion) same.delete(companion);
+            if (!companion) continue;
+            if (!same.has(key)) {
+                same.delete(companion);
+            } else if (
+                tombstoneCompanionKey(storeName, key, { recordOnly: true }) &&
+                !carried.has(companion) &&
+                !addedSinceExchange(baseline, storeName, companion) &&
+                hidesAny(local[companion], entries[key])
+            ) {
+                // The download carries no tombstones for this record, and this
+                // device's would hide some of it: the restore has to see the
+                // record to clear them
+                same.delete(key);
+            }
         }
         if (same.size > 0) sameByStore.set(storeName, same);
     }
     return sameByStore;
+}
+
+/**
+ * Whether a key this device holds is one it created after the last exchange: a
+ * merge has a baseline, and the key is not in it. Such tombstones are this
+ * device's newer deletions, not ones the gist dropped.
+ * @param {Record<string, *>|null} baseline - Hashes at the last exchange, or null outside merge mode
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {boolean} True when the key is newer than the last exchange
+ */
+function addedSinceExchange(baseline, storeName, key) {
+    return Boolean(baseline) && !Object.hasOwn(baseline, baselineId(storeName, key));
+}
+
+/**
+ * Whether a tombstones map names any id the record holds.
+ * @param {*} graves - Tombstones, `{id: at}`
+ * @param {*} record - The record, `{id: value}`
+ * @returns {boolean} True when some id is in both
+ */
+function hidesAny(graves, record) {
+    if (!graves || typeof graves !== 'object' || !record || typeof record !== 'object') return false;
+    return Object.keys(graves).some((id) => Object.hasOwn(record, id));
 }
 
 /**

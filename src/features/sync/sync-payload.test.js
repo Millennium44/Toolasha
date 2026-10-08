@@ -66,10 +66,10 @@ const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
 }));
 vi.mock('../../utils/full-backup.js', () => ({
     // One pair, as the real one declares for the settings store
-    tombstoneCompanionKey: (store, key) => {
+    tombstoneCompanionKey: (store, key, { recordOnly = false } = {}) => {
         if (store !== 'settings') return null;
         if (key === 'enhancementTracker_sessions') return 'enhancementTracker_sessionTombstones';
-        return key === 'enhancementTracker_sessionTombstones' ? 'enhancementTracker_sessions' : null;
+        return key === 'enhancementTracker_sessionTombstones' && !recordOnly ? 'enhancementTracker_sessions' : null;
     },
     importEverything: async (payload) => {
         if (importOutcome.throws) throw importOutcome.throws;
@@ -1093,6 +1093,71 @@ describe('applyPayload writes only what it changes', () => {
 
         // The record did not move, but goes in with its tombstones so the restore reconciles the pair
         expect(Object.keys(importedPayloads[0].stores.settings).sort()).toEqual([GRAVES, RECORD]);
+    });
+
+    test('an unchanged record goes in when only this device holds tombstones that hide part of it', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1, s2: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1, s2: 1 } } }));
+
+        // The restore must see the record to clear the tombstone hiding s1
+        expect(Object.keys(importedPayloads[0].stores.settings)).toContain(RECORD);
+    });
+
+    test('a merge keeps tombstones this device changed since the last exchange', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        // s1 was deleted here after the last exchange; the gist still has the old tombstones
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+        const baseline = wholeKeyHashes(payloadOf({ settings: { [RECORD]: { s1: 1 }, [GRAVES]: {} } }));
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 }, [GRAVES]: {} } }), {
+            mode: 'merge',
+            baseline,
+        });
+
+        // Neither half is written, so the restore cannot clear the newer tombstone
+        expect(importedPayloads[0].stores.settings[RECORD]).toBeUndefined();
+        expect(importedPayloads[0].stores.settings[GRAVES]).toBeUndefined();
+    });
+
+    test('a merge keeps tombstones this device created after a tombstone-free exchange', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        // No tombstones at the last exchange or in the gist; s1 was deleted here since
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+        const baseline = wholeKeyHashes(payloadOf({ settings: { [RECORD]: { s1: 1 } } }));
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 } } }), { mode: 'merge', baseline });
+
+        expect(importedPayloads[0].stores.settings[RECORD]).toBeUndefined();
+    });
+
+    test('unchanged tombstones arriving without their record are not written', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+
+        await applyPayload(payloadOf({ settings: { [GRAVES]: { s1: 5 }, panelSizeMemory: 1 } }));
+
+        expect(importedPayloads[0].stores.settings[GRAVES]).toBeUndefined();
+    });
+
+    test('an unchanged record stays out when the tombstones on this device hide none of it', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s0: 5 };
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 }, panelSizeMemory: 1 } }));
+
+        expect(Object.keys(importedPayloads[0].stores.settings)).not.toContain(RECORD);
     });
 
     test('a settings map that comes down unchanged is not handed over as landing', async () => {
