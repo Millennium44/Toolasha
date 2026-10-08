@@ -16,11 +16,13 @@
  * That bounds what can be reported, and the bound is stated rather than papered
  * over. Per store the pull result carries the keys that were folded, the keys
  * held back because the local copy could not be read, the keys whose fold threw,
- * and how many keys the store was asked to write. Written-whole is the
- * difference. **Unchanged is not derivable at all** — a key written whole with
- * byte-identical content is indistinguishable from one that moved, and keys the
- * payload never mentioned are not in the result — so it is reported as unknown,
- * never as zero.
+ * how many keys the store was asked to write, and how many keys the apply left
+ * out because this device already held them with the same value. Written-whole
+ * is the asked-for count less the folds. Unchanged is the left-out count — the
+ * apply compares each downloaded key with this device's copy before writing (see
+ * `dropUnchangedKeys` in `sync-payload.js`). A result that does not carry it (an
+ * older caller) reports it as unknown, never as zero; keys the payload never
+ * mentioned are in neither figure.
  *
  * The summary lives in memory for the session and nowhere else. It is a
  * diagnostic about one operation, not a record of the account, and it belongs to
@@ -34,7 +36,7 @@
  * Named rather than inlined so the panel and any caller that renders the
  * summary as text say the same thing about the same gap.
  */
-export const UNCHANGED_UNKNOWN = 'not derivable — a pull result does not say which whole writes changed anything';
+export const UNCHANGED_UNKNOWN = 'not reported — this pull result does not say which keys it left as they were';
 
 /** The last pull's summary, for this session only. Never persisted. */
 let lastSummary = null;
@@ -47,7 +49,8 @@ let lastSummary = null;
  *   expected count did not come back (an unknown store the import skipped)
  * @property {number} held - Records kept because this device's copy could not be read
  * @property {number} overwritten - Records whose fold threw and took the download whole
- * @property {null} unchanged - Always null; see {@link UNCHANGED_UNKNOWN}
+ * @property {number|null} unchanged - Keys left as they were because this device already held the downloaded
+ *   value, or null when the result did not report it; see {@link UNCHANGED_UNKNOWN}
  * @property {Array<{key: string, label: string}>} combinedRecords - Folded keys and their registration
  * @property {Array<{key: string, label: string}>} heldRecords - Held keys and their registration
  * @property {Array<{key: string, label: string}>} overwrittenRecords - Failed folds and their registration
@@ -65,11 +68,21 @@ let lastSummary = null;
  * @param {Array<{store: string, key: string, label: string}>} [result.mergeFailed] - Folds that threw
  * @param {Array<{store: string, key: string, label: string}>} [result.mergeHeld] - Records held back
  * @param {Record<string, number>} [result.expected] - Keys each store was asked to write
+ * @param {Record<string, number>|null} [result.unchanged] - Keys each store left as they were; null or
+ *   missing when not reported
  * @param {string|null} [result.at] - When the pull landed, ISO
  * @returns {{at: string|null, combined: number, writtenWhole: number, writtenWholePartial: boolean,
- *   held: number, overwritten: number, unchanged: null, stores: Array<PullStoreSummary>}}
+ *   held: number, overwritten: number, unchanged: number|null, stores: Array<PullStoreSummary>}}
  */
-export function buildPullSummary({ merged = [], mergeFailed = [], mergeHeld = [], expected = {}, at = null } = {}) {
+export function buildPullSummary({
+    merged = [],
+    mergeFailed = [],
+    mergeHeld = [],
+    expected = {},
+    unchanged = null,
+    at = null,
+} = {}) {
+    const reported = Boolean(unchanged) && typeof unchanged === 'object';
     const rows = new Map();
     /**
      * @param {string} store - Store name
@@ -83,7 +96,7 @@ export function buildPullSummary({ merged = [], mergeFailed = [], mergeHeld = []
                 writtenWhole: null,
                 held: 0,
                 overwritten: 0,
-                unchanged: null,
+                unchanged: reported ? 0 : null,
                 combinedRecords: [],
                 heldRecords: [],
                 overwrittenRecords: [],
@@ -120,6 +133,12 @@ export function buildPullSummary({ merged = [], mergeFailed = [], mergeHeld = []
         target.writtenWhole = Math.max(0, count - target.combined);
     }
 
+    if (reported) {
+        for (const [store, count] of Object.entries(unchanged)) {
+            if (Number.isFinite(count) && count > 0) row(store).unchanged = count;
+        }
+    }
+
     const stores = [...rows.values()].sort((a, b) => a.store.localeCompare(b.store));
     const sum = (pick) => stores.reduce((total, store) => total + pick(store), 0);
 
@@ -132,7 +151,7 @@ export function buildPullSummary({ merged = [], mergeFailed = [], mergeHeld = []
         writtenWholePartial: stores.some((store) => store.writtenWhole === null),
         held: sum((store) => store.held),
         overwritten: sum((store) => store.overwritten),
-        unchanged: null,
+        unchanged: reported ? sum((store) => store.unchanged ?? 0) : null,
         stores,
     };
 }
@@ -165,6 +184,7 @@ export function formatPullSummaryLine(summary) {
         parts.push(`${summary.writtenWholePartial ? 'at least ' : ''}${summary.writtenWhole} written whole`);
     }
     if (summary.held > 0) parts.push(`${summary.held} held unreadable`);
+    if (summary.unchanged > 0) parts.push(`${summary.unchanged} already the same`);
 
     return parts.length ? `Pull applied: ${parts.join(', ')}.` : 'Pull applied: no records changed.';
 }
@@ -173,7 +193,7 @@ export function formatPullSummaryLine(summary) {
  * One store's counts, for the panel and for anything rendering the summary as text.
  *
  * @param {PullStoreSummary} store - One row of the summary
- * @returns {string} e.g. `settings: 1 combined, 3 written whole, 1 held, unchanged unknown`
+ * @returns {string} e.g. `settings: 1 combined, 3 written whole, 1 held, 12 unchanged`
  */
 export function formatPullStoreLine(store) {
     if (!store) return '';
@@ -181,7 +201,9 @@ export function formatPullStoreLine(store) {
     parts.push(store.writtenWhole === null ? 'written whole unknown' : `${store.writtenWhole} written whole`);
     parts.push(`${store.held} held`);
     if (store.overwritten > 0) parts.push(`${store.overwritten} overwritten`);
-    parts.push('unchanged unknown');
+    parts.push(
+        store.unchanged === null || store.unchanged === undefined ? 'unchanged unknown' : `${store.unchanged} unchanged`
+    );
     return `${store.store}: ${parts.join(', ')}`;
 }
 

@@ -86,7 +86,9 @@ vi.mock('./sync-payload.js', () => ({
             merged: payload.merged ?? [],
             mergeFailed: payload.mergeFailed ?? [],
             mergeHeld: payload.mergeHeld ?? [],
-            expected: payload.expected ?? {},
+            // Undefined unless a test sets it: a result without counts is taken as having written
+            expected: payload.expected,
+            unchanged: payload.unchanged,
             exportedAt: null,
             applied: payload.appliedText ?? json,
         };
@@ -202,7 +204,8 @@ beforeEach(() => {
     payload.merged = [];
     payload.mergeFailed = [];
     payload.mergeHeld = [];
-    payload.expected = {};
+    payload.expected = undefined;
+    payload.unchanged = undefined;
     payload.complete = true;
     payload.failed = [];
     gist.found = null;
@@ -2138,5 +2141,79 @@ describe('automatic pushes merge into the upload, never into this device', () =>
         stored.map.toolasha_sync_lastHash = 'h:{"local":2}';
         await syncManager.pull();
         expect(payload.applyOptions).toMatchObject({ mode: 'pull' });
+    });
+
+    describe('a pull of what this device already holds', () => {
+        // One browser: the leader tab's own merged push is in the gist, with the
+        // note that it holds news, and the gist's text orders the keys its own way
+        beforeEach(() => {
+            stored.map.toolasha_sync_unapplied = { since: remoteAt };
+            stored.map.toolasha_sync_lastSyncedAt = remoteAt;
+            stored.map.toolasha_sync_lastSyncedSeq = 6;
+            stored.map.toolasha_sync_lastHash = 'h:{"local":2}';
+        });
+
+        test('a startup pull of the same content applies nothing, says nothing, and settles the note', async () => {
+            payload.addsToRemote = () => false;
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(result).toMatchObject({ ok: true, skipped: true, reason: 'same-content' });
+            expect(payload.applyCalls ?? 0).toBe(0);
+            expect(toasts).toHaveLength(0);
+            expect(stored.map.toolasha_sync_unapplied).toBeNull();
+            expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":2}');
+            expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(6);
+            expect(stored.map.toolasha_sync_baseline).toEqual({ uploaded: remotePayload, local: '{"local":2}' });
+        });
+
+        test('the same text under another stamp is the same content, without comparing key by key', async () => {
+            payload.text = '{"exportedAt":"2026-03-02T00:00:00.000Z","local":2}';
+            gist.read = {
+                manifest: { exportedAt: remoteAt, chunks: 1, syncSeq: 6 },
+                payload: '{"exportedAt":"2026-03-01T00:00:00.000Z","local":2}',
+            };
+            payload.addsToRemote = () => {
+                throw new Error('not asked when the fingerprints match');
+            };
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(result.reason).toBe('same-content');
+            expect(payload.applyCalls ?? 0).toBe(0);
+            expect(toasts).toHaveLength(0);
+        });
+
+        test('a download that holds news for this device is still applied', async () => {
+            payload.addsToRemote = (local, remote) => local === remotePayload && remote === '{"local":2}';
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(payload.applyCalls).toBe(1);
+        });
+
+        test('an apply that wrote nothing asks for no reload', async () => {
+            payload.expected = { settings: 0, xpHistory: 0 };
+            payload.unchanged = { settings: 3, xpHistory: 2 };
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(payload.applyCalls).toBe(1);
+            expect(result).toMatchObject({ ok: true, reason: 'wrote-nothing' });
+            expect(toasts).toHaveLength(0);
+            expect(stored.map.toolasha_sync_unapplied).toBeNull();
+        });
+
+        test('an apply that changed a record still asks for the reload, and counts what it left alone', async () => {
+            payload.expected = { settings: 1, xpHistory: 0 };
+            payload.unchanged = { settings: 3, xpHistory: 2 };
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].message).toContain('Reload now');
+            expect(toasts[0].message).toContain('1 written whole');
+            expect(toasts[0].message).toContain('5 already the same');
+        });
     });
 });
