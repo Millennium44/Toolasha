@@ -124,6 +124,8 @@ const DEFAULT_SESSIONS = 120;
 const MAX_ACTIONS = 60;
 /** A room retried this many times has made its point */
 const MAX_ATTEMPTS = 40;
+/** Skilling attempts kept per room; one room retried this often has made its point */
+const MAX_SKILLING_ATTEMPTS = 100;
 const PANEL_ID = 'mwi-lab-logs-panel';
 const TAB_ID = 'mwi-lab-logs-tab';
 
@@ -656,7 +658,9 @@ class LabyrinthRoomLogs {
         const session = this.ensureSession(snapshot);
         if (!session) return;
 
-        this.appendAction(session, snapshot);
+        const rolled = this.rollAttempt(session, snapshot);
+        const action = this.appendAction(session, snapshot);
+        this.tallyAttempt(session, snapshot, action, rolled);
         this.applySnapshot(session, snapshot);
         this.persist();
         this.renderIfOpen();
@@ -681,6 +685,8 @@ class LabyrinthRoomLogs {
             successRate: normalize(progress.successRate),
             doubleChance: normalize(progress.doubleProgressChance),
             progressPerAction: Math.max(0, Number(progress.progressPerAction) || 0),
+            // Stated on the message by the server; null when a message omits it
+            actionTimeMs: Number(progress.actionTimeMs) > 0 ? Number(progress.actionTimeMs) : null,
             targetWorkValue,
             currentWorkValue,
             targetLevel: Math.max(0, Math.floor(Number(progress.targetLevel) || 0)),
@@ -762,7 +768,7 @@ class LabyrinthRoomLogs {
         const prevCounter = Math.max(0, Math.floor(Number(prev?.actionCounter) || 0));
         const nextCounter = snapshot.actionCounter;
 
-        if (!prev || nextCounter <= prevCounter) return;
+        if (!prev || nextCounter <= prevCounter) return null;
 
         if (nextCounter - prevCounter > 1) {
             session.incomplete = true;
@@ -785,6 +791,93 @@ class LabyrinthRoomLogs {
             session.incomplete = true;
             session.actions = session.actions.slice(session.actions.length - MAX_ACTIONS);
         }
+        return action;
+    }
+
+    /**
+     * Open and close the per-attempt records of a skilling room.
+     *
+     * A room can be retried: the server's actionCounter then falls back, and the
+     * session (keyed run|room|mode) carries on across the retry. The counter
+     * going back is the boundary; the session ending closes the last attempt
+     * (see `finalizeActiveSession`).
+     *
+     * @param {Object} session - The room being logged
+     * @param {Object} snapshot - The snapshot just received
+     * @returns {boolean} Whether this snapshot began a new attempt after a reset
+     */
+    rollAttempt(session, snapshot) {
+        if (session.mode !== 'skilling') return false;
+        if (!Array.isArray(session.attempts)) session.attempts = [];
+        const prev = session.lastSnapshot;
+        const now = Date.now();
+        const open = session.attempts[session.attempts.length - 1];
+        const isOpen = open && !open.endedAt;
+        const reset = !!prev && !!isOpen && snapshot.actionCounter < (Number(prev.actionCounter) || 0);
+
+        if (reset) {
+            open.endedAt = now;
+            open.endWorkValue = Math.max(0, Number(prev.currentWorkValue) || 0);
+            open.targetWorkValue = Math.max(0, Number(prev.targetWorkValue) || 0);
+            open.cleared = open.targetWorkValue > 0 && open.endWorkValue >= open.targetWorkValue - 0.0001;
+        }
+        if (reset || !isOpen) {
+            session.attempts.push({
+                startedAt: now,
+                endedAt: 0,
+                actions: 0,
+                successes: 0,
+                doubles: 0,
+                endWorkValue: 0,
+                targetWorkValue: snapshot.targetWorkValue,
+                actionTimeMs: snapshot.actionTimeMs,
+                cleared: false,
+            });
+            if (session.attempts.length > MAX_SKILLING_ATTEMPTS) {
+                session.attempts = session.attempts.slice(session.attempts.length - MAX_SKILLING_ATTEMPTS);
+            }
+        }
+        return reset;
+    }
+
+    /**
+     * Add the action just seen to the open attempt.
+     *
+     * The first action after a reset is not in `appendAction`'s result (the
+     * counter fell, so it has nothing to compare against); a fresh attempt
+     * starts from zero work, so when that action is the first of its attempt
+     * (counter 1) it is scored against zero here. Session totals are untouched.
+     *
+     * @param {Object} session - The room being logged
+     * @param {Object} snapshot - The snapshot just received
+     * @param {Object|null} action - What `appendAction` derived, if anything
+     * @param {boolean} reset - Whether this snapshot began a new attempt
+     */
+    tallyAttempt(session, snapshot, action, reset) {
+        if (session.mode !== 'skilling') return;
+        const attempt = session.attempts?.[session.attempts.length - 1];
+        if (!attempt || attempt.endedAt) return;
+        const prev = session.lastSnapshot;
+
+        let counted = action;
+        if (reset && snapshot.actionCounter === 1) {
+            counted = this.deriveAction(
+                { currentWorkValue: 0, progressPerAction: snapshot.progressPerAction },
+                snapshot
+            );
+            attempt.actions += 1;
+        } else if (reset) {
+            // Joined the new attempt after its first action(s): count, not score
+            attempt.actions += snapshot.actionCounter;
+        } else if (action && prev) {
+            attempt.actions += Math.max(1, snapshot.actionCounter - (Number(prev.actionCounter) || 0));
+        }
+        if (counted?.outcome === 'success' || counted?.outcome === 'double') attempt.successes += 1;
+        if (counted?.outcome === 'double') attempt.doubles += 1;
+
+        attempt.endWorkValue = snapshot.currentWorkValue;
+        attempt.targetWorkValue = snapshot.targetWorkValue;
+        if (snapshot.actionTimeMs) attempt.actionTimeMs = snapshot.actionTimeMs;
     }
 
     /**
@@ -1336,6 +1429,11 @@ class LabyrinthRoomLogs {
             session.incomplete = true;
         }
         delete session.lastSnapshot;
+        const lastAttempt = session.attempts?.[session.attempts.length - 1];
+        if (lastAttempt && !lastAttempt.endedAt) {
+            lastAttempt.endedAt = session.endedAt;
+            lastAttempt.cleared = !!session.completed;
+        }
 
         // Held back rather than reported now: the experience this room earned
         // may not have been credited yet, and a record written before the
@@ -2873,7 +2971,43 @@ class LabyrinthRoomLogs {
         });
         card.appendChild(actionsRow);
 
+        const attemptsBlock = this.renderAttemptList(session);
+        if (attemptsBlock) card.appendChild(attemptsBlock);
+
         return card;
+    }
+
+    /**
+     * One compact line per retry of a skilling room: attempt number, actions,
+     * where the work ended against its target, and whether it cleared. Only
+     * shown once a room has been tried more than once; older stored sessions
+     * carry no attempts and draw nothing.
+     * @param {Object} session - A logged room
+     * @returns {HTMLElement|null}
+     */
+    renderAttemptList(session) {
+        const attempts = Array.isArray(session.attempts) ? session.attempts : [];
+        if (session.mode === 'combat' || attempts.length < 2) return null;
+        const shown = 6;
+        const box = document.createElement('div');
+        box.style.cssText = 'margin-top:3px; font-size:10px; color:rgba(221,232,255,0.75);';
+        const offset = Math.max(0, attempts.length - shown);
+        if (offset > 0) {
+            const more = document.createElement('div');
+            more.textContent = `${offset} earlier attempts not shown`;
+            more.style.opacity = '0.6';
+            box.appendChild(more);
+        }
+        attempts.slice(offset).forEach((attempt, i) => {
+            const row = document.createElement('div');
+            const target = Math.floor(Number(attempt.targetWorkValue) || 0);
+            const end = Math.floor(Number(attempt.endWorkValue) || 0);
+            row.textContent =
+                `#${offset + i + 1}: ${attempt.actions || 0} actions, ${end}/${target}` +
+                (attempt.cleared ? ' cleared' : attempt.endedAt ? '' : ' (running)');
+            box.appendChild(row);
+        });
+        return box;
     }
 
     /**
@@ -3765,7 +3899,39 @@ class LabyrinthRoomLogs {
  * @returns {{sessions: Array<Object>}} Merged record
  */
 function mergeRoomLogs(base, fresh, size) {
-    return { sessions: mergeById(sessionIdentity, newestFirst)(base?.sessions, fresh?.sessions).slice(0, size) };
+    const merged = mergeById(sessionIdentity, newestFirst)(base?.sessions, fresh?.sessions);
+    // The same room on both sides: fresh wins whole, but the attempts of both
+    // are kept. Sessions stored before attempts existed simply have none.
+    const storedBy = new Map();
+    for (const session of Array.isArray(base?.sessions) ? base.sessions : []) {
+        const id = session == null ? null : sessionIdentity(session);
+        if (id !== null) storedBy.set(id, session);
+    }
+    const sessions = merged.map((session) => {
+        const other = storedBy.get(sessionIdentity(session));
+        if (!other || other === session) return session;
+        const union = mergeAttempts(other.attempts, session.attempts);
+        return union.length ? { ...session, attempts: union } : session;
+    });
+    return { sessions: sessions.slice(0, size) };
+}
+
+/**
+ * Two lists of skilling attempts folded by start time (the later copy wins a
+ * clash), oldest first, cut to the newest {@link MAX_SKILLING_ATTEMPTS}.
+ * @param {Array<Object>} [a] - Attempts, possibly absent
+ * @param {Array<Object>} [b] - Attempts, possibly absent
+ * @returns {Array<Object>}
+ */
+function mergeAttempts(a, b) {
+    const byStart = new Map();
+    for (const list of [a, b]) {
+        for (const attempt of Array.isArray(list) ? list : []) {
+            const key = Number(attempt?.startedAt);
+            if (Number.isFinite(key)) byStart.set(key, attempt);
+        }
+    }
+    return [...byStart.values()].sort((x, y) => x.startedAt - y.startedAt).slice(-MAX_SKILLING_ATTEMPTS);
 }
 
 const labyrinthRoomLogs = new LabyrinthRoomLogs();
@@ -3788,7 +3954,7 @@ registerSyncMerge({
 });
 
 /** The singleton itself, for tests — the default export is the feature shell */
-export { labyrinthRoomLogs };
+export { labyrinthRoomLogs, mergeRoomLogs };
 
 export default {
     name: 'Labyrinth Room Logs',
