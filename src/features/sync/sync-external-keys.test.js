@@ -651,3 +651,47 @@ describe('nothing registered', () => {
         expect(storeState.putAllCalls).toEqual([]);
     });
 });
+
+describe('review round 4', () => {
+    test('no upload is built while a registry change is unsaved', async () => {
+        storeState.failWrites = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        expect((await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] })).saved).toBe(false);
+        await expect(buildPayloadJSON('settings')).rejects.toMatchObject({ kind: 'storage' });
+        warn.mockRestore();
+        // Once it saves, the build carries the registration
+        storeState.failWrites = false;
+        const payload = JSON.parse(await buildPayloadJSON('settings'));
+        expect(Object.keys(payload.externalKeys[OWNER].prefixes)).toContain('otherScriptPrefs_');
+    });
+
+    test('registering removed prefixes again does not count against the entry limit', async () => {
+        const removed = Array.from({ length: EXTERNAL_ENTRY_LIMIT - 1 }, (_, index) => `otherScriptKey${index}_`);
+        for (const prefix of removed) {
+            await registerSyncKeys({ owner: OWNER, prefixes: [prefix] });
+            await unregisterSyncKeys({ owner: OWNER, prefixes: [prefix] });
+        }
+        // One entry left: 28 resurrected removals and one new prefix fit
+        const result = await registerSyncKeys({ owner: OWNER, prefixes: [...removed.slice(0, 28), 'otherScriptNew_'] });
+        expect(result.ok).toBe(true);
+        expect(result.added).toContain('otherScriptNew_');
+        await externalKeysSettled();
+    });
+
+    test('withdrawing held prefixes does not count against the entry limit', async () => {
+        const removed = Array.from({ length: EXTERNAL_ENTRY_LIMIT - 3 }, (_, index) => `otherScriptKey${index}_`);
+        for (const prefix of removed) {
+            await registerSyncKeys({ owner: OWNER, prefixes: [prefix] });
+            await unregisterSyncKeys({ owner: OWNER, prefixes: [prefix] });
+        }
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptHeldA_', 'otherScriptHeldB_'] });
+        // Two held, one never seen: the registry ends at the limit, not past it
+        const result = await unregisterSyncKeys({
+            owner: OWNER,
+            prefixes: ['otherScriptHeldA_', 'otherScriptHeldB_', 'otherScriptUnseen_'],
+        });
+        expect(result.ok).toBe(true);
+        expect(result.removed).toContain('otherScriptUnseen_');
+        await externalKeysSettled();
+    });
+});

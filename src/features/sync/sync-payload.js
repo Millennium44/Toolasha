@@ -425,6 +425,9 @@ export async function buildPayloadJSON(scope = 'settings') {
     // Before ownership is read: a prefix another script registered on an
     // earlier page load counts from the first exchange of this one
     await requireExternalKeys();
+    // A registry change this device could not save would be published, then
+    // undone by a reload, and the next push would erase it from the gist
+    await assertExternalKeysSaved();
     const allStores = await storage.listStores();
     const ours = allStores.filter(isSyncedStore);
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
