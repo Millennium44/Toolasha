@@ -168,14 +168,18 @@ function stack(itemHrid, count) {
  * The enhancing panel's own DOM shape: a Target Level input, a Protect From Level input, a
  * Repeat input, and (optionally) a protection item in the protection slot.
  */
-function buildPanel({ target = '', protectFrom = 0, protection = null, repeat = '∞' } = {}) {
+function buildPanel({ target = '', protectFrom = 0, protection = null, protectionLevel = 0, repeat = '∞' } = {}) {
     const panel = document.createElement('div');
     panel.innerHTML =
         `<div><span>Target Level</span><input type="number" value="${target}"></div>` +
         `<div><span>Protect From Level</span><input type="number" value="${protectFrom}"></div>` +
         `<div><span>Repeat</span><input type="text" value="${repeat}"></div>` +
         `<div class="protectionItemInputContainer">${
-            protection ? `<svg><use href="/static/media/items_sprite.abc.svg#${protection}"></use></svg>` : ''
+            protection
+                ? `<div class="Item_item__x"><svg><use href="/static/media/items_sprite.abc.svg#${protection}"></use></svg>` +
+                  (protectionLevel ? `<div class="Item_enhancementLevel__y">+${protectionLevel}</div>` : '') +
+                  '</div>'
+                : ''
         }</div>`;
     document.body.appendChild(panel);
     return panel;
@@ -260,6 +264,70 @@ describe('the ~ marker', () => {
 
         const stats = panel.querySelector('#mwi-enhancement-stats');
         expect(repeatLine(stats)).not.toContain('~');
+    });
+});
+
+describe('a self-protecting item reads the stack the slot holds', () => {
+    test('a +3 copy in the protection slot is limited by the +3 stack, not the +0 one', async () => {
+        state.items['/items/cheese_sword'].enhancementCosts = [{ itemHrid: '/items/cheese', count: 2 }];
+        state.inventory = [
+            stack('/items/cheese', 100000),
+            {
+                itemHrid: '/items/cheese_sword',
+                count: 1000,
+                enhancementLevel: 0,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+            {
+                itemHrid: '/items/cheese_sword',
+                count: 5,
+                enhancementLevel: 3,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        // 1 protection draw per 6 attempts: five +3 copies pay for 30 attempts, a thousand +0 copies for far more
+        state.predictions = {
+            expectedAttempts: 600,
+            expectedProtections: 100,
+            perActionTime: 10,
+            successMultiplier: 1,
+        };
+        const panel = buildPanel({
+            target: 10,
+            protectFrom: 5,
+            protection: 'cheese_sword',
+            protectionLevel: 3,
+            repeat: '∞',
+        });
+
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+        expect(repeatLine(stats)).toBe(`To +10: ${timeReadable(300)} · ~30 attempts`);
+    });
+});
+
+describe('a zero limit is not an infinity', () => {
+    test('a self-protection stack that is absent reads 0 attempts, not ∞', async () => {
+        state.inventory = [stack('/items/cheese', 100000)];
+        state.predictions = {
+            expectedAttempts: 600,
+            expectedProtections: 100,
+            perActionTime: 10,
+            successMultiplier: 1,
+        };
+        const panel = buildPanel({
+            target: 10,
+            protectFrom: 5,
+            protection: 'cheese_sword',
+            protectionLevel: 3,
+            repeat: '∞',
+        });
+
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+        expect(repeatLine(stats)).toBe('To +10: 0 attempts — not enough materials');
     });
 });
 

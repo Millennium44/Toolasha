@@ -65,7 +65,8 @@ function buildItemHash(itemHrid, enhancementLevel = 0) {
  * alchemy spec is harmless — they simply go unread.
  *
  * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid,
- *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid }
+ *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid,
+ *   enhancingProtectionItemLevel }
  * @returns {Object} Action object shaped like one from dataManager
  */
 export function buildUnqueuedActionObject({
@@ -76,7 +77,16 @@ export function buildUnqueuedActionObject({
     enhancingMaxLevel = 0,
     enhancingProtectionMinLevel = 0,
     enhancingProtectionItemHrid = null,
+    enhancingProtectionItemLevel = 0,
 }) {
+    // A real queued enhance carries the protection item the game will spend in its secondary
+    // slot, with the enhancement level of the exact stack. Without a catalyst (alchemy's use of
+    // that slot) the panel's selected stack goes there so the stack-specific limit reads it.
+    const secondaryItemHash = catalystHrid
+        ? buildItemHash(catalystHrid, 0)
+        : enhancingProtectionItemHrid && enhancingProtectionItemLevel > 0
+          ? buildItemHash(enhancingProtectionItemHrid, enhancingProtectionItemLevel)
+          : buildItemHash(null, 0);
     return {
         id: UNQUEUED_ACTION_ID,
         actionHrid,
@@ -84,7 +94,7 @@ export function buildUnqueuedActionObject({
         currentCount: 0,
         maxCount: 0,
         primaryItemHash: buildItemHash(itemHrid, enhancementLevel),
-        secondaryItemHash: buildItemHash(catalystHrid, 0),
+        secondaryItemHash,
         // Read directly by `calculateEnhancingQueueTime` / `getEnhancingProtectionDraw`, the
         // same fields a real queued enhancing row carries (see
         // action-time-display.enhancing-protection-limit.test.js's `enhancingRow` fixture).
@@ -102,7 +112,8 @@ export function buildUnqueuedActionObject({
  * `materialLimitIsEstimated`, `isTrulyInfinite`.
  *
  * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid,
- *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid }
+ *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid,
+ *   enhancingProtectionItemLevel }
  * @returns {Object|null} The calculator result, or null when the action is not recognised
  */
 export function estimateUnlimitedAction(spec) {
@@ -117,6 +128,7 @@ export function estimateUnlimitedAction(spec) {
             spec.enhancingMaxLevel || 0,
             spec.enhancingProtectionMinLevel || 0,
             spec.enhancingProtectionItemHrid || '',
+            spec.enhancingProtectionItemLevel || 0,
         ].join('|');
         const now = Date.now();
         if (cache.key === key && now - cache.at < ESTIMATE_TTL_MS) {
@@ -223,17 +235,38 @@ export function isBoundedEnhancingEstimate(timing) {
 }
 
 /**
+ * True when an enhancing estimate is a real limit that leaves nothing affordable: a channel
+ * (materials, or protection items once the bench copy and the keep-N reserve are set aside)
+ * bound the run at zero attempts. Distinct from a genuinely unbounded estimate, which has no
+ * limit channel at all and is flagged `isTrulyInfinite`.
+ * @param {Object|null} timing - Result from `estimateUnlimitedAction`
+ * @returns {boolean}
+ */
+export function isZeroEnhancingEstimate(timing) {
+    return Boolean(
+        timing &&
+        timing.isEnhancing &&
+        !timing.isTrulyInfinite &&
+        timing.count === 0 &&
+        timing.materialLimit === 0 &&
+        timing.limitType
+    );
+}
+
+/**
  * The bounded time text for an enhancing action whose Repeat is set to unlimited (∞): the time
  * its materials and protection items actually pay for, and how many attempts that is — carrying
  * the `~` marker when the bound rests on the expected protection draw rather than a stock count
  * (`materialLimitIsEstimated`, set by `getEnhancingProtectionDraw`).
  *
- * A genuinely unbounded run (no Target Level set, or nothing to predict from) gets `∞` back
- * rather than an invented figure.
+ * A limit that leaves zero affordable attempts reads as a plain zero, never `∞`. A genuinely
+ * unbounded run (no Target Level set, or nothing to predict from) gets `∞` back rather than an
+ * invented figure.
  * @param {Object|null} timing - Result from `estimateUnlimitedAction`
  * @returns {string} Formatted text, or '∞'
  */
 export function formatEnhancingUnlimitedText(timing) {
+    if (isZeroEnhancingEstimate(timing)) return '0 attempts — not enough materials';
     if (!isBoundedEnhancingEstimate(timing)) return '∞';
     const mark = timing.materialLimitIsEstimated ? '~' : '';
     return `${timeReadable(timing.totalTime)} · ${mark}${formatLargeNumber(Math.round(timing.count))} attempts`;

@@ -1083,13 +1083,13 @@ export const settingsGroups = {
             },
             enhanceSim_protectStockReserve: {
                 id: 'enhanceSim_protectStockReserve',
-                label: 'Enhancement: Keep this many of each protection item',
+                label: 'Enhancement: Keep this many spare copies of the item being enhanced (when it is its own protection)',
                 type: 'number',
                 default: 2,
                 min: 0,
                 max: 100000,
                 requires: 'enhanceSim_protectFromStock',
-                help: 'Copies of each protection item the protect-from sweep leaves in your bag. Only what you hold above this is counted as spare.',
+                help: 'Holds back this many copies of the enhanced item from the protect-from sweep and the material limit when it protects itself. Mirrors of Protection are spent freely. The game itself cannot hold copies back: it uses up whichever stack you pick, so keep spares at a different enhancement level if you want the game to leave them alone.',
             },
             enhancementItemPins: {
                 id: 'enhancementItemPins',

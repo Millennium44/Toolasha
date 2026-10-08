@@ -257,7 +257,10 @@ export function chooseProtectionOptions({
     const withStock = (option, role) => {
         if (!useStock) return option;
         const held = Math.max(0, Math.floor(Number(holdingsOf(option.itemHrid)) || 0));
-        const spare = spareStock(held, keep);
+        // Only the item protecting itself is held back: a Mirror of Protection or any other
+        // protection item is spent freely
+        const keepHere = option.itemHrid === itemHrid ? keep : 0;
+        const spare = spareStock(held, keepHere);
         let stockPrice = 0;
         if (spare > 0) {
             const sell = typeof sellPriceOf === 'function' ? Number(sellPriceOf(option.itemHrid)) || 0 : 0;
@@ -271,7 +274,7 @@ export function chooseProtectionOptions({
             ...(option.price > 0 ? {} : { buyPriceUnknown: true }),
             role,
             held,
-            reserve: keep,
+            reserve: keepHere,
             stock: stockPrice > 0 ? spare : 0,
             stockPrice,
         };

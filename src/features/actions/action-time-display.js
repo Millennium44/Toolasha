@@ -3876,11 +3876,17 @@ class ActionTimeDisplay {
         // `enhancingProtectionItemHrid` is the configured fallback. Same precedence the action
         // bar's own enhancing readout uses.
         let protectionItemHrid = null;
+        // The enhancement level of the stack the game spends from; an item the config names
+        // without a hash is the +0 stack
+        let protectionStackLevel = 0;
         if (actionObj.secondaryItemHash) {
-            protectionItemHrid = this.parseItemHash(actionObj.secondaryItemHash).itemHrid;
+            const parsed = this.parseItemHash(actionObj.secondaryItemHash);
+            protectionItemHrid = parsed.itemHrid;
+            protectionStackLevel = protectionItemHrid ? parsed.level : 0;
         }
         if (!protectionItemHrid) {
             protectionItemHrid = actionObj.enhancingProtectionItemHrid || null;
+            protectionStackLevel = 0;
         }
         // No protection configured — every figure stays exactly what it was
         if (!protectionItemHrid) return null;
@@ -3913,7 +3919,26 @@ class ActionTimeDisplay {
 
         const perAction = protections / attempts;
         if (!Number.isFinite(perAction) || perAction <= 0) return unquantified;
-        return { itemHrid: protectionItemHrid, perAction, isEstimated: true };
+        // The item protecting itself: the game spends one stack of it, the copy on the bench is
+        // not in play, and the keep-N setting holds copies back. Any other protection item is
+        // counted as it always was
+        if (protectionItemHrid === itemHrid) {
+            const enabled = config.getSetting('enhanceSim_protectFromStock') === true;
+            const reserve = enabled
+                ? Math.max(0, Math.floor(Number(config.getSettingValue('enhanceSim_protectStockReserve', 2)) || 0))
+                : 0;
+            return {
+                itemHrid: protectionItemHrid,
+                perAction,
+                isEstimated: true,
+                selfStack: {
+                    level: protectionStackLevel,
+                    benchCopies: currentLevel === protectionStackLevel ? 1 : 0,
+                    reserve,
+                },
+            };
+        }
+        return { itemHrid: protectionItemHrid, perAction, isEstimated: true, stackLevel: protectionStackLevel };
     }
 
     /**
@@ -3983,7 +4008,14 @@ class ActionTimeDisplay {
                 }
                 if (protection && protection.perAction > 0) {
                     noteProvenance(protection.itemHrid);
-                    const availableProtections = byHrid[protection.itemHrid] || 0;
+                    let availableProtections = byHrid[protection.itemHrid] || 0;
+                    if (protection.selfStack) {
+                        // Only the stack the run draws from, less the copy on the bench and the
+                        // copies the player keeps back
+                        const { level, benchCopies, reserve } = protection.selfStack;
+                        const stack = byEnhancedKey[`${protection.itemHrid}::${level}`] || 0;
+                        availableProtections = Math.max(0, stack - benchCopies - reserve);
+                    }
                     const maxFromProtection = Math.floor(availableProtections / protection.perAction);
                     if (maxFromProtection < minLimit) {
                         minLimit = maxFromProtection;
@@ -4508,7 +4540,11 @@ class ActionTimeDisplay {
                     }
                 }
                 if (drawsProtection) {
-                    spend(protection.itemHrid, protection.perAction * performed);
+                    spend(
+                        protection.itemHrid,
+                        protection.perAction * performed,
+                        protection.stackLevel ?? protection.selfStack?.level ?? 0
+                    );
                 }
                 return performed;
             }

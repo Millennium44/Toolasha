@@ -23,6 +23,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).
 
+### Protection reserve keeps only the item itself
+
+- The keep-N protection reserve now holds back only spare copies of the item being enhanced when it protects itself (Mirrors of Protection are spent freely), and the enhancing material limit applies it too, counting only the protection stack the run actually uses.
+
 ### Synced days no longer count twice
 
 - A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.

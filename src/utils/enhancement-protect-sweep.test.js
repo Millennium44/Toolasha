@@ -202,7 +202,7 @@ describe('chooseProtectionOptions', () => {
         expect(noStock.options).toEqual([]);
 
         const heldOnly = chooseProtectionOptions({
-            itemHrid: '/items/sword',
+            itemHrid: '/items/unpriced_protection',
             itemDetails: { protectionItemHrids: [] },
             selectedHrid: '/items/unpriced_protection',
             priceOf: () => 0,
@@ -231,11 +231,11 @@ describe('chooseProtectionOptions', () => {
         );
 
         const reserveOnly = chooseProtectionOptions({
-            itemHrid: '/items/sword',
+            itemHrid: '/items/unpriced_protection',
             itemDetails: { protectionItemHrids: [] },
             selectedHrid: '/items/unpriced_protection',
             priceOf: () => 0,
-            holdingsOf: () => 2,
+            holdingsOf: (hrid) => (hrid === '/items/unpriced_protection' ? 2 : 0),
             reserve: 2,
             sellPriceOf: () => 1500,
         });
@@ -250,7 +250,7 @@ describe('chooseProtectionOptions', () => {
             sellPriceOf: () => 1500,
         });
         expect(deepHeld.options).toEqual([
-            expect.objectContaining({ price: 0, stock: 99_998, stockPrice: 1500, role: 'held' }),
+            expect.objectContaining({ price: 0, stock: 100_000, stockPrice: 1500, role: 'held' }),
         ]);
         const covered = sweep({ protectionOptions: deepHeld.options });
         const coveredRows = covered.rows.filter((row) => row.itemHrid === '/items/unpriced_protection');
@@ -260,7 +260,7 @@ describe('chooseProtectionOptions', () => {
 
     test('a selected unpriced protection with only one spare copy cannot make the purchase shortfall free', () => {
         const { options } = chooseProtectionOptions({
-            itemHrid: '/items/sword',
+            itemHrid: '/items/unpriced_protection',
             itemDetails: { protectionItemHrids: [] },
             selectedHrid: '/items/unpriced_protection',
             priceOf: () => 0,
@@ -376,9 +376,10 @@ describe('protection from stock', () => {
     const priceOf = (hrid) => prices[hrid] || 0;
     const sellPriceOf = (hrid) => sells[hrid] || 0;
     const itemDetails = { protectionItemHrids: ['/items/sword_protector', '/items/other_cape'] };
+    // The cape is the item being enhanced and also its own protection
     const choose = (holdings, reserve) =>
         chooseProtectionOptions({
-            itemHrid: '/items/sword',
+            itemHrid: '/items/other_cape',
             itemDetails,
             selectedHrid: '/items/mirror_of_protection',
             priceOf,
@@ -397,11 +398,13 @@ describe('protection from stock', () => {
 
     test('every held candidate with spare copies gets a column; the slot and cheapest keep theirs', () => {
         const options = choose({ '/items/other_cape': 3, '/items/sword_protector': 1 }, 2);
+        // Only the item protecting itself is held back: the protector's one copy is all spare
         expect(options.map((option) => [option.itemHrid, option.role, option.stock])).toEqual([
             ['/items/mirror_of_protection', 'slot', 0],
-            ['/items/sword_protector', 'cheapest', 0],
+            ['/items/sword_protector', 'cheapest', 1],
             ['/items/other_cape', 'held', 1],
         ]);
+        expect(options[1].reserve).toBe(0);
         // Spare copies are valued at what they would sell for
         expect(options[2].stockPrice).toBe(5_000);
         expect(options[2].held).toBe(3);
@@ -416,11 +419,22 @@ describe('protection from stock', () => {
         expect(choose({ '/items/other_cape': 2 }, 2).some((o) => o.itemHrid === '/items/other_cape')).toBe(false);
     });
 
+    test('a cape protecting itself keeps the reserve back; a Mirror of Protection is spent in full', () => {
+        const options = choose({ '/items/other_cape': 5, '/items/mirror_of_protection': 5 }, 2);
+        const stockOf = (hrid) => options.find((o) => o.itemHrid === hrid)?.stock;
+        expect(stockOf('/items/other_cape')).toBe(3);
+        expect(stockOf('/items/mirror_of_protection')).toBe(5);
+        expect(options.find((o) => o.itemHrid === '/items/mirror_of_protection').reserve).toBe(0);
+        expect(options.find((o) => o.itemHrid === '/items/other_cape').reserve).toBe(2);
+    });
+
     test('no bid falls back to the buy price; a bid above the ask is capped at it', () => {
-        const base = { itemHrid: '/items/sword', itemDetails, priceOf, holdingsOf: () => 5, reserve: 2 };
+        const base = { itemHrid: '/items/other_cape', itemDetails, priceOf, holdingsOf: () => 5, reserve: 2 };
         const noBid = chooseProtectionOptions({ ...base, sellPriceOf: () => 0 }).options;
         expect(noBid.length).toBeGreaterThan(1);
-        expect(noBid.every((o) => o.stockPrice === o.price && o.stock === 3)).toBe(true);
+        expect(noBid.every((o) => o.stockPrice === o.price && o.stock === (o.itemHrid === base.itemHrid ? 3 : 5))).toBe(
+            true
+        );
         const inverted = chooseProtectionOptions({ ...base, sellPriceOf: (hrid) => priceOf(hrid) * 2 }).options;
         expect(inverted.every((o) => o.stockPrice === o.price)).toBe(true);
     });
