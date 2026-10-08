@@ -1125,6 +1125,19 @@ describe('applyPayload writes only what it changes', () => {
         expect(importedPayloads[0].stores.settings[GRAVES]).toBeUndefined();
     });
 
+    test('a merge keeps tombstones this device created after a tombstone-free exchange', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        // No tombstones at the last exchange or in the gist; s1 was deleted here since
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+        const baseline = wholeKeyHashes(payloadOf({ settings: { [RECORD]: { s1: 1 } } }));
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 } } }), { mode: 'merge', baseline });
+
+        expect(importedPayloads[0].stores.settings[RECORD]).toBeUndefined();
+    });
+
     test('an unchanged record stays out when the tombstones on this device hide none of it', async () => {
         const RECORD = 'enhancementTracker_sessions';
         const GRAVES = 'enhancementTracker_sessionTombstones';

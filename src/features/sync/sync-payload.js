@@ -1290,7 +1290,11 @@ async function weighAgainstLocal(payload, baseline) {
             if (!companion) continue;
             if (!same.has(key)) {
                 same.delete(companion);
-            } else if (!carried.has(companion) && hidesAny(local[companion], entries[key])) {
+            } else if (
+                !carried.has(companion) &&
+                !addedSinceExchange(baseline, storeName, companion) &&
+                hidesAny(local[companion], entries[key])
+            ) {
                 // The download carries no tombstones for this record, and this
                 // device's would hide some of it: the restore has to see the
                 // record to clear them
@@ -1300,6 +1304,19 @@ async function weighAgainstLocal(payload, baseline) {
         if (same.size > 0) sameByStore.set(storeName, same);
     }
     return sameByStore;
+}
+
+/**
+ * Whether a key this device holds is one it created after the last exchange: a
+ * merge has a baseline, and the key is not in it. Such tombstones are this
+ * device's newer deletions, not ones the gist dropped.
+ * @param {Record<string, *>|null} baseline - Hashes at the last exchange, or null outside merge mode
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {boolean} True when the key is newer than the last exchange
+ */
+function addedSinceExchange(baseline, storeName, key) {
+    return Boolean(baseline) && !Object.hasOwn(baseline, baselineId(storeName, key));
 }
 
 /**
