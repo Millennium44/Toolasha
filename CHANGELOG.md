@@ -22,9 +22,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Missing Mats shows what it will buy
 
 - The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).
+
 ### Capes and quivers get an Enhance button
 
 - Upgrade rows for capes, quivers and other untradable gear now offer Enhance instead of Market (preselecting the copy you'd ladder: your second-best once your best is +5 or higher, otherwise your best) and price the row as enhancing that copy up to the target.
+- Lab Sim upgrade rows for a party member are priced from their own worn cape or quiver, not from your inventory.
 
 ### Synced days no longer count twice
 

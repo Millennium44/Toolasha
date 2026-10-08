@@ -2935,13 +2935,16 @@ class LabSimUI {
         }
 
         let playerDTOs;
+        let selfHrid = null;
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 playerDTOs = Object.values(editedDTOs);
+                selfHrid = this._editor.getSelfHrid() ?? null;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
+                selfHrid = result.selfHrid ?? null;
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -3133,6 +3136,7 @@ class LabSimUI {
                 {
                     playerDTOs,
                     playerIndex,
+                    selfHrid,
                     monsterHrid,
                     roomLevel,
                     crates,

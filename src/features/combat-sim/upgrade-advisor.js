@@ -2600,7 +2600,8 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
  *   row is not priced off the live character's book bag. Must match what `explainUpgradeCost` was
  *   given for the same candidate: this is the figure the table ranks on and that one is the figure
  *   it prints, and a row whose Cost column disagrees with its own breakdown is worse than either.
- *   True by default because every caller but `runUpgradeAnalysis` is solo — labyrinth and lab
+ *   True by default for the solo callers (lab skilling, all-fights); `runUpgradeAnalysis` and
+ *   `runLabyrinthUpgradeAnalysis` pass the selected player's identity.
  * @returns {number|null} Net gold cost, negative when the resale exceeds the
  *   purchase, or null when some part of it has no known price
  */
@@ -4341,10 +4342,11 @@ function buildModifiedCombatBuffs(baseBuffs, candidate) {
  * credited because the replaced gear is being kept for other floors.
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - False for a player other than the live character
  * @returns {Object} Breakdown from explainUpgradeCost plus kept-gear detail
  */
-function explainLabCandidateCost(candidate, gameData) {
-    const detail = explainUpgradeCost(candidate, gameData);
+function explainLabCandidateCost(candidate, gameData, isSelf = true) {
+    const detail = explainUpgradeCost(candidate, gameData, isSelf);
     if (!candidate.keptItems?.length) return detail;
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
@@ -4364,6 +4366,10 @@ function explainLabCandidateCost(candidate, gameData) {
  * @param {Object} params
  * @param {Array} params.playerDTOs - Player DTOs (only first used — labyrinth is solo)
  * @param {number} params.playerIndex - Index of the player to analyze
+ * @param {string|null} [params.selfHrid] - The live character's hrid in `playerDTOs`. When given, a
+ *   selected player who is not it is priced without reading the live inventory (a cape or quiver
+ *   ladders from the worn copy, not from the logged-in character's copies). Omitted means every
+ *   row is the live character's.
  * @param {string} params.monsterHrid - Labyrinth monster HRID
  * @param {number} params.roomLevel - Room level to test at
  * @param {string[]} params.crates - Crate item HRIDs
@@ -4400,6 +4406,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     const {
         playerDTOs,
         playerIndex,
+        selfHrid,
         monsterHrid,
         roomLevel,
         crates,
@@ -4431,6 +4438,10 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     if (!gameData) throw new Error('No game data available');
 
     const playerDTO = playerDTOs[playerIndex];
+    // The selector can target a party member; their cape or quiver must not be
+    // priced off the logged-in character's inventory. No `selfHrid` at all keeps
+    // the solo behavior every earlier caller relied on.
+    const isSelf = selfHrid === undefined ? true : selfHrid != null && playerDTO.hrid === selfHrid;
 
     // Shared across baseline and every candidate so win-rate deltas measure the
     // upgrade, not the gap between two independent random samples
@@ -4458,7 +4469,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             // This table ranks win rate and Gold/1% and nothing else, so a room
             // whose only combat-facing buffs are the global wisdom and rare find
             // every room grants has nothing it could move here
-            { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets, guildShrineCapToGuild }
+            { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets, guildShrineCapToGuild, isSelf }
         )
     );
 
@@ -4466,7 +4477,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // plate and the top-tier armor matching this loadout's weapon — the tier
     // progression only ever steps one rung from what's worn and would hide them
     if (labCandidateModes.includes('equipment')) {
-        const forced = generateLabArmorCandidates(playerDTO, gameData, dataManager.getInventory());
+        const forced = generateLabArmorCandidates(playerDTO, gameData, isSelf ? dataManager.getInventory() : null);
         // The labyrinth needs every element set, so these swaps are usually an
         // added purchase rather than a trade-in — pricing them net of selling the
         // piece they replace would understate what they actually cost
@@ -4507,7 +4518,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         .filter((c) => c.type !== 'community_buff')
         .map((c) => ({
             ...c,
-            cost: calculateUpgradeCost(c, gameData),
+            cost: calculateUpgradeCost(c, gameData, isSelf),
         }));
 
     // Generate buff candidates. Skilling buffs are handled in the skilling tab;
@@ -4601,7 +4612,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
         results.push({
             candidate,
-            costDetail: explainLabCandidateCost(candidate, gameData),
+            costDetail: explainLabCandidateCost(candidate, gameData, isSelf),
             costType: 'gold',
             cost: candidate.cost,
             winRate,

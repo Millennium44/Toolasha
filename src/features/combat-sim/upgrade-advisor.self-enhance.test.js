@@ -77,7 +77,9 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { calculateUpgradeCost, explainUpgradeCost } = await import('./upgrade-advisor.js');
+const { calculateUpgradeCost, explainUpgradeCost, runLabyrinthUpgradeAnalysis } = await import('./upgrade-advisor.js');
+const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
+const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
 /** One stack of `characterItems`, in the game's shape */
 function stack(itemHrid, level, location = '/item_locations/inventory', count = 1) {
@@ -172,5 +174,66 @@ describe('self-enhanced upgrade pricing', () => {
         expect(detail.buys[0]).toMatchObject({ price: 999_000_000, source: 'market' });
         expect(detail.ladder).toBeNull();
         expect(state.sweeps).toEqual([]);
+    });
+});
+
+describe('lab upgrade analysis prices the selected player, not the logged-in character', () => {
+    const CAPE_SLOT = '/equipment_types/back';
+
+    /** A lab run whose one candidate is "+0 -> +5 on the worn cape" for the player at `selfHrid`'s side of the selector */
+    async function labCapeRow(selfHrid) {
+        buildGameDataPayload.mockReturnValue({ actionDetailMap: {}, itemDetailMap: ITEM_DETAIL_MAP });
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const candidate = {
+            type: 'enhancement',
+            slot: CAPE_SLOT,
+            currentHrid: CAPE,
+            currentLevel: 0,
+            upgradeHrid: CAPE,
+            upgradeLevel: 5,
+            removedItems: [{ hrid: CAPE, enhancementLevel: 0 }],
+            description: 'Sinister Cape +5',
+        };
+        const params = {
+            playerDTOs: [
+                {
+                    hrid: 'party-member',
+                    equipment: { [CAPE_SLOT]: { hrid: CAPE, enhancementLevel: 0 } },
+                    abilities: [],
+                    staminaLevel: 50,
+                },
+            ],
+            playerIndex: 0,
+            monsterHrid: '/monsters/goblin',
+            roomLevel: 100,
+            crates: [],
+            hours: 1,
+            communityBuffs: {},
+            labyrinthCombatBuffs: [],
+            upgradeMode: 'ability_swap',
+            extraCandidates: [candidate],
+        };
+        if (selfHrid !== undefined) params.selfHrid = selfHrid;
+        const { results } = await runLabyrinthUpgradeAnalysis(params, null, {});
+        return results.find((r) => r.candidate.type === 'enhancement');
+    }
+
+    beforeEach(() => {
+        state.items = [stack(CAPE, 4)];
+        state.sweeps = [];
+    });
+
+    test('a party member is laddered from their worn cape, not the logged-in character’s +4 copy', async () => {
+        const row = await labCapeRow('my-character');
+        expect(state.sweeps).toContainEqual({ itemHrid: CAPE, from: 0, to: 5 });
+        expect(state.sweeps).not.toContainEqual({ itemHrid: CAPE, from: 4, to: 5 });
+        expect(row.candidate.cost).toBe(5_000_000);
+        expect(row.costDetail.ladder).toMatchObject({ fromLevel: 0, toLevel: 5 });
+    });
+
+    test('the logged-in character still ladders from the copy they hold', async () => {
+        const row = await labCapeRow('party-member');
+        expect(row.candidate.cost).toBe(1_000_000);
+        expect(row.costDetail.ladder).toMatchObject({ fromLevel: 4, toLevel: 5 });
     });
 });
