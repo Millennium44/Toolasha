@@ -142,6 +142,12 @@ const LOOT = vi.hoisted(() => ({
         { itemHrid: '/items/garnet', dropRate: 0.5, minCount: 1, maxCount: 1 },
         { itemHrid: '/items/pearl', dropRate: 0.2, minCount: 1, maxCount: 1 },
     ],
+    // Nobody bids on either: coins only, and coins with a Star Fragment
+    '/items/coin_pouch': [{ itemHrid: '/items/coin', dropRate: 1, minCount: 100, maxCount: 300 }],
+    '/items/mixed_chest': [
+        { itemHrid: '/items/coin', dropRate: 1, minCount: 1000, maxCount: 1000 },
+        { itemHrid: '/items/star_fragment', dropRate: 1, minCount: 1, maxCount: 1 },
+    ],
 }));
 
 /** The listing tracker's cached order books: itemHrid → {asks, lastUpdated} */
@@ -270,7 +276,14 @@ const amberTransmute = (hrid, setup = {}) => ({
     dropRevenues: [
         { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
         ...(game.crateDrop
-            ? [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 0 }]
+            ? [
+                  {
+                      itemHrid: game.crateDrop === true ? '/items/small_artisans_crate' : game.crateDrop,
+                      isRare: true,
+                      dropsPerHour: 1,
+                      price: 0,
+                  },
+              ]
             : []),
     ],
     ...setup,
@@ -668,6 +681,33 @@ describe('transmute routes', () => {
         );
         expect(big.credits.get('/items/pearl')).toBeGreaterThan(100);
         expect(big.collateral).toBe(6);
+    });
+
+    test('coins a crate holds are counted at face value, untaxed and unbounded', async () => {
+        const attempts = 1 / 0.92;
+        const crates = (1 / 100) * attempts;
+        const plain = amberRoute(await buildCollectionRoutes());
+        // A pouch of nothing but coins: priced, 200 coins a pouch off the cost, nothing sold or collected
+        game.crateDrop = '/items/coin_pouch';
+        const pouch = amberRoute(await buildCollectionRoutes());
+        expect(pouch.partlyUnpriced).toBe(false);
+        expect(pouch.cost).toBeCloseTo(plain.cost - crates * 200, 9);
+        expect(pouch.kept.has('/items/coin')).toBe(false);
+        expect(pouch.yields.has('/items/coin')).toBe(false);
+        // Coins beside an item: both counted, and only the item is sold under a market bound
+        game.crateDrop = '/items/mixed_chest';
+        VOLUME.perDay['/items/coin'] = 0;
+        const chest = amberRoute(await buildCollectionRoutes());
+        expect(chest.cost).toBeCloseTo(plain.cost - crates * 1000, 9);
+        expect(chest.kept.get('/items/star_fragment').perSource).toBeCloseTo(
+            plain.kept.get('/items/star_fragment').perSource + crates,
+            12
+        );
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), chest, {
+            sellable: weeklySellable,
+        });
+        expect(option.sold.has('/items/coin')).toBe(false);
+        expect(option.credits.has('/items/coin')).toBe(false);
     });
 
     test('every setup the calculator weighs is a route, and the ranking picks by gold per point', async () => {
