@@ -4009,6 +4009,11 @@ class ActionTimeDisplay {
                 if (protection && protection.perAction > 0) {
                     noteProvenance(protection.itemHrid);
                     let availableProtections = byHrid[protection.itemHrid] || 0;
+                    if (!protection.selfStack && typeof protection.stackLevel === 'number') {
+                        // The game spends the exact stack the secondary slot names (hrid and
+                        // level), not copies at other levels; the ledger spends the same key
+                        availableProtections = byEnhancedKey[`${protection.itemHrid}::${protection.stackLevel}`] || 0;
+                    }
                     if (protection.selfStack) {
                         // Only the stack the run draws from, less the copy on the bench and the
                         // copies the player keeps back

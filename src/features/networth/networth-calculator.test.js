@@ -156,6 +156,9 @@ const {
     calculateAllAbilitiesCost,
     calculateGuildShrinesCost,
     isUnpricedCurrency,
+    networthUnitValue,
+    explainTokenValue,
+    GUILD_RATE_UNKNOWN_NOTE,
 } = await import('./networth-calculator.js');
 const { _resetMarketValues } = await import('../../utils/market-values.js');
 
@@ -1244,6 +1247,35 @@ describe('labyrinth and guild tokens', () => {
         expect(isUnpricedCurrency('/items/guild_token')).toBe(true);
     });
 
+    test('guild tokens on an assumed exchange rate count 0 and are reported unpriced with a note', async () => {
+        mocks.guildTokenValuation = {
+            gold: 4000,
+            creditItemHrid: '/items/guild_credit_1',
+            assumed: true,
+            note: 'via credit exchange, assumed 1 credit/token',
+        };
+
+        expect(await calculateItemValue({ itemHrid: '/items/guild_token', count: 5 })).toBe(0);
+        expect(networthUnitValue('/items/guild_token')).toBe(0);
+        expect(isUnpricedCurrency('/items/guild_token')).toBe(true);
+        expect(explainTokenValue('/items/guild_token')).toMatchObject({
+            rate: null,
+            note: GUILD_RATE_UNKNOWN_NOTE,
+        });
+    });
+
+    test('guild tokens on a captured exchange rate are valued as before', async () => {
+        mocks.guildTokenValuation = {
+            gold: 4000,
+            creditItemHrid: '/items/guild_credit_1',
+            assumed: false,
+            note: 'via credit exchange at 10 credits/token',
+        };
+
+        expect(await calculateItemValue({ itemHrid: '/items/guild_token', count: 5 })).toBe(20_000);
+        expect(isUnpricedCurrency('/items/guild_token')).toBe(false);
+    });
+
     test('turning a token kind off removes it from the value, and it is not reported unpriced', async () => {
         mocks.labyrinthTokenDetail = { value: 7000, itemHrid: '/items/pathseeker_lodestone' };
         mocks.guildTokenValuation = { gold: 4000, creditItemHrid: '/items/guild_credit_1', note: null };
@@ -1308,6 +1340,19 @@ describe('the token breakdown', () => {
     }
 
     const row = (result, hrid) => result.tokens.items.find((item) => item.itemHrid === hrid);
+
+    test('an assumed guild exchange rate leaves the guild row unpriced and out of the total', async () => {
+        const priced = await sweep();
+        mocks.guildTokenValuation = { ...mocks.guildTokenValuation, assumed: true };
+        const result = await calculateNetworth();
+
+        expect(row(result, '/items/guild_token')).toMatchObject({
+            unpriced: true,
+            value: 0,
+            note: GUILD_RATE_UNKNOWN_NOTE,
+        });
+        expect(result.tokens.value).toBe(priced.tokens.value - 20_000);
+    });
 
     test('lists each token with its amount, best rate, the item it converts into, and its total', async () => {
         const result = await sweep();

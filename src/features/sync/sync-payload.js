@@ -281,6 +281,14 @@ export function redactSettingsStore(entries) {
     return safe;
 }
 
+// Last "left out" summary logged, so an unchanged one is not repeated per build
+let lastLeftOutSummary = null;
+
+/** Test-only: forget the last logged "left out" summary. */
+export function resetLeftOutLogForTests() {
+    lastLeftOutSummary = null;
+}
+
 /**
  * Build the JSON text to upload.
  *
@@ -325,10 +333,18 @@ export async function buildPayloadJSON(scope = 'settings') {
 
     const skippedStores = scope === 'everything' ? allStores.length - ours.length : 0;
     if (foreignKeys > 0 || skippedStores > 0) {
-        console.info(
-            `[Sync] Left out of the payload: ${foreignKeys} key(s) in shared stores (~${Math.round(foreignBytes / 1024)} KB)` +
-                `${skippedStores > 0 ? ` and ${skippedStores} store(s) this script does not own` : ''}.`
-        );
+        // Every payload build reaches here; say it once per distinct summary
+        const summary = `${foreignKeys}|${Math.round(foreignBytes / 1024)}|${skippedStores}`;
+        if (summary !== lastLeftOutSummary) {
+            lastLeftOutSummary = summary;
+            console.info(
+                `[Sync] Left out of the payload: ${foreignKeys} key(s) in shared stores (~${Math.round(foreignBytes / 1024)} KB)` +
+                    `${skippedStores > 0 ? ` and ${skippedStores} store(s) this script does not own` : ''}.`
+            );
+        }
+    } else {
+        // Nothing left out now, so the next omission is news again
+        lastLeftOutSummary = null;
     }
 
     parts.push('}}');

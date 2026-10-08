@@ -34,6 +34,7 @@ import { runningAction } from '../../utils/combat-actions.js';
 
 const SETTING_KEY = 'actionTiming_monitor';
 const STORE_NAME = 'settings';
+const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
 /** Unscoped storage key; the character id is appended, per the `${base}_${id}` idiom */
 const RECORD_KEY_BASE = 'actionTimingLog';
 
@@ -216,6 +217,13 @@ class ActionTimingMonitor {
         this.lastStartAt = at;
         this.declaredDuration = declared;
         this.wentHidden = document.hidden === true;
+        // The interval belongs to the action that started it: by the next start the
+        // queue may have moved on, so read it now rather than when the interval closes
+        try {
+            this.startedAction = this._currentAction();
+        } catch {
+            this.startedAction = null;
+        }
     }
 
     _onAnimationEnd(event) {
@@ -277,7 +285,16 @@ class ActionTimingMonitor {
      *   declaredDuration: number}} timing - What was measured
      */
     _record(timing) {
-        const action = this._currentAction();
+        const live = this._currentAction();
+        const action = this.startedAction ?? live;
+        // Gear and buffs are read live; once the queue has moved to another action they
+        // describe that one, so the record says so instead of pairing the two
+        const sameEntry = (a, b) =>
+            a?.entryId != null && b?.entryId != null ? a.entryId === b.entryId : a?.actionHrid === b?.actionHrid;
+        const speedIsLive = !this.startedAction || sameEntry(this.startedAction, live);
+        // The labyrinth keeps its bar full while a room is fought or skilled;
+        // that is the game's normal behavior, not a timing anomaly.
+        if (action?.type === LABYRINTH_ACTION_TYPE) return;
         const record = {
             at: Date.now(),
             actionHrid: action?.actionHrid ?? null,
@@ -287,7 +304,8 @@ class ActionTimingMonitor {
             intervalSeconds: Number(timing.intervalSeconds.toFixed(3)),
             deadSeconds: Number(timing.deadSeconds.toFixed(3)),
             animatedSeconds: Number(timing.animatedSeconds.toFixed(3)),
-            speed: this._speedSnapshot(action),
+            speed: speedIsLive ? this._speedSnapshot(action) : null,
+            speedNote: speedIsLive ? null : 'queue moved on before the interval closed; speed context not captured',
         };
 
         this.anomalies.push(record);
@@ -315,6 +333,7 @@ class ActionTimingMonitor {
         const details = dataManager.getActionDetails(current.actionHrid) || null;
         return {
             actionHrid: current.actionHrid,
+            entryId: current.id ?? null,
             name: details?.name ?? null,
             type: details?.type ?? null,
             details,
@@ -494,6 +513,7 @@ class ActionTimingMonitor {
         this.registry = null;
         this.lastStartAt = null;
         this.lastEndAt = null;
+        this.startedAction = null;
         this.declaredDuration = null;
         this.wentHidden = false;
         this.observed = 0;

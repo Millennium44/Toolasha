@@ -98,6 +98,7 @@ await import('../guild/guild-trials-store.js');
 
 const {
     buildPayloadJSON,
+    resetLeftOutLogForTests,
     applyPayload,
     hashPayload,
     readExportedAt,
@@ -113,6 +114,7 @@ const {
 } = await import('./sync-payload.js');
 
 beforeEach(() => {
+    resetLeftOutLogForTests();
     importedPayloads.length = 0;
     importOutcome.failed = [];
     importOutcome.complete = true;
@@ -277,6 +279,43 @@ describe('buildPayloadJSON', () => {
         const parsed = JSON.parse(await buildPayloadJSON('everything'));
         expect(parsed.formatVersion).toBe(1);
         expect(typeof parsed.exportedAt).toBe('string');
+    });
+
+    test('logs what it left out once, and again only when the summary changes', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        const leftOut = () => info.mock.calls.filter((c) => String(c[0]).includes('Left out of the payload'));
+        try {
+            await buildPayloadJSON('everything');
+            await buildPayloadJSON('everything');
+            expect(leftOut()).toHaveLength(1);
+
+            storeState.stores.settings.another_foreign_key = 7;
+            await buildPayloadJSON('everything');
+            await buildPayloadJSON('everything');
+            expect(leftOut()).toHaveLength(2);
+        } finally {
+            info.mockRestore();
+        }
+    });
+
+    test('logs again when left-out data returns after a build that left nothing out', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        const leftOut = () => info.mock.calls.filter((c) => String(c[0]).includes('Left out of the payload'));
+        try {
+            storeState.stores.settings = { script_settingsMap_603281: {}, other_script_key: 1 };
+            await buildPayloadJSON('settings');
+            expect(leftOut()).toHaveLength(1);
+
+            delete storeState.stores.settings.other_script_key;
+            await buildPayloadJSON('settings');
+            expect(leftOut()).toHaveLength(1);
+
+            storeState.stores.settings.other_script_key = 1;
+            await buildPayloadJSON('settings');
+            expect(leftOut()).toHaveLength(2);
+        } finally {
+            info.mockRestore();
+        }
     });
 
     test('never carries a trial trace, gzipped-10MB opt-in diagnostic that it is', async () => {

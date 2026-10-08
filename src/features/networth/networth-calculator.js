@@ -249,6 +249,9 @@ function guildCreditPricingMode() {
         : config.getSettingValue('networth_pricingMode') || 'ask';
 }
 
+/** Why a guild token is unpriced while its exchange rate is only the setting's assumption */
+export const GUILD_RATE_UNKNOWN_NOTE = 'no exchange rate yet — open the Guild Shop exchange to read it';
+
 /**
  * What one token is worth and what it is best converted into, whatever the
  * token's setting says — the breakdown shows an excluded token's rate too.
@@ -288,6 +291,10 @@ export function explainTokenValue(itemHrid) {
         }
         case 'guild': {
             const valuation = explainGuildTokenValue(guildCreditPricingMode());
+            // An exchange rate nobody read off the Guild Shop is the setting's
+            // guess (1 credit/token by default; the real one has been 10), so it
+            // must not move the total. Unpriced until the dialog is captured.
+            if (valuation?.assumed) return { ...none, note: GUILD_RATE_UNKNOWN_NOTE };
             return valuation?.gold > 0
                 ? { rate: valuation.gold, bestItemHrid: valuation.creditItemHrid || null, note: valuation.note }
                 : none;

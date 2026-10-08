@@ -66,6 +66,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 
 const payload = vi.hoisted(() => ({ text: '{"local":1}' }));
 vi.mock('./sync-payload.js', () => ({
+    resetLeftOutLogForTests: () => {},
     buildPayloadJSON: async () => {
         storageCalls.push('buildPayloadJSON');
         if (payload.buildWait) await payload.buildWait;
