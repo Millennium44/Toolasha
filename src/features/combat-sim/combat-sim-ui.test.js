@@ -607,6 +607,10 @@ const {
     formatScore,
     visibleAllZonesSkillColumns,
     scoreAllZoneRows,
+    zonesScoreTitle,
+    isZonesScoreScale,
+    DEFAULT_ZONES_SCORE_SCALE,
+    ZONES_SCORE_LADDER,
     bestAllZoneRows,
     isSkillingGearItem,
     isAuraAbility,
@@ -2558,6 +2562,52 @@ describe('the all-zones table', () => {
             const rows = [zoneRow('Only', { totalXP: 5, profitDay: 5 })];
             expect(scoreAllZoneRows(rows)[0].score).toBe(100);
         });
+
+        test('% of best scores each zone by its share of the best XP and profit, averaged', () => {
+            const rows = [
+                zoneRow('A', { totalXP: 1000, profitDay: 4000 }),
+                zoneRow('B', { totalXP: 500, profitDay: 2000 }),
+                zoneRow('C', { totalXP: 250, profitDay: 0 }),
+            ];
+            scoreAllZoneRows(rows, SCORE_PERCENT);
+
+            expect(rows.map((r) => r.score)).toEqual([100, 50, 13]);
+        });
+
+        test('% of best scores a loss-making zone 0 for the profit column', () => {
+            const rows = [
+                zoneRow('Gold', { totalXP: 100, profitDay: 1000 }),
+                zoneRow('Loss', { totalXP: 100, profitDay: -500 }),
+            ];
+            scoreAllZoneRows(rows, SCORE_PERCENT);
+
+            expect(rows[0].score).toBe(100);
+            expect(rows[1].score).toBe(50);
+        });
+
+        test('the ladder is the default and leaves existing scores alone', () => {
+            expect(DEFAULT_ZONES_SCORE_SCALE).toBe(ZONES_SCORE_LADDER);
+            const rows = [
+                zoneRow('Best', { totalXP: 1000, profitDay: 5000 }),
+                zoneRow('Mid', { totalXP: 500, profitDay: 2000 }),
+                zoneRow('Worst', { totalXP: 100, profitDay: 100 }),
+            ];
+            scoreAllZoneRows(rows);
+            expect(rows.map((r) => r.score)).toEqual([100, 50, 0]);
+        });
+
+        test('only the two offered scales are valid stored values', () => {
+            expect(isZonesScoreScale('ladder')).toBe(true);
+            expect(isZonesScoreScale(SCORE_PERCENT)).toBe(true);
+            expect(isZonesScoreScale('5')).toBe(false);
+            expect(isZonesScoreScale(undefined)).toBe(false);
+        });
+
+        test('each scale has a header tooltip that names itself and not the Upgrade tab', () => {
+            expect(zonesScoreTitle(ZONES_SCORE_LADDER)).toContain('Ladder position');
+            expect(zonesScoreTitle(SCORE_PERCENT)).toContain('% of best');
+            expect(zonesScoreTitle(ZONES_SCORE_LADDER)).not.toContain('Upgrade tab');
+        });
     });
 
     describe('the two winners', () => {
@@ -2671,6 +2721,65 @@ describe('the all-zones table', () => {
             // The hover names the actual swap, so the claim is checkable
             expect(container.innerHTML).toContain('Cheese → Marsberry Cake');
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones-maxfood');
+        });
+
+        describe('the Score scale picker', () => {
+            const drawThree = () =>
+                ui._displayAllZonesResults(
+                    [
+                        result('Fly', { xp: { defense: 1000 }, profit: 100 }),
+                        result('Jungle', { xp: { defense: 500 }, profit: 50 }),
+                        result('Swamp', { xp: { defense: 250 }, profit: 0 }),
+                    ],
+                    1,
+                    {}
+                );
+            const scores = () => {
+                const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')];
+                const at = headers.findIndex((th) => th.dataset.col === 'score');
+                return [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map(
+                    (tr) => tr.children[at].textContent
+                );
+            };
+
+            afterEach(() => {
+                mocks.store.delete('settings:combatSimAllZonesScoreScale');
+                ui._allZonesScoreScale = ZONES_SCORE_LADDER;
+            });
+
+            test('defaults to the ladder position, unchanged', async () => {
+                await drawThree();
+                const select = ui.panel.querySelector('#mwi-csim-zones-score-scale');
+
+                expect(select.querySelector('option[selected]').value).toBe(ZONES_SCORE_LADDER);
+                expect(scores()).toEqual(['100', '50', '0']);
+                expect(ui.panel.querySelector('#mwi-csim-results th[data-col="score"]').title).toContain(
+                    'Ladder position'
+                );
+            });
+
+            test('choosing % of best rescores the drawn run and is remembered', async () => {
+                await drawThree();
+                const select = ui.panel.querySelector('#mwi-csim-zones-score-scale');
+                select.value = SCORE_PERCENT;
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                await vi.waitFor(() => expect(scores()).toEqual(['100', '50', '13']));
+
+                expect(ui._allZonesScoreScale).toBe(SCORE_PERCENT);
+                expect(mocks.store.get('settings:combatSimAllZonesScoreScale')).toBe(SCORE_PERCENT);
+                expect(ui.panel.querySelector('#mwi-csim-results th[data-col="score"]').title).toContain('% of best');
+            });
+
+            test('a saved choice is restored, and an unknown stored value is ignored', async () => {
+                mocks.store.set('settings:combatSimAllZonesScoreScale', SCORE_PERCENT);
+                await ui._loadZonesScorePref();
+                expect(ui._allZonesScoreScale).toBe(SCORE_PERCENT);
+
+                ui._allZonesScoreScale = ZONES_SCORE_LADDER;
+                mocks.store.set('settings:combatSimAllZonesScoreScale', 'bogus');
+                await ui._loadZonesScorePref();
+                expect(ui._allZonesScoreScale).toBe(ZONES_SCORE_LADDER);
+            });
         });
 
         test('an ordinary run carries no food note and exports under the plain name', async () => {

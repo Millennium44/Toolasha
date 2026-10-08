@@ -108,6 +108,7 @@ import {
     houseUpgradeMaterials,
     assignRankScores,
     assignScores,
+    percentOfBest,
     planWithinBudget,
     confirmUpgradeBudgetPlan,
     explainUpgradeCost,
@@ -164,6 +165,9 @@ const SHRINE_CAP_GUILD_KEY = 'combatSimShrineCapToGuild';
  * every time they open the ranking.
  */
 const ALL_ZONES_MAX_FOOD_KEY = 'combatSimAllZonesMaxTierFood';
+
+/** Which Score the All Zones table ranks with, remembered across sessions */
+const ALL_ZONES_SCORE_SCALE_KEY = 'combatSimAllZonesScoreScale';
 
 /** The Bestiary planner's time budget, remembered across sessions */
 const BESTIARY_PLAN_HOURS_KEY = 'combatSimBestiaryPlanHours';
@@ -1557,26 +1561,99 @@ const ALL_ZONES_SCORE_METRICS = [
 ];
 
 /**
- * Score each zone by how well it places across XP and profit at once.
+ * The All Zones Score's scales: each zone's position in the XP/hr and Profit/day
+ * ladders (the original, and the default so nothing changes for existing users),
+ * or the Upgrade tables' "% of best".
+ */
+export const ZONES_SCORE_LADDER = 'ladder';
+export const DEFAULT_ZONES_SCORE_SCALE = ZONES_SCORE_LADDER;
+
+/**
+ * Whether a stored zones Score scale is one this build offers; anything else
+ * (a key from another build, a corrupt value) is ignored.
+ * @param {*} key - Candidate scale key
+ * @returns {boolean}
+ */
+export function isZonesScoreScale(key) {
+    return key === ZONES_SCORE_LADDER || key === SCORE_PERCENT;
+}
+
+/** The options the zones table's Score `<select>` offers. */
+const ZONES_SCORE_SCALES = [
+    { key: ZONES_SCORE_LADDER, label: 'Ladder position' },
+    { key: SCORE_PERCENT, label: '% of best' },
+];
+
+/**
+ * What the All Zones Score means on a scale, for its header tooltip.
+ * @param {string} scaleKey - A zones Score scale key
+ * @returns {string}
+ */
+export function zonesScoreTitle(scaleKey) {
+    const deaths =
+        ' Deaths are not scored: they are a constraint, not something to trade against gold, so read the ' +
+        'red Deaths/hr column alongside this.';
+    if (scaleKey === SCORE_PERCENT) {
+        return (
+            '% of best: how close the zone comes to the best zone in XP/hr and in Profit/day, averaged, out of ' +
+            '100. In each the best zone scores 100 and every other its share of it, so a zone earning half the ' +
+            'best XP scores 50 there. A zone with no profit (or a loss) scores 0 for that column. One zone far ' +
+            'ahead of the rest can flatten everyone else toward 0 — Ladder position is immune to that.' +
+            deaths
+        );
+    }
+    return (
+        'Ladder position: where the zone stands in the XP/hr ladder and in the Profit/day ladder, as a fraction ' +
+        '(best 1, worst 0), averaged, out of 100. Ordinal, so it says who placed where and not by how much; ' +
+        '% of best shows the gap instead.' +
+        deaths
+    );
+}
+
+/**
+ * Score each zone across XP and profit at once.
  *
- * The same ordinal idea the Upgrade tab's Score uses — rank within each metric,
- * then blend — with one deliberate difference: the upgrade ladder awards points
- * to the top five only, which across sixty-six zones would leave all but five
- * rows at zero. Here every row gets its position in each ladder as a fraction
- * (1 for best, 0 for worst), and the Score is the mean of those, out of 100.
+ * Ladder position (the default): the same ordinal idea the Upgrade tab's points
+ * use — rank within each metric, then blend — with one deliberate difference:
+ * the upgrade ladder awards points to the top five only, which across
+ * sixty-six zones would leave all but five rows at zero. Here every row gets its
+ * position in each ladder as a fraction (1 for best, 0 for worst), and the Score
+ * is the mean of those, out of 100.
  *
  * Ties share a position, so two zones that measure identically cannot be
  * separated by list order. A single row scores 100: with nothing to rank
  * against, it is trivially the best of what was simulated.
  *
- * Mutates and returns the rows, adding `score`.
+ * % of best: each zone's share of the best zone's figure in each metric
+ * (`percentOfBest`, higher is better for both), averaged over the metrics that
+ * have any positive figure. A zone with no or negative profit scores 0 in that
+ * column, the same rule the Upgrade tables use.
+ *
+ * Mutates and returns the rows, adding `score` (a whole number).
  *
  * @param {Array<Object>} rows - Table rows carrying `totalXP` and `profitDay`
+ * @param {string} [scale=ZONES_SCORE_LADDER] - A zones Score scale key
  * @returns {Array<Object>} The same rows
  */
-export function scoreAllZoneRows(rows) {
+export function scoreAllZoneRows(rows, scale = DEFAULT_ZONES_SCORE_SCALE) {
     const list = Array.isArray(rows) ? rows : [];
     if (!list.length) return list;
+
+    if (scale === SCORE_PERCENT) {
+        const totals = new Map(list.map((row) => [row, 0]));
+        let counted = 0;
+        for (const metric of ALL_ZONES_SCORE_METRICS) {
+            const column = percentOfBest(
+                list.map((row) => (Number.isFinite(row[metric.key]) ? row[metric.key] : 0)),
+                false
+            );
+            if (!column) continue;
+            counted++;
+            list.forEach((row, i) => totals.set(row, totals.get(row) + column[i].pct));
+        }
+        for (const row of list) row.score = counted ? Math.round(totals.get(row) / counted) : 0;
+        return list;
+    }
 
     const fractions = new Map(list.map((row) => [row, []]));
     for (const metric of ALL_ZONES_SCORE_METRICS) {
@@ -2627,6 +2704,7 @@ class CombatSimUI {
         // their own gear.
         this._soloZonesLoadoutName = null;
         this._dungeonsLoadoutName = null;
+        this._allZonesScoreScale = DEFAULT_ZONES_SCORE_SCALE; // which Score the All Zones table ranks with
         this._includeDungeons = false; // whether an all-zones run also simulates every dungeon
         // Bestiary planner: a time budget by default, a points target on request
         this._bestiaryPlanMode = 'hours';
@@ -3278,6 +3356,7 @@ class CombatSimUI {
         this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
+        this._loadZonesScorePref();
         this._loadBestiaryPlanPrefs();
         this._restoreUpgradeResults();
         this._restorePanelGeometry();
@@ -3846,6 +3925,42 @@ class CombatSimUI {
         return normalizeTaskDamageMode(select ? select.value : config.getSettingValue('combatSim_taskDamage', 'off'));
     }
 
+    /**
+     * The picker for which Score the All Zones table ranks with, above the table.
+     * @returns {string} HTML
+     * @private
+     */
+    _allZonesScoreControlHtml() {
+        const options = ZONES_SCORE_SCALES.map(
+            (o) =>
+                `<option value="${o.key}"${o.key === this._allZonesScoreScale ? ' selected' : ''}>${o.label}</option>`
+        ).join('');
+        return `<div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; padding:0 0 6px 2px;">
+            <label for="mwi-csim-zones-score-scale">Score scale</label>
+            <select id="mwi-csim-zones-score-scale" style="background:#1a1a1a; color:#e0e0e0; border:1px solid #444; border-radius:4px; font-size:11px;">${options}</select>
+        </div>`;
+    }
+
+    /** @private */
+    async _persistZonesScorePref() {
+        try {
+            await storage.set(ALL_ZONES_SCORE_SCALE_KEY, this._allZonesScoreScale, 'settings');
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the zones Score scale:', error);
+        }
+    }
+
+    /** @private */
+    async _loadZonesScorePref() {
+        try {
+            const saved = await storage.get(ALL_ZONES_SCORE_SCALE_KEY, 'settings', null);
+            // A key from a build that offered other scales is ignored, not trusted
+            if (isZonesScoreScale(saved)) this._allZonesScoreScale = saved;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to read the zones Score scale:', error);
+        }
+    }
+
     /** @private */
     async _persistMaxTierFoodPref() {
         try {
@@ -4342,7 +4457,7 @@ class CombatSimUI {
 
         // The Score and the two winners are decided over the whole run, before
         // any sort or column hiding — neither is a property of the current view
-        scoreAllZoneRows(rows);
+        scoreAllZoneRows(rows, this._allZonesScoreScale);
         const best = bestAllZoneRows(rows);
         // What the route planner works from: the zones (in run order — ties in
         // the plan go to the earlier one), the counts, and how many zones had
@@ -4427,10 +4542,7 @@ class CombatSimUI {
             {
                 key: 'score',
                 label: 'Score',
-                title:
-                    'How well the zone places on XP/hr and Profit/day at once, out of 100 — the same rank-blend ' +
-                    'the Upgrade tab scores with. Deaths are not scored: they are a constraint, not something to ' +
-                    'trade against gold, so read the red Deaths/hr column alongside this.',
+                title: zonesScoreTitle(this._allZonesScoreScale),
             },
             ...visibleAllZonesSkillColumns(rows),
             { key: 'revenue', label: 'Rev/hr' },
@@ -4677,7 +4789,15 @@ class CombatSimUI {
                             const bestVal = isLowerBetter ? minVals[col.key] : maxVals[col.key];
                             const isBest = bestVal !== undefined && val === bestVal && rows.length > 1;
 
-                            if (isBest) {
+                            // On % of best the Score colors by its own value (as the
+                            // Upgrade tables do), not by being the column's top
+                            const scoreTint =
+                                col.key === 'score' && this._allZonesScoreScale === SCORE_PERCENT
+                                    ? scoreValueColor(val)
+                                    : null;
+                            if (scoreTint) {
+                                style += ` color:${scoreTint};${isBest ? ' font-weight:600;' : ''}`;
+                            } else if (isBest) {
                                 style += ' color:#4caf50; font-weight:600;';
                             } else if ((col.key === 'profit' || col.key === 'profitDay') && val < 0) {
                                 style += ' color:#f44336;';
@@ -4702,6 +4822,7 @@ class CombatSimUI {
         const minWidth = Math.max(420, cols.length * 56);
 
         container.innerHTML = `
+            ${this._allZonesScoreControlHtml()}
             ${this._allZonesHeadline(best)}
             <div style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:${minWidth}px;">
@@ -4749,6 +4870,14 @@ class CombatSimUI {
             ],
             rows,
         }));
+
+        container.querySelector('#mwi-csim-zones-score-scale')?.addEventListener('change', (event) => {
+            if (!isZonesScoreScale(event.target.value)) return;
+            this._allZonesScoreScale = event.target.value;
+            this._persistZonesScorePref();
+            // Scoring is pure ranking over figures already measured: redraw, no re-sim
+            this._displayAllZonesResults(this._allZonesResults || zoneResults, hours, gameData, playerHrid);
+        });
 
         // Add sort listeners
         container.querySelectorAll('th[data-col]').forEach((th) => {
