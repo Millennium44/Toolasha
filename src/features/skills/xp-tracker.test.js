@@ -89,6 +89,7 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 }));
 
 const { xpTracker, inLastInterval } = await import('./xp-tracker.js');
+const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
 const KEY = 'xpHistory_char1';
 const stored = () => storageMock.storeFor('xpHistory').get(KEY);
@@ -607,5 +608,38 @@ describe('skills named by their icon, in any game language', () => {
         xpTracker._updateNavBars();
 
         expect(nav.querySelector('.mwi-xp-rate')).not.toBeNull();
+    });
+});
+
+describe('the sync fold of a skill XP history', () => {
+    const MINUTE = 60_000;
+    const at = (minutes, xp) => ({ t: 1_790_000_000_000 + minutes * MINUTE, xp });
+    const registration = () => mergeForKey('xpHistory', 'xpHistory_char1');
+
+    test('a pull of samples this device thinned since it uploaded them changes nothing', () => {
+        // Recorded 3:1 12:3 18:4 20:5 22:5 26:5 30:6 31:7 35:8; uploaded when 18:4 was newest.
+        // 22:5 then thinned 18 away, and 26:5 thinned 22
+        const local = { milking: [at(3, 1), at(12, 3), at(26, 5), at(35, 8)] };
+        const gist = { milking: [at(3, 1), at(12, 3), at(18, 4)] };
+
+        expect(registration().mergeForPull(structuredClone(local), gist)).toEqual(local);
+    });
+
+    test('a pull still takes what another device recorded after this one', () => {
+        const local = { milking: [at(3, 1), at(35, 8)] };
+        const gist = { milking: [at(3, 1), at(50, 12)] };
+
+        expect(registration().mergeForPull(local, gist).milking).toEqual([at(3, 1), at(35, 8), at(50, 12)]);
+    });
+
+    test('the upload still folds the full union, so the gist loses nothing', () => {
+        const local = { milking: [at(3, 1), at(35, 8)] };
+        const gist = { milking: [at(3, 1), at(12, 3)] };
+
+        expect(registration().merge(local, gist, { forUpload: true }).milking).toEqual([
+            at(3, 1),
+            at(12, 3),
+            at(35, 8),
+        ]);
     });
 });

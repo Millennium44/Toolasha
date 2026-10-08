@@ -59,6 +59,7 @@ import {
     resolveStableRate,
     calcNextMemberSlotETA,
 } from './guild-xp-tracker.js';
+import { mergeForKey } from '../../utils/sync-merge-registry.js';
 
 const MIN = 60 * 1000;
 
@@ -1039,5 +1040,50 @@ describe('onMetaChanged — roster and sign-up subscribers', () => {
         }
         guildXPTracker._onTrialSignupUpdated({ characterId: 101, signupWeekStartAt: 'W' });
         expect(calls).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('the sync folds of the guild XP records', () => {
+    const WEEK_MIN = 7 * 24 * 60;
+    const at = (minutes, xp) => ({ t: 1_790_000_000_000 + minutes * MIN, xp });
+    const guild = () => mergeForKey('guildHistory', 'guildXP_Chat');
+    const members = () => mergeForKey('guildHistory', 'memberXP_1493');
+    const board = () => mergeForKey('guildHistory', 'guildLeaderboardXP');
+
+    test('a pull of samples this device aged out of its week changes nothing', () => {
+        const local = { Chat: [at(WEEK_MIN + 30, 90), at(WEEK_MIN + 60, 95)] };
+        const gist = { Chat: [at(0, 10), at(5, 20), at(WEEK_MIN + 30, 90)] };
+
+        expect(guild().mergeForPull(structuredClone(local), gist)).toEqual(local);
+        expect(board().mergeForPull(structuredClone(local), gist)).toEqual(local);
+    });
+
+    test('a pull of samples this device thinned changes nothing', () => {
+        // 18 was thinned here when 22 arrived, and 22 when 26 did
+        const local = { Chat: [at(3, 1), at(12, 3), at(26, 5), at(35, 8)] };
+        const gist = { Chat: [at(3, 1), at(12, 3), at(18, 4), at(22, 5)] };
+
+        expect(guild().mergeForPull(structuredClone(local), gist)).toEqual(local);
+    });
+
+    test('a member this device dropped as departed is not brought back; one who joined since is', () => {
+        const local = { 111: [at(100, 9), at(160, 12)] };
+        const departed = { 222: [at(0, 5), at(30, 6)] };
+        const joined = { 333: [at(150, 1), at(200, 4)] };
+
+        expect(members().mergeForPull(structuredClone(local), { ...local, ...departed })).toEqual(local);
+        expect(members().mergeForPull(structuredClone(local), { ...local, ...joined })).toEqual({
+            ...local,
+            ...joined,
+        });
+    });
+
+    test('the upload keeps the union, held to the week', () => {
+        const local = { Chat: [at(WEEK_MIN + 30, 90), at(WEEK_MIN + 60, 95)] };
+        const gist = { Chat: [at(0, 10), at(70, 20), at(WEEK_MIN + 30, 90)] };
+
+        expect(guild().merge(local, gist, { forUpload: true })).toEqual({
+            Chat: [at(70, 20), at(WEEK_MIN + 30, 90), at(WEEK_MIN + 60, 95)],
+        });
     });
 });

@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
+import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 const STORE_NAME = 'networthHistory';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -26,6 +27,29 @@ const MAX_DETAIL_SNAPSHOTS = 25; // ~24h of hourly snapshots + 1 buffer
  */
 const DETAIL_PREFIX = 'networthDetail';
 registerCharacterScopedPrefix(STORE_NAME, DETAIL_PREFIX);
+
+/**
+ * A detail snapshot key's character and time, or null for anything else (the
+ * pre-split `networthDetail_<id>` array key has no time and is not judged).
+ * @param {string} key - Storage key
+ * @returns {{group: string, order: number}|null} The character's window and the snapshot time
+ */
+function parseDetailKey(key) {
+    const match = /^networthDetail_(.+)_(\d+)$/.exec(key);
+    return match ? { group: match[1], order: Number(match[2]) } : null;
+}
+
+/*
+ * The rolling window, told to sync. Without it a snapshot dropped here stayed
+ * in the gist — the upload merge keeps every key only the gist holds — and
+ * every pull wrote it back, to be dropped again on the next load.
+ */
+registerSyncRetention({
+    store: STORE_NAME,
+    prefix: `${DETAIL_PREFIX}_`,
+    parse: parseDetailKey,
+    keep: MAX_DETAIL_SNAPSHOTS,
+});
 
 /** Beyond this age, the history is thinned rather than kept point for point */
 const RETENTION_FULL_MS = 365 * 24 * 60 * 60 * 1000;

@@ -2088,19 +2088,22 @@ class Storage {
      * Delete a key from storage
      * @param {string} key - Storage key to delete
      * @param {string} storeName - Object store name (default: 'settings')
+     * @param {{bypassRestoreLatch?: boolean}} [options] - `bypassRestoreLatch` for a delete that is part of
+     *   the restore itself, never a pre-restore prune
      * @returns {Promise<boolean>} Success status
      */
-    async delete(key, storeName = 'settings') {
+    async delete(key, storeName = 'settings', options = {}) {
         // A restored store must not lose keys to a pre-restore prune either —
         // a rolling window that dropped its oldest chunk from *memory* would
         // otherwise delete the chunk the restore just put back
-        if (this._refuseDuringRestore(key, storeName, 'delete')) return false;
+        const refused = () => !options.bypassRestoreLatch && this._refuseDuringRestore(key, storeName, 'delete');
+        if (refused()) return false;
 
         if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot delete key: ${key}`);
             return false;
         }
-        if (this._refuseDuringRestore(key, storeName, 'delete')) return false;
+        if (refused()) return false;
         this._emitWrite(storeName, [key], 'local');
 
         // A queued debounced write to this key predates the delete, and used to

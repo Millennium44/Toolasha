@@ -58,8 +58,9 @@
  * @property {string} store - Object store the key lives in
  * @property {(key: string) => boolean} match - Whether this registration owns a key
  * @property {SyncMerge} merge - Folds the incoming value onto the local one; ties go to `incoming`
- * @property {SyncMerge} mergeForPull - The fold a pull applies: `merge`, or with `localWinsOnPull`
- *   the same fold with this device's copy as the side that wins ties
+ * @property {SyncMerge} mergeForPull - The fold a pull applies: the registration's own `pull` fold when it
+ *   has one; else `merge`, or with `localWinsOnPull` the same fold with this device's copy as the side that
+ *   wins ties
  * @property {string} label - For logging and for the apply summary
  * @property {boolean} capsLocally - This device keeps the history shorter by its own setting, so a push
  *   that replaces the gist can cut entries the gist holds. Only such a registration can report a trim
@@ -101,6 +102,9 @@ export function scopedKeyMatcher(base) {
  * @param {SyncMerge} options.merge - `(local, incoming) => merged`, ties to `incoming`
  * @param {boolean} [options.localWinsOnPull] - A pull keeps this device's copy where the fold ties
  *   (`mergeForPull` folds with the arguments turned round); uploads still use `merge`
+ * @param {SyncMerge} [options.pull] - The fold a pull applies, when it must differ from `merge`: a record
+ *   this device compacts or prunes as it records, whose union with the gist would hand back what it dropped.
+ *   Called `(local, incoming)` like `merge`; takes precedence over `localWinsOnPull`
  * @param {string} [options.label] - Name for logs and the apply summary
  * @param {boolean} [options.capsLocally] - The fold caps the history by a setting of this device (and keeps
  *   everything for `forUpload`). Opt-in: only a flagged registration can make a pressed Push warn about a trim
@@ -114,6 +118,7 @@ export function registerSyncMerge({
     match,
     merge,
     localWinsOnPull = false,
+    pull,
     label,
     capsLocally = false,
 }) {
@@ -146,7 +151,12 @@ export function registerSyncMerge({
         store,
         match: matcher,
         merge,
-        mergeForPull: localWinsOnPull ? (local, incoming, context) => merge(incoming, local, context) : merge,
+        mergeForPull:
+            typeof pull === 'function'
+                ? pull
+                : localWinsOnPull
+                  ? (local, incoming, context) => merge(incoming, local, context)
+                  : merge,
         label: label || key || base || prefix || store,
         capsLocally: capsLocally === true,
         claim,
@@ -239,12 +249,117 @@ export function listSyncMerges() {
 }
 
 /**
+ * @typedef {Object} SyncRetention
+ * @property {string} store - Object store the keys live in
+ * @property {string} prefix - Raw key prefix the rule owns
+ * @property {(key: string) => {group: string, order: number}|null} parse - Which window a key belongs to and
+ *   where it sorts in it (larger is newer); null for a key the rule does not judge
+ * @property {number} keep - How many of the newest keys each window keeps
+ */
+
+/** @type {Array<SyncRetention>} */
+const retentions = [];
+
+/**
+ * Declare that a family of keys is kept to a rolling window by its owner, so
+ * sync must neither upload nor write back a key that falls outside it.
+ *
+ * A key this device deleted by retention is simply absent from its payload,
+ * and absence is not a deletion to sync: the upload merge keeps every key only
+ * the gist holds, and a pull writes every key this device lacks. So a pruned
+ * key never left the gist, came back on every pull, was pruned again by its
+ * owner, and the next pull brought it back once more — a "Reload now" after
+ * every exchange. A retention rule is the owner's own window, applied by sync
+ * to both sides' keys together: a key outside it is dropped from the upload
+ * and from the download, so it leaves the gist at the next merged push and is
+ * never written here again.
+ *
+ * Window membership is decided over the union of the two sides' keys, so a
+ * device that has the newer keys pushes the other side's older ones out
+ * rather than keeping both.
+ *
+ * @param {Object} options - The rule
+ * @param {string} options.store - Object store name
+ * @param {string} options.prefix - Raw key prefix
+ * @param {(key: string) => {group: string, order: number}|null} options.parse - Window and order of a key
+ * @param {number} options.keep - Newest keys kept per window
+ * @returns {() => void} Unregister, mostly for tests
+ */
+export function registerSyncRetention({ store, prefix, parse, keep }) {
+    if (!store || typeof prefix !== 'string' || !prefix) {
+        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
+    }
+    if (typeof parse !== 'function') throw new Error('[SyncMergeRegistry] registerSyncRetention needs a parse()');
+    if (!Number.isInteger(keep) || keep < 1) {
+        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a positive keep');
+    }
+    // One rule per store and prefix: a bundle copy of the owning module makes
+    // the same call again, and the first stands
+    const existing = retentions.find((rule) => rule.store === store && rule.prefix === prefix);
+    const rule = existing || { store, prefix, parse, keep };
+    if (!existing) retentions.push(rule);
+    return () => {
+        const index = retentions.indexOf(rule);
+        if (index !== -1) retentions.splice(index, 1);
+    };
+}
+
+/**
+ * The keys of one store that a retention rule puts outside its window, judged
+ * over every key given — pass both sides' keys together.
+ *
+ * Keys no rule owns, and keys a rule's `parse` declines, are never dropped.
+ *
+ * @param {string} store - Object store name
+ * @param {Iterable<string>} keys - Every key in play (this device's and the other side's)
+ * @returns {Set<string>} The keys to leave out
+ */
+export function retentionDrops(store, keys) {
+    const dropped = new Set();
+    const rules = retentions.filter((rule) => rule.store === store);
+    if (rules.length === 0) return dropped;
+
+    for (const rule of rules) {
+        /** group → [{key, order}] */
+        const groups = new Map();
+        for (const key of new Set(keys)) {
+            if (typeof key !== 'string' || !key.startsWith(rule.prefix)) continue;
+            let parsed = null;
+            try {
+                parsed = rule.parse(key);
+            } catch (error) {
+                console.error(`[SyncMergeRegistry] Retention parse for ${rule.prefix} threw:`, error);
+            }
+            if (!parsed || typeof parsed.group !== 'string' || !Number.isFinite(parsed.order)) continue;
+            if (!groups.has(parsed.group)) groups.set(parsed.group, []);
+            groups.get(parsed.group).push({ key, order: parsed.order });
+        }
+        for (const members of groups.values()) {
+            if (members.length <= rule.keep) continue;
+            // Newest first; equal orders by key, so both devices drop the same ones
+            members.sort((a, b) => b.order - a.order || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+            for (const { key } of members.slice(rule.keep)) dropped.add(key);
+        }
+    }
+    return dropped;
+}
+
+/**
  * Drop every registration. Tests only — the real lifetime is the page's.
  * @returns {void}
  */
 export function clearSyncMerges() {
     registrations.length = 0;
     reportedOverlaps.clear();
+    retentions.length = 0;
 }
 
-export default { registerSyncMerge, mergeForKey, listSyncMerges, clearSyncMerges, scopedKeyMatcher };
+export default {
+    registerSyncMerge,
+    mergeForKey,
+    listSyncMerges,
+    clearSyncMerges,
+    scopedKeyMatcher,
+    registerSyncRetention,
+    retentionDrops,
+};

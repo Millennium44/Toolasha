@@ -36,6 +36,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/connection-state.js', () => ({ default: { isConnected: () => true } }));
 
 const { default: networthHistory, pruneHistory, seriesStore } = await import('./networth-history.js');
+const { retentionDrops } = await import('../../utils/sync-merge-registry.js');
 
 const HOUR = 3_600_000;
 
@@ -497,5 +498,21 @@ describe('the recorded gold figure', () => {
         expect(snapshot.gold).toBe(0);
         expect(snapshot.inventory - snapshot.gold).toBeGreaterThanOrEqual(0);
         expect(networthHistory.detailHistory.at(-1).items['/items/coin:0']).toEqual({ count: 0, value: 0 });
+    });
+});
+
+describe("the detail snapshots' window, as sync applies it", () => {
+    test('keeps the newest 25 per character over both sides, and leaves the pre-split key alone', () => {
+        const keys = [
+            ...Array.from({ length: 27 }, (_, i) => `networthDetail_32030_${1_000 + i}`),
+            ...Array.from({ length: 3 }, (_, i) => `networthDetail_32325_${1_000 + i}`),
+            'networthDetail_32030',
+            'networthSeries_32030_2026-10',
+        ];
+
+        expect([...retentionDrops('networthHistory', keys)].sort()).toEqual([
+            'networthDetail_32030_1000',
+            'networthDetail_32030_1001',
+        ]);
     });
 });

@@ -6,6 +6,8 @@ import {
     listSyncMerges,
     clearSyncMerges,
     scopedKeyMatcher,
+    registerSyncRetention,
+    retentionDrops,
 } from './sync-merge-registry.js';
 
 beforeEach(() => {
@@ -213,5 +215,51 @@ describe('which side wins a tie', () => {
 
         expect(registration.merge('local', 'incoming')).toBe('incoming');
         expect(registration.mergeForPull('local', 'incoming')).toBe('local');
+    });
+});
+
+describe('a separate pull fold', () => {
+    test('a pull folds with `pull`, everything else with `merge`', () => {
+        registerSyncMerge({
+            store: 'xpHistory',
+            base: 'xpHistory',
+            merge: () => 'union',
+            pull: () => 'pull',
+            localWinsOnPull: true,
+        });
+
+        const registration = mergeForKey('xpHistory', 'xpHistory_1');
+        expect(registration.merge({}, {})).toBe('union');
+        expect(registration.mergeForPull({}, {})).toBe('pull');
+    });
+});
+
+describe('retention rules', () => {
+    const parse = (key) => {
+        const match = /^snap_(.+)_(\d+)$/.exec(key);
+        return match ? { group: match[1], order: Number(match[2]) } : null;
+    };
+
+    test('drops all but the newest `keep` keys of each window, and nothing it does not own', () => {
+        registerSyncRetention({ store: 'nw', prefix: 'snap_', parse, keep: 2 });
+
+        const drops = retentionDrops('nw', ['snap_a_1', 'snap_a_3', 'snap_a_2', 'snap_b_1', 'snap_a', 'other_a_0']);
+
+        expect([...drops]).toEqual(['snap_a_1']);
+        expect(retentionDrops('elsewhere', ['snap_a_1', 'snap_a_2', 'snap_a_3']).size).toBe(0);
+    });
+
+    test('a key named on both sides counts once', () => {
+        registerSyncRetention({ store: 'nw', prefix: 'snap_', parse, keep: 2 });
+
+        expect(retentionDrops('nw', ['snap_a_1', 'snap_a_2', 'snap_a_1', 'snap_a_2']).size).toBe(0);
+    });
+
+    test('a second registration of the same rule is the same rule', () => {
+        const off = registerSyncRetention({ store: 'nw', prefix: 'snap_', parse, keep: 1 });
+        registerSyncRetention({ store: 'nw', prefix: 'snap_', parse, keep: 1 });
+        off();
+
+        expect(retentionDrops('nw', ['snap_a_1', 'snap_a_2']).size).toBe(0);
     });
 });

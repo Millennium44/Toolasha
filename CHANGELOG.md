@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync stops bringing back pruned history
+
+- Networth snapshots and XP samples a device trims by its own limits now leave the gist instead of returning on every pull, and a pull no longer writes a merged record over a newer save from another open tab, so a reload after your own push stays quiet.
+
 ### Panel rows wrap long text
 
 - A long value in a panel row, such as the sync pull summary, now wraps inside its card instead of running past the edge and forcing a sideways scroll.

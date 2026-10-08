@@ -106,6 +106,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/xp-series-sync.js',
+        // One pure fold over two XP series maps, no imports and no module state.
+        // The combat bundle (guild XP tracker) and the ui bundle (skill XP
+        // tracker) each register their sync pull fold with it.
+        'stateless XP series pull fold; no module state to share',
+    ],
+    [
         'src/utils/wrap-long-value.js',
         // One constant and one pure style helper, no imports and no module state.
         // Panels in several bundles (ironcow, ui, combat) draw label and value rows with it.
