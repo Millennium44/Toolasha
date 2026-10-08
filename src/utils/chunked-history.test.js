@@ -1562,6 +1562,27 @@ describe('review round: folds that rerun, removals, and the owner’s prune', ()
         expect(storageMock.store.has(JUNE)).toBe(false);
     });
 
+    test('a store that prunes only incoming entries prunes adopted ones the same way', async () => {
+        let cutoff = Date.UTC(2026, 6, 1);
+        const history = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'rec',
+            legacyKey: (charId) => `legacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            pruneIncoming: (points) => points.filter((point) => point.t >= cutoff),
+            label: 'PruneIncomingTest',
+        });
+        await history.save('c1', [at(2026, 7, 10)]);
+        storageMock.store.set(JULY, [at(2026, 7, 2), at(2026, 7, 10)]);
+        await history.save('c1', [at(2026, 7, 10), at(2026, 7, 12)]);
+
+        cutoff = Date.UTC(2026, 6, 5);
+        await history.save('c1', [at(2026, 7, 10), at(2026, 7, 12), at(2026, 7, 14)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-10', '2026-7-12', '2026-7-14']);
+    });
+
     test('an adopted entry the owner’s retention drops is not carried, and leaves the disk copy too', async () => {
         let cutoff = Date.UTC(2026, 6, 1);
         const history = createChunkedHistory({

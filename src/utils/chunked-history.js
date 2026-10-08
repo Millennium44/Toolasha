@@ -1282,13 +1282,17 @@ class ChunkedHistory {
      * @private
      */
     _pruneAdopted(list, extra) {
-        if (!this.pruneEntries || extra.length === 0) return extra;
+        if ((!this.pruneEntries && !this.pruneIncoming) || extra.length === 0) return extra;
         const mine = this._group(list);
         const kept = [];
         for (const [chunkId, adopted] of this._group(extra)) {
             let survivors;
             try {
-                const pruned = this.pruneEntries([...(mine.get(chunkId) || []), ...adopted]);
+                // Adopted entries came from elsewhere, so a store that prunes only what it did not
+                // hold (`pruneIncoming`) judges them alone; one that prunes the whole union judges both
+                const pruned = this.pruneIncoming
+                    ? this.pruneIncoming(adopted)
+                    : this.pruneEntries([...(mine.get(chunkId) || []), ...adopted]);
                 if (!Array.isArray(pruned)) {
                     kept.push(...adopted);
                     continue;
