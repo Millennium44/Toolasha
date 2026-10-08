@@ -83,6 +83,7 @@ import housePanelObserver from '../features/house/house-panel-observer.js';
 // Settings UI
 import settingsUI from '../features/settings/settings-ui.js';
 import { getSyncTrace } from '../features/sync/sync-manager.js';
+import { registerSyncKeys, unregisterSyncKeys, registeredSyncKeys } from '../features/sync/sync-external-keys.js';
 import whatsNew from '../features/settings/whats-new.js';
 import forkBackupPrompt from '../features/settings/fork-backup-prompt.js';
 import settingsMirrorRestore from '../features/settings/settings-mirror-restore.js';
@@ -235,6 +236,8 @@ toolashaRoot.UI = {
     housePanelObserver,
     settingsUI,
     syncTrace: getSyncTrace,
+    // Plain functions, not a feature record: `window.Toolasha.sync` (entrypoint.js) calls them
+    syncKeys: { register: registerSyncKeys, unregister: unregisterSyncKeys, list: registeredSyncKeys },
     whatsNew,
     forkBackupPrompt,
     settingsMirrorRestore,

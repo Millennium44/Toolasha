@@ -16,6 +16,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - An automatic sync push no longer reads and hashes every synced store when nothing it carries has been written since the last check, so idle 15-minute pushes stop stalling the page; a pressed Push always builds.
 
+### Other scripts can join gist sync
+
+- Another userscript sharing Toolasha's database can register key prefixes with `window.Toolasha.sync.registerKeys` so its settings travel in the gist; devices that never run it learn the list from the gist and keep those keys, and `unregisterKeys` withdraws a prefix.
+
 ### Guild building dialogs scroll on Firefox
 
 - The guild building and shrine upgrade dialog, with its gold-cost table, now scrolls to the bottom on Firefox (mobile included), and the cost table scrolls sideways on narrow screens instead of being cut off.

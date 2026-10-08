@@ -106,6 +106,8 @@ vi.mock('./sync-payload.js', () => ({
     // Opaque payload text here: the merged upload is the two texts side by side
     mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
     restampRestoredSettings: () => {},
+    assertExternalKeysSaved: async () => {},
+    learnExternalKeysFromText: () => false,
     RESTORED_BASELINE: '\u0000restoredAt',
     exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
     // Opaque payloads hold no registered history to cut
