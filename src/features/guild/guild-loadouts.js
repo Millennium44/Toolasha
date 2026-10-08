@@ -718,17 +718,45 @@ export async function loadLoadouts(characterId, guildName = null) {
  * one place that would do it. {@link pruneCharacterOnlyLoadouts} is the one
  * caller that means it, and says so.
  *
+ * The write folds the record into what is stored when it lands
+ * ({@link mergeLoadoutRecords}, this record winning per player by recency),
+ * inside the write's own transaction. A sync pull merges another device's
+ * sightings into the stored record, and another tab of the same character
+ * saves its own; written whole, the next capture here threw both away.
+ * Impostors (monster and item sheets) are dropped from the fold, so a
+ * sighting the purge took out cannot come back from the disk copy. A write
+ * that means to remove sightings — the purge, the prune — passes `replace`.
+ *
  * @param {string|number|null} characterId - Viewing character id
  * @param {Object} record - The record
  * @param {string|null} [guildName] - The character's guild, when known
  * @param {Object} [options] - Write options
  * @param {boolean} [options.allowEmpty=false] - Permit writing a record with no players
+ * @param {boolean} [options.replace=false] - Write the record as it is, dropping what only the disk holds
+ * @param {(under: (current: Object) => Object) => void} [options.onMerged] - Told when the write
+ *   folded stored sightings in, with a function that folds them under a record in hand (that
+ *   record winning), so the caller's memory can take them
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveLoadouts(characterId, record, guildName = null, { allowEmpty = false } = {}) {
+export async function saveLoadouts(
+    characterId,
+    record,
+    guildName = null,
+    { allowEmpty = false, replace = false, onMerged = null } = {}
+) {
     try {
         if (!allowEmpty && !Object.keys(record?.players || {}).length) return false;
-        await storage.set(guildLoadoutsStorageKey(characterId, guildName), record, LOADOUT_STORE);
+        const fold = replace
+            ? undefined
+            : (stored, value) => {
+                  if (!stored || typeof stored !== 'object' || !stored.players) return value;
+                  const merged = purgeMonsterLoadouts(mergeLoadoutRecords(stored, value)).record;
+                  if (typeof onMerged === 'function') {
+                      onMerged((current) => purgeMonsterLoadouts(mergeLoadoutRecords(merged, current)).record);
+                  }
+                  return merged;
+              };
+        await storage.set(guildLoadoutsStorageKey(characterId, guildName), record, LOADOUT_STORE, false, { fold });
         return true;
     } catch (error) {
         console.error('[GuildLoadouts] Failed to save seen loadouts:', error);
@@ -773,7 +801,7 @@ export async function pruneCharacterOnlyLoadouts(characterId, guildRecord) {
         }
         if (!dropped.length) return [];
 
-        await saveLoadouts(characterId, { ...record, players: kept }, null, { allowEmpty: true });
+        await saveLoadouts(characterId, { ...record, players: kept }, null, { allowEmpty: true, replace: true });
         return dropped;
     } catch (error) {
         console.error('[GuildLoadouts] Pruning the character-only record failed:', error);

@@ -46,8 +46,11 @@ const storageMock = vi.hoisted(() => {
         // Cloned on write, as IndexedDB does: the module hands the same array to
         // two keys in a row and a mock that stored the reference would show them
         // sharing a log they do not actually share
-        set: vi.fn(async (key, value, store = 'settings') => {
-            storeFor(store).set(key, structuredClone(value));
+        // A folding write is handed what is stored when it lands, as the real one is
+        set: vi.fn(async (key, value, store = 'settings', _immediate, options) => {
+            const map = storeFor(store);
+            const folded = options?.fold ? (options.fold(map.get(key), value) ?? value) : value;
+            map.set(key, structuredClone(folded));
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -59,8 +62,10 @@ const storageMock = vi.hoisted(() => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
         }),
-        setJSON: vi.fn(async (key, value, store = 'settings') => {
-            storeFor(store).set(key, structuredClone(value));
+        setJSON: vi.fn(async (key, value, store = 'settings', _immediate, options) => {
+            const map = storeFor(store);
+            const folded = options?.fold ? (options.fold(map.get(key), value) ?? value) : value;
+            map.set(key, structuredClone(folded));
             return true;
         }),
     };
@@ -547,6 +552,41 @@ describe('splitting the old shared key', () => {
         copies[0].status = 'meddled';
 
         expect(estimatedListingAge.knownListings[0].status).toBeUndefined();
+    });
+});
+
+describe('the anchor pool write folds into what is stored', () => {
+    test('anchors another tab or a sync pull stored survive this tab growing its own pool', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+        estimatedListingAge.anchorsLoaded = true;
+        storageMock.storeFor('marketListings').set(ANCHORS_KEY, [
+            { id: 100, timestamp: 1000 },
+            { id: 150, timestamp: 1500 },
+        ]);
+
+        await estimatedListingAge.addAnchors([{ id: 200, timestamp: 2000 }]);
+
+        expect(
+            storageMock
+                .storeFor('marketListings')
+                .get(ANCHORS_KEY)
+                .map((anchor) => anchor.id)
+        ).toEqual([100, 150, 200]);
+        // …and the estimates can use it now, not only after a reload
+        expect(estimatedListingAge.anchors.map((anchor) => anchor.id)).toEqual([100, 150, 200]);
+    });
+
+    test('this pool keeps its own timestamp for an id both copies hold', async () => {
+        estimatedListingAge.anchors = [{ id: 100, timestamp: 1000 }];
+        estimatedListingAge.anchorsLoaded = true;
+        storageMock.storeFor('marketListings').set(ANCHORS_KEY, [{ id: 100, timestamp: 9999 }]);
+
+        await estimatedListingAge.addAnchors([{ id: 200, timestamp: 2000 }]);
+
+        expect(storageMock.storeFor('marketListings').get(ANCHORS_KEY)).toEqual([
+            { id: 100, timestamp: 1000 },
+            { id: 200, timestamp: 2000 },
+        ]);
     });
 });
 

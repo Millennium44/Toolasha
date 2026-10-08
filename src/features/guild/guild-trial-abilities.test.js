@@ -20,9 +20,12 @@ const disk = vi.hoisted(() => ({ value: null, saved: null, keys: {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key) => (key in disk.keys ? disk.keys[key] : disk.value),
-        set: async (key, value) => {
-            disk.saved = value;
-            disk.keys[key] = value;
+        // A folding write is handed what is stored when it lands, as the real one is
+        set: async (key, value, _store, _immediate, options) => {
+            const stored = key in disk.keys ? disk.keys[key] : undefined;
+            const written = options?.fold ? (options.fold(stored, value) ?? value) : value;
+            disk.saved = written;
+            disk.keys[key] = written;
         },
         // The ability plan rides in the same store; nothing here is about it
         tryGet: async (key) => ({ found: key in disk.keys, value: disk.keys[key] ?? null }),
@@ -107,6 +110,46 @@ beforeEach(() => {
     disk.keys = {};
     game.characterId = null;
     game.items = {};
+});
+
+describe('a write folds into the session another tab or device stored', () => {
+    test('a capture stored elsewhere survives this tab’s next capture, and comes into memory', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const key = sessionStorageKey('Cats');
+        // Another tab of the guild captured Bob into the same trial's session
+        disk.keys[key] = {
+            ...disk.keys[key],
+            players: {
+                ...disk.keys[key].players,
+                [playerKey({ name: 'Bob', characterId: 2 })]: {
+                    ...snap('Bob', 2, ['/abilities/aqua_aura']),
+                    capturedAt: NOW,
+                },
+            },
+        };
+
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura'], { at: NOW + 1000 }), { at: NOW + 1000 });
+
+        const stored = Object.values(disk.keys[key].players).map((player) => player.name);
+        expect(stored.sort()).toEqual(['Alice', 'Bob']);
+        expect(
+            Object.values(s.session.players)
+                .map((player) => player.name)
+                .sort()
+        ).toEqual(['Alice', 'Bob']);
+        // The roster stays this tab's own
+        expect(disk.keys[key].roster.map((member) => member.name)).toEqual(['Alice', 'Bob']);
+    });
+
+    test('a recapture is written as it stands, not folded back into the old captures', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+
+        s.recapture(NOW + 1000);
+
+        expect(disk.keys[sessionStorageKey('Cats')].players).toEqual({});
+    });
 });
 
 describe('the key before the guild name is known', () => {

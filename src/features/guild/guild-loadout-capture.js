@@ -267,7 +267,8 @@ class GuildLoadoutCapture {
         if (cleaned.purged.length) {
             console.warn('[GuildLoadoutCapture] Dropping stored monster sheets:', cleaned.purged.join(', '));
             this.record = cleaned.record;
-            await saveLoadouts(this.characterId, this.record, this.guildName);
+            // A purge is a removal: written as it stands, not folded back into the disk copy
+            await saveLoadouts(this.characterId, this.record, this.guildName, { replace: true });
         }
         if (!stillOurs(ticket)) return;
 
@@ -545,7 +546,15 @@ class GuildLoadoutCapture {
 
         this.timers.scheduleTimeout(async () => {
             this.saveQueued = false;
-            await saveLoadouts(this.characterId, this.record, this.guildName);
+            const { characterId, guildName } = this;
+            await saveLoadouts(characterId, this.record, guildName, {
+                // Sightings another tab or device stored for this key come into
+                // memory too, so the roster and the next write both hold them
+                onMerged: (under) => {
+                    if (this.characterId !== characterId || this.guildName !== guildName) return;
+                    this.record = under(this.record);
+                },
+            });
         }, SAVE_DEBOUNCE_MS);
     }
 }
