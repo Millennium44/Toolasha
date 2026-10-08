@@ -394,6 +394,21 @@ describe('pull', () => {
         expect(payload.applied).toBeUndefined();
     });
 
+    test.each([
+        [false, 'Already up to date with GitHub.'],
+        [true, 'Nothing new from GitHub; this device has changes the next push will send.'],
+    ])('a pull with nothing newer says so truthfully (this device holds more: %s)', async (holdsMore, expected) => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-03-01T00:00:00.000Z';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.addsToRemote = () => holdsMore;
+
+        const result = await syncManager.pull();
+
+        expect(result).toMatchObject({ skipped: true, reason: 'not-newer' });
+        expect(toasts.map((toast) => toast.message)).toContain(expected);
+    });
+
     test.each([false, true])('detects queued local edits before a pull (silent=%s)', async (silent) => {
         stored.map.toolasha_sync_gistId = 'abc';
         stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';

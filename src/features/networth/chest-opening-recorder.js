@@ -61,12 +61,24 @@ import webSocketHook from '../../core/websocket.js';
 import { isScrollItem } from '../inventory/treasure-tracker.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { localDayId, dayStart } from './gold-sources.js';
+import { registerDayRowRetention, pruneDayRows } from './day-row-retention.js';
 
 const STORE_NAME = 'networthHistory';
 const RECORD_PREFIX = 'chestOpenRec';
 
 /** Beyond this, a day's row is dropped — the panel's longest window is 30 days */
 const RETENTION_DAYS = 400;
+
+/*
+ * The same window, told to sync: without it a day this recorder pruned stayed in the gist and every pull
+ * wrote it back (see day-row-retention.js).
+ */
+registerDayRowRetention({
+    store: STORE_NAME,
+    recordPrefix: RECORD_PREFIX,
+    days: RETENTION_DAYS,
+    granularity: 'month',
+});
 
 /**
  * Which chunk a day row belongs to.
@@ -170,6 +182,8 @@ class ChestOpeningRecorder {
             // day are two versions of one row, not two rows
             identityOf: (row) => row?.d,
             mergeCopies: mergeChestOpeningDays,
+            // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
+            pruneEntries: pruneDayRows(RETENTION_DAYS),
             label: 'ChestOpenings',
         });
 

@@ -50,12 +50,24 @@ import { parseItemHash } from '../../utils/item-hash.js';
 import { getDrinkConcentration, parseArtisanBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
 import { PRODUCTION_TYPES } from '../../utils/profit-constants.js';
 import { localDayId, dayStart } from './gold-sources.js';
+import { registerDayRowRetention, pruneDayRows } from './day-row-retention.js';
 
 const STORE_NAME = 'networthHistory';
 const RECORD_PREFIX = 'prodIncomeRec';
 
 /** Beyond this, a day's row is dropped — the panel's longest window is 30 days */
 const RETENTION_DAYS = 400;
+
+/*
+ * The same window, told to sync: without it a day this recorder pruned stayed in the gist and every pull
+ * wrote it back (see day-row-retention.js).
+ */
+registerDayRowRetention({
+    store: STORE_NAME,
+    recordPrefix: RECORD_PREFIX,
+    days: RETENTION_DAYS,
+    granularity: 'month',
+});
 
 /**
  * Which chunk a day row belongs to. Named so a row mutation can record the month it
@@ -307,6 +319,8 @@ class ProductionIncomeRecorder {
             // day are two versions of one row, not two rows
             identityOf: (row) => row?.d,
             mergeCopies: mergeProductionDays,
+            // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
+            pruneEntries: pruneDayRows(RETENTION_DAYS),
             label: 'ProductionIncome',
         });
 

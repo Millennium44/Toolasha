@@ -61,6 +61,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { localDayId, dayStart } from './gold-sources.js';
+import { registerDayRowRetention, pruneDayRows } from './day-row-retention.js';
 
 const STORE_NAME = 'networthHistory';
 const RECORD_PREFIX = 'combatLootRec';
@@ -70,6 +71,17 @@ const RECORD_PREFIX = 'combatLootRec';
  * the rest is headroom, and it is one key per day so it is also the key cost.
  */
 export const RETENTION_DAYS = 100;
+
+/*
+ * The same window, told to sync: without it a day this recorder pruned stayed in the gist and every pull
+ * wrote it back (see day-row-retention.js).
+ */
+registerDayRowRetention({
+    store: STORE_NAME,
+    recordPrefix: RECORD_PREFIX,
+    days: RETENTION_DAYS,
+    granularity: 'day',
+});
 
 /**
  * How often an unchanged reading is written anyway.
@@ -301,6 +313,8 @@ class CombatLootRecorder {
             // are two versions of one row, not two rows
             identityOf: (row) => row?.d,
             mergeCopies: mergeCombatLootDays,
+            // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
+            pruneEntries: pruneDayRows(RETENTION_DAYS),
             label: 'CombatLoot',
         });
 

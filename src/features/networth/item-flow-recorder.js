@@ -89,12 +89,24 @@ import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.j
 import { runningAction, runningCombatAction } from '../../utils/combat-actions.js';
 import { dungeonEntryKey } from '../../utils/dungeon-key-forecast.js';
 import { localDayId, dayStart, GATHERING_ACTION_TYPES } from './gold-sources.js';
+import { registerDayRowRetention, pruneDayRows } from './day-row-retention.js';
 
 const STORE_NAME = 'networthHistory';
 const RECORD_PREFIX = 'itemFlowRec';
 
 /** Beyond this, a day's row is dropped; one key per day, so this is also the key cost */
 export const RETENTION_DAYS = 100;
+
+/*
+ * The same window, told to sync: without it a day this recorder pruned stayed in the gist and every pull
+ * wrote it back (see day-row-retention.js).
+ */
+registerDayRowRetention({
+    store: STORE_NAME,
+    recordPrefix: RECORD_PREFIX,
+    days: RETENTION_DAYS,
+    granularity: 'day',
+});
 
 /**
  * How long without a completion before the next one starts a new stretch.
@@ -497,6 +509,8 @@ class ItemFlowRecorder {
             // handing the gist and every other device both copies
             identityOf: (row) => row?.d,
             mergeCopies: mergeDayRow,
+            // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
+            pruneEntries: pruneDayRows(RETENTION_DAYS),
             label: 'ItemFlow',
         });
 

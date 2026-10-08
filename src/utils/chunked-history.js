@@ -352,6 +352,11 @@ export function maxRecordsPerCharacter(storeName, keys) {
  *   sync brings together are an older and a newer version of it and only the recorder knows
  *   which is which. Given one, a read also folds any copies already sitting side by side on
  *   disk, and writes the folded chunk back.
+ * @param {Function} [options.pruneEntries] - `(entries) => entries`, the owner's own retention applied
+ *   to one chunk's worth of entries (rows past a date, points thinned to a daily outline). A sync fold
+ *   runs its result through it, because a union with a peer's copy otherwise hands back exactly what the
+ *   owner pruned: the peer still holds it, this device prunes it again on its next save, and the next
+ *   pull brings it back, for good. Must match what the owner does to a chunk it holds.
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -369,6 +374,7 @@ class ChunkedHistory {
         immediate = false,
         identityOf,
         mergeCopies,
+        pruneEntries,
         label = 'ChunkedHistory',
     }) {
         this.storeName = storeName;
@@ -381,6 +387,7 @@ class ChunkedHistory {
         /** True when `identityOf` is the caller's, so a stone may still be keyed by the old JSON */
         this._customIdentity = typeof identityOf === 'function';
         this.mergeCopies = typeof mergeCopies === 'function' ? mergeCopies : null;
+        this.pruneEntries = typeof pruneEntries === 'function' ? pruneEntries : null;
         this.label = label;
 
         /** Whose records are in memory */
@@ -470,7 +477,15 @@ class ChunkedHistory {
         const merge = (local, incoming) => {
             if (!Array.isArray(local)) return incoming;
             if (!Array.isArray(incoming)) return local;
-            return this._union(local, incoming);
+            const united = this._union(local, incoming);
+            if (!this.pruneEntries) return united;
+            try {
+                const pruned = this.pruneEntries(united);
+                return Array.isArray(pruned) ? pruned : united;
+            } catch (error) {
+                console.error(`[${this.label}] Pruning a folded chunk failed; keeping the union:`, error);
+                return united;
+            }
         };
 
         registerSyncMerge({

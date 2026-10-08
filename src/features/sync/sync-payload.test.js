@@ -36,6 +36,7 @@ vi.mock('../../core/storage.js', () => ({
         delete: async (key, name, options = {}) => {
             storeState.deleteCalls = [...(storeState.deleteCalls || []), { key, name, options }];
             if (storeState.latched?.has(name) && !options.bypassRestoreLatch) return false;
+            if (storeState.deleteFails) return false;
             delete (storeState.stores[name] || {})[key];
             return true;
         },
@@ -1079,6 +1080,15 @@ describe('applyPayload writes only what it changes', () => {
         expect(result.unchanged).toEqual({ dungeonRuns: 1 });
     });
 
+    test('keys the import would strip are not counted as already the same', async () => {
+        storeState.stores.guildHistory = { trialTraceChunk_1: 'x', kept: 1 };
+
+        const result = await applyPayload(payloadOf({ guildHistory: { trialTraceChunk_1: 'x', kept: 1 } }));
+
+        // The trace chunk is not part of the pull at all; only the record that would have been written counts
+        expect(result.unchanged).toEqual({ guildHistory: 1 });
+    });
+
     test('a store that cannot be read writes all of it, as a pull always did', async () => {
         storeState.stores.dungeonRuns = { same: 1 };
         storeState.getAllThrows = 'dungeonRuns';
@@ -1951,6 +1961,21 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
             importOutcome.complete = true;
         }
         expect(Object.keys(storeState.stores[DAY])).toHaveLength(25);
+    });
+
+    test('a displaced delete that does not land makes the pull incomplete, so it is retried', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        storeState.deleteFails = true;
+        try {
+            const result = await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0 + 20 * 3_600_000, 10) }), {
+                mode: 'merge',
+                baseline: {},
+            });
+            expect(result.complete).toBe(false);
+            expect(result.failed.map((entry) => entry.store)).toContain(DAY);
+        } finally {
+            storeState.deleteFails = false;
+        }
     });
 
     test('snapshots this device would drop by itself are left to its own pruning', async () => {
