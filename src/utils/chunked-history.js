@@ -426,6 +426,32 @@ class ChunkedHistory {
          */
         this._unreadableFor = null;
 
+        /**
+         * chunkId → every identity this store has held for that chunk since the
+         * character was read: the chunk as read, and every version written since.
+         *
+         * What a chunk write folds against. An entry on disk that memory lacks is
+         * either one this store let go of — a deletion, a window sliding past it —
+         * or one it has never seen: another tab's save, or another device's,
+         * brought in by a sync pull. Only the second kind is folded back in, and
+         * this set is what tells them apart. Built lazily, the first time a chunk
+         * is written, from the serialization the snapshot already holds.
+         * @type {Map<string, Set<*>>}
+         */
+        this._known = new Map();
+        /**
+         * Entries a chunk write found on disk and folded in, which the caller has
+         * not been handed yet (`id → entry`).
+         *
+         * A caller keeps its own copy of the history and hands it whole to every
+         * `save()`. An entry it has never seen is missing from that list, and
+         * without this the next save would read its absence as a deletion. Each
+         * save puts these back into the list it was given; a `load()` hands them
+         * over, and from then on they are the caller's to keep or drop.
+         * @type {Map<*, Object>}
+         */
+        this._adopted = new Map();
+
         /** The read in flight, so two concurrent `load()`s share one */
         this._loading = null;
         /** Which read is current, so one abandoned by `forget()` does not commit */
@@ -901,7 +927,11 @@ class ChunkedHistory {
      */
     async load(charId) {
         if (!charId) return [];
-        if (this._loaded && this._charId === charId) return [...this._entries];
+        if (this._loaded && this._charId === charId) {
+            // Whatever a chunk write folded in is in `_entries`; the caller now holds it
+            this._adopted.clear();
+            return [...this._entries];
+        }
 
         // `_loaded` used to be set before the read, so a second caller arriving
         // while the first was still awaiting storage was told the history was
@@ -1015,6 +1045,8 @@ class ChunkedHistory {
         this._snapshot = state.snapshot;
         this._tombs = state.tombs;
         this._legacy = state.legacy;
+        this._known = new Map();
+        this._adopted = new Map();
         this._loaded = true;
         if (collapsed.chunks.size > 0 && !state.legacy) this._writeChunks(charId, collapsed.chunks);
         return [...this._entries];
@@ -1035,12 +1067,13 @@ class ChunkedHistory {
     _writeChunks(charId, chunkIds) {
         const grouped = this._group(this._entries);
         for (const chunkId of chunkIds) {
-            this._snapshot.delete(chunkId);
             const bucket = grouped.get(chunkId);
+            if (bucket) this._noteKnown(chunkId, bucket, this._snapshot.get(chunkId));
+            this._snapshot.delete(chunkId);
             // Every copy this chunk held folded into another chunk's: the key goes, rather than
             // staying on disk to be read and folded again on every load
             const write = bucket
-                ? storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate)
+                ? this._writeChunk(charId, chunkId, bucket, { owned: true, written: null })
                 : storage.delete(this.keyFor(charId, chunkId), this.storeName);
             Promise.resolve(write).catch((error) => {
                 console.error(`[${this.label}] Writing back folded chunk ${chunkId} failed:`, error);
@@ -1100,7 +1133,8 @@ class ChunkedHistory {
         const owns = this._loaded && this._charId === charId;
         const snapshot = owns ? this._snapshot : new Map();
 
-        const list = Array.isArray(entries) ? entries : [];
+        const handed = Array.isArray(entries) ? entries : [];
+        const list = owns ? this._withAdopted(handed) : handed;
         const before = owns ? this._entries : [];
         if (owns) {
             this._entries = this._sorted(list);
@@ -1144,8 +1178,10 @@ class ChunkedHistory {
             }
 
             const serialized = JSON.stringify(bucket);
-            next.set(chunkId, { json: serialized, count: bucket.length });
-            if (previous?.json === serialized) continue;
+            if (previous?.json === serialized) {
+                next.set(chunkId, { json: serialized, count: bucket.length });
+                continue;
+            }
 
             // The snapshot is what makes an identical future save skip this
             // chunk, so recording the write before knowing it landed is a claim
@@ -1155,12 +1191,15 @@ class ChunkedHistory {
             // The write itself stays debounced — the promise a debounced write
             // returns resolves with the outcome when its timer fires, which is
             // exactly the answer needed and is not worth waiting for here.
-            const write = Promise.resolve(
-                storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate)
-            ).then((ok) => {
-                if (ok === false) this._evictSnapshot(chunkId, serialized);
-                return ok;
-            });
+            const written = { json: serialized, count: bucket.length };
+            next.set(chunkId, written);
+            if (owns) this._noteKnown(chunkId, bucket, previous);
+            const write = Promise.resolve(this._writeChunk(charId, chunkId, bucket, { owned: owns, written })).then(
+                (ok) => {
+                    if (ok === false) this._evictSnapshot(chunkId, serialized);
+                    return ok;
+                }
+            );
             write.catch((error) => {
                 console.error(`[${this.label}] Writing chunk ${chunkId} failed:`, error);
                 this._evictSnapshot(chunkId, serialized);
@@ -1179,6 +1218,191 @@ class ChunkedHistory {
 
         if (pending.length > 0) await Promise.all(pending);
         return true;
+    }
+
+    /**
+     * The list a save was handed, with the entries a chunk write adopted put back.
+     *
+     * An adopted entry the list already holds has reached the caller, and is
+     * the caller's from here on. The rest are added, so their absence from a
+     * caller that has never seen them is not taken for a deletion — which
+     * `_recordDeletions` would tombstone, and the next write would drop.
+     * @param {Array<Object>} list - What the caller passed
+     * @returns {Array<Object>} The list to save; `list` itself when nothing was adopted
+     * @private
+     */
+    _withAdopted(list) {
+        if (this._adopted.size === 0) return list;
+        const held = new Set();
+        for (const entry of list) {
+            const id = this._identity(entry);
+            if (id !== undefined && id !== null) held.add(id);
+        }
+        const extra = [];
+        for (const [id, entry] of this._adopted) {
+            if (held.has(id)) this._adopted.delete(id);
+            else extra.push(entry);
+        }
+        return extra.length === 0 ? list : this._sorted([...list, ...extra]);
+    }
+
+    /**
+     * Add a chunk's entries to what this store has held for it.
+     *
+     * The first time, the chunk as last read or written (its snapshot) goes in
+     * as well: an entry dropped from memory since the read is still one this
+     * store had, and must not be mistaken for news on disk.
+     * @param {string} chunkId - Which bucket
+     * @param {Array<Object>} bucket - The entries about to be written
+     * @param {{json: string}|undefined} previous - The chunk's snapshot before this write
+     * @returns {void}
+     * @private
+     */
+    _noteKnown(chunkId, bucket, previous) {
+        let known = this._known.get(chunkId);
+        if (!known) {
+            known = new Set();
+            if (typeof previous?.json === 'string') {
+                try {
+                    for (const entry of JSON.parse(previous.json)) {
+                        const id = this._identity(entry);
+                        if (id !== undefined && id !== null) known.add(id);
+                    }
+                } catch {
+                    // A snapshot that will not parse names nothing; the bucket below still counts
+                }
+            }
+            this._known.set(chunkId, known);
+        }
+        for (const entry of bucket) {
+            const id = this._identity(entry);
+            if (id !== undefined && id !== null) known.add(id);
+        }
+    }
+
+    /**
+     * Write one chunk, folded into whatever is on disk for it when it lands.
+     *
+     * The write used to put this store's bucket down whole. Anything else on
+     * disk for that chunk went with it: a save another tab of this character
+     * committed, or the entries a sync pull had just merged in from another
+     * device — the pull folds, then the next append here wrote them away. The
+     * fold runs inside the write's own transaction (see `storage.set`'s
+     * `fold`), after the debounce, against what is stored at that moment, so
+     * it sees every commit before it and nothing can land in between.
+     *
+     * The rule, per entry on disk:
+     *
+     * - one memory also holds keeps memory's copy, folded with the stored one
+     *   by `mergeCopies` when the store has a rule — the same fold a pull makes,
+     *   with this tab as the local side;
+     * - one this store has held for the chunk (`_known`) and memory no longer
+     *   holds was let go of here — deleted, pruned, slid out of a window — and
+     *   stays gone;
+     * - one a tombstone matches stays gone;
+     * - anything else is news and is kept, on disk and — when the store still
+     *   holds the same character — in memory, so the next save carries it too.
+     *
+     * Debounced exactly as before, so the write count does not change: a chunk
+     * whose bucket matches its snapshot is still not written at all, and a disk
+     * copy that adds nothing leaves the bucket to be written as it is.
+     * @param {string} charId - Whose record
+     * @param {string} chunkId - Which bucket
+     * @param {Array<Object>} bucket - The entries to write
+     * @param {{owned: boolean, written: ({json: string, count: number}|null)}} options - Whether the
+     *   store holds this character's memory (a save for anyone else folds as a plain union, and
+     *   tells memory nothing), and the snapshot entry this write set, if any
+     * @returns {Promise<boolean>} The write's outcome
+     * @private
+     */
+    _writeChunk(charId, chunkId, bucket, { owned, written }) {
+        // Taken now, not when the write lands: a character switch in between
+        // replaces these maps, and the fold must judge by the ones this write
+        // was made under
+        const known = owned ? this._known : new Map();
+        const stones = owned ? this._tombs : {};
+        const fold = (stored, value) => {
+            if (!Array.isArray(stored) || stored.length === 0 || !Array.isArray(value)) return value;
+            const at = new Map();
+            value.forEach((entry, index) => {
+                const id = this._identity(entry);
+                if (id !== undefined && id !== null) at.set(id, index);
+            });
+            const held = known.get(chunkId);
+            let out = null;
+            const adopted = [];
+            for (const entry of stored) {
+                if (entry == null) continue;
+                const id = this._identity(entry);
+                if (id === undefined || id === null) continue;
+                if (at.has(id)) {
+                    if (!this.mergeCopies) continue;
+                    const index = at.get(id);
+                    const mine = (out || value)[index];
+                    const folded = this._mergeCopies(mine, entry);
+                    if (folded !== mine) {
+                        out = out || [...value];
+                        out[index] = folded;
+                    }
+                    continue;
+                }
+                if (held?.has(id)) continue;
+                if (this._tombstoned(id, entry, stones)) continue;
+                out = out || [...value];
+                at.set(id, out.length);
+                out.push(entry);
+                adopted.push(entry);
+            }
+            if (!out) return value;
+            const result = this._sorted(out);
+            if (owned && adopted.length > 0) this._adopt(chunkId, adopted, result, known, written);
+            return result;
+        };
+        return storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate, { fold });
+    }
+
+    /**
+     * Take entries a chunk write found on disk into memory.
+     *
+     * Only into the memory the write was made under: after a character switch
+     * the store holds somebody else, and the entries are on disk for the next
+     * read of this one to find.
+     * @param {string} chunkId - Which bucket
+     * @param {Array<Object>} adopted - The entries folded in
+     * @param {Array<Object>} result - The chunk as written
+     * @param {Map<string, Set<*>>} known - The `_known` map the write was made under
+     * @param {{json: string, count: number}|null} written - The snapshot entry the write set, if any
+     * @returns {void}
+     * @private
+     */
+    _adopt(chunkId, adopted, result, known, written) {
+        if (known !== this._known || !this._loaded) return;
+        let held = known.get(chunkId);
+        if (!held) {
+            held = new Set();
+            known.set(chunkId, held);
+        }
+        const present = new Set(this._entries.map((entry) => this._identity(entry)));
+        const fresh = [];
+        for (const entry of adopted) {
+            const id = this._identity(entry);
+            held.add(id);
+            if (present.has(id)) continue;
+            this._adopted.set(id, entry);
+            fresh.push(entry);
+        }
+        if (fresh.length > 0) this._entries = this._sorted([...this._entries, ...fresh]);
+        // What is on disk now, so the next save of an unchanged chunk is still
+        // skipped rather than written once more to say the same thing. The
+        // entry itself is updated, not replaced: the save that made it may not
+        // have installed its snapshot yet, and one carried forward by a later
+        // save is still this same object. `foldedFrom` lets a write that then
+        // fails evict it all the same (see `_evictSnapshot`).
+        if (written) {
+            written.foldedFrom = written.json;
+            written.json = JSON.stringify(result);
+            written.count = result.length;
+        }
     }
 
     /**
@@ -1249,7 +1473,8 @@ class ChunkedHistory {
      * @private
      */
     _evictSnapshot(chunkId, serialized) {
-        if (this._snapshot.get(chunkId)?.json === serialized) this._snapshot.delete(chunkId);
+        const held = this._snapshot.get(chunkId);
+        if (held?.json === serialized || held?.foldedFrom === serialized) this._snapshot.delete(chunkId);
     }
 
     /**
@@ -1357,6 +1582,8 @@ class ChunkedHistory {
         this._entries = [];
         this._snapshot = new Map();
         this._tombs = {};
+        this._known = new Map();
+        this._adopted = new Map();
         this._legacy = false;
         // A read still in flight was for the departing character. Moving the
         // token past it is what stops it committing its entries into the

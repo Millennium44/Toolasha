@@ -17,8 +17,10 @@ const storageMock = vi.hoisted(() => {
     const mock = {
         store,
         get: vi.fn(async (key, storeName, fallback) => (store.has(key) ? store.get(key) : fallback)),
-        set: vi.fn(async (key, value) => {
-            store.set(key, value);
+        // A folding write is handed what is stored when it lands, as the real one is
+        set: vi.fn(async (key, value, storeName, immediate, options) => {
+            const fold = options?.fold;
+            store.set(key, fold ? (fold(store.get(key), value) ?? value) : value);
             return true;
         }),
         delete: vi.fn(async (key) => {
@@ -85,8 +87,9 @@ beforeEach(() => {
     storageMock.get.mockImplementation(async (key, storeName, fallback) =>
         storageMock.store.has(key) ? storageMock.store.get(key) : fallback
     );
-    storageMock.set.mockImplementation(async (key, value) => {
-        storageMock.store.set(key, value);
+    storageMock.set.mockImplementation(async (key, value, storeName, immediate, options) => {
+        const fold = options?.fold;
+        storageMock.store.set(key, fold ? (fold(storageMock.store.get(key), value) ?? value) : value);
         return true;
     });
     storageMock.delete.mockImplementation(async (key) => {
@@ -1354,5 +1357,129 @@ describe('one row per day, rewritten in place', () => {
         );
         expect(merged).toEqual([{ d: '2026-10-07', v: 9 }]);
         spy.mockRestore();
+    });
+});
+
+describe('a chunk write folds into what is on disk for that chunk', () => {
+    /** The `v` labels a chunk holds on disk, in stored order */
+    const onDisk = (key) => (storageMock.store.get(key) || []).map((point) => point.v);
+    const JULY = 'rec_c1_2026-07';
+
+    test('an entry another device added to the chunk survives this tab’s next write, on disk and in memory', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1)]);
+        // A sync pull (or another tab) lands a peer's entry in the same month
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 5)]);
+
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-5', '2026-7-10']);
+        expect((await history.load('c1')).map((point) => point.v)).toEqual(['2026-7-1', '2026-7-5', '2026-7-10']);
+    });
+
+    test('a caller that never saw the folded-in entry does not delete it by leaving it out', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 2)]);
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 2), at(2026, 7, 5)]);
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 2), at(2026, 7, 10)]);
+
+        // The recorder still holds only its own list, and appends again
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 2), at(2026, 7, 10), at(2026, 7, 12)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-2', '2026-7-5', '2026-7-10', '2026-7-12']);
+        // Not taken for an interior deletion, so no tombstone tells a peer to drop it
+        expect(storageMock.store.has('recTomb_c1')).toBe(false);
+    });
+
+    test('an entry this tab deleted is not folded back from a stale copy on disk', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 5), at(2026, 7, 10)]);
+        // Another tab, still holding the 5th, commits its own addition on top
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 5), at(2026, 7, 10), at(2026, 7, 12)]);
+
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-10', '2026-7-12']);
+    });
+
+    test('an entry this tab pruned off the end of its window is not refilled from disk', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 2), at(2026, 7, 3)]);
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 2), at(2026, 7, 3), at(2026, 7, 20)]);
+
+        // The oldest slides out of the window as a new one comes in
+        await history.save('c1', [at(2026, 7, 2), at(2026, 7, 3), at(2026, 7, 25)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-2', '2026-7-3', '2026-7-20', '2026-7-25']);
+    });
+
+    test('a tombstoned entry another tab wrote back is not folded in', async () => {
+        // Deleted here earlier: the record holds the tombstone, the chunk does not hold the entry
+        const first = build();
+        await first.save('c1', [at(2026, 7, 1), at(2026, 7, 5), at(2026, 7, 10)]);
+        await first.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+        expect(storageMock.store.has('recTomb_c1')).toBe(true);
+
+        // A fresh page reads that state, then a tab that never saw the deletion writes the entry back
+        const history = build();
+        await history.load('c1');
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 5), at(2026, 7, 10)]);
+
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10), at(2026, 7, 12)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-10', '2026-7-12']);
+    });
+
+    test('an unchanged chunk is still not written, and a disk copy equal to memory changes nothing', async () => {
+        const history = build();
+        const points = [at(2026, 6, 1), at(2026, 7, 1)];
+        await history.save('c1', points);
+        storageMock.set.mockClear();
+
+        await history.save('c1', points);
+        expect(written()).toEqual([]);
+
+        await history.save('c1', [...points, at(2026, 7, 2)]);
+        expect(written()).toEqual([JULY]);
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-2']);
+    });
+
+    test('once an entry is folded in, saving the same list again writes nothing', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1)]);
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 5)]);
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+        storageMock.set.mockClear();
+
+        // The recorder's list, without the entry it never saw: nothing it holds moved
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+
+        expect(written()).toEqual([]);
+    });
+
+    test('a row rewritten in place keeps the other copy’s fresher values through the store’s own rule', async () => {
+        const days = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'foldDay',
+            legacyKey: (charId) => `foldDayLegacy_${charId}`,
+            groupOf: (row) => row.d.slice(0, 7),
+            compare: (a, b) => a.d.localeCompare(b.d),
+            identityOf: (row) => row?.d,
+            mergeCopies: (a, b) => (b.v > a.v ? b : a),
+            label: 'FoldDayTest',
+        });
+        await days.save('c1', [{ d: '2026-10-07', v: 2 }]);
+        // Another device's copy of today, pulled in, is ahead of this tab's
+        storageMock.store.set('foldDay_c1_2026-10', [{ d: '2026-10-07', v: 9 }]);
+
+        await days.save('c1', [
+            { d: '2026-10-07', v: 3 },
+            { d: '2026-10-08', v: 1 },
+        ]);
+
+        expect(storageMock.store.get('foldDay_c1_2026-10')).toEqual([
+            { d: '2026-10-07', v: 9 },
+            { d: '2026-10-08', v: 1 },
+        ]);
     });
 });

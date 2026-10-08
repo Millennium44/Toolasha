@@ -1994,3 +1994,119 @@ describe('tryGetAllKeys separates an empty store from one that could not be list
         expect(await storage.tryGetAllKeys('settings')).toBeNull();
     });
 });
+
+describe('Storage.set with a fold: read, fold and write in the one transaction that lands it', () => {
+    /** Union of two arrays of strings, stored side first — the shape a history fold has */
+    const union = (stored, value) => [...new Set([...(stored || []), ...value])];
+
+    beforeEach(() => {
+        storage.db = null;
+        storage._closingForTeardown = false;
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage.db = null;
+    });
+
+    test('an immediate write folds into what is stored instead of replacing it', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['other tab'] } });
+        storage.db = db;
+
+        await expect(storage.set('lines', ['mine'], 'settings', true, { fold: union })).resolves.toBe(true);
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['other tab', 'mine']);
+    });
+
+    test('a debounced write folds against what is stored when it lands, not when it was asked for', async () => {
+        vi.useFakeTimers();
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: [] } });
+        storage.db = db;
+
+        const pending = storage.set('lines', ['mine'], 'settings', false, { fold: union });
+        // Another tab commits inside the debounce window
+        dataByStore.get('settings').set('lines', ['committed meanwhile']);
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+
+        await expect(pending).resolves.toBe(true);
+        expect(dataByStore.get('settings').get('lines')).toEqual(['committed meanwhile', 'mine']);
+    });
+
+    test('flushAll lands a queued fold the same way, beside a plain write in the same store', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], {
+            settings: { lines: ['other tab'], plain: 'old' },
+        });
+        storage.db = db;
+
+        storage.set('lines', ['mine'], 'settings', false, { fold: union });
+        storage.set('plain', 'new', 'settings');
+        await storage.flushAll();
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['other tab', 'mine']);
+        expect(dataByStore.get('settings').get('plain')).toBe('new');
+    });
+
+    test('the newest set brings its own fold; a plain set after a folding one writes plainly', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['other tab'] } });
+        storage.db = db;
+
+        storage.set('lines', ['first'], 'settings', false, { fold: union });
+        storage.set('lines', ['second'], 'settings');
+        await storage.flushAll();
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['second']);
+    });
+
+    test('a fold queued behind a plain write folds into that write, not into the disk it replaces', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['purged'] } });
+        storage.db = db;
+
+        // A reset or a purge is a plain write; a folding save right behind it must not undo it
+        storage.set('lines', ['kept'], 'settings');
+        storage.set('lines', ['added'], 'settings', false, { fold: union });
+        await storage.flushAll();
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['kept', 'added']);
+    });
+
+    test('an immediate fold over a queued plain write folds into that write too', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['purged'] } });
+        storage.db = db;
+
+        storage.set('lines', ['kept'], 'settings');
+        await storage.set('lines', ['added'], 'settings', true, { fold: union });
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['kept', 'added']);
+    });
+
+    test('a fold that throws writes the value as given rather than nothing', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['other tab'] } });
+        storage.db = db;
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await storage.set('lines', ['mine'], 'settings', true, {
+            fold: () => {
+                throw new Error('bad fold');
+            },
+        });
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['mine']);
+        error.mockRestore();
+    });
+
+    test('an update that takes over a queued folding write folds it first', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['other tab'] } });
+        storage.db = db;
+
+        storage.set('lines', ['queued'], 'settings', false, { fold: union });
+        await storage.update('lines', (current) => [...current, 'updated'], 'settings');
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['other tab', 'queued', 'updated']);
+    });
+});
