@@ -26,6 +26,7 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { attachMinimize } from './panel-minimize.js';
 import { registerEscapeClose } from './panel-escape.js';
 import { ROW_COLORS } from './overlay-format.js';
+import { fitValueToBox } from './wrap-long-value.js';
 
 const DEFAULT_REFRESH_MS = 3000;
 
@@ -444,9 +445,6 @@ export function panelCard(body, title, accent = '#8fb4ff') {
     return card;
 }
 
-/** Values longer than this wrap instead of holding one line. */
-const PANEL_LINE_NOWRAP_CHARS = 24;
-
 /**
  * A labelled figure on its own line.
  *
@@ -470,8 +468,7 @@ export function panelLine(label, value, color = '#e8ecf5', title = '') {
     const figure = document.createElement('span');
     figure.textContent = value;
     figure.style.color = color;
-    Object.assign(figure.style, { minWidth: '0', textAlign: 'right', overflowWrap: 'anywhere' });
-    figure.style.whiteSpace = String(value).length > PANEL_LINE_NOWRAP_CHARS ? 'normal' : 'nowrap';
+    fitValueToBox(figure, value);
 
     if (title) line.title = title;
     line.append(name, figure);

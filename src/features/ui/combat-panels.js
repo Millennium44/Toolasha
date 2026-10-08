@@ -46,6 +46,7 @@ import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floati
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
+import { fitValueToBox } from '../../utils/wrap-long-value.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
 import { loadAllZonesSnapshot, bestSoloZone, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
@@ -575,12 +576,12 @@ function line(label, value, color = COLORS.text, title = '') {
     const name = document.createElement('span');
     name.textContent = label;
     name.style.color = COLORS.textDim;
-    name.style.flex = '1';
+    name.style.flex = '1 0 auto';
 
     const figure = document.createElement('span');
     figure.textContent = value;
     figure.style.color = color;
-    figure.style.whiteSpace = 'nowrap';
+    fitValueToBox(figure, value);
 
     if (title) element.title = title;
     element.append(name, figure);

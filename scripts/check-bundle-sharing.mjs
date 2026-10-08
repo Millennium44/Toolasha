@@ -106,6 +106,12 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/wrap-long-value.js',
+        // One constant and one pure style helper, no imports and no module state.
+        // Panels in several bundles (ironcow, ui, combat) draw label and value rows with it.
+        'stateless style helper; no module state to share',
+    ],
+    [
         'src/utils/points-from-count.js',
         // The game's count-to-points ladder: two pure functions, no imports and
         // no module state. The utils bundle (the Bestiary, through bestiary.js)

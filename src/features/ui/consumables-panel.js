@@ -3370,7 +3370,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         Object.assign(footer.style, {
             display: 'flex',
             alignItems: 'baseline',
-            gap: '8px',
+            gap: '2px 8px',
+            flexWrap: 'wrap',
             borderTop: `1px solid ${COLORS.border}`,
             marginTop: '5px',
             paddingTop: '4px',
@@ -3387,9 +3388,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}`;
         value.style.whiteSpace = 'nowrap';
 
+        // The restock text can be a whole clause; it wraps inside the panel
         const buy = document.createElement('span');
-        buy.style.marginLeft = 'auto';
-        buy.style.whiteSpace = 'nowrap';
+        Object.assign(buy.style, { marginLeft: 'auto', minWidth: '0', overflowWrap: 'anywhere', textAlign: 'right' });
 
         if (need.items) {
             // The whole restock in one gesture. Buying it a row at a time means
