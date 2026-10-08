@@ -50,6 +50,7 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 }));
 
 vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToEnhanceItem: () => false,
     navigateToAction: (actionHrid) => {
         mocks.navigatedActions.push(actionHrid);
         return true;

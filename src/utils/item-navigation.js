@@ -124,6 +124,32 @@ export function navigateToAction(actionHrid) {
 }
 
 /**
+ * Open the Enhancing screen with one owned stack already selected.
+ *
+ * The game's own `handleEnhanceItem` (the item menu's "Enhance" entry) takes an
+ * item hash and preselects exactly that stack. It has no target level. The
+ * picker only accepts inventory stacks and the handler dereferences the stack it
+ * looks up without a null check, so a hash for a worn piece or a stack that is
+ * gone is refused here rather than handed over.
+ *
+ * @param {string} itemHash - `characterId::/item_locations/inventory::itemHrid::level`
+ * @returns {boolean} True if the game was navigated
+ */
+export function navigateToEnhanceItem(itemHash) {
+    if (typeof itemHash !== 'string' || !itemHash.includes('::/item_locations/inventory::')) {
+        return false;
+    }
+
+    const game = getGameObject();
+    if (typeof game?.handleEnhanceItem !== 'function') {
+        return false;
+    }
+
+    game.handleEnhanceItem(itemHash);
+    return true;
+}
+
+/**
  * Navigate to the action page for an item, or item dictionary if no action found
  * @param {string} itemHrid - Item HRID to navigate to
  * @returns {boolean} True if navigation was attempted, false if game API unavailable

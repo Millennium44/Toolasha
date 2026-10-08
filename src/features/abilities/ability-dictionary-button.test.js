@@ -19,6 +19,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { register: () => () => {} } }));
 vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToEnhanceItem: () => false,
     openItemDictionary: (hrid) => {
         state.opened.push(hrid);
         return true;

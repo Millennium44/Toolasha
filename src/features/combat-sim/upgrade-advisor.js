@@ -29,6 +29,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
+import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
@@ -2650,7 +2651,7 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     if (candidate.type === 'cross_slot') {
         let buyCost = 0;
         for (const item of Object.values(candidate.addedSlots)) {
-            const { price } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, gameData);
+            const { price } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, gameData, { isSelf });
             if (price === null) {
                 return null; // Unknown acquisition cost — don't rank as free
             }
@@ -2660,6 +2661,14 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     }
 
     if (candidate.type === 'enhancement') {
+        // Gear nobody can sell is laddered from a copy you hold, never quoted
+        if (isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)) {
+            return resolveSelfEnhancePrice(candidate.currentHrid, candidate.upgradeLevel, gameData, {
+                isSelf,
+                candidate,
+            }).price;
+        }
+
         // Primary: market price delta (buy at target level - sell at current level)
         // Only use if BOTH levels have actual market listings
         const upgradedMarket = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
@@ -2679,7 +2688,9 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     }
 
     // Tier upgrade: buy new item at target enhancement - sell current item
-    const { price: buyPrice } = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, gameData);
+    const { price: buyPrice } = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, gameData, {
+        isSelf,
+    });
     if (buyPrice === null) {
         return null; // Unknown acquisition cost — don't rank as free
     }
@@ -2757,6 +2768,12 @@ export const COST_SOURCES = {
             'No usable pair of listings at these enhancement levels, so the price uses a simulated ' +
             'enhancement path. New gear also includes its base item price; this is an estimate, not a quote.',
     },
+    enhance: {
+        label: 'enh',
+        title:
+            'Cannot be bought at any level, so this is the expected cost of enhancing a copy you hold ' +
+            'up to the target — an estimate over a random process, not a quote.',
+    },
     craft: {
         label: 'craft',
         title: 'No market listing, so the price is what the materials to make it come to.',
@@ -2770,7 +2787,7 @@ export const COST_SOURCES = {
 };
 
 /** Cost bases in descending order of how much a reader should trust them */
-const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'sim', 'ongoing'];
+const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'sim', 'enhance', 'ongoing'];
 
 /**
  * The weakest basis among several, since a total is only as solid as its
@@ -2796,10 +2813,14 @@ function weakestCostSource(sources) {
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Target enhancement level
  * @param {Object} gameData - Game data payload
- * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined}} Buy price in
- *   gold, its basis, and — when an enhancement sweep produced it — whose enhancing stats it ran on
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the row is the live character's, so a
+ *   self-enhanced item can be laddered from the copies they hold
+ * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined,
+ *   ladder: Object|undefined}} Buy price in gold, its basis, whose enhancing stats a sweep ran
+ *   on, and for a self-enhanced item the copy it was laddered from
  */
-function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData) {
+function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, { isSelf = true } = {}) {
     // Tester shop first, when it is a price source: the shop copy at its
     // level, or that copy mirrored up — see tester-shop.js
     if (testerShopEnabled()) {
@@ -2807,6 +2828,12 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData) {
         if (tester) {
             return { price: tester.price, source: tester.route === 'mirror' ? 'tester shop + mirrors' : 'tester shop' };
         }
+    }
+
+    // Capes, quivers and the like are never on the market at any level, so
+    // they are priced as an enhance from a copy you hold — see `resolveSelfEnhancePrice`
+    if (isSelfEnhancedItem(itemHrid, gameData?.itemDetailMap)) {
+        return resolveSelfEnhancePrice(itemHrid, enhancementLevel, gameData, { isSelf });
     }
 
     if (enhancementLevel > 0) {
@@ -2848,6 +2875,65 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData) {
     // an ask at +0 is the market speaking and anything else is a craft estimate
     const listed = getItemPrices(itemHrid, 0);
     return { price: direct, source: listed?.ask > 0 ? 'market' : 'craft' };
+}
+
+/**
+ * Price a self-enhanced item (a cape, a quiver: anything without `isTradable`)
+ * at a target level, as the enhance from the copy the ladder picks.
+ *
+ * The copy is chosen by `planSelfEnhance`: the second-best held copy when the
+ * best is +5 or more, otherwise the best. The cost is the expected enhancing
+ * cost from that copy's level to the target, and never a market ask, because
+ * no level of these is ever listed. A chosen copy already at the target costs
+ * nothing. With no copy held the ladder starts a fresh one, priced at the +0
+ * base the ordinary path uses (`resolveItemPrice`, a craft estimate for a
+ * refined cape whose untradable base contributes nothing) plus the whole
+ * enhance. A base with no price at all leaves the row unpriced.
+ *
+ * Held copies are read when this runs, which is when the analysis prices its
+ * rows. A later inventory change shows in the next analysis.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @param {number} targetLevel - Level the row asks for
+ * @param {Object} gameData - Game data payload
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the live character's copies apply
+ * @param {Object} [options.candidate] - The candidate, for a worn copy when the inventory is not known
+ * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined, ladder: Object}}
+ */
+function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = true, candidate = null } = {}) {
+    const plan = planSelfEnhance(targetLevel, copiesForPricing(itemHrid, { isSelf, candidate }));
+    const ladder = {
+        fromLevel: plan.fromLevel,
+        toLevel: plan.toLevel,
+        fresh: plan.fresh,
+        alreadyHeld: plan.alreadyHeld,
+        fromEquipped: Boolean(plan.copy?.equipped),
+        baseCost: 0,
+    };
+
+    if (plan.alreadyHeld) return { price: 0, source: 'enhance', ladder };
+
+    let base = 0;
+    if (plan.fresh) {
+        base = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        if (!(base > 0)) return { price: null, source: null, ladder };
+        ladder.baseCost = base;
+    }
+
+    const enhanceCost =
+        plan.toLevel > plan.fromLevel
+            ? calculateDirectEnhancementCost(itemHrid, plan.fromLevel, plan.toLevel, gameData)
+            : 0;
+    if (enhanceCost == null) return { price: null, source: null, ladder };
+
+    return {
+        price: base + Math.max(0, enhanceCost),
+        source: 'enhance',
+        enhanceSource:
+            plan.toLevel > plan.fromLevel ? describeEnhancementSource(enhancementSweepParams(itemHrid)) : undefined,
+        ladder,
+    };
 }
 
 /**
@@ -3025,6 +3111,30 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
 
+    if (candidate.type === 'enhancement' && isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)) {
+        const { price, source, enhanceSource, ladder } = resolveSelfEnhancePrice(
+            candidate.currentHrid,
+            candidate.upgradeLevel,
+            gameData,
+            { isSelf, candidate }
+        );
+        return {
+            buys: [],
+            credits: [],
+            gross: price,
+            credit: 0,
+            net: price,
+            unpriced: price == null ? [nameOf(candidate.currentHrid)] : [],
+            creditApplied: false,
+            source,
+            enhanceSource: enhanceSource || null,
+            enhancementPath: true,
+            // Never listed, so there is no ask for a watch to aim at
+            targetAsk: null,
+            ladder,
+        };
+    }
+
     if (candidate.type === 'enhancement') {
         const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
         const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
@@ -3088,10 +3198,11 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     const buys = [];
     if (candidate.addedSlots) {
         for (const item of Object.values(candidate.addedSlots)) {
-            const { price, source, enhanceSource } = resolveUpgradeBuyPrice(
+            const { price, source, enhanceSource, ladder } = resolveUpgradeBuyPrice(
                 item.hrid,
                 item.enhancementLevel || 0,
-                gameData
+                gameData,
+                { isSelf }
             );
             buys.push({
                 hrid: item.hrid,
@@ -3100,13 +3211,15 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
                 price,
                 source,
                 enhanceSource,
+                ...(ladder ? { ladder } : {}),
             });
         }
     } else if (candidate.upgradeHrid) {
-        const { price, source, enhanceSource } = resolveUpgradeBuyPrice(
+        const { price, source, enhanceSource, ladder } = resolveUpgradeBuyPrice(
             candidate.upgradeHrid,
             candidate.upgradeLevel || 0,
-            gameData
+            gameData,
+            { isSelf }
         );
         buys.push({
             hrid: candidate.upgradeHrid,
@@ -3115,6 +3228,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
             price,
             source,
             enhanceSource,
+            ...(ladder ? { ladder } : {}),
         });
     }
 
@@ -3143,6 +3257,9 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
         gross,
         credit,
         enhanceSource,
+        // The ladder behind a single self-enhanced piece, so the row can say
+        // "enhance from +X to +N" rather than "buys"
+        ladder: buys.length === 1 ? buys[0].ladder || null : null,
         // Not floored at zero: see calculateUpgradeCost. A swap whose resale
         // beats its purchase hands gold back, and the breakdown says so
         net: gross === null ? null : gross - credit,

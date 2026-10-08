@@ -346,6 +346,8 @@ function buildGameData() {
         itemDetailMap: {
             '/items/fine_sword': {
                 name: 'Fine Sword',
+                // Tradables carry `isTradable: true`; only capes and quivers lack it
+                isTradable: true,
                 itemLevel: 50,
                 sortIndex: 1,
                 equipmentDetail: {
@@ -355,6 +357,8 @@ function buildGameData() {
             },
             '/items/regal_sword_refined': {
                 name: 'Regal Sword (R)',
+                // Tradables carry `isTradable: true`; only capes and quivers lack it
+                isTradable: true,
                 itemLevel: 60,
                 sortIndex: 2,
                 equipmentDetail: {
@@ -3990,9 +3994,10 @@ describe('explainUpgradeCost', () => {
     function costGameData() {
         return {
             itemDetailMap: {
-                '/items/fire_top': { name: 'Fire Top', equipmentDetail: { type: BODY } },
-                '/items/fire_bottoms': { name: 'Fire Bottoms', equipmentDetail: { type: LEGS } },
-                '/items/nature_top': { name: 'Nature Top', equipmentDetail: { type: BODY } },
+                // Tradables carry `isTradable: true`, as itemDetailMap sends them
+                '/items/fire_top': { name: 'Fire Top', isTradable: true, equipmentDetail: { type: BODY } },
+                '/items/fire_bottoms': { name: 'Fire Bottoms', isTradable: true, equipmentDetail: { type: LEGS } },
+                '/items/nature_top': { name: 'Nature Top', isTradable: true, equipmentDetail: { type: BODY } },
             },
         };
     }
@@ -6416,7 +6421,12 @@ describe('a community buff target level', () => {
  * −410,000,000 the Skilling tab was showing.
  */
 describe('crediting the resale of what a swap replaces', () => {
-    const gameData = { itemDetailMap: { '/items/new': { name: 'New' }, '/items/old': { name: 'Old' } } };
+    const gameData = {
+        itemDetailMap: {
+            '/items/new': { name: 'New', isTradable: true },
+            '/items/old': { name: 'Old', isTradable: true },
+        },
+    };
 
     beforeEach(() => {
         resolveItemPrice.mockImplementation((hrid, { side }) => ({

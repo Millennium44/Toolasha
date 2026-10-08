@@ -13,7 +13,7 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-const { findActionForItem, openItemDictionary, navigateToItem, navigateToAction } =
+const { findActionForItem, openItemDictionary, navigateToItem, navigateToAction, navigateToEnhanceItem } =
     await import('./item-navigation.js');
 
 function setGameRoot(gameStateNode) {
@@ -179,5 +179,31 @@ describe('navigateToAction', () => {
 
         setGameRoot({ handleGoToMarketplace: () => {} });
         expect(navigateToAction('/actions/milking/cow')).toBe(false);
+    });
+});
+
+describe('navigateToEnhanceItem', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('hands an inventory stack hash to the game', () => {
+        const calls = [];
+        setGameRoot({ handleGoToMarketplace: () => {}, handleEnhanceItem: (hash) => calls.push(hash) });
+        const hash = '161296::/item_locations/inventory::/items/sinister_cape::3';
+        expect(navigateToEnhanceItem(hash)).toBe(true);
+        expect(calls).toEqual([hash]);
+    });
+
+    test('refuses a worn piece, which the enhancing picker cannot hold', () => {
+        const calls = [];
+        setGameRoot({ handleGoToMarketplace: () => {}, handleEnhanceItem: (hash) => calls.push(hash) });
+        expect(navigateToEnhanceItem('161296::/item_locations/back::/items/sinister_cape::6')).toBe(false);
+        expect(calls).toEqual([]);
+    });
+
+    test('returns false when the game has no enhance handler', () => {
+        setGameRoot({ handleGoToMarketplace: () => {} });
+        expect(navigateToEnhanceItem('161296::/item_locations/inventory::/items/sinister_cape::3')).toBe(false);
     });
 });

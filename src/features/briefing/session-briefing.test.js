@@ -152,6 +152,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 }));
 
 vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToEnhanceItem: () => false,
     navigateToAction: (hrid) => {
         game.opened.push(`action:${hrid}`);
         return true;

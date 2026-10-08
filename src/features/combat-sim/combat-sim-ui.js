@@ -34,6 +34,7 @@ import {
 // this bundle as a second, divergent set of module state.
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { navigateToAction, navigateToEnhanceItem } from '../../utils/item-navigation.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -117,6 +118,7 @@ import {
     shrineName,
 } from './upgrade-advisor.js';
 import { applyMaxTierFood } from './food-optimizer.js';
+import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
@@ -646,9 +648,36 @@ export function upgradeCostCell(result) {
                     `${formatKMB(result.costDetail.rawCredit)} looks out of line with the market.`,
             };
         }
+        if (result?.costDetail?.ladder?.alreadyHeld) {
+            return { text: 'free', color: '#4caf50', title: ladderSentence(result.costDetail.ladder) };
+        }
         return { text: 'free', color: '#4caf50', title: 'Costs nothing up front.' };
     }
+    const ladder = result?.costDetail?.ladder;
+    if (ladder) return { text: formatKMB(cost), color: null, title: ladderSentence(ladder) };
     return { text: formatKMB(cost), color: null, title: '' };
+}
+
+/**
+ * The one-line account of a laddered price: which copy it enhances from, and
+ * whether a fresh base is in the figure.
+ * @param {Object} ladder - `costDetail.ladder` from the advisor
+ * @param {number|null} [total] - The row's figure, to name in the sentence
+ * @returns {string} Plain text
+ */
+function ladderSentence(ladder, total = null) {
+    if (!ladder) return '';
+    if (ladder.alreadyHeld) {
+        return `You already hold a spare at +${ladder.fromLevel}, which meets +${ladder.toLevel}.`;
+    }
+    const span =
+        `Enhance from +${ladder.fromLevel} to +${ladder.toLevel}` +
+        (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '');
+    if (ladder.fresh) {
+        return `${span}: you hold no spare copy, so this includes a fresh base at ${formatKMB(ladder.baseCost)}.`;
+    }
+    if (ladder.fromEquipped) return `${span}, on the copy you are wearing.`;
+    return `${span}, on the spare copy you hold.`;
 }
 
 /**
@@ -1520,8 +1549,13 @@ export { saveAllZonesSnapshot, loadAllZonesSnapshot };
  * stay as they are — the savings list reserves one slot and the watchlist
  * watches one item, and neither is being asked to grow a second here.
  *
+ * `selfEnhance` is set for an item nobody can sell (a cape, a quiver): the row
+ * is enhanced, not bought, so it gets an Enhance button in place of Watch and
+ * Market. See `upgradeRowActionsHtml`.
+ *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
- * @returns {Object|null} `{itemHrid, enhancementLevel, name, quantity, items, savable, ability}`, or null
+ * @returns {Object|null} `{itemHrid, enhancementLevel, name, quantity, items, selfEnhance, savable, ability}`,
+ *   or null
  */
 export function upgradeRowPurchase(result) {
     const candidate = result?.candidate;
@@ -1572,12 +1606,23 @@ export function upgradeRowPurchase(result) {
             ? result.costDetail.gross
             : cost;
 
+    const items = isBook ? null : multiItemPurchase(candidate);
+    // A cape or quiver is never on the market, at +0 or any other level: the
+    // row is an enhance at your own bench from a copy you hold. `fromLevel` is
+    // the copy the price was laddered from, when the breakdown says.
+    const ladder = result?.costDetail?.ladder || null;
+    const selfEnhance =
+        !isBook && !isConsumable && !items && isSelfEnhancedItem(itemHrid)
+            ? { fromLevel: Number.isFinite(ladder?.fromLevel) ? ladder.fromLevel : null, toLevel: targetLevel }
+            : null;
+
     return {
         itemHrid,
         enhancementLevel,
         name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
         quantity: isBook ? abilityBookCount(result) : 1,
-        items: isBook ? null : multiItemPurchase(candidate),
+        items,
+        selfEnhance,
         savable: !isBook && !isConsumable,
         // The gear side's equivalent of `ability.cost`: the price this row was
         // costed at, so the savings list shows the figure that was on screen
@@ -1843,6 +1888,14 @@ export function upgradeRowActionsHtml(result) {
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
     }
 
+    // Self-enhanced gear: no Market (no level of it is ever listed, the base
+    // included) and no Watch (the watchlist tracks an order book this item does
+    // not have). Enhance opens the game's Enhancing screen on the copy to ladder.
+    if (buy.selfEnhance) {
+        return `${save}<button type="button" ${attrs} data-buy-action="enhance"
+            title="${escapeAttribute(enhanceButtonTitle(buy))}" style="${ROW_ACTION_STYLE}">Enhance</button>`;
+    }
+
     // A row that buys a stack — an ability's books — is a one-line bill, and
     // goes through the same missing-materials tabs a house level does: a tab
     // that arms the buy box with what is still short of the stack and stands
@@ -1878,6 +1931,42 @@ export function upgradeRowActionsHtml(result) {
     return `${save}<button type="button" ${attrs} data-buy-action="watch" data-buy-cost="${watchCost}"
         title="Add to the watchlist" style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"${bill}
         title="${escapeAttribute(marketTitle)}" style="${ROW_ACTION_STYLE}">Market</button>`;
+}
+
+/**
+ * What the Enhance button will open on, read off the live inventory.
+ *
+ * The price was laddered when the analysis ran; the button picks its stack when
+ * pressed. Both use the same rule, so they agree unless the inventory changed
+ * in between, or the ladder's copy is the worn one, which the game's picker
+ * cannot select.
+ *
+ * @param {Object} buy - From `upgradeRowPurchase`, with `selfEnhance`
+ * @returns {string} Tooltip text
+ */
+function enhanceButtonTitle(buy) {
+    const target = buy.selfEnhance.toLevel;
+    let copy = null;
+    try {
+        copy = enhanceHandoffCopy(buy.itemHrid, target, dataManager.getInventory?.());
+    } catch (error) {
+        console.error('[CombatSimUI] Reading held copies failed:', error);
+    }
+    const priced =
+        buy.selfEnhance.fromLevel == null ? '' : ` Priced as enhance from +${buy.selfEnhance.fromLevel} to +${target}.`;
+    if (!copy) {
+        return `Open Enhancing. No copy in your inventory to preselect for +${target}.${priced}`;
+    }
+    if (copy.substitute) {
+        return (
+            `Open Enhancing on your +${copy.level} copy. The +${copy.plan.fromLevel} the price ladders from ` +
+            `is equipped, and the game only enhances from the inventory.${priced}`
+        );
+    }
+    if (copy.plan.alreadyHeld) {
+        return `Open Enhancing on your +${copy.level} copy, which already meets +${target}.`;
+    }
+    return `Open Enhancing on your +${copy.level} copy, to take it to +${target}.${priced}`;
 }
 
 /**
@@ -1954,10 +2043,11 @@ function seedWatchlistPriceTarget(itemHrid, enhancementLevel, rawCost) {
  * whose own click opens the detail panel, and saving for a sword should not also
  * unfold the breakdown of it.
  *
- * Five handoffs, told apart by `data-buy-action`: `save` reserves a gear slot,
+ * Six handoffs, told apart by `data-buy-action`: `save` reserves a gear slot,
  * `save-ability` records a book-level goal, `save-house` records a room-level
  * goal, `market` opens the item's marketplace tab with the row's quantity
- * waiting in the buy box, and anything else watches the item.
+ * waiting in the buy box, `enhance` opens Enhancing on the held copy a
+ * self-enhanced row ladders from, and anything else watches the item.
  *
  * @param {HTMLElement} container - Anything containing rendered rows
  * @param {string} [logPrefix] - Module name for error logs
@@ -2004,6 +2094,14 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                         label: button.getAttribute('data-house-label') || '',
                     });
                     button.textContent = 'Saving ✓';
+                } else if (action === 'enhance') {
+                    // The stack is picked now, from the live inventory: the
+                    // game's handler crashes on a hash it cannot find, and the
+                    // analysis may be older than what is in the bag
+                    const copy = enhanceHandoffCopy(itemHrid, enhancementLevel, dataManager.getInventory?.());
+                    const opened =
+                        (copy && navigateToEnhanceItem(copy.hash)) || navigateToAction('/actions/enhancing/enhance');
+                    button.textContent = opened ? 'Opened ✓' : 'Failed';
                 } else if (action === 'market') {
                     // A house level is a bill of several materials: hand the
                     // whole of it to the missing-materials tabs, one per line,
@@ -9981,7 +10079,9 @@ class CombatSimUI {
             );
         }
 
-        if (detail?.enhancementPath && detail.gross != null) {
+        if (detail?.ladder && (detail.gross != null || detail.ladder.alreadyHeld)) {
+            parts.push(`<span style="color:#888;">${ladderSentence(detail.ladder, detail.gross)}</span>`);
+        } else if (detail?.enhancementPath && detail.gross != null) {
             parts.push(`<span style="color:#888;">Enhances for ${formatKMB(detail.gross)}.</span>`);
         } else if (detail && (detail.gross != null || detail.credit)) {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
@@ -10346,7 +10446,9 @@ class CombatSimUI {
                     const cell = upgradeCostCell(r);
                     const body = cell.color
                         ? `<span style="color:${cell.color};" title="${cell.title}">${cell.text}</span>`
-                        : cell.text;
+                        : cell.title
+                          ? `<span title="${cell.title}">${cell.text}</span>`
+                          : cell.text;
                     return `${body}${costSourceTagHtml(r.costSource)}`;
                 },
             },

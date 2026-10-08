@@ -45,3 +45,22 @@ export function parseItemHash(itemHash) {
 
     return { itemHrid, level };
 }
+
+/**
+ * The game's hash for one stack of an item.
+ *
+ * The client keys its item map by exactly this tuple
+ * (`characterId::location::itemHrid::level`) and hands it to its own enhancing
+ * and alchemy pickers, so a hash built here has to match it to the character.
+ *
+ * @param {string|number} characterId - Owning character's id
+ * @param {string} locationHrid - e.g. `/item_locations/inventory`
+ * @param {string} itemHrid - Item HRID
+ * @param {number} [enhancementLevel=0] - Stack's enhancement level
+ * @returns {string|null} The hash, or null when a part is missing
+ */
+export function buildItemHash(characterId, locationHrid, itemHrid, enhancementLevel = 0) {
+    if (characterId == null || characterId === '' || !locationHrid || !itemHrid) return null;
+    const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
+    return `${characterId}::${locationHrid}::${itemHrid}::${level}`;
+}

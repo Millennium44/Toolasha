@@ -432,7 +432,9 @@ function planPurchases(picks) {
 
     for (const pick of picks || []) {
         const buy = combatSimUI.upgradeRowPurchase(pick);
-        if (!buy) continue;
+        // A cape or quiver is enhanced at your own bench, never listed, so it
+        // has no place on a marketplace trip; its row carries an Enhance button
+        if (!buy || buy.selfEnhance) continue;
 
         const key = `${buy.itemHrid}+${buy.enhancementLevel}`;
         if (seen.has(key)) continue;

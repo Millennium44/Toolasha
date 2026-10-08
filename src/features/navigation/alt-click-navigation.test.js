@@ -23,7 +23,7 @@ vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinOnlyCost: () => 0,
     getItemHridFromName: (name) => lookupState.names[name] || null,
 }));
-vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem: vi.fn() }));
+vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem: vi.fn(), navigateToEnhanceItem: vi.fn() }));
 
 const { default: altClickNavigation } = await import('./alt-click-navigation.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');

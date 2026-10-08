@@ -102,6 +102,7 @@ vi.mock('../../utils/shopping-list.js', () => ({
 // The game's own navigation, which reaches the React root
 const navigation = vi.hoisted(() => ({ calls: [], answer: true }));
 vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToEnhanceItem: () => false,
     navigateToAction: (actionHrid) => {
         navigation.calls.push(actionHrid);
         return navigation.answer;
