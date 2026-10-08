@@ -1283,13 +1283,31 @@ async function weighAgainstLocal(payload, baseline) {
             )
         );
         for (const key of Object.keys(entries)) {
-            if (same.has(key)) continue;
             const companion = tombstoneCompanionKey(storeName, key);
-            if (companion) same.delete(companion);
+            if (!companion) continue;
+            if (!same.has(key)) {
+                same.delete(companion);
+            } else if (!Object.hasOwn(entries, companion) && hidesAny(local[companion], entries[key])) {
+                // The download carries no tombstones for this record, and this
+                // device's would hide some of it: the restore has to see the
+                // record to clear them
+                same.delete(key);
+            }
         }
         if (same.size > 0) sameByStore.set(storeName, same);
     }
     return sameByStore;
+}
+
+/**
+ * Whether a tombstones map names any id the record holds.
+ * @param {*} graves - Tombstones, `{id: at}`
+ * @param {*} record - The record, `{id: value}`
+ * @returns {boolean} True when some id is in both
+ */
+function hidesAny(graves, record) {
+    if (!graves || typeof graves !== 'object' || !record || typeof record !== 'object') return false;
+    return Object.keys(graves).some((id) => Object.hasOwn(record, id));
 }
 
 /**

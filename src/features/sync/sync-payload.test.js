@@ -1095,6 +1095,29 @@ describe('applyPayload writes only what it changes', () => {
         expect(Object.keys(importedPayloads[0].stores.settings).sort()).toEqual([GRAVES, RECORD]);
     });
 
+    test('an unchanged record goes in when only this device holds tombstones that hide part of it', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1, s2: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1, s2: 1 } } }));
+
+        // The restore must see the record to clear the tombstone hiding s1
+        expect(Object.keys(importedPayloads[0].stores.settings)).toContain(RECORD);
+    });
+
+    test('an unchanged record stays out when the tombstones on this device hide none of it', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s0: 5 };
+
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 }, panelSizeMemory: 1 } }));
+
+        expect(Object.keys(importedPayloads[0].stores.settings)).not.toContain(RECORD);
+    });
+
     test('a settings map that comes down unchanged is not handed over as landing', async () => {
         storeState.stores.settings.script_settingsMap_abc = { chatCommands: { isTrue: true } };
 
