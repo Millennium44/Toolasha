@@ -252,6 +252,17 @@ class LabyrinthClearRate {
         // inputs actually changed, and a no-op change costs one fingerprint scan.
         this._buffInputsHandler = () => this._onBuffInputsChanged();
         for (const event of BUFF_INPUT_EVENTS) dataManager.on(event, this._buffInputsHandler);
+        // A level reached by skilling arrives only on `action_completed` (it
+        // updates the skill list and emits no `skills_updated`), which fires every
+        // few seconds, so it schedules a pass only when a level actually moved
+        this._skillLevelSig = this._skillLevelSignature();
+        this._actionCompletedHandler = () => {
+            const sig = this._skillLevelSignature();
+            if (sig === this._skillLevelSig) return;
+            this._skillLevelSig = sig;
+            this._onBuffInputsChanged();
+        };
+        dataManager.on('action_completed', this._actionCompletedHandler);
 
         this.liveProgressHandler = (data) => this.onLiveProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
@@ -485,6 +496,11 @@ class LabyrinthClearRate {
             if (this._buffInputsHandler) {
                 for (const event of BUFF_INPUT_EVENTS) dataManager.off(event, this._buffInputsHandler);
                 this._buffInputsHandler = null;
+            }
+
+            if (this._actionCompletedHandler) {
+                dataManager.off('action_completed', this._actionCompletedHandler);
+                this._actionCompletedHandler = null;
             }
 
             if (this.snapshotUpdateHandler) {
@@ -2673,6 +2689,21 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Every skill's level as one string — a cheap snapshot to tell whether a
+     * level moved between `action_completed` events.
+     * @private
+     * @returns {string}
+     */
+    _skillLevelSignature() {
+        try {
+            const skills = dataManager.getSkills() || [];
+            return skills.map((skill) => `${skill.skillHrid}:${skill.level}`).join(',');
+        } catch {
+            return '';
+        }
+    }
+
+    /**
      * A buff, consumable or skill level the tile badges are scored under changed.
      * Schedules the auto pass (a no-op with Auto-calc off or no floor shown).
      * Coalesces rather than debounces: several of these stream during play, and
@@ -4156,6 +4187,12 @@ class LabyrinthClearRate {
                 this.setTileStatus('Grid not found');
                 return;
             }
+            // Skilling scores are synchronous but were taken before the awaited
+            // sims; a buff or level event during them leaves those figures stale,
+            // and the badge sync below would overwrite a fresher auto-pass badge
+            // with them and record the current inputs against it. Score them again.
+            for (const key of skillingResults.keys()) chances.delete(key);
+            skillingResults.clear();
             const { tiles } = this.buildPathTiles(fresh, { threshold, unknownMode, chanceOf });
             this.syncSkillingTileBadges(fresh, cells, cols, skillingResults);
 

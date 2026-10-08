@@ -2997,6 +2997,42 @@ describe('a skilling tile badge and the Path quote one clear chance', () => {
         expect(badgePct(parent)).toBe('15%');
     });
 
+    test('an input change during the awaited combat sims leaves no stale badge', async () => {
+        current = SLOW;
+        const { parent } = buildBoard(15);
+        // A fight behind the woodcutting room, so the Path awaits a sim
+        const extra = document.createElement('div');
+        extra.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(extra);
+        labyrinthClearRate.roomData[0].splice(2, 0, {
+            roomType: '/labyrinth_room_types/combat',
+            monsterHrid: '/monsters/gobo',
+            recommendedLevel: 100,
+        });
+        const simSpy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            // A buff lands while the sim runs
+            current = FAST;
+            return { clearChance: 0.5 };
+        });
+        try {
+            await labyrinthClearRate.runTileCalculation();
+            expect(badgePct(parent)).toBe('5%');
+            current = SLOW;
+
+            await labyrinthClearRate.runPathCalculation();
+
+            expect(simSpy).toHaveBeenCalled();
+            expect(badgePct(parent)).toBe('15%');
+            // The signature recorded beside the badge is the one it was drawn under
+            const recorded = labyrinthClearRate._calculatedTileInputs.get('1,0');
+            const flat = labyrinthClearRate.roomData.flat();
+            const live = labyrinthClearRate._tileInputsReader()(flat[1], 206);
+            expect(recorded.inputs).toBe(live);
+        } finally {
+            simSpy.mockRestore();
+        }
+    });
+
     test('a badge drawn before the room got harder is redrawn, and Clear ≥ 15 shrouds it', async () => {
         current = FAST;
         const { parent } = buildBoard(15);
@@ -3096,6 +3132,7 @@ describe('a buff change re-runs the auto pass for the tiles it affects', () => {
             'guild_buffs_updated',
             'house_rooms_updated',
             'skills_updated',
+            'action_completed',
         ]) {
             expect(typeof handlerFor(event)).toBe('function');
         }
@@ -3145,6 +3182,35 @@ describe('a buff change re-runs the auto pass for the tiles it affects', () => {
         run.mockRestore();
     });
 
+    test('a level-up arriving on action_completed re-scores the tile', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(badgePct()).toBe('5%');
+
+        // The game's skilling path updates the skill list and emits only
+        // `action_completed`, never `skills_updated`
+        dataManagerMock.getSkills.mockReturnValue([{ skillHrid: WOODCUTTING, level: 132 }]);
+        handlerFor('action_completed')({});
+        await vi.advanceTimersByTimeAsync(900);
+
+        expect(badgePct()).toBe('6%');
+    });
+
+    test('action_completed with no level change schedules nothing', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
+        const schedule = vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc');
+
+        for (let i = 0; i < 5; i++) {
+            handlerFor('action_completed')({});
+            await vi.advanceTimersByTimeAsync(1000);
+        }
+
+        expect(schedule).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        run.mockRestore();
+        schedule.mockRestore();
+    });
+
     test('a burst of events makes one pass', async () => {
         await labyrinthClearRate.runTileCalculation({ auto: true });
         const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
@@ -3168,6 +3234,7 @@ describe('a buff change re-runs the auto pass for the tiles it affects', () => {
         labyrinthClearRate.disable();
         expect(dataManagerMock.off).toHaveBeenCalledWith('community_buffs_updated', handler);
         expect(dataManagerMock.off).toHaveBeenCalledWith('skills_updated', handler);
+        expect(dataManagerMock.off).toHaveBeenCalledWith('action_completed', handlerFor('action_completed'));
     });
 });
 
