@@ -82,7 +82,11 @@ vi.mock('../../utils/performance-monitor.js', () => ({
         recordElapsed: () => {},
     },
 }));
-vi.mock('./networth-calculator.js', () => ({ calculateNetworth: async () => null, networthUnitValue: () => 0 }));
+vi.mock('./networth-calculator.js', () => ({
+    calculateNetworth: async () => null,
+    networthUnitValue: () => 0,
+    GUILD_RATE_UNKNOWN_NOTE: 'no exchange rate yet — open the Guild Shop exchange to read it',
+}));
 vi.mock('./networth-display.js', () => ({
     networthHeaderDisplay: { setNetworthFeature: () => {}, initialize: () => {}, update: () => {}, disable: () => {} },
     networthInventoryDisplay: {

@@ -10,6 +10,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const calculatorMock = vi.hoisted(() => ({
+    GUILD_RATE_UNKNOWN_NOTE: 'no exchange rate yet — open the Guild Shop exchange to read it',
     calculateNetworth: vi.fn(),
     networthUnitValue: vi.fn(() => 0),
 }));

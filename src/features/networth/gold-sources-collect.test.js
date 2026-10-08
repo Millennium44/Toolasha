@@ -63,6 +63,7 @@ vi.mock('./combat-loot-recorder.js', () => ({
 vi.mock('./item-flow-recorder.js', () => ({ default: { load: async () => [] } }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0 }));
 vi.mock('./networth-calculator.js', () => ({
+    GUILD_RATE_UNKNOWN_NOTE: 'no exchange rate yet — open the Guild Shop exchange to read it',
     calculateCraftingCost: (itemHrid) => (itemHrid === '/items/culinary_cape' ? 300_000 : 0),
     networthUnitValue: (itemHrid) => (itemHrid === '/items/task_token' ? 40_000 : 0),
 }));

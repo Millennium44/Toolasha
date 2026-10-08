@@ -79,6 +79,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 
 const applies = vi.hoisted(() => ({ complete: true, texts: [] }));
 vi.mock('./sync-payload.js', () => ({
+    resetLeftOutLogForTests: () => {},
     buildPayloadJSON: async () => world.content,
     applyPayload: async (json) => {
         applies.texts.push(json);

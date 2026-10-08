@@ -217,6 +217,13 @@ class ActionTimingMonitor {
         this.lastStartAt = at;
         this.declaredDuration = declared;
         this.wentHidden = document.hidden === true;
+        // The interval belongs to the action that started it: by the next start the
+        // queue may have moved on, so read it now rather than when the interval closes
+        try {
+            this.startedAction = this._currentAction();
+        } catch {
+            this.startedAction = null;
+        }
     }
 
     _onAnimationEnd(event) {
@@ -278,7 +285,7 @@ class ActionTimingMonitor {
      *   declaredDuration: number}} timing - What was measured
      */
     _record(timing) {
-        const action = this._currentAction();
+        const action = this.startedAction ?? this._currentAction();
         // The labyrinth keeps its bar full while a room is fought or skilled;
         // that is the game's normal behavior, not a timing anomaly.
         if (action?.type === LABYRINTH_ACTION_TYPE) return;
@@ -498,6 +505,7 @@ class ActionTimingMonitor {
         this.registry = null;
         this.lastStartAt = null;
         this.lastEndAt = null;
+        this.startedAction = null;
         this.declaredDuration = null;
         this.wentHidden = false;
         this.observed = 0;
