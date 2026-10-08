@@ -457,7 +457,7 @@ class SyncManager {
                 return { ok: true, skipped: true, reason: 'unchanged' };
             }
             await storage.flushAll?.();
-            builtAtGeneration = syncWriteGeneration();
+            builtAtGeneration = syncWriteGeneration(scope);
             localPayload = await buildPayloadJSON(scope);
         }
         // What goes up, and what this device holds. They differ only for a

@@ -316,3 +316,42 @@ describe('when the counter cannot vouch for the database', () => {
         expect(builds()).toBe(1);
     });
 });
+
+describe('the count follows what the scope carries', () => {
+    /** Re-prove this page clean for a settings-only payload */
+    async function settingsScope() {
+        settings.values.sync_scope = 'settings';
+        expect((await syncManager.push()).ok).toBe(true);
+        calls.length = 0;
+    }
+
+    test('a settings-only push ignores writes to stores only a full sync carries', async () => {
+        await settingsScope();
+        write('actionProgress', ['char-A_progress'], 'remote');
+        write('xpHistory', ['char-A_xp']);
+        // A bulk write whose keys are not listed, outside the scope, too
+        write('marketListings', null, 'remote');
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(0);
+    });
+
+    test('a full-sync push counts them', async () => {
+        write('actionProgress', ['char-A_progress'], 'remote');
+        await autoPush();
+        expect(builds()).toBe(1);
+    });
+
+    test('a settings-only push still counts a setting', async () => {
+        await settingsScope();
+        write('settings', ['script_settingsMap_603281'], 'remote');
+        await autoPush();
+        expect(builds()).toBe(1);
+    });
+
+    test.each(['settings', 'everything'])('a write to an unknown store dirties the %s scope', async (scope) => {
+        if (scope === 'settings') await settingsScope();
+        write(null, null, 'resumed');
+        await autoPush();
+        expect(builds()).toBe(1);
+    });
+});

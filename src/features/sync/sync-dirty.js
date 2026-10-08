@@ -12,12 +12,12 @@
  *
  * So writes are counted instead. `storage.onWrite` reports every write this
  * tab asks for, as it is asked for, and every write another tab commits, after
- * it commits. A write to a synced store bumps {@link generation}. A build that
- * finds the payload matching the stored fingerprint — or a push that stores
- * the fingerprint of the payload it just built — records the generation it
- * started from as the clean point; until the count moves, the stored
- * fingerprint is still the payload's, and the push can say "unchanged" without
- * building.
+ * it commits. A write a payload carries bumps the count for the scopes it
+ * reaches. A build that finds the payload matching the stored fingerprint — or
+ * a push that stores the fingerprint of the payload it just built — records
+ * the count it started from as the clean point; until the count moves, the
+ * stored fingerprint is still the payload's, and the push can say "unchanged"
+ * without building.
  *
  * Why that is safe, and where it is not:
  *
@@ -52,8 +52,20 @@ import { payloadCarriesKey } from './sync-payload.js';
 /** How long a clean point vouches for the database before a push builds anyway. */
 export const CLEAN_POINT_MAX_AGE_MS = 60 * 60 * 1000;
 
-/** Writes to synced stores this tab has heard of since the tracker started */
-let generation = 0;
+/**
+ * The one store a `settings`-scope payload carries — `buildPayloadJSON` filters
+ * the synced stores down to it for that scope; `everything` carries them all.
+ */
+const SETTINGS_SCOPE_STORE = 'settings';
+
+/**
+ * Writes heard since the tracker started, split by what they can reach: the
+ * `settings` store (every scope's payload), the other synced stores (only an
+ * `everything` payload), and writes to an unknown store (any payload). Kept
+ * apart so that a settings-only device, whose payload `actionProgress` and the
+ * histories never touch, is not sent back to building by every action tick.
+ */
+const generations = { settings: 0, other: 0, unknown: 0 };
 /** Unsubscribe from `storage.onWrite`, while listening */
 let unsubscribe = null;
 /** `{generation, lastHash, scope, at}` of the last proven-clean build, or null */
@@ -85,17 +97,23 @@ export function startSyncDirtyTracker() {
     if (unsubscribe) return true;
     if (typeof storage.onWrite !== 'function') return false;
     unsubscribe = storage.onWrite((write) => {
-        if (countsAsChange(write)) generation += 1;
+        if (!countsAsChange(write)) return;
+        if (write.storeName === null || write.storeName === undefined) generations.unknown += 1;
+        else if (write.storeName === SETTINGS_SCOPE_STORE) generations.settings += 1;
+        else generations.other += 1;
     });
     return true;
 }
 
 /**
- * The current write count — snapshot it before flushing and building.
- * @returns {number} Writes to synced stores heard so far
+ * The write count for what one scope's payload carries — snapshot it once the
+ * flush has landed, just before building.
+ * @param {string} scope - 'settings' or 'everything'
+ * @returns {number} Writes heard so far that could change that scope's payload
  */
-export function syncWriteGeneration() {
-    return generation;
+export function syncWriteGeneration(scope) {
+    const reach = generations.unknown + generations.settings;
+    return scope === 'everything' ? reach + generations.other : reach;
 }
 
 /**
@@ -118,8 +136,9 @@ export function markSyncClean({ generation: atGeneration, lastHash, scope }) {
 export function unchangedSinceClean(scope, storedHash) {
     if (!unsubscribe || !cleanPoint) return false;
     if (!storage.crossTabWritesVisible?.()) return false;
-    if (cleanPoint.generation !== generation) return false;
+    // Scope first: a count is only comparable with one taken for the same scope
     if (!storedHash || cleanPoint.lastHash !== storedHash || cleanPoint.scope !== scope) return false;
+    if (cleanPoint.generation !== syncWriteGeneration(scope)) return false;
     return Date.now() - cleanPoint.at < CLEAN_POINT_MAX_AGE_MS;
 }
 
@@ -128,5 +147,7 @@ export function _resetSyncDirtyTracker() {
     unsubscribe?.();
     unsubscribe = null;
     cleanPoint = null;
-    generation = 0;
+    generations.settings = 0;
+    generations.other = 0;
+    generations.unknown = 0;
 }
