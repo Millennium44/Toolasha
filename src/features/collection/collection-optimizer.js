@@ -143,18 +143,20 @@ export function weeklySellable(hrid) {
  *   yields Y  = drop Y × attempts  (S itself: r × attempts)
  *   cost      = ask(S) + attempts × (coin + catalyst + tea) per attempt
  *   seconds   = attempts × 3600 / (actionsPerHour × bulk)
- * Every drop but S is sold ({@link realizedSalePrice}); one with no price at all
- * leaves the route partly unpriced, and out of the ranking.
+ * Every drop but S is sold ({@link realizedSalePrice}), a crate nobody bids on as
+ * its contents ({@link saleParts}); one with no price at all leaves the route
+ * partly unpriced, and out of the ranking.
  *
  * @param {string} sourceHrid - S
  * @param {Object|null} result - `calculateTransmuteProfit(S)`
  * @param {Array<Object>|null} table - S's `alchemyDetail.transmuteDropTable`
  * @param {Object} opts
  * @param {number} opts.buy - What one S costs
- * @param {(hrid: string) => number|null} opts.unitValue - What selling one unit of an output realizes
+ * @param {(hrid: string) => Array<{itemHrid: string, units: number, unit: number}>|null} opts.sell - What
+ *   selling one unit of an output comes to, item by item ({@link saleParts})
  * @returns {Object|null} A source route, or null when the transmute cannot run
  */
-export function transmuteRoute(sourceHrid, result, table, { buy, unitValue }) {
+export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts }) {
     const basis = alchemyRunBasis(result);
     if (!basis || !Array.isArray(table) || !(buy > 0)) return null;
     const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
@@ -177,9 +179,7 @@ export function transmuteRoute(sourceHrid, result, table, { buy, unitValue }) {
     const bonus = new Set();
     let partlyUnpriced = false;
     const sell = (hrid, perSource) => {
-        const unit = unitValue(hrid);
-        if (unit === null || unit === undefined) partlyUnpriced = true;
-        else kept.set(hrid, { perSource: (kept.get(hrid)?.perSource || 0) + perSource, unit });
+        if (!keepSold(kept, sellParts(hrid), perSource)) partlyUnpriced = true;
     };
     for (const [hrid, expected] of perAttempt) {
         if (SKIP_ITEMS.has(hrid)) continue;
@@ -221,16 +221,18 @@ export function transmuteRoute(sourceHrid, result, table, { buy, unitValue }) {
  *               processed item, which is credited instead (the planner's netting)
  *   bonus Y   = dropsPerHour_Y / A × efficiencyMultiplier
  *   cost      = drink spend per hour / A
- * Every drop but the target is sold ({@link realizedSalePrice}); a drop or tea
- * with no price at all leaves the route out of the ranking.
+ * Every drop but the target is sold ({@link realizedSalePrice}), a crate nobody
+ * bids on as its contents ({@link saleParts}); a drop or tea with no price at all
+ * leaves the route out of the ranking.
  *
  * @param {string} actionHrid
  * @param {Object|null} profit - `calculateGatheringProfit(actionHrid)`
  * @param {Object} opts
- * @param {(hrid: string) => number|null} opts.unitValue - What selling one unit of an output realizes
+ * @param {(hrid: string) => Array<{itemHrid: string, units: number, unit: number}>|null} opts.sell - What
+ *   selling one unit of an output comes to, item by item ({@link saleParts})
  * @returns {Object|null} A source route, or null when the action has no rate
  */
-export function gatherRoute(actionHrid, profit, { unitValue }) {
+export function gatherRoute(actionHrid, profit, { sell }) {
     const perHour = Number(profit?.actionsPerHour);
     if (!(perHour > 0)) return null;
     const efficiency = Number(profit.efficiencyMultiplier) > 0 ? Number(profit.efficiencyMultiplier) : 1;
@@ -256,9 +258,7 @@ export function gatherRoute(actionHrid, profit, { unitValue }) {
     const kept = new Map();
     let partlyUnpriced = (profit.drinkCosts || []).some((drink) => drink?.missingPrice);
     for (const [hrid, units] of yields) {
-        const unit = unitValue(hrid);
-        if (unit === null || unit === undefined) partlyUnpriced = true;
-        else kept.set(hrid, { perSource: units, unit });
+        if (!keepSold(kept, sell(hrid), units)) partlyUnpriced = true;
     }
     return {
         route: 'gather',
@@ -275,16 +275,73 @@ export function gatherRoute(actionHrid, profit, { unitValue }) {
 }
 
 /**
- * The sold outputs of a route as `{perSource, unit}`, from per-source expected
- * units and their total value.
+ * What selling one unit of an output comes to, item by item.
+ *
+ * An item with a sale price ({@link realizedSalePrice}) is sold as itself. A
+ * container nobody bids on is opened and each content sold as itself, so every
+ * content carries its own bid, tax and market-volume bound: the unopened
+ * crate's volume says nothing about how much of its contents the market takes.
+ * A content that is itself such a container is opened too.
+ * @param {string} hrid
+ * @param {Object} deps
+ * @param {(hrid: string) => number|null} deps.saleOf - What selling one unit realizes; null when it has no price
+ * @param {(hrid: string) => Array|null} deps.containerDrops - `openableLootDropMap[hrid]`
+ * @param {Set<string>} [path] - Recursion guard
+ * @returns {Array<{itemHrid: string, units: number, unit: number}>|null} Units of each item sold per
+ *   unit of `hrid` and the price of one; null when any part has no price (or a crate opens into itself)
+ */
+export function saleParts(hrid, { saleOf, containerDrops }, path = new Set()) {
+    const sale = saleOf(hrid);
+    if (sale !== null && sale !== undefined) return [{ itemHrid: hrid, units: 1, unit: sale }];
+    const table = containerDrops(hrid);
+    if (!Array.isArray(table) || table.length === 0 || path.has(hrid)) return null;
+    const inner = new Set([...path, hrid]);
+    const parts = new Map();
+    for (const drop of table) {
+        const average = ((Number(drop?.minCount) || 0) + (Number(drop?.maxCount) || 0)) / 2;
+        const expected = (Number(drop?.dropRate) || 0) * average;
+        if (!drop?.itemHrid || !(expected > 0) || SKIP_ITEMS.has(drop.itemHrid)) continue;
+        const nested = saleParts(drop.itemHrid, { saleOf, containerDrops }, inner);
+        if (!nested) return null;
+        for (const part of nested) {
+            const entry = parts.get(part.itemHrid) || { itemHrid: part.itemHrid, units: 0, unit: part.unit };
+            entry.units += expected * part.units;
+            parts.set(part.itemHrid, entry);
+        }
+    }
+    return parts.size > 0 ? [...parts.values()] : null;
+}
+
+/**
+ * Add what selling `perSource` units of an output comes to into a route's sold outputs.
+ * @param {Map<string, {perSource: number, unit: number}>} kept
+ * @param {Array<{itemHrid: string, units: number, unit: number}>|null} parts - From {@link saleParts}
+ * @param {number} perSource - Units of the output per unit of the route
+ * @returns {boolean} False when the output has no price
+ */
+function keepSold(kept, parts, perSource) {
+    if (!parts) return false;
+    for (const { itemHrid, units, unit } of parts) {
+        const added = perSource * units;
+        if (!(added > 0)) continue;
+        kept.set(itemHrid, { perSource: (kept.get(itemHrid)?.perSource || 0) + added, unit });
+    }
+    return true;
+}
+
+/**
+ * The sold outputs of a decompose chain as `{perSource, unit}`, from its
+ * terminals' per-source expected units.
  * @param {Iterable<{itemHrid: string, expected: number, value: number|null}>} terminals
+ * @param {(hrid: string) => Array<{itemHrid: string, units: number, unit: number}>|null} sell - {@link saleParts}
  * @returns {Map<string, {perSource: number, unit: number}>}
  */
-function keptFromTerminals(terminals) {
+function keptFromTerminals(terminals, sell) {
     const kept = new Map();
     for (const { itemHrid, expected, value } of terminals) {
+        // A terminal the chain could not price is already marked on the chain, and left out here
         if (value === null || value === undefined || !(expected > 0)) continue;
-        kept.set(itemHrid, { perSource: expected, unit: value / expected });
+        keepSold(kept, sell(itemHrid), expected);
     }
     return kept;
 }
@@ -413,6 +470,11 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!salePrices.has(hrid)) salePrices.set(hrid, realizedSalePrice(hrid, isContainer));
         return salePrices.get(hrid);
     };
+    const sales = new Map();
+    const sell = (hrid) => {
+        if (!sales.has(hrid)) sales.set(hrid, saleParts(hrid, { saleOf, containerDrops }));
+        return sales.get(hrid);
+    };
     const crateValues = new Map();
     const containerValue = (hrid) => {
         if (!crateValues.has(hrid)) {
@@ -441,7 +503,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
             yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
         }
-        const kept = keptFromTerminals(chain.terminals);
+        const kept = keptFromTerminals(chain.terminals, sell);
         if (yields.size === 0) continue;
         // The alchemy-wide bonus drops each step rolls: credited, never a target
         const bonus = new Set();
@@ -493,12 +555,6 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     if (cancelled()) return null;
 
     // Transmute: buy S at the ask and transmute it until nothing of it is left
-    const unitValue = (hrid) => {
-        const sale = saleOf(hrid);
-        if (sale !== null) return sale;
-        const opened = containerValue(hrid);
-        return opened && !opened.partlyUnpriced ? opened.value : null;
-    };
     for (const [hrid, details] of Object.entries(itemDetailMap)) {
         const table = details?.alchemyDetail?.transmuteDropTable;
         if (!Array.isArray(table) || !(Number(details.alchemyDetail.transmuteSuccessRate) > 0)) continue;
@@ -508,7 +564,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!(buy > 0)) continue;
         try {
             const result = alchemyProfitCalculator.calculateTransmuteProfit(hrid) ?? null;
-            const route = transmuteRoute(hrid, result, table, { buy, unitValue });
+            const route = transmuteRoute(hrid, result, table, { buy, sell });
             if (route) sources.push(route);
         } catch (error) {
             console.error('[CollectionOptimizer] Transmute route failed for', hrid, error);
@@ -536,7 +592,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!canGather(action)) continue;
         if (await pause()) return null;
         try {
-            const route = gatherRoute(actionHrid, await calculateGatheringProfit(actionHrid), { unitValue });
+            const route = gatherRoute(actionHrid, await calculateGatheringProfit(actionHrid), { sell });
             if (route) sources.push(route);
         } catch (error) {
             console.error('[CollectionOptimizer] Gather route failed for', actionHrid, error);

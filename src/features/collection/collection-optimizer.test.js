@@ -134,6 +134,14 @@ const BID = vi.hoisted(() => ({
     '/items/milk': 90,
 }));
 
+/** What an Artisan's Crate opens into, when a test has one drop (game.crateDrop) */
+const LOOT = vi.hoisted(() => ({
+    '/items/small_artisans_crate': [
+        { itemHrid: '/items/star_fragment', dropRate: 1, minCount: 2, maxCount: 4 },
+        { itemHrid: '/items/garnet', dropRate: 0.5, minCount: 1, maxCount: 1 },
+    ],
+}));
+
 /** Measured daily volumes, for the liquidity bound */
 const VOLUME = vi.hoisted(() => ({ perDay: {} }));
 
@@ -151,6 +159,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             itemDetailMap: ITEMS,
             actionDetailMap: ACTIONS,
+            openableLootDropMap: LOOT,
             achievementDetailMap: {
                 '/achievements/collection_points_100': { hrid: '/achievements/collection_points_100', target: 100 },
             },
@@ -256,6 +265,9 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
                       totalTeaCostPerHour: 0,
                       dropRevenues: [
                           { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
+                          ...(game.crateDrop
+                              ? [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 0 }]
+                              : []),
                       ],
                   },
         calculateDecomposeProfit: (hrid) =>
@@ -382,6 +394,7 @@ beforeEach(() => {
     game.noTransmute = false;
     game.milkingLevel = 10;
     game.unpricedTea = false;
+    game.crateDrop = false;
 });
 
 afterEach(() => {
@@ -526,6 +539,32 @@ describe('transmute routes', () => {
         );
         expect(garnet.dataset.route).toBe('transmute');
         expect(garnet.textContent).toContain('Transmute: 16× Amber');
+    });
+
+    test('a crate nobody bids on is sold as its contents, each bounded by its own market', async () => {
+        game.crateDrop = true;
+        // No live bid on the crate, and a crate market that is measured dead
+        game.estimated = new Set(['/items/small_artisans_crate']);
+        VOLUME.perDay['/items/small_artisans_crate'] = 0;
+        const route = amberRoute(await buildCollectionRoutes());
+        const attempts = 1 / 0.92;
+        // One crate an hour over 100 attempts: 3 fragments and half a Garnet each
+        const crates = (1 / 100) * attempts;
+        expect(route.kept.has('/items/small_artisans_crate')).toBe(false);
+        expect(route.kept.get('/items/star_fragment').perSource).toBeCloseTo(0.1 * 0.5 * attempts + crates * 3, 12);
+        expect(route.kept.get('/items/garnet').perSource).toBeCloseTo(0.12 * 0.5 * attempts + crates * 0.5, 12);
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 9);
+        // The crate is still collected as it drops
+        expect(route.yields.get('/items/small_artisans_crate')).toBeCloseTo(crates, 12);
+        // The dead crate market no longer erases what its contents sell for
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), route, {
+            sellable: weeklySellable,
+        });
+        expect(option.sold.has('/items/small_artisans_crate')).toBe(false);
+        expect(option.sold.get('/items/star_fragment')).toBeCloseTo(
+            option.units * route.kept.get('/items/star_fragment').perSource,
+            9
+        );
     });
 
     test('an output with no price at all leaves the route out', async () => {
