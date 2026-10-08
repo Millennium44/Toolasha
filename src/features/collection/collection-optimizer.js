@@ -16,10 +16,12 @@
  * and redone whenever the counts arrive again. The arithmetic is in
  * collection-optimizer-plan.js.
  *
- * Prices: a bought source at the ask; everything a route yields besides the
- * target is sold, at the bid after the market tax (no live bid: worth
- * nothing), and only as many units as the market takes in a week — the
- * shared liquidity bound, from volumes already measured.
+ * Prices: a bought source up the ask side of its order book where one has been
+ * seen (else at the top ask), and no more of it than the market trades in a
+ * week; everything a route yields besides the target is sold, at the bid after
+ * the market tax (no live bid: worth nothing), and only as many units as the
+ * market takes in a week — the shared liquidity bound, from volumes already
+ * measured.
  */
 
 import config from '../../core/config.js';
@@ -42,12 +44,14 @@ import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { alchemyRunBasis, selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
+import { estimatedListingAge } from '../../utils/bundle-bridge.js';
 import {
     DEFAULT_MAX_STEP_SECONDS,
     DEFAULT_SORT,
     ROUTE_LABELS,
     SORT_MODES,
     bestOptions,
+    buyCost,
     collectionAchievementTargets,
     collectionCounts,
     indexRoutes,
@@ -129,6 +133,60 @@ export function weeklySellable(hrid) {
     return Math.max(0, Number(bounded.limit?.throttle) || 0) * probe * 24 * LIQUIDITY_HORIZON_DAYS;
 }
 
+/** How old a cached order book may be and still say what buying costs */
+const BOOK_MAX_AGE_MS = 6 * 3600 * 1000;
+
+/**
+ * The ask side of an item's order book, from the listing tracker's cache of
+ * books the player has opened in the marketplace (the one cache of whole books;
+ * the guild credit advisor reads it the same way). Null when no book was seen
+ * in the last {@link BOOK_MAX_AGE_MS}.
+ * @param {string} hrid
+ * @returns {Array<{price: number, quantity: number}>|null} Listings, best first
+ */
+function cachedAsks(hrid) {
+    try {
+        const side = estimatedListingAge()?.cachedBookSide?.(hrid, 0, true);
+        if (!side || !(Date.now() - (Number(side.lastUpdated) || 0) <= BOOK_MAX_AGE_MS)) return null;
+        return side.listings;
+    } catch (error) {
+        console.error('[CollectionOptimizer] Reading a cached order book failed:', error);
+        return null;
+    }
+}
+
+/**
+ * What buying a quantity of a route's source costs ({@link buyCost}): up the
+ * cached book from the route's ask, and no more than a week's traded volume
+ * ({@link weeklySellable} — the same measured bound as selling, either way a
+ * quarter of what trades).
+ * @param {{hrid: string, ask: number}} purchase - The source and the ask the route was priced at
+ * @param {number} units
+ * @param {number} [already=0] - Units earlier steps of a plan bought
+ * @returns {{gold: number, feasible: boolean, limit: number, fromBook: boolean}}
+ */
+export function buyQuote(purchase, units, already = 0) {
+    return createBuyQuote()(purchase, units, already);
+}
+
+/**
+ * {@link buyQuote} for one ranking or plan: each source's book and weekly volume
+ * are read once, not once per option the ranking weighs.
+ * @returns {(purchase: {hrid: string, ask: number}, units: number, already?: number) => Object}
+ */
+export function createBuyQuote() {
+    const markets = new Map();
+    return (purchase, units, already = 0) => {
+        if (!markets.has(purchase.hrid)) {
+            markets.set(purchase.hrid, {
+                listings: cachedAsks(purchase.hrid),
+                weekly: weeklySellable(purchase.hrid),
+            });
+        }
+        return buyCost(units, { ask: purchase.ask, ...markets.get(purchase.hrid), already });
+    };
+}
+
 /**
  * Transmuting a bought item S, and every copy of S that comes back, as a route.
  *
@@ -201,6 +259,7 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
         sourceHrid,
         batch: bulk,
         cost: buy + (attempts * overheadPerHour) / unitsPerHour,
+        purchase: { hrid: sourceHrid, ask: buy },
         seconds: (attempts * 3600) / unitsPerHour,
         yields,
         kept,
@@ -561,7 +620,14 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         // Bought sources are not collected; a crafted one is, and its making takes time — two
         // routes, each priced and timed for how the source is actually got
         const buy = buyableQuote(hrid);
-        if (buy > 0) sources.push({ ...shared, route: 'decompose', cost: buy + chain.overheadCost });
+        if (buy > 0) {
+            sources.push({
+                ...shared,
+                route: 'decompose',
+                cost: buy + chain.overheadCost,
+                purchase: { hrid, ask: buy },
+            });
+        }
         const make = makeCost.get(hrid);
         if (make > 0) {
             const withSource = new Map(yields);
@@ -914,7 +980,9 @@ class CollectionOptimizer {
                 'span',
                 '',
                 'Buying on the market does not collect an item. Net gold: + earns, \u2212 costs, counting the ' +
-                    'other outputs as sold at the bid after tax, as many as the market takes in a week. '
+                    'other outputs as sold at the bid after tax, as many as the market takes in a week. A bought ' +
+                    'source is priced up its order book where you have opened it, and a step needing more of it ' +
+                    'than the market trades in a week is left out. '
             )
         );
         const recompute = el('button', 'font-size:11px;margin-left:4px;', 'Recompute');
@@ -1040,6 +1108,7 @@ class CollectionOptimizer {
             const plan = planTarget(counts, this.index, wanted, {
                 maxSeconds: this.maxSeconds,
                 sellable: weeklySellable,
+                buyQuote: createBuyQuote(),
                 sort: this.sort,
             });
             result.replaceChildren();
@@ -1085,6 +1154,7 @@ class CollectionOptimizer {
         const options = bestOptions(counts, this.index, {
             maxSeconds: this.maxSeconds,
             sellable: weeklySellable,
+            buyQuote: createBuyQuote(),
             sort: this.sort,
         });
         if (options.length === 0) {
@@ -1127,16 +1197,16 @@ class CollectionOptimizer {
     }
 
     /**
-     * Measure the traded volume of what the shown options sell, once per item,
-     * and redraw when that is done: a bound only applies to a volume already
-     * measured. The lookup is the shared liquidity one, which asks the pooled
-     * history only when the player has turned it on.
+     * Measure the traded volume of what the shown options sell and buy, once
+     * per item, and redraw when that is done: a bound only applies to a volume
+     * already measured. The lookup is the shared liquidity one, which asks the
+     * pooled history only when the player has turned it on.
      * @param {Array<Object>} options
      */
     warmVolumes(options) {
         const fresh = [];
         for (const option of options || []) {
-            for (const hrid of option.sold?.keys?.() || []) {
+            for (const hrid of [...(option.sold?.keys?.() || []), ...(option.bought?.keys?.() || [])]) {
                 if (this.volumesAsked.has(hrid)) continue;
                 this.volumesAsked.add(hrid);
                 fresh.push({ itemHrid: hrid });

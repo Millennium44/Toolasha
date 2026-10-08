@@ -142,6 +142,9 @@ const LOOT = vi.hoisted(() => ({
     ],
 }));
 
+/** The listing tracker's cached order books: itemHrid → {asks, lastUpdated} */
+const BOOKS = vi.hoisted(() => ({ byItem: {} }));
+
 /** Measured daily volumes, for the liquidity bound */
 const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null }));
 
@@ -335,6 +338,15 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
     },
 }));
 vi.mock('../planner/market-liquidity.js', () => ({ LIQUIDITY_HORIZON_DAYS: 7 }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    estimatedListingAge: () => ({
+        cachedBookSide: (hrid, level, isSell) => {
+            const book = BOOKS.byItem[hrid];
+            return book && level === 0 && isSell ? { listings: book.asks, lastUpdated: book.lastUpdated } : null;
+        },
+    }),
+}));
 vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinOnlyCost: (hrid) => ({
         coins: hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0,
@@ -361,6 +373,7 @@ vi.mock('../../utils/character-key.js', () => ({
 const {
     default: optimizer,
     buildCollectionRoutes,
+    buyQuote,
     realizedSalePrice,
     weeklySellable,
     formatNet,
@@ -402,6 +415,7 @@ beforeEach(() => {
     game.ironCow = false;
     VOLUME.perDay = {};
     VOLUME.gate = null;
+    BOOKS.byItem = {};
     game.pricingMode = 'hybrid';
     game.noTransmute = false;
     game.milkingLevel = 10;
@@ -488,6 +502,35 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
         expect(option.gold).toBeGreaterThan(8e9);
     });
 
+    test('the earring is bought up its order book, and no more of it than a week trades', async () => {
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.purchase).toEqual({ hrid: '/items/earrings_of_essence_find', ask: 6_300_000 });
+        // A book opened an hour ago, 11 earrings on show from 6.3M to 6.8M
+        BOOKS.byItem['/items/earrings_of_essence_find'] = {
+            lastUpdated: Date.now() - 3600 * 1000,
+            asks: [
+                { listingId: 9001, price: 6_300_000, quantity: 2, createdTimestamp: '2026-10-08T19:02:11.000Z' },
+                { listingId: 8790, price: 6_350_000, quantity: 1, createdTimestamp: '2026-10-07T11:30:02.000Z' },
+                { listingId: 8811, price: 6_400_000, quantity: 3, createdTimestamp: '2026-10-07T14:41:55.000Z' },
+                { listingId: 8402, price: 6_500_000, quantity: 1, createdTimestamp: '2026-10-05T08:12:19.000Z' },
+                { listingId: 8125, price: 6_800_000, quantity: 4, createdTimestamp: '2026-10-03T22:47:31.000Z' },
+            ],
+        };
+        expect(buyQuote(route.purchase, 4).gold).toBe(2 * 6_300_000 + 6_350_000 + 6_400_000);
+        // Nothing measured: past the book at its deepest level
+        expect(buyQuote(route.purchase, 13).gold).toBe(
+            2 * 6_300_000 + 6_350_000 + 3 * 6_400_000 + 6_500_000 + 6 * 6_800_000
+        );
+        // One a day trades: the 1,459 the Amber row needs are not to be had
+        VOLUME.perDay['/items/earrings_of_essence_find'] = 1;
+        expect(buyQuote(route.purchase, 1459).feasible).toBe(false);
+        expect(evaluateOption('/items/amber', counts, route, { sellable: weeklySellable, buyQuote })).toBeNull();
+        // A book older than six hours says nothing about today's price
+        delete VOLUME.perDay['/items/earrings_of_essence_find'];
+        BOOKS.byItem['/items/earrings_of_essence_find'].lastUpdated = Date.now() - 7 * 3600 * 1000;
+        expect(buyQuote(route.purchase, 4).gold).toBe(4 * 6_300_000);
+    });
+
     test('an Iron Cow sells to the vendor: no market bound', () => {
         VOLUME.perDay['/items/star_fragment'] = 22_885;
         expect(weeklySellable('/items/star_fragment')).toBeCloseTo(0.25 * 22_885 * 7, 6);
@@ -522,6 +565,7 @@ describe('transmute routes', () => {
         expect(route.kept.has('/items/amber')).toBe(false);
         // Bought at the ask; each attempt pays 125 coins and 30 of catalyst
         expect(route.cost).toBeCloseTo(20_240 + attempts * (125 + 30), 9);
+        expect(route.purchase).toEqual({ hrid: '/items/amber', ask: 20_240 });
         expect(route.seconds).toBeCloseTo(attempts * 36, 9);
         expect(route.batch).toBe(1);
         // The others are sold at the bid after tax; the essence is credited and sold, never a target
