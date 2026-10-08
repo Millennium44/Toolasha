@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
     items: [],
     /** Enhancement sweeps the advisor asked for */
     sweeps: [],
+    /** Extra init_client_data maps (shops) */
+    shops: {},
 }));
 
 const CAPE = '/items/sinister_cape';
@@ -36,7 +38,7 @@ const ITEM_DETAIL_MAP = {
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => [...state.items],
-        getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP }),
+        getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP, ...state.shops }),
         getCurrentCharacterId: () => CHAR,
         getGuildBuildingLevel: () => 0,
         characterData: { characterAbilities: [] },
@@ -107,6 +109,7 @@ describe('self-enhanced upgrade pricing', () => {
     beforeEach(() => {
         state.items = [];
         state.sweeps = [];
+        state.shops = {};
     });
 
     test('best copy at +6 and second at +3: a +5 row ladders the +3 up, never the ask', () => {
@@ -145,6 +148,19 @@ describe('self-enhanced upgrade pricing', () => {
         const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
         expect(detail.ladder).toMatchObject({ fromLevel: 0, fresh: true, baseCost: 5_000_000 });
         expect(detail.net).toBe(5_000_000 + 5_000_000);
+    });
+
+    test('no copy held: a cape sold only for task tokens is priced from the token shop, not the estimate', () => {
+        // 10 tokens at an ask of 999M each would be absurd; the token is valued by its own shop's best line
+        state.shops = {
+            taskShopItemDetailMap: {
+                a: { itemHrid: CAPE, costs: [{ itemHrid: '/items/task_token', count: 100 }] },
+            },
+        };
+        const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
+        expect(detail.ladder.fresh).toBe(true);
+        expect(detail.ladder.baseCost).not.toBe(5_000_000);
+        expect(detail.ladder.baseCost).toBe(100 * 999_000_000);
     });
 
     test('a stack of two +6 copies ladders the second +6, which already meets +5', () => {

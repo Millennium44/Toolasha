@@ -26,6 +26,7 @@ import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
@@ -2919,7 +2920,14 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
 
     let base = 0;
     if (plan.fresh) {
-        base = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        // Capes and quivers are never listed, so the real acquisition cost is the
+        // shop line (coins, task tokens or labyrinth tokens) — the same walk the
+        // savings row's base price does. The value-map/craft estimate is only the
+        // fallback for a piece no shop sells.
+        const data = dataManager.getInitClientData?.() || {};
+        const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
+        base = shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
+        if (!(base > 0)) base = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
     }
