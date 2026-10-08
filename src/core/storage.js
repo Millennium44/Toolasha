@@ -2709,6 +2709,7 @@ class Storage {
             this._runningTeardownListeners = false;
         }
         this._closingForTeardown = true;
+        this._closeWriteChannel();
 
         // Deliberately not awaited — see above. Its rejection is not anyone's to
         // handle at this point, but an unhandled one would be logged as a script
@@ -2785,26 +2786,44 @@ class Storage {
     onWrite(listener) {
         if (typeof listener !== 'function') return () => {};
         this._writeListeners.add(listener);
-        this._openWriteChannel();
+        this._listenForOtherTabs();
         return () => this._writeListeners.delete(listener);
     }
 
     /**
      * Whether other tabs' writes reach `onWrite` listeners in this tab.
-     * @returns {boolean} True when the cross-tab write channel is open
+     * @returns {boolean} True when a listener is registered and the channel is open and heard
      */
     crossTabWritesVisible() {
-        return Boolean(this._openWriteChannel());
+        if (this._writeListeners.size === 0) return false;
+        return Boolean(this._listenForOtherTabs()?.onmessage);
     }
 
     /**
-     * Open the cross-tab write channel once, or learn it cannot be had.
+     * Open the cross-tab write channel, or learn it cannot be had.
+     *
+     * Every tab that commits a write opens it to post — a tab with sync off, or
+     * not the one running the schedule, still writes records the scheduling tab
+     * must hear about. Only a tab with an `onWrite` listener also listens on it
+     * (see `_listenForOtherTabs`); one that merely posts carries no handler.
+     * Closed while the page says goodbye (`closeForTeardown`) — an open channel
+     * can keep a page out of the bfcache — and opened again on the next use.
      * @returns {BroadcastChannel|null} The channel, or null
      * @private
      */
     _openWriteChannel() {
         if (this._writeChannel !== undefined) return this._writeChannel;
-        this._writeChannel = null;
+        if (this._closingForTeardown) return null;
+        this._writeChannel = this._createWriteChannel();
+        return this._writeChannel;
+    }
+
+    /**
+     * A new channel on the write announcements' name, or null where there can be none.
+     * @returns {BroadcastChannel|null} The channel, or null
+     * @private
+     */
+    _createWriteChannel() {
         // A page only: under the test runner there are no other tabs, and an
         // open channel would hold the process up
         if (typeof window === 'undefined' || typeof BroadcastChannel !== 'function') return null;
@@ -2812,16 +2831,45 @@ class Storage {
             const channel = new BroadcastChannel(WRITE_CHANNEL_NAME);
             // Node's channel (a DOM-emulating test) keeps the process alive unless told not to
             channel.unref?.();
+            return channel;
+        } catch (error) {
+            console.warn('[Storage] Cross-tab write announcements are unavailable:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Open the write channel with a handler that passes other tabs' commits to
+     * this tab's listeners.
+     * @returns {BroadcastChannel|null} The channel, or null
+     * @private
+     */
+    _listenForOtherTabs() {
+        const channel = this._openWriteChannel();
+        if (channel && !channel.onmessage) {
             channel.onmessage = (event) => {
                 const data = event?.data;
                 if (!data || typeof data.storeName !== 'string') return;
                 this._emitWrite(data.storeName, Array.isArray(data.keys) ? data.keys : null, 'remote');
             };
-            this._writeChannel = channel;
-        } catch (error) {
-            console.warn('[Storage] Cross-tab write announcements are unavailable:', error);
         }
-        return this._writeChannel;
+        return channel;
+    }
+
+    /**
+     * Close the write channel for the page's goodbye. Its next use reopens it.
+     * @private
+     */
+    _closeWriteChannel() {
+        const channel = this._writeChannel;
+        if (!channel) return;
+        this._writeChannel = undefined;
+        try {
+            channel.onmessage = null;
+            channel.close();
+        } catch (error) {
+            console.warn('[Storage] Closing the write channel failed:', error);
+        }
     }
 
     /**
@@ -2851,12 +2899,18 @@ class Storage {
     _announceCommit(storeName, keys) {
         const listed = keys.length > WRITE_CHANNEL_KEYS_MAX ? null : keys;
         this._emitWrite(storeName, listed, 'commit');
-        const channel = this._openWriteChannel();
+        // The teardown flush's own commits land after the channel was closed.
+        // They still go out, on a channel opened for the one message: a
+        // message posted before close is delivered.
+        const closing = this._closingForTeardown;
+        const channel = closing ? this._createWriteChannel() : this._openWriteChannel();
         if (!channel) return;
         try {
             channel.postMessage({ storeName, keys: listed });
         } catch (error) {
             console.warn('[Storage] Could not announce a write to other tabs:', error);
+        } finally {
+            if (closing) channel.close?.();
         }
     }
 
@@ -2885,6 +2939,7 @@ class Storage {
         // Frozen, this page may have missed other tabs' write announcements;
         // anyone counting them is told it can no longer vouch for the count.
         this._emitWrite(null, null, 'resumed');
+        if (this._writeListeners.size > 0) this._listenForOtherTabs();
         // A reconnect that gave up before the page was frozen says nothing about
         // now, and the wait it suppresses is the one this needs.
         this._lastReconnectFailureAt = 0;

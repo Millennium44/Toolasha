@@ -20,7 +20,9 @@ class FakeChannel {
     postMessage(data) {
         this.posted.push(data);
     }
-    close() {}
+    close() {
+        this.closed = true;
+    }
 }
 
 /**
@@ -84,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
     stop?.();
+    storage._closingForTeardown = false;
     storage.cleanupPendingWrites();
     storage._writeChannel = undefined;
     vi.unstubAllGlobals();
@@ -147,6 +150,46 @@ describe('storage.onWrite', () => {
         await storage.reopenAfterRestore();
         open.mockRestore();
         expect(heard).toContainEqual({ storeName: null, keys: null, origin: 'resumed' });
+    });
+
+    test('a tab with no listener still announces its commits, without listening', async () => {
+        stop();
+        storage._writeChannel?.close();
+        storage._writeChannel = undefined;
+        FakeChannel.instances = [];
+        await storage.set('a', 1, 'xpHistory', true);
+        await settle();
+        expect(FakeChannel.instances).toHaveLength(1);
+        expect(FakeChannel.instances[0].posted).toEqual([{ storeName: 'xpHistory', keys: ['a'] }]);
+        expect(FakeChannel.instances[0].onmessage).toBeNull();
+        expect(storage.crossTabWritesVisible()).toBe(false);
+    });
+
+    test('the page saying goodbye closes the channel, and coming back reopens it listening', async () => {
+        const first = FakeChannel.instances[0];
+        first.close = vi.fn();
+        const live = storage.db;
+        // A write the teardown flush lands, committing after the close
+        storage._debouncedSave('t', 1, 'xpHistory');
+        const flush = storage.closeForTeardown('pagehide');
+        expect(first.close).toHaveBeenCalled();
+        expect(storage.crossTabWritesVisible()).toBe(false);
+        // The flush runs on the connection it snapshotted; let it commit
+        storage.db = live;
+        await flush;
+        await settle();
+        const oneShot = FakeChannel.instances.find((channel) => channel !== first && channel.posted.length);
+        expect(oneShot?.posted).toEqual([{ storeName: 'xpHistory', keys: ['t'] }]);
+        expect(oneShot.closed).toBe(true);
+
+        const open = vi.spyOn(storage, 'openDatabase').mockResolvedValue(undefined);
+        await storage.reopenAfterRestore();
+        open.mockRestore();
+        expect(heard).toContainEqual({ storeName: null, keys: null, origin: 'resumed' });
+        const reopened = FakeChannel.instances.at(-1);
+        expect(reopened).not.toBe(first);
+        expect(typeof reopened.onmessage).toBe('function');
+        expect(storage.crossTabWritesVisible()).toBe(true);
     });
 
     test('cross-tab writes are visible only where a channel could be opened', () => {

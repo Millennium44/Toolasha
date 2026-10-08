@@ -79,6 +79,8 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 
 const applies = vi.hoisted(() => ({ complete: true, texts: [] }));
 vi.mock('./sync-payload.js', () => ({
+    // Read by the write counter in sync-dirty.js, which this storage fake never feeds
+    payloadCarriesKey: () => true,
     buildPayloadJSON: async () => world.content,
     applyPayload: async (json) => {
         applies.texts.push(json);

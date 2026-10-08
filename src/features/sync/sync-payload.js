@@ -22,7 +22,7 @@
 
 import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
-import { isSyncedStore, partitionOwnedKeys } from './sync-ownership.js';
+import { isSyncedStore, ownsKey, partitionOwnedKeys } from './sync-ownership.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
@@ -142,6 +142,31 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // another device's arrival times are not this one's
     'tickPeriodTally',
 ];
+
+/**
+ * Whether a key written to a store would travel in a payload at all.
+ *
+ * The same four filters the build applies, asked of one key: the store is one
+ * the sync carries, the key is Toolasha's (`ownsKey`), the backup filter does
+ * not strip it (`stripExcludedKeys`), and in `settings` it is not local-only.
+ * What answers false here can be written as often as it likes without changing
+ * a payload — a heartbeat stamped every few seconds, a cache, another script's
+ * record — which is what lets the write counter in `sync-dirty.js` ignore it.
+ *
+ * It errs the safe way: a settings map that would be dropped for being
+ * unreadable, or whose only change is a device-local setting inside it, still
+ * answers true.
+ *
+ * @param {string} storeName - Object store the key was written to
+ * @param {string} key - Storage key
+ * @returns {boolean} True when the key can change a payload
+ */
+export function payloadCarriesKey(storeName, key) {
+    if (!isSyncedStore(storeName) || !ownsKey(storeName, key)) return false;
+    const name = String(key);
+    if (!(name in (stripExcludedKeys(storeName, { [name]: true }) || {}))) return false;
+    return !(storeName === SETTINGS_STORE && LOCAL_ONLY_KEY_PREFIXES.some((prefix) => name.startsWith(prefix)));
+}
 
 /**
  * Where each settings map's per-setting change stamps live:

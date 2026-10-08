@@ -21,9 +21,12 @@
  *
  * Why that is safe, and where it is not:
  *
- * - The generation is taken *before* the flush and the build. A write that
- *   lands during the build counts after the snapshot, so the next push builds
- *   again; it can never be absorbed into a clean point it was not read into.
+ * - The generation is taken *after* the flush and before the build. Every
+ *   write is counted again when it commits, so a write not yet in IndexedDB
+ *   when the count is taken — still queued, requeued after a failure, landing
+ *   during the build, another tab's — counts after the snapshot, and the next
+ *   push builds again; it can never be absorbed into a clean point it was not
+ *   read into. One that committed before the snapshot is in what the build read.
  * - Another tab's write is announced only after it commits. Heard before the
  *   snapshot, it committed before the build read the store; heard after, it
  *   counts against the next push. The one gap is a write committed in another
@@ -44,14 +47,7 @@
 
 import storage from '../../core/storage.js';
 import { isSyncedStore } from './sync-ownership.js';
-
-/**
- * The store the device-local sync bookkeeping lives in, and its prefix — one of
- * `LOCAL_ONLY_KEY_PREFIXES` in `sync-payload.js`, so never in a payload. Every
- * push and pull writes these; counting them would make every push dirty the next.
- */
-const BOOKKEEPING_STORE = 'settings';
-const BOOKKEEPING_PREFIX = 'toolasha_sync_';
+import { payloadCarriesKey } from './sync-payload.js';
 
 /** How long a clean point vouches for the database before a push builds anyway. */
 export const CLEAN_POINT_MAX_AGE_MS = 60 * 60 * 1000;
@@ -65,16 +61,20 @@ let cleanPoint = null;
 
 /**
  * Whether a reported write could change a payload.
+ *
+ * Only keys a payload carries count (`payloadCarriesKey`). Most writes in
+ * `settings` are not: the sync's own bookkeeping, the session briefing's
+ * heartbeat every few seconds, network tallies, caches, and other scripts'
+ * records. Counting those moved the count on nearly every tick, and the push
+ * built every time anyway.
  * @param {{storeName: string|null, keys: Array<string>|null}} write - From `storage.onWrite`
- * @returns {boolean} True unless it provably touched only bookkeeping or unsynced stores
+ * @returns {boolean} True unless every key it names provably stays out of a payload
  */
 function countsAsChange({ storeName, keys }) {
     if (storeName === null || storeName === undefined) return true;
-    if (!isSyncedStore(storeName)) return false;
-    if (storeName === BOOKKEEPING_STORE && Array.isArray(keys) && keys.length > 0) {
-        return !keys.every((key) => typeof key === 'string' && key.startsWith(BOOKKEEPING_PREFIX));
-    }
-    return true;
+    // A bulk write whose keys were not listed counts if its store syncs at all
+    if (!Array.isArray(keys) || keys.length === 0) return isSyncedStore(storeName);
+    return keys.some((key) => payloadCarriesKey(storeName, key));
 }
 
 /**

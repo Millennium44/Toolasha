@@ -444,20 +444,21 @@ class SyncManager {
         // whether anything synced was written since the last build proved this
         // device matched the stored fingerprint. If not, the build would only
         // find that out again, at the cost of serializing every store on the
-        // main thread. The count is taken before the flush, so a write that
-        // lands during the build is never counted into the clean point.
+        // main thread. The count is taken once the flush has landed what was
+        // queued — every write is counted again when it commits, so one that
+        // is not on disk by then, or lands during the build, counts after it
+        // and is never absorbed into the clean point.
         let localPayload = merged?.localText;
         let builtAtGeneration = null;
         if (!merged) {
             startSyncDirtyTracker();
-            const generation = syncWriteGeneration();
             await flushPersistedRecords();
             if (silent && unchangedSinceClean(scope, await storage.get(KEY_LAST_HASH, STORE, null))) {
                 return { ok: true, skipped: true, reason: 'unchanged' };
             }
             await storage.flushAll?.();
+            builtAtGeneration = syncWriteGeneration();
             localPayload = await buildPayloadJSON(scope);
-            builtAtGeneration = generation;
         }
         // What goes up, and what this device holds. They differ only for a
         // merged upload; the fingerprint remembered is always this device's,

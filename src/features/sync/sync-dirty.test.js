@@ -23,7 +23,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => 'char-A' },
 }));
 
-const stored = vi.hoisted(() => ({ map: {}, listeners: new Set(), crossTab: true }));
+const stored = vi.hoisted(() => ({ map: {}, listeners: new Set(), crossTab: true, queued: [] }));
 const calls = vi.hoisted(() => []);
 vi.mock('../../core/storage.js', () => {
     const emit = (storeName, keys, origin = 'local') => {
@@ -31,7 +31,11 @@ vi.mock('../../core/storage.js', () => {
     };
     return {
         default: {
-            flushAll: async () => calls.push('flushAll'),
+            // Lands what `queue()` left waiting, and reports each commit as the real one does
+            flushAll: async () => {
+                calls.push('flushAll');
+                for (const [storeName, keys] of stored.queued.splice(0)) emit(storeName, keys, 'commit');
+            },
             get: async (key, _store, fallback = null) => stored.map[key] ?? fallback,
             set: async (key, value, storeName = 'settings') => {
                 emit(storeName, [key]);
@@ -60,7 +64,9 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }))
 vi.mock('./pull-summary-panel.js', () => ({ openPullSummaryPanel: () => {} }));
 
 const payload = vi.hoisted(() => ({ text: '{"local":1}', buildWait: null }));
-vi.mock('./sync-payload.js', () => ({
+vi.mock('./sync-payload.js', async (importOriginal) => ({
+    // The real filter: which keys can change a payload is what these tests are about
+    payloadCarriesKey: (await importOriginal()).payloadCarriesKey,
     buildPayloadJSON: async () => {
         calls.push('buildPayloadJSON');
         if (payload.buildWait) await payload.buildWait();
@@ -100,6 +106,12 @@ function write(storeName, keys, origin = 'local') {
     for (const listener of stored.listeners) listener({ storeName, keys, origin });
 }
 
+/** A debounced write in this tab: reported now, committed by the push's flush */
+function queue(storeName, keys) {
+    write(storeName, keys, 'local');
+    stored.queued.push([storeName, keys]);
+}
+
 const builds = () => calls.filter((call) => call === 'buildPayloadJSON').length;
 const autoPush = () => syncManager.push({ silent: true, unattended: true });
 
@@ -112,6 +124,7 @@ beforeEach(async () => {
     stored.map = {};
     stored.listeners.clear();
     stored.crossTab = true;
+    stored.queued = [];
     calls.length = 0;
     payload.text = '{"local":1}';
     payload.buildWait = null;
@@ -158,7 +171,54 @@ describe('automatic push with nothing written', () => {
     });
 });
 
+describe('writes no payload carries', () => {
+    test.each([
+        ['the session briefing heartbeat', 'sessionBriefingLastAlive_603281'],
+        ['a device-local record', 'toolasha_local_liveGraph_603281'],
+        ['a network tally', 'waveGapTally'],
+        ["another script's key", 'otherScriptStats'],
+        ['the market API cache', 'Toolasha_marketAPI_cache'],
+    ])('%s does not make the push build', async (_label, key) => {
+        write('settings', [key], 'remote');
+        write('settings', [key]);
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(0);
+    });
+
+    test('a store the backup strips a key from does not count that key', async () => {
+        write('labyrinth', ['labyrinthTickCaptureAutosave_603281']);
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(0);
+    });
+
+    test('a real setting does', async () => {
+        write('settings', ['script_settingsMap_603281'], 'remote');
+        await autoPush();
+        expect(builds()).toBe(1);
+    });
+});
+
 describe('automatic push after a write', () => {
+    test('a write the push flush lands itself does not make the following push build again', async () => {
+        queue('xpHistory', ['char-A_xp']);
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(1);
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(1);
+    });
+
+    test('a write still queued after the flush counts against the next push', async () => {
+        write('xpHistory', ['char-A_xp']);
+        // The flush could not land this one (it failed and was requeued): it commits after the build
+        payload.buildWait = async () => write('xpHistory', ['char-A_late'], 'commit');
+        expect((await autoPush()).reason).toBe('unchanged');
+        payload.buildWait = null;
+        payload.text = '{"local":5}';
+        await autoPush();
+        expect(builds()).toBe(2);
+        expect(gist.writes).toHaveLength(2);
+    });
+
     test('a write to a synced store in this tab makes the next push build', async () => {
         write('xpHistory', ['char-A_xp']);
         payload.text = '{"local":2}';
@@ -170,7 +230,7 @@ describe('automatic push after a write', () => {
     });
 
     test('a setting written beside the bookkeeping counts', async () => {
-        write('settings', ['toolasha_sync_lastHash', 'character_char-A_settings']);
+        write('settings', ['toolasha_sync_lastHash', 'script_settingsMap_603281']);
         await autoPush();
         expect(builds()).toBe(1);
     });
