@@ -230,7 +230,7 @@ export function indexRoutes(routes) {
  * @param {Object} route - A craft or source route
  * @param {Object} [opts]
  * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes; unbounded when absent
- * @returns {Object|null} `{itemHrid, route, sourceHrid, actionHrid, from, to, needed, gain, collateral, points,
+ * @returns {Object|null} `{itemHrid, route, sourceHrid, actionHrid, setup, from, to, needed, gain, collateral, points,
  *   gold, seconds, goldPerPoint, secondsPerPoint, units, credits: Map, sold: Map}` — `credits` is every count
  *   the option adds, `sold` the units of each output it sells
  */
@@ -304,6 +304,7 @@ export function evaluateOption(itemHrid, counts, route, { sellable } = {}) {
         gain: targetGain,
         sourceHrid: route.sourceHrid ?? null,
         actionHrid: route.actionHrid ?? null,
+        setup: route.setup ?? null,
         needed: step.needed,
         units,
         collateral,

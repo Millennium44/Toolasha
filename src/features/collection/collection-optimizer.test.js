@@ -246,30 +246,38 @@ const RATES = vi.hoisted(() => ({
 const OVERHEAD = vi.hoisted(() => ({
     '/items/earrings_of_essence_find': { coin: 200, catalystPerSuccess: 7920 },
 }));
+/**
+ * Amber's transmute: by default 50% after its catalyst and tea, 100 attempts an hour, 125 coins
+ * and 3,000 of catalyst an hour, and the essence every attempt can roll
+ */
+const amberTransmute = (hrid, setup = {}) => ({
+    itemHrid: hrid,
+    actionsPerHour: 100,
+    successRate: 0.5,
+    requirementCosts: [
+        { itemHrid: hrid, count: 1, price: BUY[hrid] },
+        { itemHrid: '/items/coin', count: 125, costPerAction: 125 },
+    ],
+    catalystCostPerHour: 3000,
+    totalTeaCostPerHour: 0,
+    winningCatalystHrid: '/items/catalyst_of_transmutation',
+    winningTeaUsed: true,
+    dropRevenues: [
+        { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
+        ...(game.crateDrop
+            ? [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 0 }]
+            : []),
+    ],
+    ...setup,
+});
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
-        // Amber at 50% after its catalyst and tea, 100 attempts an hour, 125 coins and 3,000 of
-        // catalyst an hour, and the essence every attempt can roll
-        calculateTransmuteProfit: (hrid) =>
-            hrid !== '/items/amber' || game.noTransmute
-                ? null
-                : {
-                      itemHrid: hrid,
-                      actionsPerHour: 100,
-                      successRate: 0.5,
-                      requirementCosts: [
-                          { itemHrid: hrid, count: 1, price: BUY[hrid] },
-                          { itemHrid: '/items/coin', count: 125, costPerAction: 125 },
-                      ],
-                      catalystCostPerHour: 3000,
-                      totalTeaCostPerHour: 0,
-                      dropRevenues: [
-                          { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
-                          ...(game.crateDrop
-                              ? [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 0 }]
-                              : []),
-                      ],
-                  },
+        calculateTransmuteProfit: (hrid) => (hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid)),
+        // The setups the calculator weighs, when a test lists them
+        calculateCandidateResults: (type, hrid) =>
+            type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
+                ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
+                : [],
         calculateDecomposeProfit: (hrid) =>
             RATES[hrid] === undefined
                 ? null
@@ -395,6 +403,7 @@ beforeEach(() => {
     game.milkingLevel = 10;
     game.unpricedTea = false;
     game.crateDrop = false;
+    game.transmuteSetups = [];
 });
 
 afterEach(() => {
@@ -565,6 +574,43 @@ describe('transmute routes', () => {
             option.units * route.kept.get('/items/star_fragment').perSource,
             9
         );
+    });
+
+    test('every setup the calculator weighs is a route, and the ranking picks by gold per point', async () => {
+        // The calculator's pick is the type-specific catalyst. Prime raises the success rate to 75%
+        // for 9,000 of catalyst an hour: more Garnet per Amber bought, so fewer Amber for a point
+        game.transmuteSetups = [
+            {},
+            { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
+            // No tea to drink: the same as the first, offered once
+            { winningTeaUsed: false },
+        ];
+        const routes = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'transmute' && s.sourceHrid === '/items/amber'
+        );
+        expect(routes.map((r) => r.setup.catalystHrid)).toEqual([
+            '/items/catalyst_of_transmutation',
+            '/items/prime_catalyst',
+        ]);
+        const counts = new Map([['/items/star_fragment', 1e6]]);
+        const [typeSpecific, prime] = routes.map((r) => evaluateOption('/items/garnet', counts, r));
+        expect(prime.goldPerPoint).toBeLessThan(typeSpecific.goldPerPoint);
+        const index = new Map([['/items/garnet', routes]]);
+        const [best] = bestOptions(counts, index);
+        expect(best.setup.catalystHrid).toBe('/items/prime_catalyst');
+        // Fastest compares the same routes on time per point
+        const [fastest] = bestOptions(counts, index, { sort: 'fastest' });
+        expect(fastest.secondsPerPoint).toBeLessThanOrEqual(typeSpecific.secondsPerPoint);
+    });
+
+    test('the row says which catalyst and teas the transmute uses', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const garnet = [...document.querySelectorAll('.toolasha-collopt-row')].find(
+            (row) => row.dataset.item === '/items/garnet'
+        );
+        expect(garnet.textContent).toContain('Transmute: 16× Amber (catalyst_of_transmutation, teas)');
     });
 
     test('an output with no price at all leaves the route out', async () => {

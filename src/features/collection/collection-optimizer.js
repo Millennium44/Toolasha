@@ -210,6 +210,40 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
 }
 
 /**
+ * Every catalyst/tea setup for transmuting S, each as its own route.
+ *
+ * The calculator's own pick (`calculateTransmuteProfit`) is the setup with the
+ * best taxed profit per hour under the profit pricing mode, with every output
+ * sold however much of it there is. The optimizer pays the ask, sells at the
+ * bid within a week's volume and ranks by gold (or time) per point, so that
+ * pick can be the wrong setup here. Each candidate the calculator weighs
+ * (`calculateCandidateResults`) is offered instead, and the ranking chooses
+ * among them per target item and per sort, with its own prices and caps — the
+ * same comparison it already makes between routes. A setup that comes out the
+ * same as another (no tea to drink, say) is offered once.
+ * @param {string} sourceHrid - S
+ * @param {Array<Object>} table - S's `alchemyDetail.transmuteDropTable`
+ * @param {Object} opts - {@link transmuteRoute}'s
+ * @returns {Array<Object>} Source routes, each carrying its `setup`
+ */
+export function transmuteSetups(sourceHrid, table, opts) {
+    const listed = alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid) ?? [];
+    const candidates = listed.length > 0 ? listed : [alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid)];
+    const routes = [];
+    const seen = new Set();
+    for (const result of candidates) {
+        const route = result ? transmuteRoute(sourceHrid, result, table, opts) : null;
+        if (!route) continue;
+        const key = `${route.cost}|${route.seconds}|${[...route.yields].join(';')}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        route.setup = { catalystHrid: result.winningCatalystHrid ?? null, tea: Boolean(result.winningTeaUsed) };
+        routes.push(route);
+    }
+    return routes;
+}
+
+/**
  * Running a gathering action as a route, one action at a time.
  *
  * Everything is the gathering calculator's (`calculateGatheringProfit`): its
@@ -563,9 +597,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         const buy = buyableQuote(hrid);
         if (!(buy > 0)) continue;
         try {
-            const result = alchemyProfitCalculator.calculateTransmuteProfit(hrid) ?? null;
-            const route = transmuteRoute(hrid, result, table, { buy, sell });
-            if (route) sources.push(route);
+            sources.push(...transmuteSetups(hrid, table, { buy, sell }));
         } catch (error) {
             console.error('[CollectionOptimizer] Transmute route failed for', hrid, error);
         }
@@ -679,7 +711,10 @@ function describeRoute(option) {
         return `${label}: ${actions} at ${zone.split('/').pop()}`;
     }
     if (!option.sourceHrid) return label;
-    return `${label}: ${option.units}× ${itemName(option.sourceHrid)}`;
+    const base = `${label}: ${option.units}× ${itemName(option.sourceHrid)}`;
+    if (!option.setup) return base;
+    const catalyst = option.setup.catalystHrid ? itemName(option.setup.catalystHrid) : 'no catalyst';
+    return `${base} (${catalyst}, ${option.setup.tea ? 'teas' : 'no tea'})`;
 }
 
 class CollectionOptimizer {
