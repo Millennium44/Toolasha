@@ -491,6 +491,12 @@ class ItemFlowRecorder {
             legacyKey: (charId) => `itemFlow_${charId}`,
             groupOf: rowChunkId,
             compare: (a, b) => String(a?.d || '').localeCompare(String(b?.d || '')),
+            // One row per day, rewritten all day: two copies of a day are two
+            // versions of one row. Folding them in the store, not only on load,
+            // is what keeps a sync's union — pull and upload alike — from
+            // handing the gist and every other device both copies
+            identityOf: (row) => row?.d,
+            mergeCopies: mergeDayRow,
             label: 'ItemFlow',
         });
 

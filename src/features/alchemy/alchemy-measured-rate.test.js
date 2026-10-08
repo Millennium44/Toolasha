@@ -19,6 +19,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('./alchemy-session-store.js', () => ({
+    mergeSessionCopies: (a) => a,
     NO_CHARACTER: 'default',
     // Like the real chunked-history store, an instance serves its first read
     // from memory forever after — which is what makes holding one across reads

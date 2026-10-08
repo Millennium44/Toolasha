@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Synced days no longer count twice
+
+- A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.
+
 ### Push confirmation asks once
 
 - A pressed Push asks before cutting GitHub's history only for logs this device deliberately keeps shorter (not guild XP, day rows or trial records), asks once, remembers "Merge and push" for that gist and scope, and names the histories involved.

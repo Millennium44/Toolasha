@@ -217,6 +217,64 @@ export function foldOffline(row, window) {
 }
 
 /**
+ * Two copies of one day's row, as the one row the day has.
+ *
+ * A day's row is rewritten on every battle, and a sync brings two versions of
+ * it together: the one a device pushed and the one another device pulled and
+ * kept extending. The attribution already takes the high-water mark of every
+ * reading of a run, so both copies side by side did not count a drop twice —
+ * but they did keep doubling on every sync, and nothing ever folded them.
+ *
+ * Nothing here has to choose a copy. A stretch is known by its first reading:
+ * two copies of it are the same watched stretch, one extended further, and the
+ * one reaching later is kept. Stretches that began at different moments are
+ * different watched spans and both are kept — the attribution's high-water mark
+ * is what stops two devices' readings of one run from being added. Offline
+ * windows are a set.
+ *
+ * @param {CombatLootDay} a - One copy (this device's, in a fold)
+ * @param {CombatLootDay} b - The other
+ * @returns {CombatLootDay} The merged row
+ */
+export function mergeCombatLootDays(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const out = { ...a, runs: {} };
+
+    const runs = new Set([...Object.keys(a.runs || {}), ...Object.keys(b.runs || {})]);
+    for (const run of runs) {
+        const byStart = new Map();
+        for (const stretch of [...(a.runs?.[run]?.stretches || []), ...(b.runs?.[run]?.stretches || [])]) {
+            const start = stretch?.first?.t;
+            if (!Number.isFinite(start)) continue;
+            const held = byStart.get(start);
+            if (!held || num(stretch.last?.t) > num(held.last?.t)) byStart.set(start, stretch);
+        }
+        out.runs[run] = { stretches: [...byStart.values()].sort((x, y) => x.first.t - y.first.t) };
+    }
+
+    if (a.offline || b.offline) {
+        const windows = new Map();
+        for (const window of [...(a.offline || []), ...(b.offline || [])]) {
+            if (!Array.isArray(window)) continue;
+            const key = `${window[0]}|${window[1]}`;
+            if (!windows.has(key)) windows.set(key, window);
+        }
+        out.offline = [...windows.values()].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    }
+    return out;
+}
+
+/**
+ * @param {*} value
+ * @returns {number} The value, or -Infinity when it is not a finite number
+ */
+function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : -Infinity;
+}
+
+/**
  * Two running totals, item for item.
  * @param {Object<string, number>} a
  * @param {Object<string, number>} b
@@ -239,6 +297,10 @@ class CombatLootRecorder {
             legacyKey: (charId) => `combatLoot_${charId}`,
             groupOf: rowChunkId,
             compare: (a, b) => String(a?.d || '').localeCompare(String(b?.d || '')),
+            // One row per day, rewritten on every battle: two copies of a day
+            // are two versions of one row, not two rows
+            identityOf: (row) => row?.d,
+            mergeCopies: mergeCombatLootDays,
             label: 'CombatLoot',
         });
 
