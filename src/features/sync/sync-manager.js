@@ -64,6 +64,7 @@ import {
     registeredKeysDiverge,
     trimmedRegisteredKeys,
     restampRestoredSettings,
+    learnExternalKeysFromText,
     RESTORED_BASELINE,
 } from './sync-payload.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -442,9 +443,9 @@ class SyncManager {
         // What goes up, and what this device holds. They differ only for a
         // merged upload; the fingerprint remembered is always this device's,
         // because "has this device changed since?" is asked of its own data.
-        const payload = merged ? merged.text : localPayload;
-        const hash = contentHash(payload);
-        const localHash = merged ? contentHash(localPayload) : hash;
+        let payload = merged ? merged.text : localPayload;
+        let hash = contentHash(payload);
+        let localHash = merged ? contentHash(localPayload) : hash;
 
         if (!merged && silent && localHash === (await storage.get(KEY_LAST_HASH, STORE, null))) {
             return { ok: true, skipped: true, reason: 'unchanged' };
@@ -487,6 +488,15 @@ class SyncManager {
         let checked = null;
         if (!unattended && !merged && gistId) {
             const asked = await this._askBeforeTrimming(token, gistId, localPayload, scope, opToken);
+            // The download named key prefixes another script registered that
+            // this device had not heard of: what goes up is the rebuild that
+            // carries them, or this push would erase them from the gist
+            if (asked.localPayload && asked.localPayload !== localPayload) {
+                localPayload = asked.localPayload;
+                payload = localPayload;
+                hash = contentHash(payload);
+                localHash = hash;
+            }
             if (asked.choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
             if (asked.choice === 'superseded') return this._supersededResult(silent, 'push', opToken);
             if (asked.choice === 'merge') {
@@ -776,6 +786,15 @@ class SyncManager {
             throw error;
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+
+        // The gist named key prefixes another script registered that this
+        // device had not heard of. Rebuilt with them, this device's payload
+        // carries whatever it holds under them, and the fingerprint remembered
+        // below is of a payload with the registry it now has — not of one
+        // without it, which every later rebuild would read as a local change
+        if (learnExternalKeysFromText(remote.payload)) {
+            localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
+        }
 
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
         let merged;
@@ -1162,8 +1181,10 @@ class SyncManager {
      * @param {string} scope - The scope `localPayload` was built for, which the remembered answer is keyed to:
      *   rereading the setting here would key it to a scope changed while the gist was downloading
      * @param {number} opToken - The push's ownership token; a takeover during the dialog stands the push down
-     * @returns {Promise<{choice: 'push'|'merge'|'cancel'|'superseded', remote: Object|null}>} What to do ('push'
-     *   replaces as before), and the download it was decided on; null when the gist could not be read
+     * @returns {Promise<{choice: 'push'|'merge'|'cancel'|'superseded', remote: Object|null, localPayload: string}>}
+     *   What to do ('push' replaces as before), the download it was decided on (null when the gist could not be
+     *   read), and this device's payload — rebuilt when the download taught this device key prefixes another
+     *   script registered, so the push carries them
      * @private
      */
     async _askBeforeTrimming(token, gistId, localPayload, scope, opToken) {
@@ -1172,17 +1193,37 @@ class SyncManager {
             remote = await this._readRemote(token, gistId, null);
         } catch (error) {
             console.warn('[Sync] Could not check whether a push would trim the gist; pushing as asked:', error);
-            return { choice: 'push', remote: null };
+            return { choice: 'push', remote: null, localPayload };
+        }
+        const decided = await this._decideTrim(token, gistId, remote, localPayload, scope, opToken);
+        return { ...decided, localPayload: decided.localPayload ?? localPayload };
+    }
+
+    /**
+     * The body of `_askBeforeTrimming`, once the gist is in hand.
+     * @param {string} token - GitHub token
+     * @param {string} gistId - Gist id
+     * @param {Object} remote - The download
+     * @param {string} builtPayload - This device's payload as built
+     * @param {string} scope - The scope it was built for
+     * @param {number} opToken - The push's ownership token
+     * @returns {Promise<{choice: string, remote: Object|null, localPayload?: string}>} The decision
+     * @private
+     */
+    async _decideTrim(token, gistId, remote, builtPayload, scope, opToken) {
+        let localPayload = builtPayload;
+        if (remote?.payload && learnExternalKeysFromText(remote.payload)) {
+            localPayload = await buildPayloadJSON(scope);
         }
         const trimmed = remote?.payload ? trimmedRegisteredKeys(localPayload, remote.payload) : [];
-        if (!trimmed.length) return { choice: 'push', remote: remote ?? null };
+        if (!trimmed.length) return { choice: 'push', remote: remote ?? null, localPayload };
         const remembered = await storage.get(KEY_MERGE_ON_TRIM, STORE, null);
         const rememberedHere = remembered?.gistId === gistId && remembered?.scope === scope;
         traceSync('push-would-trim', {
             keys: trimmed.map(({ store, key }) => `${store}/${key}`),
             remembered: rememberedHere,
         });
-        if (rememberedHere) return { choice: 'merge', remote };
+        if (rememberedHere) return { choice: 'merge', remote, localPayload };
         const labels = [...new Set(trimmed.map(({ label }) => label))];
         const named = labels.slice(0, 4).join(', ') + (labels.length > 4 ? `, and ${labels.length - 4} more` : '');
         const answer = await askChoice({
@@ -1200,13 +1241,13 @@ class SyncManager {
                 { value: null, label: 'Cancel' },
             ],
         });
-        if (!this._stillOwns(opToken)) return { choice: 'superseded', remote };
+        if (!this._stillOwns(opToken)) return { choice: 'superseded', remote, localPayload };
         if (answer === 'merge') {
             await rememberLocal({ [KEY_MERGE_ON_TRIM]: { gistId, scope } });
-            return { choice: 'merge', remote };
+            return { choice: 'merge', remote, localPayload };
         }
-        if (answer === 'replace') return { choice: 'push', remote };
-        return { choice: 'cancel', remote };
+        if (answer === 'replace') return { choice: 'push', remote, localPayload };
+        return { choice: 'cancel', remote, localPayload };
     }
 
     /**

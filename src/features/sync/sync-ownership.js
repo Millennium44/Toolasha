@@ -279,14 +279,37 @@ export const OWNED_KEY_PATTERNS = [/^.+_bulkSell_lastTab$/, /^.+_inventoryTabs_c
  * this device does not own is left out of its pushes and dropped from a merged
  * upload, so a device has to know the prefixes to carry the keys through — and
  * the only way a device that never runs the other script can know them is from
- * the gist itself. Prefixes are only ever added (a union across devices cannot
- * tell a withdrawn prefix from one another device has not heard of yet).
+ * the gist itself.
  *
- * Validation keeps a registration from reaching into this script's keys: a
- * prefix that is a prefix of one of ours, or that one of ours is a prefix of,
- * is refused, and so is anything in the `toolasha` namespace. Every device-local
- * prefix (`LOCAL_ONLY_KEY_PREFIXES` in `sync-payload.js`) is one
- * `OWNED_KEY_PREFIXES` already claims, so a registered key is never local-only.
+ * ### Withdrawing a prefix
+ *
+ * Every prefix an owner has ever named is an entry with a state (registered or
+ * removed) and the time that state was set, and two copies of one entry settle
+ * on the later state — on an exact tie, removal. So `unregisterKeys` leaves a
+ * removal behind rather than forgetting the prefix: a device that still holds it
+ * as registered learns the removal from the next payload instead of teaching the
+ * prefix back, and registering it again later is newer than the removal and wins
+ * the same way. Keys already carried under a removed prefix simply stop being
+ * carried; every device keeps whatever it already stored.
+ *
+ * ### What may be registered
+ *
+ * Validation keeps a registration from reaching into keys that are not its
+ * owner's:
+ * - nothing that is a prefix of one of ours, or that one of ours is a prefix
+ *   of, and nothing in the `toolasha` namespace. Every device-local prefix
+ *   (`LOCAL_ONLY_KEY_PREFIXES` in `sync-payload.js`) is one
+ *   `OWNED_KEY_PREFIXES` already claims, so a registered key is never local-only;
+ * - nothing that is a prefix of, or prefixed by, a prefix registered under a
+ *   different owner — so one script cannot claim another's whole namespace with
+ *   a short prefix, and one prefix is never held twice. An owner's own prefixes
+ *   may overlap each other: narrowing or widening its own registration is its
+ *   business;
+ * - at most {@link EXTERNAL_PREFIX_LIMIT} registered prefixes across every owner.
+ *
+ * The device's own remembered record is the exception: it was valid when it was
+ * written, and loading it is never refused for the cap or an overlap — refusing
+ * would have the next save write a smaller record than the one on disk.
  */
 
 /** Shortest prefix another script may register: anything shorter matches too much */
@@ -295,8 +318,11 @@ export const EXTERNAL_PREFIX_MIN_LENGTH = 6;
 /** Longest prefix accepted — a key, not a document */
 export const EXTERNAL_PREFIX_MAX_LENGTH = 128;
 
-/** Most prefixes held across every owner together */
+/** Most registered prefixes held across every owner together */
 export const EXTERNAL_PREFIX_LIMIT = 32;
+
+/** Most removals remembered; past it the oldest is forgotten */
+export const EXTERNAL_REMOVAL_LIMIT = 64;
 
 /** What an owner id may look like: short, printable, nothing that needs escaping */
 const EXTERNAL_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
@@ -304,17 +330,17 @@ const EXTERNAL_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 /** This script's own namespace, never another's to claim, in any case */
 const RESERVED_NAMESPACE = 'toolasha';
 
-/** Registered prefixes by owner */
-const externalPrefixes = new Map();
+/** Every entry by owner, then prefix: `{live, at}` */
+const externalEntries = new Map();
 
-/** Every registered prefix, flat — what {@link ownsKey} scans */
+/** Every registered (live) prefix, flat — what {@link ownsKey} scans */
 let externalPrefixList = [];
 
-/** Called with no arguments whenever the registry gains a prefix */
+/** Called with no arguments whenever the registry changes */
 const externalListeners = new Set();
 
 /**
- * Why a prefix may not be registered, or null when it may.
+ * Why a prefix may not be registered, judged on its own, or null when it may.
  * @param {*} prefix - Candidate prefix
  * @returns {string|null} The reason it is refused
  */
@@ -333,43 +359,96 @@ export function checkExternalPrefix(prefix) {
 }
 
 /**
- * Add prefixes to one owner's registration.
+ * Why a prefix may not be registered for this owner given what other owners
+ * hold, or null when it may.
+ * @param {string} owner - The owner asking
+ * @param {string} prefix - Candidate prefix
+ * @returns {string|null} The reason it is refused
+ */
+function checkAgainstOtherOwners(owner, prefix) {
+    for (const [other, entries] of externalEntries) {
+        if (other === owner) continue;
+        for (const [held, entry] of entries) {
+            if (entry.live && (held.startsWith(prefix) || prefix.startsWith(held))) {
+                return `overlaps "${held}", registered by ${other}`;
+            }
+        }
+    }
+    return null;
+}
+
+/** Rebuild the flat list and enforce the removal limit after a change */
+function settle() {
+    externalPrefixList = [];
+    const removals = [];
+    for (const [owner, entries] of externalEntries) {
+        for (const [prefix, entry] of entries) {
+            if (entry.live) externalPrefixList.push(prefix);
+            else removals.push({ owner, prefix, at: entry.at });
+        }
+    }
+    if (removals.length > EXTERNAL_REMOVAL_LIMIT) {
+        removals.sort((a, b) => a.at - b.at || a.owner.localeCompare(b.owner) || a.prefix.localeCompare(b.prefix));
+        for (const { owner, prefix } of removals.slice(0, removals.length - EXTERNAL_REMOVAL_LIMIT)) {
+            externalEntries.get(owner).delete(prefix);
+        }
+    }
+    for (const [owner, entries] of Array.from(externalEntries)) {
+        if (entries.size === 0) externalEntries.delete(owner);
+    }
+}
+
+/** Tell the listeners the registry changed */
+function announce() {
+    for (const listener of externalListeners) {
+        try {
+            listener();
+        } catch (error) {
+            console.error('[Sync] A key-registry listener failed:', error);
+        }
+    }
+}
+
+/** A refusal for a call whose owner or prefix list is malformed */
+function malformed(owner, prefixes, { prefixesOptional = false } = {}) {
+    if (typeof owner !== 'string' || !EXTERNAL_OWNER_PATTERN.test(owner)) {
+        return 'owner must be 1-64 characters of letters, digits, "_", "." or "-"';
+    }
+    if (prefixesOptional && prefixes === undefined) return null;
+    if (!Array.isArray(prefixes)) return 'prefixes must be an array of strings';
+    return null;
+}
+
+/**
+ * Register prefixes for one owner.
  *
- * An already-registered prefix is accepted again without counting twice. A
- * prefix past {@link EXTERNAL_PREFIX_LIMIT} is refused rather than evicting an
- * earlier one, so what is already carried never stops being carried.
+ * An already-registered prefix is accepted again and changes nothing, so a
+ * script may call this with the same list on every page load. A removed one is
+ * registered again, as a change made now. A prefix past the limit is refused
+ * rather than evicting an earlier one, so what is already carried never stops
+ * being carried.
  *
  * @param {*} owner - Owner id
- * @param {*} prefixes - Prefixes to add
- * @param {{notify?: boolean}} [options] - `notify: false` skips the change listeners (a load from disk)
+ * @param {*} prefixes - Prefixes to register
+ * @param {{notify?: boolean, now?: number}} [options] - `notify: false` skips the change listeners
  * @returns {{ok: boolean, accepted: string[], added: string[], rejected: Array<{prefix: *, reason: string}>,
  *   error?: string}} What was taken, what of it was new, and what was refused and why
  */
-export function addExternalKeyPrefixes(owner, prefixes, { notify = true } = {}) {
-    if (typeof owner !== 'string' || !EXTERNAL_OWNER_PATTERN.test(owner)) {
-        return {
-            ok: false,
-            accepted: [],
-            added: [],
-            rejected: [],
-            error: 'owner must be 1-64 characters of letters, digits, "_", "." or "-"',
-        };
-    }
-    if (!Array.isArray(prefixes)) {
-        return { ok: false, accepted: [], added: [], rejected: [], error: 'prefixes must be an array of strings' };
-    }
+export function addExternalKeyPrefixes(owner, prefixes, { notify = true, now = Date.now() } = {}) {
+    const error = malformed(owner, prefixes);
+    if (error) return { ok: false, accepted: [], added: [], rejected: [], error };
 
     const accepted = [];
     const added = [];
     const rejected = [];
-    const held = externalPrefixes.get(owner) || new Set();
+    const entries = externalEntries.get(owner) || new Map();
     for (const prefix of prefixes) {
-        const reason = checkExternalPrefix(prefix);
+        const reason = checkExternalPrefix(prefix) || checkAgainstOtherOwners(owner, prefix);
         if (reason) {
             rejected.push({ prefix, reason });
             continue;
         }
-        if (held.has(prefix) || added.includes(prefix)) {
+        if (entries.get(prefix)?.live) {
             if (!accepted.includes(prefix)) accepted.push(prefix);
             continue;
         }
@@ -377,63 +456,162 @@ export function addExternalKeyPrefixes(owner, prefixes, { notify = true } = {}) 
             rejected.push({ prefix, reason: `the limit of ${EXTERNAL_PREFIX_LIMIT} registered prefixes is reached` });
             continue;
         }
+        // Later than any removal it replaces, whatever this device's clock says
+        entries.set(prefix, { live: true, at: Math.max(now, (entries.get(prefix)?.at ?? 0) + 1) });
         accepted.push(prefix);
         added.push(prefix);
     }
 
     if (added.length > 0) {
-        for (const prefix of added) held.add(prefix);
-        externalPrefixes.set(owner, held);
-        externalPrefixList = Array.from(externalPrefixes.values()).flatMap((set) => Array.from(set));
-        if (notify) {
-            for (const listener of externalListeners) {
-                try {
-                    listener();
-                } catch (error) {
-                    console.error('[Sync] A key-registry listener failed:', error);
-                }
-            }
-        }
+        externalEntries.set(owner, entries);
+        settle();
+        if (notify) announce();
     }
     return { ok: rejected.length === 0, accepted, added, rejected };
 }
 
 /**
- * Learn a whole registry record (`{owner: [prefix]}`) — from disk, or from a
- * payload. Anything malformed is skipped, not thrown: a record is data from
- * somewhere else, and one bad entry must not cost the rest.
- * @param {*} record - Registry record
- * @param {{notify?: boolean}} [options] - Passed through to {@link addExternalKeyPrefixes}
- * @returns {boolean} Whether the registry gained anything
+ * Withdraw prefixes from one owner, or all of its prefixes when none are named,
+ * leaving a removal behind so no other device's copy teaches them back.
+ *
+ * A named prefix this device never held is recorded as removed too: another
+ * device may hold it, and the removal is what reaches that device.
+ *
+ * @param {*} owner - Owner id
+ * @param {*} [prefixes] - Prefixes to withdraw; all of the owner's when omitted
+ * @param {{notify?: boolean, now?: number}} [options] - `notify: false` skips the change listeners
+ * @returns {{ok: boolean, removed: string[], error?: string}} What was withdrawn
  */
-export function learnExternalKeyPrefixes(record, options = {}) {
-    if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
-    let gained = false;
-    for (const owner of Object.keys(record).sort()) {
-        const prefixes = record[owner];
-        if (!Array.isArray(prefixes)) continue;
-        const { added } = addExternalKeyPrefixes(owner, [...prefixes].sort(), options);
-        if (added.length > 0) gained = true;
+export function removeExternalKeyPrefixes(owner, prefixes, { notify = true, now = Date.now() } = {}) {
+    const error = malformed(owner, prefixes, { prefixesOptional: true });
+    if (error) return { ok: false, removed: [], error };
+
+    const entries = externalEntries.get(owner) || new Map();
+    const named =
+        prefixes === undefined
+            ? Array.from(entries.keys()).filter((prefix) => entries.get(prefix).live)
+            : prefixes.filter((prefix) => typeof prefix === 'string' && checkExternalPrefix(prefix) === null);
+    const removed = [];
+    for (const prefix of new Set(named)) {
+        const entry = entries.get(prefix);
+        if (entry && !entry.live) continue;
+        entries.set(prefix, { live: false, at: Math.max(now, (entry?.at ?? 0) + 1) });
+        removed.push(prefix);
     }
-    return gained;
+    if (removed.length > 0) {
+        externalEntries.set(owner, entries);
+        settle();
+        if (notify) announce();
+    }
+    return { ok: true, removed };
 }
 
 /**
- * The registry as a record, owners and prefixes sorted, so two devices holding
- * the same registrations serialize it identically — the payload fingerprint
- * depends on that. Empty when nothing is registered.
+ * One owner's entries from a record, in either shape the record has had:
+ * `[prefix, …]` (registered, at time 0) or `{prefixes: {prefix: at}, removed: {prefix: at}}`.
+ * @param {*} value - The owner's value in the record
+ * @returns {Array<{prefix: string, live: boolean, at: number}>} The entries
+ */
+function readOwnerEntries(value) {
+    if (Array.isArray(value)) {
+        return value.filter((prefix) => typeof prefix === 'string').map((prefix) => ({ prefix, live: true, at: 0 }));
+    }
+    if (!value || typeof value !== 'object') return [];
+    const out = [];
+    for (const [field, live] of [
+        ['prefixes', true],
+        ['removed', false],
+    ]) {
+        const map = value[field];
+        if (!map || typeof map !== 'object' || Array.isArray(map)) continue;
+        for (const [prefix, at] of Object.entries(map)) {
+            out.push({ prefix, live, at: Number.isFinite(at) && at >= 0 ? at : 0 });
+        }
+    }
+    return out;
+}
+
+/**
+ * Learn a registry record — from this device's remembered copy, or from a
+ * payload — entry by entry, the later state of each winning (a removal on a
+ * tie). Anything malformed is skipped, not thrown: a record is data from
+ * somewhere else, and one bad entry must not cost the rest.
+ *
+ * A registration learned from a payload is held to the same rules as one made
+ * here (the cap, other owners' prefixes). The remembered copy (`trusted`) is not:
+ * it was valid when written, and refusing part of it would have the next save
+ * write a smaller record than the one on disk.
+ *
+ * @param {*} record - Registry record, `{owner: entries}`
+ * @param {{notify?: boolean, trusted?: boolean}} [options] - Skip the listeners; skip the cap and overlap checks
+ * @returns {boolean} Whether the registry changed
+ */
+export function learnExternalKeyPrefixes(record, { notify = true, trusted = false } = {}) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+    let changed = false;
+    for (const owner of Object.keys(record).sort()) {
+        if (!EXTERNAL_OWNER_PATTERN.test(owner)) continue;
+        const incoming = readOwnerEntries(record[owner]).sort((a, b) => a.prefix.localeCompare(b.prefix));
+        for (const { prefix, live, at } of incoming) {
+            if (checkExternalPrefix(prefix)) continue;
+            const entries = externalEntries.get(owner) || new Map();
+            const held = entries.get(prefix);
+            const newer = !held || at > held.at || (at === held.at && held.live && !live);
+            if (!newer || (held && held.live === live && held.at === at)) continue;
+            if (live && !held?.live && !trusted) {
+                if (checkAgainstOtherOwners(owner, prefix)) continue;
+                if (externalPrefixList.length >= EXTERNAL_PREFIX_LIMIT) continue;
+            }
+            entries.set(prefix, { live, at });
+            externalEntries.set(owner, entries);
+            settle();
+            changed = true;
+        }
+    }
+    if (changed && notify) announce();
+    return changed;
+}
+
+/**
+ * The registered (live) prefixes by owner, sorted. Empty when nothing is registered.
  * @returns {Record<string, string[]>} Prefixes by owner
  */
 export function externalKeyPrefixes() {
     const record = {};
-    for (const owner of Array.from(externalPrefixes.keys()).sort()) {
-        record[owner] = Array.from(externalPrefixes.get(owner)).sort();
+    for (const owner of Array.from(externalEntries.keys()).sort()) {
+        const live = Array.from(externalEntries.get(owner))
+            .filter(([, entry]) => entry.live)
+            .map(([prefix]) => prefix)
+            .sort();
+        if (live.length > 0) record[owner] = live;
     }
     return record;
 }
 
 /**
- * Be told when the registry gains a prefix.
+ * The whole registry, removals included, as the record that is remembered and
+ * carried in the payload: `{owner: {prefixes: {prefix: at}, removed: {prefix: at}}}`,
+ * owners and prefixes sorted, so two devices holding the same entries serialize
+ * them identically (the payload fingerprint depends on that). Empty when the
+ * registry has never held anything.
+ * @returns {Record<string, {prefixes: Record<string, number>, removed: Record<string, number>}>} The record
+ */
+export function externalKeyRecord() {
+    const record = {};
+    for (const owner of Array.from(externalEntries.keys()).sort()) {
+        const prefixes = {};
+        const removed = {};
+        for (const prefix of Array.from(externalEntries.get(owner).keys()).sort()) {
+            const entry = externalEntries.get(owner).get(prefix);
+            (entry.live ? prefixes : removed)[prefix] = entry.at;
+        }
+        record[owner] = { prefixes, removed };
+    }
+    return record;
+}
+
+/**
+ * Be told when the registry changes.
  * @param {Function} listener - Called with no arguments
  * @returns {Function} Unsubscribe
  */
@@ -443,11 +621,11 @@ export function onExternalKeyPrefixesChange(listener) {
 }
 
 /**
- * Test seam: forget every registration (listeners are kept).
+ * Test seam: forget every registration and removal (listeners are kept).
  * @returns {void}
  */
 export function _resetExternalKeyPrefixes() {
-    externalPrefixes.clear();
+    externalEntries.clear();
     externalPrefixList = [];
 }
 
@@ -554,7 +732,9 @@ export default {
     partitionOwnedKeys,
     checkExternalPrefix,
     addExternalKeyPrefixes,
+    removeExternalKeyPrefixes,
     learnExternalKeyPrefixes,
     externalKeyPrefixes,
+    externalKeyRecord,
     onExternalKeyPrefixesChange,
 };

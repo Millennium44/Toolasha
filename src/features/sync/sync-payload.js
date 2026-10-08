@@ -22,7 +22,7 @@
 
 import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
-import { isSyncedStore, partitionOwnedKeys, externalKeyPrefixes, learnExternalKeyPrefixes } from './sync-ownership.js';
+import { isSyncedStore, partitionOwnedKeys, externalKeyRecord, learnExternalKeyPrefixes } from './sync-ownership.js';
 import { ensureExternalKeysLoaded, externalKeysSettled } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
@@ -222,8 +222,9 @@ export function localStampWins(localStamp, incomingStamp) {
 /**
  * The payload's `externalKeys` field: the key prefixes other scripts have
  * registered with this sync (see "Keys another script opts in" in
- * `sync-ownership.js`), owners and prefixes sorted. Omitted entirely when
- * nothing is registered, so a payload from a device where no other script ever
+ * `sync-ownership.js`), with the removals that stop a withdrawn prefix being
+ * taught back, owners and prefixes sorted. Omitted entirely when nothing was
+ * ever registered, so a payload from a device where no other script ever
  * registered is the same text it always was.
  *
  * A top-level field rather than a key in a store: it is not a record to land on
@@ -234,7 +235,7 @@ export function localStampWins(localStamp, incomingStamp) {
  * @returns {string} The field and its trailing comma, or '' when nothing is registered
  */
 function externalKeysField() {
-    const registry = externalKeyPrefixes();
+    const registry = externalKeyRecord();
     return Object.keys(registry).length > 0 ? `"externalKeys":${JSON.stringify(registry)},` : '';
 }
 
@@ -248,6 +249,53 @@ function externalKeysField() {
 function learnPayloadExternalKeys(payload) {
     if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) return false;
     return learnExternalKeyPrefixes(payload.externalKeys);
+}
+
+/**
+ * Learn the registry a payload's text carries, without parsing its stores.
+ *
+ * For a caller about to act on this device's payload against a download — a
+ * pressed Push, a merged upload — that has to know first whether the download
+ * named prefixes this device did not, and rebuild its own payload if so. The
+ * field is written before `stores` by both writers, and `,"stores":{` cannot
+ * occur inside an earlier JSON string (its quotes would be escaped), so the
+ * head of the text up to there is the whole of everything else.
+ *
+ * @param {string} text - Payload text
+ * @returns {boolean} Whether the registry changed
+ */
+export function learnExternalKeysFromText(text) {
+    if (typeof text !== 'string') return false;
+    const at = text.indexOf(',"stores":{');
+    if (at < 0) return false;
+    let head;
+    try {
+        head = JSON.parse(`${text.slice(0, at)}}`);
+    } catch {
+        return false;
+    }
+    return learnPayloadExternalKeys(head);
+}
+
+/**
+ * Load this device's remembered registry, or refuse to go on without it.
+ *
+ * A payload built or applied without it would leave out the other scripts'
+ * keys it carries — an upload that erases them from the gist, a pull that
+ * drops them from the download. Raised as a GistError so the sync reports it
+ * the way it reports any failure it can say something about, and the next
+ * sync tries again.
+ *
+ * @returns {Promise<void>}
+ * @throws {GistError} With kind 'storage' when the record could not be read
+ */
+async function requireExternalKeys() {
+    if (await ensureExternalKeysLoaded()) return;
+    throw new GistError(
+        'storage',
+        "This device's sync records could not be read, so nothing was synced. Try again; reload the page if " +
+            'it keeps happening.'
+    );
 }
 
 /**
@@ -333,7 +381,7 @@ export function redactSettingsStore(entries) {
 export async function buildPayloadJSON(scope = 'settings') {
     // Before ownership is read: a prefix another script registered on an
     // earlier page load counts from the first exchange of this one
-    await ensureExternalKeysLoaded();
+    await requireExternalKeys();
     const allStores = await storage.listStores();
     const ours = allStores.filter(isSyncedStore);
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
@@ -499,7 +547,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
     const payload = JSON.parse(json);
     // Before anything is dropped as unowned: keys another script registered,
     // on this device on an earlier load or on another device, are carried
-    await ensureExternalKeysLoaded();
+    await requireExternalKeys();
     if (learnPayloadExternalKeys(payload)) await externalKeysSettled();
     // After the foreign stores are dropped: what another script keeps in a
     // gist written by an older build is not this pull's to judge
@@ -1288,7 +1336,7 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
         stores[storeName] = out;
     }
 
-    const externalKeys = externalKeyPrefixes();
+    const externalKeys = externalKeyRecord();
     const text = JSON.stringify({
         formatVersion: FORMAT_VERSION,
         exportedAt: new Date().toISOString(),

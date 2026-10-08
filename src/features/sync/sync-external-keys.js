@@ -30,7 +30,9 @@
 import storage from '../../core/storage.js';
 import {
     addExternalKeyPrefixes,
+    removeExternalKeyPrefixes,
     externalKeyPrefixes,
+    externalKeyRecord,
     learnExternalKeyPrefixes,
     onExternalKeyPrefixesChange,
     _resetExternalKeyPrefixes,
@@ -63,7 +65,9 @@ export function ensureExternalKeysLoaded() {
                 await storage.ready;
                 const read = await storage.tryGet(KEY_EXTERNAL_KEYS, STORE);
                 if (!read) throw new Error('the record could not be read');
-                if (read.found) learnExternalKeyPrefixes(read.value, { notify: false });
+                // Trusted: valid when it was written, and never cut down on the
+                // way in, or the next save would write a smaller record
+                if (read.found) learnExternalKeyPrefixes(read.value, { notify: false, trusted: true });
                 return true;
             } catch (error) {
                 console.warn('[Sync] Could not load the registered key prefixes; retrying on the next sync:', error);
@@ -92,7 +96,7 @@ function persist() {
             if (!(await ensureExternalKeysLoaded())) return;
             const written = await storage.putAll(
                 STORE,
-                { [KEY_EXTERNAL_KEYS]: externalKeyPrefixes() },
+                { [KEY_EXTERNAL_KEYS]: externalKeyRecord() },
                 { bypassRestoreLatch: true }
             );
             if (written !== 1) console.warn('[Sync] The registered key prefixes were not saved.');
@@ -120,10 +124,10 @@ export function externalKeysSettled() {
  * this sync. Exposed as `window.Toolasha.sync.registerKeys`.
  *
  * Each prefix must be a string of at least 6 characters, may not overlap any
- * key this script owns or sit in its `toolasha` namespace, and at most 32 are
- * held across every owner. Registering is additive and idempotent: call it on
- * every page load with the same list. A prefix cannot be withdrawn — another
- * device would only teach it back.
+ * key this script owns or sit in its `toolasha` namespace, may not overlap a
+ * prefix registered under a different owner, and at most 32 are held across
+ * every owner. Registering is additive and idempotent: call it on every page
+ * load with the same list. {@link unregisterSyncKeys} withdraws a prefix.
  *
  * @param {{owner: string, prefixes: string[]}} registration - Who is asking, and for which key prefixes
  * @returns {{ok: boolean, accepted: string[], added: string[], rejected: Array<{prefix: *, reason: string}>,
@@ -135,6 +139,24 @@ export function registerSyncKeys(registration) {
     if (result.error || result.rejected.length > 0) {
         console.warn('[Sync] Key registration refused in part:', result.error || result.rejected);
     }
+    return result;
+}
+
+/**
+ * Withdraw some of an owner's prefixes, or all of them when none are named.
+ * Exposed as `window.Toolasha.sync.unregisterKeys`.
+ *
+ * The removal is remembered and carried in the payload, so the other devices
+ * drop the prefix too instead of teaching it back. Keys already stored under it
+ * stay where they are on every device; they just stop travelling.
+ *
+ * @param {{owner: string, prefixes?: string[]}} registration - Whose prefixes, and which
+ * @returns {{ok: boolean, removed: string[], error?: string}} What was withdrawn
+ */
+export function unregisterSyncKeys(registration) {
+    const { owner, prefixes } = registration && typeof registration === 'object' ? registration : {};
+    const result = removeExternalKeyPrefixes(owner, prefixes);
+    if (result.error) console.warn('[Sync] Key unregistration refused:', result.error);
     return result;
 }
 
@@ -158,6 +180,7 @@ export function _resetExternalKeys() {
 
 export default {
     registerSyncKeys,
+    unregisterSyncKeys,
     registeredSyncKeys,
     ensureExternalKeysLoaded,
     externalKeysSettled,

@@ -97,6 +97,8 @@ vi.mock('./sync-payload.js', () => ({
         return { text: `${remote}+${local}`, remoteAdds: payload.remoteAdds ?? local !== remote };
     },
     restampRestoredSettings: () => {},
+    // A download that teaches this device another script's key prefixes (see sync-external-keys.test.js)
+    learnExternalKeysFromText: (text) => payload.learns?.(text) ?? false,
     RESTORED_BASELINE: '\u0000restoredAt',
     exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
     // Opaque payloads hold no registered history to cut

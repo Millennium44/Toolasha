@@ -7,7 +7,9 @@ vi.mock('../../core/storage.js', () => ({
         listStores: async () => Object.keys(storeState.stores),
         getAll: async (name) => ({ ...(storeState.stores[name] || {}) }),
         tryGet: async (key, name) => {
-            if (storeState.unreadable) return null;
+            // Unreadable histories, not the sync's own registry record (whose
+            // failed read is its own case, in sync-external-keys.test.js)
+            if (storeState.unreadable && key !== 'toolasha_sync_externalKeys') return null;
             const store = storeState.stores[name] || {};
             return Object.prototype.hasOwnProperty.call(store, key)
                 ? { found: true, value: store[key] }

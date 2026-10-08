@@ -229,6 +229,7 @@ vi.mock('./gist-client.js', async () => {
 });
 
 const { default: syncManager, SyncManager, getSyncTrace } = await import('./sync-manager.js');
+const { registerSyncKeys, externalKeysSettled, _resetExternalKeys } = await import('./sync-external-keys.js');
 const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
 // A history capped by this device's own live setting, written the way the
 // labyrinth room log registers (newest first, trimmed to the player's choice
@@ -1790,5 +1791,77 @@ describe("a Settings-only device's pull of a gist that holds histories", () => {
         await as(c, auto.push);
         expect(gist.writes).toBe(writes);
         expect(a.db.xpHistory.testHistory_c1).toEqual(['s1']);
+    });
+});
+
+describe("another script's registered keys, end to end", () => {
+    const OWNER = 'other-script';
+
+    /**
+     * Act as `device` on a fresh page: whatever the last device's registry was
+     * still saving lands on that device first, and the next one starts with
+     * nothing in memory and its own remembered record on disk.
+     * @param {Object} device - Device
+     * @param {Function} run - What it does
+     * @returns {Promise<*>} The result
+     */
+    async function asDevice(device, run) {
+        await externalKeysSettled();
+        _resetExternalKeys();
+        return as(device, run);
+    }
+
+    /** A registers the key and pushes its copy */
+    async function registerOnA(a) {
+        await asDevice(a, async () => {
+            registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
+            a.db.settings.otherScriptLive = { state: 'a' };
+            expect((await syncManager.push()).ok).toBe(true);
+        });
+    }
+
+    afterEach(async () => {
+        await externalKeysSettled();
+        _resetExternalKeys();
+    });
+
+    test('a pressed Push from a device that has not pulled since the registration keeps the registry', async () => {
+        const { a, b } = await syncedPair();
+        await registerOnA(a);
+
+        // B holds its own copy (the other script runs there too) but has not
+        // registered on this page yet, and has never seen the registry
+        b.db.settings.otherScriptLive = { state: 'b' };
+        expect((await asDevice(b, () => syncManager.push())).ok).toBe(true);
+
+        const pushed = JSON.parse(gist.state.payload);
+        expect(pushed.stores.settings.otherScriptLive).toEqual({ state: 'b' });
+        expect(Object.keys(pushed.externalKeys[OWNER].prefixes)).toEqual(['otherScriptLive']);
+    });
+
+    test('a device that never runs the other script merges its keys through, and its next push stays unchanged', async () => {
+        const { a, b } = await syncedPair();
+        await registerOnA(a);
+
+        // B changes a setting; its interval push finds the gist ahead and merges
+        await asDevice(b, async () => {
+            changeSetting(b, 'X', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+        expect(gistStores().settings.otherScriptLive).toEqual({ state: 'a' });
+
+        // Nothing has changed on B since: what it remembered is what it now builds
+        const writes = gist.writes;
+        expect((await asDevice(b, auto.push)).reason).toBe('unchanged');
+        expect(gist.writes).toBe(writes);
+
+        // Its startup pull lands the key, and its own plain pushes carry it from then on
+        await asDevice(b, auto.startup);
+        expect(b.db.settings.otherScriptLive).toEqual({ state: 'a' });
+        await asDevice(b, async () => {
+            changeSetting(b, 'Y', true);
+            expect((await auto.push()).ok).toBe(true);
+        });
+        expect(gistStores().settings.otherScriptLive).toEqual({ state: 'a' });
     });
 });

@@ -3060,8 +3060,11 @@ if (combatSimulatorSite === 'metz') {
     // features/sync/sync-external-keys.js; reached through the UI library so the
     // split build has one registry, the one the sync reads.
     //   window.Toolasha.sync.registerKeys({ owner: 'some-script', prefixes: ['someScriptPrefs_'] })
+    //   window.Toolasha.sync.unregisterKeys({ owner: 'some-script' }) — all of its prefixes, or name some
+    // Set here, after the libraries load: a script that runs first has to wait for it.
     targetWindow.Toolasha.sync = {
         registerKeys: (registration) => UI.syncKeys.register(registration),
+        unregisterKeys: (registration) => UI.syncKeys.unregister(registration),
         registeredKeys: () => UI.syncKeys.list(),
     };
 
