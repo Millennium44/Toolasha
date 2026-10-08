@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Score can show how much better, not just the placing
 
 - The upgrade analyzer's Score can now be "% of best": each column scores a row against the best one and the Score averages them, so a row four times slower reads 25 instead of one place lower. Combat levels uses it by default; the gear table keeps Points unless you switch it in ⚙ Columns.
+- The All Zones table gets the same choice above it: its usual ladder-position Score stays the default, or switch to % of best.
 
 ### Room Logs Accuracy tab stops flashing during lab runs
 
