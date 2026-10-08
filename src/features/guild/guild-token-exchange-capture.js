@@ -317,6 +317,12 @@ export async function hydrateCapturedTokenExchanges() {
 }
 
 /**
+ * Fired on `window` when a captured exchange rate changes, so readers in another
+ * bundle (net worth prices held guild tokens through it) can re-price.
+ */
+export const GUILD_TOKEN_EXCHANGE_EVENT = 'toolasha:guild-token-exchange-changed';
+
+/**
  * Write a reading down, if it says anything the table does not already say.
  *
  * @param {Object|null} reading - From {@link readTokenExchangeFromModal}
@@ -334,6 +340,10 @@ export async function rememberTokenExchange(reading) {
         await storage.set(CAPTURE_KEY, { exchanges: { ...captured }, updatedAt: Date.now() }, STORE_NAME);
     } catch (error) {
         console.error('[GuildTokenExchange] Could not store the exchange:', error);
+    }
+
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(GUILD_TOKEN_EXCHANGE_EVENT, { detail: { ...reading } }));
     }
 
     return true;

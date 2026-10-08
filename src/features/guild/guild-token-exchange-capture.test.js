@@ -38,6 +38,7 @@ const {
     hydrateCapturedTokenExchanges,
     readTokenExchangeFromModal,
     rememberTokenExchange,
+    GUILD_TOKEN_EXCHANGE_EVENT,
 } = await import('./guild-token-exchange-capture.js');
 
 const GREEN = '/items/green_guild_credit';
@@ -263,6 +264,20 @@ describe('remembering what was read', () => {
         expect(await captureTokenExchangeFromModal(modal('<div>Exchange</div>'), greenContext)).toBeNull();
         expect(capturedTokenExchanges()).toEqual([]);
         expect(store.writes).toBe(0);
+    });
+
+    test('a changed rate tells other bundles, so net worth can re-price held tokens', async () => {
+        const heard = [];
+        const listener = (event) => heard.push(event.detail.creditsPerToken);
+        window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        try {
+            await rememberTokenExchange({ creditItemHrid: GREEN, creditsPerToken: 12 });
+            // The same rate again changes nothing and says nothing
+            await rememberTokenExchange({ creditItemHrid: GREEN, creditsPerToken: 12 });
+        } finally {
+            window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        }
+        expect(heard).toEqual([12]);
     });
 
     test('a rate that is not a rate is refused', async () => {
