@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Panel rows wrap long text
+
+- A long value in a panel row, such as the sync pull summary, now wraps inside its card instead of running past the edge and forcing a sideways scroll.
+
 ### Sync pulls stop asking for needless reloads
 
 - A sync pull of what this browser already holds now applies nothing and shows no toast, and a pull writes only the records that differ, so "Reload now" appears only when something actually changed; the summary also counts records already the same.

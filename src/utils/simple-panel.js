@@ -444,6 +444,9 @@ export function panelCard(body, title, accent = '#8fb4ff') {
     return card;
 }
 
+/** Values longer than this wrap instead of holding one line. */
+const PANEL_LINE_NOWRAP_CHARS = 24;
+
 /**
  * A labelled figure on its own line.
  *
@@ -460,12 +463,15 @@ export function panelLine(label, value, color = '#e8ecf5', title = '') {
     const name = document.createElement('span');
     name.textContent = label;
     name.style.color = 'rgba(232, 236, 245, 0.5)';
-    name.style.flex = '1';
+    name.style.flex = '1 0 auto';
 
+    // A figure stays on one line; a sentence wraps inside the card instead of
+    // running past its edge
     const figure = document.createElement('span');
     figure.textContent = value;
     figure.style.color = color;
-    figure.style.whiteSpace = 'nowrap';
+    Object.assign(figure.style, { minWidth: '0', textAlign: 'right', overflowWrap: 'anywhere' });
+    figure.style.whiteSpace = String(value).length > PANEL_LINE_NOWRAP_CHARS ? 'normal' : 'nowrap';
 
     if (title) line.title = title;
     line.append(name, figure);

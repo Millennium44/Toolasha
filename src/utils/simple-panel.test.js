@@ -698,3 +698,19 @@ describe('releasing a panel shell', () => {
         expect(switchHandlers()).toBe(before);
     });
 });
+
+describe('panelLine', () => {
+    test('a short figure holds one line', () => {
+        const figure = panelLine('Fights', '12').lastChild;
+        expect(figure.style.whiteSpace).toBe('nowrap');
+    });
+
+    test('a sentence wraps inside its card instead of overrunning it', () => {
+        const figure = panelLine(
+            'Summary',
+            'Pull applied: 13 records combined, 83 written whole, 621 already the same.'
+        ).lastChild;
+        expect(figure.style.whiteSpace).toBe('normal');
+        expect(figure.style.minWidth).toBe('0');
+    });
+});
