@@ -2835,6 +2835,25 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, { isSelf =
     // Capes, quivers and the like are never on the market at any level, so
     // they are priced as an enhance from a copy you hold — see `resolveSelfEnhancePrice`
     if (isSelfEnhancedItem(itemHrid, gameData?.itemDetailMap)) {
+        // A swap to a copy already held at the level asked for just equips it:
+        // nothing to buy or enhance. The spare-ladder rule is for enhancing above
+        // every held copy, so it must not discard that copy as the "protected best"
+        const held = heldSwapCopy(itemHrid, enhancementLevel, isSelf);
+        if (held) {
+            return {
+                price: 0,
+                source: 'enhance',
+                ladder: {
+                    fromLevel: held.level,
+                    toLevel: Math.max(0, Math.floor(Number(enhancementLevel) || 0)),
+                    fresh: false,
+                    alreadyHeld: true,
+                    fromEquipped: false,
+                    isSelf: Boolean(isSelf),
+                    baseCost: 0,
+                },
+            };
+        }
         return resolveSelfEnhancePrice(itemHrid, enhancementLevel, gameData, { isSelf });
     }
 
@@ -2877,6 +2896,23 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, { isSelf =
     // an ask at +0 is the market speaking and anything else is a craft estimate
     const listed = getItemPrices(itemHrid, 0);
     return { price: direct, source: listed?.ask > 0 ? 'market' : 'craft' };
+}
+
+/**
+ * A copy of a self-enhanced item the live character holds unworn at or above the
+ * level a swap asks for, best-fitting (lowest sufficient) first. The worn copy is
+ * never returned: swapping to the piece already worn is not a swap. Only the live
+ * character's rows read the inventory.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} targetLevel - Level the swap asks for
+ * @param {boolean} isSelf - False for any player other than the live character
+ * @returns {Object|null} The copy, or null
+ */
+function heldSwapCopy(itemHrid, targetLevel, isSelf) {
+    if (!isSelf) return null;
+    const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
+    const spares = copiesForPricing(itemHrid, { isSelf }).filter((copy) => !copy.equipped && copy.level >= target);
+    return spares.length ? spares[spares.length - 1] : null;
 }
 
 /**

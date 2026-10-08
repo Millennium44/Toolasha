@@ -170,6 +170,35 @@ describe('self-enhanced upgrade pricing', () => {
         expect(detail.net).toBe(0);
     });
 
+    test('a swap to a lone unworn +10 cape reuses it: free, no ladder', () => {
+        state.items = [stack(CAPE, 10)];
+        const candidate = tier(CAPE, 10);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(0);
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(detail.net).toBe(0);
+        expect(detail.ladder).toMatchObject({ fromLevel: 10, toLevel: 10, fresh: false, alreadyHeld: true });
+        expect(state.sweeps).toEqual([]);
+    });
+
+    test('a swap does not count the worn copy as a free swap to itself', () => {
+        state.items = [stack(CAPE, 10, '/item_locations/back')];
+        const detail = explainUpgradeCost(tier(CAPE, 10), gameData);
+        expect(detail.ladder).toMatchObject({ fresh: true });
+        expect(detail.net).toBeGreaterThan(0);
+    });
+
+    test('an enhancement row on a lone unworn +10 cape still ladders (spare rule)', () => {
+        state.items = [stack(CAPE, 10)];
+        const candidate = {
+            type: 'enhancement',
+            currentHrid: CAPE,
+            currentLevel: 10,
+            upgradeHrid: CAPE,
+            upgradeLevel: 10,
+        };
+        expect(explainUpgradeCost(candidate, gameData).ladder).toMatchObject({ fresh: true });
+    });
+
     test('an enhancement row on a worn +6 cape ladders the spare +3, not the worn one', () => {
         state.items = [stack(CAPE, 6, '/item_locations/back'), stack(CAPE, 3)];
         const candidate = {
