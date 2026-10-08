@@ -210,6 +210,8 @@ const {
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
+    assignScores,
+    percentOfBest,
     RANK_PLACES,
     SCORE_METRICS,
     DEFAULT_SCORE_KEYS,
@@ -4538,6 +4540,172 @@ describe('assignRankScores', () => {
 
         expect(rows[RANK_PLACES - 1].score).toBe(4); // last scoring place, 1 point per metric
         expect(rows[RANK_PLACES].score).toBe(0);
+    });
+});
+
+describe('assignScores', () => {
+    const row = (name, dps, xp, profit, repayHours) => ({
+        candidate: { description: name },
+        goldPer: { dps, xp, profit },
+        economics: { repayHours },
+    });
+
+    test('the best row in every column scores 100, and the rest their share of the best', () => {
+        const rows = [row('best', 1, 1, 1, 1), row('half', 2, 2, 2, 2)];
+        assignScores(rows);
+
+        // Four columns carry figures; encounters and deaths have none, so they
+        // are left out of the average rather than counted as zeroes for everyone
+        expect(rows[0].score).toBe(100);
+        expect(rows[1].score).toBe(50);
+        expect(rows[0].scoreParts.dps).toMatchObject({ pct: 100, place: 1 });
+        expect(rows[1].scoreParts.dps).toMatchObject({ pct: 50, place: 2 });
+        expect(rows[0].scoreParts.encounters).toBeUndefined();
+    });
+
+    test('the live Combat levels case: 3.8h vs 17.2h per 0.01% DPS reads 100 vs 22, not 5 vs 4', () => {
+        const rows = [row('Melee', 3.8), row('Attack', 17.2)];
+        assignScores(rows, { keys: ['dps'] });
+
+        expect(Math.round(rows[0].score)).toBe(100);
+        expect(Math.round(rows[1].score)).toBe(22);
+    });
+
+    test('the Score is the average of the column scores', () => {
+        // DPS: 100 vs 50; EXP: 25 vs 100
+        const rows = [row('a', 10, 40), row('b', 20, 10)];
+        assignScores(rows, { keys: ['dps', 'xp'] });
+
+        expect(rows[0].score).toBeCloseTo((100 + 25) / 2, 9);
+        expect(rows[1].score).toBeCloseTo((50 + 100) / 2, 9);
+    });
+
+    test('a narrow winner no longer scores what an outright winner does', () => {
+        const narrow = [row('first', 100), row('second', 101)];
+        const outright = [row('first', 100), row('second', 500)];
+        assignScores(narrow, { keys: ['dps'] });
+        assignScores(outright, { keys: ['dps'] });
+
+        expect(narrow[1].score).toBeGreaterThan(99);
+        expect(outright[1].score).toBe(20);
+    });
+
+    test('an all-rounder can outscore a single-column winner', () => {
+        const rows = [
+            row('spiky', 1, 900, 900, 900), // wins DPS outright, far behind everywhere else
+            row('rounded', 2, 2, 2, 2), // half the best DPS, best in the other three
+        ];
+        assignScores(rows);
+
+        expect(rows[1].score).toBeGreaterThan(rows[0].score);
+    });
+
+    test('ties share a score and a place rather than being split by list order', () => {
+        const rows = [row('a', 5, 5, 5, 5), row('b', 5, 5, 5, 5)];
+        assignScores(rows);
+
+        expect(rows[0].score).toBe(100);
+        expect(rows[1].score).toBe(100);
+        expect(rows[0].scoreParts.dps.place).toBe(1);
+        expect(rows[1].scoreParts.dps.place).toBe(1);
+    });
+
+    test('a single row is the best of what was measured', () => {
+        const rows = [row('only', 7, 3, 9, 12)];
+        assignScores(rows);
+
+        expect(rows[0].score).toBe(100);
+    });
+
+    test('a row with no improvement scores 0 in that column, and 0 overall when it has none anywhere', () => {
+        const rows = [row('known', 1, 1, 1, 1), row('unknown', Infinity, Infinity, Infinity, Infinity)];
+        assignScores(rows);
+
+        expect(rows[1].score).toBe(0);
+        expect(rows[1].scoreParts.dps).toMatchObject({ pct: 0, place: null });
+    });
+
+    test('a missing figure counts as 0 rather than being skipped, so a worse row cannot outrank a good one', () => {
+        // "lucky" is best at DPS by a hair and has nothing anywhere else (the
+        // Intelligence-style row that makes most things worse); "solid" is
+        // nearly as good at DPS and has a figure in every column. Skipping the
+        // missing columns would score lucky 100 and put it on top.
+        const rows = [row('lucky', 10, null, Infinity, undefined), row('solid', 11, 10, 10, 10)];
+        assignScores(rows);
+
+        expect(rows[1].score).toBeGreaterThan(rows[0].score);
+        expect(rows[0].score).toBeCloseTo(100 / 4, 9);
+    });
+
+    test('a column in which no row has a figure is left out of every average', () => {
+        const rows = [row('a', 10, Infinity), row('b', 20, Infinity)];
+        assignScores(rows, { keys: ['dps', 'xp'] });
+
+        expect(rows[0].score).toBe(100);
+        expect(rows[1].score).toBe(50);
+        expect(rows[0].scoreParts.xp).toBeUndefined();
+    });
+
+    test('free and pays-for-itself rows score 100, and purchases are measured against the cheapest purchase', () => {
+        const rows = [row('pays back', -40_000), row('free', 0), row('cheap', 1000), row('dear', 4000)];
+        assignScores(rows, { keys: ['dps'] });
+
+        expect(rows.map((r) => Math.round(r.score))).toEqual([100, 100, 100, 25]);
+        // The places still say which free-or-better row hands back the most
+        expect(rows.map((r) => r.scoreParts.dps.place)).toEqual([1, 2, 3, 4]);
+    });
+
+    test('a column whose every figure is free still scores, without dividing by zero', () => {
+        const rows = [row('a', 0), row('b', 0)];
+        assignScores(rows, { keys: ['dps'] });
+
+        expect(rows[0].score).toBe(100);
+        expect(rows[1].score).toBe(100);
+    });
+
+    test('a row carries the breakdown of one scale at a time', () => {
+        const rows = [row('a', 1, 1, 1, 1), row('b', 2, 2, 2, 2)];
+        assignRankScores(rows);
+        assignScores(rows);
+        expect(rows[0].rankPoints).toBeUndefined();
+        expect(rows[0].scoreParts.dps).toMatchObject({ pct: 100, place: 1 });
+
+        assignRankScores(rows);
+        expect(rows[0].scoreParts).toBeUndefined();
+        expect(rows[0].rankPoints.dps).toMatchObject({ place: 1, points: RANK_PLACES });
+    });
+
+    test('every Score is finite and between 0 and 100', () => {
+        const rows = [row('a', -5, 0, 1e-9, 1e12), row('b', 3, Infinity, null, 0), row('c', NaN, 7, 9, Infinity)];
+        assignScores(rows);
+
+        for (const r of rows) {
+            expect(Number.isFinite(r.score)).toBe(true);
+            expect(r.score).toBeGreaterThanOrEqual(0);
+            expect(r.score).toBeLessThanOrEqual(100);
+        }
+    });
+});
+
+describe('percentOfBest', () => {
+    test('cheaper-is-better: best ÷ row', () => {
+        expect(percentOfBest([2, 4, 8], true).map((c) => c.pct)).toEqual([100, 50, 25]);
+    });
+
+    test('higher-is-better: row ÷ best, with a loss or nothing at 0 and unbounded at 100', () => {
+        const column = percentOfBest([200, 100, -50, 0, null, Infinity], false);
+        expect(column.map((c) => c.pct)).toEqual([100, 50, 0, 0, 0, 100]);
+        expect(column.map((c) => c.place)).toEqual([2, 3, null, null, null, 1]);
+    });
+
+    test('a column with nothing usable is null', () => {
+        expect(percentOfBest([Infinity, null, NaN], true)).toBeNull();
+        expect(percentOfBest([0, -3, null], false)).toBeNull();
+        expect(percentOfBest([], true)).toBeNull();
+    });
+
+    test('a best of zero is not divided by', () => {
+        expect(percentOfBest([0, 5], true).map((c) => c.pct)).toEqual([100, 100]);
     });
 });
 
