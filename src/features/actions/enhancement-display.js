@@ -1099,8 +1099,8 @@ export function protectSweepHTML({
         }
         if (stockSettings.enabled) {
             notes.push(
-                `Protection items you hold beyond ${stockSettings.reserve.toLocaleString()} of each are used first, ` +
-                    'valued at their sell price; the rest are bought.'
+                'Protection items you hold are used first, valued at their sell price; the rest are bought. ' +
+                    `${stockSettings.reserve.toLocaleString()} spare copies of the item itself are kept back.`
             );
         }
         if (materialsUnpriced) notes.push('Some materials have no price; costs are understated.');

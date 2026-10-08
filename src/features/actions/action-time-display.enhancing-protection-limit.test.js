@@ -365,3 +365,75 @@ describe('the single-action basis is untouched', () => {
         expect(lookup.byHrid[ESSENCE]).toBe(500);
     });
 });
+
+describe('an item that protects itself keeps its spares back', () => {
+    // 3 protections buy 30 attempts, so protections held == limit / 10
+    const selfRow = (stackLevel = 0) => ({
+        ...enhancingRow({ protectionItemHrid: SWORD }),
+        secondaryItemHash: hashFor(SWORD, stackLevel),
+    });
+    const bag = [stack(ESSENCE, 5000), stack(SWORD, 5, 0), stack(SWORD, 1, 3), stack(SWORD, 1, 5)];
+
+    test('counts the +0 stack less the reserve, not copies at every level', () => {
+        game.settings.enhanceSim_protectFromStock = true;
+        game.settings.enhanceSim_protectStockReserve = 2;
+        game.inventory = bag;
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const limit = actionTimeDisplay.calculateMaterialLimit(details(), lookup, 0, selfRow());
+
+        // The bench is the +1 copy (not in the +0 stack): 5 at +0, 2 kept, 3 spent
+        expect(limit.maxActions).toBe(30);
+        expect(limit.limitType).toBe(`material:${SWORD}`);
+    });
+
+    test('the copy being enhanced at the protection stock level cannot protect itself', () => {
+        game.settings.enhanceSim_protectFromStock = true;
+        game.settings.enhanceSim_protectStockReserve = 2;
+        game.inventory = bag;
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const row = { ...selfRow(), primaryItemHash: hashFor(SWORD, 0) };
+        // 5 at +0, one is the bench, 2 kept: 2 spare
+        expect(actionTimeDisplay.calculateMaterialLimit(details(), lookup, 0, row).maxActions).toBe(20);
+    });
+
+    test('a selected enhanced stack is the one counted', () => {
+        game.settings.enhanceSim_protectFromStock = true;
+        game.settings.enhanceSim_protectStockReserve = 0;
+        game.inventory = bag;
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        expect(actionTimeDisplay.calculateMaterialLimit(details(), lookup, 0, selfRow(3)).maxActions).toBe(10);
+    });
+
+    test('with the stock setting off the reserve is not applied', () => {
+        game.settings.enhanceSim_protectStockReserve = 2;
+        game.inventory = bag;
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        expect(actionTimeDisplay.calculateMaterialLimit(details(), lookup, 0, selfRow()).maxActions).toBe(50);
+    });
+
+    test('the ledger spends from the stack the limit counted', () => {
+        game.settings.enhanceSim_protectFromStock = true;
+        game.settings.enhanceSim_protectStockReserve = 2;
+        game.inventory = bag;
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const action = { ...selfRow(), maxCount: 30 };
+        const performed = actionTimeDisplay.deductQueueActionMaterials(lookup, details(), action, { count: 30 });
+        expect(performed).toBe(30);
+        expect(lookup.byEnhancedKey[`${SWORD}::0`]).toBeCloseTo(2, 10);
+        expect(lookup.byEnhancedKey[`${SWORD}::3`]).toBe(1);
+    });
+
+    test('a Mirror of Protection is unaffected by the reserve', () => {
+        game.settings.enhanceSim_protectFromStock = true;
+        game.settings.enhanceSim_protectStockReserve = 2;
+        game.inventory = [stack(ESSENCE, 5000), stack(PROTECTION, 5)];
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const limit = actionTimeDisplay.calculateMaterialLimit(
+            details(),
+            lookup,
+            0,
+            enhancingRow({ protectionItemHrid: PROTECTION })
+        );
+        expect(limit.maxActions).toBe(50);
+    });
+});
