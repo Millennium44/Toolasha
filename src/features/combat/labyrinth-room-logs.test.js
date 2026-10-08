@@ -321,6 +321,40 @@ describe('the replay cohort picker', () => {
         expect(ticks()[3].checked).toBe(false);
     });
 
+    test('a skilling or experience update does not redraw the Accuracy view; a recorded fight does', async () => {
+        await labyrinthRoomLogs.renderAccuracy();
+        let reads = 0;
+        labyrinthRoomLogs.simSource.accuracy = async () => {
+            reads += 1;
+            return { rows: [], summary: {}, bySubject: [] };
+        };
+        labyrinthRoomLogs.panel.style.display = '';
+
+        labyrinthRoomLogs.renderIfOpen();
+        await Promise.resolve();
+        expect(reads).toBe(0);
+
+        labyrinthRoomLogs.renderIfOpen({ fightRecord: true });
+        await vi.waitFor(() => expect(reads).toBe(1));
+    });
+
+    test('the Accuracy view keeps what it shows until a new reading replaces it', async () => {
+        await labyrinthRoomLogs.renderAccuracy();
+        const before = text();
+        expect(before).not.toBe('');
+        let finish;
+        labyrinthRoomLogs.simSource.accuracy = () =>
+            new Promise((resolve) => {
+                finish = () => resolve({ rows: [], summary: {}, bySubject: [] });
+            });
+
+        const drawing = labyrinthRoomLogs.renderAccuracy();
+        // Mid-read: still the old content, not a blank list
+        expect(text()).toBe(before);
+        finish();
+        await drawing;
+    });
+
     test('opens even when a fight redraws the panel while the cohorts are being read', async () => {
         // `renderIfOpen` runs on every battle tick and each redraw bumps
         // `renderToken`, so guarding the open on that token dropped the press

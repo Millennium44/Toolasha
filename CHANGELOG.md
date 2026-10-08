@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The upgrade analyzer's Score can now be "% of best": each column scores a row against the best one and the Score averages them, so a row four times slower reads 25 instead of one place lower. Combat levels uses it by default; the gear table keeps Points unless you switch it in ⚙ Columns.
 
+### Room Logs Accuracy tab stops flashing during lab runs
+
+- The Accuracy tab now redraws only when a fight is recorded, not on every skilling action or experience tick, and keeps what it shows until the new reading is ready, so it no longer blinks blank while a lab run is going.
+
 <!-- shipped in 3.65.0 -->
 
 ### Sync stops bringing back pruned history
