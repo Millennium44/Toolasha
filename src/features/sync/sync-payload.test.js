@@ -34,6 +34,7 @@ vi.mock('../../core/storage.js', () => ({
             flushLog.push('endRestore');
         },
         delete: async (key, name, options = {}) => {
+            if (storeState.deleteFails) return false;
             storeState.deleteCalls = [...(storeState.deleteCalls || []), { key, name, options }];
             if (storeState.latched?.has(name) && !options.bypassRestoreLatch) return false;
             if (storeState.deleteFails) return false;
@@ -1976,6 +1977,30 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         } finally {
             storeState.deleteFails = false;
         }
+    });
+
+    test('a displaced delete that failed is retried by the next pull', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        storeState.deleteFails = true;
+        let first;
+        try {
+            first = await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0 + 20 * 3_600_000, 10) }), {
+                mode: 'merge',
+                baseline: {},
+            });
+        } finally {
+            storeState.deleteFails = false;
+        }
+        expect(first.complete).toBe(false);
+        // The five landed; the old ones are now this device's own drops, never displaced again
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 30) };
+
+        await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0 + 20 * 3_600_000, 10) }), {
+            mode: 'merge',
+            baseline: {},
+        });
+
+        expect(Object.keys(storeState.stores[DAY])).toHaveLength(25);
     });
 
     test('snapshots this device would drop by itself are left to its own pruning', async () => {
