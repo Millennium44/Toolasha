@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Score can show how much better, not just the placing
+
+- The upgrade analyzer's Score can now be "% of best": each column scores a row against the best one and the Score averages them, so a row four times slower reads 25 instead of one place lower. Combat levels uses it by default; the gear table keeps Points unless you switch it in ⚙ Columns.
+
 <!-- shipped in 3.65.0 -->
 
 ### Sync stops bringing back pruned history
