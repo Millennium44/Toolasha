@@ -4160,8 +4160,9 @@ export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'encounters', 'deaths'
  * and summing the placings finds those all-rounders.
  *
  * The scoring is deliberately ordinal, and that is also its limitation: winning
- * a metric by a mile scores exactly what winning it by a hair scores. It is a
- * shortlisting aid, not a verdict, which is why it is not the default sort.
+ * a metric by a mile scores exactly what winning it by a hair scores. That is
+ * also its strength — see `assignScores` for the percent-of-best alternative and
+ * why the gear table still defaults to this one.
  *
  * The Time column (cost over current profit rate) is excluded on purpose.
  * Baseline profit is one number shared by every row, so dividing each cost by it
@@ -4189,6 +4190,9 @@ export function assignRankScores(results, options = {}) {
 
     for (const row of results) {
         row.rankPoints = {};
+        // A row carries one scale's breakdown at a time, so the detail line
+        // cannot mix a stale percent-of-best with fresh placings
+        delete row.scoreParts;
         row.score = 0;
     }
 
@@ -4206,6 +4210,120 @@ export function assignRankScores(results, options = {}) {
         }
     }
 
+    return results;
+}
+
+/**
+ * Every row's figure in one Score column as a percentage of the column's best.
+ *
+ * Best is 100. A cheaper-is-better figure scores `100 × best ÷ row` and a
+ * higher-is-better one `100 × row ÷ best`, so a row twice as expensive per 0.01%
+ * as the cheapest reads 50 — the gap is in the number, not just the order.
+ *
+ * What cannot be a ratio is settled first, the same way for every table:
+ *
+ * - **No figure** — null, NaN, a cheaper-is-better `Infinity` (no improvement at
+ *   all), or a higher-is-better figure at or below zero (a loss) — scores 0. It
+ *   still counts toward the row's average, so a row that is worse than baseline
+ *   in most columns cannot ride one good column past a row that is good in all.
+ * - **Free or better than free** on a cheaper-is-better column (zero, or the
+ *   negative net gold a swap hands back) scores 100: nothing that costs gold can
+ *   beat it, and a ratio against zero means nothing. Purchases are then measured
+ *   against the cheapest of themselves, so they still spread out below it.
+ * - **Unbounded** on a higher-is-better column (an `Infinity` ROI, a free gain)
+ *   scores 100 the same way; finite figures are measured against the largest
+ *   finite one.
+ *
+ * A column in which no row has a figure says nothing about any of them and
+ * returns null, so the caller can leave it out of every row's average.
+ *
+ * `place` is the row's 1-based position among the distinct figures (ties share
+ * one), or null where the row had none — kept so the breakdown can say both how
+ * far behind a row is and where that leaves it.
+ *
+ * @param {Array<*>} values - One figure per row
+ * @param {boolean} lowerIsBetter - Whether the smallest figure is best
+ * @returns {Array<{pct: number, place: number|null}>|null} Per row, in order; null when the column is empty
+ */
+export function percentOfBest(values, lowerIsBetter) {
+    const usable = (v) => {
+        if (typeof v !== 'number' || Number.isNaN(v)) return false;
+        return lowerIsBetter ? v !== Infinity : v > 0;
+    };
+    const present = values.filter(usable);
+    if (!present.length) return null;
+
+    // The figure every positive, finite one is measured against
+    const ratioFigures = present.filter((v) => Number.isFinite(v) && v > 0);
+    const best = ratioFigures.length ? (lowerIsBetter ? Math.min(...ratioFigures) : Math.max(...ratioFigures)) : null;
+
+    const ladder = [...new Set(present)].sort((a, b) => (lowerIsBetter ? a - b : b - a));
+
+    return values.map((v) => {
+        if (!usable(v)) return { pct: 0, place: null };
+        const place = ladder.indexOf(v) + 1;
+        // Free, paying back, or unbounded: at least as good as anything with a ratio
+        if (!Number.isFinite(v) || v <= 0) return { pct: 100, place };
+        return { pct: lowerIsBetter ? (100 * best) / v : (100 * v) / best, place };
+    });
+}
+
+/**
+ * Score every candidate by how close it comes to the best row in each value
+ * metric, averaged.
+ *
+ * Sorting by one column answers only that column's question, and a candidate
+ * that is nearly the best at everything never surfaces. Each scored column gives
+ * a row its percentage of that column's best (see `percentOfBest`), and the
+ * Score is the mean of those over the columns that had any figure: 0–100, where
+ * 100 is a row that is best in everything counted.
+ *
+ * The alternative to `assignRankScores`, chosen per table. Placings say who came
+ * where and nothing about by how much — a combat level 4–5× slower per 0.01%
+ * than the winner sits right behind it on placings alone — so the Combat levels
+ * table defaults to this. The gear table defaults to placings instead, because
+ * a value-for-cost column can hold one extreme outlier: a near-free swap with a
+ * tiny Gold/0.01% makes every other row's share of it round to about 0, and the
+ * column stops separating anything. Placings are immune to that.
+ *
+ * The Time column (cost over current profit rate) is excluded on purpose.
+ * Baseline profit is one number shared by every row, so dividing each cost by it
+ * preserves the cost ordering exactly — Time is the Cost column in hours, and
+ * scoring it would count cost twice. Repay is the one that carries new
+ * information, dividing by a gain that differs per row.
+ *
+ * Mutates and returns the rows, adding `score` (unrounded; round to show it) and
+ * `scoreParts`, keyed by metric: `{ label, pct, place }` for every counted column.
+ *
+ * @param {Array<Object>} results - Rows carrying `goldPer` and `economics`
+ * @param {Object} [options]
+ * @param {Array<string>} [options.keys=DEFAULT_SCORE_KEYS] - SCORE_METRICS keys to count
+ * @param {Array<Object>} [options.metrics=SCORE_METRICS] - Metric definitions to choose from, for a table
+ *   that reads the same keys off different figures (the Combat levels table's Hours/0.01%)
+ * @returns {Array<Object>} The same rows
+ */
+export function assignScores(results, options = {}) {
+    const keys = options.keys ?? DEFAULT_SCORE_KEYS;
+    const metrics = (options.metrics ?? SCORE_METRICS).filter((m) => keys.includes(m.key));
+
+    for (const row of results) {
+        row.scoreParts = {};
+        delete row.rankPoints;
+        row.score = 0;
+    }
+
+    let counted = 0;
+    for (const metric of metrics) {
+        const column = percentOfBest(results.map(metric.value), metric.lowerIsBetter);
+        if (!column) continue;
+        counted++;
+        results.forEach((row, i) => {
+            row.scoreParts[metric.key] = { label: metric.label, ...column[i] };
+            row.score += column[i].pct;
+        });
+    }
+
+    if (counted) for (const row of results) row.score /= counted;
     return results;
 }
 
