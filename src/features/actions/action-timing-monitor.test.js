@@ -197,6 +197,27 @@ describe('measuring the bar', () => {
         warn.mockRestore();
     });
 
+    test('a stall followed by another queue entry of the same action records no speed context', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        dataManager.getCurrentActions.mockReturnValue([{ id: 101, actionHrid: '/actions/brewing/coffee' }]);
+        dataManager.getActionDetails.mockReturnValue({ name: 'Coffee', type: '/action_types/brewing' });
+        const bar = mountBar(1);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        vi.advanceTimersByTime(1000);
+        fire(bar, 'animationend');
+        vi.advanceTimersByTime(60000);
+        // The next queue entry runs the same action, possibly with other gear
+        dataManager.getCurrentActions.mockReturnValue([{ id: 102, actionHrid: '/actions/brewing/coffee' }]);
+        fire(bar, 'animationstart');
+
+        expect(monitor.anomalies).toHaveLength(1);
+        expect(monitor.anomalies[0].speed).toBeNull();
+        warn.mockRestore();
+    });
+
     test('a labyrinth interval stays exempt when the queue has moved on by the time it closes', async () => {
         const { default: dataManager } = await import('../../core/data-manager.js');
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

@@ -289,7 +289,9 @@ class ActionTimingMonitor {
         const action = this.startedAction ?? live;
         // Gear and buffs are read live; once the queue has moved to another action they
         // describe that one, so the record says so instead of pairing the two
-        const speedIsLive = !this.startedAction || this.startedAction.actionHrid === live?.actionHrid;
+        const sameEntry = (a, b) =>
+            a?.entryId != null && b?.entryId != null ? a.entryId === b.entryId : a?.actionHrid === b?.actionHrid;
+        const speedIsLive = !this.startedAction || sameEntry(this.startedAction, live);
         // The labyrinth keeps its bar full while a room is fought or skilled;
         // that is the game's normal behavior, not a timing anomaly.
         if (action?.type === LABYRINTH_ACTION_TYPE) return;
@@ -331,6 +333,7 @@ class ActionTimingMonitor {
         const details = dataManager.getActionDetails(current.actionHrid) || null;
         return {
             actionHrid: current.actionHrid,
+            entryId: current.id ?? null,
             name: details?.name ?? null,
             type: details?.type ?? null,
             details,
