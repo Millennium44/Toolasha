@@ -95,13 +95,14 @@ describe('modal scroll caps', () => {
         expect(css).not.toMatch(/[^-]height:\s*(?!auto)/);
     });
 
-    test('the guild shrine dialog is capped, and the generic wrapper rule is :has()-gated on it', () => {
+    test('the guild shrine dialog caps the game scroller, gated on its content, and adds no inner scroller', () => {
         modalScrollCaps.initialize();
         const css = styleEl().textContent;
 
         expect(css).toMatch(
             /\[class\*="Modal_modalContent"\]:has\(\[class\*="GuildPanel_guildModalContent"\]\)\s*\{[^}]*max-height/
         );
-        expect(css).toMatch(/\[class\*="GuildPanel_guildModalContent"\]\s*\{[^}]*max-height/);
+        // The game's scroller is the wrapper; the inner content must not become a second one
+        expect(css).not.toMatch(/^\s*\[class\*="GuildPanel_guildModalContent"\]\s*\{/m);
     });
 });

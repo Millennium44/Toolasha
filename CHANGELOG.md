@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild building dialogs scroll on Firefox
+
+- The guild building and shrine upgrade dialog, with its gold-cost table, now scrolls to the bottom on Firefox (mobile included), and the cost table scrolls sideways on narrow screens instead of being cut off.
+
 ### Lab skilling badges match the Path
 
 - With Auto-calc on, lab badges now refresh when a community, guild, house, achievement, MooPass or gear buff or a skill level changes, and Path redraws any badge still left over, so badges and the route quote the same clear chance.
