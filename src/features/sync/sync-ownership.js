@@ -454,6 +454,9 @@ export function addExternalKeyPrefixes(owner, prefixes, { notify = true, now = D
     const accepted = [];
     const added = [];
     const rejected = [];
+    // Only entries that did not exist count against the lifetime limit; a
+    // removal registered again reuses its own
+    let created = 0;
     const entries = externalEntries.get(owner) || new Map();
     for (const prefix of prefixes) {
         const reason = checkExternalPrefix(prefix) || checkAgainstOtherOwners(owner, prefix);
@@ -469,10 +472,12 @@ export function addExternalKeyPrefixes(owner, prefixes, { notify = true, now = D
             rejected.push({ prefix, reason: `the limit of ${EXTERNAL_PREFIX_LIMIT} registered prefixes is reached` });
             continue;
         }
-        if (!entries.has(prefix) && externalEntryCount + added.length >= EXTERNAL_ENTRY_LIMIT) {
+        const isNew = !entries.has(prefix);
+        if (isNew && externalEntryCount + created >= EXTERNAL_ENTRY_LIMIT) {
             rejected.push({ prefix, reason: FULL });
             continue;
         }
+        if (isNew) created += 1;
         // Later than any removal it replaces, whatever this device's clock says
         entries.set(prefix, { live: true, at: Math.max(now, (entries.get(prefix)?.at ?? 0) + 1) });
         accepted.push(prefix);
@@ -514,13 +519,15 @@ export function removeExternalKeyPrefixes(owner, prefixes, { notify = true, now 
             : prefixes.filter((prefix) => typeof prefix === 'string' && checkExternalPrefix(prefix) === null);
     const removed = [];
     const rejected = [];
+    let created = 0;
     for (const prefix of new Set(named)) {
         const entry = entries.get(prefix);
         if (entry && !entry.live) continue;
-        if (!entry && externalEntryCount + removed.length >= EXTERNAL_ENTRY_LIMIT) {
+        if (!entry && externalEntryCount + created >= EXTERNAL_ENTRY_LIMIT) {
             rejected.push({ prefix, reason: FULL });
             continue;
         }
+        if (!entry) created += 1;
         entries.set(prefix, { live: false, at: Math.max(now, (entry?.at ?? 0) + 1) });
         removed.push(prefix);
     }
