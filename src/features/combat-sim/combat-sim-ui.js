@@ -10521,7 +10521,11 @@ class CombatSimUI {
             html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}" data-row-key="${rowKey}">`;
             for (const c of columns) {
                 const value = c.value(r);
-                const isBest = c.highlight && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
+                // A Score of 0 is "scored nothing" on either scale, never a column best,
+                // even when every row has it
+                const unscored = c.key === 'score' && !(value > 0);
+                const isBest =
+                    c.highlight && !unscored && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
                 const style = `${tdBase} ${align(c)}${isBest ? ' color:#4caf50; font-weight:700;' : ''}`;
                 const title = c.title ? ` title="${c.title}"` : '';
                 html += `<td style="${style}"${title}>${c.render(r, value)}</td>`;

@@ -6392,6 +6392,25 @@ describe('the Score column in the table', () => {
         expect(html()).toContain(scoreValueColor(scores[1]));
     });
 
+    test('when no candidate scores, no Score cell is drawn as the column best', () => {
+        for (const scale of [SCORE_PERCENT, '5']) {
+            ui._upgradeScoreDepth = scale;
+            const data = results();
+            for (const r of data.results) {
+                r.goldPer = { dps: Infinity, xp: Infinity, profit: Infinity, deaths: Infinity, encounters: Infinity };
+                r.economics = { ...r.economics, repayHours: null, roiAnnualPct: null };
+            }
+            ui._renderUpgradeResults(data);
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            const headers = [...container.querySelectorAll('thead th')];
+            const at = headers.findIndex((th) => th.dataset.sortKey === 'score');
+            expect(at).toBeGreaterThanOrEqual(0);
+            const cells = [...container.querySelectorAll('tr[data-upgrade-row]')].map((tr) => tr.children[at]);
+            expect(cells.length).toBe(3);
+            for (const td of cells) expect(td.getAttribute('style')).not.toContain('#4caf50');
+        }
+    });
+
     test('a depth stored by an older build keeps working on Points, and the levels table still opens on % of best', async () => {
         mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [], scoreDepth: '15', scoreGradient: false });
         await ui._loadUpgradeColumnPrefs();
