@@ -114,12 +114,15 @@ const TOMBSTONE_COMPANIONS = {
  * restore keeps each pair whole, so the reconciling below still sees both.
  * @param {string} storeName - Object store
  * @param {string} key - Storage key
+ * @param {{recordOnly?: boolean}} [options] - `recordOnly`: answer only for a record, null for a tombstones key
  * @returns {string|null} The companion key, or null when the key has none
  */
-export function tombstoneCompanionKey(storeName, key) {
+export function tombstoneCompanionKey(storeName, key, { recordOnly = false } = {}) {
     for (const { record, tombstones } of TOMBSTONE_COMPANIONS[storeName] || []) {
         if (key === record || key.startsWith(`${record}_`)) return `${tombstones}${key.slice(record.length)}`;
-        if (key === tombstones || key.startsWith(`${tombstones}_`)) return `${record}${key.slice(tombstones.length)}`;
+        if (key === tombstones || key.startsWith(`${tombstones}_`)) {
+            return recordOnly ? null : `${record}${key.slice(tombstones.length)}`;
+        }
     }
     return null;
 }

@@ -1291,6 +1291,7 @@ async function weighAgainstLocal(payload, baseline) {
             if (!same.has(key)) {
                 same.delete(companion);
             } else if (
+                tombstoneCompanionKey(storeName, key, { recordOnly: true }) &&
                 !carried.has(companion) &&
                 !addedSinceExchange(baseline, storeName, companion) &&
                 hidesAny(local[companion], entries[key])

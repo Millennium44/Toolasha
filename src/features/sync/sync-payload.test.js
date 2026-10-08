@@ -66,10 +66,10 @@ const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
 }));
 vi.mock('../../utils/full-backup.js', () => ({
     // One pair, as the real one declares for the settings store
-    tombstoneCompanionKey: (store, key) => {
+    tombstoneCompanionKey: (store, key, { recordOnly = false } = {}) => {
         if (store !== 'settings') return null;
         if (key === 'enhancementTracker_sessions') return 'enhancementTracker_sessionTombstones';
-        return key === 'enhancementTracker_sessionTombstones' ? 'enhancementTracker_sessions' : null;
+        return key === 'enhancementTracker_sessionTombstones' && !recordOnly ? 'enhancementTracker_sessions' : null;
     },
     importEverything: async (payload) => {
         if (importOutcome.throws) throw importOutcome.throws;
@@ -1136,6 +1136,17 @@ describe('applyPayload writes only what it changes', () => {
         await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 } } }), { mode: 'merge', baseline });
 
         expect(importedPayloads[0].stores.settings[RECORD]).toBeUndefined();
+    });
+
+    test('unchanged tombstones arriving without their record are not written', async () => {
+        const RECORD = 'enhancementTracker_sessions';
+        const GRAVES = 'enhancementTracker_sessionTombstones';
+        storeState.stores.settings[RECORD] = { s1: 1 };
+        storeState.stores.settings[GRAVES] = { s1: 5 };
+
+        await applyPayload(payloadOf({ settings: { [GRAVES]: { s1: 5 }, panelSizeMemory: 1 } }));
+
+        expect(importedPayloads[0].stores.settings[GRAVES]).toBeUndefined();
     });
 
     test('an unchanged record stays out when the tombstones on this device hide none of it', async () => {

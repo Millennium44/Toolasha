@@ -599,6 +599,12 @@ describe('tombstoneCompanionKey', () => {
     });
 
     test('anything else has no companion', () => {
+        expect(
+            tombstoneCompanionKey('settings', 'enhancementTracker_sessionTombstones_abc', { recordOnly: true })
+        ).toBeNull();
+        expect(tombstoneCompanionKey('settings', 'enhancementTracker_sessions_abc', { recordOnly: true })).toBe(
+            'enhancementTracker_sessionTombstones_abc'
+        );
         expect(tombstoneCompanionKey('settings', 'panelSizeMemory')).toBeNull();
         expect(tombstoneCompanionKey('dungeonRuns', 'enhancementTracker_sessions')).toBeNull();
     });
