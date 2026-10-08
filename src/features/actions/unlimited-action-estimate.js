@@ -266,7 +266,7 @@ export function isZeroEnhancingEstimate(timing) {
  * @returns {string} Formatted text, or '∞'
  */
 export function formatEnhancingUnlimitedText(timing) {
-    if (isZeroEnhancingEstimate(timing)) return '0 attempts — nothing affordable after reserves';
+    if (isZeroEnhancingEstimate(timing)) return '0 attempts — not enough materials';
     if (!isBoundedEnhancingEstimate(timing)) return '∞';
     const mark = timing.materialLimitIsEstimated ? '~' : '';
     return `${timeReadable(timing.totalTime)} · ${mark}${formatLargeNumber(Math.round(timing.count))} attempts`;

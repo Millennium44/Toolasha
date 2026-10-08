@@ -327,7 +327,7 @@ describe('a zero limit is not an infinity', () => {
         await displayEnhancementStats(panel, '/items/cheese_sword');
 
         const stats = panel.querySelector('#mwi-enhancement-stats');
-        expect(repeatLine(stats)).toBe('To +10: 0 attempts — nothing affordable after reserves');
+        expect(repeatLine(stats)).toBe('To +10: 0 attempts — not enough materials');
     });
 });
 
