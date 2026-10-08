@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collection optimizer: honest profits, sort, transmute and gathering
+
+- By-products of a collection route are now valued at the bid after tax and only up to what the market can absorb in a week (a decompose that showed +430M now shows its real cost), and a bought source is always priced at the ask.
+- Gold reads as signed net ("+" earns, "−" costs), a sort choice offers Most profitable or Fastest, and transmuting and gathering are ranked as routes alongside crafting and decomposing.
+
 ### Room Logs Accuracy tab stops flashing during lab runs
 
 - The Accuracy tab now redraws only when a fight is recorded, not on every skilling action or experience tick, and keeps what it shows until the new reading is ready, so it no longer blinks blank while a lab run is going.
