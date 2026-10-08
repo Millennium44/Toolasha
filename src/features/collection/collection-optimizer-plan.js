@@ -37,6 +37,42 @@ export const ROUTE_LABELS = {
 };
 
 /**
+ * The ranking orders. "Cheapest per point" is not one of them: net gold per
+ * point is minus the cost per point, so the two orders are the same order
+ * whatever the signs.
+ */
+export const SORT_MODES = {
+    profit: 'Most profitable',
+    fastest: 'Fastest',
+};
+
+/** The order the ranking starts in */
+export const DEFAULT_SORT = 'profit';
+
+/**
+ * A sort mode, or the default for anything unknown.
+ * @param {*} value
+ * @returns {string}
+ */
+export function validSort(value) {
+    return typeof value === 'string' && Object.hasOwn(SORT_MODES, value) ? value : DEFAULT_SORT;
+}
+
+/**
+ * Order two options for a sort mode: most profitable is the lowest gold (cost)
+ * per point first; fastest is the least time per point first, ties broken by
+ * gold per point.
+ * @param {string} sort
+ * @returns {(a: Object, b: Object) => number}
+ */
+export function compareOptions(sort) {
+    if (validSort(sort) === 'fastest') {
+        return (a, b) => a.secondsPerPoint - b.secondsPerPoint || a.goldPerPoint - b.goldPerPoint;
+    }
+    return (a, b) => a.goldPerPoint - b.goldPerPoint;
+}
+
+/**
  * The alchemy-wide bonus drops. They roll on every alchemy action whatever the
  * item, so "decompose X to collect them" is never a real plan: they are never
  * a route's target, though what a route yields of them still counts toward its
@@ -189,7 +225,7 @@ export function indexRoutes(routes) {
  * @param {Object} [opts]
  * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes; unbounded when absent
  * @returns {Object|null} `{itemHrid, route, sourceHrid, actionHrid, from, to, needed, gain, collateral, points,
- *   gold, seconds, goldPerPoint, units, credits: Map, sold: Map}` — `credits` is every count
+ *   gold, seconds, goldPerPoint, secondsPerPoint, units, credits: Map, sold: Map}` — `credits` is every count
  *   the option adds, `sold` the units of each output it sells
  */
 export function evaluateOption(itemHrid, counts, route, { sellable } = {}) {
@@ -218,6 +254,7 @@ export function evaluateOption(itemHrid, counts, route, { sellable } = {}) {
             gold,
             seconds,
             goldPerPoint: gold / gain,
+            secondsPerPoint: seconds / gain,
             credits,
             sold: new Map(),
         };
@@ -268,22 +305,25 @@ export function evaluateOption(itemHrid, counts, route, { sellable } = {}) {
         gold,
         seconds,
         goldPerPoint: gold / points,
+        secondsPerPoint: seconds / points,
         credits,
         sold,
     };
 }
 
 /**
- * Each item's cheapest next rung, cheapest gold per point first.
+ * Each item's best next rung, in the sort's order.
  * @param {Map<string, number>} counts
  * @param {Map<string, Array<Object>>} index - From {@link indexRoutes}
  * @param {Object} [opts]
  * @param {number} [opts.maxSeconds=Infinity] - Leave out any option slower than this
  * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes
+ * @param {string} [opts.sort='profit'] - A {@link SORT_MODES} key: which route is best per item, and the order
  * @returns {Array<Object>} One option per item a route can collect within the time
  */
-export function bestOptions(counts, index, { maxSeconds = Infinity, sellable } = {}) {
+export function bestOptions(counts, index, { maxSeconds = Infinity, sellable, sort = DEFAULT_SORT } = {}) {
     const limit = Number(maxSeconds) > 0 ? Number(maxSeconds) : Infinity;
+    const compare = compareOptions(sort);
     const options = [];
     for (const [itemHrid, routes] of index) {
         let best = null;
@@ -291,17 +331,18 @@ export function bestOptions(counts, index, { maxSeconds = Infinity, sellable } =
             const option = evaluateOption(itemHrid, counts, route, { sellable });
             if (!option || !Number.isFinite(option.goldPerPoint)) continue;
             if (!(option.seconds <= limit)) continue;
-            if (!best || option.goldPerPoint < best.goldPerPoint) best = option;
+            if (!best || compare(option, best) < 0) best = option;
         }
         if (best) options.push(best);
     }
-    return options.sort((a, b) => a.goldPerPoint - b.goldPerPoint);
+    return options.sort(compare);
 }
 
 /**
- * The cheapest list of rungs found greedily to gain `targetPoints`.
+ * The best list of rungs, in the sort's sense, found greedily to gain
+ * `targetPoints`.
  *
- * Takes the lowest gold-per-point option, credits every count it adds (the
+ * Takes the first option in the sort's order, credits every count it adds (the
  * target and anything else the route collects), counts what it sells against
  * what the market takes, and looks again: the item's next rung is then on
  * offer at its new price. Stops at the target or after `maxSteps`.
@@ -312,9 +353,15 @@ export function bestOptions(counts, index, { maxSeconds = Infinity, sellable } =
  * @param {number} [opts.maxSteps=300]
  * @param {number} [opts.maxSeconds=Infinity] - Leave out any step slower than this
  * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes over the whole plan
+ * @param {string} [opts.sort='profit'] - A {@link SORT_MODES} key
  * @returns {{steps: Array<Object>, points: number, gold: number, seconds: number, reached: boolean}}
  */
-export function planTarget(counts, index, targetPoints, { maxSteps = 300, maxSeconds = Infinity, sellable } = {}) {
+export function planTarget(
+    counts,
+    index,
+    targetPoints,
+    { maxSteps = 300, maxSeconds = Infinity, sellable, sort = DEFAULT_SORT } = {}
+) {
     const working = new Map(counts);
     const start = totalCollectionPoints(working);
     const want = Math.max(0, Math.floor(Number(targetPoints) || 0));
@@ -326,7 +373,7 @@ export function planTarget(counts, index, targetPoints, { maxSteps = 300, maxSec
     let seconds = 0;
     let gained = 0;
     while (gained < want && steps.length < maxSteps) {
-        const [pick] = bestOptions(working, index, { maxSeconds, sellable: room });
+        const [pick] = bestOptions(working, index, { maxSeconds, sellable: room, sort });
         if (!pick) break;
         for (const [hrid, added] of pick.credits) working.set(hrid, (working.get(hrid) || 0) + added);
         for (const [hrid, units] of pick.sold) soldSoFar.set(hrid, (soldSoFar.get(hrid) || 0) + units);

@@ -263,8 +263,9 @@ const {
     buildCollectionRoutes,
     realizedSalePrice,
     weeklySellable,
+    formatNet,
 } = await import('./collection-optimizer.js');
-const { evaluateOption } = await import('./collection-optimizer-plan.js');
+const { bestOptions, collectionCounts, evaluateOption } = await import('./collection-optimizer-plan.js');
 
 /** The game's Collections tab: controls, then the tile categories */
 function drawCollectionsTab() {
@@ -639,6 +640,66 @@ describe('the panel', () => {
         for (const handler of bus.handlers.collections_updated || []) handler({ collections: COLLECTIONS });
         await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
         expect(optimizer.routesFor).toBe('char-2');
+    });
+
+    test('money is net gold: + earns, − costs, in the columns that say so', async () => {
+        expect(formatNet(-1500)).toBe('+1.5K');
+        expect(formatNet(2_000_000)).toBe('\u22122.0M');
+        expect(formatNet(0)).toBe('0');
+
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const heads = [...document.querySelectorAll('.toolasha-collopt-table th')].map((th) => th.textContent);
+        expect(heads).toEqual(['Item', 'Count → next', 'Points', 'Route', 'Net gold', 'Time', 'Net/pt']);
+        // Each row's net gold carries its sign: the cheese craft costs, every row is signed
+        const rows = [...document.querySelectorAll('.toolasha-collopt-row')];
+        const craft = rows.filter((row) => row.dataset.route === 'craft');
+        expect(craft.length).toBeGreaterThan(0);
+        for (const row of craft) expect(row.children[4].textContent.startsWith('\u2212')).toBe(true);
+        for (const row of rows) expect(row.children[4].textContent).toMatch(/^[+\u2212]/);
+    });
+
+    test('the sort: most profitable by default, fastest on request, kept per character', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const select = () => document.querySelector('.toolasha-collopt-sort');
+        expect(select().value).toBe('profit');
+        expect([...select().options].map((o) => o.value)).toEqual(['profit', 'fastest']);
+        const order = () => [...document.querySelectorAll('.toolasha-collopt-row')].map((row) => row.dataset.item);
+        const byProfit = order();
+
+        select().value = 'fastest';
+        select().dispatchEvent(new Event('change'));
+        expect(optimizer.sort).toBe('fastest');
+        expect(select().value).toBe('fastest');
+        // The same items, now in time-per-point order
+        expect([...order()].sort()).toEqual([...byProfit].sort());
+        const fastest = bestOptions(collectionCounts(COLLECTIONS), optimizer.index, {
+            maxSeconds: optimizer.maxSeconds,
+            sort: 'fastest',
+        });
+        expect(order()).toEqual(fastest.slice(0, 40).map((o) => o.itemHrid));
+        expect(order()).not.toEqual(byProfit);
+        await vi.waitFor(() => expect(scoped.values.get('char-1:collectionOptimizerSort')).toBe('fastest'));
+        // Choosing an order does not collapse the panel
+        expect(document.querySelector('.toolasha-collopt-table')).not.toBeNull();
+
+        optimizer.disable();
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        expect(optimizer.sort).toBe('fastest');
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-sort').value).toBe('fastest'));
+
+        optimizer.disable();
+        game.characterId = 'char-2';
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        expect(optimizer.sort).toBe('profit');
     });
 
     test('disable removes the panel and stops listening', () => {

@@ -41,7 +41,9 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import {
     DEFAULT_MAX_STEP_SECONDS,
+    DEFAULT_SORT,
     ROUTE_LABELS,
+    SORT_MODES,
     bestOptions,
     collectionAchievementTargets,
     collectionCounts,
@@ -49,6 +51,7 @@ import {
     nextAchievementTarget,
     planTarget,
     totalCollectionPoints,
+    validSort,
 } from './collection-optimizer-plan.js';
 
 /** The setting that turns the panel on */
@@ -60,6 +63,9 @@ const PANEL_CLASS = 'toolasha-collopt';
 /** Where the max-time-per-step choice is kept, per character */
 const MAX_STEP_KEY = 'collectionOptimizerMaxStepHours';
 const MAX_STEP_STORE = 'collections';
+
+/** Where the ranking order is kept, per character, beside the max time per step */
+const SORT_KEY = 'collectionOptimizerSort';
 
 /** The default max time per step, in hours */
 const DEFAULT_MAX_STEP_HOURS = DEFAULT_MAX_STEP_SECONDS / 3600;
@@ -392,6 +398,19 @@ function formatCount(value) {
 }
 
 /**
+ * Gold a step makes, signed: "+" when it earns, "−" when it costs.
+ * @param {number} gold - What the step costs (negative when it earns)
+ * @returns {string}
+ */
+export function formatNet(gold) {
+    const net = -Number(gold) || 0;
+    const text = formatKMB(Math.abs(net)) ?? '0';
+    if (net > 0) return `+${text}`;
+    if (net < 0) return `−${text}`;
+    return text;
+}
+
+/**
  * A route's description for a row: the route, and the source item it starts from.
  * @param {Object} option
  * @returns {string}
@@ -416,6 +435,7 @@ class CollectionOptimizer {
         this.collapsed = false;
         this.targetPoints = 10;
         this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
+        this.sort = DEFAULT_SORT;
         /** Items whose traded volume has been asked for this session */
         this.volumesAsked = new Set();
         this.volumesWarming = null;
@@ -440,7 +460,20 @@ class CollectionOptimizer {
     }
 
     /**
-     * Read this character's max time per step, then redraw a mounted panel.
+     * Keep this character's ranking order.
+     * @param {string} sort
+     * @returns {Promise<void>}
+     */
+    async saveSort(sort) {
+        try {
+            await writeScoped(SORT_KEY, sort, MAX_STEP_STORE);
+        } catch (error) {
+            console.error('[CollectionOptimizer] Saving the sort failed:', error);
+        }
+    }
+
+    /**
+     * Read this character's max time per step and ranking order, then redraw a mounted panel.
      * The character is captured before the read and checked after it, so a
      * switch landing in between never applies one character's choice to another.
      * @returns {Promise<void>}
@@ -450,13 +483,15 @@ class CollectionOptimizer {
         const generation = this.generation;
         try {
             const stored = await readScoped(MAX_STEP_KEY, MAX_STEP_STORE, DEFAULT_MAX_STEP_HOURS);
+            const sort = await readScoped(SORT_KEY, MAX_STEP_STORE, DEFAULT_SORT);
             if (generation !== this.generation) return;
             if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId) return;
             this.maxStepHours = validHours(stored);
+            this.sort = validSort(sort);
             const root = document.querySelector(`.${PANEL_CLASS}`);
             if (root) this.render(root);
         } catch (error) {
-            console.error('[CollectionOptimizer] Reading max time per step failed:', error);
+            console.error('[CollectionOptimizer] Reading the panel settings failed:', error);
         }
     }
 
@@ -497,6 +532,7 @@ class CollectionOptimizer {
         this.index = null;
         this.building = null;
         this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
+        this.sort = DEFAULT_SORT;
         this.volumesAsked = new Set();
         this.volumesWarming = null;
         this.isInitialized = false;
@@ -552,6 +588,7 @@ class CollectionOptimizer {
         const next = nextAchievementTarget(targets, total);
         const summary = next ? `${total} points — next achievement at ${next.target}` : `${total} points`;
         header.appendChild(el('span', 'font-weight:normal;color:#aaa;', summary));
+        if (!this.collapsed) header.appendChild(this.renderSortChoice());
         header.addEventListener('click', () => {
             this.collapsed = !this.collapsed;
             this.render(root);
@@ -577,8 +614,8 @@ class CollectionOptimizer {
             el(
                 'span',
                 '',
-                'Buying on the market does not collect an item. Gold is net of the other outputs, sold at the ' +
-                    'bid after tax, as many as the market takes in a week. '
+                'Buying on the market does not collect an item. Net gold: + earns, \u2212 costs, counting the ' +
+                    'other outputs as sold at the bid after tax, as many as the market takes in a week. '
             )
         );
         const recompute = el('button', 'font-size:11px;margin-left:4px;', 'Recompute');
@@ -591,6 +628,32 @@ class CollectionOptimizer {
         });
         footer.appendChild(recompute);
         body.appendChild(footer);
+    }
+
+    /**
+     * The ranking order: a select in the header, kept per character.
+     * @returns {Element}
+     */
+    renderSortChoice() {
+        const wrap = el('label', 'margin-left:auto;font-weight:normal;color:#aaa;', 'Sort ');
+        const select = el('select', 'font-size:11px;background:#222;color:#eee;border:1px solid #444;');
+        select.className = 'toolasha-collopt-sort';
+        for (const [value, label] of Object.entries(SORT_MODES)) {
+            const option = el('option', '', label);
+            option.value = value;
+            select.appendChild(option);
+        }
+        select.value = this.sort;
+        // The header collapses on a click; choosing an order must not
+        wrap.addEventListener('click', (event) => event.stopPropagation());
+        select.addEventListener('change', () => {
+            this.sort = validSort(select.value);
+            this.saveSort(this.sort);
+            const root = select.closest(`.${PANEL_CLASS}`);
+            if (root) this.render(root);
+        });
+        wrap.appendChild(select);
+        return wrap;
     }
 
     /**
@@ -676,11 +739,13 @@ class CollectionOptimizer {
             const plan = planTarget(counts, this.index, wanted, {
                 maxSeconds: this.maxSeconds,
                 sellable: weeklySellable,
+                sort: this.sort,
             });
             result.replaceChildren();
+            const totals = `net ${formatNet(plan.gold)} gold, ${timeReadable(plan.seconds)}`;
             const head = plan.reached
-                ? `+${plan.points} points: ${formatKMB(plan.gold)} gold, ${timeReadable(plan.seconds)}`
-                : `Only +${plan.points} points found: ${formatKMB(plan.gold)} gold, ${timeReadable(plan.seconds)}`;
+                ? `+${plan.points} points: ${totals}`
+                : `Only +${plan.points} points found: ${totals}`;
             result.appendChild(el('div', 'color:#9cf;', head));
             const list = el('ol', 'margin:2px 0 4px 18px;padding:0;');
             for (const step of plan.steps) {
@@ -689,7 +754,7 @@ class CollectionOptimizer {
                         'li',
                         '',
                         `${itemName(step.itemHrid)} → ${formatCount(step.to)} (+${step.points}) via ` +
-                            `${describeRoute(step)}: ${formatKMB(step.gold)}`
+                            `${describeRoute(step)}: ${formatNet(step.gold)}`
                     )
                 );
             }
@@ -711,7 +776,11 @@ class CollectionOptimizer {
      * @param {Map<string, number>} counts
      */
     renderRanking(body, counts) {
-        const options = bestOptions(counts, this.index, { maxSeconds: this.maxSeconds, sellable: weeklySellable });
+        const options = bestOptions(counts, this.index, {
+            maxSeconds: this.maxSeconds,
+            sellable: weeklySellable,
+            sort: this.sort,
+        });
         if (options.length === 0) {
             body.appendChild(
                 el(
@@ -725,7 +794,7 @@ class CollectionOptimizer {
         const table = el('table', 'width:100%;border-collapse:collapse;font-size:11px;');
         table.className = 'toolasha-collopt-table';
         const head = el('tr', 'color:#aaa;text-align:left;');
-        for (const label of ['Item', 'Count → next', 'Points', 'Route', 'Gold', 'Time', 'Gold/pt']) {
+        for (const label of ['Item', 'Count → next', 'Points', 'Route', 'Net gold', 'Time', 'Net/pt']) {
             head.appendChild(el('th', 'padding:1px 4px;font-weight:normal;', label));
         }
         table.appendChild(head);
@@ -740,9 +809,9 @@ class CollectionOptimizer {
                 `${formatCount(option.from)} → ${formatCount(option.to)}`,
                 points,
                 describeRoute(option),
-                formatKMB(option.gold),
+                formatNet(option.gold),
                 timeReadable(option.seconds),
-                formatKMB(option.goldPerPoint),
+                formatNet(option.goldPerPoint),
             ];
             for (const text of cells) tr.appendChild(el('td', 'padding:1px 4px;', String(text ?? '')));
             table.appendChild(tr);

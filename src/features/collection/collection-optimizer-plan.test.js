@@ -12,6 +12,8 @@ import { describe, test, expect } from 'vitest';
 import { pointsFromCount } from '../../utils/points-from-count.js';
 import {
     ALCHEMY_BONUS_DROPS,
+    DEFAULT_SORT,
+    SORT_MODES,
     bestOptions,
     collectionAchievementTargets,
     collectionCounts,
@@ -21,6 +23,7 @@ import {
     planTarget,
     pointsStep,
     totalCollectionPoints,
+    validSort,
 } from './collection-optimizer-plan.js';
 
 const ROWS = [
@@ -385,5 +388,47 @@ describe('selling the other outputs', () => {
         expect(plan.steps[0].sold.get('/items/gold_dust')).toBe(2);
         expect(plan.steps[1].sold.get('/items/gold_dust')).toBe(1);
         expect(plan.gold).toBe(50 - 200 + 5 * 50 - 100);
+    });
+});
+
+describe('the sort', () => {
+    // Cheap and slow against dear and fast, for two items
+    const index = () =>
+        indexRoutes({
+            craft: [
+                { route: 'craft', itemHrid: '/items/a', unitCost: 10, unitSeconds: 100 },
+                { route: 'craft', itemHrid: '/items/a', unitCost: 50, unitSeconds: 1 },
+                { route: 'craft', itemHrid: '/items/b', unitCost: 20, unitSeconds: 10 },
+            ],
+        });
+
+    test('most profitable is the default and today’s order: lowest cost per point, per item and overall', () => {
+        const options = bestOptions(new Map(), index());
+        expect(options.map((o) => [o.itemHrid, o.gold])).toEqual([
+            ['/items/a', 10],
+            ['/items/b', 20],
+        ]);
+        expect(bestOptions(new Map(), index(), { sort: 'profit' })).toEqual(options);
+    });
+
+    test('fastest picks each item’s quickest route and ranks by time per point', () => {
+        const options = bestOptions(new Map(), index(), { sort: 'fastest' });
+        expect(options.map((o) => [o.itemHrid, o.seconds])).toEqual([
+            ['/items/a', 1],
+            ['/items/b', 10],
+        ]);
+        expect(options[0].secondsPerPoint).toBe(1);
+    });
+
+    test('the plan follows the sort', () => {
+        expect(planTarget(new Map(), index(), 1).steps[0].gold).toBe(10);
+        expect(planTarget(new Map(), index(), 1, { sort: 'fastest' }).steps[0].seconds).toBe(1);
+    });
+
+    test('an unknown sort is the default', () => {
+        expect(validSort('fastest')).toBe('fastest');
+        expect(validSort('cheapest')).toBe(DEFAULT_SORT);
+        expect(validSort(undefined)).toBe('profit');
+        expect(Object.keys(SORT_MODES)).toEqual(['profit', 'fastest']);
     });
 });
