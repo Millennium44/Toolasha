@@ -2184,6 +2184,33 @@ describe('automatic pushes merge into the upload, never into this device', () =>
             expect(toasts).toHaveLength(0);
         });
 
+        test('a download in another format is applied, so the apply can refuse it', async () => {
+            payload.addsToRemote = () => false;
+            payload.text = '{"formatVersion":1,"local":2}';
+            gist.read = {
+                manifest: { exportedAt: remoteAt, chunks: 1, syncSeq: 6 },
+                payload: '{"formatVersion":2,"local":2}',
+            };
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(payload.applyCalls).toBe(1);
+        });
+
+        test('a download whose key registry differs is applied, so the registry is learned', async () => {
+            payload.addsToRemote = () => false;
+            payload.text = '{"formatVersion":1,"local":2}';
+            gist.read = {
+                manifest: { exportedAt: remoteAt, chunks: 1, syncSeq: 6 },
+                payload:
+                    '{"formatVersion":1,"externalKeys":{"other-script":{"prefixes":{"otherPrefs_":1},"removed":{}}},"local":2}',
+            };
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(payload.applyCalls).toBe(1);
+        });
+
         test('a download that holds news for this device is still applied', async () => {
             payload.addsToRemote = (local, remote) => local === remotePayload && remote === '{"local":2}';
 

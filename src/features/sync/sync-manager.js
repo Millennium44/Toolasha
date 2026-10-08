@@ -74,6 +74,7 @@ import {
 import { startSyncDirtyTracker, syncWriteGeneration, markSyncClean, unchangedSinceClean } from './sync-dirty.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { flushPersistedRecords } from '../../utils/persisted-record.js';
+import { stableStringify } from '../../utils/stable-stringify.js';
 import {
     buildPullSummary,
     formatPullSummaryLine,
@@ -1734,6 +1735,15 @@ class SyncManager {
     _sameContent(remoteText, localText, localHash) {
         if (contentHash(remoteText) === localHash) return true;
         try {
+            // The store comparison reads only `stores`. A download whose format
+            // or registry differs must reach the apply, which refuses a newer
+            // format and learns the registry
+            const remote = JSON.parse(remoteText);
+            const local = JSON.parse(localText);
+            if (remote?.formatVersion !== local?.formatVersion) return false;
+            if (stableStringify(remote?.externalKeys ?? null) !== stableStringify(local?.externalKeys ?? null)) {
+                return false;
+            }
             return !addsToRemote(remoteText, localText, { forUpload: false }) && !addsToRemote(localText, remoteText);
         } catch (error) {
             console.warn('[Sync] Could not compare the download with this device; applying it:', error);
