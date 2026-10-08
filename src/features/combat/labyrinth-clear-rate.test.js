@@ -3010,6 +3010,167 @@ describe('a skilling tile badge and the Path quote one clear chance', () => {
     });
 });
 
+/**
+ * Reported live: with Auto-calc on, a floor sat for a day, a gathering buff
+ * started, and a woodcutting room's badge stayed at 5% until Recompute gave 16%
+ * (what the Path used). Nothing scheduled an auto pass when a buff changed, so
+ * the badge kept the figure of the pass that drew it.
+ */
+describe('a buff change re-runs the auto pass for the tiles it affects', () => {
+    const WOODCUTTING = '/skills/woodcutting';
+    const metricsAt = (efficiencyBonus) => ({
+        skillLevelBonus: 0,
+        efficiencyBonus,
+        actionSpeedBonus: 1.358,
+        successBonus: 0,
+        doubleProgressBonus: 0.2,
+        gatheringBonus: 0,
+        experienceBonus: 0,
+    });
+    const SLOW = metricsAt(174.57 / 131 - 1); // 4.8%
+    const FAST = metricsAt(0.58); // 15.3%
+
+    let current;
+    let metricsSpy;
+    let parent;
+
+    const setAutoCalc = (on) =>
+        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoCalcTiles' ? on : key !== 'x'));
+    const badgePct = () => parent.children[1].querySelector('.mwi-labyrinth-tile-badge')?.firstChild?.textContent;
+    /** The handler initialize() registered for an event */
+    const handlerFor = (event) => {
+        const calls = dataManagerMock.on.mock.calls.filter((c) => c[0] === event);
+        return calls[calls.length - 1][1];
+    };
+
+    beforeEach(async () => {
+        vi.useFakeTimers();
+        settings.map.clear();
+        dataManagerMock.on.mockClear();
+        dataManagerMock.getSkills.mockReturnValue([{ skillHrid: WOODCUTTING, level: 131 }]);
+        current = SLOW;
+        metricsSpy = vi.spyOn(labyrinthClearRate, 'getSkillingMetrics').mockImplementation(() => ({ ...current }));
+        labyrinthClearRate.calculatedTileKeys?.clear();
+        labyrinthClearRate._calculatedTileInputs?.clear();
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate._autoCalcFingerprint = null;
+        setAutoCalc(true);
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        document.body.innerHTML = '';
+        parent = document.createElement('div');
+        for (let i = 0; i < 3; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [
+                { isCleared: true },
+                { roomType: '/labyrinth_room_types/skilling', skillHrid: WOODCUTTING, recommendedLevel: 206 },
+                { roomType: '/labyrinth_room_types/descend' },
+            ],
+        ];
+        labyrinthClearRate.currentFloor = 5;
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        labyrinthClearRate.isInitialized = false;
+        metricsSpy.mockRestore();
+        dataManagerMock.getSkills.mockReturnValue([]);
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._tileResults?.clear();
+        configMock.getSetting.mockImplementation(() => true);
+        vi.useRealTimers();
+    });
+
+    test('initialize listens for the buff and skill events, and not for teas', () => {
+        for (const event of [
+            'community_buffs_updated',
+            'guild_buffs_updated',
+            'house_rooms_updated',
+            'skills_updated',
+        ]) {
+            expect(typeof handlerFor(event)).toBe('function');
+        }
+        const events = dataManagerMock.on.mock.calls.map((c) => c[0]);
+        expect(events).not.toContain('consumables_updated');
+        expect(events).not.toContain('consumable_buffs_updated');
+    });
+
+    test('Auto-calc on: a buff change redraws the skilling badge at the new figure', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(badgePct()).toBe('5%');
+
+        current = FAST;
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(900);
+
+        expect(badgePct()).toBe('15%');
+    });
+
+    test('only the tile whose inputs changed is re-scored', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        const scored = vi.spyOn(labyrinthClearRate, 'computeSkillingRoomClear');
+
+        // Nothing the badge depends on changed: the pass scores no tile
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(900);
+        expect(scored).not.toHaveBeenCalled();
+
+        current = FAST;
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(900);
+        expect(scored).toHaveBeenCalledTimes(1);
+        scored.mockRestore();
+    });
+
+    test('Auto-calc off: a buff change runs nothing', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        setAutoCalc(false);
+        const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
+
+        current = FAST;
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(run).not.toHaveBeenCalled();
+        expect(badgePct()).toBe('5%');
+        run.mockRestore();
+    });
+
+    test('a burst of events makes one pass', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
+
+        current = FAST;
+        for (let i = 0; i < 5; i++) {
+            handlerFor('community_buffs_updated')({});
+            handlerFor('guild_buffs_updated')({});
+            handlerFor('skills_updated')({});
+            await vi.advanceTimersByTimeAsync(100);
+        }
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(run).toHaveBeenCalledTimes(1);
+        run.mockRestore();
+    });
+
+    test('disable() removes the listeners', () => {
+        const handler = handlerFor('community_buffs_updated');
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        expect(dataManagerMock.off).toHaveBeenCalledWith('community_buffs_updated', handler);
+        expect(dataManagerMock.off).toHaveBeenCalledWith('skills_updated', handler);
+    });
+});
+
 describe('recomputeCombatSims clears every cached sim before re-running', () => {
     test('empties both cache layers and re-runs the tile calc', async () => {
         labyrinthClearRate.combatCache.set('imp:200:1:1pp:', { clearChance: 0.5 });

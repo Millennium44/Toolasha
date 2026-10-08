@@ -99,6 +99,20 @@ const BADGE_CLASS = 'mwi-labyrinth-clear';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
+/**
+ * DataManager events after which a tile badge's inputs may have changed. Teas,
+ * drinks and food are deliberately absent: only crates supply consumable
+ * effects in the labyrinth, and `_computeSkillingMetrics` reads none of them.
+ */
+const BUFF_INPUT_EVENTS = [
+    'community_buffs_updated',
+    'guild_buffs_updated',
+    'house_rooms_updated',
+    'achievement_buffs_updated',
+    'moo_pass_buffs_updated',
+    'equipment_buffs_updated',
+    'skills_updated',
+];
 /** How often the orphan check runs — slow on purpose, see `_previewWatchdogTick` */
 const PREVIEW_WATCHDOG_MS = 500;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
@@ -228,6 +242,16 @@ class LabyrinthClearRate {
             this.injectOverlays();
         };
         loadoutSnapshot.onUpdate(this.snapshotUpdateHandler);
+
+        // The buffs a tile badge is scored under move without any labyrinth or
+        // settings message: a community buff starting, a guild shrine, a house
+        // room, an achievement, MooPass, a skill level. A floor left
+        // open for a day kept the badge it was drawn with (5%) while the Path,
+        // which scores afresh, quoted 16%. Each of these schedules the auto pass;
+        // its per-tile inputs check then re-sims only the tiles whose recorded
+        // inputs actually changed, and a no-op change costs one fingerprint scan.
+        this._buffInputsHandler = () => this._onBuffInputsChanged();
+        for (const event of BUFF_INPUT_EVENTS) dataManager.on(event, this._buffInputsHandler);
 
         this.liveProgressHandler = (data) => this.onLiveProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
@@ -456,6 +480,11 @@ class LabyrinthClearRate {
             if (this.liveProgressHandler) {
                 webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
                 this.liveProgressHandler = null;
+            }
+
+            if (this._buffInputsHandler) {
+                for (const event of BUFF_INPUT_EVENTS) dataManager.off(event, this._buffInputsHandler);
+                this._buffInputsHandler = null;
             }
 
             if (this.snapshotUpdateHandler) {
@@ -2641,6 +2670,18 @@ class LabyrinthClearRate {
                 }
             }
         }
+    }
+
+    /**
+     * A buff, consumable or skill level the tile badges are scored under changed.
+     * Schedules the auto pass (a no-op with Auto-calc off or no floor shown).
+     * Coalesces rather than debounces: several of these stream during play, and
+     * resetting the timer on each would starve the pass.
+     */
+    _onBuffInputsChanged() {
+        if (!config.getSetting('labyrinthAutoCalcTiles')) return;
+        if (!this.roomData || this.autoTileTimer) return;
+        this.scheduleAutoTileCalc();
     }
 
     /**
