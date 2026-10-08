@@ -18,6 +18,8 @@
  *   coin price.
  * - **Transmute**: buy S at the ask and transmute it, transmuting again every
  *   copy of S that comes back, so each bought S is 1 / (1 − r) attempts.
+ * - **Gather**: run a gathering action, whole actions; nothing goes in but its
+ *   teas.
  *
  * Every other output a route yields is sold: it is credited at the bid after
  * the market tax, and only as many units as the market takes in a week
@@ -37,6 +39,7 @@ export const ROUTE_LABELS = {
     craftDecompose: 'Craft + decompose',
     shop: 'Shop gear',
     transmute: 'Transmute',
+    gather: 'Gather',
 };
 
 /**
@@ -173,12 +176,12 @@ export function nextAchievementTarget(targets, total) {
  * Index routes by the item each can collect.
  *
  * A craft route collects its own item. A source route (decompose, shop,
- * transmute) collects every item in its `yields` — the gear in between and the
- * kept outputs.
+ * transmute, gather) collects every item in its `yields` — the gear in between
+ * and the kept outputs.
  * @param {{craft?: Iterable<Object>, sources?: Iterable<Object>}} routes
  *   craft: `{route: 'craft', itemHrid, unitCost, unitSeconds}`;
  *   sources: `{route, sourceHrid, actionHrid?, cost, seconds, yields: Map, kept: Map, batch?: number,
- *   bonus?: Set}` — per unit of the route (one source item): `yields` the
+ *   bonus?: Set}` — per unit of the route (one source item, or one gathering action): `yields` the
  *   expected units of each item collected, `kept` each sold output as `{perSource, unit}` (expected
  *   units and the realized price of one), `bonus` the yields that are bonus drops
  * @returns {Map<string, Array<Object>>}

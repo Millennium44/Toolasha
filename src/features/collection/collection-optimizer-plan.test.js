@@ -463,3 +463,42 @@ describe('a transmute route', () => {
         for (const step of plan.steps) expect(step.route).toBe('transmute');
     });
 });
+
+describe('a gather route', () => {
+    // A cow at 10 s an action: 1.35 milk and 0.15 cheese an action, 2 of tea
+    const cow = () => ({
+        route: 'gather',
+        sourceHrid: null,
+        actionHrid: '/actions/milking/cow',
+        cost: 2,
+        seconds: 10,
+        batch: 1,
+        yields: new Map([
+            ['/items/milk', 1.35],
+            ['/items/cheese', 0.15],
+        ]),
+        kept: new Map([
+            ['/items/milk', { perSource: 1.35, unit: 86.4 }],
+            ['/items/cheese', { perSource: 0.15, unit: 9.6 }],
+        ]),
+    });
+
+    test('whole actions, timed, with the other drop sold', () => {
+        const option = evaluateOption('/items/cheese', new Map(), cow());
+        // 0.15 cheese an action: 7 actions for the first
+        expect(option.units).toBe(7);
+        expect(option.actionHrid).toBe('/actions/milking/cow');
+        expect(option.seconds).toBe(70);
+        expect(option.gold).toBeCloseTo(7 * 2 - 7 * 1.35 * 86.4, 9);
+        expect(option.credits.get('/items/milk')).toBeCloseTo(9.45, 9);
+    });
+
+    test('respects the max time per step and plans', () => {
+        const index = indexRoutes({ sources: [cow()] });
+        // Cheese 0 → 1 is 70 s; milk 0 → 1 one action, 10 s
+        expect(bestOptions(new Map(), index, { maxSeconds: 60 }).map((o) => o.itemHrid)).toEqual(['/items/milk']);
+        const plan = planTarget(new Map(), index, 2);
+        expect(plan.reached).toBe(true);
+        for (const step of plan.steps) expect(step.route).toBe('gather');
+    });
+});

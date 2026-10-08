@@ -91,6 +91,19 @@ const ITEMS = vi.hoisted(() => ({
         },
     },
     '/items/garnet': { name: 'Garnet' },
+    '/items/milk': { name: 'Milk' },
+    '/items/milking_essence': { name: 'Milking Essence' },
+}));
+
+/** Milking a cow, as the game lists it: a level requirement and a drop table */
+const ACTIONS = vi.hoisted(() => ({
+    '/actions/milking/cow': {
+        hrid: '/actions/milking/cow',
+        name: 'Cow',
+        type: '/action_types/milking',
+        levelRequirement: { skillHrid: '/skills/milking', level: 1 },
+        dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+    },
 }));
 
 const BUY = vi.hoisted(() => ({
@@ -109,6 +122,8 @@ const BUY = vi.hoisted(() => ({
     '/items/star_fragment': 13_750,
     '/items/amber': 20_240,
     '/items/garnet': 21_000,
+    '/items/milk': 100,
+    '/items/milking_essence': 50,
 }));
 
 /** The bid side, where it differs from the ask above */
@@ -116,6 +131,7 @@ const BID = vi.hoisted(() => ({
     '/items/earrings_of_essence_find': 5_940_000,
     '/items/star_fragment': 13_700,
     '/items/amber': 20_160,
+    '/items/milk': 90,
 }));
 
 /** Measured daily volumes, for the liquidity bound */
@@ -134,12 +150,16 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => game.characterId,
         getInitClientData: () => ({
             itemDetailMap: ITEMS,
+            actionDetailMap: ACTIONS,
             achievementDetailMap: {
                 '/achievements/collection_points_100': { hrid: '/achievements/collection_points_100', target: 100 },
             },
         }),
         getItemDetails: (hrid) => ITEMS[hrid] || null,
-        getActionDetails: () => game.actionDetails ?? null,
+        getActionDetails: (hrid) => ACTIONS[hrid] ?? game.actionDetails ?? null,
+        getSkills: () => [{ skillHrid: '/skills/milking', level: game.milkingLevel }],
+        getEquipment: () => new Map(),
+        getActionDrinkSlots: () => [],
         getCurrentCharacterGameMode: () => 'standard',
         on: (event, handler) => {
             (bus.handlers[event] ||= []).push(handler);
@@ -177,6 +197,29 @@ vi.mock('../market/profit-calculator.js', () => ({
                       ...game.profitExtra,
                   },
     },
+}));
+// The cow at 360 actions an hour and +50% efficiency: 1.5 milk an action, 10% of it turned into
+// cheese by Processing, an essence every 100 completions, and 720 an hour of tea
+vi.mock('../actions/gathering-profit.js', () => ({
+    calculateGatheringProfit: async (hrid) =>
+        hrid !== '/actions/milking/cow'
+            ? null
+            : {
+                  actionsPerHour: 360,
+                  efficiencyMultiplier: 1.5,
+                  baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 540 }],
+                  processingConversions: [
+                      {
+                          rawItemHrid: '/items/milk',
+                          processedItemHrid: '/items/cheese',
+                          rawConsumedPerHour: 54,
+                          conversionsPerHour: 54,
+                      },
+                  ],
+                  bonusRevenue: { bonusDrops: [{ itemHrid: '/items/milking_essence', dropsPerHour: 3.6 }] },
+                  drinkCostPerHour: 720,
+                  drinkCosts: game.unpricedTea ? [{ missingPrice: true }] : [],
+              },
 }));
 vi.mock('../market/tooltip-prices.js', () => ({
     ownUseCompare: () => ({ make: 4, buy: 10, saves: 6, cheaper: 'make', priceBasis: 'ask' }),
@@ -337,6 +380,8 @@ beforeEach(() => {
     VOLUME.perDay = {};
     game.pricingMode = 'hybrid';
     game.noTransmute = false;
+    game.milkingLevel = 10;
+    game.unpricedTea = false;
 });
 
 afterEach(() => {
@@ -364,7 +409,7 @@ describe('the routes', () => {
             { route: 'craft', itemHrid: '/items/cheese', unitCost: 4, unitSeconds: 10, batch: 1 },
         ]);
         const kinds = new Set([...routes.craft, ...routes.sources].map((r) => r.route));
-        expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop', 'transmute']);
+        expect([...kinds].sort()).toEqual(['craft', 'decompose', 'gather', 'shop', 'transmute']);
         // No decompose or shop route ever yields the source it starts from
         for (const source of routes.sources.filter((r) => ['decompose', 'shop'].includes(r.route))) {
             expect(source.yields.has(source.sourceHrid)).toBe(false);
@@ -506,6 +551,59 @@ describe('transmute routes', () => {
     });
 });
 
+describe('gathering routes', () => {
+    const cowRoute = (routes) => routes.sources.find((s) => s.route === 'gather');
+
+    test('one action: its drops net of Processing, its bonus drops, and its tea', async () => {
+        const route = cowRoute(await buildCollectionRoutes());
+        expect(route.actionHrid).toBe('/actions/milking/cow');
+        // (540 − 54) / 360 milk and 54 / 360 cheese an action; essence 3.6 / 360 × 1.5
+        expect(route.yields.get('/items/milk')).toBeCloseTo(1.35, 12);
+        expect(route.yields.get('/items/cheese')).toBeCloseTo(0.15, 12);
+        expect(route.yields.get('/items/milking_essence')).toBeCloseTo(0.015, 12);
+        expect(route.bonus.has('/items/milking_essence')).toBe(true);
+        // Nothing goes in but the tea: 720 an hour is 2 an action; an action is 10 s
+        expect(route.cost).toBeCloseTo(2, 12);
+        expect(route.seconds).toBeCloseTo(10, 12);
+        expect(route.batch).toBe(1);
+        // Everything is sold at the bid after tax, unless it is the target
+        expect(route.kept.get('/items/milk').unit).toBeCloseTo(90 * 0.96, 12);
+    });
+
+    test('ten Milk: seven actions, the cheese and essence sold', async () => {
+        const route = cowRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/milk', new Map([['/items/milk', 1]]), route);
+        // 9 more at 1.35 an action
+        expect(option.units).toBe(7);
+        expect(option.seconds).toBeCloseTo(70, 9);
+        const sold = 7 * (0.15 * 10 * 0.96 + 0.015 * 50 * 0.96);
+        expect(option.gold).toBeCloseTo(7 * 2 - sold, 9);
+        expect(option.sold.has('/items/milk')).toBe(false);
+    });
+
+    test('ranks with the other routes and says where', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const milk = [...document.querySelectorAll('.toolasha-collopt-row')].find(
+            (row) => row.dataset.item === '/items/milk'
+        );
+        expect(milk.dataset.route).toBe('gather');
+        expect(milk.textContent).toContain('Gather: 1 action at Cow');
+    });
+
+    test('a zone above the character’s level is no route; an unpriced tea leaves it out', async () => {
+        ACTIONS['/actions/milking/cow'].levelRequirement.level = 20;
+        try {
+            expect(cowRoute(await buildCollectionRoutes())).toBeUndefined();
+        } finally {
+            ACTIONS['/actions/milking/cow'].levelRequirement.level = 1;
+        }
+        game.unpricedTea = true;
+        expect(cowRoute(await buildCollectionRoutes()).partlyUnpriced).toBe(true);
+    });
+});
+
 describe('whole actions for sources', () => {
     test('a decompose action eats its bulk of sources; a shop bundle is bought whole', async () => {
         game.craftable = new Set(['/items/cheese', '/items/cheese_sword']);
@@ -636,7 +734,7 @@ describe('the panel', () => {
         await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
         const rows = [...document.querySelectorAll('.toolasha-collopt-row')];
         const routes = rows.map((row) => row.dataset.route);
-        for (const route of routes) expect(['craft', 'decompose', 'shop', 'transmute']).toContain(route);
+        for (const route of routes) expect(['craft', 'decompose', 'shop', 'transmute', 'gather']).toContain(route);
         expect(panel().textContent).not.toMatch(/\bBuy\b:/);
         // The lower hoods are on offer, collected by decomposing an Umbral Hood
         const items = rows.map((row) => row.dataset.item);
@@ -759,12 +857,11 @@ describe('the panel', () => {
         await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
         const heads = [...document.querySelectorAll('.toolasha-collopt-table th')].map((th) => th.textContent);
         expect(heads).toEqual(['Item', 'Count → next', 'Points', 'Route', 'Net gold', 'Time', 'Net/pt']);
-        // Each row's net gold carries its sign: the cheese craft costs, every row is signed
-        const rows = [...document.querySelectorAll('.toolasha-collopt-row')];
-        const craft = rows.filter((row) => row.dataset.route === 'craft');
-        expect(craft.length).toBeGreaterThan(0);
-        for (const row of craft) expect(row.children[4].textContent.startsWith('\u2212')).toBe(true);
-        for (const row of rows) expect(row.children[4].textContent).toMatch(/^[+\u2212]/);
+        // Each row's net gold carries its sign, and both kinds of step are on offer here
+        const nets = [...document.querySelectorAll('.toolasha-collopt-row')].map((row) => row.children[4].textContent);
+        for (const text of nets) expect(text).toMatch(/^[+\u2212]/);
+        expect(nets.some((text) => text.startsWith('+'))).toBe(true);
+        expect(nets.some((text) => text.startsWith('\u2212'))).toBe(true);
     });
 
     test('the sort: most profitable by default, fastest on request, kept per character', async () => {

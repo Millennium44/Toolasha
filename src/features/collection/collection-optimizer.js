@@ -1,11 +1,11 @@
 /**
  * Collection Points optimizer.
  *
- * A collapsible panel on Achievements → Collections that ranks the cheapest
- * next collection points: per item, the next rung of the points ladder and
- * the cheapest route to it (craft, decompose chain, or shop gear decomposed),
- * in gold per point. A target box plans the cheapest list of rungs to gain
- * "+N points".
+ * A collapsible panel on Achievements → Collections that ranks the next
+ * collection points: per item, the next rung of the points ladder and the best
+ * route to it (craft, decompose chain, shop gear decomposed, transmute or
+ * gather), by net gold per point or by time per point. A target box plans the
+ * best list of rungs to gain "+N points".
  *
  * The counts are the game's own `collections_updated` message, which it sends
  * when the Collections tab is opened; the panel appears once it has arrived.
@@ -27,6 +27,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
+import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -35,6 +36,8 @@ import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { canStartAction } from '../../utils/efficiency.js';
+import { GATHERING_TYPES } from '../../utils/profit-constants.js';
+import { getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { alchemyRunBasis, selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -199,6 +202,71 @@ export function transmuteRoute(sourceHrid, result, table, { buy, unitValue }) {
         batch: bulk,
         cost: buy + (attempts * overheadPerHour) / unitsPerHour,
         seconds: (attempts * 3600) / unitsPerHour,
+        yields,
+        kept,
+        bonus,
+        partlyUnpriced,
+    };
+}
+
+/**
+ * Running a gathering action as a route, one action at a time.
+ *
+ * Everything is the gathering calculator's (`calculateGatheringProfit`): its
+ * drop table per hour (gathering quantity and efficiency in), the Processing
+ * conversions, the essence and rare-find drops, and the tea spend. Per action,
+ * with A = actions per hour (efficiency repeats are free, so an action's time
+ * is 3600 / A):
+ *   yields Y  = itemsPerHour_Y / A, less the raw units Processing turns into its
+ *               processed item, which is credited instead (the planner's netting)
+ *   bonus Y   = dropsPerHour_Y / A × efficiencyMultiplier
+ *   cost      = drink spend per hour / A
+ * Every drop but the target is sold ({@link realizedSalePrice}); a drop or tea
+ * with no price at all leaves the route out of the ranking.
+ *
+ * @param {string} actionHrid
+ * @param {Object|null} profit - `calculateGatheringProfit(actionHrid)`
+ * @param {Object} opts
+ * @param {(hrid: string) => number|null} opts.unitValue - What selling one unit of an output realizes
+ * @returns {Object|null} A source route, or null when the action has no rate
+ */
+export function gatherRoute(actionHrid, profit, { unitValue }) {
+    const perHour = Number(profit?.actionsPerHour);
+    if (!(perHour > 0)) return null;
+    const efficiency = Number(profit.efficiencyMultiplier) > 0 ? Number(profit.efficiencyMultiplier) : 1;
+    const yields = new Map();
+    const add = (hrid, units) => {
+        if (!hrid || SKIP_ITEMS.has(hrid) || !Number.isFinite(units)) return;
+        yields.set(hrid, (yields.get(hrid) || 0) + units);
+    };
+    for (const output of profit.baseOutputs || []) add(output?.itemHrid, (Number(output?.itemsPerHour) || 0) / perHour);
+    for (const conversion of profit.processingConversions || []) {
+        add(conversion?.rawItemHrid, -(Number(conversion?.rawConsumedPerHour) || 0) / perHour);
+        add(conversion?.processedItemHrid, (Number(conversion?.conversionsPerHour) || 0) / perHour);
+    }
+    const bonus = new Set();
+    for (const drop of profit.bonusRevenue?.bonusDrops || []) {
+        if (!drop?.itemHrid) continue;
+        add(drop.itemHrid, ((Number(drop.dropsPerHour) || 0) / perHour) * efficiency);
+        bonus.add(drop.itemHrid);
+    }
+    for (const [hrid, units] of yields) if (!(units > 0)) yields.delete(hrid);
+    if (yields.size === 0) return null;
+
+    const kept = new Map();
+    let partlyUnpriced = (profit.drinkCosts || []).some((drink) => drink?.missingPrice);
+    for (const [hrid, units] of yields) {
+        const unit = unitValue(hrid);
+        if (unit === null || unit === undefined) partlyUnpriced = true;
+        else kept.set(hrid, { perSource: units, unit });
+    }
+    return {
+        route: 'gather',
+        sourceHrid: null,
+        actionHrid,
+        batch: 1,
+        cost: (Number(profit.drinkCostPerHour) || 0) / perHour,
+        seconds: 3600 / perHour,
         yields,
         kept,
         bonus,
@@ -447,6 +515,34 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         }
     }
     if (cancelled()) return null;
+
+    // Gather: run a gathering action the character can start
+    const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap || {};
+    const levels = new Map((dataManager.getSkills?.() || []).map((skill) => [skill.skillHrid, skill.level]));
+    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment?.(), itemDetailMap);
+    const canGather = (action) => {
+        const requirement = action.levelRequirement;
+        if (!requirement?.skillHrid) return true;
+        // Gathering has no Action Level tea; a skill-level tea counts, as the game's own check does
+        const drinks = dataManager.getActionDrinkSlots?.(action.type) || [];
+        return canStartAction({
+            requiredLevel: requirement.level || 1,
+            skillLevel: levels.get(requirement.skillHrid) ?? 1,
+            teaSkillLevelBonus: parseTeaSkillLevelBonus(action.type, drinks, itemDetailMap, drinkConcentration),
+        });
+    };
+    for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
+        if (!GATHERING_TYPES.includes(action?.type) || !Array.isArray(action.dropTable)) continue;
+        if (!canGather(action)) continue;
+        if (await pause()) return null;
+        try {
+            const route = gatherRoute(actionHrid, await calculateGatheringProfit(actionHrid), { unitValue });
+            if (route) sources.push(route);
+        } catch (error) {
+            console.error('[CollectionOptimizer] Gather route failed for', actionHrid, error);
+        }
+    }
+    if (cancelled()) return null;
     return { craft, sources };
 }
 
@@ -521,6 +617,11 @@ export function formatNet(gold) {
  */
 function describeRoute(option) {
     const label = ROUTE_LABELS[option.route] || option.route;
+    if (option.route === 'gather') {
+        const zone = dataManager.getActionDetails?.(option.actionHrid)?.name || String(option.actionHrid || '');
+        const actions = `${formatCount(option.units)} action${option.units === 1 ? '' : 's'}`;
+        return `${label}: ${actions} at ${zone.split('/').pop()}`;
+    }
     if (!option.sourceHrid) return label;
     return `${label}: ${option.units}× ${itemName(option.sourceHrid)}`;
 }
