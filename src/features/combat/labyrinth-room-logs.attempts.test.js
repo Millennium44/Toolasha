@@ -165,6 +165,23 @@ describe('skilling attempts are logged one per retry', () => {
         expect(labyrinthRoomLogs.activeSession.attempts).toHaveLength(100);
     });
 
+    test('joining an attempt already under way counts the actions it missed and marks it partial', () => {
+        play([
+            [5, 50],
+            [6, 60],
+        ]);
+        const [attempt] = labyrinthRoomLogs.activeSession.attempts;
+        expect(attempt).toMatchObject({ actions: 6, successes: 1, partial: true });
+    });
+
+    test('an attempt seen from its start is not partial', () => {
+        play([
+            [0, 0],
+            [1, 10],
+        ]);
+        expect(labyrinthRoomLogs.activeSession.attempts[0].partial).toBeUndefined();
+    });
+
     test('a missing actionTimeMs is recorded as null, not guessed', () => {
         labyrinthRoomLogs.onRoomProgress(msg(0, 0, { actionTimeMs: undefined }));
         expect(labyrinthRoomLogs.activeSession.attempts[0].actionTimeMs).toBeNull();

@@ -804,7 +804,8 @@ class LabyrinthRoomLogs {
      *
      * @param {Object} session - The room being logged
      * @param {Object} snapshot - The snapshot just received
-     * @returns {boolean} Whether this snapshot began a new attempt after a reset
+     * @returns {'reset'|'opened'|false} 'reset' when this snapshot began a new attempt after the
+     *   counter fell, 'opened' when it opened the first attempt seen in this session, else false
      */
     rollAttempt(session, snapshot) {
         if (session.mode !== 'skilling') return false;
@@ -836,8 +837,9 @@ class LabyrinthRoomLogs {
             if (session.attempts.length > MAX_SKILLING_ATTEMPTS) {
                 session.attempts = session.attempts.slice(session.attempts.length - MAX_SKILLING_ATTEMPTS);
             }
+            if (!reset) return 'opened';
         }
-        return reset;
+        return reset ? 'reset' : false;
     }
 
     /**
@@ -851,15 +853,23 @@ class LabyrinthRoomLogs {
      * @param {Object} session - The room being logged
      * @param {Object} snapshot - The snapshot just received
      * @param {Object|null} action - What `appendAction` derived, if anything
-     * @param {boolean} reset - Whether this snapshot began a new attempt
+     * An attempt opened mid-room (the tracker started or restarted with the
+     * counter already past 1) takes its action count from the counter, since
+     * the earlier actions happened; their outcomes were not seen, so it is
+     * marked `partial` rather than scored.
+     *
+     * @param {'reset'|'opened'|false} rolled - What `rollAttempt` did with this snapshot
      */
-    tallyAttempt(session, snapshot, action, reset) {
+    tallyAttempt(session, snapshot, action, rolled) {
         if (session.mode !== 'skilling') return;
         const attempt = session.attempts?.[session.attempts.length - 1];
         if (!attempt || attempt.endedAt) return;
         const prev = session.lastSnapshot;
+        const counter = Number(snapshot.actionCounter) || 0;
+        const reset = rolled === 'reset' || (rolled === 'opened' && counter >= 1);
+        if (rolled === 'opened' && counter > 1) attempt.partial = true;
 
-        let counted = action;
+        let counted = rolled === 'opened' ? null : action;
         if (reset && snapshot.actionCounter === 1) {
             counted = this.deriveAction(
                 { currentWorkValue: 0, progressPerAction: snapshot.progressPerAction },
