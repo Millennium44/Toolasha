@@ -366,6 +366,19 @@ describe('the single-action basis is untouched', () => {
     });
 });
 
+describe('a different protection item counts only the stack the run draws from', () => {
+    test('a +3 stack of 5 bounds the limit even with 1000 copies at +0', () => {
+        game.inventory = [stack(ESSENCE, 5000), stack(PROTECTION, 1000, 0), stack(PROTECTION, 5, 3)];
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const row = { ...enhancingRow({ protectionItemHrid: PROTECTION }), secondaryItemHash: hashFor(PROTECTION, 3) };
+        const limit = actionTimeDisplay.calculateMaterialLimit(details(), lookup, 0, row);
+
+        // 5 protections at one per ten attempts
+        expect(limit.maxActions).toBe(50);
+        expect(limit.limitType).toBe(`material:${PROTECTION}`);
+    });
+});
+
 describe('an item that protects itself keeps its spares back', () => {
     // 3 protections buy 30 attempts, so protections held == limit / 10
     const selfRow = (stackLevel = 0) => ({
