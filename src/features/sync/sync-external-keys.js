@@ -119,6 +119,14 @@ export function externalKeysSettled() {
     return writing;
 }
 
+/*
+ * The three calls below are asynchronous: each waits for this device's
+ * remembered record to load first, so it answers about — and changes — the
+ * whole registry, not just what this page has heard of so far. Called before
+ * the load, `unregisterKeys({owner})` would otherwise see no prefixes, report
+ * nothing removed and leave the saved ones syncing.
+ */
+
 /**
  * Ask for some of another script's keys in the `settings` store to travel with
  * this sync. Exposed as `window.Toolasha.sync.registerKeys`.
@@ -129,11 +137,15 @@ export function externalKeysSettled() {
  * every owner. Registering is additive and idempotent: call it on every page
  * load with the same list. {@link unregisterSyncKeys} withdraws a prefix.
  *
+ * Should the remembered record be unreadable, the registration still holds for
+ * this page and is saved by the next change that finds it readable.
+ *
  * @param {{owner: string, prefixes: string[]}} registration - Who is asking, and for which key prefixes
- * @returns {{ok: boolean, accepted: string[], added: string[], rejected: Array<{prefix: *, reason: string}>,
- *   error?: string}} What was taken, what was new, and what was refused and why
+ * @returns {Promise<{ok: boolean, accepted: string[], added: string[], rejected: Array<{prefix: *, reason: string}>,
+ *   error?: string}>} What was taken, what was new, and what was refused and why
  */
-export function registerSyncKeys(registration) {
+export async function registerSyncKeys(registration) {
+    await ensureExternalKeysLoaded();
     const { owner, prefixes } = registration && typeof registration === 'object' ? registration : {};
     const result = addExternalKeyPrefixes(owner, prefixes);
     if (result.error || result.rejected.length > 0) {
@@ -150,21 +162,34 @@ export function registerSyncKeys(registration) {
  * drop the prefix too instead of teaching it back. Keys already stored under it
  * stay where they are on every device; they just stop travelling.
  *
+ * Refused outright when the remembered record cannot be read: without it this
+ * device does not know which prefixes there are to withdraw, and a removal it
+ * could not save would be undone by the next page load.
+ *
  * @param {{owner: string, prefixes?: string[]}} registration - Whose prefixes, and which
- * @returns {{ok: boolean, removed: string[], error?: string}} What was withdrawn
+ * @returns {Promise<{ok: boolean, removed: string[], rejected: Array<{prefix: string, reason: string}>,
+ *   error?: string}>} What was withdrawn, and what could not be recorded
  */
-export function unregisterSyncKeys(registration) {
+export async function unregisterSyncKeys(registration) {
+    if (!(await ensureExternalKeysLoaded())) {
+        const error = 'the saved registrations could not be read; nothing was removed. Try again.';
+        console.warn('[Sync] Key unregistration refused:', error);
+        return { ok: false, removed: [], rejected: [], error };
+    }
     const { owner, prefixes } = registration && typeof registration === 'object' ? registration : {};
     const result = removeExternalKeyPrefixes(owner, prefixes);
-    if (result.error) console.warn('[Sync] Key unregistration refused:', result.error);
+    if (result.error || result.rejected.length > 0) {
+        console.warn('[Sync] Key unregistration refused in part:', result.error || result.rejected);
+    }
     return result;
 }
 
 /**
  * Every registered prefix, by owner. Exposed as `window.Toolasha.sync.registeredKeys`.
- * @returns {Record<string, string[]>} Prefixes by owner
+ * @returns {Promise<Record<string, string[]>>} Prefixes by owner
  */
-export function registeredSyncKeys() {
+export async function registeredSyncKeys() {
+    await ensureExternalKeysLoaded();
     return externalKeyPrefixes();
 }
 

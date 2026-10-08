@@ -3062,6 +3062,7 @@ if (combatSimulatorSite === 'metz') {
     //   window.Toolasha.sync.registerKeys({ owner: 'some-script', prefixes: ['someScriptPrefs_'] })
     //   window.Toolasha.sync.unregisterKeys({ owner: 'some-script' }) — all of its prefixes, or name some
     // Set here, after the libraries load: a script that runs first has to wait for it.
+    // All three return promises: each waits for this device's saved registrations to load.
     targetWindow.Toolasha.sync = {
         registerKeys: (registration) => UI.syncKeys.register(registration),
         unregisterKeys: (registration) => UI.syncKeys.unregister(registration),

@@ -307,8 +307,20 @@ export const OWNED_KEY_PATTERNS = [/^.+_bulkSell_lastTab$/, /^.+_inventoryTabs_c
  *   business;
  * - at most {@link EXTERNAL_PREFIX_LIMIT} registered prefixes across every owner.
  *
+ * - at most {@link EXTERNAL_ENTRY_LIMIT} prefixes ever known, registered and
+ *   removed together.
+ *
+ * A removal is never forgotten: a forgotten one would let an older copy that
+ * still lists the prefix teach it back. What bounds the registry instead is
+ * that it never learns a new prefix once it holds {@link EXTERNAL_ENTRY_LIMIT}
+ * entries — not as registered, and not as removed. Entries are only ever added
+ * or flipped, never deleted, so a device at the limit cannot be taught a
+ * prefix it does not hold, and one below it learns a removal as readily as a
+ * registration. The record is therefore at most 128 entries of at most 128
+ * characters each (about 20 KB), plus the device's own record loaded whole.
+ *
  * The device's own remembered record is the exception: it was valid when it was
- * written, and loading it is never refused for the cap or an overlap — refusing
+ * written, and loading it is never refused for a limit or an overlap — refusing
  * would have the next save write a smaller record than the one on disk.
  */
 
@@ -321,8 +333,8 @@ export const EXTERNAL_PREFIX_MAX_LENGTH = 128;
 /** Most registered prefixes held across every owner together */
 export const EXTERNAL_PREFIX_LIMIT = 32;
 
-/** Most removals remembered; past it the oldest is forgotten */
-export const EXTERNAL_REMOVAL_LIMIT = 64;
+/** Most prefixes ever known, registered and removed together; past it nothing new is learned */
+export const EXTERNAL_ENTRY_LIMIT = 128;
 
 /** What an owner id may look like: short, printable, nothing that needs escaping */
 const EXTERNAL_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
@@ -377,26 +389,23 @@ function checkAgainstOtherOwners(owner, prefix) {
     return null;
 }
 
-/** Rebuild the flat list and enforce the removal limit after a change */
+/** How many entries, registered and removed, every owner holds together */
+let externalEntryCount = 0;
+
+/** Rebuild the flat list and the entry count after a change */
 function settle() {
     externalPrefixList = [];
-    const removals = [];
-    for (const [owner, entries] of externalEntries) {
+    externalEntryCount = 0;
+    for (const entries of externalEntries.values()) {
         for (const [prefix, entry] of entries) {
+            externalEntryCount += 1;
             if (entry.live) externalPrefixList.push(prefix);
-            else removals.push({ owner, prefix, at: entry.at });
         }
-    }
-    if (removals.length > EXTERNAL_REMOVAL_LIMIT) {
-        removals.sort((a, b) => a.at - b.at || a.owner.localeCompare(b.owner) || a.prefix.localeCompare(b.prefix));
-        for (const { owner, prefix } of removals.slice(0, removals.length - EXTERNAL_REMOVAL_LIMIT)) {
-            externalEntries.get(owner).delete(prefix);
-        }
-    }
-    for (const [owner, entries] of Array.from(externalEntries)) {
-        if (entries.size === 0) externalEntries.delete(owner);
     }
 }
+
+/** The refusal for a prefix this registry has no room to learn */
+const FULL = `the limit of ${EXTERNAL_ENTRY_LIMIT} prefixes ever registered is reached`;
 
 /** Tell the listeners the registry changed */
 function announce() {
@@ -456,6 +465,10 @@ export function addExternalKeyPrefixes(owner, prefixes, { notify = true, now = D
             rejected.push({ prefix, reason: `the limit of ${EXTERNAL_PREFIX_LIMIT} registered prefixes is reached` });
             continue;
         }
+        if (!entries.has(prefix) && externalEntryCount + added.length >= EXTERNAL_ENTRY_LIMIT) {
+            rejected.push({ prefix, reason: FULL });
+            continue;
+        }
         // Later than any removal it replaces, whatever this device's clock says
         entries.set(prefix, { live: true, at: Math.max(now, (entries.get(prefix)?.at ?? 0) + 1) });
         accepted.push(prefix);
@@ -480,11 +493,15 @@ export function addExternalKeyPrefixes(owner, prefixes, { notify = true, now = D
  * @param {*} owner - Owner id
  * @param {*} [prefixes] - Prefixes to withdraw; all of the owner's when omitted
  * @param {{notify?: boolean, now?: number}} [options] - `notify: false` skips the change listeners
- * @returns {{ok: boolean, removed: string[], error?: string}} What was withdrawn
+ * A prefix this device never held takes room in the registry; once it is
+ * full, such a prefix is refused (one it holds can always be withdrawn).
+ *
+ * @returns {{ok: boolean, removed: string[], rejected: Array<{prefix: string, reason: string}>,
+ *   error?: string}} What was withdrawn, and what could not be recorded
  */
 export function removeExternalKeyPrefixes(owner, prefixes, { notify = true, now = Date.now() } = {}) {
     const error = malformed(owner, prefixes, { prefixesOptional: true });
-    if (error) return { ok: false, removed: [], error };
+    if (error) return { ok: false, removed: [], rejected: [], error };
 
     const entries = externalEntries.get(owner) || new Map();
     const named =
@@ -492,9 +509,14 @@ export function removeExternalKeyPrefixes(owner, prefixes, { notify = true, now 
             ? Array.from(entries.keys()).filter((prefix) => entries.get(prefix).live)
             : prefixes.filter((prefix) => typeof prefix === 'string' && checkExternalPrefix(prefix) === null);
     const removed = [];
+    const rejected = [];
     for (const prefix of new Set(named)) {
         const entry = entries.get(prefix);
         if (entry && !entry.live) continue;
+        if (!entry && externalEntryCount + removed.length >= EXTERNAL_ENTRY_LIMIT) {
+            rejected.push({ prefix, reason: FULL });
+            continue;
+        }
         entries.set(prefix, { live: false, at: Math.max(now, (entry?.at ?? 0) + 1) });
         removed.push(prefix);
     }
@@ -503,7 +525,7 @@ export function removeExternalKeyPrefixes(owner, prefixes, { notify = true, now 
         settle();
         if (notify) announce();
     }
-    return { ok: true, removed };
+    return { ok: rejected.length === 0, removed, rejected };
 }
 
 /**
@@ -558,6 +580,8 @@ export function learnExternalKeyPrefixes(record, { notify = true, trusted = fals
             const held = entries.get(prefix);
             const newer = !held || at > held.at || (at === held.at && held.live && !live);
             if (!newer || (held && held.live === live && held.at === at)) continue;
+            // Full: nothing it does not hold, registered or removed (see "What may be registered")
+            if (!held && !trusted && externalEntryCount >= EXTERNAL_ENTRY_LIMIT) continue;
             if (live && !held?.live && !trusted) {
                 if (checkAgainstOtherOwners(owner, prefix)) continue;
                 if (externalPrefixList.length >= EXTERNAL_PREFIX_LIMIT) continue;
@@ -627,6 +651,7 @@ export function onExternalKeyPrefixesChange(listener) {
 export function _resetExternalKeyPrefixes() {
     externalEntries.clear();
     externalPrefixList = [];
+    externalEntryCount = 0;
 }
 
 /**

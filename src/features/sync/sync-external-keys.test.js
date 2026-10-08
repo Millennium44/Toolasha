@@ -48,8 +48,15 @@ vi.mock('../../utils/full-backup.js', () => ({
     stripExcludedKeys: (storeName, entries) => entries,
 }));
 
-const { ownsKey, partitionOwnedKeys, checkExternalPrefix, EXTERNAL_PREFIX_LIMIT, OWNED_KEY_PREFIXES } =
-    await import('./sync-ownership.js');
+const {
+    ownsKey,
+    partitionOwnedKeys,
+    checkExternalPrefix,
+    addExternalKeyPrefixes,
+    EXTERNAL_PREFIX_LIMIT,
+    EXTERNAL_ENTRY_LIMIT,
+    OWNED_KEY_PREFIXES,
+} = await import('./sync-ownership.js');
 const {
     registerSyncKeys,
     unregisterSyncKeys,
@@ -90,11 +97,11 @@ beforeEach(() => {
 
 describe('registration validation', () => {
     test('accepts neutral prefixes and reports them', async () => {
-        const result = registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        const result = await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         expect(result).toMatchObject({ ok: true, accepted: PREFIXES, added: PREFIXES, rejected: [] });
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: [...PREFIXES].sort() });
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: [...PREFIXES].sort() });
         // Registering again is a no-op, not a second copy
-        expect(registerSyncKeys({ owner: OWNER, prefixes: PREFIXES }).added).toEqual([]);
+        expect((await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES })).added).toEqual([]);
         await externalKeysSettled();
     });
 
@@ -110,15 +117,15 @@ describe('registration validation', () => {
         ['script_settingsMap_other', "an extension of this script's settings map key"],
         ['settings_', "a prefix of this script's settings bookkeeping"],
         ['x'.repeat(200), 'over the maximum length'],
-    ])('refuses %j (%s)', (prefix) => {
-        const result = registerSyncKeys({ owner: OWNER, prefixes: [prefix] });
+    ])('refuses %j (%s)', async (prefix) => {
+        const result = await registerSyncKeys({ owner: OWNER, prefixes: [prefix] });
         expect(result.ok).toBe(false);
         expect(result.added).toEqual([]);
         expect(result.rejected).toHaveLength(1);
-        expect(registeredSyncKeys()).toEqual({});
+        expect(await registeredSyncKeys()).toEqual({});
     });
 
-    test('refuses every prefix that would overlap a key this script owns, device-local ones included', () => {
+    test('refuses every prefix that would overlap a key this script owns, device-local ones included', async () => {
         const ours = [...OWNED_KEY_PREFIXES, ...LOCAL_ONLY_KEY_PREFIXES, ...DEVICE_LOCAL_KEY_PREFIXES];
         for (const prefix of ours) {
             if (prefix.length < 6) continue;
@@ -127,42 +134,52 @@ describe('registration validation', () => {
         }
     });
 
-    test('refuses a bad owner or a non-array of prefixes', () => {
-        expect(registerSyncKeys({ owner: '', prefixes: PREFIXES }).ok).toBe(false);
-        expect(registerSyncKeys({ owner: 'has space', prefixes: PREFIXES }).ok).toBe(false);
-        expect(registerSyncKeys({ owner: OWNER, prefixes: 'otherScriptPrefs_' }).ok).toBe(false);
-        expect(registerSyncKeys(undefined).ok).toBe(false);
-        expect(registeredSyncKeys()).toEqual({});
+    test('refuses a bad owner or a non-array of prefixes', async () => {
+        expect((await registerSyncKeys({ owner: '', prefixes: PREFIXES })).ok).toBe(false);
+        expect((await registerSyncKeys({ owner: 'has space', prefixes: PREFIXES })).ok).toBe(false);
+        expect((await registerSyncKeys({ owner: OWNER, prefixes: 'otherScriptPrefs_' })).ok).toBe(false);
+        expect((await registerSyncKeys(undefined)).ok).toBe(false);
+        expect(await registeredSyncKeys()).toEqual({});
     });
 
     test('caps the total number of prefixes without evicting earlier ones', async () => {
         const many = Array.from({ length: EXTERNAL_PREFIX_LIMIT + 3 }, (_, index) => `otherScriptKey${index}_`);
-        const result = registerSyncKeys({ owner: OWNER, prefixes: many });
+        const result = await registerSyncKeys({ owner: OWNER, prefixes: many });
         expect(result.added).toHaveLength(EXTERNAL_PREFIX_LIMIT);
         expect(result.rejected).toHaveLength(3);
-        expect(registerSyncKeys({ owner: 'second-script', prefixes: ['secondScriptPrefs_'] }).added).toEqual([]);
-        expect(registeredSyncKeys()[OWNER]).toHaveLength(EXTERNAL_PREFIX_LIMIT);
+        expect((await registerSyncKeys({ owner: 'second-script', prefixes: ['secondScriptPrefs_'] })).added).toEqual(
+            []
+        );
+        expect((await registeredSyncKeys())[OWNER]).toHaveLength(EXTERNAL_PREFIX_LIMIT);
         await externalKeysSettled();
     });
 
     test('refuses a prefix that overlaps one another owner registered, either way round', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
         // Shorter: would capture the first owner's whole namespace
-        expect(registerSyncKeys({ owner: 'second-script', prefixes: ['otherScript'] }).rejected).toHaveLength(1);
+        expect((await registerSyncKeys({ owner: 'second-script', prefixes: ['otherScript'] })).rejected).toHaveLength(
+            1
+        );
         // Longer: would sit inside it
-        expect(registerSyncKeys({ owner: 'second-script', prefixes: ['otherScriptPrefs_x'] }).rejected).toHaveLength(1);
+        expect(
+            (await registerSyncKeys({ owner: 'second-script', prefixes: ['otherScriptPrefs_x'] })).rejected
+        ).toHaveLength(1);
         // Identical: never held twice, so never counted twice toward the cap
-        expect(registerSyncKeys({ owner: 'second-script', prefixes: ['otherScriptPrefs_'] }).rejected).toHaveLength(1);
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptPrefs_'] });
+        expect(
+            (await registerSyncKeys({ owner: 'second-script', prefixes: ['otherScriptPrefs_'] })).rejected
+        ).toHaveLength(1);
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptPrefs_'] });
         // The same owner may widen or narrow its own
-        expect(registerSyncKeys({ owner: OWNER, prefixes: ['otherScript', 'otherScriptPrefs_x'] }).ok).toBe(true);
+        expect((await registerSyncKeys({ owner: OWNER, prefixes: ['otherScript', 'otherScriptPrefs_x'] })).ok).toBe(
+            true
+        );
         await externalKeysSettled();
     });
 
     test('a payload cannot teach a prefix that overlaps another owner either', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
         learnExternalKeysFromText(payloadText({}, { 'second-script': ['otherScript'] }));
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptPrefs_'] });
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptPrefs_'] });
         expect(ownsKey('settings', 'otherScriptCache_big')).toBe(false);
         await externalKeysSettled();
     });
@@ -171,7 +188,7 @@ describe('registration validation', () => {
 describe('ownership', () => {
     test('a registered prefix is owned in the settings store, and only there', async () => {
         expect(ownsKey('settings', 'otherScriptPrefs_main')).toBe(false);
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         expect(ownsKey('settings', 'otherScriptPrefs_main')).toBe(true);
         expect(ownsKey('settings', 'otherScriptLive')).toBe(true);
         expect(ownsKey('settings', 'otherScriptCache_big')).toBe(false);
@@ -196,7 +213,7 @@ describe('the payload', () => {
             otherScriptLive: { state: 1 },
             otherScriptCache_big: 'not registered',
         };
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
 
         const payload = JSON.parse(await buildPayloadJSON('settings'));
         expect(payload.stores.settings).toEqual({
@@ -209,7 +226,7 @@ describe('the payload', () => {
     });
 
     test('a registered key is written back on a pull', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         await externalKeysSettled();
         await applyPayload(
             payloadText({ watchlist: ['b'], otherScriptPrefs_main: { mode: 'remote' }, otherScriptCache_big: 'x' })
@@ -245,7 +262,7 @@ describe('the payload', () => {
     });
 
     test('the registry is never uploaded as a key, only as the payload field', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         await externalKeysSettled();
         expect(storeState.stores.settings[KEY_EXTERNAL_KEYS]).toBeDefined();
         const payload = JSON.parse(await buildPayloadJSON('settings'));
@@ -255,7 +272,7 @@ describe('the payload', () => {
     test("the registry is read from a payload's head without its stores", async () => {
         const text = payloadText({ watchlist: ['x'] }, { [OWNER]: ['otherScriptLive'] });
         expect(learnExternalKeysFromText(text)).toBe(true);
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
         expect(learnExternalKeysFromText(text)).toBe(false);
         expect(learnExternalKeysFromText('not json')).toBe(false);
         await externalKeysSettled();
@@ -265,8 +282,8 @@ describe('the payload', () => {
 describe('withdrawing a prefix', () => {
     test('unregistering stops the keys travelling and leaves a removal in the payload', async () => {
         storeState.stores.settings = { otherScriptPrefs_main: 1, otherScriptLive: 2 };
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
-        expect(unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] }).removed).toEqual([
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        expect((await unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] })).removed).toEqual([
             'otherScriptPrefs_',
         ]);
         expect(ownsKey('settings', 'otherScriptPrefs_main')).toBe(false);
@@ -282,35 +299,35 @@ describe('withdrawing a prefix', () => {
     });
 
     test('with no prefixes named, every prefix of the owner goes', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
-        registerSyncKeys({ owner: 'second-script', prefixes: ['secondScriptPrefs_'] });
-        expect(unregisterSyncKeys({ owner: OWNER }).removed.sort()).toEqual([...PREFIXES].sort());
-        expect(registeredSyncKeys()).toEqual({ 'second-script': ['secondScriptPrefs_'] });
-        expect(unregisterSyncKeys({ owner: 'has space' }).ok).toBe(false);
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: 'second-script', prefixes: ['secondScriptPrefs_'] });
+        expect((await unregisterSyncKeys({ owner: OWNER })).removed.sort()).toEqual([...PREFIXES].sort());
+        expect(await registeredSyncKeys()).toEqual({ 'second-script': ['secondScriptPrefs_'] });
+        expect((await unregisterSyncKeys({ owner: 'has space' })).ok).toBe(false);
         await externalKeysSettled();
     });
 
     test('an older copy that still lists the prefix does not teach it back', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         const before = JSON.parse(await buildPayloadJSON('settings')).externalKeys;
         vi.setSystemTime(new Date('2026-10-02T00:00:00Z'));
-        unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
+        await unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
         vi.useRealTimers();
 
         // Another device's payload, from before the removal
         await applyPayload(payloadText({ otherScriptPrefs_main: 'stale' }, before));
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
         expect(Object.hasOwn(importedPayloads[0].stores.settings, 'otherScriptPrefs_main')).toBe(false);
         // The plain list shape (time 0) loses to the removal too
         learnExternalKeysFromText(payloadText({}, { [OWNER]: PREFIXES }));
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
         await externalKeysSettled();
     });
 
     test('a removal in a payload reaches a device that still holds the prefix', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         const later = Date.now() + 60_000;
         await applyPayload(
             payloadText(
@@ -318,14 +335,14 @@ describe('withdrawing a prefix', () => {
                 { [OWNER]: { prefixes: { otherScriptLive: 1 }, removed: { otherScriptPrefs_: later } } }
             )
         );
-        expect(registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: ['otherScriptLive'] });
         await externalKeysSettled();
     });
 
     test('registering again after a removal wins over the removal', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
-        unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
-        expect(registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] }).added).toEqual([
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
+        expect((await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] })).added).toEqual([
             'otherScriptPrefs_',
         ]);
         expect(ownsKey('settings', 'otherScriptPrefs_main')).toBe(true);
@@ -337,7 +354,7 @@ describe('withdrawing a prefix', () => {
 
 describe('remembered across page loads', () => {
     test('a registration is saved device-local through the restore-latch exemption', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         await externalKeysSettled();
         const write = storeState.putAllCalls.find((call) => Object.hasOwn(call.entries, KEY_EXTERNAL_KEYS));
         expect(write.options).toEqual({ bypassRestoreLatch: true });
@@ -345,7 +362,7 @@ describe('remembered across page loads', () => {
     });
 
     test('the next load honours the saved prefixes before the other script registers again', async () => {
-        registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
         await externalKeysSettled();
         storeState.stores.settings.otherScriptPrefs_main = { mode: 'kept' };
 
@@ -361,7 +378,7 @@ describe('remembered across page loads', () => {
     test('a registration made before the saved record is read does not write over it', async () => {
         // The plain list shape an earlier build of this feature wrote
         storeState.stores.settings[KEY_EXTERNAL_KEYS] = { 'first-script': ['firstScriptPrefs_'] };
-        registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
         await externalKeysSettled();
         const saved = storeState.stores.settings[KEY_EXTERNAL_KEYS];
         expect(liveIn(saved, 'first-script')).toEqual(['firstScriptPrefs_']);
@@ -372,7 +389,8 @@ describe('remembered across page loads', () => {
         const stored = Array.from({ length: 5 }, (_, index) => `firstScriptKey${index}_`);
         storeState.stores.settings[KEY_EXTERNAL_KEYS] = { 'first-script': stored };
         const many = Array.from({ length: EXTERNAL_PREFIX_LIMIT }, (_, index) => `otherScriptKey${index}_`);
-        registerSyncKeys({ owner: OWNER, prefixes: many });
+        // Straight into the registry, as nothing public can any more: the public calls load first
+        addExternalKeyPrefixes(OWNER, many);
         await externalKeysSettled();
         const saved = storeState.stores.settings[KEY_EXTERNAL_KEYS];
         expect(liveIn(saved, 'first-script')).toEqual([...stored].sort());
@@ -384,7 +402,7 @@ describe('remembered across page loads', () => {
         storeState.stores.settings[KEY_EXTERNAL_KEYS] = { 'first-script': ['firstScriptPrefs_'] };
         storeState.unreadable = true;
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
         await externalKeysSettled();
         warn.mockRestore();
         expect(storeState.putAllCalls).toEqual([]);
@@ -399,6 +417,85 @@ describe('remembered across page loads', () => {
         await expect(applyPayload(payloadText({ otherScriptLive: 2 }))).rejects.toMatchObject({ kind: 'storage' });
         warn.mockRestore();
         expect(importedPayloads).toEqual([]);
+    });
+});
+
+describe('review follow-ups', () => {
+    test('unregistering before this page loaded the saved record withdraws the saved prefixes', async () => {
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        await externalKeysSettled();
+        storeState.stores.settings.otherScriptLive = 1;
+
+        _resetExternalKeys(); // a fresh page: the saved record not read yet
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: [...PREFIXES].sort() });
+        _resetExternalKeys();
+        expect((await unregisterSyncKeys({ owner: OWNER })).removed.sort()).toEqual([...PREFIXES].sort());
+        await externalKeysSettled();
+        expect(liveIn(storeState.stores.settings[KEY_EXTERNAL_KEYS])).toEqual([]);
+
+        _resetExternalKeys();
+        const payload = JSON.parse(await buildPayloadJSON('settings'));
+        expect(Object.hasOwn(payload.stores.settings, 'otherScriptLive')).toBe(false);
+    });
+
+    test('unregistering is refused when the saved record cannot be read', async () => {
+        storeState.stores.settings[KEY_EXTERNAL_KEYS] = { [OWNER]: PREFIXES };
+        storeState.unreadable = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const result = await unregisterSyncKeys({ owner: OWNER });
+        warn.mockRestore();
+        expect(result.ok).toBe(false);
+        expect(storeState.putAllCalls).toEqual([]);
+    });
+
+    test('a damaged payload with a readable registry header teaches nothing', async () => {
+        const registry = { [OWNER]: ['otherScriptLive'] };
+        const damaged = JSON.stringify({ formatVersion: 1, externalKeys: registry, stores: { settings: [] } });
+        expect(learnExternalKeysFromText(damaged)).toBe(false);
+        // Cut short after the header: the old header-only read accepted this
+        const cut = payloadText({ otherScriptLive: { state: 1 } }, registry).slice(0, -20);
+        expect(learnExternalKeysFromText(cut)).toBe(false);
+        const newer = JSON.stringify({ formatVersion: 2, externalKeys: registry, stores: { settings: {} } });
+        expect(learnExternalKeysFromText(newer)).toBe(false);
+
+        await expect(applyPayload(damaged)).rejects.toThrow();
+        storeState.stores.settings = { otherScriptLive: 'local' };
+        expect(() => mergeForUpload(payloadText({}), damaged, null)).toThrow();
+        expect(await registeredSyncKeys()).toEqual({});
+    });
+
+    test('a withdrawn prefix stays withdrawn however many removals follow', async () => {
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptFirst'] });
+        await unregisterSyncKeys({ owner: OWNER, prefixes: ['otherScriptFirst'] });
+        for (let index = 0; index < 80; index += 1) {
+            const prefix = `otherScriptKey${index}_`;
+            await registerSyncKeys({ owner: OWNER, prefixes: [prefix] });
+            await unregisterSyncKeys({ owner: OWNER, prefixes: [prefix] });
+        }
+        // A stale copy, from before the first removal
+        learnExternalKeysFromText(payloadText({}, { [OWNER]: { prefixes: { otherScriptFirst: 1 }, removed: {} } }));
+        expect(ownsKey('settings', 'otherScriptFirst')).toBe(false);
+        expect(removedIn(JSON.parse(await buildPayloadJSON('settings')).externalKeys)).toContain('otherScriptFirst');
+        await externalKeysSettled();
+    });
+
+    test('a full registry learns no prefix it does not hold, registered or removed', async () => {
+        for (let index = 0; index < EXTERNAL_ENTRY_LIMIT; index += 1) {
+            const prefix = `otherScriptKey${index}_`;
+            await registerSyncKeys({ owner: OWNER, prefixes: [prefix] });
+            await unregisterSyncKeys({ owner: OWNER, prefixes: [prefix] });
+        }
+        const late = Date.now() + 60_000;
+        expect(
+            learnExternalKeysFromText(
+                payloadText({}, { 'second-script': { prefixes: { secondScriptPrefs_: late }, removed: {} } })
+            )
+        ).toBe(false);
+        expect((await registerSyncKeys({ owner: 'second-script', prefixes: ['secondScriptPrefs_'] })).ok).toBe(false);
+        expect((await unregisterSyncKeys({ owner: 'second-script', prefixes: ['secondScriptOld_'] })).ok).toBe(false);
+        // One it holds can still be registered again
+        expect((await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptKey0_'] })).ok).toBe(true);
+        await externalKeysSettled();
     });
 });
 

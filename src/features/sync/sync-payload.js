@@ -240,41 +240,60 @@ function externalKeysField() {
 }
 
 /**
- * Learn the prefixes a payload says other scripts registered, before anything
- * reads ownership off it. Only from a payload in this build's format — one this
- * build is about to refuse is not one to take facts from.
+ * Whether `applyPayload` and `mergeForUpload` would accept this payload: the
+ * same refusal ({@link assertApplicable}), asked of the stores this script
+ * syncs — the others are dropped before either of them checks.
  * @param {*} payload - Parsed payload
- * @returns {boolean} Whether the registry gained anything
+ * @returns {boolean} True when the payload would be applied or merged
+ */
+function isApplicable(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    const stores = payload.stores;
+    if (!stores || typeof stores !== 'object' || Array.isArray(stores)) return false;
+    const ours = Object.fromEntries(Object.entries(stores).filter(([name]) => isSyncedStore(name)));
+    try {
+        assertApplicable({ ...payload, stores: ours });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Learn the prefixes a payload says other scripts registered, before anything
+ * reads ownership off it. Only from a payload this build would apply or merge
+ * whole — a damaged or newer-format one is refused there, and a registry it
+ * carries is not a fact to take from it either: the pressed Push that learned
+ * one would upload this device's keys under it.
+ * @param {*} payload - Parsed payload
+ * @returns {boolean} Whether the registry changed
  */
 function learnPayloadExternalKeys(payload) {
-    if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) return false;
+    if (!isApplicable(payload)) return false;
     return learnExternalKeyPrefixes(payload.externalKeys);
 }
 
 /**
- * Learn the registry a payload's text carries, without parsing its stores.
+ * Learn the registry a payload's text carries.
  *
  * For a caller about to act on this device's payload against a download — a
  * pressed Push, a merged upload — that has to know first whether the download
  * named prefixes this device did not, and rebuild its own payload if so. The
- * field is written before `stores` by both writers, and `,"stores":{` cannot
- * occur inside an earlier JSON string (its quotes would be escaped), so the
- * head of the text up to there is the whole of everything else.
+ * whole text is parsed and checked, not only the field: a damaged payload with
+ * a readable header must teach nothing.
  *
  * @param {string} text - Payload text
  * @returns {boolean} Whether the registry changed
  */
 export function learnExternalKeysFromText(text) {
     if (typeof text !== 'string') return false;
-    const at = text.indexOf(',"stores":{');
-    if (at < 0) return false;
-    let head;
+    let payload;
     try {
-        head = JSON.parse(`${text.slice(0, at)}}`);
+        payload = JSON.parse(text);
     } catch {
         return false;
     }
-    return learnPayloadExternalKeys(head);
+    return learnPayloadExternalKeys(payload);
 }
 
 /**

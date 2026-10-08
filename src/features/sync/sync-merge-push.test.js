@@ -1814,7 +1814,7 @@ describe("another script's registered keys, end to end", () => {
     /** A registers the key and pushes its copy */
     async function registerOnA(a) {
         await asDevice(a, async () => {
-            registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
+            await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
             a.db.settings.otherScriptLive = { state: 'a' };
             expect((await syncManager.push()).ok).toBe(true);
         });
