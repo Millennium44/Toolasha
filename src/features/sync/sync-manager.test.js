@@ -178,7 +178,7 @@ vi.mock('./pull-summary-panel.js', () => ({
     openPullSummaryPanel: () => panelOpens.push(1),
 }));
 
-const { lastPullSummary, clearPullSummary } = await import('./pull-summary.js');
+const { lastPullSummary, clearPullSummary, rememberPullSummary } = await import('./pull-summary.js');
 const { default: syncManager, isNewer, SyncManager } = await import('./sync-manager.js');
 
 beforeEach(() => {
@@ -2202,6 +2202,48 @@ describe('automatic pushes merge into the upload, never into this device', () =>
             expect(result).toMatchObject({ ok: true, reason: 'wrote-nothing' });
             expect(toasts).toHaveLength(0);
             expect(stored.map.toolasha_sync_unapplied).toBeNull();
+        });
+
+        test('a takeover while this device is built leaves the newer record alone', async () => {
+            payload.addsToRemote = () => false;
+            let finishBuild;
+            payload.buildWait = new Promise((resolve) => {
+                finishBuild = resolve;
+            });
+
+            const pulling = syncManager.pull({ silent: true, startup: true });
+            await vi.waitFor(() => expect(storageCalls).toContain('buildPayloadJSON'));
+            // The operation that took over has since recorded a newer exchange
+            syncManager.cleanup();
+            stored.map.toolasha_sync_lastSyncedSeq = 9;
+            stored.map.toolasha_sync_lastHash = 'h:newer';
+            finishBuild();
+
+            expect(await pulling).toMatchObject({ skipped: true, reason: 'superseded' });
+            expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(9);
+            expect(stored.map.toolasha_sync_lastHash).toBe('h:newer');
+            expect(stored.map.toolasha_sync_baseline).toBeUndefined();
+        });
+
+        test('a hold left from an earlier version is cleared once this device matches the gist', async () => {
+            payload.addsToRemote = () => false;
+            stored.map.toolasha_sync_mergeHeld = { exportedAt: '2026-02-15T00:00:00.000Z', hash: 'h:older' };
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(result.reason).toBe('same-content');
+            expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+        });
+
+        test('an apply that wrote nothing keeps the summary an earlier reload toast opens', async () => {
+            const earlier = { at: 'earlier', combined: 1, stores: [] };
+            rememberPullSummary(earlier);
+            payload.expected = { settings: 0 };
+            payload.unchanged = { settings: 3 };
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(lastPullSummary()).toBe(earlier);
         });
 
         test('an apply that changed a record still asks for the reload, and counts what it left alone', async () => {

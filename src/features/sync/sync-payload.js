@@ -709,17 +709,12 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
             await settingsStorage.reconcileKeyMigrationState(landing);
         }
 
-        // One read of each store this pull touches, shared by the checks below:
-        // nothing writes between them and the import
-        const localStores = new Map();
-        const readLocal = async (storeName) => {
-            if (!localStores.has(storeName)) localStores.set(storeName, await storage.getAll(storeName));
-            return localStores.get(storeName);
-        };
-
         const histories = await mergeLocalHistories(payload);
         const mergeHeld = histories.held;
-        if (mode === 'merge') await keepMovedLocalWholeKeys(payload, baseline, readLocal);
+        // One store read at a time, each let go before the next: what this
+        // device moved since the last exchange is kept (merge mode), and what it
+        // already holds is noted, to be left out once `applied` is taken below
+        const sameByStore = await weighAgainstLocal(payload, mode === 'merge' ? baseline : null);
 
         // What is remembered as "the state of this device" has to be what was
         // actually written. `mergeLocalHistories` (and the settings fix-ups
@@ -734,7 +729,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
 
         // After `applied`, which describes the data as it now stands here: a
         // key left out below already holds its value
-        const { unchanged, unchangedKeys } = await dropUnchangedKeys(payload, readLocal);
+        const { unchanged, unchangedKeys } = dropUnchangedKeys(payload, sameByStore);
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
         const merged = histories.merged.filter(changed);
         const mergeFailed = histories.failed.filter(changed);
@@ -1234,63 +1229,54 @@ export function restampRestoredSettings(payload, now = Date.now()) {
 }
 
 /**
- * The startup pull's half of the whole-value rule: drop from the download each
- * key this device moved since the last exchange while the gist's copy did not,
- * so the import leaves this device's newer value where it is.
- * @param {Object} payload - Parsed payload, mutated in place
- * @param {Record<string, string>|null} baseline - Hashes at the last exchange
- * @returns {Promise<void>}
+ * Weigh a download against this device's stores, one store read at a time, so
+ * no more than one store's local copy is held at once.
+ *
+ * With a baseline — the startup pull's half of the whole-value rule — each key
+ * this device moved since the last exchange while the gist's copy did not is
+ * dropped from the download, so the import leaves this device's newer value
+ * where it is.
+ *
+ * Then each remaining key this device already holds with the same value is
+ * noted (compared with object keys sorted, as `addsToRemote` compares), for
+ * {@link dropUnchangedKeys} to leave out. A record and its tombstones are kept
+ * together whenever either moved (see `tombstoneCompanionKey`), so the restore
+ * still reconciles the pair. A store that cannot be read is noted as having
+ * nothing the same: an import that writes an identical value is the old
+ * behavior, never a loss.
+ *
+ * @param {Object} payload - Parsed payload, after every fold; mutated in place by the baseline rule
+ * @param {Record<string, string>|null} baseline - Hashes at the last exchange, or null outside merge mode
+ * @returns {Promise<Map<string, Set<string>>>} Per store, the keys that hold this device's value already
  */
-async function keepMovedLocalWholeKeys(payload, baseline, readLocal = (storeName) => storage.getAll(storeName)) {
-    if (!baseline) return;
+async function weighAgainstLocal(payload, baseline) {
+    const sameByStore = new Map();
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
-        const local = await readLocal(storeName);
-        for (const key of Object.keys(entries)) {
-            if (!isWholeKey(storeName, key) || !Object.hasOwn(local || {}, key)) continue;
-            if (
-                keepMine(baselineId(storeName, key), local[key], entries[key], baseline, {
-                    allowRestored: true,
-                    storeName,
-                    key,
-                })
-            ) {
-                delete entries[key];
-            }
-        }
-    }
-}
-
-/**
- * Leave out of an import every key this device already holds with the same
- * value, so a pull writes — and latches until the reload — only what it
- * changes. A pull of what this device already has then writes nothing and
- * asks for no reload.
- *
- * Compared by value with object keys sorted, as `addsToRemote` compares. A
- * store that cannot be read leaves every key in: an import that writes an
- * identical value is the old behavior, never a loss. A record and its
- * tombstones go in together whenever either does (see `tombstoneCompanionKey`),
- * so the restore still reconciles the pair.
- *
- * @param {Object} payload - Parsed payload, after every fold; its stores are mutated in place
- * @param {(storeName: string) => Promise<Record<string, *>>} readLocal - This device's copy of a store
- * @returns {Promise<{unchanged: Record<string, number>, unchangedKeys: Set<string>}>} Per store, how many
- *   keys were left out; and those keys, as `baselineId`s
- */
-async function dropUnchangedKeys(payload, readLocal) {
-    const unchanged = {};
-    const unchangedKeys = new Set();
-    for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
-        if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
         let local;
         try {
-            local = await readLocal(storeName);
+            local = await storage.getAll(storeName);
         } catch (error) {
+            // The baseline rule always needed this read; only the comparison is optional
+            if (baseline) throw error;
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
             continue;
         }
-        if (!local || typeof local !== 'object') continue;
+        if (baseline) {
+            for (const key of Object.keys(entries)) {
+                if (!isWholeKey(storeName, key) || !Object.hasOwn(local || {}, key)) continue;
+                if (
+                    keepMine(baselineId(storeName, key), local[key], entries[key], baseline, {
+                        allowRestored: true,
+                        storeName,
+                        key,
+                    })
+                ) {
+                    delete entries[key];
+                }
+            }
+        }
+        if (!local || typeof local !== 'object' || Array.isArray(entries)) continue;
         const same = new Set(
             Object.keys(entries).filter(
                 (key) => Object.hasOwn(local, key) && stableStringify(local[key]) === stableStringify(entries[key])
@@ -1301,11 +1287,32 @@ async function dropUnchangedKeys(payload, readLocal) {
             const companion = tombstoneCompanionKey(storeName, key);
             if (companion) same.delete(companion);
         }
+        if (same.size > 0) sameByStore.set(storeName, same);
+    }
+    return sameByStore;
+}
+
+/**
+ * Leave out of an import every key {@link weighAgainstLocal} found this device
+ * already holds, so a pull writes — and latches until the reload — only what it
+ * changes. A pull of what this device already has then writes nothing and asks
+ * for no reload.
+ *
+ * @param {Object} payload - Parsed payload; its stores are mutated in place
+ * @param {Map<string, Set<string>>} sameByStore - Per store, the keys to leave out
+ * @returns {{unchanged: Record<string, number>, unchangedKeys: Set<string>}} Per store, how many keys were
+ *   left out; and those keys, as `baselineId`s
+ */
+function dropUnchangedKeys(payload, sameByStore) {
+    const unchanged = {};
+    const unchangedKeys = new Set();
+    for (const [storeName, same] of sameByStore) {
+        const entries = payload.stores[storeName];
         for (const key of same) {
             delete entries[key];
             unchangedKeys.add(baselineId(storeName, key));
         }
-        if (same.size > 0) unchanged[storeName] = same.size;
+        unchanged[storeName] = same.size;
     }
     return { unchanged, unchangedKeys };
 }

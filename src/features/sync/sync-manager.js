@@ -1442,6 +1442,9 @@ class SyncManager {
         // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
         // Held-back records and a replaced push keep their own paths.
         if (!retryHeld && !replaced && this._sameContent(payload, localText, localHash)) {
+            // The flush and the build above can outlast a takeover, whose own
+            // record this one would roll back
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
             await this._remember({
                 gistId,
                 exportedAt: remoteAt,
@@ -1449,6 +1452,9 @@ class SyncManager {
                 chunkCount: Number(manifest?.chunks) || 0,
                 syncSeq: advanceSeq(lastSeq, remoteSeq),
                 version: seen ? { ...seen, current: true } : null,
+                // A hold from an earlier version has nothing left to wait for:
+                // this device's copy was just read whole, and it is the gist's
+                mergeHeld: null,
                 extra: { [KEY_BASELINE]: exchangeBaseline(payload, localText), [KEY_UNAPPLIED]: null },
             });
             if (!silent) showToast('Already up to date with GitHub.');
@@ -1644,10 +1650,11 @@ class SyncManager {
             unchanged,
             at: new Date().toISOString(),
         });
-        rememberPullSummary(summary);
 
         // Nothing written means nothing latched, so there is nothing to reload
         // for. An apply result without the counts is taken as having written.
+        // Nor is its summary kept: an earlier pull's "Reload now" toast may
+        // still be on screen, and its "What changed?" has to show that pull.
         const wroteNothing =
             Boolean(expected) &&
             !mergeHeld?.length &&
@@ -1661,6 +1668,7 @@ class SyncManager {
             }
             return { ok: true, merged: 0, reason: 'wrote-nothing' };
         }
+        rememberPullSummary(summary);
 
         // A record whose fold threw took the remote copy whole, which is this
         // device's entries for it gone. The pull still succeeded, so this is a
