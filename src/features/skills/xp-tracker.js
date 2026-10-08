@@ -12,6 +12,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getSkillHridFromIconHref, getIconHref } from '../../utils/game-lookups.js';
 import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { foldXPSeriesForPull } from '../../utils/xp-series-sync.js';
 import { monthToDateFor } from './skill-checkpoints.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
@@ -180,7 +181,15 @@ function mergeXPHistory(stored, memory) {
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE_NAME, base: 'xpHistory', merge: mergeXPHistory, label: 'Skill XP history' });
+registerSyncMerge({
+    store: STORE_NAME,
+    base: 'xpHistory',
+    merge: mergeXPHistory,
+    // A pull takes only what can be news: the replayed union handed back every
+    // sample this device had thinned since it uploaded them (see the module)
+    pull: (local, incoming) => foldXPSeriesForPull(local, incoming, { windowMs: WINDOW_1W, recentMs: WINDOW_10M }),
+    label: 'Skill XP history',
+});
 
 /**
  * Filter history to only entries within the given interval from now.

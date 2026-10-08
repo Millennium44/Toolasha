@@ -32,7 +32,7 @@ import {
 } from './sync-ownership.js';
 import { ensureExternalKeysLoaded, ensureExternalKeysSaved } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys, tombstoneCompanionKey } from '../../utils/full-backup.js';
-import { mergeForKey } from '../../utils/sync-merge-registry.js';
+import { mergeForKey, retentionDrops } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
 
 /** Matches the full-backup format, because that is what this produces */
@@ -714,7 +714,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it
         // already holds is noted, to be left out once `applied` is taken below
-        const sameByStore = await weighAgainstLocal(payload, mode === 'merge' ? baseline : null);
+        const { sameByStore, retentionDropped } = await weighAgainstLocal(payload, mode === 'merge' ? baseline : null);
 
         // What is remembered as "the state of this device" has to be what was
         // actually written. `mergeLocalHistories` (and the settings fix-ups
@@ -724,7 +724,12 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
         // every silent pull until an auto-push happened to reset it.
         // Re-serialising only when something was rewritten keeps the common
         // no-op pull free.
-        const rewrote = histories.merged.length > 0 || mergeHeld.length > 0 || droppedUnowned || Boolean(settingsStore);
+        const rewrote =
+            histories.merged.length > 0 ||
+            mergeHeld.length > 0 ||
+            droppedUnowned ||
+            retentionDropped ||
+            Boolean(settingsStore);
         const applied = rewrote ? JSON.stringify(payload) : json;
 
         // After `applied`, which describes the data as it now stands here: a
@@ -1237,6 +1242,11 @@ export function restampRestoredSettings(payload, now = Date.now()) {
  * dropped from the download, so the import leaves this device's newer value
  * where it is.
  *
+ * Keys a retention rule puts outside its owner's window, judged over the
+ * download's keys and this device's together, are dropped from the download
+ * (see `registerSyncRetention`): a snapshot this device pruned is not written
+ * back, and neither is an older one the window no longer has room for.
+ *
  * Then each remaining key this device already holds with the same value is
  * noted (compared with object keys sorted, as `addsToRemote` compares), for
  * {@link dropUnchangedKeys} to leave out. A record and its tombstones are kept
@@ -1247,10 +1257,19 @@ export function restampRestoredSettings(payload, now = Date.now()) {
  *
  * @param {Object} payload - Parsed payload, after every fold; mutated in place by the baseline rule
  * @param {Record<string, string>|null} baseline - Hashes at the last exchange, or null outside merge mode
- * @returns {Promise<Map<string, Set<string>>>} Per store, the keys that hold this device's value already
+ * @returns {Promise<{sameByStore: Map<string, Set<string>>, retentionDropped: boolean}>} Per store, the keys
+ *   that hold this device's value already; and whether a retention rule took any key out of the download
  */
 async function weighAgainstLocal(payload, baseline) {
     const sameByStore = new Map();
+    let retentionDropped = false;
+    const dropOutsideRetention = (storeName, entries, localKeys) => {
+        for (const key of retentionDrops(storeName, [...Object.keys(entries), ...localKeys])) {
+            if (!Object.hasOwn(entries, key)) continue;
+            delete entries[key];
+            retentionDropped = true;
+        }
+    };
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
         // Before the baseline rule removes any: a companion it kept as this
@@ -1263,7 +1282,12 @@ async function weighAgainstLocal(payload, baseline) {
             // The baseline rule always needed this read; only the comparison is optional
             if (baseline) throw error;
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
+            if (!Array.isArray(entries)) dropOutsideRetention(storeName, entries, []);
             continue;
+        }
+        if (!Array.isArray(entries)) {
+            const localKeys = local && typeof local === 'object' && !Array.isArray(local) ? Object.keys(local) : [];
+            dropOutsideRetention(storeName, entries, localKeys);
         }
         if (baseline) {
             for (const key of Object.keys(entries)) {
@@ -1304,7 +1328,7 @@ async function weighAgainstLocal(payload, baseline) {
         }
         if (same.size > 0) sameByStore.set(storeName, same);
     }
-    return sameByStore;
+    return { sameByStore, retentionDropped };
 }
 
 /**
@@ -1406,7 +1430,10 @@ function cleaningRemoved(entries, cleaned) {
  *   when this device's side is the incoming one;
  * - any other key whose gist value is still the one this device last exchanged: this device's value;
  * - otherwise the gist's value;
- * - a key on one side only, kept from that side.
+ * - a key on one side only, kept from that side;
+ * - except a key a retention rule puts outside its owner's window, over both sides' keys together (see
+ *   `registerSyncRetention`), which is left out — and when the gist held it, the upload is worth sending for that
+ *   alone (`dropsFromRemote`), since that is how a key this device pruned leaves the gist.
  *
  * The gist's copy is cleaned the way a pull cleans it first — other scripts'
  * stores and keys, excluded keys, device-local keys and settings — and refused
@@ -1548,6 +1575,10 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
         }
         // Stamps for a map only this device has came across with it above;
         // stamps the gist holds for a map it alone has stay with that map
+        for (const key of retentionDrops(storeName, Object.keys(out))) {
+            if (Object.hasOwn(theirs, key)) dropsFromRemote = true;
+            delete out[key];
+        }
         stores[storeName] = out;
     }
 
@@ -1585,7 +1616,8 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
  * the way the other device's pull will fold it, does this device's copy change
  * anything? A key with a registered merge is folded with that merge, gist side
  * as the base; any other key is compared by value (object keys sorted). A key
- * the gist lacks is new. Keys only the gist has add nothing from here.
+ * the gist lacks is new. Keys only the gist has add nothing from here, and
+ * neither does a key a retention rule leaves out of both.
  *
  * A settings map's stamps are compared like any other key. A stamp that moved
  * with no value moving beside it still decides a later merge — a change back
@@ -1611,7 +1643,11 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
     }
     for (const [storeName, entries] of Object.entries(local)) {
         const theirs = remote[storeName] && typeof remote[storeName] === 'object' ? remote[storeName] : {};
+        // A key outside its owner's retention window, over both sides' keys, is
+        // one neither side keeps: not news, whichever side still holds it
+        const outside = retentionDrops(storeName, [...Object.keys(entries || {}), ...Object.keys(theirs)]);
         for (const [key, value] of Object.entries(entries || {})) {
+            if (outside.has(key)) continue;
             if (!Object.hasOwn(theirs, key)) return true;
             const registration = mergeForKey(storeName, key);
             let folded = value;

@@ -48,7 +48,7 @@ vi.mock('../../core/storage.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/sync-merge-registry.js', () => ({ registerSyncMerge: () => {} }));
+vi.mock('../../utils/sync-merge-registry.js', () => ({ registerSyncMerge: () => {}, registerSyncRetention: () => {} }));
 
 const { leaderboardXPTracker } = await import('./leaderboard-xp-tracker.js');
 

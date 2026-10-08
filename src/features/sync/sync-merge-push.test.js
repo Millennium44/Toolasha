@@ -249,6 +249,8 @@ registerSyncMerge({
 
 // A real fold with a scalar it cannot combine (`sortBy`), registered the way a page load does
 await import('../../utils/watchlist.js');
+// The detail snapshots' retention window, registered the way a page load does
+await import('../networth/networth-history.js');
 
 // A history with its own fold, the shape every registered one has: a union
 registerSyncMerge({
@@ -1887,5 +1889,46 @@ describe("another script's registered keys, end to end", () => {
             expect((await auto.push()).ok).toBe(true);
         });
         expect(gistStores().settings.otherScriptLive).toEqual({ state: 'a' });
+    });
+});
+
+describe('data a device pruned by retention', () => {
+    const HOUR = 3_600_000;
+    const T0 = Date.parse('2026-04-01T00:00:00.000Z');
+    /** Hourly detail snapshots `from`..`from + count - 1` hours, keyed as networth-history keys them */
+    const snapshots = (from, count) => {
+        const out = {};
+        for (let i = from; i < from + count; i++) {
+            const t = T0 + i * HOUR;
+            out[`networthDetail_c1_${t}`] = { t, items: { gold: { count: 1, value: i } } };
+        }
+        return out;
+    };
+
+    test('leaves the gist at the next merged push, and the reload after it applies nothing', async () => {
+        const { a } = await syncedPair();
+
+        // A records a day of snapshots and a history sample; its push merges (a registered history moved)
+        await as(a, async () => {
+            a.db.networthHistory = snapshots(0, 25);
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-1'];
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        // Five hours on: five new snapshots, and the five oldest pruned to keep 25
+        await as(a, async () => {
+            a.db.networthHistory = snapshots(5, 25);
+            a.db.xpHistory.testHistory_c1 = ['s1', 'a-1', 'a-2'];
+            expect((await auto.push()).ok).toBe(true);
+        });
+
+        expect(Object.keys(gistStores().networthHistory).sort()).toEqual(Object.keys(snapshots(5, 25)).sort());
+
+        a.latches = 0;
+        toasts.length = 0;
+        await as(a, auto.startup);
+        expect(a.latches).toBe(0);
+        expect(toasts).toHaveLength(0);
+        expect(Object.keys(a.db.networthHistory)).toHaveLength(25);
     });
 });

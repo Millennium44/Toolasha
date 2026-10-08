@@ -106,6 +106,9 @@ await import('../../utils/chest-tally.js');
 await import('../market/trade-history.js');
 await import('../guild/guild-xp-tracker.js');
 await import('../guild/guild-trials-store.js');
+await import('../skills/xp-tracker.js');
+// The detail snapshots' retention window, registered the way the page does
+await import('../networth/networth-history.js');
 
 const {
     payloadCarriesKey,
@@ -1857,5 +1860,130 @@ describe('payloadCarriesKey', () => {
         ['openableAnalytics', 'anything'],
     ])('%s/%s never reaches a payload', (storeName, key) => {
         expect(payloadCarriesKey(storeName, key)).toBe(false);
+    });
+});
+
+describe('keys a retention rule drops are neither uploaded nor written back', () => {
+    const DAY = 'networthHistory';
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-08T00:00:00.000Z', syncScope: 'everything', stores });
+    /** `networthDetail_<char>_<t>` snapshots, one an hour from `from` */
+    const snapshots = (charId, from, count) => {
+        const out = {};
+        for (let i = 0; i < count; i++) {
+            const t = from + i * 3_600_000;
+            out[`networthDetail_${charId}_${t}`] = { t, items: { gold: { count: 1, value: t % 1000 } } };
+        }
+        return out;
+    };
+    const T0 = 1_790_000_000_000;
+
+    test('a pull does not write back snapshots older than the 25 this device keeps per character', async () => {
+        // The gist still holds the 10 oldest; this device pruned them
+        const gist = snapshots('32030', T0, 35);
+        const local = snapshots('32030', T0 + 10 * 3_600_000, 25);
+        storeState.stores[DAY] = { ...local };
+
+        const result = await applyPayload(payloadOf({ [DAY]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores[DAY]).toEqual({});
+        expect(result.unchanged[DAY]).toBe(25);
+        // What landed is what this device holds: the pruned ten are not described as applied
+        expect(Object.keys(JSON.parse(result.applied).stores[DAY])).toHaveLength(25);
+    });
+
+    test("the window is per character, and the newest of both sides' snapshots win", async () => {
+        // The other device took the four newest; this device's four oldest fall out
+        const gist = { ...snapshots('32030', T0 + 4 * 3_600_000, 25), ...snapshots('32325', T0, 3) };
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25), ...snapshots('32325', T0, 3) };
+
+        await applyPayload(payloadOf({ [DAY]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(Object.keys(importedPayloads[0].stores[DAY]).sort()).toEqual(
+            Object.keys(snapshots('32030', T0 + 25 * 3_600_000, 4)).sort()
+        );
+    });
+
+    test('the pre-split detail key, which carries no time, is left to the usual rules', async () => {
+        storeState.stores[DAY] = snapshots('32030', T0, 25);
+        const gist = { networthDetail_32030: [{ t: 1 }] };
+
+        await applyPayload(payloadOf({ [DAY]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores[DAY]).toEqual(gist);
+    });
+
+    test('a merged upload leaves out the snapshots outside the window, and says it sheds them', () => {
+        const local = payloadOf({ [DAY]: snapshots('32030', T0 + 10 * 3_600_000, 25) });
+        const remote = payloadOf({ [DAY]: snapshots('32030', T0, 35) });
+
+        const merged = mergeForUpload(local, remote, null);
+
+        expect(Object.keys(JSON.parse(merged.text).stores[DAY]).sort()).toEqual(
+            Object.keys(snapshots('32030', T0 + 10 * 3_600_000, 25)).sort()
+        );
+        expect(merged.dropsFromRemote).toBe(true);
+        // ...and a pull here of that result has nothing to take
+        expect(merged.remoteAdds).toBe(false);
+    });
+
+    test('a snapshot outside the window is not news in either direction', () => {
+        const local = payloadOf({ [DAY]: snapshots('32030', T0 + 10 * 3_600_000, 25) });
+        const remote = payloadOf({ [DAY]: snapshots('32030', T0, 35) });
+
+        expect(addsToRemote(remote, local, { forUpload: false })).toBe(false);
+        expect(addsToRemote(local, remote)).toBe(false);
+        // A snapshot newer than the gist's still is
+        const newer = payloadOf({ [DAY]: snapshots('32030', T0 + 11 * 3_600_000, 25) });
+        expect(addsToRemote(newer, remote)).toBe(true);
+    });
+});
+
+describe('a pull of XP series this device has since thinned changes nothing', () => {
+    const MIN = 60_000;
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-08T00:00:00.000Z', syncScope: 'everything', stores });
+    const T0 = 1_790_000_000_000;
+    const at = (minutes, xp) => ({ t: T0 + minutes * MIN, xp });
+
+    test('skill XP: samples thinned since the upload are not put back', async () => {
+        // Uploaded with 18:4 as the newest; 22:5 then thinned 18 away, and 26:5 thinned 22
+        const gist = { xpHistory_32030: { milking: [at(3, 1), at(12, 3), at(18, 4)] } };
+        const local = { xpHistory_32030: { milking: [at(3, 1), at(12, 3), at(26, 5), at(35, 8)] } };
+        storeState.stores.xpHistory = structuredClone(local);
+
+        const result = await applyPayload(payloadOf({ xpHistory: gist }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores.xpHistory).toEqual({});
+        expect(result.merged).toEqual([]);
+    });
+
+    test('guild XP: samples a week old and departed members are not put back', async () => {
+        const week = 7 * 24 * 60;
+        const gist = {
+            guildXP_Chat: { Chat: [at(0, 10), at(5, 20), at(week + 30, 90)] },
+            memberXP_1493: { 111: [at(0, 1), at(week + 30, 9)], 222: [at(0, 5), at(30, 6)] },
+        };
+        const local = {
+            guildXP_Chat: { Chat: [at(week + 30, 90), at(week + 60, 95)] },
+            // 222 left the guild; this device's login dropped them
+            memberXP_1493: { 111: [at(week + 30, 9), at(week + 60, 12)] },
+        };
+        storeState.stores.guildHistory = structuredClone(local);
+
+        const result = await applyPayload(payloadOf({ guildHistory: gist }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores.guildHistory).toEqual({});
+        expect(result.merged).toEqual([]);
+    });
+
+    test('a sample another device took after this one is still combined in', async () => {
+        const gist = { xpHistory_32030: { milking: [at(3, 1), at(40, 9)] } };
+        storeState.stores.xpHistory = { xpHistory_32030: { milking: [at(3, 1), at(35, 8)] } };
+
+        const result = await applyPayload(payloadOf({ xpHistory: gist }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores.xpHistory.xpHistory_32030.milking).toEqual([at(3, 1), at(35, 8), at(40, 9)]);
+        expect(result.merged.map((entry) => entry.key)).toEqual(['xpHistory_32030']);
     });
 });

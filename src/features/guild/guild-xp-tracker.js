@@ -17,6 +17,7 @@ import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { foldXPSeriesForPull } from '../../utils/xp-series-sync.js';
 import { runInBackground } from '../../utils/background-work.js';
 
 const STORE_NAME = 'guildHistory';
@@ -480,12 +481,98 @@ export function mergeXPHistories(stored, memory) {
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE_NAME, prefix: 'guildXP_', merge: mergeXPHistories, label: 'Guild XP history' });
-registerSyncMerge({ store: STORE_NAME, prefix: 'memberXP_', merge: mergeXPHistories, label: 'Guild member XP' });
+
+/**
+ * The week rule of {@link pushXP}, over every series of a map: samples more
+ * than a week behind their series' newest go, never the last two.
+ * @param {Object<string, Array<{t: number, xp: number}>>} map - name → samples, oldest first
+ * @returns {Object<string, Array<{t: number, xp: number}>>} The map, each series trimmed
+ */
+function trimXPHistoriesToWeek(map) {
+    if (!map || typeof map !== 'object') return map;
+    const out = {};
+    for (const [name, series] of Object.entries(map)) {
+        if (!Array.isArray(series) || series.length <= 2) {
+            out[name] = series;
+            continue;
+        }
+        const newest = series[series.length - 1]?.t;
+        let drop = 0;
+        while (drop < series.length - 2 && newest - series[drop]?.t > WINDOW_1W) drop++;
+        out[name] = drop > 0 ? series.slice(drop) : series;
+    }
+    return out;
+}
+
+/**
+ * The upload's fold: the union, held to the week every device keeps — the union
+ * alone kept every sample any device ever uploaded, in the gist, for good.
+ * @param {Object} local - One side's map
+ * @param {Object} incoming - The other's, winning a shared instant
+ * @returns {Object} The merged map
+ */
+const mergeXPHistoriesForSync = (local, incoming) => trimXPHistoriesToWeek(mergeXPHistories(local, incoming));
+
+/**
+ * The pull's fold: only what can be news (see `utils/xp-series-sync.js`), so a
+ * pull of samples this device has since thinned or aged out leaves it as it is.
+ * @param {Object} local - This device's map
+ * @param {Object} incoming - The gist's map
+ * @returns {Object} The folded map
+ */
+const pullXPHistories = (local, incoming) =>
+    foldXPSeriesForPull(local, incoming, { windowMs: WINDOW_1W, recentMs: WINDOW_10M, keepLast: 2 });
+
+/**
+ * The newest sample time anywhere in a map.
+ * @param {Object<string, Array<{t: number}>>} map - name → samples
+ * @returns {number} Epoch ms, or -Infinity for an empty map
+ */
+function newestSampleIn(map) {
+    let newest = -Infinity;
+    for (const series of Object.values(map || {})) {
+        if (!Array.isArray(series)) continue;
+        for (const sample of series) if (Number.isFinite(sample?.t) && sample.t > newest) newest = sample.t;
+    }
+    return newest;
+}
+
+/**
+ * The member map's pull fold. A member series only the gist has is a member
+ * who left — this device dropped them at its last login, which samples the
+ * whole roster (`pruneDepartedMembers`) — unless it runs past this device's
+ * newest sample, when it is someone who joined since.
+ * @param {Object} local - This device's map
+ * @param {Object} incoming - The gist's map
+ * @returns {Object} The folded map
+ */
+const pullMemberXPHistories = (local, incoming) =>
+    foldXPSeriesForPull(local, incoming, {
+        windowMs: WINDOW_1W,
+        recentMs: WINDOW_10M,
+        keepLast: 2,
+        acceptSeries: (series, mine) => newestSampleIn({ series }) > newestSampleIn(mine),
+    });
+
+registerSyncMerge({
+    store: STORE_NAME,
+    prefix: 'guildXP_',
+    merge: mergeXPHistoriesForSync,
+    pull: pullXPHistories,
+    label: 'Guild XP history',
+});
+registerSyncMerge({
+    store: STORE_NAME,
+    prefix: 'memberXP_',
+    merge: mergeXPHistoriesForSync,
+    pull: pullMemberXPHistories,
+    label: 'Guild member XP',
+});
 registerSyncMerge({
     store: STORE_NAME,
     key: LEADERBOARD_KEY,
-    merge: mergeXPHistories,
+    merge: mergeXPHistoriesForSync,
+    pull: pullXPHistories,
     label: 'Guild leaderboard XP',
 });
 
