@@ -291,9 +291,9 @@ describe('combat task Go count buffer defaults', () => {
 });
 
 describe('net worth token settings', () => {
-    test('labyrinth and guild tokens are counted by default, as task tokens are', () => {
+    test('labyrinth and guild tokens are new features, so they start off and move no total', () => {
         expect(getSettingDefinition('networth_includeTaskTokens').default).toBe(true);
-        expect(getSettingDefinition('networth_includeLabyrinthTokens').default).toBe(true);
-        expect(getSettingDefinition('networth_includeGuildTokens').default).toBe(true);
+        expect(getSettingDefinition('networth_includeLabyrinthTokens').default).toBe(false);
+        expect(getSettingDefinition('networth_includeGuildTokens').default).toBe(false);
     });
 });

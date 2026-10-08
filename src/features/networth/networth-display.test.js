@@ -265,6 +265,19 @@ describe('token worth breakdown', () => {
         expect(guildRow.getAttribute('title')).toContain('via credit exchange at 10 credits/token');
     });
 
+    test('held tokens still show when nothing in Current Assets is counted', () => {
+        const data = withTokens([guild]);
+        data.currentAssets.total = 0;
+        data.currentAssets.inventory.value = 0;
+        networthInventoryDisplay.update(data);
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-tokens-toggle');
+        expect(toggle).not.toBeNull();
+        expect(networthInventoryDisplay.container.querySelector('#mwi-tokens-breakdown').textContent).toContain(
+            '(not counted)'
+        );
+    });
+
     test('a token nothing can price says so', () => {
         networthInventoryDisplay.update(
             withTokens([{ ...labyrinth, rate: null, value: 0, unpriced: true, bestItemHrid: null, bestItemName: null }])

@@ -241,6 +241,8 @@ describe('pricing settings', () => {
             'networth_includeGuildTokens',
             'networth_abilityBooksAsInventory',
             'guildTokenCreditRate',
+            'profitCalc_pricingMode',
+            'profitCalc_patientTickSell',
         ];
         for (const [index, key] of keysThatReprice.entries()) {
             calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 20 + index, coins: 0 });

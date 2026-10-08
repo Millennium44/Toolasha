@@ -47,6 +47,9 @@ const NETWORTH_RECALC_SETTINGS = [
     'networth_abilityBooksAsInventory',
     // The guild token exchange rate stand-in prices held guild tokens
     'guildTokenCreditRate',
+    // Labyrinth tokens are priced through the profit calculator's pricing settings
+    'profitCalc_pricingMode',
+    'profitCalc_patientTickSell',
     IRONCOW_VALUATION_SETTING,
 ];
 

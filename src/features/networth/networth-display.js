@@ -385,13 +385,14 @@ class NetworthInventoryDisplay {
         const fa = networthData.fixedAssets;
         const excl = networthData.excluded ?? { total: 0, items: [] };
 
-        const showCurrentAssets = ca.total > 0;
-        const showEquipped = ca.equipped.value > 0;
-        const showInventory = ca.inventory.value > 0;
-        const showListings = ca.listings.value > 0;
         // Tokens held, already inside the inventory value: a view, not a second count
         const tokens = networthData.tokens ?? { value: 0, items: [] };
         const showTokens = (tokens.items?.length ?? 0) > 0;
+        // Held tokens keep the section open even when none of them is counted
+        const showCurrentAssets = ca.total > 0 || showTokens;
+        const showEquipped = ca.equipped.value > 0;
+        const showInventory = ca.inventory.value > 0;
+        const showListings = ca.listings.value > 0;
         const showFixedAssets = fa.total > 0;
         const showHouses = fa.houses.totalCost > 0;
         const showAbilities = fa.abilities.totalCost > 0;
