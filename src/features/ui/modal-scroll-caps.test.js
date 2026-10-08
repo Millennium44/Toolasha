@@ -78,7 +78,8 @@ describe('modal scroll caps', () => {
             // Dictionary's own content class.
             const isDialogSpecific =
                 selector.includes('OfflineProgressModal_modalContent') ||
-                selector.includes('SharableProfile_modalContent');
+                selector.includes('SharableProfile_modalContent') ||
+                selector.includes('GuildPanel_guildModalContent');
             if (!isDialogSpecific) {
                 expect(selector).toContain('ItemDictionary_modalContent');
             }
@@ -92,5 +93,15 @@ describe('modal scroll caps', () => {
 
         expect(css).toContain('max-height');
         expect(css).not.toMatch(/[^-]height:\s*(?!auto)/);
+    });
+
+    test('the guild shrine dialog is capped, and the generic wrapper rule is :has()-gated on it', () => {
+        modalScrollCaps.initialize();
+        const css = styleEl().textContent;
+
+        expect(css).toMatch(
+            /\[class\*="Modal_modalContent"\]:has\(\[class\*="GuildPanel_guildModalContent"\]\)\s*\{[^}]*max-height/
+        );
+        expect(css).toMatch(/\[class\*="GuildPanel_guildModalContent"\]\s*\{[^}]*max-height/);
     });
 });

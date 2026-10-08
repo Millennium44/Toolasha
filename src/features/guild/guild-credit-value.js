@@ -3511,7 +3511,10 @@ class GuildCreditValue {
 
         const wrapper = document.createElement('div');
         wrapper.className = 'mwi-shrine-cost';
-        wrapper.style.cssText = 'margin-top:12px; font-size:12px; width:100%;';
+        // overflow-x: a six-column table is wider than a phone-width modal; scroll it sideways
+        // rather than clip the Bid columns
+        wrapper.style.cssText =
+            'margin-top:12px; font-size:12px; width:100%; max-width:100%; box-sizing:border-box; overflow-x:auto;';
 
         const hdr = document.createElement('div');
         hdr.style.cssText = 'font-size:11px; color:#9ca3af; margin-bottom:6px; text-align:center;';

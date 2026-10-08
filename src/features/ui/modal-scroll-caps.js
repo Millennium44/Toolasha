@@ -92,6 +92,25 @@ const CSS = `
         box-sizing: border-box;
         max-height: ${GENERIC_MODAL_MAX_HEIGHT};
     }
+
+    /* Guild shop shrine upgrade dialog (player report, Firefox mobile): with
+       the "Gold cost of upgrade" table added, the Cost list's later credits
+       were unreachable. The frame's class prefix is not known from repo
+       evidence (only GuildPanel_guildModalContent, which guild-credit-value.js
+       observes), so cap both the generic Modal_modalContent wrapper that
+       contains it (:has-gated, like the Item Dictionary) and the
+       GuildPanel_guildModalContent element itself, which scrolls if it is the
+       scroller. */
+    [class*="Modal_modalContent"]:has([class*="GuildPanel_guildModalContent"]) {
+        box-sizing: border-box;
+        max-height: ${GENERIC_MODAL_MAX_HEIGHT};
+    }
+
+    [class*="GuildPanel_guildModalContent"] {
+        box-sizing: border-box;
+        max-height: ${GENERIC_MODAL_MAX_HEIGHT};
+        overflow-y: auto;
+    }
 `;
 
 const modalScrollCaps = {
