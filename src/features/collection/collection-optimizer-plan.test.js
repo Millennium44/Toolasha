@@ -41,8 +41,8 @@ const umbralChain = (route = 'decompose', cost = 1000) => ({
         ['/items/gobo_hood', 0.6 * 0.5],
     ]),
     kept: new Map([
-        ['/items/umbral_leather', 0.6 * 90 * 5],
-        ['/items/beast_leather', 0.6 * 0.5 * 60 * 2],
+        ['/items/umbral_leather', { perSource: 0.6 * 90, unit: 5 }],
+        ['/items/beast_leather', { perSource: 0.6 * 0.5 * 60, unit: 2 }],
     ]),
 });
 
@@ -52,7 +52,7 @@ const cheeseSword = (route = 'shop', cost = 50) => ({
     cost,
     seconds: 36,
     yields: new Map([['/items/cheese', 18]]),
-    kept: new Map([['/items/cheese', 180]]),
+    kept: new Map([['/items/cheese', { perSource: 18, unit: 10 }]]),
 });
 
 describe('counts and the ladder', () => {
@@ -106,9 +106,12 @@ describe('route options', () => {
         // Beast Hood 0 → 2 is its first point; the leathers cross several rungs too
         expect(option.collateral).toBeGreaterThanOrEqual(1);
         expect(option.points).toBe(1 + option.collateral);
-        // Gold is net of the other kept outputs
+        // Gold is net of the other outputs, sold
         const kept = 0.6 * 90 * 5 + 0.6 * 0.5 * 60 * 2;
         expect(option.gold).toBeCloseTo(4 * (1000 - kept), 6);
+        expect(option.sold.get('/items/umbral_leather')).toBeCloseTo(4 * 54, 9);
+        // The target is collected, never sold
+        expect(option.sold.has('/items/gobo_hood')).toBe(false);
     });
 
     test('the target itself is not netted out of the gold', () => {
@@ -308,5 +311,79 @@ describe('the max time per step', () => {
         expect(plan.steps).toHaveLength(1);
         expect(plan.points).toBe(3);
         expect(plan.reached).toBe(false);
+    });
+});
+
+describe('selling the other outputs', () => {
+    /**
+     * Earrings of Essence Find, as the game data has it: decompose → 600 Star Fragment + 6 Amber, the
+     * whole recipe back. At the 0.8 success rate the maintainer's row implies, one earring bought at
+     * the 6.3M ask, plus 200 coins and a 7,920 catalyst used on success, yields 480 Star Fragments
+     * and 4.8 Amber.
+     */
+    const earrings = (fragmentUnit) => ({
+        route: 'decompose',
+        sourceHrid: '/items/earrings_of_essence_find',
+        cost: 6_300_000 + 200 + 7920 * 0.8,
+        seconds: 36,
+        yields: new Map([
+            ['/items/star_fragment', 480],
+            ['/items/amber', 4.8],
+        ]),
+        kept: new Map([
+            ['/items/star_fragment', { perSource: 480, unit: fragmentUnit }],
+            ['/items/amber', { perSource: 4.8, unit: 20_160 * 0.96 }],
+        ]),
+    });
+    // Amber at 3,000 toward 10,000: 7,000 more is 1,459 earrings
+    const counts = new Map([
+        ['/items/amber', 3000],
+        ['/items/star_fragment', 1_000_000],
+    ]);
+
+    test("the maintainer's Amber row: Star Fragments at the untaxed ask make the route earn ~430M", () => {
+        const option = evaluateOption('/items/amber', counts, earrings(13_750));
+        expect(option.units).toBe(1459);
+        // Per earring: 480 × 13,750 = 6,600,000 against 6,306,536 spent
+        expect(option.gold / option.units).toBeCloseTo(6_306_536 - 6_600_000, 3);
+        expect(option.gold).toBeLessThan(-400e6);
+    });
+
+    test('at the bid after tax the same earring earns 6.4k, not 293k', () => {
+        const option = evaluateOption('/items/amber', counts, earrings(13_700 * 0.96));
+        // 480 × 13,152 = 6,312,960
+        expect(option.gold / option.units).toBeCloseTo(6_306_536 - 6_312_960, 3);
+    });
+
+    test('only what the market takes is sold; the rest is collected and worth nothing', () => {
+        // Star Fragments trade ~22,885 a day; a quarter of that for a week is ~40,049
+        const week = 0.25 * 22_885 * 7;
+        const sellable = (hrid) => (hrid === '/items/star_fragment' ? week : Infinity);
+        const option = evaluateOption('/items/amber', counts, earrings(13_700 * 0.96), { sellable });
+        expect(option.sold.get('/items/star_fragment')).toBeCloseTo(week, 6);
+        // Every fragment is still collected
+        expect(option.credits.get('/items/star_fragment')).toBeCloseTo(1459 * 480, 6);
+        // 1,459 earrings cost ~9.2B; the fragments the market takes return ~0.53B
+        expect(option.gold).toBeCloseTo(1459 * 6_306_536 - week * 13_152, 0);
+        expect(option.gold).toBeGreaterThan(8e9);
+    });
+
+    test('the plan counts what earlier steps sold against what the market takes', () => {
+        const route = {
+            ...cheeseSword('shop', 50),
+            kept: new Map([['/items/gold_dust', { perSource: 2, unit: 100 }]]),
+        };
+        route.yields = new Map([
+            ['/items/cheese', 18],
+            ['/items/gold_dust', 2],
+        ]);
+        // 3 units of Gold Dust can be sold over the whole plan
+        const sellable = (hrid) => (hrid === '/items/gold_dust' ? 3 : Infinity);
+        const plan = planTarget(new Map(), indexRoutes({ sources: [route] }), 6, { sellable });
+        expect(plan.steps).toHaveLength(2);
+        // Step 1: one sword, 2 dust sold. Step 2: five swords, 10 dust made, 1 sold
+        expect(plan.steps[0].sold.get('/items/gold_dust')).toBe(2);
+        expect(plan.steps[1].sold.get('/items/gold_dust')).toBe(1);
+        expect(plan.gold).toBe(50 - 200 + 5 * 50 - 100);
     });
 });

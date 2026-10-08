@@ -62,6 +62,21 @@ const ITEMS = vi.hoisted(() => ({
     },
     '/items/cheese': { name: 'Cheese' },
     '/items/coin': { name: 'Coin' },
+    // The game's own data: the whole recipe comes back on a success
+    '/items/earrings_of_essence_find': {
+        name: 'Earrings Of Essence Find',
+        itemLevel: 30,
+        equipmentDetail: {},
+        alchemyDetail: {
+            bulkMultiplier: 1,
+            decomposeItems: [
+                { itemHrid: '/items/star_fragment', count: 600 },
+                { itemHrid: '/items/amber', count: 6 },
+            ],
+        },
+    },
+    '/items/star_fragment': { name: 'Star Fragment' },
+    '/items/amber': { name: 'Amber' },
 }));
 
 const BUY = vi.hoisted(() => ({
@@ -75,7 +90,21 @@ const BUY = vi.hoisted(() => ({
     '/items/cheese_sword': 2000,
     // The bonus drop every alchemy action rolls has a market in the game
     '/items/alchemy_essence': 100,
+    // Live books, 2026-10-08
+    '/items/earrings_of_essence_find': 6_300_000,
+    '/items/star_fragment': 13_750,
+    '/items/amber': 20_240,
 }));
+
+/** The bid side, where it differs from the ask above */
+const BID = vi.hoisted(() => ({
+    '/items/earrings_of_essence_find': 5_940_000,
+    '/items/star_fragment': 13_700,
+    '/items/amber': 20_160,
+}));
+
+/** Measured daily volumes, for the liquidity bound */
+const VOLUME = vi.hoisted(() => ({ perDay: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -143,6 +172,12 @@ const RATES = vi.hoisted(() => ({
     '/items/beast_hood': 0.5,
     '/items/gobo_hood': 0.8,
     '/items/cheese_sword': 1,
+    // The rate the maintainer's row implies: base 60% raised by a catalyst and tea
+    '/items/earrings_of_essence_find': 0.8,
+}));
+/** Coins per decompose ((10 + level 30) × 5) and the catalyst used on each success */
+const OVERHEAD = vi.hoisted(() => ({
+    '/items/earrings_of_essence_find': { coin: 200, catalystPerSuccess: 7920 },
 }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
@@ -153,8 +188,19 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
                       itemHrid: hrid,
                       actionsPerHour: 100,
                       successRate: RATES[hrid],
-                      requirementCosts: [{ itemHrid: hrid, count: 1, price: BUY[hrid] }],
-                      catalystCostPerHour: 0,
+                      requirementCosts: [
+                          { itemHrid: hrid, count: 1, price: BUY[hrid] },
+                          ...(OVERHEAD[hrid]
+                              ? [
+                                    {
+                                        itemHrid: '/items/coin',
+                                        count: OVERHEAD[hrid].coin,
+                                        costPerAction: OVERHEAD[hrid].coin,
+                                    },
+                                ]
+                              : []),
+                      ],
+                      catalystCostPerHour: OVERHEAD[hrid] ? OVERHEAD[hrid].catalystPerSuccess * RATES[hrid] * 100 : 0,
                       totalTeaCostPerHour: 0,
                       // The alchemy-wide bonus drop every action rolls
                       dropRevenues: [
@@ -166,12 +212,29 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => BUY[hrid] ?? null,
-    getItemPriceInfo: (hrid) =>
-        game.estimated.has(hrid)
-            ? { price: BUY[hrid] ?? null, source: 'value', estimated: true }
-            : { price: BUY[hrid] ?? null, source: 'book', estimated: false },
+    getItemPriceInfo: (hrid, options = {}) => {
+        // The profit pricing mode picks the side when no mode is named: 'optimistic' buys at the bid
+        const side = options.mode ?? (game.pricingMode === 'optimistic' && options.side === 'buy' ? 'bid' : 'ask');
+        const price = side === 'bid' ? (BID[hrid] ?? BUY[hrid] ?? null) : (BUY[hrid] ?? null);
+        return game.estimated.has(hrid)
+            ? { price, source: 'value', estimated: true }
+            : { price, source: 'book', estimated: false };
+    },
     getPricingMode: () => 'ask',
 }));
+// The shared liquidity bound: a quarter of the measured daily volume, per hour
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    capProfitRateCached: ({ goldPerHour, sells }) => {
+        const perDay = VOLUME.perDay[sells[0].itemHrid];
+        if (perDay === undefined) return { goldPerHour, capped: false, limit: null };
+        const throttle = Math.min(1, (0.25 * perDay) / 24 / sells[0].unitsPerHour);
+        return throttle < 1
+            ? { goldPerHour: goldPerHour * throttle, capped: true, limit: { throttle } }
+            : { goldPerHour, capped: false, limit: null };
+    },
+    prefetchLiquidity: async () => {},
+}));
+vi.mock('../planner/market-liquidity.js', () => ({ LIQUIDITY_HORIZON_DAYS: 7 }));
 vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinOnlyCost: (hrid) => ({
         coins: hrid === '/items/cheese_sword' && !game.mixedShop ? 50 : 0,
@@ -179,7 +242,10 @@ vi.mock('../../utils/game-lookups.js', () => ({
     }),
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
-vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price }));
+// The 4% market tax, off for an Iron Cow
+vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => (game.ironCow ? price : price * 0.96),
+}));
 vi.mock('../../utils/character-key.js', () => ({
     readScoped: async (base, _store, fallback) => {
         const key = `${game.characterId}:${base}`;
@@ -192,7 +258,13 @@ vi.mock('../../utils/character-key.js', () => ({
     },
 }));
 
-const { default: optimizer, buildCollectionRoutes } = await import('./collection-optimizer.js');
+const {
+    default: optimizer,
+    buildCollectionRoutes,
+    realizedSalePrice,
+    weeklySellable,
+} = await import('./collection-optimizer.js');
+const { evaluateOption } = await import('./collection-optimizer-plan.js');
 
 /** The game's Collections tab: controls, then the tile categories */
 function drawCollectionsTab() {
@@ -227,6 +299,8 @@ beforeEach(() => {
     game.altProfit = null;
     game.mixedShop = false;
     game.ironCow = false;
+    VOLUME.perDay = {};
+    game.pricingMode = 'hybrid';
 });
 
 afterEach(() => {
@@ -257,6 +331,70 @@ describe('the routes', () => {
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
         // No route ever yields the source it starts from
         for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+    });
+});
+
+describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find, −430.3M", () => {
+    const earringsRoute = (routes) =>
+        routes.sources.find((s) => s.sourceHrid === '/items/earrings_of_essence_find' && s.route === 'decompose');
+    // Amber at 3,000 toward 10,000: 4.8 per earring is 1,459 earrings
+    const counts = new Map([
+        ['/items/amber', 3000],
+        ['/items/star_fragment', 1_000_000],
+    ]);
+
+    test('the bought earring is charged at the ask, with its coins and catalyst', async () => {
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.cost).toBeCloseTo(6_300_000 + 200 + 7920 * 0.8, 6);
+        // 600 × 0.8 fragments, 6 × 0.8 Amber
+        expect(route.yields.get('/items/star_fragment')).toBeCloseTo(480, 9);
+        expect(route.yields.get('/items/amber')).toBeCloseTo(4.8, 9);
+    });
+
+    test('a patient-buy pricing mode does not price a buy of hundreds at the bid', async () => {
+        game.pricingMode = 'optimistic';
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.cost).toBeCloseTo(6_300_000 + 200 + 7920 * 0.8, 6);
+    });
+
+    test('Star Fragments are sold at the bid after tax: the earring no longer earns 293k', async () => {
+        const route = earringsRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/amber', counts, route);
+        expect(option.units).toBe(1459);
+        expect(option.gold).toBeGreaterThan(-10e6);
+        // At the untaxed ask the same route earned 480 × 13,750 − 6,306,536 = 293,464 an earring
+        // (−428M over 1,459; the panel's 1,472 at its own count: −430.3M). At 13,152 a fragment it
+        // is 6,424 an earring, plus the essence
+        const essence = 0.1 * 100 * 0.96;
+        expect(option.gold / option.units).toBeCloseTo(6_306_536 - 480 * 13_152 - essence, 3);
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 6);
+    });
+
+    test('and only as many as the market takes in a week: the route costs ~8.7B', async () => {
+        VOLUME.perDay['/items/star_fragment'] = 22_885;
+        const route = earringsRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/amber', counts, route, { sellable: weeklySellable });
+        const week = 0.25 * 22_885 * 7;
+        expect(option.sold.get('/items/star_fragment')).toBeCloseTo(week, 3);
+        expect(option.gold).toBeGreaterThan(8e9);
+    });
+
+    test('an Iron Cow sells to the vendor: no market bound', () => {
+        VOLUME.perDay['/items/star_fragment'] = 22_885;
+        expect(weeklySellable('/items/star_fragment')).toBeCloseTo(0.25 * 22_885 * 7, 6);
+        game.ironCow = true;
+        expect(weeklySellable('/items/star_fragment')).toBe(Infinity);
+        // Nothing measured: unbounded
+        game.ironCow = false;
+        expect(weeklySellable('/items/amber')).toBe(Infinity);
+    });
+
+    test('an output nobody bids on realizes nothing, unless it is a crate to open', () => {
+        expect(realizedSalePrice('/items/star_fragment')).toBeCloseTo(13_700 * 0.96, 6);
+        game.estimated = new Set(['/items/star_fragment']);
+        expect(realizedSalePrice('/items/star_fragment')).toBe(0);
+        expect(realizedSalePrice('/items/star_fragment', () => true)).toBeNull();
+        expect(realizedSalePrice('/items/no_such_item')).toBeNull();
     });
 });
 

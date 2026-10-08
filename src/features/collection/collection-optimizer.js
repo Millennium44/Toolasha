@@ -15,16 +15,23 @@
  * hover path, and kept for the session; ranking against the counts is cheap
  * and redone whenever the counts arrive again. The arithmetic is in
  * collection-optimizer-plan.js.
+ *
+ * Prices: a bought source at the ask; everything a route yields besides the
+ * target is sold, at the bid after the market tax (no live bid: worth
+ * nothing), and only as many units as the market takes in a week — the
+ * shared liquidity bound, from volumes already measured.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import profitCalculator from '../market/profit-calculator.js';
-import expectedValueCalculator from '../market/expected-value-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { capProfitRateCached, prefetchLiquidity } from '../../utils/liquidity-cap.js';
+import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { canStartAction } from '../../utils/efficiency.js';
@@ -77,6 +84,58 @@ const SLICE_MS = 12;
 const SKIP_ITEMS = new Set(['/items/coin']);
 
 /**
+ * What selling one unit of an output realizes: the live bid after the market
+ * tax (an Iron Cow's own valuation, untaxed, since it never uses the market).
+ *
+ * A bid that is only a value-map estimate means nobody is bidding, so the unit
+ * realizes nothing — except a container, which is then worth its contents
+ * (null here sends the caller to the container's value).
+ * @param {string} hrid
+ * @param {(hrid: string) => boolean} isContainer
+ * @returns {number|null} Null when the item has no price at all
+ */
+export function realizedSalePrice(hrid, isContainer = () => false) {
+    const info = getItemPriceInfo(hrid, { mode: 'bid' });
+    if (!info || info.price === null || info.price === undefined) return null;
+    if (info.estimated) return isContainer(hrid) ? null : 0;
+    return calculatePriceAfterTax(info.price);
+}
+
+/**
+ * How many units of an item the market takes from one character in a week:
+ * the shared liquidity bound ({@link capProfitRateCached}: a quarter of the
+ * measured daily volume) over the planner's horizon. Only volumes already
+ * measured count, so nothing here starts a lookup; an unmeasured item, the
+ * liquidity cap switched off, or an Iron Cow (which sells to the vendor) is
+ * unbounded.
+ * @param {string} hrid
+ * @returns {number}
+ */
+export function weeklySellable(hrid) {
+    if (isIronCowCharacter()) return Infinity;
+    // A rate far past any market: the throttle that comes back is then the absorbable rate over it
+    const probe = 1e12;
+    const bounded = capProfitRateCached({ goldPerHour: 1, sells: [{ itemHrid: hrid, unitsPerHour: probe }] });
+    if (!bounded?.capped) return Infinity;
+    return Math.max(0, Number(bounded.limit?.throttle) || 0) * probe * 24 * LIQUIDITY_HORIZON_DAYS;
+}
+
+/**
+ * The sold outputs of a route as `{perSource, unit}`, from per-source expected
+ * units and their total value.
+ * @param {Iterable<{itemHrid: string, expected: number, value: number|null}>} terminals
+ * @returns {Map<string, {perSource: number, unit: number}>}
+ */
+function keptFromTerminals(terminals) {
+    const kept = new Map();
+    for (const { itemHrid, expected, value } of terminals) {
+        if (value === null || value === undefined || !(expected > 0)) continue;
+        kept.set(itemHrid, { perSource: expected, unit: value / expected });
+    }
+    return kept;
+}
+
+/**
  * Price every route the game data allows, for the current character's bench.
  *
  * Craft: per item with a production action, the own-use make cost
@@ -85,9 +144,9 @@ const SKIP_ITEMS = new Set(['/items/coin']);
  *
  * Decompose / shop: per item with decompose outputs, the full chain at the
  * calculator's catalyst/tea pick with an input cost of 0
- * ({@link selfUseDecomposeChain}), so one walk serves both: the decompose
- * route adds the item's own-use cost (cheaper of make and buy), the shop
- * route its shop coin price.
+ * ({@link selfUseDecomposeChain}), its outputs valued at what selling them
+ * realizes ({@link realizedSalePrice}), so one walk serves every way of getting
+ * the item: bought at the ask, made at the bench, or bought at the shop.
  *
  * @param {Object} [opts]
  * @param {() => boolean} [opts.cancelled] - Stops the build when it turns true
@@ -96,14 +155,13 @@ const SKIP_ITEMS = new Set(['/items/coin']);
 export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const getItemDetails = (hrid) => itemDetailMap[hrid] || dataManager.getItemDetails?.(hrid) || null;
-    const priceOf = (hrid) => getItemPrice(hrid, { context: 'profit', side: 'buy' });
-    // What a source can actually be bought for: a live order book (or the player's own price),
-    // never the value-map estimate an empty book falls back to, and nothing on an Iron Cow, which
-    // cannot use the market at all
+    // What a source can actually be bought for: the live ask (or the player's own price) — not a
+    // patient bid, whatever the pricing mode, for a buy of hundreds — never the value-map estimate an
+    // empty book falls back to, and nothing on an Iron Cow, which cannot use the market at all
     const ironCow = isIronCowCharacter();
     const buyableQuote = (hrid) => {
         if (ironCow) return null;
-        const info = getItemPriceInfo(hrid, { context: 'profit', side: 'buy', marketQuote: true });
+        const info = getItemPriceInfo(hrid, { mode: 'ask', side: 'buy', marketQuote: true });
         if (!info || info.estimated || !['book', 'custom'].includes(info.source)) return null;
         return info.price > 0 ? info.price : null;
     };
@@ -192,17 +250,19 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
     };
 
-    // A crate with no order book is worth its contents, untaxed at the buy side, as in the tooltip
+    // Every output a route yields besides its target is sold. A crate nobody bids on is opened and
+    // its contents sold
+    const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
+    const isContainer = (h) => Array.isArray(containerDrops(h)) && containerDrops(h).length > 0;
+    const salePrices = new Map();
+    const saleOf = (hrid) => {
+        if (!salePrices.has(hrid)) salePrices.set(hrid, realizedSalePrice(hrid, isContainer));
+        return salePrices.get(hrid);
+    };
     const crateValues = new Map();
     const containerValue = (hrid) => {
         if (!crateValues.has(hrid)) {
-            crateValues.set(
-                hrid,
-                untaxedContainerValue(hrid, {
-                    containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
-                    priceOf: (h) => expectedValueCalculator.resolveBuySideValue?.(h)?.value ?? priceOf(h),
-                })
-            );
+            crateValues.set(hrid, untaxedContainerValue(hrid, { containerDrops, priceOf: saleOf }));
         }
         return crateValues.get(hrid);
     };
@@ -215,7 +275,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             getDecompose,
             getItemDetails,
             isChainable,
-            priceOf,
+            priceOf: saleOf,
             ownUseCost: 0,
             containerValue,
         });
@@ -227,10 +287,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
             yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
         }
-        const kept = new Map();
-        for (const { itemHrid, value } of chain.terminals) {
-            if (value !== null && value !== undefined) kept.set(itemHrid, value);
-        }
+        const kept = keptFromTerminals(chain.terminals);
         if (yields.size === 0) continue;
         // The alchemy-wide bonus drops each step rolls: credited, never a target
         const bonus = new Set();
@@ -359,6 +416,9 @@ class CollectionOptimizer {
         this.collapsed = false;
         this.targetPoints = 10;
         this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
+        /** Items whose traded volume has been asked for this session */
+        this.volumesAsked = new Set();
+        this.volumesWarming = null;
     }
 
     /** The max time per step, in seconds */
@@ -437,6 +497,8 @@ class CollectionOptimizer {
         this.index = null;
         this.building = null;
         this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
+        this.volumesAsked = new Set();
+        this.volumesWarming = null;
         this.isInitialized = false;
     }
 
@@ -515,7 +577,8 @@ class CollectionOptimizer {
             el(
                 'span',
                 '',
-                'Buying on the market does not collect an item. Gold is net of the other kept outputs, untaxed. '
+                'Buying on the market does not collect an item. Gold is net of the other outputs, sold at the ' +
+                    'bid after tax, as many as the market takes in a week. '
             )
         );
         const recompute = el('button', 'font-size:11px;margin-left:4px;', 'Recompute');
@@ -610,7 +673,10 @@ class CollectionOptimizer {
         const run = () => {
             const wanted = Math.max(1, Math.floor(Number(input.value) || 0));
             this.targetPoints = wanted;
-            const plan = planTarget(counts, this.index, wanted, { maxSeconds: this.maxSeconds });
+            const plan = planTarget(counts, this.index, wanted, {
+                maxSeconds: this.maxSeconds,
+                sellable: weeklySellable,
+            });
             result.replaceChildren();
             const head = plan.reached
                 ? `+${plan.points} points: ${formatKMB(plan.gold)} gold, ${timeReadable(plan.seconds)}`
@@ -645,7 +711,7 @@ class CollectionOptimizer {
      * @param {Map<string, number>} counts
      */
     renderRanking(body, counts) {
-        const options = bestOptions(counts, this.index, { maxSeconds: this.maxSeconds });
+        const options = bestOptions(counts, this.index, { maxSeconds: this.maxSeconds, sellable: weeklySellable });
         if (options.length === 0) {
             body.appendChild(
                 el(
@@ -682,6 +748,37 @@ class CollectionOptimizer {
             table.appendChild(tr);
         }
         body.appendChild(table);
+        this.warmVolumes(options.slice(0, MAX_ROWS));
+    }
+
+    /**
+     * Measure the traded volume of what the shown options sell, once per item,
+     * and redraw when that is done: a bound only applies to a volume already
+     * measured. The lookup is the shared liquidity one, which asks the pooled
+     * history only when the player has turned it on.
+     * @param {Array<Object>} options
+     */
+    warmVolumes(options) {
+        const fresh = [];
+        for (const option of options || []) {
+            for (const hrid of option.sold?.keys?.() || []) {
+                if (this.volumesAsked.has(hrid)) continue;
+                this.volumesAsked.add(hrid);
+                fresh.push({ itemHrid: hrid });
+            }
+        }
+        if (fresh.length === 0) return;
+        const generation = this.generation;
+        this.volumesWarming = (async () => {
+            try {
+                await prefetchLiquidity(fresh);
+            } catch (error) {
+                console.error('[CollectionOptimizer] Measuring market volumes failed:', error);
+            }
+            if (generation !== this.generation || this.collapsed) return;
+            const root = document.querySelector(`.${PANEL_CLASS}`);
+            if (root && this.index) this.render(root);
+        })();
     }
 }
 
