@@ -2910,6 +2910,8 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         fresh: plan.fresh,
         alreadyHeld: plan.alreadyHeld,
         fromEquipped: Boolean(plan.copy?.equipped),
+        // Whose copies these were, so a row for another player draws no Enhance
+        isSelf: Boolean(isSelf),
         baseCost: 0,
     };
 

@@ -1613,7 +1613,11 @@ export function upgradeRowPurchase(result) {
     const ladder = result?.costDetail?.ladder || null;
     const selfEnhance =
         !isBook && !isConsumable && !items && isSelfEnhancedItem(itemHrid)
-            ? { fromLevel: Number.isFinite(ladder?.fromLevel) ? ladder.fromLevel : null, toLevel: targetLevel }
+            ? {
+                  fromLevel: Number.isFinite(ladder?.fromLevel) ? ladder.fromLevel : null,
+                  toLevel: targetLevel,
+                  isSelf: ladder?.isSelf !== false,
+              }
             : null;
 
     return {
@@ -1892,6 +1896,9 @@ export function upgradeRowActionsHtml(result) {
     // included) and no Watch (the watchlist tracks an order book this item does
     // not have). Enhance opens the game's Enhancing screen on the copy to ladder.
     if (buy.selfEnhance) {
+        // The click rereads the LIVE character's inventory, so a row priced for
+        // another player (`isSelf: false`) keeps Save but offers no Enhance
+        if (!buy.selfEnhance.isSelf) return save;
         return `${save}<button type="button" ${attrs} data-buy-action="enhance"
             title="${escapeAttribute(enhanceButtonTitle(buy))}" style="${ROW_ACTION_STYLE}">Enhance</button>`;
     }

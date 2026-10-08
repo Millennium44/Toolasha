@@ -9025,6 +9025,17 @@ describe('self-enhanced upgrade rows (capes, quivers)', () => {
         expect(container.querySelector('[data-buy-action="enhance"]').title).toContain('from +3 to +5');
     });
 
+    test('a row priced for another player keeps Save but offers no Enhance, Market or Watch', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            capeRow(5, { fromLevel: 3, toLevel: 5, fresh: false, isSelf: false })
+        );
+        expect(container.querySelector('[data-buy-action="enhance"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="market"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="watch"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="save"]')).not.toBeNull();
+    });
+
     test('a cape row at +0 still gets no Market button', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(capeRow(0, null));

@@ -120,6 +120,20 @@ describe('self-enhanced upgrade pricing', () => {
         expect(state.sweeps).toContainEqual({ itemHrid: CAPE, from: 3, to: 5 });
     });
 
+    test('a worn +4 with no count field is one copy, not a fresh +0 base', () => {
+        const worn = stack(CAPE, 4, '/item_locations/back');
+        delete worn.count;
+        state.items = [worn];
+        const detail = explainUpgradeCost(tier(CAPE, 7), gameData);
+        expect(detail.ladder).toMatchObject({ fromLevel: 4, toLevel: 7, fresh: false, isSelf: true });
+        expect(detail.net).toBe(3_000_000);
+    });
+
+    test('an explicit zero count is still a consumed stack', () => {
+        state.items = [stack(CAPE, 4, '/item_locations/inventory', 0)];
+        expect(explainUpgradeCost(tier(CAPE, 7), gameData).ladder).toMatchObject({ fresh: true });
+    });
+
     test('best copy at +4: the ladder runs from the +4 itself', () => {
         state.items = [stack(CAPE, 4), stack(CAPE, 1)];
         const detail = explainUpgradeCost(tier(CAPE, 7), gameData);

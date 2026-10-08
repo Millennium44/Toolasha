@@ -61,7 +61,10 @@ export function heldCopies(itemHrid, items) {
     const copies = [];
     for (const item of items) {
         if (!item || item.itemHrid !== itemHrid) continue;
-        const count = Math.floor(Number(item.count) || 0);
+        // Equipped rows do not reliably carry a `count` (see
+        // `highestOwnedEnhancements`): an absent one is a single worn copy, and
+        // only an explicit zero (a consumed stack) is skipped
+        const count = item.count == null ? 1 : Math.floor(Number(item.count) || 0);
         if (count <= 0) continue;
         const location = item.itemLocationHrid || INVENTORY_LOCATION;
         const copy = {
