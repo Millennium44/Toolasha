@@ -880,7 +880,13 @@ class LabyrinthRoomLogs {
             // Joined the new attempt after its first action(s): count, not score
             attempt.actions += snapshot.actionCounter;
         } else if (action && prev) {
-            attempt.actions += Math.max(1, snapshot.actionCounter - (Number(prev.actionCounter) || 0));
+            const step = Math.max(1, snapshot.actionCounter - (Number(prev.actionCounter) || 0));
+            attempt.actions += step;
+            if (step > 1) {
+                // Several actions arrived as one change of work: their outcomes are unknowable
+                counted = null;
+                attempt.partial = true;
+            }
         }
         if (counted?.outcome === 'success' || counted?.outcome === 'double') attempt.successes += 1;
         if (counted?.outcome === 'double') attempt.doubles += 1;

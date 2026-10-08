@@ -174,6 +174,16 @@ describe('skilling attempts are logged one per retry', () => {
         expect(attempt).toMatchObject({ actions: 6, successes: 1, partial: true });
     });
 
+    test('a skipped batch of actions is counted but not scored, and marks the attempt partial', () => {
+        play([
+            [0, 0],
+            [1, 10],
+            [3, 30],
+        ]);
+        const [attempt] = labyrinthRoomLogs.activeSession.attempts;
+        expect(attempt).toMatchObject({ actions: 3, successes: 1, doubles: 0, partial: true });
+    });
+
     test('an attempt seen from its start is not partial', () => {
         play([
             [0, 0],
