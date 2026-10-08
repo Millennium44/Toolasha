@@ -15,6 +15,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Net worth can now value labyrinth tokens (best Labyrinth Shop gold per token) and held guild tokens (via the guild credit exchange), each behind its own setting (off by default), and a new Tokens row lists every token held: amount × best gold per token = total.
 
+### Room Logs records each skilling attempt
+
+- Room Logs now keeps every retry of a skilling room as its own attempt (actions, successes, doubles, end progress against the target, action time) and lists the last few on the room card, so the clear-chance model can be checked against real attempts.
+
 ### Missing Mats shows what it will buy
 
 - The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).
