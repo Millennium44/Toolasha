@@ -1330,17 +1330,23 @@ describe('Storage waits out a lost connection instead of answering with defaults
         setTimeout(() => {
             storage.db = {
                 transaction() {
-                    return {
+                    const transaction = {
                         objectStore: () => ({
                             put(value, key) {
                                 const request = { onsuccess: null, onerror: null };
                                 written.push([key, value]);
-                                queueMicrotask(() => request.onsuccess?.());
+                                // A write is settled by its commit, as in IndexedDB
+                                queueMicrotask(() => {
+                                    request.onsuccess?.();
+                                    queueMicrotask(() => transaction.oncomplete?.());
+                                });
                                 return request;
                             },
                         }),
                         onabort: null,
+                        oncomplete: null,
                     };
+                    return transaction;
                 },
             };
             storage._reconnecting = false;
@@ -2083,6 +2089,49 @@ describe('Storage.set with a fold: read, fold and write in the one transaction t
         await storage.set('lines', ['added'], 'settings', true, { fold: union });
 
         expect(dataByStore.get('settings').get('lines')).toEqual(['kept', 'added']);
+    });
+
+    test('a fold that answers FOLD_DELETE deletes the key in the same transaction', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['gone'] } });
+        storage.db = db;
+
+        await expect(storage.set('lines', [], 'settings', true, { fold: () => storage.FOLD_DELETE })).resolves.toBe(
+            true
+        );
+        expect(dataByStore.get('settings').has('lines')).toBe(false);
+
+        dataByStore.get('settings').set('lines', ['gone again']);
+        storage.set('lines', [], 'settings', false, { fold: () => storage.FOLD_DELETE });
+        await storage.flushAll();
+        expect(dataByStore.get('settings').has('lines')).toBe(false);
+    });
+
+    test('a write whose put succeeds but whose transaction aborts is reported as not written', async () => {
+        const db = {
+            transaction() {
+                const transaction = {
+                    objectStore: () => ({
+                        put() {
+                            const request = { onsuccess: null, onerror: null };
+                            queueMicrotask(() => {
+                                request.onsuccess?.();
+                                queueMicrotask(() => transaction.onabort?.());
+                            });
+                            return request;
+                        },
+                    }),
+                    oncomplete: null,
+                    onabort: null,
+                    onerror: null,
+                };
+                return transaction;
+            },
+        };
+        storage.db = db;
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(storage.set('lines', ['mine'], 'settings', true)).resolves.toBe(false);
+        error.mockRestore();
     });
 
     test('a fold that throws writes the value as given rather than nothing', async () => {

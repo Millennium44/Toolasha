@@ -155,6 +155,16 @@ function isConnectionGone(error) {
 }
 
 /**
+ * What a fold answers to say "this key should not exist any more".
+ *
+ * A writer that removes a whole record (a history chunk that lost its last
+ * entry) folds the removal like any other write, so a copy another tab or a
+ * sync pull put there in the meantime is judged rather than wiped: the fold
+ * answers what is left, or this, and the transaction deletes the key.
+ */
+const FOLD_DELETE = Symbol('storage-fold-delete');
+
+/**
  * The value a folding write puts down, from what is stored now.
  *
  * A fold is how a writer that keeps its record in memory says "combine with
@@ -291,6 +301,8 @@ class Storage {
          */
         this._inFlightWrites = new Set();
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
+        /** A fold's answer for "delete the key" — see {@link FOLD_DELETE} */
+        this.FOLD_DELETE = FOLD_DELETE;
 
         /**
          * Restore quiescing — see `beginRestore()`/`finishRestore()`.
@@ -1500,12 +1512,12 @@ class Storage {
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
                 const put = (next) => {
-                    const request = store.put(next, key);
+                    const request = next === FOLD_DELETE ? store.delete(key) : store.put(next, key);
 
-                    request.onsuccess = () => {
-                        settle(true, null);
-                    };
-
+                    // Not settled here: a request that succeeds can still be lost
+                    // to a transaction that aborts at commit, and a caller acting
+                    // on "written" (a snapshot that stops the next write, a fold
+                    // that took entries into memory) would be acting on nothing
                     request.onerror = () => {
                         console.error(`[Storage] Failed to save key ${key}:`, request.error);
                         settle(false, request.error);
@@ -1529,6 +1541,11 @@ class Storage {
                 transaction.oncomplete = () => {
                     this._noteWriteCommitted(failuresAtStart);
                     this._announceCommit(storeName, [key]);
+                    settle(true, null);
+                };
+                transaction.onerror = () => {
+                    console.error(`[Storage] Save transaction failed for key ${key}:`, transaction.error);
+                    settle(false, transaction.error);
                 };
 
                 // A quota failure aborts the whole transaction; without this the
@@ -1623,9 +1640,10 @@ class Storage {
                 read.onsuccess = () => {
                     let next;
                     // A queued value that was to be folded as it landed is folded now
-                    const held = queued?.fold
+                    const folded = queued?.fold
                         ? foldForWrite(queued.fold, key, queued.value, read.result)
                         : queued?.value;
+                    const held = folded === FOLD_DELETE ? undefined : folded;
                     try {
                         const found = queued ? true : read.result !== undefined;
                         next = mutate(queued ? held : read.result, found);
@@ -2514,7 +2532,7 @@ class Storage {
                 const written = [];
 
                 const put = (key, value) => {
-                    const request = store.put(value, key);
+                    const request = value === FOLD_DELETE ? store.delete(key) : store.put(value, key);
                     request.onsuccess = () => {
                         written.push(key);
                     };
