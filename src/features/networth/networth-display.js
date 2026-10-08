@@ -910,8 +910,8 @@ class NetworthInventoryDisplay {
             });
         }
 
-        // Current assets toggle
-        if (ca.total > 0) {
+        // Current assets toggle — drawn for held tokens too, even when none is counted
+        if (ca.total > 0 || (networthData.tokens?.items?.length ?? 0) > 0) {
             this.setupToggle(
                 'mwi-current-assets-toggle',
                 'mwi-current-assets-details',

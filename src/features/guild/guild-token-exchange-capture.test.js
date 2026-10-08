@@ -306,6 +306,31 @@ describe('hydrating what an earlier session read', () => {
         expect(capturedTokenExchange(GREEN).creditsPerToken).toBe(10);
     });
 
+    test('a stored rate read in after start-up tells net worth to re-price', async () => {
+        store.data[CAPTURE_KEY] = { exchanges: { [GREEN]: { creditsPerToken: 10, capturedAt: 1 } } };
+        const heard = [];
+        const listener = (event) => heard.push(event.detail);
+        window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        try {
+            await hydrateCapturedTokenExchanges();
+        } finally {
+            window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        }
+        expect(heard).toEqual([{ hydrated: true }]);
+    });
+
+    test('an empty stored table says nothing', async () => {
+        const heard = [];
+        const listener = () => heard.push(1);
+        window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        try {
+            await hydrateCapturedTokenExchanges();
+        } finally {
+            window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        }
+        expect(heard).toEqual([]);
+    });
+
     test('stored junk is not believed', async () => {
         store.data[CAPTURE_KEY] = {
             exchanges: { '/items/coin': { creditsPerToken: 5 }, [GREEN]: { creditsPerToken: 0 } },

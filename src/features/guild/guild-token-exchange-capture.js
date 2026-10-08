@@ -291,6 +291,22 @@ export function capturedTokenExchange(creditItemHrid) {
 }
 
 /**
+ * Fired on `window` when a captured exchange rate changes, so readers in another
+ * bundle (net worth prices held guild tokens through it) can re-price.
+ */
+export const GUILD_TOKEN_EXCHANGE_EVENT = 'toolasha:guild-token-exchange-changed';
+
+/**
+ * Tell listeners the captured table changed.
+ * @param {Object} detail - What changed
+ */
+function announceExchangeChange(detail) {
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(GUILD_TOKEN_EXCHANGE_EVENT, { detail }));
+    }
+}
+
+/**
  * Read the stored table into memory, once.
  *
  * The valuation is synchronous and called from tooltips, so it cannot await
@@ -305,22 +321,20 @@ export async function hydrateCapturedTokenExchanges() {
 
     try {
         const stored = await storage.get(CAPTURE_KEY, STORE_NAME, null);
+        let changed = false;
         for (const [hrid, entry] of Object.entries(stored?.exchanges || {})) {
             if (!isCreditHrid(hrid) || !(Number(entry?.creditsPerToken) > 0)) continue;
+            if (captured[hrid]?.creditsPerToken !== Number(entry.creditsPerToken)) changed = true;
             captured[hrid] = { ...entry, creditItemHrid: hrid };
         }
+        // A valuation may already have run on the assumed rate while this read was out
+        if (changed) announceExchangeChange({ hydrated: true });
     } catch (error) {
         console.error('[GuildTokenExchange] Could not read the stored exchange:', error);
     }
 
     return { ...captured };
 }
-
-/**
- * Fired on `window` when a captured exchange rate changes, so readers in another
- * bundle (net worth prices held guild tokens through it) can re-price.
- */
-export const GUILD_TOKEN_EXCHANGE_EVENT = 'toolasha:guild-token-exchange-changed';
 
 /**
  * Write a reading down, if it says anything the table does not already say.
@@ -342,9 +356,7 @@ export async function rememberTokenExchange(reading) {
         console.error('[GuildTokenExchange] Could not store the exchange:', error);
     }
 
-    if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent(GUILD_TOKEN_EXCHANGE_EVENT, { detail: { ...reading } }));
-    }
+    announceExchangeChange({ ...reading });
 
     return true;
 }

@@ -276,6 +276,11 @@ describe('token worth breakdown', () => {
         expect(networthInventoryDisplay.container.querySelector('#mwi-tokens-breakdown').textContent).toContain(
             '(not counted)'
         );
+        // And the section can be opened to reach it
+        const details = networthInventoryDisplay.container.querySelector('#mwi-current-assets-details');
+        expect(details.style.display).toBe('none');
+        networthInventoryDisplay.container.querySelector('#mwi-current-assets-toggle').click();
+        expect(details.style.display).not.toBe('none');
     });
 
     test('a token nothing can price says so', () => {
