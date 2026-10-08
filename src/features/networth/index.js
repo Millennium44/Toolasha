@@ -29,6 +29,7 @@ import { initExclusions } from './networth-exclusions.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { GUILD_TOKEN_EXCHANGE_EVENT } from '../guild/guild-token-exchange-capture.js';
 
 /**
  * The settings that change what everything is worth, so a change re-prices the
@@ -42,7 +43,14 @@ const NETWORTH_RECALC_SETTINGS = [
     'networth_highEnhancementMinLevel',
     'networth_includeCowbells',
     'networth_includeTaskTokens',
+    'networth_includeLabyrinthTokens',
+    'networth_includeGuildTokens',
     'networth_abilityBooksAsInventory',
+    // The guild token exchange rate stand-in prices held guild tokens
+    'guildTokenCreditRate',
+    // Labyrinth tokens are priced through the profit calculator's pricing settings
+    'profitCalc_pricingMode',
+    'profitCalc_patientTickSell',
     IRONCOW_VALUATION_SETTING,
 ];
 
@@ -172,6 +180,8 @@ class NetworthFeature {
             }
         };
         for (const key of NETWORTH_RECALC_SETTINGS) config.onSettingChange(key, this.pricingModeHandler);
+        // A newly captured guild token exchange rate re-prices held guild tokens
+        if (typeof window !== 'undefined') window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, this.pricingModeHandler);
 
         // Listen for inventory changes
         this.itemsUpdateHandler = () => {
@@ -327,6 +337,9 @@ class NetworthFeature {
 
             if (this.pricingModeHandler) {
                 for (const key of NETWORTH_RECALC_SETTINGS) config.offSettingChange(key, this.pricingModeHandler);
+                if (typeof window !== 'undefined') {
+                    window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, this.pricingModeHandler);
+                }
                 this.pricingModeHandler = null;
             }
 

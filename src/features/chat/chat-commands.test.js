@@ -80,6 +80,7 @@ vi.mock('../../utils/market-data.js', () => ({
     },
 }));
 vi.mock('../guild/guild-token-exchange-capture.js', () => ({
+    GUILD_TOKEN_EXCHANGE_EVENT: 'toolasha:guild-token-exchange-changed',
     capturedTokenExchanges: () => game.capturedExchanges,
 }));
 

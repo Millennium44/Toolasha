@@ -194,6 +194,7 @@ vi.mock('../../utils/shopping-list.js', () => ({
 // per credit color, and a color missing from it is one the player has never
 // opened the exchange for.
 vi.mock('./guild-token-exchange-capture.js', () => ({
+    GUILD_TOKEN_EXCHANGE_EVENT: 'toolasha:guild-token-exchange-changed',
     captureTokenExchangeFromModal: (...args) => game.captures.push(args),
     hydrateCapturedTokenExchanges: async () => ({ ...game.rates }),
     capturedTokenExchanges: () => Object.values(game.rates),

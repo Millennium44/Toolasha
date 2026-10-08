@@ -2139,6 +2139,22 @@ export const settingsGroups = {
                 help: 'Value task tokens based on expected value from Task Shop chests. Disable to exclude them from net worth.',
                 requires: 'networth',
             },
+            networth_includeLabyrinthTokens: {
+                id: 'networth_includeLabyrinthTokens',
+                label: 'Include labyrinth tokens in net worth',
+                type: 'checkbox',
+                default: false,
+                help: 'Value labyrinth tokens at the best gold per token the Labyrinth Shop converts them into, the figure their tooltip shows. Disable to exclude them from net worth.',
+                requires: 'networth',
+            },
+            networth_includeGuildTokens: {
+                id: 'networth_includeGuildTokens',
+                label: 'Include guild tokens in net worth',
+                type: 'checkbox',
+                default: false,
+                help: 'Value guild tokens you hold through the Guild Shop credit exchange (credits per token × the gold value of a credit). Tokens already spent on shrine levels are not counted. Disable to exclude them from net worth.',
+                requires: 'networth',
+            },
             networth_abilityBooksAsInventory: {
                 id: 'networth_abilityBooksAsInventory',
                 label: 'Count ability books as inventory (Current Assets)',

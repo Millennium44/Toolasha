@@ -183,3 +183,142 @@ describe('an inventory item nothing can price', () => {
         expect(html).not.toContain('no price');
     });
 });
+
+describe('token worth breakdown', () => {
+    /**
+     * Net worth data holding tokens inside its inventory value.
+     * @param {Array} items - `tokens.items`
+     * @returns {Object} networthData
+     */
+    function withTokens(items) {
+        const data = networthData(undefined);
+        const counted = items.filter((item) => item.counted).reduce((sum, item) => sum + item.value, 0);
+        data.currentAssets.total = 500_000;
+        data.currentAssets.inventory.value = 500_000;
+        data.totalNetworth = 1_500_000;
+        data.tokens = { value: counted, items };
+        return data;
+    }
+
+    const labyrinth = {
+        itemHrid: '/items/labyrinth_token',
+        name: 'Labyrinth Token',
+        kind: 'labyrinth',
+        count: 30,
+        rate: 7000,
+        value: 210_000,
+        bestItemHrid: '/items/pathseeker_lodestone',
+        bestItemName: 'Pathseeker Lodestone',
+        note: null,
+        counted: true,
+        excludedBy: null,
+        unpriced: false,
+    };
+    const guild = {
+        itemHrid: '/items/guild_token',
+        name: 'Guild Token',
+        kind: 'guild',
+        count: 5,
+        rate: 4000,
+        value: 20_000,
+        bestItemHrid: '/items/guild_credit_1',
+        bestItemName: 'Green Guild Credit',
+        note: 'via credit exchange at 10 credits/token',
+        counted: false,
+        excludedBy: 'setting',
+        unpriced: false,
+    };
+
+    test('sits under Current Assets, labelled as part of the inventory, without moving any total', () => {
+        const data = withTokens([labyrinth, guild]);
+        networthInventoryDisplay.update(data);
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-tokens-toggle');
+        expect(toggle).not.toBeNull();
+        expect(networthInventoryDisplay.container.querySelector('#mwi-current-assets-details').contains(toggle)).toBe(
+            true
+        );
+        expect(toggle.textContent).toContain('Tokens (in inventory)');
+        expect(toggle.getAttribute('title')).toContain('Already counted in Inventory value');
+        // The panel's totals are the calculator's, untouched by the breakdown
+        expect(panelText()).toContain('Net Worth: 1.50M');
+        expect(panelText()).toContain('Current Assets: 500.00K');
+    });
+
+    test('lists amount × best gold per token = total, naming the item, with the conversion in the hover text', () => {
+        networthInventoryDisplay.update(withTokens([labyrinth]));
+
+        const line = networthInventoryDisplay.container.querySelector('#mwi-tokens-breakdown .mwi-token-row');
+        expect(line.textContent).toContain('Labyrinth Token x30 × 7.0K (Pathseeker Lodestone) = 210.00K');
+        expect(line.textContent).not.toContain('(not counted)');
+        expect(line.getAttribute('title')).toContain('If converted into Pathseeker Lodestone');
+        expect(line.getAttribute('title')).toContain('sold at the best rate');
+    });
+
+    test('a token left out of net worth is greyed and says (not counted)', () => {
+        networthInventoryDisplay.update(withTokens([labyrinth, guild]));
+
+        const rows = [...networthInventoryDisplay.container.querySelectorAll('#mwi-tokens-breakdown .mwi-token-row')];
+        const guildRow = rows.find((row) => row.textContent.includes('Guild Token'));
+        expect(guildRow.textContent).toContain('Guild Token x5 × 4.0K (Green Guild Credit) = 20.00K (not counted)');
+        expect(guildRow.style.opacity).toBe('0.5');
+        expect(guildRow.getAttribute('title')).toContain('via credit exchange at 10 credits/token');
+    });
+
+    test('held tokens still show when nothing in Current Assets is counted', () => {
+        const data = withTokens([guild]);
+        data.currentAssets.total = 0;
+        data.currentAssets.inventory.value = 0;
+        networthInventoryDisplay.update(data);
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-tokens-toggle');
+        expect(toggle).not.toBeNull();
+        expect(networthInventoryDisplay.container.querySelector('#mwi-tokens-breakdown').textContent).toContain(
+            '(not counted)'
+        );
+        // And the section can be opened to reach it
+        const details = networthInventoryDisplay.container.querySelector('#mwi-current-assets-details');
+        expect(details.style.display).toBe('none');
+        networthInventoryDisplay.container.querySelector('#mwi-current-assets-toggle').click();
+        expect(details.style.display).not.toBe('none');
+    });
+
+    test('a token nothing can price says so', () => {
+        networthInventoryDisplay.update(
+            withTokens([{ ...labyrinth, rate: null, value: 0, unpriced: true, bestItemHrid: null, bestItemName: null }])
+        );
+
+        expect(networthInventoryDisplay.container.querySelector('#mwi-tokens-breakdown').textContent).toContain(
+            'Labyrinth Token x30: no price'
+        );
+    });
+
+    test('no tokens, no row; data from before tokens were listed renders without one', () => {
+        networthInventoryDisplay.update(withTokens([]));
+        expect(networthInventoryDisplay.container.querySelector('#mwi-tokens-toggle')).toBeNull();
+
+        const legacy = withTokens([]);
+        delete legacy.tokens;
+        networthInventoryDisplay.update(legacy);
+        expect(networthInventoryDisplay.container.querySelector('#mwi-tokens-toggle')).toBeNull();
+    });
+
+    test('the shrine row no longer says guild tokens have no value', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 52_500,
+                tokens: 60,
+                known: true,
+                breakdown: [
+                    { hrid: '/guild_buffs/force_combat', name: 'Force Combat 3', level: 3, cost: 52_500, tokens: 60 },
+                ],
+            })
+        );
+
+        const title = networthInventoryDisplay.container
+            .querySelector('#mwi-guild-shrines-toggle')
+            .getAttribute('title');
+        expect(title).not.toContain('carry no gold value');
+        expect(title).toContain('tokens spent on shrines are not counted');
+    });
+});

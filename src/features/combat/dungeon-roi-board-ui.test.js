@@ -150,6 +150,8 @@ vi.mock('../../utils/key-cost.js', () => ({
 
 vi.mock('../../utils/token-valuation.js', () => ({
     calculateDungeonTokenValue: () => 100,
+    calculateDungeonTokenValueDetail: () => ({ value: 100, itemHrid: null, via: 'shop' }),
+    calculateLabyrinthTokenValueDetail: () => null,
 }));
 
 const { default: DungeonRoiBoardUI, listDungeons, rewardsPerCompletion } = await import('./dungeon-roi-board-ui.js');

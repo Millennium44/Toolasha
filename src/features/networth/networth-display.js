@@ -17,6 +17,33 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { removeExclusion } from './networth-exclusions.js';
 
+/** Hover text on the token row: it is a view of the inventory, not added again */
+const TOKENS_ROW_TITLE =
+    'Tokens you hold, each at the best gold one token converts into at its shop, if converted and sold at ' +
+    'the best rate. Already counted in Inventory value — shown here as a breakdown, not added again.';
+
+/**
+ * The token row's label.
+ * @param {{value: number}} tokens - From `networthData.tokens`
+ * @returns {string} Label text
+ */
+function tokensLabel(tokens) {
+    return `Tokens (in inventory): ${networthFormatter(Math.round(tokens?.value || 0))}`;
+}
+
+/**
+ * Escape text for an HTML attribute or body.
+ * @param {string} text - Raw text
+ * @returns {string} Escaped text
+ */
+function escapeHtml(text) {
+    return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 /**
  * Header Display Component
  * Shows "Gold: [amount]" next to total level
@@ -316,6 +343,7 @@ class NetworthInventoryDisplay {
             'mwi-equipment-breakdown',
             'mwi-inventory-breakdown',
             'mwi-listings-breakdown',
+            'mwi-tokens-breakdown',
             'mwi-fixed-assets-details',
             'mwi-houses-breakdown',
             'mwi-abilities-details',
@@ -357,7 +385,11 @@ class NetworthInventoryDisplay {
         const fa = networthData.fixedAssets;
         const excl = networthData.excluded ?? { total: 0, items: [] };
 
-        const showCurrentAssets = ca.total > 0;
+        // Tokens held, already inside the inventory value: a view, not a second count
+        const tokens = networthData.tokens ?? { value: 0, items: [] };
+        const showTokens = (tokens.items?.length ?? 0) > 0;
+        // Held tokens keep the section open even when none of them is counted
+        const showCurrentAssets = ca.total > 0 || showTokens;
         const showEquipped = ca.equipped.value > 0;
         const showInventory = ca.inventory.value > 0;
         const showListings = ca.listings.value > 0;
@@ -454,6 +486,18 @@ class NetworthInventoryDisplay {
                     `
                             : ''
                     }
+
+                    ${
+                        showTokens
+                            ? `
+                    <!-- Token worth (a view of the inventory value, not added again) -->
+                    <div style="cursor: pointer; margin-top: 4px;" id="mwi-tokens-toggle" title="${TOKENS_ROW_TITLE}">
+                        + ${tokensLabel(tokens)}
+                    </div>
+                    <div id="mwi-tokens-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb;">${this.renderTokensBreakdown(tokens.items)}</div>
+                    `
+                            : ''
+                    }
                 </div>
                 `
                         : ''
@@ -523,7 +567,7 @@ class NetworthInventoryDisplay {
                         showGuildShrines
                             ? `
                         <!-- Guild Shrines -->
-                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent — nothing converts into tokens, so they carry no gold value here.">
+                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent; tokens spent on shrines are not counted here (guild tokens you still hold are valued under Tokens).">
                             + Guild Shrines: ${networthFormatter(Math.round(guildShrines.totalCost))}
                         </div>
                         <div id="mwi-guild-shrines-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderGuildShrinesBreakdown(guildShrines.breakdown)}</div>
@@ -647,8 +691,8 @@ class NetworthInventoryDisplay {
      * Render guild shrines breakdown HTML.
      *
      * Each line carries its token cost beside the gold one, because the gold
-     * figure alone understates what a shrine level took to buy and the tokens
-     * have no price that could be folded in.
+     * figure alone understates what a shrine level took to buy. The spent
+     * tokens are shown as a count and never folded into the gold figure.
      *
      * @param {Array} breakdown - Array of {name, cost, tokens}
      * @returns {string} HTML string
@@ -664,6 +708,43 @@ class NetworthInventoryDisplay {
                 return `${shrine.name}: ${networthFormatter(Math.round(shrine.cost))}${tokens}`;
             })
             .join('\n');
+    }
+
+    /**
+     * Render the token breakdown: one line per token held, as
+     * amount × best gold per token = total, naming what the token is best
+     * converted into. A token left out of net worth is greyed and marked.
+     *
+     * @param {Array} items - From `networthData.tokens.items`
+     * @returns {string} HTML string
+     */
+    renderTokensBreakdown(items) {
+        if (!items || items.length === 0) {
+            return '<div>No tokens</div>';
+        }
+
+        return items
+            .map((token) => {
+                const via = token.bestItemName ? ` (${escapeHtml(token.bestItemName)})` : '';
+                const figure = token.unpriced
+                    ? `${token.name} x${formatKMB(token.count)}: no price`
+                    : `${token.name} x${formatKMB(token.count)} × ${formatKMB(token.rate)}${via} = ${networthFormatter(Math.round(token.value))}`;
+                const title = token.unpriced
+                    ? 'Nothing can price this token yet.'
+                    : `If converted ${token.bestItemName ? `into ${token.bestItemName} ` : ''}and sold at the best rate: ` +
+                      `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/token = ${formatKMB(token.value)}` +
+                      (token.note ? ` (${token.note})` : '') +
+                      '.';
+                const notCounted = token.counted ? '' : ' (not counted)';
+                const why = token.counted
+                    ? ''
+                    : token.excludedBy === 'exclusion'
+                      ? ' Not counted: excluded from net worth.'
+                      : ' Not counted: turned off in the net worth settings.';
+                const style = token.counted ? '' : ' style="opacity: 0.5;"';
+                return `<div class="mwi-token-row"${style} title="${escapeHtml(title + why)}">${figure}${notCounted}</div>`;
+            })
+            .join('');
     }
 
     /**
@@ -829,8 +910,8 @@ class NetworthInventoryDisplay {
             });
         }
 
-        // Current assets toggle
-        if (ca.total > 0) {
+        // Current assets toggle — drawn for held tokens too, even when none is counted
+        if (ca.total > 0 || (networthData.tokens?.items?.length ?? 0) > 0) {
             this.setupToggle(
                 'mwi-current-assets-toggle',
                 'mwi-current-assets-details',
@@ -888,6 +969,11 @@ class NetworthInventoryDisplay {
                 'mwi-listings-breakdown',
                 `Market listings: ${networthFormatter(Math.round(ca.listings.value))}`
             );
+        }
+
+        // Tokens toggle
+        if ((networthData.tokens?.items?.length ?? 0) > 0) {
+            this.setupToggle('mwi-tokens-toggle', 'mwi-tokens-breakdown', tokensLabel(networthData.tokens));
         }
 
         // Fixed assets toggle

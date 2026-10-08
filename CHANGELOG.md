@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - With Auto-calc on, lab badges now refresh when a community, guild, house, achievement, MooPass or gear buff or a skill level changes, and Path redraws any badge still left over, so badges and the route quote the same clear chance.
 - The skilling room tooltip opens with its Clear Chance, laid out row for row like the combat tooltip.
 
+### Net worth counts labyrinth and guild tokens
+
+- Net worth can now value labyrinth tokens (best Labyrinth Shop gold per token) and held guild tokens (via the guild credit exchange), each behind its own setting (off by default), and a new Tokens row lists every token held: amount × best gold per token = total.
+
 ### Missing Mats shows what it will buy
 
 - The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).

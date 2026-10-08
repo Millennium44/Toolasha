@@ -219,6 +219,22 @@ describe('the game value map refreshing', () => {
 });
 
 describe('pricing settings', () => {
+    test('a newly captured guild token exchange rate re-prices net worth', async () => {
+        const target = new EventTarget();
+        vi.stubGlobal('window', target);
+        try {
+            networthFeature.isActive = true;
+            networthFeature.currentData = { totalNetworth: 10, coins: 0 };
+            networthFeature.setupEventListeners();
+            calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 77, coins: 0 });
+            target.dispatchEvent(new Event('toolasha:guild-token-exchange-changed'));
+            await vi.waitFor(() => expect(networthFeature.currentData.totalNetworth).toBe(77));
+        } finally {
+            networthFeature.isActive = false;
+            vi.unstubAllGlobals();
+        }
+    });
+
     test('settings that affect valuation invoke recalculation and publish the new total', async () => {
         networthFeature.isActive = true;
         networthFeature.currentData = { totalNetworth: 10, coins: 0 };
@@ -237,7 +253,12 @@ describe('pricing settings', () => {
             'networth_highEnhancementMinLevel',
             'networth_includeCowbells',
             'networth_includeTaskTokens',
+            'networth_includeLabyrinthTokens',
+            'networth_includeGuildTokens',
             'networth_abilityBooksAsInventory',
+            'guildTokenCreditRate',
+            'profitCalc_pricingMode',
+            'profitCalc_patientTickSell',
         ];
         for (const [index, key] of keysThatReprice.entries()) {
             calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 20 + index, coins: 0 });

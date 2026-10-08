@@ -6,7 +6,11 @@
  * - Market listings
  * - Houses (all 17)
  * - Abilities (equipped + others)
- * - Guild shrine levels bought (credits only — tokens have no gold price)
+ * - Guild shrine levels bought (credits only — the tokens spent on them are not counted)
+ *
+ * Tokens held in the inventory (task, dungeon, labyrinth, guild) are valued at
+ * the best gold one token converts into, and listed again in a token breakdown
+ * that is a view of the inventory figure, never added to the total twice.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -18,7 +22,8 @@ import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
-import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
+import { calculateDungeonTokenValueDetail, calculateLabyrinthTokenValueDetail } from '../../utils/token-valuation.js';
+import { explainGuildTokenValue, isGuildTokenHrid } from '../guild/guild-token-value.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import config from '../../core/config.js';
 import networthCache from './networth-cache.js';
@@ -180,11 +185,116 @@ function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
  * @returns {boolean} True when the item is a currency with no obtainable price
  */
 export function isUnpricedCurrency(itemHrid) {
-    if (itemHrid !== '/items/task_token') return false;
-    if (config.getSetting('networth_includeTaskTokens') === false) return false;
+    const kind = tokenKind(itemHrid);
+    if (kind !== 'task' && kind !== 'labyrinth' && kind !== 'guild') return false;
+    if (!isTokenIncluded(itemHrid)) return false;
 
-    const tokenData = calculateTaskTokenValue();
-    return !(tokenData?.tokenValue > 0);
+    return !(explainTokenValue(itemHrid).rate > 0);
+}
+
+/** The dungeon shop tokens, each valued at the best line in the shop that takes it */
+const DUNGEON_TOKEN_HRIDS = new Set([
+    '/items/chimerical_token',
+    '/items/sinister_token',
+    '/items/enchanted_token',
+    '/items/pirate_token',
+]);
+
+/** The labyrinth shop's currency */
+export const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
+
+/** The setting that keeps each optional token kind in net worth; dungeon tokens always count */
+export const TOKEN_INCLUDE_SETTINGS = {
+    task: 'networth_includeTaskTokens',
+    labyrinth: 'networth_includeLabyrinthTokens',
+    guild: 'networth_includeGuildTokens',
+};
+
+/**
+ * Which kind of token an item is, if any.
+ * @param {string} itemHrid - Item HRID
+ * @returns {'task'|'dungeon'|'labyrinth'|'guild'|null} The kind, or null for anything else
+ */
+export function tokenKind(itemHrid) {
+    if (itemHrid === '/items/task_token') return 'task';
+    if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) return 'dungeon';
+    if (itemHrid === LABYRINTH_TOKEN_HRID) return 'labyrinth';
+    if (isGuildTokenHrid(itemHrid)) return 'guild';
+    return null;
+}
+
+/**
+ * Whether a token kind's setting keeps it in net worth. Dungeon tokens have no
+ * setting and always count; the three optional kinds are counted unless their
+ * setting is explicitly off.
+ * @param {string} itemHrid - Item HRID
+ * @returns {boolean} True when the token is counted
+ */
+function isTokenIncluded(itemHrid) {
+    const setting = TOKEN_INCLUDE_SETTINGS[tokenKind(itemHrid)];
+    return !setting || config.getSetting(setting) !== false;
+}
+
+/**
+ * The pricing side guild credits are read at for net worth: the net worth
+ * pricing mode, pinned to ask when the value source is the game's own market
+ * value (credits are never priced from that map, and the mode's help text
+ * promises it is ignored there). Shared by the shrine levels and held guild
+ * tokens so the two always agree on what a credit is worth.
+ * @returns {string} 'ask' or 'bid'
+ */
+function guildCreditPricingMode() {
+    return (config.getSettingValue('networth_valueSource') || 'orderBook') === 'officialValue'
+        ? 'ask'
+        : config.getSettingValue('networth_pricingMode') || 'ask';
+}
+
+/**
+ * What one token is worth and what it is best converted into, whatever the
+ * token's setting says — the breakdown shows an excluded token's rate too.
+ *
+ * - Task tokens: the best Task Shop line (`calculateTaskTokenValue`).
+ * - Dungeon tokens: the best line of their dungeon shop, else their essence.
+ * - Labyrinth tokens: the best labyrinth shop line, priced the way the dungeon
+ *   tokens are — the tooltip's best Gold/Token under the default mode.
+ * - Guild tokens: the guild-token valuation, tokens → credits → gold.
+ *
+ * @param {string} itemHrid - Token HRID
+ * @returns {{rate: number|null, bestItemHrid: string|null, note: string|null}} Coins per token
+ *   (null when nothing prices it), the item it converts into, and a provenance note
+ */
+export function explainTokenValue(itemHrid) {
+    const none = { rate: null, bestItemHrid: null, note: null };
+    switch (tokenKind(itemHrid)) {
+        case 'task': {
+            const tokenData = calculateTaskTokenValue();
+            return tokenData?.tokenValue > 0
+                ? { rate: tokenData.tokenValue, bestItemHrid: tokenData.bestShopItemHrid || null, note: null }
+                : none;
+        }
+        case 'dungeon': {
+            const detail = calculateDungeonTokenValueDetail(itemHrid, 'profitCalc_pricingMode', null);
+            return detail?.value > 0
+                ? {
+                      rate: detail.value,
+                      bestItemHrid: detail.itemHrid,
+                      note: detail.via === 'essence' ? 'no shop line priced, valued at its essence' : null,
+                  }
+                : none;
+        }
+        case 'labyrinth': {
+            const detail = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null);
+            return detail?.value > 0 ? { rate: detail.value, bestItemHrid: detail.itemHrid, note: null } : none;
+        }
+        case 'guild': {
+            const valuation = explainGuildTokenValue(guildCreditPricingMode());
+            return valuation?.gold > 0
+                ? { rate: valuation.gold, bestItemHrid: valuation.creditItemHrid || null, note: valuation.note }
+                : none;
+        }
+        default:
+            return none;
+    }
 }
 
 /**
@@ -327,20 +437,14 @@ function calculateCurrencyValue(itemHrid) {
         return 0;
     }
 
-    // Dungeon tokens: Best market value per token approach
-    // Calculate based on best shop item value (similar to task tokens)
-    // Uses profitCalc_pricingMode which defaults to 'hybrid' (ask price)
-    if (itemHrid === '/items/chimerical_token') {
-        return calculateDungeonTokenValue(itemHrid, 'profitCalc_pricingMode', null) || 0;
-    }
-    if (itemHrid === '/items/sinister_token') {
-        return calculateDungeonTokenValue(itemHrid, 'profitCalc_pricingMode', null) || 0;
-    }
-    if (itemHrid === '/items/enchanted_token') {
-        return calculateDungeonTokenValue(itemHrid, 'profitCalc_pricingMode', null) || 0;
-    }
-    if (itemHrid === '/items/pirate_token') {
-        return calculateDungeonTokenValue(itemHrid, 'profitCalc_pricingMode', null) || 0;
+    // Dungeon tokens: the best line of their own shop (profitCalc_pricingMode,
+    // 'hybrid' by default, so the ask). Labyrinth tokens: the same rule over the
+    // labyrinth shop. Guild tokens: tokens → credits → gold. An excluded
+    // labyrinth or guild token is worth 0 here, not whatever a fallback finds
+    const kind = tokenKind(itemHrid);
+    if (kind === 'dungeon' || kind === 'labyrinth' || kind === 'guild') {
+        if (!isTokenIncluded(itemHrid)) return 0;
+        return explainTokenValue(itemHrid).rate || 0;
     }
 
     return null; // Not a currency
@@ -1020,6 +1124,11 @@ export async function calculateNetworth() {
     const inventoryValues = await calculateItemValuesParallel(inventoryItems, priceCache, gameData);
     phase('inventoryValues');
 
+    // Every token held, by hrid. Marked counted only where its value is added to
+    // a total below, so the breakdown's counted sum is exactly the share of the
+    // inventory figure the tokens make up — a view, never a second count
+    const tokenEntries = new Map();
+
     for (let i = 0; i < inventoryItems.length; i++) {
         const item = inventoryItems[i];
         const value = inventoryValues[i];
@@ -1033,6 +1142,22 @@ export async function calculateNetworth() {
         const itemDetails = gameData.itemDetailMap[item.itemHrid];
         const itemName = itemDetails?.name || item.itemHrid.replace('/items/', '');
         const displayName = item.enhancementLevel > 0 ? `${itemName} +${item.enhancementLevel}` : itemName;
+
+        if (tokenKind(item.itemHrid)) {
+            const entry = tokenEntries.get(item.itemHrid);
+            if (entry) {
+                entry.count += item.count || 0;
+                entry.heldValue += value;
+            } else {
+                tokenEntries.set(item.itemHrid, {
+                    itemHrid: item.itemHrid,
+                    name: displayName,
+                    count: item.count || 0,
+                    heldValue: value,
+                    counted: false,
+                });
+            }
+        }
 
         const itemData = {
             name: displayName,
@@ -1066,6 +1191,8 @@ export async function calculateNetworth() {
             trackExcluded('assetType', 'abilityBooks', 'All Ability Books', value);
             continue;
         }
+
+        if (tokenEntries.has(item.itemHrid)) tokenEntries.get(item.itemHrid).counted = true;
 
         if (isAbilityBook && !booksAsInventory) {
             // Add to ability books (Fixed Assets)
@@ -1104,6 +1231,8 @@ export async function calculateNetworth() {
 
     // Sort ability books by value descending
     abilityBooksBreakdown.sort((a, b) => b.value - a.value);
+
+    const tokens = buildTokenBreakdown(tokenEntries, gameData.itemDetailMap);
 
     phase('inventoryBreakdown');
 
@@ -1257,10 +1386,7 @@ export async function calculateNetworth() {
     // total — and its help text says it is ignored once the value source is the game's
     // own market value. Pin the mode rather than reading the setting so ask/bid stop
     // changing the shrine total for anyone on officialValue, matching that promise.
-    const shrinesPricingMode =
-        (config.getSettingValue('networth_valueSource') || 'orderBook') === 'officialValue'
-            ? 'ask'
-            : config.getSettingValue('networth_pricingMode') || 'ask';
+    const shrinesPricingMode = guildCreditPricingMode();
     let guildShrinesData = calculateGuildShrinesCost(dataManager.characterGuildBuffMap, shrinesPricingMode);
     if (isExcluded('assetType', 'guildShrines') && guildShrinesData.totalCost > 0) {
         trackExcluded('assetType', 'guildShrines', 'All Guild Shrines', guildShrinesData.totalCost);
@@ -1312,6 +1438,8 @@ export async function calculateNetworth() {
         coins: coinCount,
         countedCoins,
         excluded: { total: excludedTotal, items: excludedItems },
+        // A view of tokens already inside the inventory value — never add it to a total
+        tokens,
         currentAssets: {
             total: currentAssetsTotal,
             equipped: { value: equippedValue, breakdown: equippedBreakdown },
@@ -1336,6 +1464,51 @@ export async function calculateNetworth() {
 }
 
 /**
+ * The token breakdown: every token held, with its count, the best gold one
+ * token converts into, what that line is, and the total.
+ *
+ * A counted token's total is the value the inventory figure already carries for
+ * it, so `value` (the counted sum) is a share of the inventory value and must
+ * never be added to a total. A token left out — by its setting or a net worth
+ * exclusion — is listed with what it would be worth, flagged `counted: false`.
+ *
+ * @param {Map} entries - itemHrid → {itemHrid, name, count, heldValue, counted}
+ * @param {Object} [itemDetailMap] - Item details, for the converted item's name
+ * @returns {{value: number, items: Array<Object>}} Counted sum and one row per token
+ */
+function buildTokenBreakdown(entries, itemDetailMap = {}) {
+    let countedValue = 0;
+    const items = [];
+    for (const entry of entries.values()) {
+        if (!(entry.count > 0)) continue;
+        const { rate, bestItemHrid, note } = explainTokenValue(entry.itemHrid);
+        const settingOff = !isTokenIncluded(entry.itemHrid);
+        const counted = entry.counted && !settingOff;
+        const value = counted ? entry.heldValue : rate > 0 ? rate * entry.count : 0;
+        if (counted) countedValue += value;
+        items.push({
+            itemHrid: entry.itemHrid,
+            name: entry.name,
+            kind: tokenKind(entry.itemHrid),
+            count: entry.count,
+            rate: rate > 0 ? rate : null,
+            value,
+            bestItemHrid,
+            bestItemName: bestItemHrid
+                ? itemDetailMap?.[bestItemHrid]?.name || bestItemHrid.split('/').pop().replace(/_/g, ' ')
+                : null,
+            note,
+            counted,
+            // Why a token is not counted: its include setting, or a net worth exclusion
+            excludedBy: counted ? null : settingOff ? 'setting' : 'exclusion',
+            unpriced: !(rate > 0),
+        });
+    }
+    items.sort((a, b) => b.value - a.value);
+    return { value: countedValue, items };
+}
+
+/**
  * Create empty networth data structure
  *
  * Returned when there was nothing to price with — no game data, or no market
@@ -1351,6 +1524,7 @@ function createEmptyNetworthData() {
         coins: 0,
         countedCoins: 0,
         excluded: { total: 0, items: [] },
+        tokens: { value: 0, items: [] },
         currentAssets: {
             total: 0,
             equipped: { value: 0, breakdown: [] },

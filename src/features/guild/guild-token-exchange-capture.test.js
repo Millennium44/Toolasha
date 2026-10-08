@@ -38,6 +38,7 @@ const {
     hydrateCapturedTokenExchanges,
     readTokenExchangeFromModal,
     rememberTokenExchange,
+    GUILD_TOKEN_EXCHANGE_EVENT,
 } = await import('./guild-token-exchange-capture.js');
 
 const GREEN = '/items/green_guild_credit';
@@ -265,6 +266,20 @@ describe('remembering what was read', () => {
         expect(store.writes).toBe(0);
     });
 
+    test('a changed rate tells other bundles, so net worth can re-price held tokens', async () => {
+        const heard = [];
+        const listener = (event) => heard.push(event.detail.creditsPerToken);
+        window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        try {
+            await rememberTokenExchange({ creditItemHrid: GREEN, creditsPerToken: 12 });
+            // The same rate again changes nothing and says nothing
+            await rememberTokenExchange({ creditItemHrid: GREEN, creditsPerToken: 12 });
+        } finally {
+            window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        }
+        expect(heard).toEqual([12]);
+    });
+
     test('a rate that is not a rate is refused', async () => {
         expect(await rememberTokenExchange({ creditItemHrid: GREEN, creditsPerToken: 0 })).toBe(false);
         expect(await rememberTokenExchange(null)).toBe(false);
@@ -289,6 +304,31 @@ describe('hydrating what an earlier session read', () => {
         store.data[CAPTURE_KEY] = { exchanges: {} };
         await hydrateCapturedTokenExchanges();
         expect(capturedTokenExchange(GREEN).creditsPerToken).toBe(10);
+    });
+
+    test('a stored rate read in after start-up tells net worth to re-price', async () => {
+        store.data[CAPTURE_KEY] = { exchanges: { [GREEN]: { creditsPerToken: 10, capturedAt: 1 } } };
+        const heard = [];
+        const listener = (event) => heard.push(event.detail);
+        window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        try {
+            await hydrateCapturedTokenExchanges();
+        } finally {
+            window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        }
+        expect(heard).toEqual([{ hydrated: true }]);
+    });
+
+    test('an empty stored table says nothing', async () => {
+        const heard = [];
+        const listener = () => heard.push(1);
+        window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        try {
+            await hydrateCapturedTokenExchanges();
+        } finally {
+            window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, listener);
+        }
+        expect(heard).toEqual([]);
     });
 
     test('stored junk is not believed', async () => {

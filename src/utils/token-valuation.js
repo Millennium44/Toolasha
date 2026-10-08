@@ -55,15 +55,78 @@ export function calculateDungeonTokenValue(
     pricingModeSetting = 'profitCalc_pricingMode',
     respectModeSetting = 'expectedValue_respectPricingMode'
 ) {
+    return calculateDungeonTokenValueDetail(tokenHrid, pricingModeSetting, respectModeSetting)?.value ?? null;
+}
+
+/**
+ * {@link calculateDungeonTokenValue}, but also naming what the token is best
+ * converted into — the shop line, or the essence when no line is priced — for
+ * anywhere the figure has to be explained rather than only used.
+ *
+ * @param {string} tokenHrid - Token HRID (e.g., '/items/chimerical_token')
+ * @param {string} pricingModeSetting - Config setting key for pricing mode
+ * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
+ * @returns {{value: number, itemHrid: string, via: 'shop'|'essence'}|null} Coins per token and
+ *   the item they come from, or null if no data
+ */
+export function calculateDungeonTokenValueDetail(
+    tokenHrid,
+    pricingModeSetting = 'profitCalc_pricingMode',
+    respectModeSetting = 'expectedValue_respectPricingMode'
+) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) return null;
 
+    const priceOf = tokenPriceOf(pricingModeSetting, respectModeSetting);
+
+    // Only single-currency lines price a token cleanly
+    const tokenShop = Object.values(gameData.shopItemDetailMap || {}).filter((line) => {
+        const costs = shopCosts(line);
+        return costs.length === 1 && costs[0]?.itemHrid === tokenHrid;
+    });
+
+    const best = tokenValueDetailIn(tokenShop, priceOf, tokenHrid);
+    if (best) return { ...best, via: 'shop' };
+
+    // Nothing in the shop is priced: fall back to the token's essence
+    const essenceHrid = TOKEN_ESSENCE_MAP[tokenHrid];
+    const essencePrice = priceOf(essenceHrid);
+    return essencePrice > 0 ? { value: essencePrice, itemHrid: essenceHrid, via: 'essence' } : null;
+}
+
+/**
+ * The best coins a labyrinth token converts into at the labyrinth shop, priced
+ * the way {@link calculateDungeonTokenValue} prices a dungeon token: the same
+ * side of the book from the same settings, custom prices and the patient tick
+ * included. Under the default Hybrid mode that is the ask — the figure the
+ * labyrinth token's own tooltip shows as its best Gold/Token.
+ *
+ * @param {string} pricingModeSetting - Config setting key for pricing mode
+ * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
+ * @returns {{value: number, itemHrid: string}|null} Coins per token and the shop item, or null
+ */
+export function calculateLabyrinthTokenValueDetail(
+    pricingModeSetting = 'profitCalc_pricingMode',
+    respectModeSetting = 'expectedValue_respectPricingMode'
+) {
+    const shopMap = dataManager.getInitClientData()?.labyrinthShopItemDetailMap;
+    if (!shopMap) return null;
+    return labyrinthTokenValueDetail(shopMap, tokenPriceOf(pricingModeSetting, respectModeSetting));
+}
+
+/**
+ * The pricer a token valuation reads its shop lines through.
+ * @param {string} pricingModeSetting - Config setting key for pricing mode
+ * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
+ * @returns {Function} `(itemHrid) => number|null`
+ */
+function tokenPriceOf(pricingModeSetting, respectModeSetting) {
     const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);
     // Following the global mode, a sale at the ask is a patient one and takes the
     // +1 tick like every other profit price. Respect switched off pins the bid,
     // an exact side, and a custom price or value estimate has no queue to jump.
     const tickable = mode === 'ask' && pricingModeSetting === 'profitCalc_pricingMode' && isPatientTickOn('sell');
-    const priceOf = (hrid) => {
+    return (hrid) => {
         if (!hrid) return null;
         if (!tickable) return getItemPrice(hrid, { mode });
         const { price, source } = getItemPriceInfo(hrid, { mode });
@@ -76,19 +139,6 @@ export function calculateDungeonTokenValue(
             itemHrid: hrid,
         });
     };
-
-    // Only single-currency lines price a token cleanly
-    const tokenShop = Object.values(gameData.shopItemDetailMap || {}).filter((line) => {
-        const costs = shopCosts(line);
-        return costs.length === 1 && costs[0]?.itemHrid === tokenHrid;
-    });
-
-    const best = tokenValueIn(tokenShop, priceOf, tokenHrid);
-    if (best > 0) return best;
-
-    // Nothing in the shop is priced: fall back to the token's essence
-    const essencePrice = priceOf(TOKEN_ESSENCE_MAP[tokenHrid]);
-    return essencePrice > 0 ? essencePrice : null;
 }
 
 /**
@@ -119,7 +169,18 @@ function shopCosts(line) {
  * @returns {number} Coins per token, or 0
  */
 function tokenValueIn(shopMap, priceOf, tokenHrid) {
-    let best = 0;
+    return tokenValueDetailIn(shopMap, priceOf, tokenHrid)?.value || 0;
+}
+
+/**
+ * {@link tokenValueIn}, with the shop item the best value comes from.
+ * @param {Object} shopMap - One of the game's shop maps
+ * @param {Function} priceOf - `(itemHrid) => number|null`
+ * @param {string} tokenHrid - The currency
+ * @returns {{value: number, itemHrid: string}|null} Best coins per token, or null
+ */
+function tokenValueDetailIn(shopMap, priceOf, tokenHrid) {
+    let best = null;
 
     for (const line of Object.values(shopMap || {})) {
         const cost = shopCosts(line).find((entry) => entry?.itemHrid === tokenHrid);
@@ -129,7 +190,7 @@ function tokenValueIn(shopMap, priceOf, tokenHrid) {
         if (!(price > 0)) continue;
 
         const perToken = (price * (line.outputCount || 1)) / cost.count;
-        if (perToken > best) best = perToken;
+        if (!best || perToken > best.value) best = { value: perToken, itemHrid: line.itemHrid };
     }
     return best;
 }
