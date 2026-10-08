@@ -471,8 +471,8 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     };
 
     const craft = [];
-    const makeCost = new Map();
-    const makeSeconds = new Map();
+    /** Each item's recipes that survive {@link undominatedRecipes}: `{cost, seconds}` per item made */
+    const makes = new Map();
     // Yield by elapsed time, not item count: scheduler.yield where the browser has it, which a
     // background tab does not stall the way it does a setTimeout(0) chain
     let sliceStart = performance.now();
@@ -504,32 +504,34 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 const alternative = await profitCalculator.calculateProfit(hrid, { actionHrid });
                 if (alternative) recipes.push(alternative);
             }
-            let chosen = null;
+            const viable = [];
             for (const data of recipes) {
                 if (!startable(data)) continue;
                 const details = dataManager.getActionDetails?.(data.actionHrid) ?? null;
                 const comparison = ownUseCompare(data, details);
                 const perHour = Number(data.totalItemsPerHour);
-                if (!comparison || !(perHour > 0)) continue;
-                if (!chosen || comparison.make < chosen.comparison.make) {
-                    chosen = { profitData: data, actionDetails: details, comparison, perHour };
-                }
+                if (!comparison || !(perHour > 0) || !Number.isFinite(comparison.make)) continue;
+                // One action makes a whole batch: 15 of an item made 15 at a time is one action, not
+                // 1/15. Gourmet adds expected copies from the same inputs, counted as profitData counts
+                const gourmet = Math.max(0, Number(data.gourmetBonus) || 0);
+                const batch = Math.max(1, (Number(details?.outputItems?.[0]?.count) || 1) * (1 + gourmet));
+                viable.push({ actionHrid: data.actionHrid, cost: comparison.make, seconds: 3600 / perHour, batch });
             }
-            if (!chosen) continue;
-            const { profitData, actionDetails, comparison, perHour } = chosen;
-            makeCost.set(hrid, comparison.make);
-            makeSeconds.set(hrid, 3600 / perHour);
-            // One action makes a whole batch: 15 of an item made 15 at a time is one action, not 1/15.
-            // Gourmet adds expected copies from the same inputs, counted as profitData counts items
-            const gourmet = Math.max(0, Number(profitData.gourmetBonus) || 0);
-            const batch = Math.max(1, (Number(actionDetails?.outputItems?.[0]?.count) || 1) * (1 + gourmet));
-            craft.push({
-                route: 'craft',
-                itemHrid: hrid,
-                unitCost: comparison.make,
-                unitSeconds: 3600 / perHour,
-                batch,
-            });
+            // Every recipe is its own route, so each sort weighs it on its own terms: the cheapest
+            // and the fastest can be different recipes
+            const kept = undominatedRecipes(viable);
+            if (kept.length === 0) continue;
+            makes.set(hrid, kept);
+            for (const recipe of kept) {
+                craft.push({
+                    route: 'craft',
+                    itemHrid: hrid,
+                    actionHrid: recipe.actionHrid,
+                    unitCost: recipe.cost,
+                    unitSeconds: recipe.seconds,
+                    batch: recipe.batch,
+                });
+            }
         } catch (error) {
             console.error('[CollectionOptimizer] Craft route failed for', hrid, error);
         }
@@ -628,16 +630,17 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 purchase: { hrid, ask: buy },
             });
         }
-        const make = makeCost.get(hrid);
-        if (make > 0) {
+        for (const recipe of makes.get(hrid) || []) {
+            if (!(recipe.cost > 0)) continue;
             const withSource = new Map(yields);
             withSource.set(hrid, (withSource.get(hrid) || 0) + 1);
             sources.push({
                 ...shared,
                 route: 'craftDecompose',
+                actionHrid: recipe.actionHrid,
                 yields: withSource,
-                cost: make + chain.overheadCost,
-                seconds: chain.seconds + (makeSeconds.get(hrid) || 0),
+                cost: recipe.cost + chain.overheadCost,
+                seconds: chain.seconds + recipe.seconds,
             });
         }
         // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
@@ -698,6 +701,29 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     }
     if (cancelled()) return null;
     return { craft, sources };
+}
+
+/**
+ * The recipes worth offering for one item: every one that no other recipe
+ * beats on both cost and time per item. One that is no cheaper and no faster
+ * than another (an exact copy included) is left out, since it can never be
+ * either sort's pick; any trade-off between the two is kept.
+ * @param {Array<{cost: number, seconds: number}>} recipes
+ * @returns {Array<Object>} The survivors, in the order given
+ */
+export function undominatedRecipes(recipes) {
+    const list = Array.isArray(recipes) ? recipes : [];
+    return list.filter(
+        (recipe, i) =>
+            !list.some(
+                (other, j) =>
+                    j !== i &&
+                    other.cost <= recipe.cost &&
+                    other.seconds <= recipe.seconds &&
+                    // Strictly better somewhere, or an exact copy listed earlier
+                    (other.cost < recipe.cost || other.seconds < recipe.seconds || j < i)
+            )
+    );
 }
 
 /**
@@ -776,7 +802,11 @@ function describeRoute(option) {
         const actions = `${formatCount(option.units)} action${option.units === 1 ? '' : 's'}`;
         return `${label}: ${actions} at ${zone.split('/').pop()}`;
     }
-    if (!option.sourceHrid) return label;
+    if (!option.sourceHrid) {
+        if (!option.actionHrid) return label;
+        const action = dataManager.getActionDetails?.(option.actionHrid)?.name || String(option.actionHrid);
+        return `${label}: ${action.split('/').pop()}`;
+    }
     const base = `${label}: ${option.units}× ${itemName(option.sourceHrid)}`;
     if (!option.setup) return base;
     const catalyst = option.setup.catalystHrid ? itemName(option.setup.catalystHrid) : 'no catalyst';

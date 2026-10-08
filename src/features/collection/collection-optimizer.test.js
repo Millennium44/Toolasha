@@ -234,7 +234,7 @@ vi.mock('../actions/gathering-profit.js', () => ({
               },
 }));
 vi.mock('../market/tooltip-prices.js', () => ({
-    ownUseCompare: () => ({ make: 4, buy: 10, saves: 6, cheaper: 'make', priceBasis: 'ask' }),
+    ownUseCompare: (data) => ({ make: data.makeCost ?? 4, buy: 10, saves: 6, cheaper: 'make', priceBasis: 'ask' }),
 }));
 
 const RATES = vi.hoisted(() => ({
@@ -378,7 +378,7 @@ const {
     weeklySellable,
     formatNet,
 } = await import('./collection-optimizer.js');
-const { bestOptions, collectionCounts, evaluateOption } = await import('./collection-optimizer-plan.js');
+const { bestOptions, collectionCounts, evaluateOption, indexRoutes } = await import('./collection-optimizer-plan.js');
 
 /** The game's Collections tab: controls, then the tile categories */
 function drawCollectionsTab() {
@@ -446,7 +446,14 @@ describe('the routes', () => {
         expect(sword.yields.get('/items/cheese')).toBe(18);
 
         expect(routes.craft).toEqual([
-            { route: 'craft', itemHrid: '/items/cheese', unitCost: 4, unitSeconds: 10, batch: 1 },
+            {
+                route: 'craft',
+                itemHrid: '/items/cheese',
+                actionHrid: '/actions/x',
+                unitCost: 4,
+                unitSeconds: 10,
+                batch: 1,
+            },
         ]);
         const kinds = new Set([...routes.craft, ...routes.sources].map((r) => r.route));
         expect([...kinds].sort()).toEqual(['craft', 'decompose', 'gather', 'shop', 'transmute']);
@@ -784,6 +791,33 @@ describe('a recipe the character cannot start', () => {
         const routes = await buildCollectionRoutes();
         expect(routes.craft).toHaveLength(1);
         expect(routes.craft[0].itemHrid).toBe('/items/cheese');
+    });
+
+    test('each recipe the character can start is its own route, so the sort picks cheap or fast', async () => {
+        // The default recipe: 4 a unit at 360 an hour. The alternative: 6 a unit, but 720 an hour
+        game.altProfit = { makeCost: 6, totalItemsPerHour: 720 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft.map((r) => [r.actionHrid, r.unitCost, r.unitSeconds])).toEqual([
+            ['/actions/x', 4, 10],
+            ['/actions/alt', 6, 5],
+        ]);
+        // The bench-made sword decomposes off either recipe too
+        const cheese = indexRoutes(routes)
+            .get('/items/cheese')
+            .filter((r) => r.route === 'craft');
+        const counts = new Map([['/items/cheese', 5]]);
+        const index = new Map([['/items/cheese', cheese]]);
+        expect(bestOptions(counts, index)[0].actionHrid).toBe('/actions/x');
+        expect(bestOptions(counts, index, { sort: 'fastest' })[0].actionHrid).toBe('/actions/alt');
+        // A max time per step only the fast recipe fits still ranks the item
+        expect(bestOptions(counts, index, { maxSeconds: 30 })[0].actionHrid).toBe('/actions/alt');
+    });
+
+    test('a recipe no cheaper and no faster than another is left out', async () => {
+        game.altProfit = { makeCost: 6, totalItemsPerHour: 360 };
+        expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
+        game.altProfit = { makeCost: 4, totalItemsPerHour: 360 };
+        expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
     });
 
     test('an Action Level tea that raises the requirement past the level blocks it too', async () => {

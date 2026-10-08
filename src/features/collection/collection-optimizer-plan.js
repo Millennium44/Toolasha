@@ -309,7 +309,7 @@ export function evaluateOption(itemHrid, counts, route, { sellable, buyQuote } =
         return {
             ...base,
             sourceHrid: null,
-            actionHrid: null,
+            actionHrid: route.actionHrid ?? null,
             needed: step.needed,
             units,
             collateral: 0,
