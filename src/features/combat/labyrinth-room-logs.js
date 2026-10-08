@@ -867,7 +867,8 @@ class LabyrinthRoomLogs {
         const prev = session.lastSnapshot;
         const counter = Number(snapshot.actionCounter) || 0;
         const reset = rolled === 'reset' || (rolled === 'opened' && counter >= 1);
-        if (rolled === 'opened' && counter > 1) attempt.partial = true;
+        // Opened (fresh or after a reset) past its first action: the earlier outcomes were not seen
+        if (rolled && counter > 1) attempt.partial = true;
 
         let counted = rolled === 'opened' ? null : action;
         if (reset && snapshot.actionCounter === 1) {

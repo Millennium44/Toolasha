@@ -184,6 +184,19 @@ describe('skilling attempts are logged one per retry', () => {
         expect(attempt).toMatchObject({ actions: 3, successes: 1, doubles: 0, partial: true });
     });
 
+    test('a retry first seen past its first action is marked partial', () => {
+        play([
+            [0, 0],
+            [1, 10],
+            [5, 50],
+            // retry, but the first message kept is already at counter 2
+            [2, 20],
+        ]);
+        const attempts = labyrinthRoomLogs.activeSession.attempts;
+        expect(attempts).toHaveLength(2);
+        expect(attempts[1]).toMatchObject({ actions: 2, successes: 0, partial: true });
+    });
+
     test('an attempt seen from its start is not partial', () => {
         play([
             [0, 0],
