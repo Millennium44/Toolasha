@@ -133,6 +133,8 @@ const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 /** Only reached for when the game's item sheet has not been drawn from yet */
 const SUPPLY_EMOJI = { torch: '🔥', shroud: '👻', beacon: '📡' };
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
+/** The room tooltips' headline row: one label, so the combat and skilling cards match */
+const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 
 class LabyrinthClearRate {
@@ -5031,6 +5033,13 @@ class LabyrinthClearRate {
             return;
         }
 
+        // Laid out row for row against the combat tooltip: the clear chance
+        // first, one room-specific row where combat counts its fights, then the
+        // forecast pair, so the same figure sits on the same line of both
+        addRow(
+            CLEAR_CHANCE_LABEL,
+            Number.isFinite(result.clearChance) ? `${(result.clearChance * 100).toFixed(1)}%` : '—'
+        );
         if (result.type === 'enhancing') {
             addRow('Target Enhancement', `+${result.targetLevel}`);
         } else {
@@ -5041,10 +5050,8 @@ class LabyrinthClearRate {
                 Math.abs(raw - floored) < 1e-9 ? raw.toFixed(2) : `${raw.toFixed(2)} \u2192 ${floored}`
             );
         }
-        addRow('Success Rate', pct(result.successChance));
-        // The forecast pair sits directly under the headline rows here as it
-        // does on the combat tooltip, so the two read the same way side by side
         this.appendForecastRows(addRow, result);
+        addRow('Success Rate', pct(result.successChance));
         addRow('Double Progress', pct(result.doubleChance));
         addRow('Actions in 2m', `${result.attempts}`);
         addRow('Action Duration', `${result.actionSeconds.toFixed(2)}s`);
@@ -5117,7 +5124,7 @@ class LabyrinthClearRate {
         if (Number.isFinite(result.halfWidth) && result.trials > 0) {
             const band = (result.halfWidth * 100).toFixed(1);
             addRow(
-                'Clear Chance',
+                CLEAR_CHANCE_LABEL,
                 `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
             );
             addRow('Fights Simulated', `${result.trials.toLocaleString()}`);

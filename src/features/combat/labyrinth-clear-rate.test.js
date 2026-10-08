@@ -4850,7 +4850,23 @@ describe('the room preview forecast rows', () => {
             'Est. clear time',
             'Est. room attempts',
         ]);
-        expect(skilling.slice(0, 4)).toEqual(['Work Power', 'Success Rate', 'Est. clear time', 'Est. room attempts']);
+        expect(skilling.slice(0, 4)).toEqual(['Clear Chance', 'Work Power', 'Est. clear time', 'Est. room attempts']);
+    });
+
+    test('the skilling tooltip leads with the clear chance, on the line combat puts it, beside the clear time', () => {
+        const combat = previewLabels(combatResult());
+        const skilling = previewLabels(skillingResult());
+        // Same label, same first line, and the clear time on the same line of both cards
+        expect(skilling[0]).toBe(combat[0]);
+        expect(skilling.indexOf('Est. clear time')).toBe(combat.indexOf('Est. clear time'));
+        expect(skilling.indexOf('Est. room attempts')).toBe(combat.indexOf('Est. room attempts'));
+
+        // Formatted like the combat figure: one decimal, the badge's percentage before rounding
+        expect(previewValue(skillingResult({ clearChance: 0.0483 }), 'Clear Chance')).toBe('4.8%');
+        expect(previewValue(skillingResult({ clearChance: 0.1525 }), 'Clear Chance')).toBe('15.3%');
+        expect(previewValue(skillingResult({ type: 'enhancing', targetLevel: 8 }), 'Clear Chance')).toBe('50.0%');
+        // No figure yet: a dash, not NaN%
+        expect(previewValue(skillingResult({ clearChance: undefined }), 'Clear Chance')).toBe('—');
     });
 
     test('the rows below the pair keep the order they had', () => {
@@ -4858,7 +4874,8 @@ describe('the room preview forecast rows', () => {
         expect(combat.slice(4, 6)).toEqual(['EXP / Room', 'EXP / Hour']);
 
         const skilling = previewLabels(skillingResult());
-        expect(skilling.slice(4, 9)).toEqual([
+        expect(skilling.slice(4, 10)).toEqual([
+            'Success Rate',
             'Double Progress',
             'Actions in 2m',
             'Action Duration',
@@ -4867,13 +4884,14 @@ describe('the room preview forecast rows', () => {
         ]);
     });
 
-    test('an enhancing room keeps its target at the very top', () => {
+    test('an enhancing room keeps its target right under the clear chance', () => {
         const labels = previewLabels(skillingResult({ type: 'enhancing', targetLevel: 8 }));
-        expect(labels.slice(0, 5)).toEqual([
+        expect(labels.slice(0, 6)).toEqual([
+            'Clear Chance',
             'Target Enhancement',
-            'Success Rate',
             'Est. clear time',
             'Est. room attempts',
+            'Success Rate',
             'Double Progress',
         ]);
     });
