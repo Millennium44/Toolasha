@@ -25,6 +25,8 @@ const {
     labyrinthRewardValue,
     shopPurchasePrice,
     calculateDungeonTokenValue,
+    calculateDungeonTokenValueDetail,
+    calculateLabyrinthTokenValueDetail,
 } = await import('./token-valuation.js');
 const { nextPriceDown } = await import('./market-values.js');
 
@@ -235,5 +237,82 @@ describe('calculateDungeonTokenValue', () => {
     test('no game data is null', () => {
         game.initClientData = null;
         expect(calculateDungeonTokenValue(TOKEN)).toBeNull();
+    });
+});
+
+describe('calculateLabyrinthTokenValueDetail', () => {
+    const labyrinthShop = {
+        lodestone: { itemHrid: '/items/pathseeker_lodestone', cost: { count: 20 }, outputCount: 1 },
+        essence: { itemHrid: '/items/labyrinth_essence', cost: { count: 1 }, outputCount: 10 },
+        seal: { itemHrid: '/items/seal_of_gathering', cost: { count: 30 }, outputCount: 1 },
+    };
+
+    beforeEach(() => {
+        game.settings = {};
+        game.sources = {};
+        game.initClientData = { labyrinthShopItemDetailMap: labyrinthShop };
+        game.prices = {
+            '/items/pathseeker_lodestone': { ask: 140_000, bid: 120_000 },
+            '/items/labyrinth_essence': { ask: 500, bid: 400 },
+        };
+    });
+
+    test("is the tooltip's best Gold/Token under the default mode: the ask, times output, over the cost", () => {
+        // The tooltip's table: lodestone 140,000 / 20 = 7,000; essence 500 × 10 / 1 = 5,000
+        const tooltipBest = Math.max(
+            ...Object.values(labyrinthShop)
+                .filter((line) => game.prices[line.itemHrid]?.ask > 0)
+                .map((line) => (game.prices[line.itemHrid].ask * (line.outputCount || 1)) / line.cost.count)
+        );
+
+        const detail = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null);
+        expect(detail).toEqual({ value: 7000, itemHrid: '/items/pathseeker_lodestone' });
+        expect(detail.value).toBe(tooltipBest);
+    });
+
+    test('follows the pricing mode the dungeon tokens follow', () => {
+        game.settings.profitCalc_pricingMode = 'conservative';
+        expect(calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null)).toEqual({
+            value: 6000,
+            itemHrid: '/items/pathseeker_lodestone',
+        });
+    });
+
+    test('null without the shop or without a priced line', () => {
+        game.prices = {};
+        expect(calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null)).toBeNull();
+        game.initClientData = {};
+        expect(calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null)).toBeNull();
+    });
+});
+
+describe('calculateDungeonTokenValueDetail', () => {
+    beforeEach(() => {
+        game.settings = {};
+        game.sources = {};
+        game.initClientData = {
+            shopItemDetailMap: {
+                cape: { itemHrid: '/items/cape', costs: [{ itemHrid: '/items/chimerical_token', count: 100 }] },
+            },
+        };
+        game.prices = {
+            '/items/cape': { ask: 50_000, bid: 40_000 },
+            '/items/chimerical_essence': { ask: 80, bid: 70 },
+        };
+    });
+
+    test('names the shop line, and agrees with calculateDungeonTokenValue', () => {
+        const detail = calculateDungeonTokenValueDetail('/items/chimerical_token', 'profitCalc_pricingMode', null);
+        expect(detail).toEqual({ value: 500, itemHrid: '/items/cape', via: 'shop' });
+        expect(calculateDungeonTokenValue('/items/chimerical_token', 'profitCalc_pricingMode', null)).toBe(500);
+    });
+
+    test('says so when the essence is what prices the token', () => {
+        delete game.prices['/items/cape'];
+        expect(calculateDungeonTokenValueDetail('/items/chimerical_token', 'profitCalc_pricingMode', null)).toEqual({
+            value: 80,
+            itemHrid: '/items/chimerical_essence',
+            via: 'essence',
+        });
     });
 });

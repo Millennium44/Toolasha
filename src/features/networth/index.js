@@ -42,7 +42,11 @@ const NETWORTH_RECALC_SETTINGS = [
     'networth_highEnhancementMinLevel',
     'networth_includeCowbells',
     'networth_includeTaskTokens',
+    'networth_includeLabyrinthTokens',
+    'networth_includeGuildTokens',
     'networth_abilityBooksAsInventory',
+    // The guild token exchange rate stand-in prices held guild tokens
+    'guildTokenCreditRate',
     IRONCOW_VALUATION_SETTING,
 ];
 

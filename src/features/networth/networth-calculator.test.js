@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
     enhancementPaths: {}, // `${hrid}:${level}` -> totalCost
     taskTokenValue: null,
     dungeonTokenValues: {},
+    labyrinthTokenDetail: null, // {value, itemHrid} the labyrinth shop's best line
+    guildTokenValuation: null, // what explainGuildTokenValue answers
+    guildTokenModes: [], // the pricing modes guild tokens were valued at
     shopCosts: {},
     unpricedAbilities: new Set(),
     marketValues: null, // { marketValuesVersion, marketItemValues } for getMarketItemValues()
@@ -82,6 +85,18 @@ vi.mock('../tasks/task-profit-calculator.js', () => ({
 }));
 vi.mock('../../utils/token-valuation.js', () => ({
     calculateDungeonTokenValue: (hrid) => mocks.dungeonTokenValues[hrid] ?? null,
+    calculateDungeonTokenValueDetail: (hrid) =>
+        hrid in mocks.dungeonTokenValues
+            ? { value: mocks.dungeonTokenValues[hrid], itemHrid: '/items/dungeon_best', via: 'shop' }
+            : null,
+    calculateLabyrinthTokenValueDetail: () => mocks.labyrinthTokenDetail,
+}));
+vi.mock('../guild/guild-token-value.js', () => ({
+    isGuildTokenHrid: (hrid) => /guild_token/.test(String(hrid || '')),
+    explainGuildTokenValue: (mode) => {
+        mocks.guildTokenModes.push(mode);
+        return mocks.guildTokenValuation ?? { gold: null, creditItemHrid: null, note: null };
+    },
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: () => null },
@@ -152,6 +167,9 @@ beforeEach(() => {
     mocks.enhancementPaths = {};
     mocks.taskTokenValue = null;
     mocks.dungeonTokenValues = {};
+    mocks.labyrinthTokenDetail = null;
+    mocks.guildTokenValuation = null;
+    mocks.guildTokenModes = [];
     mocks.shopCosts = {};
     mocks.unpricedAbilities = new Set();
     mocks.marketValues = null;
@@ -1186,5 +1204,184 @@ describe('a sweep with nothing to price with', () => {
 
         expect(result.totalNetworth).toBe(0);
         expect(result.unavailable).toBe(true);
+    });
+});
+
+describe('labyrinth and guild tokens', () => {
+    test("a labyrinth token is valued at the labyrinth shop's best gold per token", async () => {
+        mocks.labyrinthTokenDetail = { value: 7000, itemHrid: '/items/pathseeker_lodestone' };
+
+        const value = await calculateItemValue({ itemHrid: '/items/labyrinth_token', enhancementLevel: 0, count: 30 });
+        expect(value).toBe(210_000);
+    });
+
+    test('a guild token is valued by the guild token valuation, at the net worth pricing side', async () => {
+        mocks.settings.networth_pricingMode = 'bid';
+        mocks.guildTokenValuation = {
+            gold: 4000,
+            creditItemHrid: '/items/guild_credit_1',
+            note: 'via credit exchange',
+        };
+
+        const value = await calculateItemValue({ itemHrid: '/items/guild_token', enhancementLevel: 0, count: 5 });
+        expect(value).toBe(20_000);
+        expect(mocks.guildTokenModes).toContain('bid');
+    });
+
+    test('guild tokens price their credits at ask under the official value source, as the shrines do', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.settings.networth_pricingMode = 'bid';
+        mocks.guildTokenValuation = { gold: 4000, creditItemHrid: '/items/guild_credit_1', note: null };
+
+        await calculateItemValue({ itemHrid: '/items/guild_token', enhancementLevel: 0, count: 1 });
+        expect(mocks.guildTokenModes).toEqual(['ask']);
+    });
+
+    test('a token nothing can price yet is worth 0 and reported unpriced', async () => {
+        const value = await calculateItemValue({ itemHrid: '/items/labyrinth_token', enhancementLevel: 0, count: 30 });
+        expect(value).toBe(0);
+        expect(isUnpricedCurrency('/items/labyrinth_token')).toBe(true);
+        expect(isUnpricedCurrency('/items/guild_token')).toBe(true);
+    });
+
+    test('turning a token kind off removes it from the value, and it is not reported unpriced', async () => {
+        mocks.labyrinthTokenDetail = { value: 7000, itemHrid: '/items/pathseeker_lodestone' };
+        mocks.guildTokenValuation = { gold: 4000, creditItemHrid: '/items/guild_credit_1', note: null };
+        mocks.settings.networth_includeLabyrinthTokens = false;
+        mocks.settings.networth_includeGuildTokens = false;
+
+        expect(await calculateItemValue({ itemHrid: '/items/labyrinth_token', count: 30 })).toBe(0);
+        expect(await calculateItemValue({ itemHrid: '/items/guild_token', count: 5 })).toBe(0);
+        expect(isUnpricedCurrency('/items/labyrinth_token')).toBe(false);
+        expect(isUnpricedCurrency('/items/guild_token')).toBe(false);
+    });
+});
+
+describe('the token breakdown', () => {
+    const inv = (itemHrid, count) => ({
+        itemHrid,
+        enhancementLevel: 0,
+        count,
+        itemLocationHrid: '/item_locations/inventory',
+    });
+
+    /**
+     * A sweep over an inventory of coins, cheese and one of every token kind.
+     * @returns {Promise<Object>} networthData
+     */
+    function sweep() {
+        mocks.taskTokenValue = { tokenValue: 2500, bestShopItemHrid: '/items/large_meteorite_cache' };
+        mocks.dungeonTokenValues = { '/items/chimerical_token': 300 };
+        mocks.labyrinthTokenDetail = { value: 7000, itemHrid: '/items/pathseeker_lodestone' };
+        mocks.guildTokenValuation = {
+            gold: 4000,
+            creditItemHrid: '/items/guild_credit_1',
+            note: 'via credit exchange at 10 credits/token',
+        };
+        mocks.itemPrices['/items/cheese'] = { ask: 100, bid: 90 };
+        mocks.combinedData = {
+            characterItems: [
+                inv('/items/coin', 1000),
+                inv('/items/cheese', 10),
+                inv('/items/task_token', 4),
+                inv('/items/chimerical_token', 10),
+                inv('/items/labyrinth_token', 30),
+                inv('/items/guild_token', 5),
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: {
+                '/items/coin': { name: 'Coin', categoryHrid: '/item_categories/currency' },
+                '/items/cheese': { name: 'Cheese', categoryHrid: '/item_categories/food' },
+                '/items/task_token': { name: 'Task Token', categoryHrid: '/item_categories/currency' },
+                '/items/chimerical_token': { name: 'Chimerical Token', categoryHrid: '/item_categories/currency' },
+                '/items/labyrinth_token': { name: 'Labyrinth Token', categoryHrid: '/item_categories/currency' },
+                '/items/guild_token': { name: 'Guild Token', categoryHrid: '/item_categories/currency' },
+                '/items/pathseeker_lodestone': { name: 'Pathseeker Lodestone' },
+                '/items/guild_credit_1': { name: 'Green Guild Credit' },
+                '/items/large_meteorite_cache': { name: 'Large Meteorite Cache' },
+            },
+        };
+        return calculateNetworth();
+    }
+
+    const row = (result, hrid) => result.tokens.items.find((item) => item.itemHrid === hrid);
+
+    test('lists each token with its amount, best rate, the item it converts into, and its total', async () => {
+        const result = await sweep();
+
+        expect(row(result, '/items/labyrinth_token')).toMatchObject({
+            count: 30,
+            rate: 7000,
+            value: 210_000,
+            bestItemName: 'Pathseeker Lodestone',
+            counted: true,
+        });
+        expect(row(result, '/items/guild_token')).toMatchObject({
+            count: 5,
+            rate: 4000,
+            value: 20_000,
+            bestItemName: 'Green Guild Credit',
+            note: 'via credit exchange at 10 credits/token',
+            counted: true,
+        });
+        expect(row(result, '/items/task_token')).toMatchObject({
+            count: 4,
+            rate: 2500,
+            value: 10_000,
+            bestItemName: 'Large Meteorite Cache',
+        });
+        expect(row(result, '/items/chimerical_token')).toMatchObject({ count: 10, rate: 300, value: 3000 });
+        // Coin and cheese are not tokens
+        expect(result.tokens.items).toHaveLength(4);
+        expect(result.tokens.value).toBe(243_000);
+    });
+
+    test('is a view of the inventory value: the total carries each token exactly once', async () => {
+        const result = await sweep();
+
+        // 1,000 coins + 10 cheese at 100 + 243,000 of tokens
+        expect(result.currentAssets.inventory.value).toBe(1000 + 1000 + 243_000);
+        expect(result.totalNetworth).toBe(result.currentAssets.total + result.fixedAssets.total);
+        expect(result.totalNetworth).toBe(245_000);
+    });
+
+    test('a token turned off is listed at what it would be worth, not counted, and leaves the total', async () => {
+        mocks.settings.networth_includeLabyrinthTokens = false;
+        const result = await sweep();
+
+        expect(row(result, '/items/labyrinth_token')).toMatchObject({
+            counted: false,
+            excludedBy: 'setting',
+            rate: 7000,
+            value: 210_000,
+        });
+        expect(result.tokens.value).toBe(33_000);
+        expect(result.totalNetworth).toBe(245_000 - 210_000);
+    });
+
+    test('each exclusion setting removes only its own tokens', async () => {
+        mocks.settings.networth_includeGuildTokens = false;
+        let result = await sweep();
+        expect(result.totalNetworth).toBe(245_000 - 20_000);
+        expect(row(result, '/items/guild_token').counted).toBe(false);
+        expect(row(result, '/items/labyrinth_token').counted).toBe(true);
+
+        mocks.settings.networth_includeGuildTokens = true;
+        mocks.settings.networth_includeTaskTokens = false;
+        result = await sweep();
+        expect(result.totalNetworth).toBe(245_000 - 10_000);
+        expect(row(result, '/items/task_token')).toMatchObject({ counted: false, excludedBy: 'setting' });
+    });
+
+    test('a token excluded by a net worth exclusion is marked not counted, not added back', async () => {
+        mocks.excluded.add('item:/items/guild_token');
+        const result = await sweep();
+
+        expect(row(result, '/items/guild_token')).toMatchObject({ counted: false, excludedBy: 'exclusion' });
+        expect(result.totalNetworth).toBe(245_000 - 20_000);
+        expect(result.excluded.total).toBe(20_000);
     });
 });

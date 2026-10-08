@@ -210,6 +210,8 @@ const MARKET_EXTRAS = [
     'networth',
     'networth_highEnhancementUseCost',
     'networth_includeTaskTokens',
+    'networth_includeLabyrinthTokens',
+    'networth_includeGuildTokens',
     'networth_historyChart',
     'invWorth',
     'invCategoryTotals',

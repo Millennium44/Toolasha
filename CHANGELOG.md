@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Net worth counts labyrinth and guild tokens
+
+- Net worth now values labyrinth tokens (best Labyrinth Shop gold per token) and held guild tokens (via the guild credit exchange), each with its own setting to leave them out, and a new Tokens row lists every token held: amount × best gold per token = total.
+
 ### Missing Mats shows what it will buy
 
 - The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).

@@ -60,6 +60,11 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/token-valuation.js', () => ({
     calculateDungeonTokenValue: (hrid) => (hrid in mocks.dungeonTokenValues ? mocks.dungeonTokenValues[hrid] : null),
+    calculateDungeonTokenValueDetail: (hrid) =>
+        hrid in mocks.dungeonTokenValues
+            ? { value: mocks.dungeonTokenValues[hrid], itemHrid: null, via: 'shop' }
+            : null,
+    calculateLabyrinthTokenValueDetail: () => null,
 }));
 
 vi.mock('../../utils/market-data.js', () => ({

@@ -237,7 +237,10 @@ describe('pricing settings', () => {
             'networth_highEnhancementMinLevel',
             'networth_includeCowbells',
             'networth_includeTaskTokens',
+            'networth_includeLabyrinthTokens',
+            'networth_includeGuildTokens',
             'networth_abilityBooksAsInventory',
+            'guildTokenCreditRate',
         ];
         for (const [index, key] of keysThatReprice.entries()) {
             calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 20 + index, coins: 0 });

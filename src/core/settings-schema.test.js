@@ -61,6 +61,8 @@ describe('net worth and auto-all sub-settings name their parent', () => {
             'invWorth',
             'networth_includeCowbells',
             'networth_includeTaskTokens',
+            'networth_includeLabyrinthTokens',
+            'networth_includeGuildTokens',
             'networth_abilityBooksAsInventory',
             'networth_historyChart',
             'networth_goldSources',
@@ -285,5 +287,13 @@ describe('combat task Go count buffer defaults', () => {
         expect(setting.help).toMatch(/nine runs in ten|how often/i);
         // And says what zero does, since zero is the off switch
         expect(setting.help).toMatch(/0 turns it off/i);
+    });
+});
+
+describe('net worth token settings', () => {
+    test('labyrinth and guild tokens are counted by default, as task tokens are', () => {
+        expect(getSettingDefinition('networth_includeTaskTokens').default).toBe(true);
+        expect(getSettingDefinition('networth_includeLabyrinthTokens').default).toBe(true);
+        expect(getSettingDefinition('networth_includeGuildTokens').default).toBe(true);
     });
 });
