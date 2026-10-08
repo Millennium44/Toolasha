@@ -3938,7 +3938,7 @@ class ActionTimeDisplay {
                 },
             };
         }
-        return { itemHrid: protectionItemHrid, perAction, isEstimated: true };
+        return { itemHrid: protectionItemHrid, perAction, isEstimated: true, stackLevel: protectionStackLevel };
     }
 
     /**
@@ -4540,7 +4540,11 @@ class ActionTimeDisplay {
                     }
                 }
                 if (drawsProtection) {
-                    spend(protection.itemHrid, protection.perAction * performed, protection.selfStack?.level ?? 0);
+                    spend(
+                        protection.itemHrid,
+                        protection.perAction * performed,
+                        protection.stackLevel ?? protection.selfStack?.level ?? 0
+                    );
                 }
                 return performed;
             }

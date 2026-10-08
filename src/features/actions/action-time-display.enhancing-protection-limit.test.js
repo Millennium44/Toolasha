@@ -437,3 +437,30 @@ describe('an item that protects itself keeps its spares back', () => {
         expect(limit.maxActions).toBe(50);
     });
 });
+
+describe('a protection item drawn from an enhanced stack leaves that stack in the ledger', () => {
+    test('an earlier row spending item B at +3 empties B::3 for a later row that protects with it', () => {
+        game.settings.enhanceSim_protectFromStock = true;
+        game.settings.enhanceSim_protectStockReserve = 0;
+        game.inventory = [stack(ESSENCE, 5000), stack(PROTECTION, 3, 3)];
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+
+        // Row 1 enhances the sword, protected by the +3 mirror stack (30 attempts, 3 mirrors)
+        const first = {
+            ...enhancingRow({ protectionItemHrid: PROTECTION, maxCount: 30 }),
+            secondaryItemHash: hashFor(PROTECTION, 3),
+        };
+        expect(actionTimeDisplay.deductQueueActionMaterials(lookup, details(), first, { count: 30 })).toBe(30);
+        expect(lookup.byHrid[PROTECTION]).toBeCloseTo(0, 10);
+        expect(lookup.byEnhancedKey[`${PROTECTION}::3`]).toBeCloseTo(0, 10);
+
+        // Row 2 enhances item B itself, protecting with B::3, which row 1 has already used up
+        const second = {
+            ...enhancingRow({ protectionItemHrid: PROTECTION }),
+            primaryItemHash: hashFor(PROTECTION, 1),
+            secondaryItemHash: hashFor(PROTECTION, 3),
+        };
+        const limit = actionTimeDisplay.calculateMaterialLimit(details(), lookup, 0, second);
+        expect(limit.maxActions).toBe(0);
+    });
+});
