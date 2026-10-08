@@ -19,6 +19,7 @@ const lookups = vi.hoisted(() => ({
 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, onReady: () => () => {} } }));
 vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToEnhanceItem: () => false,
     navigateToItem: vi.fn(),
     findActionForItem: vi.fn(() => null),
 }));

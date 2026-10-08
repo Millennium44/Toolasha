@@ -20,7 +20,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 const navigateToItem = vi.hoisted(() => vi.fn());
-vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem }));
+vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem, navigateToEnhanceItem: () => false }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         onClass: (name, classNames, callback) => {

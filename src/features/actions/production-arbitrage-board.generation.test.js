@@ -68,6 +68,7 @@ vi.mock('../../utils/simple-panel.js', () => ({
 }));
 
 vi.mock('../../utils/item-navigation.js', () => ({
+    navigateToEnhanceItem: () => false,
     navigateToAction: () => true,
     navigateToItem: () => true,
 }));

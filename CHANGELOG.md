@@ -27,6 +27,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The keep-N protection reserve now holds back only spare copies of the item being enhanced when it protects itself (Mirrors of Protection are spent freely), and the enhancing material limit applies it too, counting only the protection stack the run actually uses.
 
+### Capes and quivers get an Enhance button
+
+- Upgrade rows for capes, quivers and other untradable gear now offer Enhance instead of Market (preselecting the copy you'd ladder: your second-best once your best is +5 or higher, otherwise your best) and price the row as enhancing that copy up to the target.
+- Lab Sim upgrade rows for a party member are priced from their own worn cape or quiver, not from your inventory.
+- A cape or quiver with no spare copy to enhance now prices its fresh base from the coin, task-token or labyrinth-token shop that sells it, not a value estimate.
+
 ### Synced days no longer count twice
 
 - A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.

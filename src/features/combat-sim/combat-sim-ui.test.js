@@ -250,7 +250,12 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level),
             houseRoomDetailMap: mocks.houseRoomDetailMap || {},
+            // Only the self-enhanced (cape) tests put items here; everything
+            // else is unknown to the map and keeps the ordinary market path
+            itemDetailMap: mocks.itemDetailMap || {},
         }),
+        // `characterItems`, read by the Enhance button to pick a held copy
+        getInventory: () => mocks.inventory ?? null,
         // The live character's own house room level — used only as a display
         // fallback before any DTO has loaded; a loaded DTO (self, imported, or a
         // party member's) must never fall through to this for a room it lacks
@@ -8952,5 +8957,132 @@ describe('the Solo zones + party dungeons helpers', () => {
         expect(forced.selfHrid).toBe('player2');
         // No override: the checkbox decides, as before
         expect(resolveSimParty(unchecked, editedDTOs).playerDTOs).toHaveLength(2);
+    });
+});
+
+describe('self-enhanced upgrade rows (capes, quivers)', () => {
+    const CAPE = '/items/sinister_cape';
+    const CHAR = 161296;
+    const stack = (level, location = '/item_locations/inventory', count = 1) => ({
+        id: 1000 + level,
+        characterID: CHAR,
+        itemLocationHrid: location,
+        itemHrid: CAPE,
+        enhancementLevel: level,
+        count,
+        hash: `${CHAR}::${location}::${CAPE}::${level}`,
+    });
+    const capeRow = (level, ladder) => ({
+        cost: 2_000_000,
+        costDetail: { source: 'enhance', gross: 2_000_000, net: 2_000_000, buys: [], ladder },
+        candidate: { description: 'Sinister Cape', upgradeHrid: CAPE, upgradeLevel: level, type: 'equipment' },
+    });
+    let enhanced;
+    let wentToAction;
+
+    beforeEach(() => {
+        // No `isTradable` on a cape, exactly as itemDetailMap sends it
+        mocks.itemDetailMap = {
+            [CAPE]: { hrid: CAPE, name: 'Sinister Cape', equipmentDetail: { type: '/equipment_types/back' } },
+            '/items/cheese_sword': { hrid: '/items/cheese_sword', name: 'Cheese Sword', isTradable: true },
+        };
+        mocks.inventory = [stack(6, '/item_locations/back'), stack(3)];
+        mocks.marketOpened.length = 0;
+        enhanced = [];
+        wentToAction = [];
+        // The game component, found the way item-navigation finds it
+        document.getElementById('root')?.remove();
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = {
+            current: {
+                stateNode: {
+                    handleGoToMarketplace: () => {},
+                    handleEnhanceItem: (hash) => enhanced.push(hash),
+                    handleGoToAction: (hrid) => wentToAction.push(hrid),
+                },
+                child: null,
+                sibling: null,
+            },
+        };
+        document.body.appendChild(root);
+    });
+
+    afterEach(() => {
+        mocks.itemDetailMap = undefined;
+        mocks.inventory = undefined;
+        document.getElementById('root')?.remove();
+    });
+
+    test('a cape row offers Enhance in place of Market and Watch', () => {
+        const html = upgradeRowActionsHtml(capeRow(5, { fromLevel: 3, toLevel: 5, fresh: false }));
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        expect(container.querySelector('[data-buy-action="enhance"]')?.textContent).toBe('Enhance');
+        expect(container.querySelector('[data-buy-action="market"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="watch"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="save"]')).not.toBeNull();
+        expect(container.querySelector('[data-buy-action="enhance"]').title).toContain('from +3 to +5');
+    });
+
+    test('a row priced for another player keeps Save but offers no Enhance, Market or Watch', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            capeRow(5, { fromLevel: 3, toLevel: 5, fresh: false, isSelf: false })
+        );
+        expect(container.querySelector('[data-buy-action="enhance"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="market"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="watch"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="save"]')).not.toBeNull();
+    });
+
+    test('a cape row at +0 still gets no Market button', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(capeRow(0, null));
+        expect(container.querySelector('[data-buy-action="market"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="enhance"]')).not.toBeNull();
+    });
+
+    test('a tradable item keeps Market and Watch', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 1,
+            candidate: { description: 'Sword', upgradeHrid: '/items/cheese_sword', upgradeLevel: 5, type: 'tier' },
+        });
+        expect(container.querySelector('[data-buy-action="market"]')).not.toBeNull();
+        expect(container.querySelector('[data-buy-action="watch"]')).not.toBeNull();
+        expect(container.querySelector('[data-buy-action="enhance"]')).toBeNull();
+    });
+
+    test('Enhance preselects the spare +3 when the worn copy is +6', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(capeRow(5, { fromLevel: 3, toLevel: 5, fresh: false }));
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="enhance"]').click();
+
+        expect(enhanced).toEqual([`${CHAR}::/item_locations/inventory::${CAPE}::3`]);
+        expect(mocks.marketOpened).toEqual([]);
+    });
+
+    test('a worn +4 cannot be preselected, so the best inventory copy stands in', () => {
+        mocks.inventory = [stack(4, '/item_locations/back'), stack(1)];
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(capeRow(6, { fromLevel: 4, toLevel: 6, fresh: false }));
+        expect(container.querySelector('[data-buy-action="enhance"]').title).toContain('is equipped');
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="enhance"]').click();
+
+        expect(enhanced).toEqual([`${CHAR}::/item_locations/inventory::${CAPE}::1`]);
+    });
+
+    test('with no copy in the inventory, Enhance opens the Enhancing screen without a selection', () => {
+        mocks.inventory = [];
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(capeRow(5, { fromLevel: 0, toLevel: 5, fresh: true }));
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="enhance"]').click();
+
+        expect(enhanced).toEqual([]);
+        expect(wentToAction).toEqual(['/actions/enhancing/enhance']);
     });
 });

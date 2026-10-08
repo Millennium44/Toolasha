@@ -432,7 +432,9 @@ function planPurchases(picks) {
 
     for (const pick of picks || []) {
         const buy = combatSimUI.upgradeRowPurchase(pick);
-        if (!buy) continue;
+        // A cape or quiver is enhanced at your own bench, never listed, so it
+        // has no place on a marketplace trip; its row carries an Enhance button
+        if (!buy || buy.selfEnhance) continue;
 
         const key = `${buy.itemHrid}+${buy.enhancementLevel}`;
         if (seen.has(key)) continue;
@@ -2933,13 +2935,16 @@ class LabSimUI {
         }
 
         let playerDTOs;
+        let selfHrid = null;
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 playerDTOs = Object.values(editedDTOs);
+                selfHrid = this._editor.getSelfHrid() ?? null;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
+                selfHrid = result.selfHrid ?? null;
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -3131,6 +3136,7 @@ class LabSimUI {
                 {
                     playerDTOs,
                     playerIndex,
+                    selfHrid,
                     monsterHrid,
                     roomLevel,
                     crates,
