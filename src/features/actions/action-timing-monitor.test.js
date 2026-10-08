@@ -154,6 +154,43 @@ describe('measuring the bar', () => {
         expect(speed.predictedSeconds).toBe(8.5176);
     });
 
+    test('a labyrinth action with a long full bar is not an anomaly and does not warn', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        dataManager.getCurrentActions.mockReturnValue([{ actionHrid: '/actions/labyrinth/explore_labyrinth' }]);
+        dataManager.getActionDetails.mockReturnValue({ name: 'Explore Labyrinth', type: '/action_types/labyrinth' });
+        const bar = mountBar(1);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        runAction(bar, { animatedMs: 1000, deadMs: 60000 });
+
+        expect(monitor.observed).toBe(1);
+        expect(monitor.anomalies).toHaveLength(0);
+        expect(warn).not.toHaveBeenCalled();
+        expect(storage.set).not.toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    test('a skilling action with the same 60s gap is still recorded and warns', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        dataManager.getCurrentActions.mockReturnValue([{ actionHrid: '/actions/cheesesmithing/cheese_gauntlets' }]);
+        dataManager.getActionDetails.mockReturnValue({
+            name: 'Cheese Gauntlets',
+            type: '/action_types/cheesesmithing',
+        });
+        const bar = mountBar(1);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        runAction(bar, { animatedMs: 1000, deadMs: 60000 });
+
+        expect(monitor.anomalies).toHaveLength(1);
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+    });
+
     test('a healthy action records nothing', async () => {
         const bar = mountBar(8.5176);
         await feature.initialize();

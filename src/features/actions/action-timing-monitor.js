@@ -34,6 +34,7 @@ import { runningAction } from '../../utils/combat-actions.js';
 
 const SETTING_KEY = 'actionTiming_monitor';
 const STORE_NAME = 'settings';
+const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
 /** Unscoped storage key; the character id is appended, per the `${base}_${id}` idiom */
 const RECORD_KEY_BASE = 'actionTimingLog';
 
@@ -278,6 +279,9 @@ class ActionTimingMonitor {
      */
     _record(timing) {
         const action = this._currentAction();
+        // The labyrinth keeps its bar full while a room is fought or skilled;
+        // that is the game's normal behavior, not a timing anomaly.
+        if (action?.type === LABYRINTH_ACTION_TYPE) return;
         const record = {
             at: Date.now(),
             actionHrid: action?.actionHrid ?? null,
