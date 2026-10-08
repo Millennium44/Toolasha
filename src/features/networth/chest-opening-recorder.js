@@ -183,7 +183,7 @@ class ChestOpeningRecorder {
             identityOf: (row) => row?.d,
             mergeCopies: mergeChestOpeningDays,
             // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
-            pruneEntries: pruneDayRows(RETENTION_DAYS),
+            pruneIncoming: pruneDayRows(RETENTION_DAYS),
             label: 'ChestOpenings',
         });
 
