@@ -63,6 +63,8 @@ vi.mock('../../core/storage.js', () => {
                     ? { found: true, value: structuredClone(store(name)[key]) }
                     : { found: false, value: null },
             putAll: async (name, entries) => {
+                // The other script's registry record failing to save, and only that
+                if (world.failRegistryWrites && Object.hasOwn(entries, 'toolasha_sync_externalKeys')) return 0;
                 Object.assign(store(name), structuredClone(entries));
                 return Object.keys(entries).length;
             },
@@ -1821,8 +1823,30 @@ describe("another script's registered keys, end to end", () => {
     }
 
     afterEach(async () => {
+        world.failRegistryWrites = false;
         await externalKeysSettled();
         _resetExternalKeys();
+    });
+
+    test('nothing syncs on a device that cannot save the registry the gist taught it', async () => {
+        const { a, b } = await syncedPair();
+        await registerOnA(a);
+        const writes = gist.writes;
+        world.failRegistryWrites = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        // The interval push merges the gist: refused before anything goes up
+        await asDevice(b, async () => {
+            changeSetting(b, 'X', true);
+            expect(await auto.push()).toMatchObject({ ok: false, reason: 'storage' });
+        });
+        // A pressed Push: the same
+        expect(await asDevice(b, () => syncManager.push())).toMatchObject({ ok: false, reason: 'storage' });
+        expect(gist.writes).toBe(writes);
+        // A startup pull: lands nothing
+        expect(await asDevice(b, auto.startup)).toMatchObject({ ok: false, reason: 'storage' });
+        expect(Object.hasOwn(b.db.settings, 'otherScriptLive')).toBe(false);
+        warn.mockRestore();
     });
 
     test('a pressed Push from a device that has not pulled since the registration keeps the registry', async () => {

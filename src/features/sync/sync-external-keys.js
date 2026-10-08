@@ -164,6 +164,22 @@ export function externalKeysSettled() {
     return writing;
 }
 
+/**
+ * Wait for every pending write of the record, and say whether the registry is
+ * on disk — retrying the write once more when an earlier one failed.
+ *
+ * For the sync's own paths that learn prefixes from a download: a pull that
+ * applied keys under a prefix this device could not save would find them
+ * unowned after a reload, and its next push would drop them from the gist.
+ *
+ * @returns {Promise<boolean>} True when the record on disk holds the registry
+ */
+export async function ensureExternalKeysSaved() {
+    await writing;
+    if (!unsaved) return true;
+    return persist();
+}
+
 /*
  * The three calls below are asynchronous: each waits for this device's
  * remembered record to load first, so it answers about — and changes — the
@@ -261,6 +277,7 @@ export function _resetExternalKeys() {
 }
 
 export default {
+    ensureExternalKeysSaved,
     registerSyncKeys,
     unregisterSyncKeys,
     registeredSyncKeys,

@@ -609,6 +609,32 @@ describe('saving what the public calls change', () => {
     });
 });
 
+describe('review round 4', () => {
+    test.each(['__proto__', 'constructor', 'hasOwnProperty', 'toString'])(
+        'refuses the built-in name %j',
+        async (name) => {
+            expect(checkExternalPrefix(name)).not.toBeNull();
+            expect((await registerSyncKeys({ owner: OWNER, prefixes: [name] })).rejected).toHaveLength(1);
+            expect(learnExternalKeysFromText(payloadText({}, { [OWNER]: [name] }))).toBe(false);
+            expect(await registeredSyncKeys()).toEqual({});
+        }
+    );
+
+    test('a pull whose new prefix could not be saved lands nothing', async () => {
+        storeState.failWrites = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await expect(
+            applyPayload(payloadText({ otherScriptLive: { state: 7 } }, { [OWNER]: ['otherScriptLive'] }))
+        ).rejects.toMatchObject({ kind: 'storage' });
+        warn.mockRestore();
+        expect(importedPayloads).toEqual([]);
+        // Once it saves, the same pull lands
+        storeState.failWrites = false;
+        await applyPayload(payloadText({ otherScriptLive: { state: 7 } }, { [OWNER]: ['otherScriptLive'] }));
+        expect(importedPayloads[0].stores.settings.otherScriptLive).toEqual({ state: 7 });
+    });
+});
+
 describe('nothing registered', () => {
     test('the payload is what it always was: no registry field, another script left out', async () => {
         storeState.stores.settings = { watchlist: ['a'], otherScriptPrefs_main: { mode: 'x' } };

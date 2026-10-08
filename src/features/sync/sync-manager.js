@@ -65,6 +65,7 @@ import {
     trimmedRegisteredKeys,
     restampRestoredSettings,
     learnExternalKeysFromText,
+    assertExternalKeysSaved,
     RESTORED_BASELINE,
 } from './sync-payload.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -804,6 +805,8 @@ class SyncManager {
             this._logStuckOnce('unmergeable', error);
             return { ok: false, reason: 'unmergeable' };
         }
+        // Whatever the gist taught the registry is saved before the result goes up
+        await assertExternalKeysSaved();
 
         // An upload that only sheds stores this device's scope no longer syncs
         // adds nothing, yet is the write that stops every device downloading them
@@ -961,6 +964,15 @@ class SyncManager {
             }
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+        // The replaced revisions may have taught the registry prefixes this
+        // device could not save: put them back rather than act on it
+        try {
+            await assertExternalKeysSaved();
+        } catch (error) {
+            console.warn('[Sync] Could not save what the replaced pushes taught; putting them back:', error);
+            await this._restoreReplaced(token, gistId, written.intervening.at(-1));
+            return { ok: false, reason: 'storage' };
+        }
         remoteAdds = remoteAdds || addsToRemote(text, localPayload, { forUpload: false });
 
         return this._doPush(silent, opToken, true, {
@@ -1213,6 +1225,7 @@ class SyncManager {
     async _decideTrim(token, gistId, remote, builtPayload, scope, opToken) {
         let localPayload = builtPayload;
         if (remote?.payload && learnExternalKeysFromText(remote.payload)) {
+            await assertExternalKeysSaved();
             localPayload = await buildPayloadJSON(scope);
         }
         const trimmed = remote?.payload ? trimmedRegisteredKeys(localPayload, remote.payload) : [];

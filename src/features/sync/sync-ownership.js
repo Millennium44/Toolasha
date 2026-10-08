@@ -360,6 +360,10 @@ export function checkExternalPrefix(prefix) {
     if (typeof prefix !== 'string') return 'not a string';
     if (prefix.length < EXTERNAL_PREFIX_MIN_LENGTH) return `shorter than ${EXTERNAL_PREFIX_MIN_LENGTH} characters`;
     if (prefix.length > EXTERNAL_PREFIX_MAX_LENGTH) return `longer than ${EXTERNAL_PREFIX_MAX_LENGTH} characters`;
+    // The record is a plain object keyed by prefix: `__proto__` would be taken
+    // by the prototype setter and never saved, and the other built-in names
+    // are not worth the doubt
+    if (Object.getOwnPropertyNames(Object.prototype).includes(prefix)) return 'a reserved JavaScript property name';
     const lower = prefix.toLowerCase();
     if (lower.startsWith(RESERVED_NAMESPACE) || RESERVED_NAMESPACE.startsWith(lower)) {
         return "inside this script's own namespace";
