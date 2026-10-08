@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync pulls stop asking for needless reloads
+
+- A sync pull of what this browser already holds now applies nothing and shows no toast, and a pull writes only the records that differ, so "Reload now" appears only when something actually changed; the summary also counts records already the same.
+
 ### Leftover fixes
 
 - Enhancing with ∞ repeat counts only the protection stack the run actually spends when the protection is a different item, not every level of it.
