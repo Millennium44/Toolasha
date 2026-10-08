@@ -598,8 +598,19 @@ const {
     SCORE_DEPTHS,
     DEFAULT_SCORE_DEPTH,
     SCORE_GRADIENT_PLACES,
+    SCORE_PERCENT,
+    DEFAULT_LEVEL_SCORE_SCALE,
+    isScoreScale,
+    applyScoreScale,
+    scoreScaleTitle,
+    scoreValueColor,
+    formatScore,
     visibleAllZonesSkillColumns,
     scoreAllZoneRows,
+    zonesScoreTitle,
+    isZonesScoreScale,
+    DEFAULT_ZONES_SCORE_SCALE,
+    ZONES_SCORE_LADDER,
     bestAllZoneRows,
     isSkillingGearItem,
     isAuraAbility,
@@ -700,6 +711,7 @@ beforeEach(() => {
     ui._upgradeHiddenColumns = null;
     ui._upgradeScoreKeys = null;
     ui._upgradeScoreDepth = DEFAULT_SCORE_DEPTH;
+    ui._upgradeLevelScoreScale = undefined;
     ui._upgradeScoreGradient = false;
 });
 
@@ -1295,7 +1307,27 @@ describe('the panel', () => {
         const scoreOf = (c, name) => levelTr(c, name).querySelector('[data-level-score]').textContent.trim();
         const names = (c) => [...c.querySelectorAll('[data-level-row]')].map((t) => t.children[0].textContent.trim());
 
-        test('the Score ranks by combined points and the breakdown says where they came from', () => {
+        test('with coloring on, the Score is colored by value on % of best and by place on Points', () => {
+            const cell = (c, name) => levelTr(c, name).querySelector('[data-level-score]');
+            ui._upgradeScoreGradient = true;
+            try {
+                ui._upgradeLevelScoreScale = 'pct';
+                let c = render();
+                expect(cell(c, 'A skill').style.color).not.toBe('');
+                expect(cell(c, 'D skill').style.color).toBe('');
+                ui._upgradeLevelScoreScale = '5';
+                c = render();
+                expect(cell(c, 'A skill').style.color).not.toBe('');
+                ui._upgradeScoreGradient = false;
+                c = render();
+                expect(cell(c, 'A skill').style.color).toBe('');
+            } finally {
+                ui._upgradeScoreGradient = false;
+            }
+        });
+
+        test('on Points, the Score ranks by combined points and the breakdown says where they came from', () => {
+            ui._upgradeLevelScoreScale = '5';
             const c = render();
             // DPS: A 5, B 4, C 3. Profit: C 5, B 4, A 3. EXP: nobody.
             expect(scoreOf(c, 'A skill')).toBe('8');
@@ -1336,6 +1368,7 @@ describe('the panel', () => {
         });
 
         test('with only level rows the ⚙ Columns control is there and rescoring the table works', () => {
+            ui._upgradeLevelScoreScale = '5';
             const c = render();
             expect(c.querySelectorAll('#mwi-csim-upgrade-cols-btn')).toHaveLength(1);
             expect(c.querySelector('[data-upgrade-score="profit"]')).not.toBeNull();
@@ -1352,12 +1385,81 @@ describe('the panel', () => {
         });
 
         test('only the scored metrics count, and the header explains the Score', () => {
+            ui._upgradeLevelScoreScale = '5';
             ui._upgradeScoreKeys = ['dps'];
             const c = render();
             expect(scoreOf(c, 'A skill')).toBe('5');
             expect(c.querySelector('[data-level-sort-key="score"]').getAttribute('title')).toContain(
-                'Points for placing'
+                'Points: for placing'
             );
+        });
+
+        test('% of best is the default here, and the header says so and explains it', () => {
+            expect(DEFAULT_LEVEL_SCORE_SCALE).toBe(SCORE_PERCENT);
+            const th = render().querySelector('[data-level-sort-key="score"]');
+            expect(th.textContent).toContain('% of best');
+            expect(th.getAttribute('title')).toContain('best row in each scored Hours/0.01% column, averaged');
+        });
+
+        test('on % of best, the Score averages the share of the best in each column', () => {
+            const c = render();
+            // 240 h each. Hours/0.01% DPS: A 0.8, B 1.2, C 2.4 -> 100, 67, 33.
+            // Hours/0.01% Profit: A 24, B 12, C 4.8 -> 20, 40, 100. EXP: nobody,
+            // so it is left out of the average rather than zeroing everyone.
+            expect(scoreOf(c, 'A skill')).toBe('60'); // (100 + 20) / 2
+            expect(scoreOf(c, 'B skill')).toBe('53'); // (66.7 + 40) / 2
+            expect(scoreOf(c, 'C skill')).toBe('67'); // (33.3 + 100) / 2
+            expect(scoreOf(c, 'D skill')).toBe('—');
+            expect(names(c)).toEqual(['C skill', 'A skill', 'B skill', 'D skill']);
+            const detail = [...c.querySelectorAll('[data-level-detail]')][names(c).indexOf('B skill')];
+            expect(detail.textContent).toContain('Score 53');
+            expect(detail.textContent).toContain('Hours/0.01% DPS 67% (#2)');
+            expect(detail.textContent).toContain('Hours/0.01% Profit 40% (#2)');
+            expect(detail.textContent).not.toMatch(/#\d \(\+\d+\)/);
+            expect(detail.textContent).not.toContain('Hours/0.01% EXP');
+        });
+
+        test('the live case: Melee 3.8h vs Attack 17.2h per 0.01% DPS is 100 vs 22 on % of best', () => {
+            ui._upgradeScoreKeys = ['dps'];
+            // 3.8 h and 17.2 h per 0.01% at 1% DPS each: 380 h and 1720 h of grind
+            const live = () => [levelRow('Melee', 380 / 24, { dps: 1 }), levelRow('Attack', 1720 / 24, { dps: 1 })];
+            const c = render(live());
+            expect(scoreOf(c, 'Melee')).toBe('100');
+            expect(scoreOf(c, 'Attack')).toBe('22');
+            const detail = [...c.querySelectorAll('[data-level-detail]')][names(c).indexOf('Attack')];
+            expect(detail.textContent).toContain('Score 22: Hours/0.01% DPS 22% (#2)');
+
+            // The same rows on Points: first and second, five and four
+            ui._upgradeLevelScoreScale = '5';
+            const c2 = render(live());
+            expect(scoreOf(c2, 'Melee')).toBe('5');
+            expect(scoreOf(c2, 'Attack')).toBe('4');
+        });
+
+        test('a column the row had no figure in shows as 0% with no place, and counts in the average', () => {
+            const a = rows();
+            a[0] = levelRow('A skill', 10, { dps: 3 }); // no profit gain any more
+            const c = render(a);
+            const detail = [...c.querySelectorAll('[data-level-detail]')][names(c).indexOf('A skill')];
+            expect(detail.textContent).toContain('Hours/0.01% DPS 100% (#1)');
+            expect(detail.textContent).toContain('Hours/0.01% Profit 0% (—)');
+            expect(scoreOf(c, 'A skill')).toBe('50');
+        });
+
+        test('the Combat levels scale is its own choice in ⚙ Columns, independent of the gear table', () => {
+            const c = render();
+            c.querySelector('#mwi-csim-upgrade-cols-btn').click();
+            const select = ui.panel.querySelector('#mwi-csim-level-score-scale');
+            expect(select.querySelector('option[selected]').value).toBe(SCORE_PERCENT);
+
+            select.value = '5';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+
+            expect(ui._upgradeLevelScoreScale).toBe('5');
+            expect(ui._upgradeScoreDepth).toBe(DEFAULT_SCORE_DEPTH);
+            const after = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(scoreOf(after, 'A skill')).toBe('8');
+            expect(mocks.store.get('settings:combatSimUpgradeColumns').levelScoreScale).toBe('5');
         });
     });
 
@@ -2460,6 +2562,52 @@ describe('the all-zones table', () => {
             const rows = [zoneRow('Only', { totalXP: 5, profitDay: 5 })];
             expect(scoreAllZoneRows(rows)[0].score).toBe(100);
         });
+
+        test('% of best scores each zone by its share of the best XP and profit, averaged', () => {
+            const rows = [
+                zoneRow('A', { totalXP: 1000, profitDay: 4000 }),
+                zoneRow('B', { totalXP: 500, profitDay: 2000 }),
+                zoneRow('C', { totalXP: 250, profitDay: 0 }),
+            ];
+            scoreAllZoneRows(rows, SCORE_PERCENT);
+
+            expect(rows.map((r) => r.score)).toEqual([100, 50, 13]);
+        });
+
+        test('% of best scores a loss-making zone 0 for the profit column', () => {
+            const rows = [
+                zoneRow('Gold', { totalXP: 100, profitDay: 1000 }),
+                zoneRow('Loss', { totalXP: 100, profitDay: -500 }),
+            ];
+            scoreAllZoneRows(rows, SCORE_PERCENT);
+
+            expect(rows[0].score).toBe(100);
+            expect(rows[1].score).toBe(50);
+        });
+
+        test('the ladder is the default and leaves existing scores alone', () => {
+            expect(DEFAULT_ZONES_SCORE_SCALE).toBe(ZONES_SCORE_LADDER);
+            const rows = [
+                zoneRow('Best', { totalXP: 1000, profitDay: 5000 }),
+                zoneRow('Mid', { totalXP: 500, profitDay: 2000 }),
+                zoneRow('Worst', { totalXP: 100, profitDay: 100 }),
+            ];
+            scoreAllZoneRows(rows);
+            expect(rows.map((r) => r.score)).toEqual([100, 50, 0]);
+        });
+
+        test('only the two offered scales are valid stored values', () => {
+            expect(isZonesScoreScale('ladder')).toBe(true);
+            expect(isZonesScoreScale(SCORE_PERCENT)).toBe(true);
+            expect(isZonesScoreScale('5')).toBe(false);
+            expect(isZonesScoreScale(undefined)).toBe(false);
+        });
+
+        test('each scale has a header tooltip that names itself and not the Upgrade tab', () => {
+            expect(zonesScoreTitle(ZONES_SCORE_LADDER)).toContain('Ladder position');
+            expect(zonesScoreTitle(SCORE_PERCENT)).toContain('% of best');
+            expect(zonesScoreTitle(ZONES_SCORE_LADDER)).not.toContain('Upgrade tab');
+        });
     });
 
     describe('the two winners', () => {
@@ -2573,6 +2721,82 @@ describe('the all-zones table', () => {
             // The hover names the actual swap, so the claim is checkable
             expect(container.innerHTML).toContain('Cheese → Marsberry Cake');
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones-maxfood');
+        });
+
+        describe('the Score scale picker', () => {
+            const drawThree = () =>
+                ui._displayAllZonesResults(
+                    [
+                        result('Fly', { xp: { defense: 1000 }, profit: 100 }),
+                        result('Jungle', { xp: { defense: 500 }, profit: 50 }),
+                        result('Swamp', { xp: { defense: 250 }, profit: 0 }),
+                    ],
+                    1,
+                    {}
+                );
+            const scores = () => {
+                const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')];
+                const at = headers.findIndex((th) => th.dataset.col === 'score');
+                return [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map(
+                    (tr) => tr.children[at].textContent
+                );
+            };
+
+            afterEach(() => {
+                mocks.store.delete('settings:combatSimAllZonesScoreScale');
+                ui._allZonesScoreScale = ZONES_SCORE_LADDER;
+            });
+
+            test('defaults to the ladder position, unchanged', async () => {
+                await drawThree();
+                const select = ui.panel.querySelector('#mwi-csim-zones-score-scale');
+
+                expect(select.querySelector('option[selected]').value).toBe(ZONES_SCORE_LADDER);
+                expect(scores()).toEqual(['100', '50', '0']);
+                expect(ui.panel.querySelector('#mwi-csim-results th[data-col="score"]').title).toContain(
+                    'Ladder position'
+                );
+            });
+
+            test('choosing % of best rescores the drawn run and is remembered', async () => {
+                await drawThree();
+                const select = ui.panel.querySelector('#mwi-csim-zones-score-scale');
+                select.value = SCORE_PERCENT;
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                await vi.waitFor(() => expect(scores()).toEqual(['100', '50', '13']));
+
+                expect(ui._allZonesScoreScale).toBe(SCORE_PERCENT);
+                expect(mocks.store.get('settings:combatSimAllZonesScoreScale')).toBe(SCORE_PERCENT);
+                expect(ui.panel.querySelector('#mwi-csim-results th[data-col="score"]').title).toContain('% of best');
+            });
+
+            test('on % of best, a run where every zone scores 0 is not drawn as all-best', async () => {
+                ui._allZonesScoreScale = SCORE_PERCENT;
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fly', { xp: { defense: 0 }, profit: -100 }),
+                        result('Jungle', { xp: { defense: 0 }, profit: -50 }),
+                    ],
+                    1,
+                    {}
+                );
+                const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')];
+                const at = headers.findIndex((th) => th.dataset.col === 'score');
+                const cells = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map((tr) => tr.children[at]);
+                expect(cells.map((td) => td.textContent)).toEqual(['0', '0']);
+                for (const td of cells) expect(td.getAttribute('style')).not.toContain('#4caf50');
+            });
+
+            test('a saved choice is restored, and an unknown stored value is ignored', async () => {
+                mocks.store.set('settings:combatSimAllZonesScoreScale', SCORE_PERCENT);
+                await ui._loadZonesScorePref();
+                expect(ui._allZonesScoreScale).toBe(SCORE_PERCENT);
+
+                ui._allZonesScoreScale = ZONES_SCORE_LADDER;
+                mocks.store.set('settings:combatSimAllZonesScoreScale', 'bogus');
+                await ui._loadZonesScorePref();
+                expect(ui._allZonesScoreScale).toBe(ZONES_SCORE_LADDER);
+            });
         });
 
         test('an ordinary run carries no food note and exports under the plain name', async () => {
@@ -5979,6 +6203,40 @@ describe('how deep the Score pays out', () => {
         expect(scoreDepthPlaces('nonsense', 140)).toBe(5);
     });
 
+    test('a scale is a placing depth or % of best, and nothing else', () => {
+        for (const depth of SCORE_DEPTHS) expect(isScoreScale(depth.key)).toBe(true);
+        expect(isScoreScale(SCORE_PERCENT)).toBe(true);
+        expect(isScoreScale('nonsense')).toBe(false);
+        expect(isScoreScale(undefined)).toBe(false);
+        expect(scoreDepthLabel(SCORE_PERCENT)).toBe('% of best');
+    });
+
+    test('applyScoreScale scores with points or percent of best, and each title explains its own', () => {
+        const rows = scoreRows(3);
+        applyScoreScale(rows, '5', { keys: ['dps'] });
+        expect(rows.map((r) => r.score)).toEqual([5, 4, 3]);
+        expect(rows[0].rankPoints.dps).toBeTruthy();
+
+        applyScoreScale(rows, SCORE_PERCENT, { keys: ['repay'] });
+        // Repay 1 h, 2 h, 3 h -> 100, 50, 33
+        expect(rows.map((r) => Math.round(r.score))).toEqual([100, 50, 33]);
+        expect(rows[0].rankPoints).toBeUndefined();
+
+        expect(scoreScaleTitle('10', 'Gold/0.01%')).toContain('top 10');
+        expect(scoreScaleTitle(SCORE_PERCENT, 'Gold/0.01%')).toContain('% of best');
+    });
+
+    test('the Score prints whole, a dash for nothing; on % of best its color follows its value', () => {
+        expect(formatScore(73.6)).toBe('74');
+        expect(formatScore(15)).toBe('15');
+        expect(formatScore(0)).toBe('—');
+        expect(formatScore(undefined)).toBe('—');
+        expect(scoreValueColor(100)).toBe('rgb(76, 175, 80)');
+        expect(scoreValueColor(50)).toBe('rgb(255, 152, 0)');
+        expect(scoreValueColor(1e-9)).toBe('rgb(244, 67, 54)');
+        expect(scoreValueColor(0)).toBeNull();
+    });
+
     test('every depth on offer is a real number of places', () => {
         for (const depth of SCORE_DEPTHS) {
             expect(scoreDepthPlaces(depth.key, 20)).toBeGreaterThan(0);
@@ -6107,6 +6365,74 @@ describe('the Score column in the table', () => {
         ui._renderUpgradeResults(results());
 
         expect(html()).toContain('Top 15');
+    });
+
+    test('the gear table stays on Points by default', () => {
+        const data = results();
+        ui._renderUpgradeResults(data);
+
+        expect(html()).toContain('Top 5');
+        // Placing points (three columns carry figures here): 5, 4, 3 per column
+        expect(data.results.map((r) => r.score)).toEqual([15, 12, 9]);
+    });
+
+    test('on % of best the gear table says so, scores out of 100, and colors the Score by its value', () => {
+        ui._upgradeScoreDepth = SCORE_PERCENT;
+        ui._upgradeScoreGradient = true;
+        const data = results();
+        ui._renderUpgradeResults(data);
+
+        expect(html()).toContain('% of best');
+        const scores = data.results.map((r) => r.score);
+        expect(scores[0]).toBe(100);
+        for (const score of scores) expect(score).toBeLessThanOrEqual(100);
+        expect(data.results[1].scoreParts).toBeTruthy();
+        expect(data.results[1].rankPoints).toBeUndefined();
+        // The second row's Score is colored by its value, not as second place
+        expect(html()).toContain(scoreValueColor(scores[1]));
+    });
+
+    test('when no candidate scores, no Score cell is drawn as the column best', () => {
+        for (const scale of [SCORE_PERCENT, '5']) {
+            ui._upgradeScoreDepth = scale;
+            const data = results();
+            for (const r of data.results) {
+                r.goldPer = { dps: Infinity, xp: Infinity, profit: Infinity, deaths: Infinity, encounters: Infinity };
+                r.economics = { ...r.economics, repayHours: null, roiAnnualPct: null };
+            }
+            ui._renderUpgradeResults(data);
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            const headers = [...container.querySelectorAll('thead th')];
+            const at = headers.findIndex((th) => th.dataset.sortKey === 'score');
+            expect(at).toBeGreaterThanOrEqual(0);
+            const cells = [...container.querySelectorAll('tr[data-upgrade-row]')].map((tr) => tr.children[at]);
+            expect(cells.length).toBe(3);
+            for (const td of cells) expect(td.getAttribute('style')).not.toContain('#4caf50');
+        }
+    });
+
+    test('a depth stored by an older build keeps working on Points, and the levels table still opens on % of best', async () => {
+        mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [], scoreDepth: '15', scoreGradient: false });
+        await ui._loadUpgradeColumnPrefs();
+
+        expect(ui._upgradeScoreDepth).toBe('15');
+        expect(ui._upgradeLevelScoreScale).toBeUndefined();
+        ui._renderUpgradeResults(results());
+        expect(html()).toContain('Top 15');
+        expect(html()).not.toContain('could not be drawn');
+    });
+
+    test('a scale this build does not know is ignored rather than trusted', async () => {
+        mocks.store.set('settings:combatSimUpgradeColumns', {
+            hidden: [],
+            scoreDepth: 'top-20',
+            levelScoreScale: 42,
+        });
+        await ui._loadUpgradeColumnPrefs();
+
+        expect(ui._upgradeScoreDepth).toBe(DEFAULT_SCORE_DEPTH);
+        expect(ui._upgradeLevelScoreScale).toBeUndefined();
+        expect(() => ui._renderUpgradeResults(results())).not.toThrow();
     });
 
     test('no color on the Score unless it was asked for', () => {
