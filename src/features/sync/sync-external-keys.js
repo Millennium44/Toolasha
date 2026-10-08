@@ -79,6 +79,12 @@ export function ensureExternalKeysLoaded() {
     return loading;
 }
 
+/** The save the latest change started, for a public call to wait on */
+let lastSave = Promise.resolve(true);
+
+/** Whether some change to the registry has not reached disk */
+let unsaved = false;
+
 /**
  * Write the registry as it now stands.
  *
@@ -88,28 +94,67 @@ export function ensureExternalKeysLoaded() {
  * `bypassRestoreLatch` — this is sync bookkeeping, and a pull earlier in the
  * page may have latched the settings store.
  *
- * @returns {Promise<void>}
+ * A failed save leaves the registry marked unsaved, so the next public call
+ * tries again even when it changes nothing.
+ *
+ * @returns {Promise<boolean>} Whether the record on disk now matches the registry
  */
 function persist() {
-    writing = writing.then(async () => {
+    const attempt = writing.then(async () => {
         try {
-            if (!(await ensureExternalKeysLoaded())) return;
+            if (!(await ensureExternalKeysLoaded())) {
+                unsaved = true;
+                return false;
+            }
             const written = await storage.putAll(
                 STORE,
                 { [KEY_EXTERNAL_KEYS]: externalKeyRecord() },
                 { bypassRestoreLatch: true }
             );
-            if (written !== 1) console.warn('[Sync] The registered key prefixes were not saved.');
+            unsaved = written !== 1;
+            if (unsaved) console.warn('[Sync] The registered key prefixes were not saved.');
         } catch (error) {
+            unsaved = true;
             console.warn('[Sync] Could not save the registered key prefixes:', error);
         }
+        return !unsaved;
     });
-    return writing;
+    writing = attempt.then(() => {});
+    lastSave = attempt;
+    return attempt;
 }
 
 onExternalKeyPrefixesChange(() => {
     persist();
 });
+
+/**
+ * Wait until the record on disk holds the registry as this call left it, and
+ * add the answer to the call's result.
+ *
+ * The change itself stays in memory either way: it holds for this page, and
+ * the next change saves it with everything else. But a caller asking to be
+ * carried, or to stop being carried, has to be able to tell that a reload
+ * would undo it — so an unsaved change answers `ok: false`, `saved: false`.
+ *
+ * @param {{ok: boolean}} result - What the registry call answered
+ * @param {boolean} changed - Whether the call changed the registry (and so started a save)
+ * @returns {Promise<Object>} The result, with `saved` and, when not saved, `ok: false` and `error`
+ */
+async function withSaved(result, changed) {
+    let saved = true;
+    if (changed) saved = await lastSave;
+    else if (unsaved) saved = await persist();
+    if (saved) return { ...result, saved };
+    return {
+        ...result,
+        ok: false,
+        saved,
+        error:
+            result.error ||
+            'the change holds on this page but could not be saved, so a reload would undo it. Try again.',
+    };
+}
 
 /**
  * Wait for every pending write of the record.
@@ -137,21 +182,26 @@ export function externalKeysSettled() {
  * every owner. Registering is additive and idempotent: call it on every page
  * load with the same list. {@link unregisterSyncKeys} withdraws a prefix.
  *
- * Should the remembered record be unreadable, the registration still holds for
- * this page and is saved by the next change that finds it readable.
+ * Resolves once the registration is saved. Should it not be — the remembered
+ * record unreadable, or the write refused — the registration still holds for
+ * this page and the answer says `ok: false, saved: false`: a reload would drop
+ * it until the next call saves it.
  *
  * @param {{owner: string, prefixes: string[]}} registration - Who is asking, and for which key prefixes
- * @returns {Promise<{ok: boolean, accepted: string[], added: string[], rejected: Array<{prefix: *, reason: string}>,
- *   error?: string}>} What was taken, what was new, and what was refused and why
+ * @returns {Promise<{ok: boolean, saved?: boolean, accepted: string[], added: string[],
+ *   rejected: Array<{prefix: *, reason: string}>, error?: string}>} What was taken, what was new, whether it is
+ *   saved, and what was refused and why
  */
 export async function registerSyncKeys(registration) {
     await ensureExternalKeysLoaded();
     const { owner, prefixes } = registration && typeof registration === 'object' ? registration : {};
     const result = addExternalKeyPrefixes(owner, prefixes);
-    if (result.error || result.rejected.length > 0) {
-        console.warn('[Sync] Key registration refused in part:', result.error || result.rejected);
+    if (result.error) {
+        console.warn('[Sync] Key registration refused:', result.error);
+        return result;
     }
-    return result;
+    if (result.rejected.length > 0) console.warn('[Sync] Key registration refused in part:', result.rejected);
+    return withSaved(result, result.added.length > 0);
 }
 
 /**
@@ -163,12 +213,15 @@ export async function registerSyncKeys(registration) {
  * stay where they are on every device; they just stop travelling.
  *
  * Refused outright when the remembered record cannot be read: without it this
- * device does not know which prefixes there are to withdraw, and a removal it
- * could not save would be undone by the next page load.
+ * device does not know which prefixes there are to withdraw. Resolves once the
+ * removal is saved; when the write fails, the removal still holds for this page
+ * (the keys stop travelling now) and the answer says `ok: false, saved: false`,
+ * because a reload would bring the prefixes back until a later call saves it.
  *
  * @param {{owner: string, prefixes?: string[]}} registration - Whose prefixes, and which
- * @returns {Promise<{ok: boolean, removed: string[], rejected: Array<{prefix: string, reason: string}>,
- *   error?: string}>} What was withdrawn, and what could not be recorded
+ * @returns {Promise<{ok: boolean, saved?: boolean, removed: string[],
+ *   rejected: Array<{prefix: string, reason: string}>, error?: string}>} What was withdrawn, whether it is saved,
+ *   and what could not be recorded
  */
 export async function unregisterSyncKeys(registration) {
     if (!(await ensureExternalKeysLoaded())) {
@@ -178,10 +231,12 @@ export async function unregisterSyncKeys(registration) {
     }
     const { owner, prefixes } = registration && typeof registration === 'object' ? registration : {};
     const result = removeExternalKeyPrefixes(owner, prefixes);
-    if (result.error || result.rejected.length > 0) {
-        console.warn('[Sync] Key unregistration refused in part:', result.error || result.rejected);
+    if (result.error) {
+        console.warn('[Sync] Key unregistration refused:', result.error);
+        return result;
     }
-    return result;
+    if (result.rejected.length > 0) console.warn('[Sync] Key unregistration refused in part:', result.rejected);
+    return withSaved(result, result.removed.length > 0);
 }
 
 /**
@@ -201,6 +256,8 @@ export function _resetExternalKeys() {
     _resetExternalKeyPrefixes();
     loading = null;
     writing = Promise.resolve();
+    lastSave = Promise.resolve(true);
+    unsaved = false;
 }
 
 export default {

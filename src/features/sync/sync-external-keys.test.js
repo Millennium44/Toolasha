@@ -32,6 +32,8 @@ vi.mock('../../core/storage.js', () => ({
         endRestore: async () => {},
         putAll: async (name, entries, options) => {
             storeState.putAllCalls.push({ name, entries, options });
+            // An aborted transaction: a short count, not a throw
+            if (storeState.failWrites) return 0;
             storeState.stores[name] = { ...(storeState.stores[name] || {}), ...entries };
             return Object.keys(entries).length;
         },
@@ -98,6 +100,7 @@ beforeEach(() => {
     storeState.putAllCalls = [];
     storeState.unreadable = false;
     storeState.duringGetAll = null;
+    storeState.failWrites = false;
     importedPayloads.length = 0;
     _resetExternalKeys();
 });
@@ -553,6 +556,56 @@ describe('review round 2', () => {
         expect(payload.stores.settings).toEqual({ otherScriptLive: 1 });
         expect(liveIn(payload.externalKeys)).toEqual(['otherScriptLive']);
         await externalKeysSettled();
+    });
+});
+
+describe('saving what the public calls change', () => {
+    test('a saved registration or withdrawal says so', async () => {
+        expect(await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES })).toMatchObject({ ok: true, saved: true });
+        expect(await unregisterSyncKeys({ owner: OWNER })).toMatchObject({ ok: true, saved: true });
+    });
+
+    test('a withdrawal that could not be saved holds for this page and says a reload would undo it', async () => {
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        storeState.failWrites = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const result = await unregisterSyncKeys({ owner: OWNER });
+        expect(result).toMatchObject({ ok: false, saved: false });
+        expect(result.error).toMatch(/could not be saved/);
+        expect(result.removed.sort()).toEqual([...PREFIXES].sort());
+        // This page has stopped carrying the keys...
+        expect(ownsKey('settings', 'otherScriptLive')).toBe(false);
+        // ...and asking again, once the database takes writes, saves it
+        storeState.failWrites = false;
+        expect(await unregisterSyncKeys({ owner: OWNER })).toMatchObject({ ok: true, saved: true, removed: [] });
+        warn.mockRestore();
+        _resetExternalKeys();
+        expect(await registeredSyncKeys()).toEqual({});
+    });
+
+    test('a registration that could not be saved says so, and the next call saves it', async () => {
+        storeState.failWrites = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        expect(await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES })).toMatchObject({
+            ok: false,
+            saved: false,
+            added: PREFIXES,
+        });
+        expect(ownsKey('settings', 'otherScriptLive')).toBe(true);
+        storeState.failWrites = false;
+        expect(await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES })).toMatchObject({ ok: true, saved: true });
+        warn.mockRestore();
+        _resetExternalKeys();
+        expect(await registeredSyncKeys()).toEqual({ [OWNER]: [...PREFIXES].sort() });
+    });
+
+    test('a withdrawal made on a fresh page is not reported saved when the write fails', async () => {
+        await registerSyncKeys({ owner: OWNER, prefixes: PREFIXES });
+        storeState.failWrites = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        _resetExternalKeys(); // and a fresh page, which loads before it removes
+        expect((await unregisterSyncKeys({ owner: OWNER })).saved).toBe(false);
+        warn.mockRestore();
     });
 });
 
