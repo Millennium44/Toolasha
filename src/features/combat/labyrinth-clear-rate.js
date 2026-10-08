@@ -2710,6 +2710,9 @@ class LabyrinthClearRate {
      * resetting the timer on each would starve the pass.
      */
     _onBuffInputsChanged() {
+        // A build change also drops the combat sims cached under the old build: house rooms
+        // reach the sim but not the cache key, so a pass would otherwise re-badge the old sim
+        this._invalidateIfInputsChanged();
         if (!config.getSetting('labyrinthAutoCalcTiles')) return;
         if (!this.roomData || this.autoTileTimer) return;
         this.scheduleAutoTileCalc();

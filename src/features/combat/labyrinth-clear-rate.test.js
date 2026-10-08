@@ -3126,6 +3126,16 @@ describe('a buff change re-runs the auto pass for the tiles it affects', () => {
         vi.useRealTimers();
     });
 
+    test('a house or buff change clears combat sims cached under the old build, Auto-calc on or off', () => {
+        const invalidate = vi.spyOn(labyrinthClearRate, '_invalidateIfInputsChanged');
+        handlerFor('house_rooms_updated')();
+        expect(invalidate).toHaveBeenCalledTimes(1);
+        setAutoCalc(false);
+        handlerFor('house_rooms_updated')();
+        expect(invalidate).toHaveBeenCalledTimes(2);
+        invalidate.mockRestore();
+    });
+
     test('initialize listens for the buff and skill events, and not for teas', () => {
         for (const event of [
             'community_buffs_updated',
