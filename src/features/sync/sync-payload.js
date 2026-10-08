@@ -550,16 +550,25 @@ export async function buildPayloadJSON(scope = 'settings') {
  * when one of them was overwritten. So the failures come back beside the
  * successes, for the caller to say so.
  *
+ * A fold that comes out exactly as the copy it was built on adds nothing, and
+ * is noted (`same`) so the import leaves the key alone. Not left to the later
+ * comparison against a fresh read: another tab of this browser can save the
+ * record in between — its own debounce queue is not this tab's to flush — and
+ * that fresher copy then differed from the fold, which was written over it,
+ * counted as combined and asked for a reload over nothing.
+ *
  * @param {Object} payload - Parsed payload; its store values are mutated in place
  * @returns {Promise<{merged: Array<{store: string, key: string, label: string}>,
  *   failed: Array<{store: string, key: string, label: string}>,
- *   held: Array<{store: string, key: string, label: string}>}>} What was combined, what took
- *   the remote copy anyway, and what was held back because the local copy could not be read
+ *   held: Array<{store: string, key: string, label: string}>,
+ *   same: Set<string>}>} What was combined, what took the remote copy anyway, what was held back
+ *   because the local copy could not be read, and (as `baselineId`s) the folds that added nothing
  */
 async function mergeLocalHistories(payload) {
     const merged = [];
     const failed = [];
     const held = [];
+    const same = new Set();
 
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
@@ -584,6 +593,9 @@ async function mergeLocalHistories(payload) {
                 if (!probed.found || probed.value == null) continue;
                 entries[key] = registration.mergeForPull(probed.value, entries[key]);
                 merged.push({ store: storeName, key, label: registration.label });
+                if (stableStringify(entries[key]) === stableStringify(probed.value)) {
+                    same.add(baselineId(storeName, key));
+                }
             } catch (error) {
                 console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
                 failed.push({ store: storeName, key, label: registration.label });
@@ -591,7 +603,7 @@ async function mergeLocalHistories(payload) {
         }
     }
 
-    return { merged, failed, held };
+    return { merged, failed, held, same };
 }
 
 /**
@@ -714,7 +726,11 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it
         // already holds is noted, to be left out once `applied` is taken below
-        const { sameByStore, retentionDropped } = await weighAgainstLocal(payload, mode === 'merge' ? baseline : null);
+        const { sameByStore, retentionDropped } = await weighAgainstLocal(
+            payload,
+            mode === 'merge' ? baseline : null,
+            histories.same
+        );
 
         // What is remembered as "the state of this device" has to be what was
         // actually written. `mergeLocalHistories` (and the settings fix-ups
@@ -1256,11 +1272,17 @@ export function restampRestoredSettings(payload, now = Date.now()) {
  * behavior, never a loss.
  *
  * @param {Object} payload - Parsed payload, after every fold; mutated in place by the baseline rule
+ * A folded record is also the same when its fold came out as the copy it was
+ * built on (`foldsSame`, from `mergeLocalHistories`), whatever the read here
+ * finds: another tab may have saved a newer copy since, and that is not one
+ * for the fold to replace.
+ *
  * @param {Record<string, string>|null} baseline - Hashes at the last exchange, or null outside merge mode
+ * @param {Set<string>} [foldsSame] - `baselineId`s of folds that added nothing to their base
  * @returns {Promise<{sameByStore: Map<string, Set<string>>, retentionDropped: boolean}>} Per store, the keys
  *   that hold this device's value already; and whether a retention rule took any key out of the download
  */
-async function weighAgainstLocal(payload, baseline) {
+async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
     const sameByStore = new Map();
     let retentionDropped = false;
     const dropOutsideRetention = (storeName, entries, localKeys) => {
@@ -1282,7 +1304,14 @@ async function weighAgainstLocal(payload, baseline) {
             // The baseline rule always needed this read; only the comparison is optional
             if (baseline) throw error;
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
-            if (!Array.isArray(entries)) dropOutsideRetention(storeName, entries, []);
+            if (!Array.isArray(entries)) {
+                dropOutsideRetention(storeName, entries, []);
+                // A record with tombstones beside it lands with them, as below; nothing here can weigh the pair
+                const folded = Object.keys(entries).filter(
+                    (key) => foldsSame.has(baselineId(storeName, key)) && !tombstoneCompanionKey(storeName, key)
+                );
+                if (folded.length > 0) sameByStore.set(storeName, new Set(folded));
+            }
             continue;
         }
         if (!Array.isArray(entries)) {
@@ -1306,7 +1335,9 @@ async function weighAgainstLocal(payload, baseline) {
         if (!local || typeof local !== 'object' || Array.isArray(entries)) continue;
         const same = new Set(
             Object.keys(entries).filter(
-                (key) => Object.hasOwn(local, key) && stableStringify(local[key]) === stableStringify(entries[key])
+                (key) =>
+                    foldsSame.has(baselineId(storeName, key)) ||
+                    (Object.hasOwn(local, key) && stableStringify(local[key]) === stableStringify(entries[key]))
             )
         );
         for (const key of Object.keys(entries)) {

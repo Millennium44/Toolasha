@@ -36,6 +36,9 @@
  * the upload still folds the full union — so nothing is lost from the gist.
  *
  * A series with nothing new is returned exactly as this device holds it.
+ *
+ * Accepted trade-off: samples another device took inside a gap of this device's own span (play that switched
+ * devices within the week) are not taken here; this device's chart is coarser over that stretch, the gist keeps them.
  */
 
 /**

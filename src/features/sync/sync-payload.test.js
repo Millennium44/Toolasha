@@ -1987,3 +1987,58 @@ describe('a pull of XP series this device has since thinned changes nothing', ()
         expect(result.merged.map((entry) => entry.key)).toEqual(['xpHistory_32030']);
     });
 });
+
+describe('a fold that adds nothing is not written over a newer save from another tab', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+
+    test("the other tab's save survives, and the record counts as unchanged", async () => {
+        storeState.stores.dungeonRuns = { run_char: ['a', 'b'] };
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => {
+                // Another tab of this browser saves the record after the fold's read
+                storeState.stores.dungeonRuns = { run_char: ['a', 'b', 'c'] };
+                return [...new Set([...local, ...incoming])];
+            },
+            label: 'fake',
+        });
+
+        try {
+            // The gist holds only what this device had when it pushed
+            const result = await applyPayload(payloadOf({ dungeonRuns: { run_char: ['a'] } }), {
+                mode: 'merge',
+                baseline: {},
+            });
+
+            expect(importedPayloads[0].stores.dungeonRuns).toEqual({});
+            expect(storeState.stores.dungeonRuns.run_char).toEqual(['a', 'b', 'c']);
+            expect(result.unchanged).toEqual({ dungeonRuns: 1 });
+            expect(result.merged).toEqual([]);
+        } finally {
+            off();
+        }
+    });
+
+    test('a fold that adds something is still written', async () => {
+        storeState.stores.dungeonRuns = { run_char: ['a'] };
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...new Set([...local, ...incoming])],
+            label: 'fake',
+        });
+
+        try {
+            const result = await applyPayload(payloadOf({ dungeonRuns: { run_char: ['a', 'z'] } }), {
+                mode: 'merge',
+                baseline: {},
+            });
+
+            expect(importedPayloads[0].stores.dungeonRuns).toEqual({ run_char: ['a', 'z'] });
+            expect(result.merged.map((entry) => entry.key)).toEqual(['run_char']);
+        } finally {
+            off();
+        }
+    });
+});
