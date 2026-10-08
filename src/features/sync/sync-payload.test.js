@@ -298,6 +298,26 @@ describe('buildPayloadJSON', () => {
         }
     });
 
+    test('logs again when left-out data returns after a build that left nothing out', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        const leftOut = () => info.mock.calls.filter((c) => String(c[0]).includes('Left out of the payload'));
+        try {
+            storeState.stores.settings = { script_settingsMap_603281: {}, other_script_key: 1 };
+            await buildPayloadJSON('settings');
+            expect(leftOut()).toHaveLength(1);
+
+            delete storeState.stores.settings.other_script_key;
+            await buildPayloadJSON('settings');
+            expect(leftOut()).toHaveLength(1);
+
+            storeState.stores.settings.other_script_key = 1;
+            await buildPayloadJSON('settings');
+            expect(leftOut()).toHaveLength(2);
+        } finally {
+            info.mockRestore();
+        }
+    });
+
     test('never carries a trial trace, gzipped-10MB opt-in diagnostic that it is', async () => {
         storeState.stores.guildHistory = {
             trialTraceManifest_603281: { chunks: [0] },

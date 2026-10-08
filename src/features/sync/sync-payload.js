@@ -342,6 +342,9 @@ export async function buildPayloadJSON(scope = 'settings') {
                     `${skippedStores > 0 ? ` and ${skippedStores} store(s) this script does not own` : ''}.`
             );
         }
+    } else {
+        // Nothing left out now, so the next omission is news again
+        lastLeftOutSummary = null;
     }
 
     parts.push('}}');
