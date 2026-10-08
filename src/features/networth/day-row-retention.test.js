@@ -129,6 +129,16 @@ describe('per-day recorder retention', () => {
         expect([...retentionDrops(STORE, [newest, aged])]).toEqual([]);
     });
 
+    test("an idle character's newest month key caps from the month's first day, not its last", () => {
+        process.env.TZ = 'UTC';
+        vi.setSystemTime(Date.UTC(2028, 5, 1));
+        // Last recorded on 2026-01-01: the recorder's last prune then kept rows from 2024-11-27 on
+        const prefix = 'chestOpenRec';
+        const newest = `${prefix}_32030_2026-01`;
+        const kept = `${prefix}_32030_2024-11`;
+        expect([...retentionDrops(STORE, [newest, kept])]).toEqual([]);
+    });
+
     test('characters are judged separately and unparsable keys are left alone', () => {
         process.env.TZ = 'UTC';
         const a = `combatLootRec_111_${localDayId(NOW)}`;

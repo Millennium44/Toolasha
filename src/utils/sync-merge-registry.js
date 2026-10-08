@@ -256,8 +256,9 @@ export function listSyncMerges() {
  *   belongs to and where it sorts in it (larger is newer); null for a key the rule does not judge. `end` is the
  *   latest moment the key can hold, when that is later than `order` (a month key's last day); defaults to `order`
  * @property {number} [keep] - How many of the newest keys each window keeps
- * @property {{floor: (newestEnd: number) => number}} [maxAge] - Keys whose `end` is before `floor(newestEnd)`
- *   are dropped, `newestEnd` being the newest `end` in the key's window
+ * @property {{floor: (newestEnd: number, newestStart: number) => number}} [maxAge] - Keys whose `end` is before
+ *   `floor(newestEnd, newestStart)` are dropped: the newest `end` in the key's window, and the newest `start` (the
+ *   earliest row a key could hold; `end` when `parse` gives none)
  */
 
 /** @type {Array<SyncRetention>} */
@@ -294,7 +295,8 @@ const retentions = [];
  * @param {(key: string) => {group: string, order: number, end?: number}|null} options.parse - Window, order and
  *   latest moment of a key
  * @param {number} [options.keep] - Newest keys kept per window
- * @param {{floor: (newestEnd: number) => number}} [options.maxAge] - The age cut, in the units `parse` returns
+ * @param {{floor: (newestEnd: number, newestStart: number) => number}} [options.maxAge] - The age cut, in the units
+ *   `parse` returns
  * @returns {() => void} Unregister, mostly for tests
  */
 export function registerSyncRetention({ store, prefix, parse, keep, maxAge }) {
@@ -349,13 +351,18 @@ export function retentionDrops(store, keys) {
             if (!parsed || typeof parsed.group !== 'string' || !Number.isFinite(parsed.order)) continue;
             if (!groups.has(parsed.group)) groups.set(parsed.group, []);
             const end = Number.isFinite(parsed.end) ? parsed.end : parsed.order;
-            groups.get(parsed.group).push({ key, order: parsed.order, end });
+            const start = Number.isFinite(parsed.start) ? parsed.start : end;
+            groups.get(parsed.group).push({ key, order: parsed.order, end, start });
         }
         for (const members of groups.values()) {
             if (rule.maxAge) {
                 let newest = -Infinity;
-                for (const { end } of members) newest = Math.max(newest, end);
-                const floor = rule.maxAge.floor(newest);
+                let newestStart = -Infinity;
+                for (const { end, start } of members) {
+                    newest = Math.max(newest, end);
+                    newestStart = Math.max(newestStart, start);
+                }
+                const floor = rule.maxAge.floor(newest, newestStart);
                 for (const { key, end } of members) if (end < floor) dropped.add(key);
             }
             if (rule.keep === undefined || members.length <= rule.keep) continue;
