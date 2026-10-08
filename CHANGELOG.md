@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab skilling badges match the Path
+
+- With Auto-calc on, lab badges now refresh when a community, guild, house, achievement, MooPass or gear buff or a skill level changes, and Path redraws any badge still left over, so badges and the route quote the same clear chance.
+- The skilling room tooltip opens with its Clear Chance, laid out row for row like the combat tooltip.
+
 ### Missing Mats shows what it will buy
 
 - The Missing Mats Marketplace button now shows how many items it will buy and lists them with quantities in its tooltip (noting when Repeat is ∞).

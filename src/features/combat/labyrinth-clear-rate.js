@@ -99,6 +99,20 @@ const BADGE_CLASS = 'mwi-labyrinth-clear';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
+/**
+ * DataManager events after which a tile badge's inputs may have changed. Teas,
+ * drinks and food are deliberately absent: only crates supply consumable
+ * effects in the labyrinth, and `_computeSkillingMetrics` reads none of them.
+ */
+const BUFF_INPUT_EVENTS = [
+    'community_buffs_updated',
+    'guild_buffs_updated',
+    'house_rooms_updated',
+    'achievement_buffs_updated',
+    'moo_pass_buffs_updated',
+    'equipment_buffs_updated',
+    'skills_updated',
+];
 /** How often the orphan check runs — slow on purpose, see `_previewWatchdogTick` */
 const PREVIEW_WATCHDOG_MS = 500;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
@@ -133,6 +147,8 @@ const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 /** Only reached for when the game's item sheet has not been drawn from yet */
 const SUPPLY_EMOJI = { torch: '🔥', shroud: '👻', beacon: '📡' };
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
+/** The room tooltips' headline row: one label, so the combat and skilling cards match */
+const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 
 class LabyrinthClearRate {
@@ -226,6 +242,27 @@ class LabyrinthClearRate {
             this.injectOverlays();
         };
         loadoutSnapshot.onUpdate(this.snapshotUpdateHandler);
+
+        // The buffs a tile badge is scored under move without any labyrinth or
+        // settings message: a community buff starting, a guild shrine, a house
+        // room, an achievement, MooPass, a skill level. A floor left
+        // open for a day kept the badge it was drawn with (5%) while the Path,
+        // which scores afresh, quoted 16%. Each of these schedules the auto pass;
+        // its per-tile inputs check then re-sims only the tiles whose recorded
+        // inputs actually changed, and a no-op change costs one fingerprint scan.
+        this._buffInputsHandler = () => this._onBuffInputsChanged();
+        for (const event of BUFF_INPUT_EVENTS) dataManager.on(event, this._buffInputsHandler);
+        // A level reached by skilling arrives only on `action_completed` (it
+        // updates the skill list and emits no `skills_updated`), which fires every
+        // few seconds, so it schedules a pass only when a level actually moved
+        this._skillLevelSig = this._skillLevelSignature();
+        this._actionCompletedHandler = () => {
+            const sig = this._skillLevelSignature();
+            if (sig === this._skillLevelSig) return;
+            this._skillLevelSig = sig;
+            this._onBuffInputsChanged();
+        };
+        dataManager.on('action_completed', this._actionCompletedHandler);
 
         this.liveProgressHandler = (data) => this.onLiveProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
@@ -454,6 +491,16 @@ class LabyrinthClearRate {
             if (this.liveProgressHandler) {
                 webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
                 this.liveProgressHandler = null;
+            }
+
+            if (this._buffInputsHandler) {
+                for (const event of BUFF_INPUT_EVENTS) dataManager.off(event, this._buffInputsHandler);
+                this._buffInputsHandler = null;
+            }
+
+            if (this._actionCompletedHandler) {
+                dataManager.off('action_completed', this._actionCompletedHandler);
+                this._actionCompletedHandler = null;
             }
 
             if (this.snapshotUpdateHandler) {
@@ -2642,6 +2689,36 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Every skill's level as one string — a cheap snapshot to tell whether a
+     * level moved between `action_completed` events.
+     * @private
+     * @returns {string}
+     */
+    _skillLevelSignature() {
+        try {
+            const skills = dataManager.getSkills() || [];
+            return skills.map((skill) => `${skill.skillHrid}:${skill.level}`).join(',');
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * A buff, consumable or skill level the tile badges are scored under changed.
+     * Schedules the auto pass (a no-op with Auto-calc off or no floor shown).
+     * Coalesces rather than debounces: several of these stream during play, and
+     * resetting the timer on each would starve the pass.
+     */
+    _onBuffInputsChanged() {
+        // A build change also drops the combat sims cached under the old build: house rooms
+        // reach the sim but not the cache key, so a pass would otherwise re-badge the old sim
+        this._invalidateIfInputsChanged();
+        if (!config.getSetting('labyrinthAutoCalcTiles')) return;
+        if (!this.roomData || this.autoTileTimer) return;
+        this.scheduleAutoTileCalc();
+    }
+
+    /**
      * Debounced auto tile calculation (no-op unless the setting is enabled)
      */
     scheduleAutoTileCalc() {
@@ -3450,10 +3527,7 @@ class LabyrinthClearRate {
 
         try {
             for (const target of skillingTargets) {
-                const result =
-                    target.room.skillHrid === '/skills/enhancing'
-                        ? this.computeEnhancingClear(target.roomLevel)
-                        : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
+                const result = this.computeSkillingRoomClear(target.room.skillHrid, target.roomLevel);
                 if (result) {
                     this.appendTileBadge(target.cell, result);
                     markCalculated(target);
@@ -3848,6 +3922,69 @@ class LabyrinthClearRate {
     }
 
     /**
+     * A skilling or enhancing room's clear result under the inputs standing
+     * now. The floor badge pass and the Path planner both score skilling rooms
+     * through this, so the two cannot reach a room by different routes.
+     * @param {string} skillHrid - e.g. '/skills/woodcutting'
+     * @param {number} roomLevel - Room level
+     * @returns {Object|null} The clear result
+     */
+    computeSkillingRoomClear(skillHrid, roomLevel) {
+        return skillHrid === '/skills/enhancing'
+            ? this.computeEnhancingClear(roomLevel)
+            : this.computeSkillingClear(skillHrid, roomLevel);
+    }
+
+    /**
+     * Bring the floor's skilling badges up to the results the Path just
+     * planned with.
+     *
+     * A badge is the result of the floor pass that drew it, and nothing redraws
+     * it when what it was computed from changes — a loadout assignment, its
+     * gear, a crate, an upgrade, a level. The Path scores every skilling room
+     * afresh, so without this a badge reading 5% sat beside a plan that
+     * routed through the room at 15%. Only rooms that already carry a badge (or
+     * a stored result) and whose recorded inputs no longer match are redrawn;
+     * the rest are left as the floor pass left them.
+     *
+     * @param {Array<Object|null>} flat - Flat room grid the plan was built on
+     * @param {Array<HTMLElement>} cells - Grid cells, same order as `flat`
+     * @param {number} cols - Grid width
+     * @param {Map<string, Object>} results - `${skillHrid}:${roomLevel}` → result
+     */
+    syncSkillingTileBadges(flat, cells, cols, results) {
+        if (!results.size || !cols) return;
+        if (!this._tileResults) this._tileResults = new Map();
+        if (!this._calculatedTileInputs) this._calculatedTileInputs = new Map();
+        if (!this.calculatedTileKeys) this.calculatedTileKeys = new Set();
+        const inputsOf = this._tileInputsReader();
+        let changed = false;
+        for (let i = 0; i < flat.length; i++) {
+            const room = flat[i];
+            const cell = cells[i];
+            if (!room?.skillHrid || !cell || room.isCleared) continue;
+            if (String(room.roomType || '').endsWith('/treasure')) continue;
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            const result = results.get(`${room.skillHrid}:${roomLevel}`);
+            if (!result) continue;
+            const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+            const shown = !!cell.querySelector(`.${TILE_BADGE_CLASS}`) || this._tileResults.has(tileKey);
+            if (!shown) continue;
+            const inputs = inputsOf(room, roomLevel);
+            const recorded = this._calculatedTileInputs.get(tileKey);
+            if (recorded?.inputs === inputs && this._tileResults.get(tileKey)?.clearChance === result.clearChance) {
+                continue;
+            }
+            this.appendTileBadge(cell, result);
+            this._tileResults.set(tileKey, result);
+            this.calculatedTileKeys.add(tileKey);
+            this._calculatedTileInputs.set(tileKey, { inputs, cap: '' });
+            changed = true;
+        }
+        if (changed) refreshRoomDistribution();
+    }
+
+    /**
      * Classify a floor's rooms for the route planner.
      *
      * Position is the reliable structural signal: the grid always starts
@@ -3981,14 +4118,16 @@ class LabyrinthClearRate {
             // Treasure rooms, the exit and the entrance are freely enterable
             // and are never asked about.
             const chances = new Map();
+            // The whole result, not just its chance: the floor badges are
+            // brought up to date from these same objects below, so a badge and
+            // the plan drawn beside it can never quote two different figures
+            const skillingResults = new Map();
             const chanceOf = (room, roomLevel) => {
                 if (room.skillHrid && roomLevel > 0) {
                     const key = `${room.skillHrid}:${roomLevel}`;
                     if (!chances.has(key)) {
-                        const result =
-                            room.skillHrid === '/skills/enhancing'
-                                ? this.computeEnhancingClear(roomLevel)
-                                : this.computeSkillingClear(room.skillHrid, roomLevel);
+                        const result = this.computeSkillingRoomClear(room.skillHrid, roomLevel);
+                        if (result) skillingResults.set(key, result);
                         chances.set(key, result ? result.clearChance : 1);
                     }
                     return chances.get(key);
@@ -4051,7 +4190,14 @@ class LabyrinthClearRate {
                 this.setTileStatus('Grid not found');
                 return;
             }
+            // Skilling scores are synchronous but were taken before the awaited
+            // sims; a buff or level event during them leaves those figures stale,
+            // and the badge sync below would overwrite a fresher auto-pass badge
+            // with them and record the current inputs against it. Score them again.
+            for (const key of skillingResults.keys()) chances.delete(key);
+            skillingResults.clear();
             const { tiles } = this.buildPathTiles(fresh, { threshold, unknownMode, chanceOf });
+            this.syncSkillingTileBadges(fresh, cells, cols, skillingResults);
 
             const path = computeLabyrinthPath(tiles, cols);
             if (!path) {
@@ -4968,6 +5114,13 @@ class LabyrinthClearRate {
             return;
         }
 
+        // Laid out row for row against the combat tooltip: the clear chance
+        // first, one room-specific row where combat counts its fights, then the
+        // forecast pair, so the same figure sits on the same line of both
+        addRow(
+            CLEAR_CHANCE_LABEL,
+            Number.isFinite(result.clearChance) ? `${(result.clearChance * 100).toFixed(1)}%` : '—'
+        );
         if (result.type === 'enhancing') {
             addRow('Target Enhancement', `+${result.targetLevel}`);
         } else {
@@ -4978,10 +5131,8 @@ class LabyrinthClearRate {
                 Math.abs(raw - floored) < 1e-9 ? raw.toFixed(2) : `${raw.toFixed(2)} \u2192 ${floored}`
             );
         }
-        addRow('Success Rate', pct(result.successChance));
-        // The forecast pair sits directly under the headline rows here as it
-        // does on the combat tooltip, so the two read the same way side by side
         this.appendForecastRows(addRow, result);
+        addRow('Success Rate', pct(result.successChance));
         addRow('Double Progress', pct(result.doubleChance));
         addRow('Actions in 2m', `${result.attempts}`);
         addRow('Action Duration', `${result.actionSeconds.toFixed(2)}s`);
@@ -5054,7 +5205,7 @@ class LabyrinthClearRate {
         if (Number.isFinite(result.halfWidth) && result.trials > 0) {
             const band = (result.halfWidth * 100).toFixed(1);
             addRow(
-                'Clear Chance',
+                CLEAR_CHANCE_LABEL,
                 `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
             );
             addRow('Fights Simulated', `${result.trials.toLocaleString()}`);

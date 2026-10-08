@@ -2888,6 +2888,366 @@ describe('re-planning a route after shrouds have been spent', () => {
     });
 });
 
+/**
+ * Reported live: a Lv.206 woodcutting tile's badge read "5% 999+" while the
+ * Path routed straight through it at Clear ≥ 15 and only shrouded it from
+ * Clear ≥ 16. Both figures come out of the same arithmetic; the badge was the
+ * floor pass's result from before something it depends on changed, and the
+ * Path scored the room afresh. The numbers below are the tooltip's: level 131,
+ * work power 174.57 → 174 (12 progress units for the room's 2,060), 20%
+ * success, 20% double progress, 28 actions in two minutes — 4.8%. Raise
+ * efficiency so work power clears 206 and the room needs 10 units: 15.3%.
+ */
+describe('a skilling tile badge and the Path quote one clear chance', () => {
+    const WOODCUTTING = '/skills/woodcutting';
+    const metricsAt = (efficiencyBonus) => ({
+        skillLevelBonus: 0,
+        efficiencyBonus,
+        actionSpeedBonus: 1.358,
+        successBonus: 0,
+        doubleProgressBonus: 0.2,
+        gatheringBonus: 0,
+        experienceBonus: 0,
+    });
+    const SLOW = metricsAt(174.57 / 131 - 1); // 12 units → 4.8%
+    const FAST = metricsAt(0.58); // 10 units → 15.3%
+
+    let current;
+    let metricsSpy;
+
+    /** Entrance, the woodcutting room, the exit: the only way out is through it */
+    function buildBoard(thresholdPct) {
+        document.body.innerHTML = '';
+        const parent = document.createElement('div');
+        for (let i = 0; i < 3; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        const status = document.createElement('span');
+        status.className = 'mwi-labyrinth-tile-controls-status';
+        document.body.appendChild(status);
+        const threshold = document.createElement('input');
+        threshold.className = 'mwi-labyrinth-tile-controls-path-threshold';
+        threshold.value = String(thresholdPct);
+        document.body.appendChild(threshold);
+        labyrinthClearRate.roomData = [
+            [
+                { isCleared: true },
+                { roomType: '/labyrinth_room_types/skilling', skillHrid: WOODCUTTING, recommendedLevel: 206 },
+                { roomType: '/labyrinth_room_types/descend' },
+            ],
+        ];
+        labyrinthClearRate.currentFloor = 5;
+        return { parent, threshold };
+    }
+
+    const room = (parent) => parent.children[1];
+    const badgePct = (parent) => room(parent).querySelector('.mwi-labyrinth-tile-badge')?.firstChild?.textContent;
+    const pathMark = (parent) => {
+        const overlay = room(parent).querySelector('.mwi-labyrinth-path-overlay');
+        if (!overlay) return '';
+        return overlay.textContent || 'route';
+    };
+
+    beforeEach(() => {
+        settings.map.clear();
+        dataManagerMock.getSkills.mockReturnValue([{ skillHrid: WOODCUTTING, level: 131 }]);
+        metricsSpy = vi.spyOn(labyrinthClearRate, 'getSkillingMetrics').mockImplementation(() => ({ ...current }));
+        labyrinthClearRate.calculatedTileKeys?.clear();
+        labyrinthClearRate._calculatedTileInputs?.clear();
+        labyrinthClearRate._tileResults?.clear();
+    });
+
+    afterEach(() => {
+        metricsSpy.mockRestore();
+        dataManagerMock.getSkills.mockReturnValue([]);
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._tileResults?.clear();
+    });
+
+    test('the figures the tooltip showed are the 5% the badge drew', () => {
+        current = SLOW;
+        const result = labyrinthClearRate.computeSkillingClear(WOODCUTTING, 206);
+        expect(result.progressPerSuccess).toBe(174);
+        expect(result.successChance).toBeCloseTo(0.2, 10);
+        expect(result.attempts).toBe(28);
+        expect(result.clearChance).toBeCloseTo(0.0483, 4);
+        current = FAST;
+        expect(labyrinthClearRate.computeSkillingClear(WOODCUTTING, 206).clearChance).toBeCloseTo(0.1525, 4);
+    });
+
+    test('a badge drawn before the room got easier is redrawn at the figure the Path routes on', async () => {
+        current = SLOW;
+        const { parent, threshold } = buildBoard(15);
+        await labyrinthClearRate.runTileCalculation();
+        expect(badgePct(parent)).toBe('5%');
+
+        current = FAST;
+        await labyrinthClearRate.runPathCalculation();
+        // The Path routes through it at Clear ≥ 15 — and the badge now says why
+        expect(pathMark(parent)).toBe('route');
+        expect(badgePct(parent)).toBe('15%');
+
+        threshold.value = '16';
+        await labyrinthClearRate.runPathCalculation();
+        expect(pathMark(parent)).toBe('Shroud');
+        expect(badgePct(parent)).toBe('15%');
+    });
+
+    test('an input change during the awaited combat sims leaves no stale badge', async () => {
+        current = SLOW;
+        const { parent } = buildBoard(15);
+        // A fight behind the woodcutting room, so the Path awaits a sim
+        const extra = document.createElement('div');
+        extra.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(extra);
+        labyrinthClearRate.roomData[0].splice(2, 0, {
+            roomType: '/labyrinth_room_types/combat',
+            monsterHrid: '/monsters/gobo',
+            recommendedLevel: 100,
+        });
+        const simSpy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            // A buff lands while the sim runs
+            current = FAST;
+            return { clearChance: 0.5 };
+        });
+        try {
+            await labyrinthClearRate.runTileCalculation();
+            expect(badgePct(parent)).toBe('5%');
+            current = SLOW;
+
+            await labyrinthClearRate.runPathCalculation();
+
+            expect(simSpy).toHaveBeenCalled();
+            expect(badgePct(parent)).toBe('15%');
+            // The signature recorded beside the badge is the one it was drawn under
+            const recorded = labyrinthClearRate._calculatedTileInputs.get('1,0');
+            const flat = labyrinthClearRate.roomData.flat();
+            const live = labyrinthClearRate._tileInputsReader()(flat[1], 206);
+            expect(recorded.inputs).toBe(live);
+        } finally {
+            simSpy.mockRestore();
+        }
+    });
+
+    test('a badge drawn before the room got harder is redrawn, and Clear ≥ 15 shrouds it', async () => {
+        current = FAST;
+        const { parent } = buildBoard(15);
+        await labyrinthClearRate.runTileCalculation();
+        expect(badgePct(parent)).toBe('15%');
+
+        current = SLOW;
+        await labyrinthClearRate.runPathCalculation();
+        expect(badgePct(parent)).toBe('5%');
+        expect(pathMark(parent)).toBe('Shroud');
+    });
+});
+
+/**
+ * Reported live: with Auto-calc on, a floor sat for a day, a gathering buff
+ * started, and a woodcutting room's badge stayed at 5% until Recompute gave 16%
+ * (what the Path used). Nothing scheduled an auto pass when a buff changed, so
+ * the badge kept the figure of the pass that drew it.
+ */
+describe('a buff change re-runs the auto pass for the tiles it affects', () => {
+    const WOODCUTTING = '/skills/woodcutting';
+    const metricsAt = (efficiencyBonus) => ({
+        skillLevelBonus: 0,
+        efficiencyBonus,
+        actionSpeedBonus: 1.358,
+        successBonus: 0,
+        doubleProgressBonus: 0.2,
+        gatheringBonus: 0,
+        experienceBonus: 0,
+    });
+    const SLOW = metricsAt(174.57 / 131 - 1); // 4.8%
+    const FAST = metricsAt(0.58); // 15.3%
+
+    let current;
+    let metricsSpy;
+    let parent;
+
+    const setAutoCalc = (on) =>
+        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoCalcTiles' ? on : key !== 'x'));
+    const badgePct = () => parent.children[1].querySelector('.mwi-labyrinth-tile-badge')?.firstChild?.textContent;
+    /** The handler initialize() registered for an event */
+    const handlerFor = (event) => {
+        const calls = dataManagerMock.on.mock.calls.filter((c) => c[0] === event);
+        return calls[calls.length - 1][1];
+    };
+
+    beforeEach(async () => {
+        vi.useFakeTimers();
+        settings.map.clear();
+        dataManagerMock.on.mockClear();
+        dataManagerMock.getSkills.mockReturnValue([{ skillHrid: WOODCUTTING, level: 131 }]);
+        current = SLOW;
+        metricsSpy = vi.spyOn(labyrinthClearRate, 'getSkillingMetrics').mockImplementation(() => ({ ...current }));
+        labyrinthClearRate.calculatedTileKeys?.clear();
+        labyrinthClearRate._calculatedTileInputs?.clear();
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate._autoCalcFingerprint = null;
+        setAutoCalc(true);
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        document.body.innerHTML = '';
+        parent = document.createElement('div');
+        for (let i = 0; i < 3; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [
+                { isCleared: true },
+                { roomType: '/labyrinth_room_types/skilling', skillHrid: WOODCUTTING, recommendedLevel: 206 },
+                { roomType: '/labyrinth_room_types/descend' },
+            ],
+        ];
+        labyrinthClearRate.currentFloor = 5;
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        labyrinthClearRate.isInitialized = false;
+        metricsSpy.mockRestore();
+        dataManagerMock.getSkills.mockReturnValue([]);
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._tileResults?.clear();
+        configMock.getSetting.mockImplementation(() => true);
+        vi.useRealTimers();
+    });
+
+    test('a house or buff change clears combat sims cached under the old build, Auto-calc on or off', () => {
+        const invalidate = vi.spyOn(labyrinthClearRate, '_invalidateIfInputsChanged');
+        handlerFor('house_rooms_updated')();
+        expect(invalidate).toHaveBeenCalledTimes(1);
+        setAutoCalc(false);
+        handlerFor('house_rooms_updated')();
+        expect(invalidate).toHaveBeenCalledTimes(2);
+        invalidate.mockRestore();
+    });
+
+    test('initialize listens for the buff and skill events, and not for teas', () => {
+        for (const event of [
+            'community_buffs_updated',
+            'guild_buffs_updated',
+            'house_rooms_updated',
+            'skills_updated',
+            'action_completed',
+        ]) {
+            expect(typeof handlerFor(event)).toBe('function');
+        }
+        const events = dataManagerMock.on.mock.calls.map((c) => c[0]);
+        expect(events).not.toContain('consumables_updated');
+        expect(events).not.toContain('consumable_buffs_updated');
+    });
+
+    test('Auto-calc on: a buff change redraws the skilling badge at the new figure', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(badgePct()).toBe('5%');
+
+        current = FAST;
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(900);
+
+        expect(badgePct()).toBe('15%');
+    });
+
+    test('only the tile whose inputs changed is re-scored', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        const scored = vi.spyOn(labyrinthClearRate, 'computeSkillingRoomClear');
+
+        // Nothing the badge depends on changed: the pass scores no tile
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(900);
+        expect(scored).not.toHaveBeenCalled();
+
+        current = FAST;
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(900);
+        expect(scored).toHaveBeenCalledTimes(1);
+        scored.mockRestore();
+    });
+
+    test('Auto-calc off: a buff change runs nothing', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        setAutoCalc(false);
+        const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
+
+        current = FAST;
+        handlerFor('community_buffs_updated')({});
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(run).not.toHaveBeenCalled();
+        expect(badgePct()).toBe('5%');
+        run.mockRestore();
+    });
+
+    test('a level-up arriving on action_completed re-scores the tile', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        expect(badgePct()).toBe('5%');
+
+        // The game's skilling path updates the skill list and emits only
+        // `action_completed`, never `skills_updated`
+        dataManagerMock.getSkills.mockReturnValue([{ skillHrid: WOODCUTTING, level: 132 }]);
+        handlerFor('action_completed')({});
+        await vi.advanceTimersByTimeAsync(900);
+
+        expect(badgePct()).toBe('6%');
+    });
+
+    test('action_completed with no level change schedules nothing', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
+        const schedule = vi.spyOn(labyrinthClearRate, 'scheduleAutoTileCalc');
+
+        for (let i = 0; i < 5; i++) {
+            handlerFor('action_completed')({});
+            await vi.advanceTimersByTimeAsync(1000);
+        }
+
+        expect(schedule).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        run.mockRestore();
+        schedule.mockRestore();
+    });
+
+    test('a burst of events makes one pass', async () => {
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+        const run = vi.spyOn(labyrinthClearRate, 'runTileCalculation');
+
+        current = FAST;
+        for (let i = 0; i < 5; i++) {
+            handlerFor('community_buffs_updated')({});
+            handlerFor('guild_buffs_updated')({});
+            handlerFor('skills_updated')({});
+            await vi.advanceTimersByTimeAsync(100);
+        }
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(run).toHaveBeenCalledTimes(1);
+        run.mockRestore();
+    });
+
+    test('disable() removes the listeners', () => {
+        const handler = handlerFor('community_buffs_updated');
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        expect(dataManagerMock.off).toHaveBeenCalledWith('community_buffs_updated', handler);
+        expect(dataManagerMock.off).toHaveBeenCalledWith('skills_updated', handler);
+        expect(dataManagerMock.off).toHaveBeenCalledWith('action_completed', handlerFor('action_completed'));
+    });
+});
+
 describe('recomputeCombatSims clears every cached sim before re-running', () => {
     test('empties both cache layers and re-runs the tile calc', async () => {
         labyrinthClearRate.combatCache.set('imp:200:1:1pp:', { clearChance: 0.5 });
@@ -4728,7 +5088,23 @@ describe('the room preview forecast rows', () => {
             'Est. clear time',
             'Est. room attempts',
         ]);
-        expect(skilling.slice(0, 4)).toEqual(['Work Power', 'Success Rate', 'Est. clear time', 'Est. room attempts']);
+        expect(skilling.slice(0, 4)).toEqual(['Clear Chance', 'Work Power', 'Est. clear time', 'Est. room attempts']);
+    });
+
+    test('the skilling tooltip leads with the clear chance, on the line combat puts it, beside the clear time', () => {
+        const combat = previewLabels(combatResult());
+        const skilling = previewLabels(skillingResult());
+        // Same label, same first line, and the clear time on the same line of both cards
+        expect(skilling[0]).toBe(combat[0]);
+        expect(skilling.indexOf('Est. clear time')).toBe(combat.indexOf('Est. clear time'));
+        expect(skilling.indexOf('Est. room attempts')).toBe(combat.indexOf('Est. room attempts'));
+
+        // Formatted like the combat figure: one decimal, the badge's percentage before rounding
+        expect(previewValue(skillingResult({ clearChance: 0.0483 }), 'Clear Chance')).toBe('4.8%');
+        expect(previewValue(skillingResult({ clearChance: 0.1525 }), 'Clear Chance')).toBe('15.3%');
+        expect(previewValue(skillingResult({ type: 'enhancing', targetLevel: 8 }), 'Clear Chance')).toBe('50.0%');
+        // No figure yet: a dash, not NaN%
+        expect(previewValue(skillingResult({ clearChance: undefined }), 'Clear Chance')).toBe('—');
     });
 
     test('the rows below the pair keep the order they had', () => {
@@ -4736,7 +5112,8 @@ describe('the room preview forecast rows', () => {
         expect(combat.slice(4, 6)).toEqual(['EXP / Room', 'EXP / Hour']);
 
         const skilling = previewLabels(skillingResult());
-        expect(skilling.slice(4, 9)).toEqual([
+        expect(skilling.slice(4, 10)).toEqual([
+            'Success Rate',
             'Double Progress',
             'Actions in 2m',
             'Action Duration',
@@ -4745,13 +5122,14 @@ describe('the room preview forecast rows', () => {
         ]);
     });
 
-    test('an enhancing room keeps its target at the very top', () => {
+    test('an enhancing room keeps its target right under the clear chance', () => {
         const labels = previewLabels(skillingResult({ type: 'enhancing', targetLevel: 8 }));
-        expect(labels.slice(0, 5)).toEqual([
+        expect(labels.slice(0, 6)).toEqual([
+            'Clear Chance',
             'Target Enhancement',
-            'Success Rate',
             'Est. clear time',
             'Est. room attempts',
+            'Success Rate',
             'Double Progress',
         ]);
     });
