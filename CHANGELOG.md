@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Gold reads as signed net ("+" earns, "−" costs), a sort choice offers Most profitable or Fastest, and transmuting and gathering are ranked as routes alongside crafting and decomposing.
 - Buying a source is priced up the order book for the quantity needed, and a step needing more than the market offers in a week is not offered; a crate nobody bids on is valued as its contents, each within its own market; every transmute catalyst and tea setup is compared; and a Plan stays on screen when the panel redraws.
 
+### Score can show how much better, not just the placing
+
+- The upgrade analyzer's Score can now be "% of best": each column scores a row against the best one and the Score averages them, so a row four times slower reads 25 instead of one place lower. Combat levels uses it by default; the gear table keeps Points unless you switch it in ⚙ Columns.
+- The All Zones table gets the same choice above it: its usual ladder-position Score stays the default, or switch to % of best.
+
 ### Room Logs Accuracy tab stops flashing during lab runs
 
 - The Accuracy tab now redraws only when a fight is recorded, not on every skilling action or experience tick, and keeps what it shows until the new reading is ready, so it no longer blinks blank while a lab run is going.
