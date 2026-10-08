@@ -22,7 +22,8 @@
 
 import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
-import { isSyncedStore, partitionOwnedKeys } from './sync-ownership.js';
+import { isSyncedStore, partitionOwnedKeys, externalKeyPrefixes, learnExternalKeyPrefixes } from './sync-ownership.js';
+import { ensureExternalKeysLoaded, externalKeysSettled } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
@@ -219,6 +220,37 @@ export function localStampWins(localStamp, incomingStamp) {
 }
 
 /**
+ * The payload's `externalKeys` field: the key prefixes other scripts have
+ * registered with this sync (see "Keys another script opts in" in
+ * `sync-ownership.js`), owners and prefixes sorted. Omitted entirely when
+ * nothing is registered, so a payload from a device where no other script ever
+ * registered is the same text it always was.
+ *
+ * A top-level field rather than a key in a store: it is not a record to land on
+ * disk but a fact about the payload, which every reader learns before it
+ * decides what in the payload is carried. `importEverything` and every older
+ * build ignore a field they do not know.
+ *
+ * @returns {string} The field and its trailing comma, or '' when nothing is registered
+ */
+function externalKeysField() {
+    const registry = externalKeyPrefixes();
+    return Object.keys(registry).length > 0 ? `"externalKeys":${JSON.stringify(registry)},` : '';
+}
+
+/**
+ * Learn the prefixes a payload says other scripts registered, before anything
+ * reads ownership off it. Only from a payload in this build's format — one this
+ * build is about to refuse is not one to take facts from.
+ * @param {*} payload - Parsed payload
+ * @returns {boolean} Whether the registry gained anything
+ */
+function learnPayloadExternalKeys(payload) {
+    if (!payload || typeof payload !== 'object' || payload.formatVersion !== FORMAT_VERSION) return false;
+    return learnExternalKeyPrefixes(payload.externalKeys);
+}
+
+/**
  * Strip credentials, device-local settings and device-local bookkeeping from a
  * settings-store dump.
  *
@@ -299,6 +331,9 @@ export function redactSettingsStore(entries) {
  * @returns {Promise<string>} Payload text, in full-backup format
  */
 export async function buildPayloadJSON(scope = 'settings') {
+    // Before ownership is read: a prefix another script registered on an
+    // earlier page load counts from the first exchange of this one
+    await ensureExternalKeysLoaded();
     const allStores = await storage.listStores();
     const ours = allStores.filter(isSyncedStore);
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
@@ -307,6 +342,7 @@ export async function buildPayloadJSON(scope = 'settings') {
         `{"formatVersion":${FORMAT_VERSION},`,
         `"exportedAt":${JSON.stringify(new Date().toISOString())},`,
         `"syncScope":${JSON.stringify(scope)},`,
+        externalKeysField(),
         '"stores":{',
     ];
 
@@ -461,6 +497,10 @@ async function mergeLocalHistories(payload) {
  */
 export async function applyPayload(json, { mode = 'pull', baseline = null } = {}) {
     const payload = JSON.parse(json);
+    // Before anything is dropped as unowned: keys another script registered,
+    // on this device on an earlier load or on another device, are carried
+    await ensureExternalKeysLoaded();
+    if (learnPayloadExternalKeys(payload)) await externalKeysSettled();
     // After the foreign stores are dropped: what another script keeps in a
     // gist written by an older build is not this pull's to judge
     const droppedUnowned = dropUnownedFromPayload(payload);
@@ -1135,6 +1175,11 @@ function cleaningRemoved(entries, cleaned) {
 export function mergeForUpload(localText, remoteText, baseline, { revisionFold = false, scope = null } = {}) {
     const local = JSON.parse(localText);
     const remote = JSON.parse(remoteText);
+    // Every prefix either side knows another script registered is carried, so
+    // the gist's copies of those keys survive an upload from a device that has
+    // never run that script (the registry is written back with the result)
+    learnPayloadExternalKeys(local);
+    learnPayloadExternalKeys(remote);
     const droppedUnowned = dropUnownedFromPayload(remote);
     assertApplicable(remote);
     // A revision fold weighs no baseline of this device's (see above)
@@ -1243,10 +1288,13 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
         stores[storeName] = out;
     }
 
+    const externalKeys = externalKeyPrefixes();
     const text = JSON.stringify({
         formatVersion: FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
         syncScope: revisionFold ? uploadScope : (local?.syncScope ?? remote.syncScope ?? 'settings'),
+        // Same place and form as `buildPayloadJSON` writes it, so equal content hashes equally
+        ...(Object.keys(externalKeys).length > 0 ? { externalKeys } : {}),
         stores,
     });
     // Whether applying the result here would change anything — not whether
