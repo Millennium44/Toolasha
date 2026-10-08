@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - By-products of a collection route are now valued at the bid after tax and only up to what the market can absorb in a week (a decompose that showed +430M now shows its real cost), and a bought source is always priced at the ask.
 - Gold reads as signed net ("+" earns, "−" costs), a sort choice offers Most profitable or Fastest, and transmuting and gathering are ranked as routes alongside crafting and decomposing.
+- Buying a source is priced up the order book for the quantity needed, and a step needing more than the market offers in a week is not offered; a crate nobody bids on is valued as its contents, each within its own market; every transmute catalyst and tea setup is compared; and a Plan stays on screen when the panel redraws.
 
 ### Room Logs Accuracy tab stops flashing during lab runs
 
