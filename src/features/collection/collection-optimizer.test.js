@@ -124,6 +124,7 @@ const BUY = vi.hoisted(() => ({
     '/items/garnet': 21_000,
     '/items/milk': 100,
     '/items/milking_essence': 50,
+    '/items/pearl': 13_350,
 }));
 
 /** The bid side, where it differs from the ask above */
@@ -139,6 +140,7 @@ const LOOT = vi.hoisted(() => ({
     '/items/small_artisans_crate': [
         { itemHrid: '/items/star_fragment', dropRate: 1, minCount: 2, maxCount: 4 },
         { itemHrid: '/items/garnet', dropRate: 0.5, minCount: 1, maxCount: 1 },
+        { itemHrid: '/items/pearl', dropRate: 0.2, minCount: 1, maxCount: 1 },
     ],
 }));
 
@@ -378,7 +380,8 @@ const {
     weeklySellable,
     formatNet,
 } = await import('./collection-optimizer.js');
-const { bestOptions, collectionCounts, evaluateOption, indexRoutes } = await import('./collection-optimizer-plan.js');
+const { bestOptions, collectionCounts, evaluateOption, indexRoutes, planTarget } =
+    await import('./collection-optimizer-plan.js');
 
 /** The game's Collections tab: controls, then the tile categories */
 function drawCollectionsTab() {
@@ -629,6 +632,42 @@ describe('transmute routes', () => {
             option.units * route.kept.get('/items/star_fragment').perSource,
             9
         );
+    });
+
+    test('a crate opened to sell acquires its contents: they count toward their own collections', async () => {
+        game.crateDrop = true;
+        game.estimated = new Set(['/items/small_artisans_crate']);
+        const route = amberRoute(await buildCollectionRoutes());
+        const attempts = 1 / 0.92;
+        const crates = (1 / 100) * attempts;
+        // What the transmute drops, and what opening the crates it drops brings out
+        expect(route.yields.get('/items/star_fragment')).toBeCloseTo(0.1 * 0.5 * attempts + crates * 3, 12);
+        expect(route.yields.get('/items/garnet')).toBeCloseTo(0.12 * 0.5 * attempts + crates * 0.5, 12);
+        expect(route.yields.get('/items/pearl')).toBeCloseTo(crates * 0.2, 12);
+        // Pearl arrives only in a bonus crate: credited like the crate, never a target of the route
+        expect(route.bonus.has('/items/pearl')).toBe(true);
+        expect(route.bonus.has('/items/garnet')).toBe(false);
+        const index = indexRoutes({ sources: [route] });
+        expect(index.has('/items/pearl')).toBe(false);
+        // A first Garnet: the Pearls the crates opened along the way are points too, and in the plan
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), route);
+        expect(option.credits.get('/items/pearl')).toBeCloseTo(option.units * crates * 0.2, 12);
+        const plan = planTarget(new Map([['/items/star_fragment', 1e6]]), index, 3);
+        expect(plan.steps[0].credits.get('/items/pearl')).toBeGreaterThan(0);
+        // Garnet 1,000 → 10,000 takes ~137k Amber, and the ~300 Pearls opened on the way are 3 more rungs
+        const big = evaluateOption(
+            '/items/garnet',
+            new Map([
+                ['/items/garnet', 1000],
+                ['/items/star_fragment', 1e9],
+                ['/items/amber', 1e9],
+                ['/items/alchemy_essence', 1e9],
+                ['/items/small_artisans_crate', 1e9],
+            ]),
+            route
+        );
+        expect(big.credits.get('/items/pearl')).toBeGreaterThan(100);
+        expect(big.collateral).toBe(6);
     });
 
     test('every setup the calculator weighs is a route, and the ranking picks by gold per point', async () => {

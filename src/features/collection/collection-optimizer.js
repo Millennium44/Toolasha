@@ -233,11 +233,11 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
     const attempts = 1 / (1 - back);
 
     const yields = new Map();
-    const kept = new Map();
+    const sink = saleSink();
     const bonus = new Set();
     let partlyUnpriced = false;
-    const sell = (hrid, perSource) => {
-        if (!keepSold(kept, sellParts(hrid), perSource)) partlyUnpriced = true;
+    const sell = (hrid, perSource, isBonus = false) => {
+        if (!sink.add(sellParts(hrid), perSource, isBonus)) partlyUnpriced = true;
     };
     for (const [hrid, expected] of perAttempt) {
         if (SKIP_ITEMS.has(hrid)) continue;
@@ -251,9 +251,12 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
         if (!(perSource > 0)) continue;
         yields.set(drop.itemHrid, (yields.get(drop.itemHrid) || 0) + perSource);
         bonus.add(drop.itemHrid);
-        sell(drop.itemHrid, perSource);
+        sell(drop.itemHrid, perSource, true);
     }
     if (yields.size === 0) return null;
+    // A crate opened to sell its contents acquired them: they count toward their own collections
+    creditOpened(sink, yields, bonus);
+    const kept = sink.kept;
     return {
         route: 'transmute',
         sourceHrid,
@@ -348,11 +351,14 @@ export function gatherRoute(actionHrid, profit, { sell }) {
     for (const [hrid, units] of yields) if (!(units > 0)) yields.delete(hrid);
     if (yields.size === 0) return null;
 
-    const kept = new Map();
+    const sink = saleSink();
     let partlyUnpriced = (profit.drinkCosts || []).some((drink) => drink?.missingPrice);
     for (const [hrid, units] of yields) {
-        if (!keepSold(kept, sell(hrid), units)) partlyUnpriced = true;
+        if (!sink.add(sell(hrid), units, bonus.has(hrid))) partlyUnpriced = true;
     }
+    // A crate opened to sell its contents acquired them: they count toward their own collections
+    creditOpened(sink, yields, bonus);
+    const kept = sink.kept;
     return {
         route: 'gather',
         sourceHrid: null,
@@ -375,68 +381,114 @@ export function gatherRoute(actionHrid, profit, { sell }) {
  * content carries its own bid, tax and market-volume bound: the unopened
  * crate's volume says nothing about how much of its contents the market takes.
  * A content that is itself such a container is opened too.
+ *
+ * Opening acquires what comes out, and an item looted that way counts toward
+ * its collection whether it is then sold or not: every content is marked
+ * `acquired`, and a nested crate opened on the way is listed as acquired with
+ * no sale (`unit: null`).
  * @param {string} hrid
  * @param {Object} deps
  * @param {(hrid: string) => number|null} deps.saleOf - What selling one unit realizes; null when it has no price
  * @param {(hrid: string) => Array|null} deps.containerDrops - `openableLootDropMap[hrid]`
  * @param {Set<string>} [path] - Recursion guard
- * @returns {Array<{itemHrid: string, units: number, unit: number}>|null} Units of each item sold per
- *   unit of `hrid` and the price of one; null when any part has no price (or a crate opens into itself)
+ * @returns {Array<{itemHrid: string, units: number, unit: number|null, acquired: boolean}>|null} Units of
+ *   each item per unit of `hrid`, the price one sells for (null: not sold), and whether opening acquired
+ *   it; null when any part has no price (or a crate opens into itself)
  */
 export function saleParts(hrid, { saleOf, containerDrops }, path = new Set()) {
     const sale = saleOf(hrid);
-    if (sale !== null && sale !== undefined) return [{ itemHrid: hrid, units: 1, unit: sale }];
+    if (sale !== null && sale !== undefined) return [{ itemHrid: hrid, units: 1, unit: sale, acquired: false }];
     const table = containerDrops(hrid);
     if (!Array.isArray(table) || table.length === 0 || path.has(hrid)) return null;
     const inner = new Set([...path, hrid]);
     const parts = new Map();
+    const add = (itemHrid, units, unit) => {
+        const entry = parts.get(itemHrid) || { itemHrid, units: 0, unit, acquired: true };
+        entry.units += units;
+        parts.set(itemHrid, entry);
+    };
     for (const drop of table) {
         const average = ((Number(drop?.minCount) || 0) + (Number(drop?.maxCount) || 0)) / 2;
         const expected = (Number(drop?.dropRate) || 0) * average;
         if (!drop?.itemHrid || !(expected > 0) || SKIP_ITEMS.has(drop.itemHrid)) continue;
         const nested = saleParts(drop.itemHrid, { saleOf, containerDrops }, inner);
         if (!nested) return null;
-        for (const part of nested) {
-            const entry = parts.get(part.itemHrid) || { itemHrid: part.itemHrid, units: 0, unit: part.unit };
-            entry.units += expected * part.units;
-            parts.set(part.itemHrid, entry);
-        }
+        // A content opened in turn: it was acquired too, and is not sold
+        if (!(nested.length === 1 && nested[0].itemHrid === drop.itemHrid)) add(drop.itemHrid, expected, null);
+        for (const part of nested) add(part.itemHrid, expected * part.units, part.unit);
     }
     return parts.size > 0 ? [...parts.values()] : null;
 }
 
 /**
- * Add what selling `perSource` units of an output comes to into a route's sold outputs.
- * @param {Map<string, {perSource: number, unit: number}>} kept
- * @param {Array<{itemHrid: string, units: number, unit: number}>|null} parts - From {@link saleParts}
- * @param {number} perSource - Units of the output per unit of the route
- * @returns {boolean} False when the output has no price
+ * What a route's outputs come to as they are sold, and what opening crates on
+ * the way acquires.
+ *
+ * `add` takes {@link saleParts} for `perSource` units of one output: what is
+ * sold goes into `kept` (`{perSource, unit}`), what opening acquired into
+ * `acquired` — or `bonusAcquired` for the contents of a bonus drop, which, like
+ * the drop, are credited but never targeted.
+ * @returns {{kept: Map, acquired: Map, bonusAcquired: Map, add: Function}}
  */
-function keepSold(kept, parts, perSource) {
-    if (!parts) return false;
-    for (const { itemHrid, units, unit } of parts) {
-        const added = perSource * units;
-        if (!(added > 0)) continue;
-        kept.set(itemHrid, { perSource: (kept.get(itemHrid)?.perSource || 0) + added, unit });
-    }
-    return true;
+function saleSink() {
+    const kept = new Map();
+    const acquired = new Map();
+    const bonusAcquired = new Map();
+    /**
+     * @param {Array<Object>|null} parts - From {@link saleParts}
+     * @param {number} perSource - Units of the output per unit of the route
+     * @param {boolean} [bonus=false] - The output is a bonus drop
+     * @returns {boolean} False when the output has no price
+     */
+    const add = (parts, perSource, bonus = false) => {
+        if (!parts) return false;
+        for (const { itemHrid, units, unit, acquired: opened } of parts) {
+            const added = perSource * units;
+            if (!(added > 0)) continue;
+            if (unit !== null && unit !== undefined) {
+                kept.set(itemHrid, { perSource: (kept.get(itemHrid)?.perSource || 0) + added, unit });
+            }
+            if (opened) {
+                const into = bonus ? bonusAcquired : acquired;
+                into.set(itemHrid, (into.get(itemHrid) || 0) + added);
+            }
+        }
+        return true;
+    };
+    return { kept, acquired, bonusAcquired, add };
 }
 
 /**
- * The sold outputs of a decompose chain as `{perSource, unit}`, from its
- * terminals' per-source expected units.
- * @param {Iterable<{itemHrid: string, expected: number, value: number|null}>} terminals
- * @param {(hrid: string) => Array<{itemHrid: string, units: number, unit: number}>|null} sell - {@link saleParts}
- * @returns {Map<string, {perSource: number, unit: number}>}
+ * Credit what opening crates acquired to a route's yields. Contents of a
+ * bonus drop join the route's bonus set unless the route yields them anyway.
+ * @param {{acquired: Map, bonusAcquired: Map}} sink - From {@link saleSink}
+ * @param {Map<string, number>} yields - Changed in place
+ * @param {Set<string>} bonus - Changed in place
  */
-function keptFromTerminals(terminals, sell) {
-    const kept = new Map();
+function creditOpened(sink, yields, bonus) {
+    for (const [hrid, units] of sink.acquired) yields.set(hrid, (yields.get(hrid) || 0) + units);
+    for (const [hrid, units] of sink.bonusAcquired) {
+        const regular = yields.has(hrid) && !bonus.has(hrid);
+        yields.set(hrid, (yields.get(hrid) || 0) + units);
+        if (!regular) bonus.add(hrid);
+    }
+}
+
+/**
+ * What a decompose chain's terminals come to as they are sold, per source.
+ * @param {Iterable<{itemHrid: string, expected: number, value: number|null}>} terminals
+ * @param {(hrid: string) => Array<Object>|null} sell - {@link saleParts}
+ * @param {Set<string>} bonus - The chain's bonus drops
+ * @returns {{kept: Map, acquired: Map, bonusAcquired: Map}} From {@link saleSink}
+ */
+function soldFromTerminals(terminals, sell, bonus) {
+    const sink = saleSink();
     for (const { itemHrid, expected, value } of terminals) {
         // A terminal the chain could not price is already marked on the chain, and left out here
         if (value === null || value === undefined || !(expected > 0)) continue;
-        keepSold(kept, sell(itemHrid), expected);
+        sink.add(sell(itemHrid), expected, bonus.has(itemHrid));
     }
-    return kept;
+    return sink;
 }
 
 /**
@@ -598,7 +650,6 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
             yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
         }
-        const kept = keptFromTerminals(chain.terminals, sell);
         if (yields.size === 0) continue;
         // The alchemy-wide bonus drops each step rolls: credited, never a target
         const bonus = new Set();
@@ -607,6 +658,10 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
             }
         }
+        const sold = soldFromTerminals(chain.terminals, sell, bonus);
+        // A crate opened to sell its contents acquired them: they count toward their own collections
+        creditOpened(sold, yields, bonus);
+        const kept = sold.kept;
         // One alchemy action eats `bulkMultiplier` sources, whole
         const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
         const shared = {
