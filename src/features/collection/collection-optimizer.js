@@ -36,7 +36,7 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { canStartAction } from '../../utils/efficiency.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
-import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
+import { alchemyRunBasis, selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import {
@@ -124,6 +124,86 @@ export function weeklySellable(hrid) {
     const bounded = capProfitRateCached({ goldPerHour: 1, sells: [{ itemHrid: hrid, unitsPerHour: probe }] });
     if (!bounded?.capped) return Infinity;
     return Math.max(0, Number(bounded.limit?.throttle) || 0) * probe * 24 * LIQUIDITY_HORIZON_DAYS;
+}
+
+/**
+ * Transmuting a bought item S, and every copy of S that comes back, as a route.
+ *
+ * Everything alchemy-specific is the calculator's ({@link alchemyRunBasis}):
+ * success rate, actions per hour, bulk, coin, catalyst and tea. The input is
+ * consumed on every attempt, success or not, as the calculator charges it; the
+ * drop table is read from the game data, as the self-use helpers do. Per S
+ * transmuted, with r the expected copies of S back:
+ *   drop Y    = avg(min, max) × dropRate × successRate
+ *   attempts  = 1 / (1 − r) per S bought — the copies that come back are transmuted again,
+ *               and each counts toward S's collection as it arrives
+ *   yields Y  = drop Y × attempts  (S itself: r × attempts)
+ *   cost      = ask(S) + attempts × (coin + catalyst + tea) per attempt
+ *   seconds   = attempts × 3600 / (actionsPerHour × bulk)
+ * Every drop but S is sold ({@link realizedSalePrice}); one with no price at all
+ * leaves the route partly unpriced, and out of the ranking.
+ *
+ * @param {string} sourceHrid - S
+ * @param {Object|null} result - `calculateTransmuteProfit(S)`
+ * @param {Array<Object>|null} table - S's `alchemyDetail.transmuteDropTable`
+ * @param {Object} opts
+ * @param {number} opts.buy - What one S costs
+ * @param {(hrid: string) => number|null} opts.unitValue - What selling one unit of an output realizes
+ * @returns {Object|null} A source route, or null when the transmute cannot run
+ */
+export function transmuteRoute(sourceHrid, result, table, { buy, unitValue }) {
+    const basis = alchemyRunBasis(result);
+    if (!basis || !Array.isArray(table) || !(buy > 0)) return null;
+    const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
+    // Outputs scale with bulk exactly as the input does, so per input unit it cancels
+    const unitsPerHour = actionsPerHour * bulk;
+    const perAttempt = new Map();
+    for (const drop of table) {
+        const average = ((Number(drop?.minCount) || 0) + (Number(drop?.maxCount) || 0)) / 2;
+        const expected = average * (Number(drop?.dropRate) || 0) * successRate;
+        if (drop?.itemHrid && expected > 0) {
+            perAttempt.set(drop.itemHrid, (perAttempt.get(drop.itemHrid) || 0) + expected);
+        }
+    }
+    const back = perAttempt.get(sourceHrid) || 0;
+    if (!(back < 1)) return null;
+    const attempts = 1 / (1 - back);
+
+    const yields = new Map();
+    const kept = new Map();
+    const bonus = new Set();
+    let partlyUnpriced = false;
+    const sell = (hrid, perSource) => {
+        const unit = unitValue(hrid);
+        if (unit === null || unit === undefined) partlyUnpriced = true;
+        else kept.set(hrid, { perSource: (kept.get(hrid)?.perSource || 0) + perSource, unit });
+    };
+    for (const [hrid, expected] of perAttempt) {
+        if (SKIP_ITEMS.has(hrid)) continue;
+        yields.set(hrid, expected * attempts);
+        if (hrid !== sourceHrid) sell(hrid, expected * attempts);
+    }
+    // The alchemy-wide bonus drops each attempt rolls: credited and sold, never a target
+    for (const drop of result?.dropRevenues || []) {
+        if (!drop?.itemHrid || !(drop.isEssence || drop.isRare)) continue;
+        const perSource = ((Number(drop.dropsPerHour) || 0) / unitsPerHour) * attempts;
+        if (!(perSource > 0)) continue;
+        yields.set(drop.itemHrid, (yields.get(drop.itemHrid) || 0) + perSource);
+        bonus.add(drop.itemHrid);
+        sell(drop.itemHrid, perSource);
+    }
+    if (yields.size === 0) return null;
+    return {
+        route: 'transmute',
+        sourceHrid,
+        batch: bulk,
+        cost: buy + (attempts * overheadPerHour) / unitsPerHour,
+        seconds: (attempts * 3600) / unitsPerHour,
+        yields,
+        kept,
+        bonus,
+        partlyUnpriced,
+    };
 }
 
 /**
@@ -340,6 +420,30 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 batch: leastCommonMultiple(units, bulk),
                 cost: offer.coins / units + chain.overheadCost,
             });
+        }
+    }
+    if (cancelled()) return null;
+
+    // Transmute: buy S at the ask and transmute it until nothing of it is left
+    const unitValue = (hrid) => {
+        const sale = saleOf(hrid);
+        if (sale !== null) return sale;
+        const opened = containerValue(hrid);
+        return opened && !opened.partlyUnpriced ? opened.value : null;
+    };
+    for (const [hrid, details] of Object.entries(itemDetailMap)) {
+        const table = details?.alchemyDetail?.transmuteDropTable;
+        if (!Array.isArray(table) || !(Number(details.alchemyDetail.transmuteSuccessRate) > 0)) continue;
+        if (SKIP_ITEMS.has(hrid)) continue;
+        if (await pause()) return null;
+        const buy = buyableQuote(hrid);
+        if (!(buy > 0)) continue;
+        try {
+            const result = alchemyProfitCalculator.calculateTransmuteProfit(hrid) ?? null;
+            const route = transmuteRoute(hrid, result, table, { buy, unitValue });
+            if (route) sources.push(route);
+        } catch (error) {
+            console.error('[CollectionOptimizer] Transmute route failed for', hrid, error);
         }
     }
     if (cancelled()) return null;

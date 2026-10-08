@@ -432,3 +432,34 @@ describe('the sort', () => {
         expect(Object.keys(SORT_MODES)).toEqual(['profit', 'fastest']);
     });
 });
+
+describe('a transmute route', () => {
+    // Per Amber bought at 0.08 back per attempt: 1 / 0.92 attempts
+    const amber = () => ({
+        route: 'transmute',
+        sourceHrid: '/items/amber',
+        cost: 20_000,
+        seconds: 36 / 0.92,
+        yields: new Map([
+            ['/items/garnet', 0.06 / 0.92],
+            ['/items/amber', 0.08 / 0.92],
+        ]),
+        kept: new Map([['/items/garnet', { perSource: 0.06 / 0.92, unit: 20_000 }]]),
+    });
+
+    test('collects the copies of its source that come back, so the source is a target too', () => {
+        const index = indexRoutes({ sources: [amber()] });
+        expect(index.get('/items/amber')[0].route).toBe('transmute');
+        const option = evaluateOption('/items/amber', new Map(), amber());
+        // 0.087 back per Amber bought: 12 for the first
+        expect(option.units).toBe(12);
+        expect(option.gold).toBeCloseTo(12 * 20_000 - 12 * (0.06 / 0.92) * 20_000, 6);
+        expect(option.sold.has('/items/amber')).toBe(false);
+    });
+
+    test('plans with its credits like any other route', () => {
+        const plan = planTarget(new Map(), indexRoutes({ sources: [amber()] }), 2, { maxSeconds: 3600 });
+        expect(plan.reached).toBe(true);
+        for (const step of plan.steps) expect(step.route).toBe('transmute');
+    });
+});

@@ -76,7 +76,21 @@ const ITEMS = vi.hoisted(() => ({
         },
     },
     '/items/star_fragment': { name: 'Star Fragment' },
-    '/items/amber': { name: 'Amber' },
+    // Amber's transmute, cut to three of its eight rows (the game's rates for those three)
+    '/items/amber': {
+        name: 'Amber',
+        itemLevel: 25,
+        alchemyDetail: {
+            bulkMultiplier: 1,
+            transmuteSuccessRate: 0.35,
+            transmuteDropTable: [
+                { itemHrid: '/items/star_fragment', dropRate: 0.1, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/amber', dropRate: 0.16, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/garnet', dropRate: 0.12, minCount: 1, maxCount: 1 },
+            ],
+        },
+    },
+    '/items/garnet': { name: 'Garnet' },
 }));
 
 const BUY = vi.hoisted(() => ({
@@ -94,6 +108,7 @@ const BUY = vi.hoisted(() => ({
     '/items/earrings_of_essence_find': 6_300_000,
     '/items/star_fragment': 13_750,
     '/items/amber': 20_240,
+    '/items/garnet': 21_000,
 }));
 
 /** The bid side, where it differs from the ask above */
@@ -181,6 +196,25 @@ const OVERHEAD = vi.hoisted(() => ({
 }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
+        // Amber at 50% after its catalyst and tea, 100 attempts an hour, 125 coins and 3,000 of
+        // catalyst an hour, and the essence every attempt can roll
+        calculateTransmuteProfit: (hrid) =>
+            hrid !== '/items/amber' || game.noTransmute
+                ? null
+                : {
+                      itemHrid: hrid,
+                      actionsPerHour: 100,
+                      successRate: 0.5,
+                      requirementCosts: [
+                          { itemHrid: hrid, count: 1, price: BUY[hrid] },
+                          { itemHrid: '/items/coin', count: 125, costPerAction: 125 },
+                      ],
+                      catalystCostPerHour: 3000,
+                      totalTeaCostPerHour: 0,
+                      dropRevenues: [
+                          { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
+                      ],
+                  },
         calculateDecomposeProfit: (hrid) =>
             RATES[hrid] === undefined
                 ? null
@@ -302,6 +336,7 @@ beforeEach(() => {
     game.ironCow = false;
     VOLUME.perDay = {};
     game.pricingMode = 'hybrid';
+    game.noTransmute = false;
 });
 
 afterEach(() => {
@@ -329,9 +364,11 @@ describe('the routes', () => {
             { route: 'craft', itemHrid: '/items/cheese', unitCost: 4, unitSeconds: 10, batch: 1 },
         ]);
         const kinds = new Set([...routes.craft, ...routes.sources].map((r) => r.route));
-        expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
-        // No route ever yields the source it starts from
-        for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+        expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop', 'transmute']);
+        // No decompose or shop route ever yields the source it starts from
+        for (const source of routes.sources.filter((r) => ['decompose', 'shop'].includes(r.route))) {
+            expect(source.yields.has(source.sourceHrid)).toBe(false);
+        }
     });
 });
 
@@ -396,6 +433,76 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
         expect(realizedSalePrice('/items/star_fragment')).toBe(0);
         expect(realizedSalePrice('/items/star_fragment', () => true)).toBeNull();
         expect(realizedSalePrice('/items/no_such_item')).toBeNull();
+    });
+});
+
+describe('transmute routes', () => {
+    const amberRoute = (routes) =>
+        routes.sources.find((s) => s.route === 'transmute' && s.sourceHrid === '/items/amber');
+
+    test('buy Amber at the ask and transmute it, and every Amber that comes back, until none is left', async () => {
+        const route = amberRoute(await buildCollectionRoutes());
+        // 0.16 × 0.5 = 0.08 Amber back per attempt: 1 / 0.92 attempts per Amber bought
+        const attempts = 1 / 0.92;
+        expect(route.yields.get('/items/garnet')).toBeCloseTo(0.12 * 0.5 * attempts, 12);
+        expect(route.yields.get('/items/star_fragment')).toBeCloseTo(0.1 * 0.5 * attempts, 12);
+        // The Amber that comes back is collected as it arrives, and transmuted again, never sold
+        expect(route.yields.get('/items/amber')).toBeCloseTo(0.08 * attempts, 12);
+        expect(route.kept.has('/items/amber')).toBe(false);
+        // Bought at the ask; each attempt pays 125 coins and 30 of catalyst
+        expect(route.cost).toBeCloseTo(20_240 + attempts * (125 + 30), 9);
+        expect(route.seconds).toBeCloseTo(attempts * 36, 9);
+        expect(route.batch).toBe(1);
+        // The others are sold at the bid after tax; the essence is credited and sold, never a target
+        expect(route.kept.get('/items/garnet').unit).toBeCloseTo(21_000 * 0.96, 9);
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 9);
+        expect(route.bonus.has('/items/alchemy_essence')).toBe(true);
+        expect(route.yields.get('/items/alchemy_essence')).toBeCloseTo(0.1 * attempts, 12);
+    });
+
+    test('a first Garnet: 16 Amber, at the arithmetic above', async () => {
+        const route = amberRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), route);
+        const attempts = 1 / 0.92;
+        // 0.0652 Garnet per Amber: 16 Amber for the first
+        expect(option.units).toBe(Math.ceil(1 / (0.06 * attempts)));
+        // Star Fragments and the essence are sold; the Amber that comes back is transmuted again
+        const sold = option.units * attempts * (0.1 * 0.5 * 13_700 * 0.96 + 0.1 * 100 * 0.96);
+        expect(option.gold).toBeCloseTo(option.units * (20_240 + attempts * 155) - sold, 6);
+        expect(option.sold.has('/items/garnet')).toBe(false);
+    });
+
+    test('ranks with the other routes and says what it transmutes', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const garnet = [...document.querySelectorAll('.toolasha-collopt-row')].find(
+            (row) => row.dataset.item === '/items/garnet'
+        );
+        expect(garnet.dataset.route).toBe('transmute');
+        expect(garnet.textContent).toContain('Transmute: 16× Amber');
+    });
+
+    test('an output with no price at all leaves the route out', async () => {
+        const saved = BUY['/items/garnet'];
+        delete BUY['/items/garnet'];
+        try {
+            const route = amberRoute(await buildCollectionRoutes());
+            expect(route.partlyUnpriced).toBe(true);
+        } finally {
+            BUY['/items/garnet'] = saved;
+        }
+    });
+
+    test('nothing to transmute without a live ask, on an Iron Cow, or when the calculator cannot run it', async () => {
+        game.estimated = new Set(['/items/amber']);
+        expect(amberRoute(await buildCollectionRoutes())).toBeUndefined();
+        game.estimated = new Set();
+        game.ironCow = true;
+        expect(amberRoute(await buildCollectionRoutes())).toBeUndefined();
+        game.ironCow = false;
+        game.noTransmute = true;
+        expect(amberRoute(await buildCollectionRoutes())).toBeUndefined();
     });
 });
 
@@ -529,7 +636,7 @@ describe('the panel', () => {
         await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
         const rows = [...document.querySelectorAll('.toolasha-collopt-row')];
         const routes = rows.map((row) => row.dataset.route);
-        for (const route of routes) expect(['craft', 'decompose', 'shop']).toContain(route);
+        for (const route of routes) expect(['craft', 'decompose', 'shop', 'transmute']).toContain(route);
         expect(panel().textContent).not.toMatch(/\bBuy\b:/);
         // The lower hoods are on offer, collected by decomposing an Umbral Hood
         const items = rows.map((row) => row.dataset.item);
