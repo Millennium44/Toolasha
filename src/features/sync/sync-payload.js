@@ -726,7 +726,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it
         // already holds is noted, to be left out once `applied` is taken below
-        const { sameByStore, retentionDropped } = await weighAgainstLocal(
+        const { sameByStore, retentionDropped, displaced } = await weighAgainstLocal(
             payload,
             mode === 'merge' ? baseline : null,
             histories.same
@@ -754,6 +754,9 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
         const merged = histories.merged.filter(changed);
         const mergeFailed = histories.failed.filter(changed);
+
+        // Before the import latches the stores until the reload
+        for (const { store, key } of displaced) await storage.delete(key, store);
 
         let imported;
         try {
@@ -1279,15 +1282,24 @@ export function restampRestoredSettings(payload, now = Date.now()) {
  *
  * @param {Record<string, string>|null} baseline - Hashes at the last exchange, or null outside merge mode
  * @param {Set<string>} [foldsSame] - `baselineId`s of folds that added nothing to their base
- * @returns {Promise<{sameByStore: Map<string, Set<string>>, retentionDropped: boolean}>} Per store, the keys
- *   that hold this device's value already; and whether a retention rule took any key out of the download
+ * @returns {Promise<{sameByStore: Map<string, Set<string>>, retentionDropped: boolean,
+ *   displaced: Array<{store: string, key: string}>}>} Per store, the keys that hold this device's value already;
+ *   whether a retention rule took any key out of the download; and local keys the download pushed out of a window
  */
 async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
     const sameByStore = new Map();
     let retentionDropped = false;
+    const displaced = [];
     const dropOutsideRetention = (storeName, entries, localKeys) => {
+        const ownDrops = new Set(retentionDrops(storeName, localKeys));
         for (const key of retentionDrops(storeName, [...Object.keys(entries), ...localKeys])) {
-            if (!Object.hasOwn(entries, key)) continue;
+            if (!Object.hasOwn(entries, key)) {
+                // Pushed out of the window by what the download brings: the
+                // import only puts keys, so it is deleted here. One this device
+                // would drop by itself is left to its owner's own pruning
+                if (!ownDrops.has(key)) displaced.push({ store: storeName, key });
+                continue;
+            }
             delete entries[key];
             retentionDropped = true;
         }
@@ -1359,7 +1371,7 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         }
         if (same.size > 0) sameByStore.set(storeName, same);
     }
-    return { sameByStore, retentionDropped };
+    return { sameByStore, retentionDropped, displaced };
 }
 
 /**

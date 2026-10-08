@@ -33,6 +33,10 @@ vi.mock('../../core/storage.js', () => ({
         endRestore: async () => {
             flushLog.push('endRestore');
         },
+        delete: async (key, name) => {
+            delete (storeState.stores[name] || {})[key];
+            return true;
+        },
         putAll: async (name, entries, options) => {
             storeState.putAllCalls.push({ name, entries, options });
             // An aborted transaction: putAll says so with a short count, not a throw
@@ -1902,6 +1906,25 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         expect(Object.keys(importedPayloads[0].stores[DAY]).sort()).toEqual(
             Object.keys(snapshots('32030', T0 + 25 * 3_600_000, 4)).sort()
         );
+    });
+
+    test("this device's snapshots pushed out of the window by newer ones from the gist are deleted", async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        const gist = snapshots('32030', T0 + 20 * 3_600_000, 10);
+
+        await applyPayload(payloadOf({ [DAY]: gist }), { mode: 'merge', baseline: {} });
+
+        // Hours 0-4 fall out; with the five newest imported, the store holds 25
+        expect(Object.keys(storeState.stores[DAY])).toHaveLength(20);
+        expect(Object.keys(importedPayloads[0].stores[DAY])).toHaveLength(5);
+    });
+
+    test('snapshots this device would drop by itself are left to its own pruning', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 30) };
+
+        await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0, 30) }), { mode: 'merge', baseline: {} });
+
+        expect(Object.keys(storeState.stores[DAY])).toHaveLength(30);
     });
 
     test('the pre-split detail key, which carries no time, is left to the usual rules', async () => {
