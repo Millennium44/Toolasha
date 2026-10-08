@@ -95,6 +95,19 @@ export function registerDayRowRetention({ store, recordPrefix, days, granularity
         }
         return lastDay;
     };
+    /**
+     * The earliest local day whose row the recorder would file under this chunk id.
+     * @param {string} chunk - `YYYY-MM-DD` or `YYYY-MM`
+     * @param {number} firstDay - Day number of the chunk's UTC start
+     * @param {number} lastDay - Day number of the chunk's UTC end
+     * @returns {number} Day number
+     */
+    const earliestRowDay = (chunk, firstDay, lastDay) => {
+        for (let day = firstDay - 2; day <= lastDay + 2; day++) {
+            if (timeChunkId(dayStart(dayId(day)), granularity) === chunk) return day;
+        }
+        return firstDay;
+    };
     return registerSyncRetention({
         store,
         prefix: `${recordPrefix}_`,
@@ -106,12 +119,23 @@ export function registerDayRowRetention({ store, recordPrefix, days, granularity
             const first = Math.round(Date.UTC(year, month - 1, granularity === 'day' ? Number(match[4]) : 1) / DAY_MS);
             const last = granularity === 'day' ? first : Math.round(Date.UTC(year, month, 0) / DAY_MS);
             const chunk = granularity === 'day' ? `${match[2]}-${match[3]}-${match[4]}` : `${match[2]}-${match[3]}`;
-            return { group: match[1], order: first, end: latestRowDay(chunk, first, last) };
+            return {
+                group: match[1],
+                order: first,
+                start: earliestRowDay(chunk, first, last),
+                end: latestRowDay(chunk, first, last),
+            };
         },
         maxAge: {
-            // The recorder's floor, from the same clock and the same local-day function, but never above the
-            // newest key's latest row less the window: an idle character keeps its history
-            floor: (newestEnd) => Math.min(dayNumber(localDayId(now() - days * DAY_MS)), newestEnd - days),
+            // The recorder's floor, from the same clock and the same local-day function. A character whose
+            // newest key cannot reach today is idle, and its recorder last pruned on some day of that key —
+            // possibly its first, for a month key — so the cut never passes that key's EARLIEST possible
+            // row less the window; an active character's own prune runs today and the cut is the recorder's
+            floor: (newestEnd, newestStart) => {
+                const recorderFloor = dayNumber(localDayId(now() - days * DAY_MS));
+                if (newestEnd >= dayNumber(localDayId(now()))) return recorderFloor;
+                return Math.min(recorderFloor, newestStart - days);
+            },
         },
     });
 }
