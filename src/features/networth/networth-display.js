@@ -727,10 +727,12 @@ class NetworthInventoryDisplay {
             .map((token) => {
                 const via = token.bestItemName ? ` (${escapeHtml(token.bestItemName)})` : '';
                 const figure = token.unpriced
-                    ? `${token.name} x${formatKMB(token.count)}: no price`
+                    ? `${token.name} x${formatKMB(token.count)}: no price${token.note ? ` (${escapeHtml(token.note)})` : ''}`
                     : `${token.name} x${formatKMB(token.count)} × ${formatKMB(token.rate)}${via} = ${networthFormatter(Math.round(token.value))}`;
                 const title = token.unpriced
-                    ? 'Nothing can price this token yet.'
+                    ? token.note
+                        ? `Not counted: ${token.note}.`
+                        : 'Nothing can price this token yet.'
                     : `If converted ${token.bestItemName ? `into ${token.bestItemName} ` : ''}and sold at the best rate: ` +
                       `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/token = ${formatKMB(token.value)}` +
                       (token.note ? ` (${token.note})` : '') +
