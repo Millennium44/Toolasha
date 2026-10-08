@@ -735,6 +735,8 @@ class CollectionOptimizer {
         /** Items whose traded volume has been asked for this session */
         this.volumesAsked = new Set();
         this.volumesWarming = null;
+        /** The plan on show, `{characterId}`: every redraw plans it again rather than dropping it */
+        this.planShown = null;
     }
 
     /** The max time per step, in seconds */
@@ -831,6 +833,7 @@ class CollectionOptimizer {
         this.sort = DEFAULT_SORT;
         this.volumesAsked = new Set();
         this.volumesWarming = null;
+        this.planShown = null;
         this.isInitialized = false;
     }
 
@@ -1029,9 +1032,11 @@ class CollectionOptimizer {
         result.className = 'toolasha-collopt-plan-result';
         body.appendChild(result);
 
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
         const run = () => {
             const wanted = Math.max(1, Math.floor(Number(input.value) || 0));
             this.targetPoints = wanted;
+            this.planShown = { characterId };
             const plan = planTarget(counts, this.index, wanted, {
                 maxSeconds: this.maxSeconds,
                 sellable: weeklySellable,
@@ -1064,6 +1069,11 @@ class CollectionOptimizer {
             if (event.key === 'Enter') run();
         });
         input.addEventListener('click', (event) => event.stopPropagation());
+
+        // A redraw (volumes measured, a new sort, a new max time, the counts arriving again) keeps a
+        // plan on show, planned again on what the panel now knows; another character's is dropped
+        if (this.planShown && this.planShown.characterId !== characterId) this.planShown = null;
+        if (this.planShown) run();
     }
 
     /**

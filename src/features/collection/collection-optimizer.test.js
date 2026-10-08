@@ -143,7 +143,7 @@ const LOOT = vi.hoisted(() => ({
 }));
 
 /** Measured daily volumes, for the liquidity bound */
-const VOLUME = vi.hoisted(() => ({ perDay: {} }));
+const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -329,7 +329,10 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
             ? { goldPerHour: goldPerHour * throttle, capped: true, limit: { throttle } }
             : { goldPerHour, capped: false, limit: null };
     },
-    prefetchLiquidity: async () => {},
+    // Measuring waits on a test's gate, when it sets one
+    prefetchLiquidity: async () => {
+        if (VOLUME.gate) await VOLUME.gate;
+    },
 }));
 vi.mock('../planner/market-liquidity.js', () => ({ LIQUIDITY_HORIZON_DAYS: 7 }));
 vi.mock('../../utils/game-lookups.js', () => ({
@@ -398,6 +401,7 @@ beforeEach(() => {
     game.mixedShop = false;
     game.ironCow = false;
     VOLUME.perDay = {};
+    VOLUME.gate = null;
     game.pricingMode = 'hybrid';
     game.noTransmute = false;
     game.milkingLevel = 10;
@@ -839,6 +843,42 @@ describe('the panel', () => {
         const result = document.querySelector('.toolasha-collopt-plan-result');
         expect(result.textContent).toMatch(/^\+\d+ points: /);
         expect(result.querySelectorAll('li').length).toBeGreaterThan(0);
+    });
+
+    test('a plan clicked before the volumes are measured survives the redraw, planned again on them', async () => {
+        let release;
+        VOLUME.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(optimizer.volumesWarming).not.toBeNull());
+        document.querySelector('.toolasha-collopt-target').value = '5';
+        document.querySelector('.toolasha-collopt-plan').click();
+        const before = document.querySelector('.toolasha-collopt-plan-result').textContent;
+        expect(before).toMatch(/^\+\d+ points: /);
+
+        // The volumes land, and nothing the plan sells has a market
+        for (const hrid of Object.keys(BUY)) VOLUME.perDay[hrid] = 0;
+        release();
+        await optimizer.volumesWarming;
+        const after = document.querySelector('.toolasha-collopt-plan-result');
+        expect(after.textContent).toMatch(/^\+\d+ points: /);
+        expect(after.querySelectorAll('li').length).toBeGreaterThan(0);
+        expect(after.textContent).not.toBe(before);
+        expect(document.querySelector('.toolasha-collopt-target').value).toBe('5');
+    });
+
+    test('another character does not inherit the plan on show', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-plan')).not.toBeNull());
+        document.querySelector('.toolasha-collopt-plan').click();
+        expect(document.querySelector('.toolasha-collopt-plan-result').textContent).not.toBe('');
+        game.characterId = 'char-2';
+        optimizer.render(panel());
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-plan')).not.toBeNull());
+        expect(document.querySelector('.toolasha-collopt-plan-result').textContent).toBe('');
     });
 
     test('collapses on a header click', async () => {
