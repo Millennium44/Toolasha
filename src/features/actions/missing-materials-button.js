@@ -118,6 +118,46 @@ const PRODUCTION_TYPES = [
     '/action_types/tailoring',
 ];
 
+/** Label every Missing Mats button carries */
+const BUTTON_LABEL = 'Missing Mats Marketplace';
+
+/**
+ * What the button will buy: the lines that get a marketplace tab with something
+ * still missing. Coins never reach the bill, and a non-tradeable line cannot be
+ * bought, so neither is counted.
+ *
+ * @param {Array<Object>} materials - Lines from the material calculator
+ * @returns {Array<Object>} Lines with a quantity to buy
+ */
+export function buyableMissing(materials) {
+    if (!Array.isArray(materials)) return [];
+    return materials.filter((m) => m && m.isTradeable !== false && m.missing > 0 && m.itemHrid !== '/items/coin');
+}
+
+/**
+ * Label and tooltip for a button, from the same lines it will open.
+ *
+ * @param {Array<Object>} materials - Lines from the material calculator
+ * @param {{note?: string}} [options] - `note` is appended to the tooltip
+ * @returns {{label: string, title: string, count: number}} Nothing missing leaves the plain label
+ */
+export function describeMissingMaterials(materials, { note = '' } = {}) {
+    const buy = buyableMissing(materials);
+    if (buy.length === 0) return { label: BUTTON_LABEL, title: '', count: 0 };
+    const list = buy.map((m) => `${m.itemName} ×${formatWithSeparator(m.missing)}`).join(', ');
+    const title = `Will buy: ${list}${
+        note
+            ? `
+${note}`
+            : ''
+    }`;
+    return {
+        label: `${BUTTON_LABEL} · ${buy.length} ${buy.length === 1 ? 'item' : 'items'}`,
+        title,
+        count: buy.length,
+    };
+}
+
 /**
  * Initialize missing materials button feature
  */
@@ -534,7 +574,11 @@ function createEnhancementMissingMaterialsButton(
 ) {
     const button = document.createElement('button');
     button.id = 'mwi-missing-mats-button';
-    button.textContent = 'Missing Mats Marketplace';
+    const summary = describeMissingMaterials(missingMaterials, {
+        note: repeatCount === null ? 'Repeat is ∞: quantities are for the expected attempts to reach the target.' : '',
+    });
+    button.textContent = summary.label;
+    button.title = summary.title;
     button.disabled = disabled;
     button.style.cssText = `
         width: 100%;
@@ -649,9 +693,10 @@ async function handleEnhancementMissingMaterialsClick(
 function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, disabled = false) {
     const button = document.createElement('button');
     button.id = 'mwi-missing-mats-button';
-    button.textContent = 'Missing Mats Marketplace';
+    const summary = describeMissingMaterials(missingMaterials);
+    button.textContent = summary.label;
     button.disabled = disabled;
-    button.title = disabled && numActions <= 0 ? 'Enter a quantity to check missing materials' : '';
+    button.title = disabled && numActions <= 0 ? 'Enter a quantity to check missing materials' : summary.title;
     button.style.cssText = `
         width: 100%;
         box-sizing: border-box;
