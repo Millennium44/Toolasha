@@ -16,7 +16,13 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(),
         listStores: async () => Object.keys(storeState.stores),
-        getAll: async (name) => ({ ...(storeState.stores[name] || {}) }),
+        getAll: async (name) => {
+            // Something else running while a build waits on a read
+            const during = storeState.duringGetAll;
+            storeState.duringGetAll = null;
+            if (during) await during();
+            return { ...(storeState.stores[name] || {}) };
+        },
         tryGet: async (key, name) => {
             if (storeState.unreadable) return null;
             const store = storeState.stores[name] || {};
@@ -91,6 +97,7 @@ beforeEach(() => {
     storeState.stores = { settings: {} };
     storeState.putAllCalls = [];
     storeState.unreadable = false;
+    storeState.duringGetAll = null;
     importedPayloads.length = 0;
     _resetExternalKeys();
 });
@@ -495,6 +502,56 @@ describe('review follow-ups', () => {
         expect((await unregisterSyncKeys({ owner: 'second-script', prefixes: ['secondScriptOld_'] })).ok).toBe(false);
         // One it holds can still be registered again
         expect((await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptKey0_'] })).ok).toBe(true);
+        await externalKeysSettled();
+    });
+});
+
+describe('review round 2', () => {
+    test("a payload that swaps one of an owner's prefixes for another lands at the cap", async () => {
+        const held = Array.from({ length: EXTERNAL_PREFIX_LIMIT }, (_, index) => `otherScriptKey${index}_`);
+        await registerSyncKeys({ owner: OWNER, prefixes: held });
+        const later = Date.now() + 60_000;
+        const prefixes = Object.fromEntries(held.slice(1).map((prefix) => [prefix, later - 1]));
+        // Sorts before the prefix it replaces
+        prefixes.otherScriptAll_ = later;
+        const record = { [OWNER]: { prefixes, removed: { [held[0]]: later } } };
+        expect(learnExternalKeysFromText(payloadText({}, record))).toBe(true);
+        expect(ownsKey('settings', 'otherScriptAll_x')).toBe(true);
+        expect(ownsKey('settings', `${held[0]}x`)).toBe(false);
+        await externalKeysSettled();
+    });
+
+    test('a prefix one owner withdrew can be claimed by another in the same payload', async () => {
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptPrefs_'] });
+        const later = Date.now() + 60_000;
+        const record = {
+            // Sorts before the owner that withdrew it
+            'another-script': { prefixes: { otherScriptPrefs_x: later }, removed: {} },
+            [OWNER]: { prefixes: {}, removed: { otherScriptPrefs_: later } },
+        };
+        learnExternalKeysFromText(payloadText({}, record));
+        expect(await registeredSyncKeys()).toEqual({ 'another-script': ['otherScriptPrefs_x'] });
+        await externalKeysSettled();
+    });
+
+    test('a registration landing while a payload is built does not split its registry from its keys', async () => {
+        storeState.stores.settings = { otherScriptLive: 1, watchlist: ['a'] };
+        storeState.duringGetAll = () => registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
+        const payload = JSON.parse(await buildPayloadJSON('settings'));
+        // Built under the registry it started with: neither the key nor the prefix
+        expect(payload.stores.settings).toEqual({ watchlist: ['a'] });
+        expect(payload.externalKeys).toBeUndefined();
+        await externalKeysSettled();
+    });
+
+    test('a withdrawal landing while a payload is built does not split its registry from its keys', async () => {
+        storeState.stores.settings = { otherScriptLive: 1 };
+        await registerSyncKeys({ owner: OWNER, prefixes: ['otherScriptLive'] });
+        storeState.duringGetAll = () => unregisterSyncKeys({ owner: OWNER });
+        const payload = JSON.parse(await buildPayloadJSON('settings'));
+        // Built under the registry it started with: the key, and its prefix still registered
+        expect(payload.stores.settings).toEqual({ otherScriptLive: 1 });
+        expect(liveIn(payload.externalKeys)).toEqual(['otherScriptLive']);
         await externalKeysSettled();
     });
 });

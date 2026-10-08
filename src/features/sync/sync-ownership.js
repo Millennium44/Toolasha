@@ -570,30 +570,55 @@ function readOwnerEntries(value) {
  */
 export function learnExternalKeyPrefixes(record, { notify = true, trusted = false } = {}) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
-    let changed = false;
+    const incoming = [];
     for (const owner of Object.keys(record).sort()) {
         if (!EXTERNAL_OWNER_PATTERN.test(owner)) continue;
-        const incoming = readOwnerEntries(record[owner]).sort((a, b) => a.prefix.localeCompare(b.prefix));
-        for (const { prefix, live, at } of incoming) {
-            if (checkExternalPrefix(prefix)) continue;
-            const entries = externalEntries.get(owner) || new Map();
-            const held = entries.get(prefix);
-            const newer = !held || at > held.at || (at === held.at && held.live && !live);
-            if (!newer || (held && held.live === live && held.at === at)) continue;
-            // Full: nothing it does not hold, registered or removed (see "What may be registered")
-            if (!held && !trusted && externalEntryCount >= EXTERNAL_ENTRY_LIMIT) continue;
-            if (live && !held?.live && !trusted) {
-                if (checkAgainstOtherOwners(owner, prefix)) continue;
-                if (externalPrefixList.length >= EXTERNAL_PREFIX_LIMIT) continue;
-            }
-            entries.set(prefix, { live, at });
-            externalEntries.set(owner, entries);
-            settle();
-            changed = true;
+        for (const entry of readOwnerEntries(record[owner])) incoming.push({ owner, ...entry });
+    }
+    // Every removal before any registration, across every owner: a payload in
+    // which an owner swapped one prefix for another, or one owner withdrew a
+    // prefix another then claimed, is only within the cap and free of overlap
+    // once its removals have landed. Taken in name order instead, the new
+    // prefix could be judged against the one it replaces and refused
+    incoming.sort(
+        (a, b) => Number(a.live) - Number(b.live) || a.owner.localeCompare(b.owner) || a.prefix.localeCompare(b.prefix)
+    );
+    let changed = false;
+    for (const { owner, prefix, live, at } of incoming) {
+        if (checkExternalPrefix(prefix)) continue;
+        const entries = externalEntries.get(owner) || new Map();
+        const held = entries.get(prefix);
+        const newer = !held || at > held.at || (at === held.at && held.live && !live);
+        if (!newer || (held && held.live === live && held.at === at)) continue;
+        // Full: nothing it does not hold, registered or removed (see "What may be registered")
+        if (!held && !trusted && externalEntryCount >= EXTERNAL_ENTRY_LIMIT) continue;
+        if (live && !held?.live && !trusted) {
+            if (checkAgainstOtherOwners(owner, prefix)) continue;
+            if (externalPrefixList.length >= EXTERNAL_PREFIX_LIMIT) continue;
         }
+        entries.set(prefix, { live, at });
+        externalEntries.set(owner, entries);
+        settle();
+        changed = true;
     }
     if (changed && notify) announce();
     return changed;
+}
+
+/**
+ * Ownership as it stands now, frozen: the registry record and an `owns` that
+ * answers from the registered prefixes of this moment, whatever registers or
+ * withdraws afterwards.
+ *
+ * For a reader that awaits between deciding what it carries and writing down
+ * the registry it carried it under — a payload build reads one store at a
+ * time — so the two cannot disagree.
+ *
+ * @returns {{record: Object, owns: (storeName: string, key: string) => boolean}} The snapshot
+ */
+export function ownershipSnapshot() {
+    const prefixes = externalPrefixList.slice();
+    return { record: externalKeyRecord(), owns: (storeName, key) => ownsKeyWith(prefixes, storeName, key) };
 }
 
 /**
@@ -678,13 +703,24 @@ export function isSyncedStore(storeName) {
  * @returns {boolean} True when the key may be uploaded and restored
  */
 export function ownsKey(storeName, key) {
+    // Another script's keys it asked to have carried — see "Keys another script
+    // opts in" above. Read from memory, so this stays synchronous and pure
+    return ownsKeyWith(externalPrefixList, storeName, key);
+}
+
+/**
+ * {@link ownsKey} against a given list of registered prefixes.
+ * @param {string[]} external - Prefixes other scripts registered
+ * @param {string} storeName - Object store the key lives in
+ * @param {string} key - Storage key
+ * @returns {boolean} True when the key may be uploaded and restored
+ */
+function ownsKeyWith(external, storeName, key) {
     if (!KEY_FILTERED_STORES.includes(storeName)) return isSyncedStore(storeName);
     const name = String(key);
     if (OWNED_KEY_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
     if (OWNED_KEY_PATTERNS.some((pattern) => pattern.test(name))) return true;
-    // Another script's keys it asked to have carried — see "Keys another script
-    // opts in" above. Read from memory, so this stays synchronous and pure
-    return externalPrefixList.some((prefix) => name.startsWith(prefix));
+    return external.some((prefix) => name.startsWith(prefix));
 }
 
 /**
@@ -702,14 +738,14 @@ export function ownsKey(storeName, key) {
  * @returns {{owned: Record<string, *>, foreignKeys: number, foreignBytes: number}}
  *   The entries that may travel, and the weight of the ones that may not
  */
-export function partitionOwnedKeys(storeName, entries) {
+export function partitionOwnedKeys(storeName, entries, owns = ownsKey) {
     const source = entries || {};
     if (!KEY_FILTERED_STORES.includes(storeName)) {
         return { owned: source, foreignKeys: 0, foreignBytes: 0 };
     }
 
     const keys = Object.keys(source);
-    if (keys.every((key) => ownsKey(storeName, key))) {
+    if (keys.every((key) => owns(storeName, key))) {
         return { owned: source, foreignKeys: 0, foreignBytes: 0 };
     }
 
@@ -717,7 +753,7 @@ export function partitionOwnedKeys(storeName, entries) {
     let foreignKeys = 0;
     let foreignBytes = 0;
     for (const key of keys) {
-        if (ownsKey(storeName, key)) {
+        if (owns(storeName, key)) {
             owned[key] = source[key];
             continue;
         }

@@ -22,7 +22,13 @@
 
 import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
-import { isSyncedStore, partitionOwnedKeys, externalKeyRecord, learnExternalKeyPrefixes } from './sync-ownership.js';
+import {
+    isSyncedStore,
+    partitionOwnedKeys,
+    externalKeyRecord,
+    learnExternalKeyPrefixes,
+    ownershipSnapshot,
+} from './sync-ownership.js';
 import { ensureExternalKeysLoaded, externalKeysSettled } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
@@ -234,8 +240,7 @@ export function localStampWins(localStamp, incomingStamp) {
  *
  * @returns {string} The field and its trailing comma, or '' when nothing is registered
  */
-function externalKeysField() {
-    const registry = externalKeyRecord();
+function externalKeysField(registry = externalKeyRecord()) {
     return Object.keys(registry).length > 0 ? `"externalKeys":${JSON.stringify(registry)},` : '';
 }
 
@@ -404,12 +409,16 @@ export async function buildPayloadJSON(scope = 'settings') {
     const allStores = await storage.listStores();
     const ours = allStores.filter(isSyncedStore);
     const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
+    // One view of ownership for the whole build. The stores are read one at a
+    // time, and a registration landing between two reads must not leave the
+    // field naming one registry and the stores carrying another's keys
+    const ownership = ownershipSnapshot();
 
     const parts = [
         `{"formatVersion":${FORMAT_VERSION},`,
         `"exportedAt":${JSON.stringify(new Date().toISOString())},`,
         `"syncScope":${JSON.stringify(scope)},`,
-        externalKeysField(),
+        externalKeysField(ownership.record),
         '"stores":{',
     ];
 
@@ -418,7 +427,7 @@ export async function buildPayloadJSON(scope = 'settings') {
     let foreignBytes = 0;
     for (const storeName of storeNames) {
         const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
-        const partition = partitionOwnedKeys(storeName, entries);
+        const partition = partitionOwnedKeys(storeName, entries, ownership.owns);
         foreignKeys += partition.foreignKeys;
         foreignBytes += partition.foreignBytes;
         const safe = storeName === SETTINGS_STORE ? redactSettingsStore(partition.owned) : partition.owned;
