@@ -307,6 +307,30 @@ describe('a self-protecting item reads the stack the slot holds', () => {
     });
 });
 
+describe('a zero limit is not an infinity', () => {
+    test('a self-protection stack that is absent reads 0 attempts, not ∞', async () => {
+        state.inventory = [stack('/items/cheese', 100000)];
+        state.predictions = {
+            expectedAttempts: 600,
+            expectedProtections: 100,
+            perActionTime: 10,
+            successMultiplier: 1,
+        };
+        const panel = buildPanel({
+            target: 10,
+            protectFrom: 5,
+            protection: 'cheese_sword',
+            protectionLevel: 3,
+            repeat: '∞',
+        });
+
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+        expect(repeatLine(stats)).toBe('To +10: 0 attempts — nothing affordable after reserves');
+    });
+});
+
 describe('redraw cost', () => {
     test('one inventory walk serves the panel, and repeated re-renders inside the throttle window reuse it', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
