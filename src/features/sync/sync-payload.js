@@ -755,9 +755,6 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
         const merged = histories.merged.filter(changed);
         const mergeFailed = histories.failed.filter(changed);
 
-        // Before the import latches the stores until the reload
-        for (const { store, key } of displaced) await storage.delete(key, store);
-
         let imported;
         try {
             imported = await importEverything(payload);
@@ -766,6 +763,12 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
             throw error;
         }
         const { restored, expected, failed, complete } = imported;
+        // Only where the snapshots that push them out landed, and past the
+        // latch the import (or an earlier pull) set: they are part of this restore
+        const landedShort = new Set((failed || []).map((entry) => entry.store));
+        for (const { store, key } of displaced) {
+            if (!landedShort.has(store)) await storage.delete(key, store, { bypassRestoreLatch: true });
+        }
         // The records were forgotten because the maps were about to land. A
         // settings store that did not land kept its old maps, which still match
         // the old records — one aborted transaction takes every key with it

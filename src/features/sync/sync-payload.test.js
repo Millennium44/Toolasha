@@ -33,7 +33,9 @@ vi.mock('../../core/storage.js', () => ({
         endRestore: async () => {
             flushLog.push('endRestore');
         },
-        delete: async (key, name) => {
+        delete: async (key, name, options = {}) => {
+            storeState.deleteCalls = [...(storeState.deleteCalls || []), { key, name, options }];
+            if (storeState.latched?.has(name) && !options.bypassRestoreLatch) return false;
             delete (storeState.stores[name] || {})[key];
             return true;
         },
@@ -1917,6 +1919,38 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         // Hours 0-4 fall out; with the five newest imported, the store holds 25
         expect(Object.keys(storeState.stores[DAY])).toHaveLength(20);
         expect(Object.keys(importedPayloads[0].stores[DAY])).toHaveLength(5);
+    });
+
+    test('displaced snapshots are deleted past a latch an earlier pull left on the store', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        storeState.latched = new Set([DAY]);
+        try {
+            await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0 + 20 * 3_600_000, 10) }), {
+                mode: 'merge',
+                baseline: {},
+            });
+            expect(Object.keys(storeState.stores[DAY])).toHaveLength(20);
+        } finally {
+            storeState.latched = null;
+        }
+    });
+
+    test('displaced snapshots stay when the snapshots that displace them did not land', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        importOutcome.failed = [{ store: DAY, expected: 5, written: 0 }];
+        importOutcome.complete = false;
+        try {
+            await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0 + 20 * 3_600_000, 10) }), {
+                mode: 'merge',
+                baseline: {},
+            });
+        } catch {
+            // An incomplete apply may be reported either way; the store is what matters
+        } finally {
+            importOutcome.failed = [];
+            importOutcome.complete = true;
+        }
+        expect(Object.keys(storeState.stores[DAY])).toHaveLength(25);
     });
 
     test('snapshots this device would drop by itself are left to its own pruning', async () => {
