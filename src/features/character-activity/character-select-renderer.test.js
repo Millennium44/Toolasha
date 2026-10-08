@@ -242,6 +242,20 @@ describe('drawing into character select', () => {
         expect(blocks()[0].textContent).toContain('Queue ends');
     });
 
+    test('the status line is cut with an ellipsis and carries its full text as a title', async () => {
+        store.records['1234'] = storedRecord('1234', 4 * HOUR);
+        const root = mountCharacterSelect(['1234']);
+
+        await renderer.onCharacterSelectMounted(root);
+
+        const status = [...blocks()[0].querySelectorAll('span')].find((span) =>
+            span.textContent.includes('Queue ends')
+        );
+        expect(status.style.textOverflow).toBe('ellipsis');
+        expect(status.style.minWidth).toBe('0');
+        expect(status.title).toBe(status.textContent);
+    });
+
     test('a slot whose link is nested inside a wrapper still resolves', async () => {
         const root = mountCharacterSelect([], false);
         addSlots(root, ['30404'], { nestedLink: true });

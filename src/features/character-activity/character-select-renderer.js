@@ -195,8 +195,9 @@ class CharacterSelectRenderer {
         limiterRow.appendChild(dot);
 
         const limiterText = document.createElement('span');
-        limiterText.style.cssText = 'white-space:nowrap;';
+        limiterText.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         limiterText.textContent = state.limiterText;
+        limiterText.title = state.limiterText;
         limiterRow.appendChild(limiterText);
 
         block.appendChild(activityRow);

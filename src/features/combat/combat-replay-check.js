@@ -3853,7 +3853,10 @@ registerRow({
         const value = document.createElement('span');
         value.textContent = summaryLine(comparison);
         value.style.color = verdictColor(comparison.metrics.find((metric) => metric.key === 'dps')?.verdict);
+        // The summary is a sentence: cut it to the row with an ellipsis, whole in the tooltip
+        Object.assign(value.style, { minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis' });
         value.style.whiteSpace = 'nowrap';
+        value.title = value.textContent;
 
         container.append(label, value);
         container.title = 'Double-click for the full comparison, its margins and its caveats.';

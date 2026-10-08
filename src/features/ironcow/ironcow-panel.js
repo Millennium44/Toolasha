@@ -37,6 +37,7 @@ import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floati
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
+import { fitValueToBox } from '../../utils/wrap-long-value.js';
 import { actionTimeDisplay } from '../../utils/bundle-bridge.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import {
@@ -222,8 +223,8 @@ function card(title) {
 function line(label, value, color = COLORS.text, title = '') {
     const row = document.createElement('div');
     Object.assign(row.style, { display: 'flex', gap: '8px', alignItems: 'baseline' });
-    const name = span(label, { color: COLORS.textDim, flex: '1' });
-    const figure = span(value, { color, whiteSpace: 'nowrap' });
+    const name = span(label, { color: COLORS.textDim, flex: '1 0 auto' });
+    const figure = fitValueToBox(span(value, { color }), value);
     if (title) row.title = title;
     row.append(name, figure);
     return row;

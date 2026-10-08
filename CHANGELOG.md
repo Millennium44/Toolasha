@@ -13,6 +13,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Panel rows wrap long text
 
 - A long value in a panel row, such as the sync pull summary, now wraps inside its card instead of running past the edge and forcing a sideways scroll.
+- The same fix reaches the Iron Bell and combat panel rows, the consumables footer, the sim accuracy overlay and the character-select status line, which wrap or cut off with the full text on hover.
 
 ### Sync pulls stop asking for needless reloads
 
