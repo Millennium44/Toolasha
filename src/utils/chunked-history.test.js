@@ -16,11 +16,14 @@ const storageMock = vi.hoisted(() => {
     const store = new Map();
     const mock = {
         store,
+        FOLD_DELETE: Symbol('fold-delete'),
         get: vi.fn(async (key, storeName, fallback) => (store.has(key) ? store.get(key) : fallback)),
         // A folding write is handed what is stored when it lands, as the real one is
         set: vi.fn(async (key, value, storeName, immediate, options) => {
             const fold = options?.fold;
-            store.set(key, fold ? (fold(store.get(key), value) ?? value) : value);
+            const next = fold ? (fold(store.get(key), value) ?? value) : value;
+            if (next === mock.FOLD_DELETE) store.delete(key);
+            else store.set(key, next);
             return true;
         }),
         delete: vi.fn(async (key) => {
@@ -89,7 +92,9 @@ beforeEach(() => {
     );
     storageMock.set.mockImplementation(async (key, value, storeName, immediate, options) => {
         const fold = options?.fold;
-        storageMock.store.set(key, fold ? (fold(storageMock.store.get(key), value) ?? value) : value);
+        const next = fold ? (fold(storageMock.store.get(key), value) ?? value) : value;
+        if (next === storageMock.FOLD_DELETE) storageMock.store.delete(key);
+        else storageMock.store.set(key, next);
         return true;
     });
     storageMock.delete.mockImplementation(async (key) => {
@@ -203,7 +208,7 @@ describe('pruning deletes old chunks', () => {
         // A rolling window dropping its oldest point
         await history.save('c1', [at(2026, 7), at(2026, 8)]);
 
-        expect(storageMock.delete).toHaveBeenCalledWith('rec_c1_2026-06', 'testStore');
+        // Removed through a folding write, which deletes the key when nothing else is in it
         expect(storageMock.store.has('rec_c1_2026-06')).toBe(false);
         expect(storageMock.store.has('rec_c1_2026-07')).toBe(true);
     });
@@ -643,6 +648,8 @@ describe('the snapshot only claims what was written', () => {
 
         storageMock.set.mockImplementation(async () => false);
         await store.save('c1', [at(2026, 6)]);
+        // The refusal is reported when the write settles, a few ticks after the save returns
+        for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
 
         // Before: the snapshot said the chunk was on disk, so an identical
         // future save compared equal and never wrote it again
@@ -1481,5 +1488,101 @@ describe('a chunk write folds into what is on disk for that chunk', () => {
             { d: '2026-10-07', v: 9 },
             { d: '2026-10-08', v: 1 },
         ]);
+    });
+});
+
+describe('review round: folds that rerun, removals, and the owner’s prune', () => {
+    const onDisk = (key) => (storageMock.store.get(key) || []).map((point) => point.v);
+    const JUNE = 'rec_c1_2026-06';
+    const JULY = 'rec_c1_2026-07';
+
+    test('a fold rerun after a write that did not land keeps the entry it adopted', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1)]);
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 5)]);
+
+        // The first transaction runs the fold and then aborts: nothing lands, and
+        // storage requeues the same value with the same fold
+        let requeued = null;
+        storageMock.set.mockImplementationOnce(async (key, value, storeName, immediate, options) => {
+            options.fold(storageMock.store.get(key), value);
+            requeued = { key, value, fold: options.fold };
+            return false;
+        });
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+        for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+        // Nothing reached memory from a write that did not land
+        expect((await history.load('c1')).map((point) => point.v)).toEqual(['2026-7-1', '2026-7-10']);
+
+        // The retry: the same fold against the same disk
+        storageMock.store.set(requeued.key, requeued.fold(storageMock.store.get(requeued.key), requeued.value));
+
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-5', '2026-7-10']);
+    });
+
+    test('a save built before another write adopted an entry does not drop it', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7, 1)]);
+        storageMock.store.set(JULY, [at(2026, 7, 1), at(2026, 7, 5)]);
+
+        // Two saves queued before either write lands, as the debounce holds them
+        const queued = [];
+        storageMock.set.mockImplementation(async (key, value, storeName, immediate, options) => {
+            queued.push({ key, value, fold: options?.fold });
+            return true;
+        });
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10)]);
+        await history.save('c1', [at(2026, 7, 1), at(2026, 7, 10), at(2026, 7, 12)]);
+
+        // They land in order; the second was built before the first adopted the 5th
+        for (const write of queued) {
+            storageMock.store.set(write.key, write.fold(storageMock.store.get(write.key), write.value));
+        }
+
+        expect(onDisk(JULY)).toEqual(['2026-7-1', '2026-7-5', '2026-7-10', '2026-7-12']);
+    });
+
+    test('a chunk emptied here keeps what another tab or a pull put in it', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6, 1), at(2026, 7, 1)]);
+        storageMock.store.set(JUNE, [at(2026, 6, 1), at(2026, 6, 15)]);
+
+        // The window slides past June
+        await history.save('c1', [at(2026, 7, 1)]);
+
+        expect(onDisk(JUNE)).toEqual(['2026-6-15']);
+    });
+
+    test('a chunk emptied here, with nothing foreign in it, still loses its key', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6, 1), at(2026, 7, 1)]);
+
+        await history.save('c1', [at(2026, 7, 1)]);
+
+        expect(storageMock.store.has(JUNE)).toBe(false);
+    });
+
+    test('an adopted entry the owner’s retention drops is not carried, and leaves the disk copy too', async () => {
+        let cutoff = Date.UTC(2026, 6, 1);
+        const history = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'rec',
+            legacyKey: (charId) => `legacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            pruneEntries: (points) => points.filter((point) => point.t >= cutoff),
+            label: 'PruneTest',
+        });
+        await history.save('c1', [at(2026, 7, 10)]);
+        storageMock.store.set(JULY, [at(2026, 7, 2), at(2026, 7, 10)]);
+        await history.save('c1', [at(2026, 7, 10), at(2026, 7, 12)]);
+        expect(onDisk(JULY)).toEqual(['2026-7-2', '2026-7-10', '2026-7-12']);
+
+        // Retention moves past the 2nd; the recorder prunes its own list, which never held it
+        cutoff = Date.UTC(2026, 6, 5);
+        await history.save('c1', [at(2026, 7, 10), at(2026, 7, 12), at(2026, 7, 14)]);
+
+        expect(onDisk(JULY)).toEqual(['2026-7-10', '2026-7-12', '2026-7-14']);
+        expect(storageMock.store.has('recTomb_c1')).toBe(false);
     });
 });

@@ -1068,13 +1068,13 @@ class ChunkedHistory {
         const grouped = this._group(this._entries);
         for (const chunkId of chunkIds) {
             const bucket = grouped.get(chunkId);
-            if (bucket) this._noteKnown(chunkId, bucket, this._snapshot.get(chunkId));
+            this._noteKnown(chunkId, bucket || [], this._snapshot.get(chunkId));
             this._snapshot.delete(chunkId);
             // Every copy this chunk held folded into another chunk's: the key goes, rather than
             // staying on disk to be read and folded again on every load
             const write = bucket
                 ? this._writeChunk(charId, chunkId, bucket, { owned: true, written: null })
-                : storage.delete(this.keyFor(charId, chunkId), this.storeName);
+                : this._removeChunk(charId, chunkId, true);
             Promise.resolve(write).catch((error) => {
                 console.error(`[${this.label}] Writing back folded chunk ${chunkId} failed:`, error);
             });
@@ -1211,7 +1211,8 @@ class ChunkedHistory {
         // no longer has any, and pruning is deleting its key
         for (const chunkId of snapshot.keys()) {
             if (next.has(chunkId)) continue;
-            pending.push(storage.delete(this.keyFor(charId, chunkId), this.storeName));
+            if (owns) this._noteKnown(chunkId, [], snapshot.get(chunkId));
+            pending.push(this._removeChunk(charId, chunkId, owns));
         }
 
         if (owns) this._snapshot = next;
@@ -1243,7 +1244,59 @@ class ChunkedHistory {
             if (held.has(id)) this._adopted.delete(id);
             else extra.push(entry);
         }
-        return extra.length === 0 ? list : this._sorted([...list, ...extra]);
+        const kept = this._pruneAdopted(list, extra);
+        return kept.length === 0 ? list : this._sorted([...list, ...kept]);
+    }
+
+    /**
+     * The adopted entries the owner's own retention still keeps.
+     *
+     * A caller prunes its own list before it saves — rows past a date, points
+     * thinned to an outline — and an adopted entry it has never seen escapes
+     * that, so it would be carried past retention until the next load. Each
+     * chunk's adopted entries are judged beside the caller's entries in the
+     * same chunk by `pruneEntries`, exactly as the sync fold judges a chunk; one
+     * the prune drops is let go here (`_known`), so the next write leaves it
+     * out of the disk copy too rather than folding it straight back.
+     * @param {Array<Object>} list - What the caller passed
+     * @param {Array<Object>} extra - Adopted entries the caller does not hold
+     * @returns {Array<Object>} The adopted entries to keep
+     * @private
+     */
+    _pruneAdopted(list, extra) {
+        if (!this.pruneEntries || extra.length === 0) return extra;
+        const mine = this._group(list);
+        const kept = [];
+        for (const [chunkId, adopted] of this._group(extra)) {
+            let survivors;
+            try {
+                const pruned = this.pruneEntries([...(mine.get(chunkId) || []), ...adopted]);
+                if (!Array.isArray(pruned)) {
+                    kept.push(...adopted);
+                    continue;
+                }
+                survivors = new Set(pruned.map((entry) => this._identity(entry)));
+            } catch (error) {
+                console.error(`[${this.label}] Pruning adopted entries failed; keeping them:`, error);
+                kept.push(...adopted);
+                continue;
+            }
+            for (const entry of adopted) {
+                const id = this._identity(entry);
+                if (survivors.has(id)) {
+                    kept.push(entry);
+                    continue;
+                }
+                this._adopted.delete(id);
+                let known = this._known.get(chunkId);
+                if (!known) {
+                    known = new Set();
+                    this._known.set(chunkId, known);
+                }
+                known.add(id);
+            }
+        }
+        return kept;
     }
 
     /**
@@ -1300,29 +1353,50 @@ class ChunkedHistory {
      *   holds was let go of here — deleted, pruned, slid out of a window — and
      *   stays gone;
      * - one a tombstone matches stays gone;
-     * - anything else is news and is kept, on disk and — when the store still
-     *   holds the same character — in memory, so the next save carries it too.
+     * - anything else is news and is kept, on disk and — once the write has
+     *   committed, and while the store still holds the same character — in
+     *   memory, so the next save carries it too.
+     *
+     * **An adopted entry is never added to `_known` here.** The fold can run
+     * more than once for one write — a transaction that aborts is requeued
+     * with the same value and the same fold — and an id the first run had
+     * marked as held would read, on the rerun, as one this store let go of,
+     * and be written out of the disk copy. It joins `_known` only when a
+     * bucket holding it is written (`_noteKnown`), which is when its absence
+     * from a later bucket really is a removal.
+     *
+     * An empty bucket is the chunk's removal: what is left on disk after the
+     * same rule is written, and the key is deleted only when nothing is.
      *
      * Debounced exactly as before, so the write count does not change: a chunk
      * whose bucket matches its snapshot is still not written at all, and a disk
      * copy that adds nothing leaves the bucket to be written as it is.
      * @param {string} charId - Whose record
      * @param {string} chunkId - Which bucket
-     * @param {Array<Object>} bucket - The entries to write
-     * @param {{owned: boolean, written: ({json: string, count: number}|null)}} options - Whether the
-     *   store holds this character's memory (a save for anyone else folds as a plain union, and
-     *   tells memory nothing), and the snapshot entry this write set, if any
-     * @returns {Promise<boolean>} The write's outcome
+     * @param {Array<Object>} bucket - The entries to write; empty to remove the chunk
+     * @param {{owned: boolean, written: ({json: string, count: number}|null), immediate?: boolean}} options -
+     *   Whether the store holds this character's memory (a save for anyone else folds as a plain
+     *   union, and tells memory nothing), the snapshot entry this write set, if any, and whether
+     *   to write now rather than after the debounce (default: the store's own setting)
+     * @returns {Promise<boolean>} The write's outcome, settled at commit
      * @private
      */
-    _writeChunk(charId, chunkId, bucket, { owned, written }) {
+    _writeChunk(charId, chunkId, bucket, { owned, written, immediate = this.immediate }) {
         // Taken now, not when the write lands: a character switch in between
         // replaces these maps, and the fold must judge by the ones this write
         // was made under
         const known = owned ? this._known : new Map();
         const stones = owned ? this._tombs : {};
+        const removal = storage.FOLD_DELETE;
+        /** What the fold's last run kept from disk, for memory once the write commits */
+        let outcome = null;
         const fold = (stored, value) => {
-            if (!Array.isArray(stored) || stored.length === 0 || !Array.isArray(value)) return value;
+            outcome = null;
+            if (!Array.isArray(value)) return value;
+            const empty = () => (value.length === 0 && removal !== undefined ? removal : value);
+            if (!Array.isArray(stored) || stored.length === 0) return empty();
+            // The common case, and the cheap one: the disk holds exactly what is being written
+            if (stored.length === value.length && JSON.stringify(stored) === JSON.stringify(value)) return value;
             const at = new Map();
             value.forEach((entry, index) => {
                 const id = this._identity(entry);
@@ -1353,20 +1427,46 @@ class ChunkedHistory {
                 out.push(entry);
                 adopted.push(entry);
             }
-            if (!out) return value;
+            if (!out) return empty();
             const result = this._sorted(out);
-            if (owned && adopted.length > 0) this._adopt(chunkId, adopted, result, known, written);
+            outcome = { result, adopted };
             return result;
         };
-        return storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate, { fold });
+        const key = this.keyFor(charId, chunkId);
+        // A storage without folding deletes (a stand-in) removes the chunk outright, as before
+        if (bucket.length === 0 && removal === undefined) return Promise.resolve(storage.delete(key, this.storeName));
+        return Promise.resolve(storage.set(key, bucket, this.storeName, immediate, { fold })).then((ok) => {
+            if (ok !== false && owned && outcome && outcome.adopted.length > 0) {
+                this._adopt(chunkId, outcome.adopted, outcome.result, known, written);
+            }
+            return ok;
+        });
     }
 
     /**
-     * Take entries a chunk write found on disk into memory.
+     * Remove a chunk that has no entries left in memory, folded like a write.
+     *
+     * A prune or a delete empties a chunk here; another tab, or a sync pull,
+     * may have put entries into it that this store never held. Those are kept
+     * (written as what is left) and the key is deleted only when nothing is.
+     * Immediate, as the plain delete it replaces was.
+     * @param {string} charId - Whose record
+     * @param {string} chunkId - Which bucket
+     * @param {boolean} owned - Whether the store holds this character's memory
+     * @returns {Promise<boolean>} The outcome
+     * @private
+     */
+    _removeChunk(charId, chunkId, owned) {
+        return this._writeChunk(charId, chunkId, [], { owned, written: null, immediate: true });
+    }
+
+    /**
+     * Take entries a committed chunk write found on disk into memory.
      *
      * Only into the memory the write was made under: after a character switch
      * the store holds somebody else, and the entries are on disk for the next
-     * read of this one to find.
+     * read of this one to find. Called after the commit, never from inside the
+     * fold, so a write that did not land changes nothing here.
      * @param {string} chunkId - Which bucket
      * @param {Array<Object>} adopted - The entries folded in
      * @param {Array<Object>} result - The chunk as written
@@ -1377,16 +1477,10 @@ class ChunkedHistory {
      */
     _adopt(chunkId, adopted, result, known, written) {
         if (known !== this._known || !this._loaded) return;
-        let held = known.get(chunkId);
-        if (!held) {
-            held = new Set();
-            known.set(chunkId, held);
-        }
         const present = new Set(this._entries.map((entry) => this._identity(entry)));
         const fresh = [];
         for (const entry of adopted) {
             const id = this._identity(entry);
-            held.add(id);
             if (present.has(id)) continue;
             this._adopted.set(id, entry);
             fresh.push(entry);
@@ -1394,12 +1488,10 @@ class ChunkedHistory {
         if (fresh.length > 0) this._entries = this._sorted([...this._entries, ...fresh]);
         // What is on disk now, so the next save of an unchanged chunk is still
         // skipped rather than written once more to say the same thing. The
-        // entry itself is updated, not replaced: the save that made it may not
-        // have installed its snapshot yet, and one carried forward by a later
-        // save is still this same object. `foldedFrom` lets a write that then
-        // fails evict it all the same (see `_evictSnapshot`).
+        // entry is updated in place: one carried forward by a later save is
+        // still this same object, and one a later save replaced is no longer
+        // in the snapshot at all.
         if (written) {
-            written.foldedFrom = written.json;
             written.json = JSON.stringify(result);
             written.count = result.length;
         }
@@ -1473,8 +1565,7 @@ class ChunkedHistory {
      * @private
      */
     _evictSnapshot(chunkId, serialized) {
-        const held = this._snapshot.get(chunkId);
-        if (held?.json === serialized || held?.foldedFrom === serialized) this._snapshot.delete(chunkId);
+        if (this._snapshot.get(chunkId)?.json === serialized) this._snapshot.delete(chunkId);
     }
 
     /**
