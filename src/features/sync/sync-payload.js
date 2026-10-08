@@ -1253,6 +1253,9 @@ async function weighAgainstLocal(payload, baseline) {
     const sameByStore = new Map();
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
+        // Before the baseline rule removes any: a companion it kept as this
+        // device's is not one the download lacked
+        const carried = new Set(Object.keys(entries));
         let local;
         try {
             local = await storage.getAll(storeName);
@@ -1287,7 +1290,7 @@ async function weighAgainstLocal(payload, baseline) {
             if (!companion) continue;
             if (!same.has(key)) {
                 same.delete(companion);
-            } else if (!Object.hasOwn(entries, companion) && hidesAny(local[companion], entries[key])) {
+            } else if (!carried.has(companion) && hidesAny(local[companion], entries[key])) {
                 // The download carries no tombstones for this record, and this
                 // device's would hide some of it: the restore has to see the
                 // record to clear them
