@@ -4791,12 +4791,13 @@ class CombatSimUI {
 
                             // On % of best the Score colors by its own value (as the
                             // Upgrade tables do), not by being the column's top
-                            const scoreTint =
-                                col.key === 'score' && this._allZonesScoreScale === SCORE_PERCENT
-                                    ? scoreValueColor(val)
-                                    : null;
+                            const percentScore = col.key === 'score' && this._allZonesScoreScale === SCORE_PERCENT;
+                            const scoreTint = percentScore ? scoreValueColor(val) : null;
                             if (scoreTint) {
                                 style += ` color:${scoreTint};${isBest ? ' font-weight:600;' : ''}`;
+                            } else if (percentScore) {
+                                // A 0% Score has no tint and is never a column best, even when every row is 0
+                                style += ' color:#e0e0e0;';
                             } else if (isBest) {
                                 style += ' color:#4caf50; font-weight:600;';
                             } else if ((col.key === 'profit' || col.key === 'profitDay') && val < 0) {

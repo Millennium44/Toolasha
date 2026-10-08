@@ -2770,6 +2770,23 @@ describe('the all-zones table', () => {
                 expect(ui.panel.querySelector('#mwi-csim-results th[data-col="score"]').title).toContain('% of best');
             });
 
+            test('on % of best, a run where every zone scores 0 is not drawn as all-best', async () => {
+                ui._allZonesScoreScale = SCORE_PERCENT;
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fly', { xp: { defense: 0 }, profit: -100 }),
+                        result('Jungle', { xp: { defense: 0 }, profit: -50 }),
+                    ],
+                    1,
+                    {}
+                );
+                const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')];
+                const at = headers.findIndex((th) => th.dataset.col === 'score');
+                const cells = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map((tr) => tr.children[at]);
+                expect(cells.map((td) => td.textContent)).toEqual(['0', '0']);
+                for (const td of cells) expect(td.getAttribute('style')).not.toContain('#4caf50');
+            });
+
             test('a saved choice is restored, and an unknown stored value is ignored', async () => {
                 mocks.store.set('settings:combatSimAllZonesScoreScale', SCORE_PERCENT);
                 await ui._loadZonesScorePref();
