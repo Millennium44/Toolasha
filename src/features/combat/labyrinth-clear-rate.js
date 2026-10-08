@@ -3450,10 +3450,7 @@ class LabyrinthClearRate {
 
         try {
             for (const target of skillingTargets) {
-                const result =
-                    target.room.skillHrid === '/skills/enhancing'
-                        ? this.computeEnhancingClear(target.roomLevel)
-                        : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
+                const result = this.computeSkillingRoomClear(target.room.skillHrid, target.roomLevel);
                 if (result) {
                     this.appendTileBadge(target.cell, result);
                     markCalculated(target);
@@ -3848,6 +3845,69 @@ class LabyrinthClearRate {
     }
 
     /**
+     * A skilling or enhancing room's clear result under the inputs standing
+     * now. The floor badge pass and the Path planner both score skilling rooms
+     * through this, so the two cannot reach a room by different routes.
+     * @param {string} skillHrid - e.g. '/skills/woodcutting'
+     * @param {number} roomLevel - Room level
+     * @returns {Object|null} The clear result
+     */
+    computeSkillingRoomClear(skillHrid, roomLevel) {
+        return skillHrid === '/skills/enhancing'
+            ? this.computeEnhancingClear(roomLevel)
+            : this.computeSkillingClear(skillHrid, roomLevel);
+    }
+
+    /**
+     * Bring the floor's skilling badges up to the results the Path just
+     * planned with.
+     *
+     * A badge is the result of the floor pass that drew it, and nothing redraws
+     * it when what it was computed from changes — a loadout assignment, its
+     * gear, a crate, an upgrade, a level. The Path scores every skilling room
+     * afresh, so without this a badge reading 5% sat beside a plan that
+     * routed through the room at 15%. Only rooms that already carry a badge (or
+     * a stored result) and whose recorded inputs no longer match are redrawn;
+     * the rest are left as the floor pass left them.
+     *
+     * @param {Array<Object|null>} flat - Flat room grid the plan was built on
+     * @param {Array<HTMLElement>} cells - Grid cells, same order as `flat`
+     * @param {number} cols - Grid width
+     * @param {Map<string, Object>} results - `${skillHrid}:${roomLevel}` → result
+     */
+    syncSkillingTileBadges(flat, cells, cols, results) {
+        if (!results.size || !cols) return;
+        if (!this._tileResults) this._tileResults = new Map();
+        if (!this._calculatedTileInputs) this._calculatedTileInputs = new Map();
+        if (!this.calculatedTileKeys) this.calculatedTileKeys = new Set();
+        const inputsOf = this._tileInputsReader();
+        let changed = false;
+        for (let i = 0; i < flat.length; i++) {
+            const room = flat[i];
+            const cell = cells[i];
+            if (!room?.skillHrid || !cell || room.isCleared) continue;
+            if (String(room.roomType || '').endsWith('/treasure')) continue;
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            const result = results.get(`${room.skillHrid}:${roomLevel}`);
+            if (!result) continue;
+            const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+            const shown = !!cell.querySelector(`.${TILE_BADGE_CLASS}`) || this._tileResults.has(tileKey);
+            if (!shown) continue;
+            const inputs = inputsOf(room, roomLevel);
+            const recorded = this._calculatedTileInputs.get(tileKey);
+            if (recorded?.inputs === inputs && this._tileResults.get(tileKey)?.clearChance === result.clearChance) {
+                continue;
+            }
+            this.appendTileBadge(cell, result);
+            this._tileResults.set(tileKey, result);
+            this.calculatedTileKeys.add(tileKey);
+            this._calculatedTileInputs.set(tileKey, { inputs, cap: '' });
+            changed = true;
+        }
+        if (changed) refreshRoomDistribution();
+    }
+
+    /**
      * Classify a floor's rooms for the route planner.
      *
      * Position is the reliable structural signal: the grid always starts
@@ -3981,14 +4041,16 @@ class LabyrinthClearRate {
             // Treasure rooms, the exit and the entrance are freely enterable
             // and are never asked about.
             const chances = new Map();
+            // The whole result, not just its chance: the floor badges are
+            // brought up to date from these same objects below, so a badge and
+            // the plan drawn beside it can never quote two different figures
+            const skillingResults = new Map();
             const chanceOf = (room, roomLevel) => {
                 if (room.skillHrid && roomLevel > 0) {
                     const key = `${room.skillHrid}:${roomLevel}`;
                     if (!chances.has(key)) {
-                        const result =
-                            room.skillHrid === '/skills/enhancing'
-                                ? this.computeEnhancingClear(roomLevel)
-                                : this.computeSkillingClear(room.skillHrid, roomLevel);
+                        const result = this.computeSkillingRoomClear(room.skillHrid, roomLevel);
+                        if (result) skillingResults.set(key, result);
                         chances.set(key, result ? result.clearChance : 1);
                     }
                     return chances.get(key);
@@ -4052,6 +4114,7 @@ class LabyrinthClearRate {
                 return;
             }
             const { tiles } = this.buildPathTiles(fresh, { threshold, unknownMode, chanceOf });
+            this.syncSkillingTileBadges(fresh, cells, cols, skillingResults);
 
             const path = computeLabyrinthPath(tiles, cols);
             if (!path) {
