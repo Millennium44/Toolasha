@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab skilling badges match the Path
+
+- Pressing Path now redraws a skilling room badge left over from an earlier calculation, so the badge and the planned route quote the same clear chance, and the skilling room tooltip opens with its Clear Chance, laid out row for row like the combat tooltip.
+
 ### Synced days no longer count twice
 
 - A sync now merges the two copies of a day's production, chest openings, combat loot and item flow (and of an alchemy run) into one instead of keeping both, so Gold Sources stops double-counting synced days; duplicates already stored fold on their next read.
