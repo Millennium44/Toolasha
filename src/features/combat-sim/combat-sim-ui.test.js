@@ -1303,6 +1303,25 @@ describe('the panel', () => {
         const scoreOf = (c, name) => levelTr(c, name).querySelector('[data-level-score]').textContent.trim();
         const names = (c) => [...c.querySelectorAll('[data-level-row]')].map((t) => t.children[0].textContent.trim());
 
+        test('with coloring on, the Score is colored by value on % of best and by place on Points', () => {
+            const cell = (c, name) => levelTr(c, name).querySelector('[data-level-score]');
+            ui._upgradeScoreGradient = true;
+            try {
+                ui._upgradeLevelScoreScale = 'pct';
+                let c = render();
+                expect(cell(c, 'A skill').style.color).not.toBe('');
+                expect(cell(c, 'D skill').style.color).toBe('');
+                ui._upgradeLevelScoreScale = '5';
+                c = render();
+                expect(cell(c, 'A skill').style.color).not.toBe('');
+                ui._upgradeScoreGradient = false;
+                c = render();
+                expect(cell(c, 'A skill').style.color).toBe('');
+            } finally {
+                ui._upgradeScoreGradient = false;
+            }
+        });
+
         test('on Points, the Score ranks by combined points and the breakdown says where they came from', () => {
             ui._upgradeLevelScoreScale = '5';
             const c = render();

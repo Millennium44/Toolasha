@@ -10783,6 +10783,13 @@ class CombatSimUI {
             metrics: LEVEL_SCORE_METRICS,
             keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
         });
+        // The same coloring as the gear table's Score: by value on % of best, by place on Points
+        const levelPlaces = this._upgradeScoreGradient && scaleKey !== SCORE_PERCENT ? scorePlaces(rows) : null;
+        const levelScoreColor = (r) => {
+            if (!this._upgradeScoreGradient) return null;
+            if (scaleKey === SCORE_PERCENT) return scoreValueColor(r.score);
+            return scoreGradientColor(levelPlaces.get(r));
+        };
         // What the grind actually ends with: the skill at its target plus the
         // weapon's primary skill wherever the same hours carried it. Rows with
         // no primary gain (or the primary skill's own row) read off the solo sim
@@ -10917,7 +10924,7 @@ class CombatSimUI {
                 <td style="${tdStyle}" data-hours-per="xp">${formatCompactHours(hoursPer(r, 'xp'))}</td>
                 <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}" ${deltaTitle}>${fmtCell(profitDelta, e.deltas.profit)}</td>
                 <td style="${tdStyle}" data-hours-per="profit">${formatCompactHours(hoursPer(r, 'profit'))}</td>
-                <td style="${tdStyle}" data-level-score>${formatScore(r.score)}</td>
+                <td style="${tdStyle}${levelScoreColor(r) ? ` color:${levelScoreColor(r)};` : ''}" data-level-score>${formatScore(r.score)}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
                 <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
