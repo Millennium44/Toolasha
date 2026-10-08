@@ -285,7 +285,11 @@ class ActionTimingMonitor {
      *   declaredDuration: number}} timing - What was measured
      */
     _record(timing) {
-        const action = this.startedAction ?? this._currentAction();
+        const live = this._currentAction();
+        const action = this.startedAction ?? live;
+        // Gear and buffs are read live; once the queue has moved to another action they
+        // describe that one, so the record says so instead of pairing the two
+        const speedIsLive = !this.startedAction || this.startedAction.actionHrid === live?.actionHrid;
         // The labyrinth keeps its bar full while a room is fought or skilled;
         // that is the game's normal behavior, not a timing anomaly.
         if (action?.type === LABYRINTH_ACTION_TYPE) return;
@@ -298,7 +302,8 @@ class ActionTimingMonitor {
             intervalSeconds: Number(timing.intervalSeconds.toFixed(3)),
             deadSeconds: Number(timing.deadSeconds.toFixed(3)),
             animatedSeconds: Number(timing.animatedSeconds.toFixed(3)),
-            speed: this._speedSnapshot(action),
+            speed: speedIsLive ? this._speedSnapshot(action) : null,
+            speedNote: speedIsLive ? null : 'queue moved on before the interval closed; speed context not captured',
         };
 
         this.anomalies.push(record);

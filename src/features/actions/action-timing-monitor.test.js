@@ -172,6 +172,31 @@ describe('measuring the bar', () => {
         warn.mockRestore();
     });
 
+    test('a stall whose queue moved on records no speed context from the next action', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        dataManager.getCurrentActions.mockReturnValue([{ actionHrid: '/actions/cheesesmithing/cheese_gauntlets' }]);
+        dataManager.getActionDetails.mockReturnValue({
+            name: 'Cheese Gauntlets',
+            type: '/action_types/cheesesmithing',
+        });
+        const bar = mountBar(1);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        vi.advanceTimersByTime(1000);
+        fire(bar, 'animationend');
+        vi.advanceTimersByTime(60000);
+        dataManager.getCurrentActions.mockReturnValue([{ actionHrid: '/actions/brewing/coffee' }]);
+        dataManager.getActionDetails.mockReturnValue({ name: 'Coffee', type: '/action_types/brewing' });
+        fire(bar, 'animationstart');
+
+        expect(monitor.anomalies).toHaveLength(1);
+        expect(monitor.anomalies[0].actionHrid).toBe('/actions/cheesesmithing/cheese_gauntlets');
+        expect(monitor.anomalies[0].speed).toBeNull();
+        warn.mockRestore();
+    });
+
     test('a labyrinth interval stays exempt when the queue has moved on by the time it closes', async () => {
         const { default: dataManager } = await import('../../core/data-manager.js');
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
