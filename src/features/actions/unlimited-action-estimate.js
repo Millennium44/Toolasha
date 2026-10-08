@@ -65,7 +65,8 @@ function buildItemHash(itemHrid, enhancementLevel = 0) {
  * alchemy spec is harmless — they simply go unread.
  *
  * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid,
- *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid }
+ *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid,
+ *   enhancingProtectionItemLevel }
  * @returns {Object} Action object shaped like one from dataManager
  */
 export function buildUnqueuedActionObject({
@@ -76,7 +77,16 @@ export function buildUnqueuedActionObject({
     enhancingMaxLevel = 0,
     enhancingProtectionMinLevel = 0,
     enhancingProtectionItemHrid = null,
+    enhancingProtectionItemLevel = 0,
 }) {
+    // A real queued enhance carries the protection item the game will spend in its secondary
+    // slot, with the enhancement level of the exact stack. Without a catalyst (alchemy's use of
+    // that slot) the panel's selected stack goes there so the stack-specific limit reads it.
+    const secondaryItemHash = catalystHrid
+        ? buildItemHash(catalystHrid, 0)
+        : enhancingProtectionItemHrid && enhancingProtectionItemLevel > 0
+          ? buildItemHash(enhancingProtectionItemHrid, enhancingProtectionItemLevel)
+          : buildItemHash(null, 0);
     return {
         id: UNQUEUED_ACTION_ID,
         actionHrid,
@@ -84,7 +94,7 @@ export function buildUnqueuedActionObject({
         currentCount: 0,
         maxCount: 0,
         primaryItemHash: buildItemHash(itemHrid, enhancementLevel),
-        secondaryItemHash: buildItemHash(catalystHrid, 0),
+        secondaryItemHash,
         // Read directly by `calculateEnhancingQueueTime` / `getEnhancingProtectionDraw`, the
         // same fields a real queued enhancing row carries (see
         // action-time-display.enhancing-protection-limit.test.js's `enhancingRow` fixture).
@@ -102,7 +112,8 @@ export function buildUnqueuedActionObject({
  * `materialLimitIsEstimated`, `isTrulyInfinite`.
  *
  * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid,
- *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid }
+ *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid,
+ *   enhancingProtectionItemLevel }
  * @returns {Object|null} The calculator result, or null when the action is not recognised
  */
 export function estimateUnlimitedAction(spec) {
@@ -117,6 +128,7 @@ export function estimateUnlimitedAction(spec) {
             spec.enhancingMaxLevel || 0,
             spec.enhancingProtectionMinLevel || 0,
             spec.enhancingProtectionItemHrid || '',
+            spec.enhancingProtectionItemLevel || 0,
         ].join('|');
         const now = Date.now();
         if (cache.key === key && now - cache.at < ESTIMATE_TTL_MS) {

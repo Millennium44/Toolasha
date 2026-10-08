@@ -85,6 +85,20 @@ export function getProtectionItemFromUI(panel) {
 }
 
 /**
+ * The enhancement level of the stack in the Protection slot, off its level badge. The game
+ * spends an exact stack (hrid + level), and the slot draws a "+N" badge only above +0.
+ * @param {HTMLElement} panel - Enhancement action panel element
+ * @returns {number} The level, 0 when the slot is empty or shows no badge
+ */
+export function getProtectionItemLevelFromUI(panel) {
+    const badge = panel
+        .querySelector('[class*="protectionItemInputContainer"] [class*="Item_enhancementLevel"]')
+        ?.textContent.trim()
+        .match(/^\+(\d+)$/);
+    return badge ? parseInt(badge[1], 10) : 0;
+}
+
+/**
  * Calculate and display enhancement statistics in the panel
  * @param {HTMLElement} panel - Enhancement action panel element
  * @param {string} itemHrid - Item HRID (e.g., "/items/cheese_sword")
@@ -728,6 +742,7 @@ export function unlimitedRepeatHTML({
             enhancingMaxLevel: targetLevel || 0,
             enhancingProtectionMinLevel: protectFromLevel,
             enhancingProtectionItemHrid: protectionItemHrid,
+            enhancingProtectionItemLevel: protectionItemHrid ? getProtectionItemLevelFromUI(panel) : 0,
         });
 
         const toLabel = targetLevel ? `To +${targetLevel}: ` : '';
