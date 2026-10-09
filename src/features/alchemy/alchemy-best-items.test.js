@@ -34,6 +34,12 @@ const calculator = vi.hoisted(() => ({
 const market = vi.hoisted(() => ({
     /** itemHrid → price */
     prices: {},
+    /** itemHrid → bid, for the decompose chain (absent = unpriced) */
+    bids: {},
+    /** hrids whose quote is a value-map estimate, not a book price */
+    estimated: new Set(),
+    /** itemHrid → decompose results, one per catalyst/tea candidate */
+    candidates: {},
 }));
 
 const experience = vi.hoisted(() => ({ totalMultiplier: 1 }));
@@ -95,8 +101,11 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateCoinifyProfit: (...args) => calculator.coinify(...args),
         calculateDecomposeProfit: (...args) => calculator.decompose(...args),
         calculateTransmuteProfit: (...args) => calculator.transmute(...args),
+        calculateCandidateResults: (action, itemHrid) => market.candidates[itemHrid] ?? [],
     },
 }));
+
+vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
 
 vi.mock('../../utils/experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({ totalMultiplier: experience.totalMultiplier }),
@@ -104,6 +113,9 @@ vi.mock('../../utils/experience-parser.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? null,
+    getItemPriceInfo: (hrid) => ({ price: market.bids[hrid] ?? null, estimated: market.estimated.has(hrid) }),
+    isPriceEstimated: (hrid) => market.estimated.has(hrid),
+    withProfitPricingMode: (mode, fn) => fn(),
 }));
 
 vi.mock('../../utils/asset-manifest.js', () => ({
@@ -209,6 +221,10 @@ beforeEach(() => {
     game.items = {};
     game.skills = [];
     market.prices = {};
+    market.bids = {};
+    market.estimated = new Set();
+    market.candidates = {};
+    settings.values.alchemy_bestItems_sortMode = 'profit';
     experience.totalMultiplier = 1;
     liquidity.throttleByItem = {};
     liquidity.calls = [];
@@ -224,6 +240,7 @@ afterEach(() => {
     // The singleton keeps its selections between openings, which is right for a panel
     bestItems.cachedRankings = {};
     bestItems.sortMode = 'profit';
+    bestItems.chainValues.clear();
     bestItems.currentType = 'coinify';
     bestItems.profitableOnly = false;
     bestItems.searchQuery = '';
@@ -1104,5 +1121,133 @@ describe('the Best Items window on a phone-width screen', () => {
         expect(content.style.maxWidth).toBe('min(95vw, calc(100% - 56px))');
         bestItems.modal.remove();
         bestItems.modal = null;
+    });
+});
+
+describe('the Decompose chain/hr sort', () => {
+    /** A decompose calculator answer carrying only what the chain reads */
+    const step = (ask, actionsPerHour) => ({
+        actionsPerHour,
+        successRate: 1,
+        requirementCosts: [{ itemHrid: '/items/x', count: 1, price: ask }],
+        dropRevenues: [],
+    });
+    const gear = (outputs) => ({
+        equipmentDetail: {},
+        alchemyDetail: { decomposeItems: outputs.map(([itemHrid, count]) => ({ itemHrid, count })) },
+    });
+    const row = (name, profitPerHour) => ({
+        itemHrid: `/items/${name}`,
+        name,
+        itemLevel: 10,
+        itemPrice: 0,
+        profitPerHour,
+        xpPerHour: 0,
+        catalyst: null,
+        profitData: null,
+    });
+    const names = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map((tr) => tr.children[1]?.textContent);
+    const chainCells = () =>
+        Array.from(bestItems.modal.querySelectorAll('[data-mwi-chain]')).map((td) => td.textContent);
+
+    /** The marketplace sort's own fixture: item_a -> mid_b -> 2x term_c, item_d -> 2x term_c */
+    function fixture() {
+        game.items = {
+            '/items/item_a': gear([['/items/mid_b', 1]]),
+            '/items/mid_b': gear([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+            '/items/item_d': gear([['/items/term_c', 2]]),
+            '/items/item_u': gear([['/items/term_c', 2]]),
+        };
+        market.candidates = {
+            '/items/item_a': [step(500, 3600)],
+            '/items/mid_b': [step(300, 1800)],
+            '/items/item_d': [step(500, 360)],
+            '/items/item_u': [step(500, 360)],
+        };
+        market.bids = { '/items/term_c': 1000 };
+    }
+
+    function open(rows, type = 'decompose') {
+        bestItems.createModal();
+        bestItems.currentType = type;
+        bestItems.cachedRankings[type] = rows;
+        bestItems.renderTable();
+    }
+
+    test('the mode is offered as a button', () => {
+        bestItems.createModal();
+        const labels = Array.from(bestItems.modal.querySelectorAll('[data-mwi-sort-btn]')).map((b) => b.textContent);
+        expect(labels).toEqual(['Profit/hr', 'XP/hr', 'Decompose chain/hr']);
+    });
+
+    test('ranks by the same chain value the marketplace sort computes, whatever the profit column says', () => {
+        fixture();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        // Profit/hr order is the reverse of the chain order on purpose
+        open([row('item_d', 900), row('item_a', 1)]);
+
+        expect(names()).toEqual(['item_a', 'item_d']);
+        // market-sort.test.js: item_a 1,704,000/hr and item_d 511,200/hr from this fixture
+        expect(bestItems.chainPerHour('/items/item_a')).toBeCloseTo(1_704_000);
+        expect(bestItems.chainPerHour('/items/item_d')).toBeCloseTo(511_200);
+        expect(chainCells()).toHaveLength(2);
+    });
+
+    test('an unpriced chain sorts last and shows a dash', () => {
+        fixture();
+        // item_u's own ask is an estimate, so it has no buy price and no figure
+        market.estimated.add('/items/item_u');
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_u', 9000), row('item_d', 1)]);
+
+        expect(names()).toEqual(['item_d', 'item_u']);
+        expect(chainCells()[1]).toBe('\u2014');
+    });
+
+    test('an estimated terminal bid leaves the whole chain unpriced', () => {
+        fixture();
+        market.estimated.add('/items/term_c');
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_a', 5), row('item_d', 1)]);
+        expect(chainCells()).toEqual(['\u2014', '\u2014']);
+    });
+
+    test('falls back to profit on the other tabs and keeps the stored choice', () => {
+        fixture();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 900), row('item_a', 1)], 'coinify');
+
+        expect(names()).toEqual(['item_d', 'item_a']);
+        expect(chainCells()).toEqual([]);
+        expect(bestItems.sortMode).toBe('decomposeChainPerHour');
+    });
+
+    test('profitable-only judges the chain figure while the chain is the sort', () => {
+        fixture();
+        market.bids = { '/items/term_c': 100 };
+        bestItems.sortMode = 'decomposeChainPerHour';
+        bestItems.profitableOnly = true;
+        // 2 x 96 - 500 < 0: the chain loses even though the profit column is positive
+        open([row('item_d', 900)]);
+        expect(names()).toEqual([]);
+    });
+
+    test('choosing the mode persists it, and an unknown stored value falls back to profit', () => {
+        bestItems.createModal();
+        bestItems.chooseSortMode('decomposeChainPerHour');
+        expect(settings.values.alchemy_bestItems_sortMode).toBe('decomposeChainPerHour');
+
+        settings.values.alchemy_bestItems_sortMode = 'decomposeChainPerHour';
+        bestItems.isInitialized = false;
+        bestItems.initialize();
+        expect(bestItems.sortMode).toBe('decomposeChainPerHour');
+        bestItems.disable();
+
+        settings.values.alchemy_bestItems_sortMode = 'nonsense';
+        bestItems.initialize();
+        expect(bestItems.sortMode).toBe('profit');
+        bestItems.disable();
     });
 });

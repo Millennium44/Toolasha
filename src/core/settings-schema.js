@@ -486,6 +486,18 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a button to see items ranked by profit or XP for each alchemy type.',
             },
+            alchemy_bestItems_sortMode: {
+                id: 'alchemy_bestItems_sortMode',
+                label: 'Alchemy panel: Best items sort',
+                type: 'select',
+                default: 'profit',
+                options: [
+                    { value: 'profit', label: 'Profit per hour' },
+                    { value: 'xp', label: 'XP per hour' },
+                    { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour (Decompose tab)' },
+                ],
+                help: 'Which figure the best items table ranks by. The chain mode buys the item at its ask, decomposes it and everything it yields, and sells what is left at bid after tax; the buttons in the table change this too.',
+            },
             alchemyItemPins: {
                 id: 'alchemyItemPins',
                 label: 'Alchemy panel: Pin items in the item picker',
