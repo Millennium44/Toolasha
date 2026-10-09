@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### From upstream: inventory, loot log and small additions
+
+- Inventory category totals draw again under the game's tabs, dungeon tokens show value badges, enhancement tooltip prices follow your number precision, and a labyrinth run the game reissues an id for stays one Loot & XP Log row.
+- New options (off by default): 24-hour chat timestamps, a Craftable action-panel sort, Buy Cheapest in the protection picker, and a Buy missing supplies button on the Labyrinth screen; the Metz export now reads MooPass from its expiry and includes worn speed gear.
+
 ### Sync retries owed deletes and words manual pulls accurately
 
 - A cleanup delete that failed is retried even when a pull finds nothing new, an idle character's history is never trimmed a day early across a daylight-saving change, and a manual pull says when the next push will remove something from the gist.
