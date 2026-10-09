@@ -93,14 +93,49 @@ function buildSkillingBlock({ skills, equipment, speedGear }) {
     };
 }
 
-function buildSpeedGear(inventoryItems, itemDetailMap) {
-    return (inventoryItems || [])
-        .filter((item) => {
-            if (item.itemLocationHrid !== INVENTORY_LOCATION || Number(item.count) <= 0) return false;
-            const stats = itemDetailMap?.[item.itemHrid]?.equipmentDetail?.noncombatStats || {};
-            return SPEED_GEAR_STATS.some((stat) => (stats[stat] || 0) > 0);
-        })
-        .map((item) => ({ itemHrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 }));
+function hasSpeedStat(equipmentDetail) {
+    const stats = equipmentDetail?.noncombatStats || {};
+    return SPEED_GEAR_STATS.some((stat) => (stats[stat] || 0) > 0);
+}
+
+/**
+ * Enhancing/skilling speed items from worn gear plus (for self) the inventory, matching what Metz's
+ * enhancement-cost formula reads. One row per item hrid, keeping the highest enhancement level seen:
+ * the same item can be worn and also spare in the bag, and Metz wants it once. Distinct hrids (a
+ * cape and its refined version) are never collapsed together.
+ * @param {Array<Object>} wornItems - Worn rows (any shape carrying itemHrid and enhancementLevel)
+ * @param {Array<Object>} inventoryItems - Inventory rows; only the bag location with a positive count
+ * @param {Object} itemDetailMap
+ * @returns {Array<{itemHrid: string, enhancementLevel: number}>}
+ */
+function buildSpeedGear(wornItems, inventoryItems, itemDetailMap) {
+    const bestLevelByHrid = new Map();
+    const consider = (item) => {
+        if (!item?.itemHrid || !hasSpeedStat(itemDetailMap?.[item.itemHrid]?.equipmentDetail)) return;
+        const level = Number(item.enhancementLevel) || 0;
+        const best = bestLevelByHrid.get(item.itemHrid);
+        if (best === undefined || level > best) bestLevelByHrid.set(item.itemHrid, level);
+    };
+    for (const item of wornItems || []) consider(item);
+    for (const item of inventoryItems || []) {
+        if (item?.itemLocationHrid === INVENTORY_LOCATION && Number(item.count) > 0) consider(item);
+    }
+    return Array.from(bestLevelByHrid, ([itemHrid, enhancementLevel]) => ({ itemHrid, enhancementLevel }));
+}
+
+/**
+ * Whether MooPass is active, from the server-resolved expiry rather than the live buff list, which
+ * can be empty while MooPass is still running. Falls back to the buff list only when no expiry is known.
+ * @param {number|string|null|undefined} expireTime - ms epoch or ISO string
+ * @param {Array|null|undefined} buffs
+ * @returns {boolean}
+ */
+function resolveHasMooPass(expireTime, buffs) {
+    if (expireTime != null) {
+        const ms = typeof expireTime === 'number' ? expireTime : Date.parse(expireTime);
+        if (Number.isFinite(ms)) return ms > Date.now();
+    }
+    return (buffs?.length ?? 0) > 0;
 }
 
 function isCombatWearable(itemHrid, itemDetailMap) {
@@ -229,13 +264,16 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
           ? characterObj.characterItems
           : [];
     const mooPassBuffs = hasLiveData ? dataManager.getMooPassBuffs() : characterObj.mooPassBuffs || [];
+    const mooPassExpireTime = hasLiveData
+        ? dataManager.getMooPassExpireTime()
+        : (characterObj.characterInfo?.mooPassExpireTime ?? null);
     const equippedAbilityHrids = new Set(
         (characterObj.combatUnit?.combatAbilities || []).map((ability) => ability.abilityHrid).filter(Boolean)
     );
     return toMetzCharacter(characterObj.character?.name || 'Player 1', source, {
-        hasMooPass: (mooPassBuffs?.length ?? 0) > 0,
+        hasMooPass: resolveHasMooPass(mooPassExpireTime, mooPassBuffs),
         skills: characterObj.characterSkills,
-        speedGear: buildSpeedGear(inventoryItems, itemDetailMap),
+        speedGear: buildSpeedGear(source.player?.equipment, inventoryItems, itemDetailMap),
         owned: buildOwnedBlock({
             inventoryItems,
             itemDetailMap,
@@ -331,6 +369,11 @@ export async function constructMetzTeamExport(
         team.push(
             toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, battleObj), {
                 skills: profile.profile?.characterSkills,
+                speedGear: buildSpeedGear(
+                    Object.values(profile.profile?.wearableItemMap || {}),
+                    [],
+                    clientObj?.itemDetailMap
+                ),
             })
         );
     }
@@ -348,6 +391,11 @@ export async function constructMetzCharacterExport(externalProfileId = null) {
         if (!profile) return null;
         return toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, getBattleData()), {
             skills: profile.profile?.characterSkills,
+            speedGear: buildSpeedGear(
+                Object.values(profile.profile?.wearableItemMap || {}),
+                [],
+                clientObj?.itemDetailMap
+            ),
         });
     }
     return buildSelfMetzCharacter(characterObj, clientObj);

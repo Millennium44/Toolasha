@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     inventory: [],
     itemDetailMap: {},
     mooPassBuffs: [],
+    mooPassExpireTime: null,
     selfEquipment: [],
     selfAbilities: [],
     partyEquipment: [],
@@ -23,6 +24,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: vi.fn(() => (mocks.onGamePage ? (mocks.characterData?.character?.id ?? null) : null)),
         getInventory: vi.fn(() => mocks.inventory),
         getMooPassBuffs: vi.fn(() => mocks.mooPassBuffs),
+        getMooPassExpireTime: vi.fn(() => mocks.mooPassExpireTime),
         // Mirrors the real one: the battle roster wins, else the login slot map
         getPartyMembers: vi.fn(() => {
             if (mocks.battleRoster?.length) return { members: mocks.battleRoster, source: 'battle', updatedAt: 1 };
@@ -89,6 +91,7 @@ describe('Metz combat export', () => {
         mocks.inventory = [];
         mocks.itemDetailMap = {};
         mocks.mooPassBuffs = [];
+        mocks.mooPassExpireTime = null;
         mocks.selfEquipment = [];
         mocks.selfAbilities = [];
         mocks.partyEquipment = [];
@@ -640,5 +643,91 @@ describe('full party export with a saved loadout on yourself', () => {
         expect(members[0].warning).toMatchObject({ level: 'stale' });
         expect(members[1].status.found).toBe(false);
         expect(members[1].warning).toMatchObject({ level: 'missing' });
+    });
+});
+
+describe('Metz export - MooPass expiry and speed gear', () => {
+    const NECK = { equipmentDetail: { type: '/equipment_types/neck', noncombatStats: { skillingSpeed: 0.04 } } };
+    const BAG = '/item_locations/inventory';
+
+    beforeEach(() => {
+        mocks.characterData = baseCharacter();
+        mocks.onGamePage = true;
+        mocks.inventory = [];
+        mocks.itemDetailMap = { '/items/philosophers_necklace': NECK };
+        mocks.mooPassBuffs = [];
+        mocks.mooPassExpireTime = null;
+        mocks.selfEquipment = [];
+        mocks.selfAbilities = [];
+        mocks.partyEquipment = [];
+        mocks.partySkills = [];
+        mocks.profiles = null;
+        mocks.battleRoster = null;
+    });
+
+    test('hasMooPass follows the expiry even when the buff list is empty', async () => {
+        mocks.mooPassExpireTime = Date.now() + 3600_000;
+        expect((await constructMetzCharacterExport()).hasMooPass).toBe(true);
+        mocks.mooPassExpireTime = Date.now() - 1000;
+        mocks.mooPassBuffs = [{ typeHrid: '/buff_types/wisdom' }];
+        expect((await constructMetzCharacterExport()).hasMooPass).toBe(false);
+    });
+
+    test('hasMooPass reads the bridged ISO expiry on a simulator page', async () => {
+        mocks.onGamePage = false;
+        mocks.characterData = baseCharacter({
+            characterInfo: { mooPassExpireTime: new Date(Date.now() + 3600_000).toISOString() },
+        });
+        expect((await constructMetzCharacterExport()).hasMooPass).toBe(true);
+    });
+
+    test('worn speed gear is exported and deduped against the bag at the highest level', async () => {
+        mocks.selfEquipment = [
+            {
+                itemLocationHrid: '/item_locations/neck',
+                itemHrid: '/items/philosophers_necklace',
+                enhancementLevel: 5,
+            },
+        ];
+        mocks.inventory = [
+            { itemHrid: '/items/philosophers_necklace', enhancementLevel: 9, itemLocationHrid: BAG, count: 1 },
+            { itemHrid: '/items/philosophers_necklace', enhancementLevel: 2, itemLocationHrid: BAG, count: 1 },
+        ];
+        const character = await constructMetzCharacterExport();
+        expect(character.skilling.speedGear).toEqual([
+            { itemHrid: '/items/philosophers_necklace', enhancementLevel: 9 },
+        ]);
+    });
+
+    test('worn speed gear alone is exported', async () => {
+        mocks.selfEquipment = [
+            {
+                itemLocationHrid: '/item_locations/neck',
+                itemHrid: '/items/philosophers_necklace',
+                enhancementLevel: 5,
+            },
+        ];
+        const character = await constructMetzCharacterExport();
+        expect(character.skilling.speedGear).toEqual([
+            { itemHrid: '/items/philosophers_necklace', enhancementLevel: 5 },
+        ]);
+    });
+
+    test('a teammate gets speed gear from wearableItemMap keyed by full location hrid', async () => {
+        mocks.characterData = baseCharacter({ partyInfo: { partySlotMap: { a: { characterID: 'party-1' } } } });
+        mocks.profiles = [
+            {
+                characterID: 'party-1',
+                characterName: 'Teammate',
+                profile: {
+                    characterSkills: [],
+                    wearableItemMap: {
+                        '/item_locations/neck': { itemHrid: '/items/philosophers_necklace', enhancementLevel: 7 },
+                    },
+                },
+            },
+        ];
+        const team = await constructMetzTeamExport('self-1');
+        expect(team[1].skilling.speedGear).toEqual([{ itemHrid: '/items/philosophers_necklace', enhancementLevel: 7 }]);
     });
 });
