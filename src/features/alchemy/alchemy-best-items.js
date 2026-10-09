@@ -11,8 +11,8 @@
  */
 
 import config from '../../core/config.js';
-import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -189,7 +189,20 @@ class AlchemyBestItems {
                 config.onSettingChange(key, () => this.updatePricingSelects())
             ),
             config.onSettingsLoaded(onPricingChange),
+            // The sort is a setting too: a change made in Settings applies to the open table
+            config.onSettingChange(SORT_MODE_SETTING, () => this.handleSortSettingChange()),
         ];
+    }
+
+    /**
+     * Follow a sort-mode change made outside the table (Settings). The table's own
+     * choice has already set `sortMode`, so it is a no-op there.
+     */
+    handleSortSettingChange() {
+        const next = normalizeSortMode(config.getSettingValue(SORT_MODE_SETTING, 'profit'));
+        if (next === this.sortMode) return;
+        this.sortMode = next;
+        if (this.modal && this.modal.style.display !== 'none') this.renderTable();
     }
 
     unsubscribePricingChanges() {

@@ -1279,6 +1279,17 @@ describe('the Decompose chain/hr sort', () => {
         bestItems.disable();
     });
 
+    test('a sort change made in Settings applies to the running table', () => {
+        settings.values.alchemy_bestItems_sortMode = 'profit';
+        bestItems.isInitialized = false;
+        bestItems.initialize();
+        expect(bestItems.sortMode).toBe('profit');
+        settings.values.alchemy_bestItems_sortMode = 'decomposeChainPerHour';
+        for (const cb of settings.changeListeners.alchemy_bestItems_sortMode || []) cb('decomposeChainPerHour');
+        expect(bestItems.sortMode).toBe('decomposeChainPerHour');
+        bestItems.disable();
+    });
+
     test('a market update re-prices an open chain table and cleanup unsubscribes', () => {
         fixture();
         bestItems.isInitialized = false;
