@@ -307,7 +307,8 @@ export async function importEverything(payload, options = {}) {
     const restored = {};
     const expected = {};
     const failed = [];
-    const written = new Set();
+    /** store -> keys the restore actually wrote (and their tombstone companions), for the per-key latch */
+    const written = new Map();
 
     // Land everything already queued before the restore overwrites it: a
     // debounced write that fires afterwards is the pre-restore value going
@@ -355,7 +356,15 @@ export async function importEverything(payload, options = {}) {
                 );
                 failed.push({ store: storeName, expected: want, written: count });
             } else if (want > 0) {
-                written.add(storeName);
+                const latch = new Set();
+                for (const key of Object.keys(entries)) {
+                    latch.add(key);
+                    // A record and its tombstones are one unit: latching only one
+                    // lets a pre-restore write to the other undo the pairing
+                    const companion = tombstoneCompanionKey(storeName, key);
+                    if (companion) latch.add(companion);
+                }
+                written.set(storeName, latch);
             }
         }
     } finally {

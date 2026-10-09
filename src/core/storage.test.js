@@ -1471,6 +1471,7 @@ describe('Storage restore quiescing', () => {
         storage._writeGeneration.clear();
         storage._flushFailures.clear();
         storage._restorePendingStores.clear();
+        storage._restorePendingKeys.clear();
         storage._restoreWarned.clear();
         storage._restoreInProgress = false;
         storage._restoreDepth = 0;
@@ -1484,6 +1485,7 @@ describe('Storage restore quiescing', () => {
         storage._writeGeneration.clear();
         storage._flushFailures.clear();
         storage._restorePendingStores.clear();
+        storage._restorePendingKeys.clear();
         storage._restoreWarned.clear();
         storage._restoreInProgress = false;
         storage._restoreDepth = 0;
@@ -1547,6 +1549,71 @@ describe('Storage restore quiescing', () => {
         expect(storage.isRestorePending('xpHistory')).toBe(false);
         expect(await storage.set('run', 1, 'xpHistory', true)).toBe(true);
         expect(storage.restorePendingStores()).toEqual(['settings']);
+    });
+
+    describe('per-key latch', () => {
+        const keyed = () => new Map([['marketListings', ['listingLog', 'listingLogTombstones']]]);
+
+        beforeEach(() => {
+            vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async () => true);
+        });
+
+        test('a write to an unlatched key in a store with a latched key goes through', async () => {
+            storage.finishRestore(keyed());
+
+            expect(await storage.set('flipPositions', { a: 1 }, 'marketListings', true)).toBe(true);
+            expect(await storage.setJSON('capitalHistory', [1], 'marketListings', true)).toBe(true);
+            expect(storage._saveToIndexedDB).toHaveBeenCalledTimes(2);
+        });
+
+        test('a latched key is still refused, bulk writes drop only that key', async () => {
+            storage.finishRestore(keyed());
+
+            expect(await storage.set('listingLog', 'x', 'marketListings', true)).toBe(false);
+            expect(await storage.setJSON('listingLog', {}, 'marketListings', true)).toBe(false);
+            expect(await storage.delete('listingLog', 'marketListings')).toBe(false);
+            expect(storage._saveToIndexedDB).not.toHaveBeenCalled();
+
+            vi.spyOn(storage, '_guardedWrite').mockImplementation(async (_n, _d, _s, _f, run) => run());
+            vi.spyOn(storage, '_runPutAll').mockImplementation(async (_s, _e, keys) => keys);
+            expect(await storage.putAll('marketListings', { listingLog: 1, flipPositions: 2 })).toBe(1);
+            expect(storage._runPutAll.mock.calls[0][2]).toEqual(['flipPositions']);
+        });
+
+        test('the companion key latched with a record is refused too', async () => {
+            storage.finishRestore(keyed());
+
+            expect(await storage.set('listingLogTombstones', [], 'marketListings', true)).toBe(false);
+            expect(storage.isRestorePending('marketListings', 'listingLogTombstones')).toBe(true);
+        });
+
+        test('isRestorePending answers per key, and true for the store while any key is latched', () => {
+            storage.finishRestore(keyed());
+
+            expect(storage.isRestorePending('marketListings')).toBe(true);
+            expect(storage.isRestorePending('marketListings', 'flipPositions')).toBe(false);
+            expect(storage.isRestorePending('settings')).toBe(false);
+            expect(storage.isRestorePending()).toBe(true);
+            expect(storage.restorePendingStores()).toEqual(['marketListings']);
+        });
+
+        test('queued writes are dropped only for the latched keys', async () => {
+            const dropped = storage.set('listingLog', 'pre', 'marketListings');
+            storage.set('flipPositions', 'pre', 'marketListings');
+
+            storage.finishRestore(keyed());
+
+            expect(storage.pendingWrites.has('marketListings:listingLog')).toBe(false);
+            expect(storage.pendingWrites.has('marketListings:flipPositions')).toBe(true);
+            expect(await dropped).toBe(false);
+        });
+
+        test('store names only still latch the whole store', async () => {
+            storage.finishRestore(['marketListings']);
+
+            expect(await storage.set('flipPositions', 1, 'marketListings', true)).toBe(false);
+            expect(storage.isRestorePending('marketListings', 'flipPositions')).toBe(true);
+        });
     });
 
     test.each([
