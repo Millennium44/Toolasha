@@ -22,6 +22,7 @@ import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { reconcileBook } from '../../utils/market-values.js';
+import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -472,16 +473,9 @@ class InventoryBadgeManager {
             config.getSetting('networth_highEnhancementUseCost') && config.isFeatureEnabled('networth');
         const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
 
-        // Currency items to skip (actual currencies, not category)
-        const currencyHrids = new Set([
-            '/items/gold_coin',
-            '/items/cowbell',
-            '/items/task_token',
-            '/items/chimerical_token',
-            '/items/sinister_token',
-            '/items/enchanted_token',
-            '/items/pirate_token',
-        ]);
+        // Currency items to skip (actual currencies, not category). The dungeon tokens are
+        // handled separately below: unlike these they have a derivable gold-equivalent value.
+        const currencyHrids = new Set(['/items/gold_coin', '/items/cowbell', '/items/task_token']);
 
         let sliceStart = performance.now();
 
@@ -526,6 +520,18 @@ class InventoryBadgeManager {
             if (!countElem) continue;
 
             const itemCount = parseItemCount(countElem.textContent, 0);
+
+            // Dungeon tokens have no market listing, but each is spendable in its token shop for
+            // an item that does trade: value them by the same best gold-per-token figure the
+            // tooltips and net worth use, instead of leaving them at 0 like a true currency.
+            if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) {
+                const perToken = calculateDungeonTokenValue(itemHrid) ?? 0;
+                itemElem.dataset.askPrice = perToken;
+                itemElem.dataset.bidPrice = perToken;
+                itemElem.dataset.askValue = perToken * itemCount;
+                itemElem.dataset.bidValue = perToken * itemCount;
+                continue;
+            }
 
             // Get item details (reused throughout)
             const itemDetails = gameData.itemDetailMap[itemHrid];
