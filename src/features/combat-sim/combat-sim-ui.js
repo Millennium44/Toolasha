@@ -107,6 +107,8 @@ import {
     houseRoomMovesWinRate,
     houseUpgradeMaterials,
     assignRankScores,
+    assignScores,
+    percentOfBest,
     planWithinBudget,
     confirmUpgradeBudgetPlan,
     explainUpgradeCost,
@@ -163,6 +165,9 @@ const SHRINE_CAP_GUILD_KEY = 'combatSimShrineCapToGuild';
  * every time they open the ranking.
  */
 const ALL_ZONES_MAX_FOOD_KEY = 'combatSimAllZonesMaxTierFood';
+
+/** Which Score the All Zones table ranks with, remembered across sessions */
+const ALL_ZONES_SCORE_SCALE_KEY = 'combatSimAllZonesScoreScale';
 
 /** The Bestiary planner's time budget, remembered across sessions */
 const BESTIARY_PLAN_HOURS_KEY = 'combatSimBestiaryPlanHours';
@@ -279,8 +284,37 @@ export const SCORE_DEPTHS = [
     { key: 'all', places: null, label: 'All rows' },
 ];
 
-/** The depth used when nothing has been chosen — the behaviour that predates the option. */
+/** The gear table's scale when nothing has been chosen — the behaviour that predates the option. */
 export const DEFAULT_SCORE_DEPTH = '5';
+
+/**
+ * The scale key for the percent-of-best Score (see `assignScores`), offered
+ * beside the placing depths in each table's Score scale picker.
+ *
+ * Two scales, chosen per table, because each fails where the other holds up.
+ * Placing points say who came where and nothing about by how much: a combat
+ * level 4–5× slower per 0.01% than the winner sits right behind it. Percent of
+ * best says how far behind, but it measures every row against one figure, and a
+ * value-for-cost column can hold one extreme outlier — a near-free swap with a
+ * tiny Gold/0.01% — that flattens every other row's share to about 0. Placings
+ * are immune to that. So the gear table (and every other Score) defaults to
+ * points, unchanged for existing users, and the Combat levels table, whose
+ * Hours/0.01% columns have no such outliers, defaults to percent of best.
+ */
+export const SCORE_PERCENT = 'pct';
+
+/** The Combat levels table's scale when nothing has been chosen. */
+export const DEFAULT_LEVEL_SCORE_SCALE = SCORE_PERCENT;
+
+/**
+ * Whether a stored scale key is one this build can score with — a placing depth
+ * or percent of best. Anything else (a key from another build) is ignored.
+ * @param {*} key - Candidate scale key
+ * @returns {boolean}
+ */
+export function isScoreScale(key) {
+    return key === SCORE_PERCENT || SCORE_DEPTHS.some((d) => d.key === key);
+}
 
 /**
  * How many placings a depth key actually pays out over.
@@ -294,9 +328,56 @@ export function scoreDepthPlaces(depthKey, rowCount) {
     return depth.places ?? Math.max(1, rowCount || 1);
 }
 
-/** What a depth key is called, for a header that has to say which one is on. */
+/** What a scale key is called, for a header that has to say which one is on. */
 export function scoreDepthLabel(depthKey) {
+    if (depthKey === SCORE_PERCENT) return '% of best';
     return (SCORE_DEPTHS.find((d) => d.key === depthKey) || SCORE_DEPTHS[0]).label;
+}
+
+/**
+ * Score rows on a scale: placing points to a depth, or percent of best.
+ * @param {Array<Object>} rows - Rows to score (mutated)
+ * @param {string} scaleKey - A `SCORE_DEPTHS` key or `SCORE_PERCENT`
+ * @param {Object} [options] - `keys` and `metrics`, as `assignRankScores` takes them
+ * @returns {Array<Object>} The same rows
+ */
+export function applyScoreScale(rows, scaleKey, options = {}) {
+    if (scaleKey === SCORE_PERCENT) return assignScores(rows, options);
+    return assignRankScores(rows, { ...options, places: scoreDepthPlaces(scaleKey, rows.length) });
+}
+
+/**
+ * What the Score means on a scale, for a header tooltip.
+ * @param {string} scaleKey - A `SCORE_DEPTHS` key or `SCORE_PERCENT`
+ * @param {string} columns - What the scored columns are called ('Gold/0.01%' or 'Hours/0.01%')
+ * @returns {string}
+ */
+export function scoreScaleTitle(scaleKey, columns) {
+    if (scaleKey === SCORE_PERCENT) {
+        return (
+            `% of best: how close the row comes to the best row in each scored ${columns} column, averaged, ` +
+            'out of 100. In each column the best row scores 100 and every other row its share of it ' +
+            '(100 × best ÷ row where cheaper is better, 100 × row ÷ best for ROI), so a row three times the ' +
+            'cost per 0.01% of the best scores 33 there. No figure in a column (no improvement, a loss) scores ' +
+            '0 in it; free and pays-for-itself rows score 100. One extreme outlier can flatten everyone ' +
+            'else toward 0 — Points is immune to that.'
+        );
+    }
+    return (
+        `Points: for placing in each scored ${columns} column's ${scoreDepthLabel(scaleKey).toLowerCase()}, ` +
+        'summed — first place earns the most. Finds all-rounders that never top a single column. Ordinal, ' +
+        'so winning a column narrowly scores the same as winning it outright; % of best shows the gap instead.'
+    );
+}
+
+/** One `<select>` of every Score scale, for the ⚙ Columns popover. */
+function scoreScaleOptions(selected) {
+    return [
+        ...SCORE_DEPTHS.map((d) => ({ key: d.key, label: `Points · ${d.label}` })),
+        { key: SCORE_PERCENT, label: '% of best' },
+    ]
+        .map((o) => `<option value="${o.key}"${o.key === selected ? ' selected' : ''}>${o.label}</option>`)
+        .join('');
 }
 
 /**
@@ -310,7 +391,7 @@ export function scoreDepthLabel(depthKey) {
 export const SCORE_GRADIENT_PLACES = 9;
 
 /**
- * Green → amber → red across the top nine scores.
+ * A point on the green → amber → red scale the gradients share.
  *
  * The three stops are the table's own colors — the same `#4caf50` that marks a
  * best-in-column cell and the same `#f44336` that marks a regression — so the
@@ -319,25 +400,59 @@ export const SCORE_GRADIENT_PLACES = 9;
  * difference from a perceptual blend is not visible, and the endpoints are
  * exactly the two colors everything else in the table uses.
  *
+ * @param {number} t - 0 for best (green) through 0.5 (amber) to 1 (red)
+ * @returns {string} A CSS color
+ */
+function gradientColorAt(t) {
+    const stops = [
+        [76, 175, 80], // #4caf50 — best
+        [255, 152, 0], // #ff9800 — middle
+        [244, 67, 54], // #f44336 — worst
+    ];
+    const clamped = Math.min(1, Math.max(0, t));
+    const half = clamped < 0.5 ? 0 : 1;
+    const local = clamped < 0.5 ? clamped * 2 : (clamped - 0.5) * 2;
+    const from = stops[half];
+    const to = stops[half + 1];
+    const channel = (i) => Math.round(from[i] + (to[i] - from[i]) * local);
+    return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
+/**
+ * Green → amber → red across the top nine places.
+ *
  * @param {number} place - 1-based rank among the scored rows
  * @returns {string|null} A CSS color, or null past the ninth place
  */
 export function scoreGradientColor(place) {
     if (!Number.isFinite(place) || place < 1 || place > SCORE_GRADIENT_PLACES) return null;
-
-    const stops = [
-        [76, 175, 80], // #4caf50 — best
-        [255, 152, 0], // #ff9800 — middle
-        [244, 67, 54], // #f44336 — ninth
-    ];
     // 0 at first place, 1 at the ninth, so the middle stop lands on fifth
-    const t = (place - 1) / (SCORE_GRADIENT_PLACES - 1);
-    const half = t < 0.5 ? 0 : 1;
-    const local = t < 0.5 ? t * 2 : (t - 0.5) * 2;
-    const from = stops[half];
-    const to = stops[half + 1];
-    const channel = (i) => Math.round(from[i] + (to[i] - from[i]) * local);
-    return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+    return gradientColorAt((place - 1) / (SCORE_GRADIENT_PLACES - 1));
+}
+
+/**
+ * The Score's color on the % of best scale, read off the Score itself.
+ *
+ * A percent-of-best Score already says how good a row is, so the color says the
+ * same: 100 is green, 50 amber, and it reddens toward 0. A row far behind is red
+ * even when it is third. A row with no Score is left uncolored.
+ *
+ * @param {number} score - A 0–100 Score
+ * @returns {string|null} A CSS color, or null when the row scored nothing
+ */
+export function scoreValueColor(score) {
+    if (!Number.isFinite(score) || score <= 0) return null;
+    return gradientColorAt(1 - Math.min(100, score) / 100);
+}
+
+/**
+ * A Score as the tables print it: whole numbers (points already are; a percent
+ * of best is rounded), and a dash for a row that scored nothing.
+ * @param {number} score - Score
+ * @returns {string}
+ */
+export function formatScore(score) {
+    return Number.isFinite(score) && score > 0 ? String(Math.round(score)) : '—';
 }
 
 /**
@@ -489,8 +604,9 @@ export const UPGRADE_PLAN_METRICS = [
         label: 'Score (balanced)',
         gain: (row) => row?.score ?? 0,
         format: (value) => `${Math.round(value)} score points`,
-        // Score is an ordinal rank-sum (see `assignRankScores`), not a percentage
-        // delta on a metric the noise model knows how to size an error bar for —
+        // Score is a rank-sum or a blend of percent-of-best figures, depending on
+        // the gear table's scale (see `applyScoreScale`), not a percentage delta
+        // on a metric the noise model knows how to size an error bar for —
         // there is no "0.01% of a score" the way there is 0.01% of DPS. Rows
         // aren't discarded by the significance check on this axis.
         significant: () => true,
@@ -1445,26 +1561,99 @@ const ALL_ZONES_SCORE_METRICS = [
 ];
 
 /**
- * Score each zone by how well it places across XP and profit at once.
+ * The All Zones Score's scales: each zone's position in the XP/hr and Profit/day
+ * ladders (the original, and the default so nothing changes for existing users),
+ * or the Upgrade tables' "% of best".
+ */
+export const ZONES_SCORE_LADDER = 'ladder';
+export const DEFAULT_ZONES_SCORE_SCALE = ZONES_SCORE_LADDER;
+
+/**
+ * Whether a stored zones Score scale is one this build offers; anything else
+ * (a key from another build, a corrupt value) is ignored.
+ * @param {*} key - Candidate scale key
+ * @returns {boolean}
+ */
+export function isZonesScoreScale(key) {
+    return key === ZONES_SCORE_LADDER || key === SCORE_PERCENT;
+}
+
+/** The options the zones table's Score `<select>` offers. */
+const ZONES_SCORE_SCALES = [
+    { key: ZONES_SCORE_LADDER, label: 'Ladder position' },
+    { key: SCORE_PERCENT, label: '% of best' },
+];
+
+/**
+ * What the All Zones Score means on a scale, for its header tooltip.
+ * @param {string} scaleKey - A zones Score scale key
+ * @returns {string}
+ */
+export function zonesScoreTitle(scaleKey) {
+    const deaths =
+        ' Deaths are not scored: they are a constraint, not something to trade against gold, so read the ' +
+        'red Deaths/hr column alongside this.';
+    if (scaleKey === SCORE_PERCENT) {
+        return (
+            '% of best: how close the zone comes to the best zone in XP/hr and in Profit/day, averaged, out of ' +
+            '100. In each the best zone scores 100 and every other its share of it, so a zone earning half the ' +
+            'best XP scores 50 there. A zone with no profit (or a loss) scores 0 for that column. One zone far ' +
+            'ahead of the rest can flatten everyone else toward 0 — Ladder position is immune to that.' +
+            deaths
+        );
+    }
+    return (
+        'Ladder position: where the zone stands in the XP/hr ladder and in the Profit/day ladder, as a fraction ' +
+        '(best 1, worst 0), averaged, out of 100. Ordinal, so it says who placed where and not by how much; ' +
+        '% of best shows the gap instead.' +
+        deaths
+    );
+}
+
+/**
+ * Score each zone across XP and profit at once.
  *
- * The same ordinal idea the Upgrade tab's Score uses — rank within each metric,
- * then blend — with one deliberate difference: the upgrade ladder awards points
- * to the top five only, which across sixty-six zones would leave all but five
- * rows at zero. Here every row gets its position in each ladder as a fraction
- * (1 for best, 0 for worst), and the Score is the mean of those, out of 100.
+ * Ladder position (the default): the same ordinal idea the Upgrade tab's points
+ * use — rank within each metric, then blend — with one deliberate difference:
+ * the upgrade ladder awards points to the top five only, which across
+ * sixty-six zones would leave all but five rows at zero. Here every row gets its
+ * position in each ladder as a fraction (1 for best, 0 for worst), and the Score
+ * is the mean of those, out of 100.
  *
  * Ties share a position, so two zones that measure identically cannot be
  * separated by list order. A single row scores 100: with nothing to rank
  * against, it is trivially the best of what was simulated.
  *
- * Mutates and returns the rows, adding `score`.
+ * % of best: each zone's share of the best zone's figure in each metric
+ * (`percentOfBest`, higher is better for both), averaged over the metrics that
+ * have any positive figure. A zone with no or negative profit scores 0 in that
+ * column, the same rule the Upgrade tables use.
+ *
+ * Mutates and returns the rows, adding `score` (a whole number).
  *
  * @param {Array<Object>} rows - Table rows carrying `totalXP` and `profitDay`
+ * @param {string} [scale=ZONES_SCORE_LADDER] - A zones Score scale key
  * @returns {Array<Object>} The same rows
  */
-export function scoreAllZoneRows(rows) {
+export function scoreAllZoneRows(rows, scale = DEFAULT_ZONES_SCORE_SCALE) {
     const list = Array.isArray(rows) ? rows : [];
     if (!list.length) return list;
+
+    if (scale === SCORE_PERCENT) {
+        const totals = new Map(list.map((row) => [row, 0]));
+        let counted = 0;
+        for (const metric of ALL_ZONES_SCORE_METRICS) {
+            const column = percentOfBest(
+                list.map((row) => (Number.isFinite(row[metric.key]) ? row[metric.key] : 0)),
+                false
+            );
+            if (!column) continue;
+            counted++;
+            list.forEach((row, i) => totals.set(row, totals.get(row) + column[i].pct));
+        }
+        for (const row of list) row.score = counted ? Math.round(totals.get(row) / counted) : 0;
+        return list;
+    }
 
     const fractions = new Map(list.map((row) => [row, []]));
     for (const metric of ALL_ZONES_SCORE_METRICS) {
@@ -2515,6 +2704,7 @@ class CombatSimUI {
         // their own gear.
         this._soloZonesLoadoutName = null;
         this._dungeonsLoadoutName = null;
+        this._allZonesScoreScale = DEFAULT_ZONES_SCORE_SCALE; // which Score the All Zones table ranks with
         this._includeDungeons = false; // whether an all-zones run also simulates every dungeon
         // Bestiary planner: a time budget by default, a points target on request
         this._bestiaryPlanMode = 'hours';
@@ -3166,6 +3356,7 @@ class CombatSimUI {
         this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
+        this._loadZonesScorePref();
         this._loadBestiaryPlanPrefs();
         this._restoreUpgradeResults();
         this._restorePanelGeometry();
@@ -3734,6 +3925,42 @@ class CombatSimUI {
         return normalizeTaskDamageMode(select ? select.value : config.getSettingValue('combatSim_taskDamage', 'off'));
     }
 
+    /**
+     * The picker for which Score the All Zones table ranks with, above the table.
+     * @returns {string} HTML
+     * @private
+     */
+    _allZonesScoreControlHtml() {
+        const options = ZONES_SCORE_SCALES.map(
+            (o) =>
+                `<option value="${o.key}"${o.key === this._allZonesScoreScale ? ' selected' : ''}>${o.label}</option>`
+        ).join('');
+        return `<div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; padding:0 0 6px 2px;">
+            <label for="mwi-csim-zones-score-scale">Score scale</label>
+            <select id="mwi-csim-zones-score-scale" style="background:#1a1a1a; color:#e0e0e0; border:1px solid #444; border-radius:4px; font-size:11px;">${options}</select>
+        </div>`;
+    }
+
+    /** @private */
+    async _persistZonesScorePref() {
+        try {
+            await storage.set(ALL_ZONES_SCORE_SCALE_KEY, this._allZonesScoreScale, 'settings');
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the zones Score scale:', error);
+        }
+    }
+
+    /** @private */
+    async _loadZonesScorePref() {
+        try {
+            const saved = await storage.get(ALL_ZONES_SCORE_SCALE_KEY, 'settings', null);
+            // A key from a build that offered other scales is ignored, not trusted
+            if (isZonesScoreScale(saved)) this._allZonesScoreScale = saved;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to read the zones Score scale:', error);
+        }
+    }
+
     /** @private */
     async _persistMaxTierFoodPref() {
         try {
@@ -4230,7 +4457,7 @@ class CombatSimUI {
 
         // The Score and the two winners are decided over the whole run, before
         // any sort or column hiding — neither is a property of the current view
-        scoreAllZoneRows(rows);
+        scoreAllZoneRows(rows, this._allZonesScoreScale);
         const best = bestAllZoneRows(rows);
         // What the route planner works from: the zones (in run order — ties in
         // the plan go to the earlier one), the counts, and how many zones had
@@ -4315,10 +4542,7 @@ class CombatSimUI {
             {
                 key: 'score',
                 label: 'Score',
-                title:
-                    'How well the zone places on XP/hr and Profit/day at once, out of 100 — the same rank-blend ' +
-                    'the Upgrade tab scores with. Deaths are not scored: they are a constraint, not something to ' +
-                    'trade against gold, so read the red Deaths/hr column alongside this.',
+                title: zonesScoreTitle(this._allZonesScoreScale),
             },
             ...visibleAllZonesSkillColumns(rows),
             { key: 'revenue', label: 'Rev/hr' },
@@ -4565,7 +4789,16 @@ class CombatSimUI {
                             const bestVal = isLowerBetter ? minVals[col.key] : maxVals[col.key];
                             const isBest = bestVal !== undefined && val === bestVal && rows.length > 1;
 
-                            if (isBest) {
+                            // On % of best the Score colors by its own value (as the
+                            // Upgrade tables do), not by being the column's top
+                            const percentScore = col.key === 'score' && this._allZonesScoreScale === SCORE_PERCENT;
+                            const scoreTint = percentScore ? scoreValueColor(val) : null;
+                            if (scoreTint) {
+                                style += ` color:${scoreTint};${isBest ? ' font-weight:600;' : ''}`;
+                            } else if (percentScore) {
+                                // A 0% Score has no tint and is never a column best, even when every row is 0
+                                style += ' color:#e0e0e0;';
+                            } else if (isBest) {
                                 style += ' color:#4caf50; font-weight:600;';
                             } else if ((col.key === 'profit' || col.key === 'profitDay') && val < 0) {
                                 style += ' color:#f44336;';
@@ -4590,6 +4823,7 @@ class CombatSimUI {
         const minWidth = Math.max(420, cols.length * 56);
 
         container.innerHTML = `
+            ${this._allZonesScoreControlHtml()}
             ${this._allZonesHeadline(best)}
             <div style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:${minWidth}px;">
@@ -4637,6 +4871,14 @@ class CombatSimUI {
             ],
             rows,
         }));
+
+        container.querySelector('#mwi-csim-zones-score-scale')?.addEventListener('change', (event) => {
+            if (!isZonesScoreScale(event.target.value)) return;
+            this._allZonesScoreScale = event.target.value;
+            this._persistZonesScorePref();
+            // Scoring is pure ranking over figures already measured: redraw, no re-sim
+            this._displayAllZonesResults(this._allZonesResults || zoneResults, hours, gameData, playerHrid);
+        });
 
         // Add sort listeners
         container.querySelectorAll('th[data-col]').forEach((th) => {
@@ -10196,16 +10438,25 @@ class CombatSimUI {
      * @private
      */
     _renderUpgradeScoreBreakdown(r) {
-        const entries = Object.values(r.rankPoints || {});
-        if (!entries.length) return '';
-
-        const parts = entries
-            .sort((a, b) => b.points - a.points)
-            .map((e) => `${e.label} #${e.place} (+${e.points})`)
-            .join(' &nbsp;·&nbsp; ');
+        // Percent of best: each column's share of its best, with where that left
+        // the row; a column the row had no figure in still shows, as the 0% it
+        // averaged in. Points: each placing and what it earned.
+        const percent = Object.values(r.scoreParts || {});
+        const points = Object.values(r.rankPoints || {});
+        let parts;
+        if (percent.length) {
+            if (!(r.score > 0)) return '';
+            parts = percent
+                .sort((a, b) => b.pct - a.pct)
+                .map((e) => `${e.label} ${Math.round(e.pct)}% (${e.place ? `#${e.place}` : '—'})`);
+        } else if (points.length) {
+            parts = points.sort((a, b) => b.points - a.points).map((e) => `${e.label} #${e.place} (+${e.points})`);
+        } else {
+            return '';
+        }
 
         return `<div style="margin-top:4px; color:#666; font-size:10px;">
-            Score ${r.score}: ${parts}
+            Score ${formatScore(r.score)}: ${parts.join(' &nbsp;·&nbsp; ')}
         </div>`;
     }
 
@@ -10270,7 +10521,11 @@ class CombatSimUI {
             html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}" data-row-key="${rowKey}">`;
             for (const c of columns) {
                 const value = c.value(r);
-                const isBest = c.highlight && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
+                // A Score of 0 is "scored nothing" on either scale, never a column best,
+                // even when every row has it
+                const unscored = c.key === 'score' && !(value > 0);
+                const isBest =
+                    c.highlight && !unscored && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
                 const style = `${tdBase} ${align(c)}${isBest ? ' color:#4caf50; font-weight:700;' : ''}`;
                 const title = c.title ? ` title="${c.title}"` : '';
                 html += `<td style="${style}"${title}>${c.render(r, value)}</td>`;
@@ -10325,10 +10580,8 @@ class CombatSimUI {
             </label>`
         ).join('');
 
-        const depthKey = this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH;
-        const depthOptions = SCORE_DEPTHS.map(
-            (d) => `<option value="${d.key}"${d.key === depthKey ? ' selected' : ''}>${d.label}</option>`
-        ).join('');
+        const depthOptions = scoreScaleOptions(this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH);
+        const levelOptions = scoreScaleOptions(this._upgradeLevelScoreScale || DEFAULT_LEVEL_SCORE_SCALE);
         const selectStyle =
             'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:1px 4px; ' +
             'font-size:11px; font-family:inherit;';
@@ -10350,18 +10603,27 @@ class CombatSimUI {
                         Repay and ROI are the same ratio inverted — scoring both counts it twice.
                     </div>
                     <div style="color:#888; font-weight:600; margin:8px 0 4px;">Score</div>
-                    <label style="${box}" title="How far down each metric's ladder a row can still earn points.
-                        Five is a podium and leaves most of a long run on zero; deeper turns the column into a
-                        ranking of the whole table.">
-                        <span>Places</span>
+                    <label style="${box}" title="How the gear table scores. Points: placings in each column earn
+                        points, down to the depth chosen — five is a podium, deeper ranks the whole table — and one
+                        extreme outlier cannot flatten the rest. % of best: each column's share of the best row,
+                        averaged, so the gap shows, not just the order.">
+                        <span>Gear</span>
                         <select class="toolasha-select" id="mwi-csim-score-depth" style="${selectStyle}">${depthOptions}</select>
+                    </label>
+                    <label style="${box}" title="How the Combat levels table scores, on its Hours/0.01% columns.
+                        % of best by default: a level that takes four times the hours per 0.01% scores a quarter,
+                        rather than coming a close second on placings.">
+                        <span>Combat levels</span>
+                        <select class="toolasha-select" id="mwi-csim-level-score-scale" style="${selectStyle}">${levelOptions}</select>
                     </label>
                     <label style="${box}" title="Color the nine best values in Score and in every column that
                         counts toward it — green through amber to red — so you can see at a glance which row is
                         the cheapest DPS, which the cheapest EXP, and which wins on aggregate. Each column is
                         ranked on its own values and in its own direction: cheapest first for the Gold/0.01%
                         columns and Repay, highest first for ROI. A row with no value in a column never places
-                        there, and rows below ninth stay uncolored — their position already says so.">
+                        there, and rows below ninth stay uncolored — their position already says so. On the
+                        % of best scale the Score is colored by its value instead: green at 100, amber at 50,
+                        red toward 0.">
                         <input type="checkbox" id="mwi-csim-score-gradient"
                             ${this._upgradeScoreGradient ? 'checked' : ''}>
                         Color the top ${SCORE_GRADIENT_PLACES} in each scored column
@@ -10599,12 +10861,10 @@ class CombatSimUI {
                 highlight: true,
                 sub: scoreDepthLabel(depthKey),
                 title:
-                    `Points for placing in each scored metric's ${scoreDepthLabel(depthKey).toLowerCase()}, ` +
-                    'summed. Finds all-rounders that never top a single column. Ordinal, so winning a metric ' +
-                    'narrowly scores the same as winning it outright. Use ⚙ Columns to choose what counts, ' +
-                    'how deep the placings go, and whether to color them.',
+                    scoreScaleTitle(depthKey, 'Gold/0.01%') +
+                    ' Use ⚙ Columns to choose what counts, the scale, and whether to color it.',
                 value: (r) => r.score ?? 0,
-                render: (r, v) => (v ? String(v) : '—'),
+                render: (r, v) => formatScore(v),
             },
         ];
 
@@ -10615,12 +10875,19 @@ class CombatSimUI {
         // intact, since an inner span wins over the one put round it.
         return defs.map((column) => {
             const ladder = gradientPlaces?.get(column.key);
-            const withGradient = ladder
+            // A percent-of-best Score is graded by its own value; placings by place
+            let colorOf = null;
+            if (ladder && column.key === 'score' && depthKey === SCORE_PERCENT) {
+                colorOf = (r) => scoreValueColor(r.score);
+            } else if (ladder) {
+                colorOf = (r) => scoreGradientColor(ladder.get(r));
+            }
+            const withGradient = colorOf
                 ? {
                       ...column,
                       render: (r, v) => {
                           const drawn = column.render(r, v);
-                          const color = scoreGradientColor(ladder.get(r));
+                          const color = colorOf(r);
                           return color ? `<span style="color:${color};">${drawn}</span>` : drawn;
                       },
                   }
@@ -10641,15 +10908,22 @@ class CombatSimUI {
     _renderUpgradeLevelTable(rows, baseline) {
         if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'score', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeLevelSort;
-        // Same points, depth and chosen metrics as the gold table's Score, placed
-        // on Hours/0.01%; written onto the rows so the detail breakdown and the
-        // CSV read them the way they read a gold row's
-        const depthKey = this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH;
-        assignRankScores(rows, {
+        // The same chosen metrics as the gold table's Score, read off
+        // Hours/0.01%, on this table's own scale (percent of best unless the
+        // reader picked points); written onto the rows so the detail breakdown
+        // reads them the way it reads a gold row's
+        const scaleKey = this._upgradeLevelScoreScale || DEFAULT_LEVEL_SCORE_SCALE;
+        applyScoreScale(rows, scaleKey, {
             metrics: LEVEL_SCORE_METRICS,
             keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
-            places: scoreDepthPlaces(depthKey, rows.length),
         });
+        // The same coloring as the gear table's Score: by value on % of best, by place on Points
+        const levelPlaces = this._upgradeScoreGradient && scaleKey !== SCORE_PERCENT ? scorePlaces(rows) : null;
+        const levelScoreColor = (r) => {
+            if (!this._upgradeScoreGradient) return null;
+            if (scaleKey === SCORE_PERCENT) return scoreValueColor(r.score);
+            return scoreGradientColor(levelPlaces.get(r));
+        };
         // What the grind actually ends with: the skill at its target plus the
         // weapon's primary skill wherever the same hours carried it. Rows with
         // no primary gain (or the primary skill's own row) read off the solo sim
@@ -10671,8 +10945,8 @@ class CombatSimUI {
                 case 'dps':
                     return -(e.metrics.dps - baseline.dps);
                 case 'score':
-                    // Higher is better, so negated; a row with no points has no
-                    // figure and stays last whichever way the column is sorted
+                    // Higher is better, so negated; a row that scored nothing has
+                    // no figure and stays last whichever way the column is sorted
                     return r.score > 0 ? -r.score : null;
                 case 'hpXp':
                     return hoursPer(r, 'xp');
@@ -10706,10 +10980,8 @@ class CombatSimUI {
 
         const detailColspan = 9;
         const scoreTitle =
-            `Points for placing in each scored Hours/0.01% column's ${scoreDepthLabel(depthKey).toLowerCase()}, ` +
-            'summed. Finds all-rounders that never top a single column. Ordinal, so winning a column narrowly ' +
-            'scores the same as winning it outright. Counts the same metrics as the gold table above; ' +
-            'use ⚙ Columns to choose what counts and how deep the placings go.';
+            scoreScaleTitle(scaleKey, 'Hours/0.01%') +
+            ' Counts the same metrics as the gold table above; use ⚙ Columns to choose what counts and the scale.';
         const primaryName = rows.find((r) => r.primarySkill)?.primarySkill;
         const primaryNote = primaryName
             ? ` Your weapon trains ${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done — the Δ columns are for both together.`
@@ -10732,7 +11004,7 @@ class CombatSimUI {
                 <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpXp" title="Hours of combat, at your current training rates, per 0.01% EXP/hr improvement. Lower is better.">Hours/0.01% EXP${arrow('hpXp')}</th>
                 <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
                 <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpProfit" title="Hours of combat, at your current training rates, per 0.01% Profit/hr improvement. Lower is better.">Hours/0.01% Profit${arrow('hpProfit')}</th>
-                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="score" title="${scoreTitle}">Score<br>${scoreDepthLabel(depthKey)}${arrow('score')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="score" title="${scoreTitle}">Score<br>${scoreDepthLabel(scaleKey)}${arrow('score')}</th>
             </tr></thead><tbody>`;
 
         sorted.forEach((r, i) => {
@@ -10786,7 +11058,7 @@ class CombatSimUI {
                 <td style="${tdStyle}" data-hours-per="xp">${formatCompactHours(hoursPer(r, 'xp'))}</td>
                 <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}" ${deltaTitle}>${fmtCell(profitDelta, e.deltas.profit)}</td>
                 <td style="${tdStyle}" data-hours-per="profit">${formatCompactHours(hoursPer(r, 'profit'))}</td>
-                <td style="${tdStyle}" data-level-score>${r.score > 0 ? r.score : '—'}</td>
+                <td style="${tdStyle}${levelScoreColor(r) ? ` color:${levelScoreColor(r)};` : ''}" data-level-score>${formatScore(r.score)}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
                 <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
@@ -11062,9 +11334,10 @@ class CombatSimUI {
         }
         if (state.status === 'done') {
             const confirmedRow = { metrics: state.result.metrics, economics: state.result.economics };
-            // Score is an ordinal rank within the candidate set the plan was
-            // built from (see `assignRankScores`) — there is no set to rank a
-            // single combined basket within, so it cannot be recomputed here.
+            // Score is a placing or a share of the best within the candidate set
+            // the plan was built from (see `applyScoreScale`) — there is no set
+            // to place a single combined basket within, so it cannot be
+            // recomputed here.
             // What the confirm run actually measured is shown instead: the
             // same per-metric changes every other axis already knows how to
             // read and format.
@@ -11412,7 +11685,8 @@ class CombatSimUI {
                     type: r.candidate?.type || 'equipment',
                     cost: finite(r.cost),
                     costSource: r.costSource || '',
-                    score: r.score ?? null,
+                    // As the table shows it: points are whole, a percent of best is rounded
+                    score: Number.isFinite(r.score) ? Math.round(r.score) : null,
                     dps: finite(r.metrics?.dps),
                     xpPerHour: finite(r.metrics?.xpPerHour),
                     profitPerHour: finite(r.metrics?.profitPerHour),
@@ -11494,6 +11768,13 @@ class CombatSimUI {
             this._renderUpgradeResults(this._upgradeResultsData);
         });
 
+        // The level table scores itself on every render, so a re-render is enough
+        menu.querySelector('#mwi-csim-level-score-scale')?.addEventListener('change', (event) => {
+            this._upgradeLevelScoreScale = event.target.value || DEFAULT_LEVEL_SCORE_SCALE;
+            this._persistUpgradeColumnPrefs();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
+
         // Color only — the scores are unchanged, so there is nothing to re-rank
         menu.querySelector('#mwi-csim-score-gradient')?.addEventListener('change', (event) => {
             this._upgradeScoreGradient = Boolean(event.target.checked);
@@ -11542,9 +11823,8 @@ class CombatSimUI {
         const rows = this._upgradeResultsData?.results;
         if (!rows) return;
         const scorable = rows.filter((r) => r.candidate?.type !== 'combat_level');
-        assignRankScores(scorable, {
+        applyScoreScale(scorable, this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH, {
             keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
-            places: scoreDepthPlaces(this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH, scorable.length),
         });
     }
 
@@ -11556,7 +11836,9 @@ class CombatSimUI {
                 {
                     hidden: [...(this._upgradeHiddenColumns || DEFAULT_HIDDEN_COLUMNS)],
                     scored: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
+                    // The gear table's scale: a placing depth, as it always was, or 'pct'
                     scoreDepth: this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH,
+                    levelScoreScale: this._upgradeLevelScoreScale || DEFAULT_LEVEL_SCORE_SCALE,
                     scoreGradient: Boolean(this._upgradeScoreGradient),
                     sort: this._upgradeSort || null,
                     levelSort: this._upgradeLevelSort || null,
@@ -11576,10 +11858,12 @@ class CombatSimUI {
             if (!saved) return;
             this._upgradeHiddenColumns = new Set(Array.isArray(saved.hidden) ? saved.hidden : []);
             if (Array.isArray(saved.scored)) this._upgradeScoreKeys = saved.scored;
-            // A depth key from a build that offered a different set is ignored
-            // rather than trusted, so the column cannot end up scoring over a
-            // ladder length nothing in the menu can name
-            if (SCORE_DEPTHS.some((d) => d.key === saved.scoreDepth)) this._upgradeScoreDepth = saved.scoreDepth;
+            // A scale key from a build that offered a different set is ignored
+            // rather than trusted, so a column cannot end up scoring over a
+            // ladder length nothing in the menu can name. A depth saved before
+            // the % of best scale existed is still a valid gear-table scale.
+            if (isScoreScale(saved.scoreDepth)) this._upgradeScoreDepth = saved.scoreDepth;
+            if (isScoreScale(saved.levelScoreScale)) this._upgradeLevelScoreScale = saved.levelScoreScale;
             this._upgradeScoreGradient = Boolean(saved.scoreGradient);
             // A sort key from a build that offered different columns is not
             // validated here — every sorter already falls back to its default

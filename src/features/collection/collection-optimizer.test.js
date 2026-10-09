@@ -62,6 +62,48 @@ const ITEMS = vi.hoisted(() => ({
     },
     '/items/cheese': { name: 'Cheese' },
     '/items/coin': { name: 'Coin' },
+    // The game's own data: the whole recipe comes back on a success
+    '/items/earrings_of_essence_find': {
+        name: 'Earrings Of Essence Find',
+        itemLevel: 30,
+        equipmentDetail: {},
+        alchemyDetail: {
+            bulkMultiplier: 1,
+            decomposeItems: [
+                { itemHrid: '/items/star_fragment', count: 600 },
+                { itemHrid: '/items/amber', count: 6 },
+            ],
+        },
+    },
+    '/items/star_fragment': { name: 'Star Fragment' },
+    // Amber's transmute, cut to three of its eight rows (the game's rates for those three)
+    '/items/amber': {
+        name: 'Amber',
+        itemLevel: 25,
+        alchemyDetail: {
+            bulkMultiplier: 1,
+            transmuteSuccessRate: 0.35,
+            transmuteDropTable: [
+                { itemHrid: '/items/star_fragment', dropRate: 0.1, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/amber', dropRate: 0.16, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/garnet', dropRate: 0.12, minCount: 1, maxCount: 1 },
+            ],
+        },
+    },
+    '/items/garnet': { name: 'Garnet' },
+    '/items/milk': { name: 'Milk' },
+    '/items/milking_essence': { name: 'Milking Essence' },
+}));
+
+/** Milking a cow, as the game lists it: a level requirement and a drop table */
+const ACTIONS = vi.hoisted(() => ({
+    '/actions/milking/cow': {
+        hrid: '/actions/milking/cow',
+        name: 'Cow',
+        type: '/action_types/milking',
+        levelRequirement: { skillHrid: '/skills/milking', level: 1 },
+        dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+    },
 }));
 
 const BUY = vi.hoisted(() => ({
@@ -75,7 +117,44 @@ const BUY = vi.hoisted(() => ({
     '/items/cheese_sword': 2000,
     // The bonus drop every alchemy action rolls has a market in the game
     '/items/alchemy_essence': 100,
+    // Live books, 2026-10-08
+    '/items/earrings_of_essence_find': 6_300_000,
+    '/items/star_fragment': 13_750,
+    '/items/amber': 20_240,
+    '/items/garnet': 21_000,
+    '/items/milk': 100,
+    '/items/milking_essence': 50,
+    '/items/pearl': 13_350,
 }));
+
+/** The bid side, where it differs from the ask above */
+const BID = vi.hoisted(() => ({
+    '/items/earrings_of_essence_find': 5_940_000,
+    '/items/star_fragment': 13_700,
+    '/items/amber': 20_160,
+    '/items/milk': 90,
+}));
+
+/** What an Artisan's Crate opens into, when a test has one drop (game.crateDrop) */
+const LOOT = vi.hoisted(() => ({
+    '/items/small_artisans_crate': [
+        { itemHrid: '/items/star_fragment', dropRate: 1, minCount: 2, maxCount: 4 },
+        { itemHrid: '/items/garnet', dropRate: 0.5, minCount: 1, maxCount: 1 },
+        { itemHrid: '/items/pearl', dropRate: 0.2, minCount: 1, maxCount: 1 },
+    ],
+    // Nobody bids on either: coins only, and coins with a Star Fragment
+    '/items/coin_pouch': [{ itemHrid: '/items/coin', dropRate: 1, minCount: 100, maxCount: 300 }],
+    '/items/mixed_chest': [
+        { itemHrid: '/items/coin', dropRate: 1, minCount: 1000, maxCount: 1000 },
+        { itemHrid: '/items/star_fragment', dropRate: 1, minCount: 1, maxCount: 1 },
+    ],
+}));
+
+/** The listing tracker's cached order books: itemHrid → {asks, lastUpdated} */
+const BOOKS = vi.hoisted(() => ({ byItem: {} }));
+
+/** Measured daily volumes, for the liquidity bound */
+const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -90,12 +169,17 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => game.characterId,
         getInitClientData: () => ({
             itemDetailMap: ITEMS,
+            actionDetailMap: ACTIONS,
+            openableLootDropMap: LOOT,
             achievementDetailMap: {
                 '/achievements/collection_points_100': { hrid: '/achievements/collection_points_100', target: 100 },
             },
         }),
         getItemDetails: (hrid) => ITEMS[hrid] || null,
-        getActionDetails: () => game.actionDetails ?? null,
+        getActionDetails: (hrid) => ACTIONS[hrid] ?? game.actionDetails ?? null,
+        getSkills: () => [{ skillHrid: '/skills/milking', level: game.milkingLevel }],
+        getEquipment: () => new Map(),
+        getActionDrinkSlots: () => [],
         getCurrentCharacterGameMode: () => 'standard',
         on: (event, handler) => {
             (bus.handlers[event] ||= []).push(handler);
@@ -134,8 +218,31 @@ vi.mock('../market/profit-calculator.js', () => ({
                   },
     },
 }));
+// The cow at 360 actions an hour and +50% efficiency: 1.5 milk an action, 10% of it turned into
+// cheese by Processing, an essence every 100 completions, and 720 an hour of tea
+vi.mock('../actions/gathering-profit.js', () => ({
+    calculateGatheringProfit: async (hrid) =>
+        hrid !== '/actions/milking/cow'
+            ? null
+            : {
+                  actionsPerHour: 360,
+                  efficiencyMultiplier: 1.5,
+                  baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 540 }],
+                  processingConversions: [
+                      {
+                          rawItemHrid: '/items/milk',
+                          processedItemHrid: '/items/cheese',
+                          rawConsumedPerHour: 54,
+                          conversionsPerHour: 54,
+                      },
+                  ],
+                  bonusRevenue: { bonusDrops: [{ itemHrid: '/items/milking_essence', dropsPerHour: 3.6 }] },
+                  drinkCostPerHour: 720,
+                  drinkCosts: game.unpricedTea ? [{ missingPrice: true }] : [],
+              },
+}));
 vi.mock('../market/tooltip-prices.js', () => ({
-    ownUseCompare: () => ({ make: 4, buy: 10, saves: 6, cheaper: 'make', priceBasis: 'ask' }),
+    ownUseCompare: (data) => ({ make: data.makeCost ?? 4, buy: 10, saves: 6, cheaper: 'make', priceBasis: 'ask' }),
 }));
 
 const RATES = vi.hoisted(() => ({
@@ -143,9 +250,52 @@ const RATES = vi.hoisted(() => ({
     '/items/beast_hood': 0.5,
     '/items/gobo_hood': 0.8,
     '/items/cheese_sword': 1,
+    // The rate the maintainer's row implies: base 60% raised by a catalyst and tea
+    '/items/earrings_of_essence_find': 0.8,
 }));
+/** Coins per decompose ((10 + level 30) × 5) and the catalyst used on each success */
+const OVERHEAD = vi.hoisted(() => ({
+    '/items/earrings_of_essence_find': { coin: 200, catalystPerSuccess: 7920 },
+}));
+/**
+ * Amber's transmute: by default 50% after its catalyst and tea, 100 attempts an hour, 125 coins
+ * and 3,000 of catalyst an hour, and the essence every attempt can roll
+ */
+const amberTransmute = (hrid, setup = {}) => ({
+    itemHrid: hrid,
+    actionsPerHour: 100,
+    successRate: 0.5,
+    requirementCosts: [
+        { itemHrid: hrid, count: 1, price: BUY[hrid] },
+        { itemHrid: '/items/coin', count: 125, costPerAction: 125 },
+    ],
+    catalystCostPerHour: 3000,
+    totalTeaCostPerHour: 0,
+    winningCatalystHrid: '/items/catalyst_of_transmutation',
+    winningTeaUsed: true,
+    dropRevenues: [
+        { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
+        ...(game.crateDrop
+            ? [
+                  {
+                      itemHrid: game.crateDrop === true ? '/items/small_artisans_crate' : game.crateDrop,
+                      isRare: true,
+                      dropsPerHour: 1,
+                      price: 0,
+                  },
+              ]
+            : []),
+    ],
+    ...setup,
+});
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
+        calculateTransmuteProfit: (hrid) => (hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid)),
+        // The setups the calculator weighs, when a test lists them
+        calculateCandidateResults: (type, hrid) =>
+            type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
+                ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
+                : [],
         calculateDecomposeProfit: (hrid) =>
             RATES[hrid] === undefined
                 ? null
@@ -153,8 +303,19 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
                       itemHrid: hrid,
                       actionsPerHour: 100,
                       successRate: RATES[hrid],
-                      requirementCosts: [{ itemHrid: hrid, count: 1, price: BUY[hrid] }],
-                      catalystCostPerHour: 0,
+                      requirementCosts: [
+                          { itemHrid: hrid, count: 1, price: BUY[hrid] },
+                          ...(OVERHEAD[hrid]
+                              ? [
+                                    {
+                                        itemHrid: '/items/coin',
+                                        count: OVERHEAD[hrid].coin,
+                                        costPerAction: OVERHEAD[hrid].coin,
+                                    },
+                                ]
+                              : []),
+                      ],
+                      catalystCostPerHour: OVERHEAD[hrid] ? OVERHEAD[hrid].catalystPerSuccess * RATES[hrid] * 100 : 0,
                       totalTeaCostPerHour: 0,
                       // The alchemy-wide bonus drop every action rolls
                       dropRevenues: [
@@ -166,11 +327,40 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => BUY[hrid] ?? null,
-    getItemPriceInfo: (hrid) =>
-        game.estimated.has(hrid)
-            ? { price: BUY[hrid] ?? null, source: 'value', estimated: true }
-            : { price: BUY[hrid] ?? null, source: 'book', estimated: false },
+    getItemPriceInfo: (hrid, options = {}) => {
+        // The profit pricing mode picks the side when no mode is named: 'optimistic' buys at the bid
+        const side = options.mode ?? (game.pricingMode === 'optimistic' && options.side === 'buy' ? 'bid' : 'ask');
+        const price = side === 'bid' ? (BID[hrid] ?? BUY[hrid] ?? null) : (BUY[hrid] ?? null);
+        return game.estimated.has(hrid)
+            ? { price, source: 'value', estimated: true }
+            : { price, source: 'book', estimated: false };
+    },
     getPricingMode: () => 'ask',
+}));
+// The shared liquidity bound: a quarter of the measured daily volume, per hour
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    capProfitRateCached: ({ goldPerHour, sells }) => {
+        const perDay = VOLUME.perDay[sells[0].itemHrid];
+        if (perDay === undefined) return { goldPerHour, capped: false, limit: null };
+        const throttle = Math.min(1, (0.25 * perDay) / 24 / sells[0].unitsPerHour);
+        return throttle < 1
+            ? { goldPerHour: goldPerHour * throttle, capped: true, limit: { throttle } }
+            : { goldPerHour, capped: false, limit: null };
+    },
+    // Measuring waits on a test's gate, when it sets one
+    prefetchLiquidity: async () => {
+        if (VOLUME.gate) await VOLUME.gate;
+    },
+}));
+vi.mock('../planner/market-liquidity.js', () => ({ LIQUIDITY_HORIZON_DAYS: 7 }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    estimatedListingAge: () => ({
+        cachedBookSide: (hrid, level, isSell) => {
+            const book = BOOKS.byItem[hrid];
+            return book && level === 0 && isSell ? { listings: book.asks, lastUpdated: book.lastUpdated } : null;
+        },
+    }),
 }));
 vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinOnlyCost: (hrid) => ({
@@ -179,7 +369,10 @@ vi.mock('../../utils/game-lookups.js', () => ({
     }),
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
-vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price }));
+// The 4% market tax, off for an Iron Cow
+vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => (game.ironCow ? price : price * 0.96),
+}));
 vi.mock('../../utils/character-key.js', () => ({
     readScoped: async (base, _store, fallback) => {
         const key = `${game.characterId}:${base}`;
@@ -192,7 +385,16 @@ vi.mock('../../utils/character-key.js', () => ({
     },
 }));
 
-const { default: optimizer, buildCollectionRoutes } = await import('./collection-optimizer.js');
+const {
+    default: optimizer,
+    buildCollectionRoutes,
+    buyQuote,
+    realizedSalePrice,
+    weeklySellable,
+    formatNet,
+} = await import('./collection-optimizer.js');
+const { bestOptions, collectionCounts, evaluateOption, indexRoutes, planTarget } =
+    await import('./collection-optimizer-plan.js');
 
 /** The game's Collections tab: controls, then the tile categories */
 function drawCollectionsTab() {
@@ -227,6 +429,15 @@ beforeEach(() => {
     game.altProfit = null;
     game.mixedShop = false;
     game.ironCow = false;
+    VOLUME.perDay = {};
+    VOLUME.gate = null;
+    BOOKS.byItem = {};
+    game.pricingMode = 'hybrid';
+    game.noTransmute = false;
+    game.milkingLevel = 10;
+    game.unpricedTea = false;
+    game.crateDrop = false;
+    game.transmuteSetups = [];
 });
 
 afterEach(() => {
@@ -251,12 +462,364 @@ describe('the routes', () => {
         expect(sword.yields.get('/items/cheese')).toBe(18);
 
         expect(routes.craft).toEqual([
-            { route: 'craft', itemHrid: '/items/cheese', unitCost: 4, unitSeconds: 10, batch: 1 },
+            {
+                route: 'craft',
+                itemHrid: '/items/cheese',
+                actionHrid: '/actions/x',
+                unitCost: 4,
+                unitSeconds: 10,
+                batch: 1,
+            },
         ]);
         const kinds = new Set([...routes.craft, ...routes.sources].map((r) => r.route));
-        expect([...kinds].sort()).toEqual(['craft', 'decompose', 'shop']);
-        // No route ever yields the source it starts from
-        for (const source of routes.sources) expect(source.yields.has(source.sourceHrid)).toBe(false);
+        expect([...kinds].sort()).toEqual(['craft', 'decompose', 'gather', 'shop', 'transmute']);
+        // No decompose or shop route ever yields the source it starts from
+        for (const source of routes.sources.filter((r) => ['decompose', 'shop'].includes(r.route))) {
+            expect(source.yields.has(source.sourceHrid)).toBe(false);
+        }
+    });
+});
+
+describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find, −430.3M", () => {
+    const earringsRoute = (routes) =>
+        routes.sources.find((s) => s.sourceHrid === '/items/earrings_of_essence_find' && s.route === 'decompose');
+    // Amber at 3,000 toward 10,000: 4.8 per earring is 1,459 earrings
+    const counts = new Map([
+        ['/items/amber', 3000],
+        ['/items/star_fragment', 1_000_000],
+    ]);
+
+    test('the bought earring is charged at the ask, with its coins and catalyst', async () => {
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.cost).toBeCloseTo(6_300_000 + 200 + 7920 * 0.8, 6);
+        // 600 × 0.8 fragments, 6 × 0.8 Amber
+        expect(route.yields.get('/items/star_fragment')).toBeCloseTo(480, 9);
+        expect(route.yields.get('/items/amber')).toBeCloseTo(4.8, 9);
+    });
+
+    test('a patient-buy pricing mode does not price a buy of hundreds at the bid', async () => {
+        game.pricingMode = 'optimistic';
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.cost).toBeCloseTo(6_300_000 + 200 + 7920 * 0.8, 6);
+    });
+
+    test('Star Fragments are sold at the bid after tax: the earring no longer earns 293k', async () => {
+        const route = earringsRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/amber', counts, route);
+        expect(option.units).toBe(1459);
+        expect(option.gold).toBeGreaterThan(-10e6);
+        // At the untaxed ask the same route earned 480 × 13,750 − 6,306,536 = 293,464 an earring
+        // (−428M over 1,459; the panel's 1,472 at its own count: −430.3M). At 13,152 a fragment it
+        // is 6,424 an earring, plus the essence
+        const essence = 0.1 * 100 * 0.96;
+        expect(option.gold / option.units).toBeCloseTo(6_306_536 - 480 * 13_152 - essence, 3);
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 6);
+    });
+
+    test('and only as many as the market takes in a week: the route costs ~8.7B', async () => {
+        VOLUME.perDay['/items/star_fragment'] = 22_885;
+        const route = earringsRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/amber', counts, route, { sellable: weeklySellable });
+        const week = 0.25 * 22_885 * 7;
+        expect(option.sold.get('/items/star_fragment')).toBeCloseTo(week, 3);
+        expect(option.gold).toBeGreaterThan(8e9);
+    });
+
+    test('the earring is bought up its order book, and no more of it than a week trades', async () => {
+        const route = earringsRoute(await buildCollectionRoutes());
+        expect(route.purchase).toEqual({ hrid: '/items/earrings_of_essence_find', ask: 6_300_000 });
+        // A book opened an hour ago, 11 earrings on show from 6.3M to 6.8M
+        BOOKS.byItem['/items/earrings_of_essence_find'] = {
+            lastUpdated: Date.now() - 3600 * 1000,
+            asks: [
+                { listingId: 9001, price: 6_300_000, quantity: 2, createdTimestamp: '2026-10-08T19:02:11.000Z' },
+                { listingId: 8790, price: 6_350_000, quantity: 1, createdTimestamp: '2026-10-07T11:30:02.000Z' },
+                { listingId: 8811, price: 6_400_000, quantity: 3, createdTimestamp: '2026-10-07T14:41:55.000Z' },
+                { listingId: 8402, price: 6_500_000, quantity: 1, createdTimestamp: '2026-10-05T08:12:19.000Z' },
+                { listingId: 8125, price: 6_800_000, quantity: 4, createdTimestamp: '2026-10-03T22:47:31.000Z' },
+            ],
+        };
+        expect(buyQuote(route.purchase, 4).gold).toBe(2 * 6_300_000 + 6_350_000 + 6_400_000);
+        // Nothing measured: past the book at its deepest level
+        expect(buyQuote(route.purchase, 13).gold).toBe(
+            2 * 6_300_000 + 6_350_000 + 3 * 6_400_000 + 6_500_000 + 6 * 6_800_000
+        );
+        // One a day trades: the 1,459 the Amber row needs are not to be had
+        VOLUME.perDay['/items/earrings_of_essence_find'] = 1;
+        expect(buyQuote(route.purchase, 1459).feasible).toBe(false);
+        expect(evaluateOption('/items/amber', counts, route, { sellable: weeklySellable, buyQuote })).toBeNull();
+        // A book older than six hours says nothing about today's price
+        delete VOLUME.perDay['/items/earrings_of_essence_find'];
+        BOOKS.byItem['/items/earrings_of_essence_find'].lastUpdated = Date.now() - 7 * 3600 * 1000;
+        expect(buyQuote(route.purchase, 4).gold).toBe(4 * 6_300_000);
+    });
+
+    test('an Iron Cow sells to the vendor: no market bound', () => {
+        VOLUME.perDay['/items/star_fragment'] = 22_885;
+        expect(weeklySellable('/items/star_fragment')).toBeCloseTo(0.25 * 22_885 * 7, 6);
+        game.ironCow = true;
+        expect(weeklySellable('/items/star_fragment')).toBe(Infinity);
+        // Nothing measured: unbounded
+        game.ironCow = false;
+        expect(weeklySellable('/items/amber')).toBe(Infinity);
+    });
+
+    test('an output nobody bids on realizes nothing, unless it is a crate to open', () => {
+        expect(realizedSalePrice('/items/star_fragment')).toBeCloseTo(13_700 * 0.96, 6);
+        game.estimated = new Set(['/items/star_fragment']);
+        expect(realizedSalePrice('/items/star_fragment')).toBe(0);
+        expect(realizedSalePrice('/items/star_fragment', () => true)).toBeNull();
+        expect(realizedSalePrice('/items/no_such_item')).toBeNull();
+    });
+});
+
+describe('transmute routes', () => {
+    const amberRoute = (routes) =>
+        routes.sources.find((s) => s.route === 'transmute' && s.sourceHrid === '/items/amber');
+
+    test('buy Amber at the ask and transmute it, and every Amber that comes back, until none is left', async () => {
+        const route = amberRoute(await buildCollectionRoutes());
+        // 0.16 × 0.5 = 0.08 Amber back per attempt: 1 / 0.92 attempts per Amber bought
+        const attempts = 1 / 0.92;
+        expect(route.yields.get('/items/garnet')).toBeCloseTo(0.12 * 0.5 * attempts, 12);
+        expect(route.yields.get('/items/star_fragment')).toBeCloseTo(0.1 * 0.5 * attempts, 12);
+        // The Amber that comes back is collected as it arrives, and transmuted again, never sold
+        expect(route.yields.get('/items/amber')).toBeCloseTo(0.08 * attempts, 12);
+        expect(route.kept.has('/items/amber')).toBe(false);
+        // Bought at the ask; each attempt pays 125 coins and 30 of catalyst
+        expect(route.cost).toBeCloseTo(20_240 + attempts * (125 + 30), 9);
+        expect(route.purchase).toEqual({ hrid: '/items/amber', ask: 20_240 });
+        expect(route.seconds).toBeCloseTo(attempts * 36, 9);
+        expect(route.batch).toBe(1);
+        // The others are sold at the bid after tax; the essence is credited and sold, never a target
+        expect(route.kept.get('/items/garnet').unit).toBeCloseTo(21_000 * 0.96, 9);
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 9);
+        expect(route.bonus.has('/items/alchemy_essence')).toBe(true);
+        expect(route.yields.get('/items/alchemy_essence')).toBeCloseTo(0.1 * attempts, 12);
+    });
+
+    test('a first Garnet: 16 Amber, at the arithmetic above', async () => {
+        const route = amberRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), route);
+        const attempts = 1 / 0.92;
+        // 0.0652 Garnet per Amber: 16 Amber for the first
+        expect(option.units).toBe(Math.ceil(1 / (0.06 * attempts)));
+        // Star Fragments and the essence are sold; the Amber that comes back is transmuted again
+        const sold = option.units * attempts * (0.1 * 0.5 * 13_700 * 0.96 + 0.1 * 100 * 0.96);
+        expect(option.gold).toBeCloseTo(option.units * (20_240 + attempts * 155) - sold, 6);
+        expect(option.sold.has('/items/garnet')).toBe(false);
+    });
+
+    test('ranks with the other routes and says what it transmutes', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const garnet = [...document.querySelectorAll('.toolasha-collopt-row')].find(
+            (row) => row.dataset.item === '/items/garnet'
+        );
+        expect(garnet.dataset.route).toBe('transmute');
+        expect(garnet.textContent).toContain('Transmute: 16× Amber');
+    });
+
+    test('a crate nobody bids on is sold as its contents, each bounded by its own market', async () => {
+        game.crateDrop = true;
+        // No live bid on the crate, and a crate market that is measured dead
+        game.estimated = new Set(['/items/small_artisans_crate']);
+        VOLUME.perDay['/items/small_artisans_crate'] = 0;
+        const route = amberRoute(await buildCollectionRoutes());
+        const attempts = 1 / 0.92;
+        // One crate an hour over 100 attempts: 3 fragments and half a Garnet each
+        const crates = (1 / 100) * attempts;
+        expect(route.kept.has('/items/small_artisans_crate')).toBe(false);
+        expect(route.kept.get('/items/star_fragment').perSource).toBeCloseTo(0.1 * 0.5 * attempts + crates * 3, 12);
+        expect(route.kept.get('/items/garnet').perSource).toBeCloseTo(0.12 * 0.5 * attempts + crates * 0.5, 12);
+        expect(route.kept.get('/items/star_fragment').unit).toBeCloseTo(13_700 * 0.96, 9);
+        // The crate is still collected as it drops
+        expect(route.yields.get('/items/small_artisans_crate')).toBeCloseTo(crates, 12);
+        // The dead crate market no longer erases what its contents sell for
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), route, {
+            sellable: weeklySellable,
+        });
+        expect(option.sold.has('/items/small_artisans_crate')).toBe(false);
+        expect(option.sold.get('/items/star_fragment')).toBeCloseTo(
+            option.units * route.kept.get('/items/star_fragment').perSource,
+            9
+        );
+    });
+
+    test('a crate opened to sell acquires its contents: they count toward their own collections', async () => {
+        game.crateDrop = true;
+        game.estimated = new Set(['/items/small_artisans_crate']);
+        const route = amberRoute(await buildCollectionRoutes());
+        const attempts = 1 / 0.92;
+        const crates = (1 / 100) * attempts;
+        // What the transmute drops, and what opening the crates it drops brings out
+        expect(route.yields.get('/items/star_fragment')).toBeCloseTo(0.1 * 0.5 * attempts + crates * 3, 12);
+        expect(route.yields.get('/items/garnet')).toBeCloseTo(0.12 * 0.5 * attempts + crates * 0.5, 12);
+        expect(route.yields.get('/items/pearl')).toBeCloseTo(crates * 0.2, 12);
+        // Pearl arrives only in a bonus crate: credited like the crate, never a target of the route
+        expect(route.bonus.has('/items/pearl')).toBe(true);
+        expect(route.bonus.has('/items/garnet')).toBe(false);
+        const index = indexRoutes({ sources: [route] });
+        expect(index.has('/items/pearl')).toBe(false);
+        // A first Garnet: the Pearls the crates opened along the way are points too, and in the plan
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), route);
+        expect(option.credits.get('/items/pearl')).toBeCloseTo(option.units * crates * 0.2, 12);
+        const plan = planTarget(new Map([['/items/star_fragment', 1e6]]), index, 3);
+        expect(plan.steps[0].credits.get('/items/pearl')).toBeGreaterThan(0);
+        // Garnet 1,000 → 10,000 takes ~137k Amber, and the ~300 Pearls opened on the way are 3 more rungs
+        const big = evaluateOption(
+            '/items/garnet',
+            new Map([
+                ['/items/garnet', 1000],
+                ['/items/star_fragment', 1e9],
+                ['/items/amber', 1e9],
+                ['/items/alchemy_essence', 1e9],
+                ['/items/small_artisans_crate', 1e9],
+            ]),
+            route
+        );
+        expect(big.credits.get('/items/pearl')).toBeGreaterThan(100);
+        expect(big.collateral).toBe(6);
+    });
+
+    test('coins a crate holds are counted at face value, untaxed and unbounded', async () => {
+        const attempts = 1 / 0.92;
+        const crates = (1 / 100) * attempts;
+        const plain = amberRoute(await buildCollectionRoutes());
+        // A pouch of nothing but coins: priced, 200 coins a pouch off the cost, nothing sold or collected
+        game.crateDrop = '/items/coin_pouch';
+        const pouch = amberRoute(await buildCollectionRoutes());
+        expect(pouch.partlyUnpriced).toBe(false);
+        expect(pouch.cost).toBeCloseTo(plain.cost - crates * 200, 9);
+        expect(pouch.kept.has('/items/coin')).toBe(false);
+        expect(pouch.yields.has('/items/coin')).toBe(false);
+        // Coins beside an item: both counted, and only the item is sold under a market bound
+        game.crateDrop = '/items/mixed_chest';
+        VOLUME.perDay['/items/coin'] = 0;
+        const chest = amberRoute(await buildCollectionRoutes());
+        expect(chest.cost).toBeCloseTo(plain.cost - crates * 1000, 9);
+        expect(chest.kept.get('/items/star_fragment').perSource).toBeCloseTo(
+            plain.kept.get('/items/star_fragment').perSource + crates,
+            12
+        );
+        const option = evaluateOption('/items/garnet', new Map([['/items/star_fragment', 1e6]]), chest, {
+            sellable: weeklySellable,
+        });
+        expect(option.sold.has('/items/coin')).toBe(false);
+        expect(option.credits.has('/items/coin')).toBe(false);
+    });
+
+    test('every setup the calculator weighs is a route, and the ranking picks by gold per point', async () => {
+        // The calculator's pick is the type-specific catalyst. Prime raises the success rate to 75%
+        // for 9,000 of catalyst an hour: more Garnet per Amber bought, so fewer Amber for a point
+        game.transmuteSetups = [
+            {},
+            { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
+            // No tea to drink: the same as the first, offered once
+            { winningTeaUsed: false },
+        ];
+        const routes = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'transmute' && s.sourceHrid === '/items/amber'
+        );
+        expect(routes.map((r) => r.setup.catalystHrid)).toEqual([
+            '/items/catalyst_of_transmutation',
+            '/items/prime_catalyst',
+        ]);
+        const counts = new Map([['/items/star_fragment', 1e6]]);
+        const [typeSpecific, prime] = routes.map((r) => evaluateOption('/items/garnet', counts, r));
+        expect(prime.goldPerPoint).toBeLessThan(typeSpecific.goldPerPoint);
+        const index = new Map([['/items/garnet', routes]]);
+        const [best] = bestOptions(counts, index);
+        expect(best.setup.catalystHrid).toBe('/items/prime_catalyst');
+        // Fastest compares the same routes on time per point
+        const [fastest] = bestOptions(counts, index, { sort: 'fastest' });
+        expect(fastest.secondsPerPoint).toBeLessThanOrEqual(typeSpecific.secondsPerPoint);
+    });
+
+    test('the row says which catalyst and teas the transmute uses', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const garnet = [...document.querySelectorAll('.toolasha-collopt-row')].find(
+            (row) => row.dataset.item === '/items/garnet'
+        );
+        expect(garnet.textContent).toContain('Transmute: 16× Amber (catalyst_of_transmutation, teas)');
+    });
+
+    test('an output with no price at all leaves the route out', async () => {
+        const saved = BUY['/items/garnet'];
+        delete BUY['/items/garnet'];
+        try {
+            const route = amberRoute(await buildCollectionRoutes());
+            expect(route.partlyUnpriced).toBe(true);
+        } finally {
+            BUY['/items/garnet'] = saved;
+        }
+    });
+
+    test('nothing to transmute without a live ask, on an Iron Cow, or when the calculator cannot run it', async () => {
+        game.estimated = new Set(['/items/amber']);
+        expect(amberRoute(await buildCollectionRoutes())).toBeUndefined();
+        game.estimated = new Set();
+        game.ironCow = true;
+        expect(amberRoute(await buildCollectionRoutes())).toBeUndefined();
+        game.ironCow = false;
+        game.noTransmute = true;
+        expect(amberRoute(await buildCollectionRoutes())).toBeUndefined();
+    });
+});
+
+describe('gathering routes', () => {
+    const cowRoute = (routes) => routes.sources.find((s) => s.route === 'gather');
+
+    test('one action: its drops net of Processing, its bonus drops, and its tea', async () => {
+        const route = cowRoute(await buildCollectionRoutes());
+        expect(route.actionHrid).toBe('/actions/milking/cow');
+        // (540 − 54) / 360 milk and 54 / 360 cheese an action; essence 3.6 / 360 × 1.5
+        expect(route.yields.get('/items/milk')).toBeCloseTo(1.35, 12);
+        expect(route.yields.get('/items/cheese')).toBeCloseTo(0.15, 12);
+        expect(route.yields.get('/items/milking_essence')).toBeCloseTo(0.015, 12);
+        expect(route.bonus.has('/items/milking_essence')).toBe(true);
+        // Nothing goes in but the tea: 720 an hour is 2 an action; an action is 10 s
+        expect(route.cost).toBeCloseTo(2, 12);
+        expect(route.seconds).toBeCloseTo(10, 12);
+        expect(route.batch).toBe(1);
+        // Everything is sold at the bid after tax, unless it is the target
+        expect(route.kept.get('/items/milk').unit).toBeCloseTo(90 * 0.96, 12);
+    });
+
+    test('ten Milk: seven actions, the cheese and essence sold', async () => {
+        const route = cowRoute(await buildCollectionRoutes());
+        const option = evaluateOption('/items/milk', new Map([['/items/milk', 1]]), route);
+        // 9 more at 1.35 an action
+        expect(option.units).toBe(7);
+        expect(option.seconds).toBeCloseTo(70, 9);
+        const sold = 7 * (0.15 * 10 * 0.96 + 0.015 * 50 * 0.96);
+        expect(option.gold).toBeCloseTo(7 * 2 - sold, 9);
+        expect(option.sold.has('/items/milk')).toBe(false);
+    });
+
+    test('ranks with the other routes and says where', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const milk = [...document.querySelectorAll('.toolasha-collopt-row')].find(
+            (row) => row.dataset.item === '/items/milk'
+        );
+        expect(milk.dataset.route).toBe('gather');
+        expect(milk.textContent).toContain('Gather: 1 action at Cow');
+    });
+
+    test('a zone above the character’s level is no route; an unpriced tea leaves it out', async () => {
+        ACTIONS['/actions/milking/cow'].levelRequirement.level = 20;
+        try {
+            expect(cowRoute(await buildCollectionRoutes())).toBeUndefined();
+        } finally {
+            ACTIONS['/actions/milking/cow'].levelRequirement.level = 1;
+        }
+        game.unpricedTea = true;
+        expect(cowRoute(await buildCollectionRoutes()).partlyUnpriced).toBe(true);
     });
 });
 
@@ -307,6 +870,33 @@ describe('a recipe the character cannot start', () => {
         const routes = await buildCollectionRoutes();
         expect(routes.craft).toHaveLength(1);
         expect(routes.craft[0].itemHrid).toBe('/items/cheese');
+    });
+
+    test('each recipe the character can start is its own route, so the sort picks cheap or fast', async () => {
+        // The default recipe: 4 a unit at 360 an hour. The alternative: 6 a unit, but 720 an hour
+        game.altProfit = { makeCost: 6, totalItemsPerHour: 720 };
+        const routes = await buildCollectionRoutes();
+        expect(routes.craft.map((r) => [r.actionHrid, r.unitCost, r.unitSeconds])).toEqual([
+            ['/actions/x', 4, 10],
+            ['/actions/alt', 6, 5],
+        ]);
+        // The bench-made sword decomposes off either recipe too
+        const cheese = indexRoutes(routes)
+            .get('/items/cheese')
+            .filter((r) => r.route === 'craft');
+        const counts = new Map([['/items/cheese', 5]]);
+        const index = new Map([['/items/cheese', cheese]]);
+        expect(bestOptions(counts, index)[0].actionHrid).toBe('/actions/x');
+        expect(bestOptions(counts, index, { sort: 'fastest' })[0].actionHrid).toBe('/actions/alt');
+        // A max time per step only the fast recipe fits still ranks the item
+        expect(bestOptions(counts, index, { maxSeconds: 30 })[0].actionHrid).toBe('/actions/alt');
+    });
+
+    test('a recipe no cheaper and no faster than another is left out', async () => {
+        game.altProfit = { makeCost: 6, totalItemsPerHour: 360 };
+        expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
+        game.altProfit = { makeCost: 4, totalItemsPerHour: 360 };
+        expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
     });
 
     test('an Action Level tea that raises the requirement past the level blocks it too', async () => {
@@ -390,7 +980,7 @@ describe('the panel', () => {
         await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
         const rows = [...document.querySelectorAll('.toolasha-collopt-row')];
         const routes = rows.map((row) => row.dataset.route);
-        for (const route of routes) expect(['craft', 'decompose', 'shop']).toContain(route);
+        for (const route of routes) expect(['craft', 'decompose', 'shop', 'transmute', 'gather']).toContain(route);
         expect(panel().textContent).not.toMatch(/\bBuy\b:/);
         // The lower hoods are on offer, collected by decomposing an Umbral Hood
         const items = rows.map((row) => row.dataset.item);
@@ -410,6 +1000,42 @@ describe('the panel', () => {
         const result = document.querySelector('.toolasha-collopt-plan-result');
         expect(result.textContent).toMatch(/^\+\d+ points: /);
         expect(result.querySelectorAll('li').length).toBeGreaterThan(0);
+    });
+
+    test('a plan clicked before the volumes are measured survives the redraw, planned again on them', async () => {
+        let release;
+        VOLUME.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(optimizer.volumesWarming).not.toBeNull());
+        document.querySelector('.toolasha-collopt-target').value = '5';
+        document.querySelector('.toolasha-collopt-plan').click();
+        const before = document.querySelector('.toolasha-collopt-plan-result').textContent;
+        expect(before).toMatch(/^\+\d+ points: /);
+
+        // The volumes land, and nothing the plan sells has a market
+        for (const hrid of Object.keys(BUY)) VOLUME.perDay[hrid] = 0;
+        release();
+        await optimizer.volumesWarming;
+        const after = document.querySelector('.toolasha-collopt-plan-result');
+        expect(after.textContent).toMatch(/^\+\d+ points: /);
+        expect(after.querySelectorAll('li').length).toBeGreaterThan(0);
+        expect(after.textContent).not.toBe(before);
+        expect(document.querySelector('.toolasha-collopt-target').value).toBe('5');
+    });
+
+    test('another character does not inherit the plan on show', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-plan')).not.toBeNull());
+        document.querySelector('.toolasha-collopt-plan').click();
+        expect(document.querySelector('.toolasha-collopt-plan-result').textContent).not.toBe('');
+        game.characterId = 'char-2';
+        optimizer.render(panel());
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-plan')).not.toBeNull());
+        expect(document.querySelector('.toolasha-collopt-plan-result').textContent).toBe('');
     });
 
     test('collapses on a header click', async () => {
@@ -501,6 +1127,65 @@ describe('the panel', () => {
         for (const handler of bus.handlers.collections_updated || []) handler({ collections: COLLECTIONS });
         await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
         expect(optimizer.routesFor).toBe('char-2');
+    });
+
+    test('money is net gold: + earns, − costs, in the columns that say so', async () => {
+        expect(formatNet(-1500)).toBe('+1.5K');
+        expect(formatNet(2_000_000)).toBe('\u22122.0M');
+        expect(formatNet(0)).toBe('0');
+
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const heads = [...document.querySelectorAll('.toolasha-collopt-table th')].map((th) => th.textContent);
+        expect(heads).toEqual(['Item', 'Count → next', 'Points', 'Route', 'Net gold', 'Time', 'Net/pt']);
+        // Each row's net gold carries its sign, and both kinds of step are on offer here
+        const nets = [...document.querySelectorAll('.toolasha-collopt-row')].map((row) => row.children[4].textContent);
+        for (const text of nets) expect(text).toMatch(/^[+\u2212]/);
+        expect(nets.some((text) => text.startsWith('+'))).toBe(true);
+        expect(nets.some((text) => text.startsWith('\u2212'))).toBe(true);
+    });
+
+    test('the sort: most profitable by default, fastest on request, kept per character', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        await vi.waitFor(() => expect(document.querySelectorAll('.toolasha-collopt-row').length).toBeGreaterThan(0));
+        const select = () => document.querySelector('.toolasha-collopt-sort');
+        expect(select().value).toBe('profit');
+        expect([...select().options].map((o) => o.value)).toEqual(['profit', 'fastest']);
+        const order = () => [...document.querySelectorAll('.toolasha-collopt-row')].map((row) => row.dataset.item);
+        const byProfit = order();
+
+        select().value = 'fastest';
+        select().dispatchEvent(new Event('change'));
+        expect(optimizer.sort).toBe('fastest');
+        expect(select().value).toBe('fastest');
+        // The same items, now in time-per-point order
+        expect([...order()].sort()).toEqual([...byProfit].sort());
+        const fastest = bestOptions(collectionCounts(COLLECTIONS), optimizer.index, {
+            maxSeconds: optimizer.maxSeconds,
+            sort: 'fastest',
+        });
+        expect(order()).toEqual(fastest.slice(0, 40).map((o) => o.itemHrid));
+        expect(order()).not.toEqual(byProfit);
+        await vi.waitFor(() => expect(scoped.values.get('char-1:collectionOptimizerSort')).toBe('fastest'));
+        // Choosing an order does not collapse the panel
+        expect(document.querySelector('.toolasha-collopt-table')).not.toBeNull();
+
+        optimizer.disable();
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        expect(optimizer.sort).toBe('fastest');
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-sort').value).toBe('fastest'));
+
+        optimizer.disable();
+        game.characterId = 'char-2';
+        drawCollectionsTab();
+        optimizer.initialize();
+        await optimizer.prefsLoaded;
+        expect(optimizer.sort).toBe('profit');
     });
 
     test('disable removes the panel and stops listening', () => {

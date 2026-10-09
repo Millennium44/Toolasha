@@ -4659,9 +4659,10 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'Ranks each item’s next collection-points rung by gold per point across crafting, ' +
-                    'decompose chains and shop gear decomposed (buying on the market does not collect), ' +
-                    'and plans the cheapest route to +N points. Appears once the Collections tab has loaded.',
+                    'Ranks each item’s next collection-points rung by net gold per point across crafting, ' +
+                    'decompose chains, shop gear decomposed, transmuting and gathering (buying on the market ' +
+                    'does not collect; by-products count as sold at the bid after tax), and plans the best ' +
+                    'route to +N points. Appears once the Collections tab has loaded.',
             },
         },
     },
