@@ -1406,6 +1406,20 @@ describe('what a pull says it reconciled', () => {
         expect(payload.applyOptions).toMatchObject({ retryHeld: true });
     });
 
+    test('the held-back marker names the held records, and the retry folds only those plainly', async () => {
+        oneOfEach();
+        await syncManager.pull();
+        expect(stored.map.toolasha_sync_mergeHeld.keys).toEqual([{ store: 'guildHistory', key: 'chests' }]);
+
+        payload.mergeHeld = [];
+        await syncManager.pull();
+
+        expect(payload.applyOptions).toMatchObject({
+            retryHeld: true,
+            heldKeys: [{ store: 'guildHistory', key: 'chests' }],
+        });
+    });
+
     test('a held-back record cannot be overwritten by a push before retrying the pull', async () => {
         oneOfEach();
         await syncManager.pull();

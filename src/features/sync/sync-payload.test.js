@@ -2353,6 +2353,38 @@ describe('a pull folds by which side moved since the last exchange', () => {
         }
     });
 
+    test('a retry of held-back records folds only those plainly; other records keep the baseline', async () => {
+        register();
+        try {
+            const gist = {
+                marketListings: {
+                    listingLog_held: [{ id: 1, status: 'active' }],
+                    listingLog_other: [{ id: 2, status: 'active' }],
+                },
+            };
+            const baseline = wholeKeyHashes(payloadOf(gist));
+            storeState.stores.marketListings = {
+                listingLog_held: [{ id: 1, status: 'filled' }],
+                // A sibling tab updated this one before the retry
+                listingLog_other: [{ id: 2, status: 'filled' }],
+            };
+
+            await applyPayload(payloadOf(gist), {
+                mode: 'merge',
+                baseline,
+                retryHeld: true,
+                heldKeys: [{ store: 'marketListings', key: 'listingLog_held' }],
+            });
+
+            expect(importedPayloads[0].stores.marketListings).toEqual({
+                listingLog_held: [{ id: 1, status: 'active' }],
+            });
+            expect(storeState.stores.marketListings.listingLog_other).toEqual([{ id: 2, status: 'filled' }]);
+        } finally {
+            unregister();
+        }
+    });
+
     test('a pull someone asked for keeps the download-wins fold', async () => {
         register();
         try {

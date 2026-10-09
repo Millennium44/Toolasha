@@ -598,13 +598,15 @@ export async function buildPayloadJSON(scope = 'settings') {
  *
  * @param {Object} payload - Parsed payload; its store values are mutated in place
  * @param {Record<string, *>|null} [baseline] - Hashes at the last exchange, or null for the plain fold
+ * @param {Set<string>|null} [plainFold] - `baselineId`s that take the plain fold whatever the baseline says
+ *   (records an earlier pull held back, being retried)
  * @returns {Promise<{merged: Array<{store: string, key: string, label: string}>,
  *   failed: Array<{store: string, key: string, label: string}>,
  *   held: Array<{store: string, key: string, label: string}>,
  *   same: Set<string>}>} What was combined, what took the remote copy anyway, what was held back
  *   because the local copy could not be read, and (as `baselineId`s) the folds that added nothing
  */
-async function mergeLocalHistories(payload, baseline = null) {
+async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
     const merged = [];
     const failed = [];
     const held = [];
@@ -635,7 +637,7 @@ async function mergeLocalHistories(payload, baseline = null) {
                 // A key a full-backup restore wrote is folded whatever the last
                 // exchange was: the restored copy can lack entries the gist holds
                 const restored = restoredKey(baseline?.[RESTORED_BASELINE], storeName, key);
-                const was = baseline && !restored ? readBaselineEntry(baseline[id]) : null;
+                const was = baseline && !restored && !plainFold?.has(id) ? readBaselineEntry(baseline[id]) : null;
                 const gistUnmoved = Boolean(was) && was.local !== null && valueHash(entries[key]) === was.gist;
                 if (gistUnmoved && was.local === was.gist) {
                     // Settled at the last exchange and unmoved since: nothing here
@@ -702,9 +704,10 @@ async function mergeLocalHistories(payload, baseline = null) {
  * is written as before.
  *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
- * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null, retryHeld?: boolean}} [options] - How
- *   settings both sides set are decided, this device's per-key hashes of the last exchange, and whether this
- *   pull retries records an earlier one held back (their folds then ignore the baseline)
+ * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null, retryHeld?: boolean,
+ *   heldKeys?: Array<{store: string, key: string}>|null}} [options] - How settings both sides set are decided,
+ *   this device's per-key hashes of the last exchange, whether this pull retries records an earlier one held
+ *   back, and which ones: their folds ignore the baseline (every fold does when a retry cannot say which)
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<Object>, complete: boolean, merged: Array<Object>, mergeFailed: Array<Object>,
  *   mergeHeld: Array<Object>, exportedAt: string|null, applied: string}>}
@@ -713,7 +716,7 @@ async function mergeLocalHistories(payload, baseline = null) {
  *   combined, which were held back because this device's copy could not be read, and
  *   the payload text as actually applied
  */
-export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false } = {}) {
+export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
     const payload = JSON.parse(json);
     // Before anything is dropped as unowned: keys another script registered,
     // on this device on an earlier load or on another device, are carried
@@ -787,8 +790,15 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             await settingsStorage.reconcileKeyMigrationState(landing);
         }
 
-        // A retry of held-back records re-reads the version whose baseline already names them
-        const histories = await mergeLocalHistories(payload, mode === 'merge' && !retryHeld ? baseline : null);
+        // A retry of held-back records re-reads the version whose baseline already names them: those
+        // take the plain fold, every other record still the baseline's. A retry that cannot say which
+        // records were held (a marker from an older build) folds them all plainly
+        const heldIds =
+            retryHeld && Array.isArray(heldKeys)
+                ? new Set(heldKeys.map((entry) => baselineId(entry?.store, entry?.key)))
+                : null;
+        const foldBaseline = mode === 'merge' && (!retryHeld || heldIds) ? baseline : null;
+        const histories = await mergeLocalHistories(payload, foldBaseline, heldIds);
         const mergeHeld = histories.held;
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it

@@ -1544,9 +1544,17 @@ class SyncManager {
                 mode: silent ? 'merge' : 'pull',
                 baseline,
                 retryHeld,
+                // Which records the marker says were held, when it says
+                heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
             }
         );
-        const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
+        const pendingHeld = mergeHeld?.length
+            ? {
+                  exportedAt: remoteAt,
+                  hash: contentHash(payload),
+                  keys: mergeHeld.map(({ store, key }) => ({ store, key })),
+              }
+            : null;
 
         // An import already in progress cannot be cancelled between its store
         // transactions. If cleanup happened during it, leave the remote stamp
