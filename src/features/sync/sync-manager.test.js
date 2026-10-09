@@ -1483,6 +1483,14 @@ describe('the remembered gist version', () => {
         gist.remoteFiles = FILES;
     });
 
+    test('a 304 pull still retries deletes an earlier pull owes', async () => {
+        await syncManager.pull({ silent: true });
+        payload.retries = 0;
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-modified' });
+        expect(payload.retries).toBe(1);
+    });
+
     test('a silent pull that finds nothing new remembers the version; the next one is a 304', async () => {
         expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-newer' });
         expect(gist.readOptions[0]).toBeUndefined();

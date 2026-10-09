@@ -1376,7 +1376,12 @@ class SyncManager {
             silent && !takeUnapplied && known && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
         const remote = await this._readRemote(token, gistId, known, conditional);
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
-        if (remote.notModified) return { ok: true, skipped: true, reason: 'not-modified' };
+        if (remote.notModified) {
+            // An unchanged gist answers 304 before any download, so deletes an earlier pull owes are
+            // retried here too or they would wait for the gist to move
+            await retryPendingDisplacedDeletes();
+            return { ok: true, skipped: true, reason: 'not-modified' };
+        }
         const { manifest, seen } = remote;
         const payload = remote.payload;
 
