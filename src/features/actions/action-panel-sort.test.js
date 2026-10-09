@@ -134,6 +134,20 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(actionPanelSort.getCachedStats('/actions/milking/fresh')).toBeNull();
     });
 
+    test('an untaxed figure caches the taxed twin when one is given', () => {
+        const panel = document.createElement('div');
+        actionPanelSort.registerPanel(panel, '/actions/milking/cow');
+        actionPanelSort.updateExpPerHour(panel, 1000);
+
+        actionPanelSort.updateProfit(panel, 5000, { excludeSellTax: true, taxedProfitPerHour: 4200 });
+
+        expect(actionPanelSort.panels.get(panel).profitPerHour).toBe(5000);
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({
+            profitPerHour: 4200,
+            expPerHour: 1000,
+        });
+    });
+
     test('either patient tick changing from outside drops the cache too', () => {
         cacheSomething();
         writePricingSetting('profitCalc_patientTickBuy');

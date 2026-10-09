@@ -255,6 +255,13 @@ class GatheringStats {
         const profitPerHour = profitData?.profitPerHour || null;
         const hasMissingPrices = profitData?.hasMissingPrices || false;
         const excludeSellTax = profitData?.excludeSellTax || false;
+        // The shared sort cache holds sale-valued rates (task cards read it), so the toggle's untaxed tile
+        // figure needs a taxed twin. Only paid for while the toggle is on.
+        let taxedProfitPerHour = null;
+        if (excludeSellTax) {
+            const taxed = await calculateGatheringProfit(data.actionHrid, { keepSellTax: true });
+            taxedProfitPerHour = taxed?.hasMissingPrices ? null : (taxed?.profitPerHour ?? null);
+        }
 
         // Calculate exp/hr using shared utility
         const expData = calculateExpPerHour(data.actionHrid);
@@ -265,7 +272,10 @@ class GatheringStats {
         data.excludeSellTax = excludeSellTax;
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
-        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour, { excludeSellTax });
+        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour, {
+            excludeSellTax,
+            taxedProfitPerHour,
+        });
         actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
 
         // Check if we should hide actions with negative profit (unless pinned)

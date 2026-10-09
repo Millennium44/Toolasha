@@ -7,7 +7,7 @@
 
 import { describe, test, expect, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ profitData: {}, updateProfitCalls: [] }));
+const state = vi.hoisted(() => ({ profitData: {}, taxedData: null, updateProfitCalls: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -28,7 +28,9 @@ vi.mock('./action-panel-sort.js', () => ({
     },
 }));
 vi.mock('./action-filter.js', () => ({ default: { isFilterHidden: () => false } }));
-vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => state.profitData }));
+vi.mock('./gathering-profit.js', () => ({
+    calculateGatheringProfit: async (_hrid, opts) => (opts?.keepSellTax ? state.taxedData : state.profitData),
+}));
 vi.mock('../../utils/experience-calculator.js', () => ({ calculateExpPerHour: () => ({ expPerHour: 100 }) }));
 vi.mock('../../utils/action-panel-helper.js', () => ({ onActionTile: () => () => {}, resolveActionTile: () => null }));
 
@@ -67,14 +69,17 @@ describe('gathering tile Profit/hr and the sell-tax exclusion', () => {
         expect(span.getAttribute('title')).toBeNull();
     });
 
-    test('the shared sort cache is told when the figure is untaxed', async () => {
+    test('untaxed tile hands the sort cache its taxed twin; taxed tile pays for no second calculation', async () => {
         state.updateProfitCalls.length = 0;
+        state.taxedData = { profitPerHour: 1000, hasMissingPrices: false };
         state.profitData = { profitPerHour: 1200, hasMissingPrices: false, excludeSellTax: true };
         await renderTile();
-        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: true });
+        expect(state.updateProfitCalls.at(-1)[1]).toBe(1200);
+        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: true, taxedProfitPerHour: 1000 });
 
+        state.taxedData = null;
         state.profitData = { profitPerHour: 1200, hasMissingPrices: false, excludeSellTax: false };
         await renderTile();
-        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: false });
+        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: false, taxedProfitPerHour: null });
     });
 });

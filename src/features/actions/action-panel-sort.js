@@ -217,15 +217,21 @@ class ActionPanelSort {
      * @param {boolean} [options.excludeSellTax=false] - The figure leaves out the market tax (personal-use
      *   toggle). The panel sort follows it, but `cachedStats` is read by sale-valued consumers (task cards'
      *   opportunity cost, the pinned page), so an untaxed figure is never written there.
+     * @param {number|null} [options.taxedProfitPerHour] - The sale-valued (taxed) rate to cache instead when
+     *   `excludeSellTax` is set; without a finite one nothing is cached.
      */
-    updateProfit(actionPanel, profitPerHour, { excludeSellTax = false } = {}) {
+    updateProfit(actionPanel, profitPerHour, { excludeSellTax = false, taxedProfitPerHour = null } = {}) {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.profitPerHour = profitPerHour;
-            if (excludeSellTax) return;
+            let cachedRate = profitPerHour;
+            if (excludeSellTax) {
+                if (!Number.isFinite(taxedProfitPerHour)) return;
+                cachedRate = taxedProfitPerHour;
+            }
             if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
             const entry = this.cachedStats[data.actionHrid];
-            entry.profitPerHour = profitPerHour;
+            entry.profitPerHour = cachedRate;
             // An uncapped tile figure replaces any liquidity-capped one the pinned page left
             delete entry.liquidityChecked;
             delete entry.liquidityLimit;
