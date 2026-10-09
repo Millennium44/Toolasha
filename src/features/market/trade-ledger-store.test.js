@@ -479,6 +479,26 @@ describe('a fill writes its own day and nothing else', () => {
         expect(LEDGER().has(floorKey('market123', bucketOf({ t: DAY2 })))).toBe(true);
     });
 
+    test('a floor marker that does not land deletes nothing, so sync cannot hand the days back', async () => {
+        const day1 = [fill(1, DAY1 + 1000), fill(2, DAY1 + 2000)];
+        const day2 = Array.from({ length: LEDGER_RECORD_CAP }, (_, i) => fill(100 + i, DAY2 + i));
+        seedSplit([...day1, ...day2]);
+        const plainSet = storageMock.set.getMockImplementation();
+        storageMock.set.mockImplementation(async (key, ...rest) =>
+            key.startsWith('tradeLedgerRecFloor_') ? false : plainSet(key, ...rest)
+        );
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await tradeLedgerStore.load();
+            await awaitSaves();
+        } finally {
+            storageMock.set.mockImplementation(plainSet);
+        }
+
+        expect(LEDGER().has(floorKey('market123', bucketOf({ t: DAY2 })))).toBe(false);
+        expect(LEDGER().has(REC(DAY1))).toBe(true);
+    });
+
     test('day records the cap dropped before this save are deleted, not left behind', async () => {
         // DAY1 falls off the cap entirely on load, so no later save ever names
         // it — only a sweep by key can remove it

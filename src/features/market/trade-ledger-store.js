@@ -823,8 +823,8 @@ class TradeLedgerStore {
      * The floor marker (`floorKey`) is written before anything is deleted and
      * the character's older markers are deleted after it: an eviction sync
      * cannot see is one the gist hands back on the next pull. A marker that
-     * does not land leaves things as they were before markers, never a lost
-     * record.
+     * does not land deletes nothing: storage keeps those days until a later
+     * capped save records the floor, never a lost record.
      * @param {string} charId - Whose records
      * @param {string} floorBucket - Oldest day still in memory
      * @returns {Promise<number>} How many day records were deleted
@@ -842,7 +842,12 @@ class TradeLedgerStore {
             const marker = floorKey(charId, floorBucket);
             if (!allKeys.includes(marker)) {
                 const written = await storage.set(marker, { floor: floorBucket }, LEDGER_STORE, true);
-                if (written === false) console.warn('[TradeLedger] The cap floor could not be recorded for sync');
+                if (written === false) {
+                    // Nothing is deleted without its marker: the gist would keep those
+                    // days and every pull write them back. The next capped save retries
+                    console.warn('[TradeLedger] The cap floor could not be recorded for sync; evicting nothing');
+                    return 0;
+                }
             }
             const keys = recordKeysFor(allKeys, RECORD_PREFIX, charId);
             const prefix = `${RECORD_PREFIX}_${charId}_`;
