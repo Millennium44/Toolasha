@@ -22,6 +22,7 @@ const game = vi.hoisted(() => ({
     actionDetails: null,
     /** The drinks the resolved action context holds (loadout snapshot, out-of-stock removed) */
     drinks: [],
+    noBid: new Set(),
     /** Setups the calculator weighs for a decompose, as overrides of its result; empty: only its pick */
     decomposeSetups: [],
 }));
@@ -336,7 +337,9 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
 }));
 
 vi.mock('../../utils/market-data.js', () => ({
-    isPriceEstimated: (hrid) => game.estimated.has(hrid),
+    // The bid side can be empty while the ask is live: a mode other than 'ask' sees `noBid` as estimated
+    isPriceEstimated: (hrid, options = {}) =>
+        game.estimated.has(hrid) || (options.mode !== 'ask' && game.noBid.has(hrid)),
     getItemPrice: (hrid) => BUY[hrid] ?? null,
     getItemPriceInfo: (hrid, options = {}) => {
         // The profit pricing mode picks the side when no mode is named: 'optimistic' buys at the bid
@@ -405,6 +408,7 @@ const {
     buyQuote,
     realizedSalePrice,
     weeklySellable,
+    wholeActionsBatch,
     formatNet,
 } = await import('./collection-optimizer.js');
 const { bestOptions, collectionCounts, evaluateOption, indexRoutes, planTarget } =
@@ -440,6 +444,7 @@ beforeEach(() => {
     game.shopUnits = 1;
     game.actionDetails = null;
     game.estimated = new Set();
+    game.noBid = new Set();
     game.altProfit = null;
     game.mixedShop = false;
     game.ironCow = false;
@@ -796,6 +801,21 @@ describe('transmute routes', () => {
         expect(decomposes.map((r) => r.setup.catalystHrid)).toEqual([null]);
     });
 
+    test('a catalyst with a live ask but no live bid is still a setup: the check pins the ask', async () => {
+        game.transmuteSetups = [
+            {},
+            { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
+        ];
+        game.noBid = new Set(['/items/prime_catalyst']);
+        const routes = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'transmute' && s.sourceHrid === '/items/amber'
+        );
+        expect(routes.map((r) => r.setup.catalystHrid)).toEqual([
+            '/items/catalyst_of_transmutation',
+            '/items/prime_catalyst',
+        ]);
+    });
+
     test('the row says which catalyst and teas the transmute uses', async () => {
         drawCollectionsTab();
         optimizer.initialize();
@@ -923,6 +943,25 @@ describe('whole actions for sources', () => {
 });
 
 describe('Gourmet and a craft batch', () => {
+    test('the batch is the matched output count, not the primary output of the action', async () => {
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/other', count: 15 }] };
+        game.profitExtra = { outputAmount: 7 };
+        expect((await buildCollectionRoutes()).craft[0].batch).toBe(7);
+    });
+
+    test('a crafted source is bought in whole craft actions and whole decompose actions', async () => {
+        // 2 swords at 25% Gourmet is 2.5 an action; a decompose action eats 2: four craft actions make 10
+        game.craftable = new Set(['/items/cheese_sword']);
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const route = (await buildCollectionRoutes()).sources.find(
+            (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+        );
+        expect(route.batch).toBe(10);
+        expect(wholeActionsBatch(2.2, 2)).toBe(22);
+        expect(wholeActionsBatch(15, 2)).toBe(30);
+    });
+
     test('the batch is the expected output per action, base count times one plus the Gourmet chance', async () => {
         game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese', count: 2 }] };
         game.profitExtra = { gourmetBonus: 0.25 };

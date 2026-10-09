@@ -286,7 +286,7 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
 export function setupIsBuyable(result) {
     return ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((cost) => cost?.itemHrid)]
         .filter(Boolean)
-        .some((hrid) => isPriceEstimated(hrid, { context: 'profit', side: 'buy' }));
+        .some((hrid) => isPriceEstimated(hrid, { mode: 'ask', side: 'buy' }));
 }
 
 /**
@@ -610,7 +610,10 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 // One action makes a whole batch: 15 of an item made 15 at a time is one action, not
                 // 1/15. Gourmet adds expected copies from the same inputs, counted as profitData counts
                 const gourmet = Math.max(0, Number(data.gourmetBonus) || 0);
-                const batch = Math.max(1, (Number(details?.outputItems?.[0]?.count) || 1) * (1 + gourmet));
+                // The calculator hands back the count of the output that matched the item: the primary output's
+                // count would be wrong for an item made as a secondary output
+                const baseCount = Number(data.outputAmount) || Number(details?.outputItems?.[0]?.count) || 1;
+                const batch = Math.max(1, baseCount * (1 + gourmet));
                 viable.push({ actionHrid: data.actionHrid, cost: comparison.make, seconds: 3600 / perHour, batch });
             }
             // Every recipe is its own route, so each sort weighs it on its own terms: the cheapest
@@ -785,7 +788,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     route: 'craftDecompose',
                     actionHrid: recipe.actionHrid,
                     // Whole craft actions feeding whole decompose actions: the smallest run that is both
-                    batch: leastCommonMultiple(Math.max(1, Math.floor(recipe.batch) || 1), bulk),
+                    batch: wholeActionsBatch(recipe.batch, bulk),
                     yields: withSource,
                     cost: recipe.cost + overheadCost,
                     seconds: chain.seconds + recipe.seconds,
@@ -885,6 +888,28 @@ export function undominatedRecipes(recipes) {
                     (other.cost < recipe.cost || other.seconds < recipe.seconds || j < i)
             )
     );
+}
+
+/**
+ * The smallest run of sources that is a whole number of craft actions and a whole number of
+ * decompose actions. A craft action makes `perAction` sources on average (Gourmet makes that
+ * fractional: 2 items at 25% is 2.5), so k craft actions make k × perAction; the run is the least
+ * k × perAction that is also a multiple of `bulk`. Each per-source cost and time stays the recipe's
+ * (k whole actions make exactly the run), and the planner rounds purchases up to this run.
+ * With no such k in reach (an irrational-looking bonus), the craft size is rounded up to whole
+ * sources instead, which can only overbuy.
+ * @param {number} perAction - Expected sources per craft action
+ * @param {number} bulk - Sources one decompose action eats
+ * @returns {number}
+ */
+export function wholeActionsBatch(perAction, bulk) {
+    const per = Math.max(1, Number(perAction) || 1);
+    for (let k = 1; k <= 1000; k++) {
+        const run = k * per;
+        const multiples = Math.round(run / bulk);
+        if (multiples >= 1 && Math.abs(run - multiples * bulk) < 1e-9 * Math.max(1, run)) return multiples * bulk;
+    }
+    return leastCommonMultiple(Math.ceil(per - 1e-9), bulk);
 }
 
 /**
