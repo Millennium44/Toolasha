@@ -547,11 +547,20 @@ class ChunkedHistory {
             }
         };
 
+        // The fold is orientation-sensitive: this device's copy is the base (it
+        // wins ties, and `mergeCopies` meets it first) while tombstones and
+        // `pruneIncoming` judge only the gist's side. So a pull always folds it
+        // this way round. Declared as its own pull fold, which keeps the sync's
+        // "this device moved" rule from turning it around: that would treat
+        // the gist's expired and deleted entries as this device's and keep them
+        const pull = (local, incoming) => merge(local, incoming);
+
         registerSyncMerge({
             store: this.storeName,
             prefix: `${this.prefix}_`,
             label: `${this.label} records`,
             merge,
+            pull,
         });
 
         // The deletions, under their own claim. Deliberately NOT
@@ -576,6 +585,7 @@ class ChunkedHistory {
                 base: legacyBase,
                 label: `${this.label} legacy key`,
                 merge,
+                pull,
             });
         }
     }

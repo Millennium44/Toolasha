@@ -283,4 +283,54 @@ describe('retention rules', () => {
         // Rules need a count or an age
         expect(() => registerSyncRetention({ store: 'x', prefix: 'y_', parse })).toThrow();
     });
+
+    describe('floor markers', () => {
+        /** `rec_<group>_<n>` is data ending at n; `recFloor_<group>_<n>` marks the floor n */
+        const parseWithMarkers = (key) => {
+            const data = /^rec_(.+)_(\d+)$/.exec(key);
+            if (data) return { group: data[1], order: Number(data[2]) };
+            const marker = /^recFloor_(.+)_(\d+)$/.exec(key);
+            return marker ? { group: marker[1], floor: Number(marker[2]) } : null;
+        };
+
+        test("drop each window's data keys below its highest marker, and the markers it supersedes", () => {
+            registerSyncRetention({ store: 's', prefix: 'rec', parse: parseWithMarkers, floorMarkers: true });
+
+            const drops = retentionDrops('s', [
+                'rec_a_1',
+                'rec_a_2',
+                'rec_a_3',
+                'recFloor_a_2',
+                'recFloor_a_3',
+                // Another window, with no marker: nothing of it is judged
+                'rec_b_1',
+                // Neither data nor marker
+                'recSplit_a',
+            ]);
+
+            expect([...drops].sort()).toEqual(['recFloor_a_2', 'rec_a_1', 'rec_a_2']);
+        });
+
+        test('a marker on one side cuts the keys the other side holds', () => {
+            registerSyncRetention({ store: 's', prefix: 'rec', parse: parseWithMarkers, floorMarkers: true });
+
+            // This device holds old days; the gist holds the marker another device's cap wrote
+            const local = ['rec_a_1', 'rec_a_5'];
+            const remote = ['recFloor_a_4', 'rec_a_4'];
+
+            expect([...retentionDrops('s', [...local, ...remote])]).toEqual(['rec_a_1']);
+            // Without the marker, nothing
+            expect(retentionDrops('s', local).size).toBe(0);
+        });
+
+        test('a rule with markers alone is a rule, and a marker is ignored by a rule without them', () => {
+            expect(() =>
+                registerSyncRetention({ store: 's', prefix: 'rec', parse: parseWithMarkers, floorMarkers: true })
+            ).not.toThrow();
+            clearSyncMerges();
+            registerSyncRetention({ store: 's', prefix: 'rec', parse: parseWithMarkers, keep: 5 });
+
+            expect(retentionDrops('s', ['rec_a_1', 'recFloor_a_9']).size).toBe(0);
+        });
+    });
 });

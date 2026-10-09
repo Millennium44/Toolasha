@@ -438,6 +438,34 @@ function applyListingRetention(listings) {
     return kept.length === listings.length ? listings : kept;
 }
 
+/**
+ * Two copies of a listing log folded for sync: the union, with the log's own
+ * retention applied to it.
+ *
+ * The union alone kept every listing either side ever held, so a listing this
+ * device had let go of by retention came back with every pull, was pruned again
+ * by the next load, and made every merged push look like news. Retention is
+ * measured from the newest listing in the log and capped by a constant, so it
+ * gives the same answer on every device; what it drops here is exactly what the
+ * owner's next load would drop from the union on disk. Applied to uploads as
+ * well, which is how the gist sheds what every device has pruned.
+ *
+ * Only the personal rows are judged, as the owner judges them: entries without
+ * an `itemHrid` are anchors (the pre-split shared key still holds some) and are
+ * passed through.
+ * @param {Array<Object>} local - This device's log
+ * @param {Array<Object>} incoming - The other side's log
+ * @returns {Array<Object>} Merged, sorted by id
+ */
+function mergeListingLogsForSync(local, incoming) {
+    const merged = mergeListingLogs(local, incoming);
+    const personal = merged.filter((entry) => entry.itemHrid);
+    const kept = applyListingRetention(personal);
+    if (kept === personal) return merged;
+    const others = merged.filter((entry) => !entry.itemHrid);
+    return [...others, ...kept].sort((a, b) => a.id - b.id);
+}
+
 class EstimatedListingAge {
     constructor() {
         this.knownListings = []; // Array of {id, timestamp, createdTimestamp, enhancementLevel, ...} sorted by id
@@ -2372,7 +2400,7 @@ const estimatedListingAge = new EstimatedListingAge();
 registerSyncMerge({
     store: LISTINGS_STORE,
     base: LISTINGS_BASE,
-    merge: mergeListingLogs,
+    merge: mergeListingLogsForSync,
     label: 'Market listing log',
 });
 
@@ -2413,6 +2441,7 @@ export {
     LISTING_SAVE_DEBOUNCE_MS,
     ORDER_BOOK_REPAINT_MS,
     mergeListingLogs,
+    mergeListingLogsForSync,
     mergeListingGraves,
     applyListingGraves,
     gravesOf,
