@@ -95,17 +95,26 @@ export function alchemyRunBasis(result) {
  * @param {Array<Object>} candidates - Calculator results, one per catalyst/tea candidate
  * @param {(result: Object) => Object|null} evaluate - The self-use valuation of one result
  * @param {string} objective - The evaluation field to maximize (e.g. `netPerHour`)
+ * @param {Object} [options]
+ * @param {boolean} [options.rankPartial=false] - Rank partly unpriced candidates by score, against each
+ *   other and against complete ones, instead of using the first partial only as a fallback. Only right
+ *   where a missing price can only lower the score (a cost that is an upper bound).
  * @returns {{result: Object, evaluation: Object}|null} The best candidate, null when none evaluates
  */
-export function bestSelfUseCandidate(candidates, evaluate, objective) {
+export function bestSelfUseCandidate(candidates, evaluate, objective, options = {}) {
     let best = null;
     let bestScore = -Infinity;
     let firstPartial = null;
+    let partialScore = -Infinity;
     for (const result of Array.isArray(candidates) ? candidates : []) {
         if (!result) continue;
         const evaluation = evaluate(result);
         if (evaluation?.partlyUnpriced) {
-            if (!firstPartial) firstPartial = { result, evaluation, optimized: false };
+            const partial = Number(evaluation?.[objective]);
+            if (!firstPartial || (options.rankPartial && Number.isFinite(partial) && partial > partialScore)) {
+                firstPartial = { result, evaluation, optimized: false };
+                partialScore = Number.isFinite(partial) ? partial : -Infinity;
+            }
             continue;
         }
         const score = Number(evaluation?.[objective]);
@@ -113,6 +122,7 @@ export function bestSelfUseCandidate(candidates, evaluate, objective) {
         best = { result, evaluation, optimized: true };
         bestScore = score;
     }
+    if (options.rankPartial && firstPartial && partialScore > bestScore) return firstPartial;
     return best ?? firstPartial;
 }
 
@@ -520,6 +530,120 @@ export function selfUseTransmuteHeld(result, itemDetails, opts) {
         inputValue,
         outputValuePerHour,
         costPerHour,
+        actionsPerHour,
+        successRate,
+        unpriced,
+        partlyUnpriced: unpriced.length > 0 || partlyUnpriced,
+        kept: [...kept],
+    };
+}
+
+/**
+ * What one unit of an item costs when you get it out of alchemy instead of buying it.
+ *
+ * The source item is bought at `inputPrice` and decomposed or transmuted; the
+ * target is the output you are after, and every other output is kept or sold
+ * the way {@link outputPricing} picks (a kept one at the untaxed buy side, any
+ * other at its after-tax sale). A transmute's self-return gives the source back,
+ * so it is worth what the source cost. Per action, from the calculator result:
+ *   spend          = inputPrice × bulk + (coin + catalyst + tea per hour) / actionsPerHour
+ *   target units   = Σ target output: count × bulk × successRate (decompose)
+ *                                     avg(min,max) × bulk × dropRate × successRate (transmute)
+ *                  + a bonus drop that is the target: dropsPerHour / actionsPerHour
+ *   credit         = Σ every other output × its unit value (self-return at inputPrice)
+ *   cost per unit  = (spend − credit) / target units
+ *   seconds / unit = 3600 / actionsPerHour / target units
+ *
+ * An unpriced other output is left out of the credit, so a partly unpriced cost
+ * is an upper bound: buying could only be beaten by more, never by less.
+ *
+ * @param {Object} result - `calculateDecomposeProfit` / `calculateTransmuteProfit` (or one candidate) for the source
+ * @param {Object} sourceDetails - The source item's details (`alchemyDetail`)
+ * @param {Object} opts
+ * @param {'decompose'|'transmute'} opts.actionType
+ * @param {string} opts.targetHrid - The item to obtain
+ * @param {number|null} opts.inputPrice - What one unit of the source costs
+ * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price (kept outputs)
+ * @param {Function} [opts.containerValue] - A kept crate's untaxed opened value
+ * @param {(hrid: string) => boolean} [opts.isWanted] - Kept outputs ({@link outputPricing})
+ * @param {(hrid: string) => number|null} [opts.sellOf] - After-tax sale of an unwanted output
+ * @param {Function} [opts.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
+ * @returns {Object|null} `{costPerUnit, secondsPerUnit, targetPerAction, spendPerAction, creditPerAction,
+ *   actionsPerHour, successRate, unpriced, partlyUnpriced, kept}`, or null when the source cannot run
+ *   or never yields the target
+ */
+export function alchemySourceUnitCost(result, sourceDetails, opts) {
+    const { actionType, targetHrid } = opts;
+    const basis = alchemyRunBasis(result);
+    const input = usablePrice(opts.inputPrice);
+    const alchemy = sourceDetails?.alchemyDetail;
+    if (!basis || input === null || !targetHrid) return null;
+
+    const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
+    let outputs = null;
+    if (actionType === 'decompose' && Array.isArray(alchemy?.decomposeItems)) {
+        outputs = alchemy.decomposeItems.map((output) => ({
+            itemHrid: output?.itemHrid,
+            units: (Number(output?.count) || 0) * bulk * successRate,
+        }));
+    } else if (actionType === 'transmute' && Array.isArray(alchemy?.transmuteDropTable)) {
+        outputs = alchemy.transmuteDropTable.map((drop) => ({
+            itemHrid: drop?.itemHrid,
+            units:
+                ((Number(drop?.minCount) + Number(drop?.maxCount)) / 2) *
+                bulk *
+                (Number(drop?.dropRate) || 0) *
+                successRate,
+        }));
+    }
+    if (!outputs) return null;
+
+    const sourceHrid = result.itemHrid;
+    const unpriced = [];
+    const kept = new Set();
+    let partlyUnpriced = false;
+    let targetPerAction = 0;
+    let creditPerAction = 0;
+    for (const { itemHrid, units } of outputs) {
+        if (!(units > 0)) continue;
+        if (itemHrid === targetHrid) {
+            targetPerAction += units;
+            continue;
+        }
+        if (itemHrid === sourceHrid) {
+            creditPerAction += units * input;
+            continue;
+        }
+        const pricing = outputPricing(itemHrid, opts);
+        if (pricing.marked) kept.add(itemHrid);
+        const unit = usablePrice(pricing.priceOf(itemHrid));
+        if (unit === null) unpriced.push(itemHrid);
+        else creditPerAction += units * unit;
+    }
+    for (const drop of bonusDrops(result)) {
+        const units = (Number(drop.dropsPerHour) || 0) / actionsPerHour;
+        if (!(units > 0)) continue;
+        if (drop.itemHrid === targetHrid) {
+            targetPerAction += units;
+            continue;
+        }
+        const pricing = outputPricing(drop.itemHrid, opts);
+        if (pricing.marked) kept.add(drop.itemHrid);
+        const unit = bonusUnitPrice(drop, pricing.priceOf, pricing.containerValue);
+        if (unit.value === null) unpriced.push(drop.itemHrid);
+        else creditPerAction += units * unit.value;
+        if (unit.partlyUnpriced && unit.value !== null) unpriced.push(drop.itemHrid);
+        partlyUnpriced ||= unit.partlyUnpriced;
+    }
+    if (!(targetPerAction > 0)) return null;
+
+    const spendPerAction = input * bulk + overheadPerHour / actionsPerHour;
+    return {
+        costPerUnit: (spendPerAction - creditPerAction) / targetPerAction,
+        secondsPerUnit: SECONDS_PER_HOUR / actionsPerHour / targetPerAction,
+        targetPerAction,
+        spendPerAction,
+        creditPerAction,
         actionsPerHour,
         successRate,
         unpriced,

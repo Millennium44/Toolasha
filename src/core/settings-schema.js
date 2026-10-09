@@ -869,6 +869,22 @@ export const settingsGroups = {
                 buttonLabel: 'Review kept items',
                 help: 'The items this character marked "Keep for self-use" from their tooltips, which the self-use alchemy lines value at what you would pay for them. Remove one, or clear the list.',
             },
+            itemTooltip_alchemyInsteadOfBuying: {
+                id: 'itemTooltip_alchemyInsteadOfBuying',
+                label: 'Show cheaper alchemy routes instead of buying',
+                type: 'checkbox',
+                default: false,
+                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than its ask, and how much each saves per unit. The source, catalyst and tea are bought at their asks; every other output is sold at its bid after tax, or valued at its ask when marked "Keep for self-use". Estimated prices are left out. Nothing is shown when buying is cheapest.',
+            },
+            itemTooltip_alchemyInsteadGoldPerHour: {
+                id: 'itemTooltip_alchemyInsteadGoldPerHour',
+                label: 'Cheaper alchemy routes: your gold rate (per hour)',
+                type: 'number',
+                default: 0,
+                min: 0,
+                requires: 'itemTooltip_alchemyInsteadOfBuying',
+                help: 'What an hour of your time earns elsewhere (combat, say). The alchemy time a route takes is charged at this rate, so a route is shown only when it still beats buying, and its gain is given per hour over this rate. 0 leaves the time free.',
+            },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',
