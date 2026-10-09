@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Supplies-full notice and Currencies by tab icon
+
+- Buy missing supplies now says so when nothing is short instead of doing nothing, and a game inventory tab is judged to be Currencies by its own icon, so a filtered view that holds only tokens keeps its total.
+
 ### From upstream: inventory, loot log and small additions
 
 - Inventory category totals draw again under the game's tabs, dungeon tokens show value badges, enhancement tooltip prices follow your number precision, and a labyrinth run the game reissues an id for stays one Loot & XP Log row.
