@@ -238,7 +238,14 @@ class ProfitCalculator {
         const totalTeaCostPerHour = teaCostData.totalCostPerHour;
 
         // Calculate bonus revenue from essence and rare find drops (before profit calculation)
-        const bonusRevenue = calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap);
+        // Personal-use toggle: no tax at all. Not flagged for Iron Cow, already untaxed.
+        const excludeSellTax =
+            !keepSellTax &&
+            !isIronCowCharacter() &&
+            config.getSettingValue('profitCalc_excludeSellTax', false) === true;
+        const bonusRevenue = calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap, {
+            grossContainers: excludeSellTax,
+        });
 
         const hasMissingPrices =
             (outputPriceMissing && !outputPriceEstimated) ||
@@ -253,11 +260,6 @@ class ProfitCalculator {
         // The rate is zero for
         // an Iron Cow character, which never has real market access to pay it on
         const netContainerRevenue = (bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
-        // Personal-use toggle: no tax at all. Not flagged for Iron Cow, already untaxed.
-        const excludeSellTax =
-            !keepSellTax &&
-            !isIronCowCharacter() &&
-            config.getSettingValue('profitCalc_excludeSellTax', false) === true;
         const marketTax = excludeSellTax
             ? 0
             : (revenuePerHour + efficiencyBoostedBonusRevenue - netContainerRevenue) * outputTaxRate(MARKET_TAX);

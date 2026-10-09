@@ -9,7 +9,7 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const game = vi.hoisted(() => ({ initClientData: null }));
 const market = vi.hoisted(() => ({ prices: {} }));
-const state = vi.hoisted(() => ({ gameMode: 'standard', settings: {} }));
+const state = vi.hoisted(() => ({ gameMode: 'standard', settings: {}, bonusOptions: [] }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -54,14 +54,17 @@ vi.mock('../../utils/efficiency.js', () => ({
 }));
 
 vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
-    calculateBonusRevenue: () => ({
-        totalBonusRevenue: 0,
-        essenceFindBonus: 0,
-        rareFindBonus: 0,
-        rareFindBreakdown: {},
-        bonusDrops: [],
-        hasMissingPrices: false,
-    }),
+    calculateBonusRevenue: (_a, _b, _c, _d, options) => {
+        state.bonusOptions.push(options);
+        return {
+            totalBonusRevenue: 0,
+            essenceFindBonus: 0,
+            rareFindBonus: 0,
+            rareFindBreakdown: {},
+            bonusDrops: [],
+            hasMissingPrices: false,
+        };
+    },
 }));
 
 const { calculateGatheringProfit } = await import('./gathering-profit.js');
@@ -105,6 +108,20 @@ describe('calculateGatheringProfit sell-tax exclusion', () => {
         expect(result.marketTax).toBe(0);
         expect(result.profitPerHour).toBeCloseTo(36000, 6);
         expect(result.excludeSellTax).toBe(true);
+    });
+
+    test('on: container drops are valued gross; off or keepSellTax: they are not', async () => {
+        state.settings.profitCalc_excludeSellTax = true;
+        state.bonusOptions.length = 0;
+        await calculateGatheringProfit(COW);
+        expect(state.bonusOptions.at(-1)).toEqual({ grossContainers: true });
+
+        await calculateGatheringProfit(COW, { keepSellTax: true });
+        expect(state.bonusOptions.at(-1)).toEqual({ grossContainers: false });
+
+        state.settings.profitCalc_excludeSellTax = false;
+        await calculateGatheringProfit(COW);
+        expect(state.bonusOptions.at(-1)).toEqual({ grossContainers: false });
     });
 
     test('keepSellTax: the setting is ignored (planners, optimizers, rankings)', async () => {

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     efficiencyContext: {},
     buyMode: 'ask',
     bonusRevenue: null,
+    bonusOptions: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -41,7 +42,12 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
 vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mocks.efficiencyContext }));
-vi.mock('../../utils/bonus-revenue-calculator.js', () => ({ calculateBonusRevenue: () => mocks.bonusRevenue }));
+vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
+    calculateBonusRevenue: (_a, _b, _c, _d, options) => {
+        mocks.bonusOptions.push(options);
+        return mocks.bonusRevenue;
+    },
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: (hrid, mode) => {
         const cost = mocks.productionCosts[hrid];
@@ -542,6 +548,19 @@ describe('calculateProfit — itemPrice reconciliation', () => {
             expect(result.marketTax).toBe(0);
             expect(result.profitPerHour).toBeCloseTo(36000 - 3600, 6);
             expect(result.excludeSellTax).toBe(true);
+        });
+
+        test('container bonus drops are valued gross only while the exclusion applies', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+            mocks.settings.profitCalc_excludeSellTax = true;
+            mocks.bonusOptions.length = 0;
+
+            await profitCalculator.calculateProfit('/items/cheese');
+            expect(mocks.bonusOptions.at(-1)).toEqual({ grossContainers: true });
+
+            await profitCalculator.calculateProfit('/items/cheese', { keepSellTax: true });
+            expect(mocks.bonusOptions.at(-1)).toEqual({ grossContainers: false });
         });
 
         test('keepSellTax ignores the setting, for consumers that value output as a sale', async () => {

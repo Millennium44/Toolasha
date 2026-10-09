@@ -117,7 +117,7 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({ profitPerHour: 4000 });
     });
 
-    test('an untaxed (sell-tax-excluded) figure sorts the panel but never reaches the shared cache', () => {
+    test('an untaxed (sell-tax-excluded) figure sorts the panel and never caches an untaxed rate', () => {
         const panel = document.createElement('div');
         actionPanelSort.registerPanel(panel, '/actions/milking/cow');
         actionPanelSort.updateProfit(panel, 4000);
@@ -126,7 +126,8 @@ describe('cachedStats and a pricing-setting change', () => {
 
         // The sort reads the panel's own figure; task cards and the pinned page read the cache
         expect(actionPanelSort.panels.get(panel).profitPerHour).toBe(5000);
-        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({ profitPerHour: 4000 });
+        // No taxed twin: the earlier taxed rate is stale, so it is dropped rather than kept
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({});
 
         const fresh = document.createElement('div');
         actionPanelSort.registerPanel(fresh, '/actions/milking/fresh');
@@ -146,6 +147,18 @@ describe('cachedStats and a pricing-setting change', () => {
             profitPerHour: 4200,
             expPerHour: 1000,
         });
+    });
+
+    test('an untaxed figure with no taxed twin drops the stale cached rate but keeps the XP', () => {
+        const panel = document.createElement('div');
+        actionPanelSort.registerPanel(panel, '/actions/milking/cow');
+        actionPanelSort.updateExpPerHour(panel, 1000);
+        actionPanelSort.updateProfit(panel, 5000, { excludeSellTax: true, taxedProfitPerHour: 4200 });
+
+        actionPanelSort.updateProfit(panel, 5100, { excludeSellTax: true, taxedProfitPerHour: null });
+
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({ expPerHour: 1000 });
+        expect(actionPanelSort.panels.get(panel).profitPerHour).toBe(5100);
     });
 
     test('either patient tick changing from outside drops the cache too', () => {

@@ -82,4 +82,40 @@ describe('gathering tile Profit/hr and the sell-tax exclusion', () => {
         await renderTile();
         expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: false, taxedProfitPerHour: null });
     });
+
+    test.each([true, false])(
+        'Eff. XP/hr line carries the marker only when untaxed (excluded: %s)',
+        async (excluded) => {
+            state.taxedData = { profitPerHour: 1000, hasMissingPrices: false };
+            state.profitData = { profitPerHour: -1200, hasMissingPrices: false, excludeSellTax: excluded };
+            const panel = document.createElement('div');
+            const display = document.createElement('div');
+            document.body.append(panel, display);
+            stats.actionElements.set(panel, { actionHrid: '/actions/foraging/apple', displayElement: display });
+            vi.spyOn(stats, 'fitLineFontSizes').mockImplementation(() => {});
+            await stats.updateStats(panel);
+            // A second, profitable tile gives the loss a recovery action
+            const other = document.createElement('div');
+            const otherDisplay = document.createElement('div');
+            document.body.append(other, otherDisplay);
+            stats.actionElements.set(other, {
+                actionHrid: '/actions/foraging/pear',
+                displayElement: otherDisplay,
+                profitPerHour: 5000,
+                expPerHour: 100,
+                hasMissingPrices: false,
+                excludeSellTax: excluded,
+            });
+            stats.addBestActionIndicators();
+
+            const overall = display.querySelector('[data-stat="overall"]');
+            expect(overall.textContent.includes('⚠')).toBe(excluded);
+            expect(overall.title.includes('Sell tax excluded')).toBe(excluded);
+
+            stats.actionElements.delete(panel);
+            stats.actionElements.delete(other);
+            document.body.innerHTML = '';
+            vi.restoreAllMocks();
+        }
+    );
 });

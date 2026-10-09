@@ -28,6 +28,7 @@ import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownershi
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { SELL_TAX_SETTING, sellTaxMarker, sellTaxTitleAttr } from '../../utils/sell-tax-marker.js';
+import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
 
 /**
  * Action type constants for classification
@@ -482,6 +483,7 @@ class MaxProduceable {
         // Store profit value for sorting and update shared sort manager
         const resolvedProfitPerHour = hasMissingPrices ? null : profitPerHour;
         data.profitPerHour = resolvedProfitPerHour;
+        data.excludeSellTax = excludeSellTax;
         actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour, { excludeSellTax, taxedProfitPerHour });
 
         // Check if we should hide actions with negative profit (unless pinned)
@@ -570,7 +572,7 @@ class MaxProduceable {
             expPerHour > 0
         ) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="overall" style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}</span></div>`;
+            html += `<span data-stat="overall"${sellTaxTitleAttr(excludeSellTax)} style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}${sellTaxMarker(excludeSellTax)}</span></div>`;
         }
 
         data.displayElement.innerHTML = html;
@@ -757,8 +759,11 @@ class MaxProduceable {
             const overallSpan = data.displayElement.querySelector('[data-stat="overall"]');
             if (overallSpan) {
                 const effXp = data.effectiveXpPerHour;
-                const label = effXp != null ? `Eff. XP/hr: ${formatKMB(effXp)}` : stripEmoji(overallSpan.textContent);
-                overallSpan.textContent = label + (isBestOverall ? ' 🏆' : '');
+                const label =
+                    effXp != null
+                        ? `Eff. XP/hr: ${formatKMB(effXp)}`
+                        : stripEmoji(overallSpan.textContent).replace(sellTaxMarker(true), '');
+                overallSpan.textContent = label + sellTaxMarker(data.excludeSellTax) + (isBestOverall ? ' 🏆' : '');
 
                 if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {
                     const loss = Math.abs(data.profitPerHour);
@@ -771,6 +776,13 @@ class MaxProduceable {
                         `Blended: (${formatKMB(data.expPerHour)} + ${ratio.toFixed(2)} × ${formatKMB(bestProfitExp || 0)}) / ${(1 + ratio).toFixed(2)} = ${formatKMB(effXp)}`;
                 } else {
                     overallSpan.title = '';
+                }
+                // The ratio and the ranking are built from untaxed profit under the toggle
+                if (data.excludeSellTax) {
+                    overallSpan.title = overallSpan.title
+                        ? `${overallSpan.title}
+${SELL_TAX_EXCLUDED_TOOLTIP}`
+                        : SELL_TAX_EXCLUDED_TOOLTIP;
                 }
             }
 

@@ -226,7 +226,16 @@ class ActionPanelSort {
             data.profitPerHour = profitPerHour;
             let cachedRate = profitPerHour;
             if (excludeSellTax) {
-                if (!Number.isFinite(taxedProfitPerHour)) return;
+                if (!Number.isFinite(taxedProfitPerHour)) {
+                    // Unpriceable now: a rate cached earlier is stale, but the XP beside it is still good
+                    const stale = this.cachedStats[data.actionHrid];
+                    if (stale) {
+                        delete stale.profitPerHour;
+                        delete stale.liquidityChecked;
+                        delete stale.liquidityLimit;
+                    }
+                    return;
+                }
                 cachedRate = taxedProfitPerHour;
             }
             if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};

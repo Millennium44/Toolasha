@@ -251,7 +251,13 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
     // Calculate bonus revenue from essence and rare find drops. This is intentionally returned
     // as-is (base actions/hour, not efficiency-scaled): profit-display.js's bonusDrops rendering
     // depends on that and re-applies efficiencyMultiplier itself via getBonusDropPerHourTotals.
-    const bonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap);
+    // The personal-use toggle also zeroes the tax; the flag is false for Iron Cow (already untaxed)
+    // so the "sell tax excluded" marker never shows on a character it changes nothing for.
+    const excludeSellTax =
+        !keepSellTax && !isIronCowCharacter() && config.getSettingValue('profitCalc_excludeSellTax', false) === true;
+    const bonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap, {
+        grossContainers: excludeSellTax,
+    });
 
     // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
     const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
@@ -270,10 +276,6 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
     // market at all, so its revenue (vendor sale, coinify, or the value-map fallback
     // for an item with neither) is never actually taxed.
     const netContainerRevenue = (bonusRevenue.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
-    // The personal-use toggle also zeroes it; the flag is false for Iron Cow (already untaxed)
-    // so the "sell tax excluded" marker never shows on a character it changes nothing for.
-    const excludeSellTax =
-        !keepSellTax && !isIronCowCharacter() && config.getSettingValue('profitCalc_excludeSellTax', false) === true;
     const marketTax = isIronCowCharacter() || excludeSellTax ? 0 : (revenuePerHour - netContainerRevenue) * MARKET_TAX;
 
     // Calculate net profit (revenue - market tax - drink costs)

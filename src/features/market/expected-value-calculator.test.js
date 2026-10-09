@@ -979,3 +979,22 @@ describe('cache invalidation on pricing changes', () => {
         expect(mocks.marketListeners.length).toBeGreaterThan(0);
     });
 });
+
+describe('calculateGrossContainerValue', () => {
+    test('leaves the contents untaxed and never touches the shared cache', () => {
+        const taxed = expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData);
+        expect(taxed).toBeCloseTo(500 * (1 - MARKET_TAX) + 150 + 100, 6);
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBeCloseTo(taxed, 6);
+
+        const gross = expectedValueCalculator.calculateGrossContainerValue(CHEST_HRID);
+
+        expect(gross).toBeCloseTo(500 + 150 + 100, 6);
+        // The sale-valued figure every other consumer reads is unchanged
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBeCloseTo(taxed, 6);
+    });
+
+    test('does not read a cached taxed value or write one when cold', () => {
+        expectedValueCalculator.calculateGrossContainerValue(CHEST_HRID);
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBeNull();
+    });
+});
