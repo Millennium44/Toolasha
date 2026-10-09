@@ -16,6 +16,7 @@ import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { SELL_TAX_SETTING, sellTaxMarker, sellTaxTitleAttr } from '../../utils/sell-tax-marker.js';
 
 class GatheringStats {
     constructor() {
@@ -100,7 +101,7 @@ class GatheringStats {
             this.updateAllStats();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
             config.onSettingChange(key, this.pricingModeHandler);
         }
 
@@ -253,6 +254,7 @@ class GatheringStats {
         const profitData = await calculateGatheringProfit(data.actionHrid);
         const profitPerHour = profitData?.profitPerHour || null;
         const hasMissingPrices = profitData?.hasMissingPrices || false;
+        const excludeSellTax = profitData?.excludeSellTax || false;
 
         // Calculate exp/hr using shared utility
         const expData = calculateExpPerHour(data.actionHrid);
@@ -260,6 +262,7 @@ class GatheringStats {
 
         // Store profit value for sorting and update shared sort manager
         data.profitPerHour = profitPerHour;
+        data.excludeSellTax = excludeSellTax;
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
         actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour);
@@ -490,7 +493,7 @@ class GatheringStats {
      * @param {Object} data - Stored action data
      */
     renderIndicators(actionPanel, data) {
-        const { profitPerHour, expPerHour, hasMissingPrices } = data;
+        const { profitPerHour, expPerHour, hasMissingPrices, excludeSellTax } = data;
         const showProfit = config.getSetting('actionPanel_showProfitPerHour_gathering');
         const showExp = config.getSetting('actionPanel_showExpPerHour_gathering');
         let html = '';
@@ -502,7 +505,7 @@ class GatheringStats {
             const profitColor = profitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             const profitSign = profitPerHour >= 0 ? '' : '-';
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="profit" style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(profitPerHour))}</span></div>`;
+            html += `<span data-stat="profit"${sellTaxTitleAttr(excludeSellTax)} style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(profitPerHour))}${sellTaxMarker(excludeSellTax)}</span></div>`;
         }
 
         if (showExp && expPerHour !== null && expPerHour > 0) {
@@ -713,7 +716,7 @@ class GatheringStats {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
                     config.offSettingChange(key, this.pricingModeHandler);
                 }
                 this.pricingModeHandler = null;

@@ -27,6 +27,7 @@ import { resolveActionContext } from '../../utils/action-context.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { SELL_TAX_SETTING, sellTaxMarker, sellTaxTitleAttr } from '../../utils/sell-tax-marker.js';
 
 /**
  * Action type constants for classification
@@ -143,7 +144,7 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
             config.onSettingChange(key, this.pricingModeHandler);
         }
 
@@ -450,6 +451,7 @@ class MaxProduceable {
         let profitPerHour = null;
         let hasMissingPrices = false;
         let outputPriceEstimated = false;
+        let excludeSellTax = false;
         const actionDetails = dataManager.getActionDetails(data.actionHrid);
 
         if (actionDetails) {
@@ -457,11 +459,13 @@ class MaxProduceable {
                 const profitData = await calculateGatheringProfit(data.actionHrid);
                 profitPerHour = profitData?.profitPerHour || null;
                 hasMissingPrices = profitData?.hasMissingPrices || false;
+                excludeSellTax = profitData?.excludeSellTax || false;
             } else if (PRODUCTION_TYPES.includes(actionDetails.type)) {
                 const profitData = await calculateProductionProfit(data.actionHrid);
                 profitPerHour = profitData?.profitPerHour || null;
                 hasMissingPrices = profitData?.hasMissingPrices || false;
                 outputPriceEstimated = profitData?.outputPriceEstimated || false;
+                excludeSellTax = profitData?.excludeSellTax || false;
             }
         }
 
@@ -538,7 +542,7 @@ class MaxProduceable {
                 const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
                 const estimatedNote = outputPriceEstimated ? ' ⚠' : '';
                 html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-                html += `<span data-stat="profit" style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}</span></div>`;
+                html += `<span data-stat="profit"${sellTaxTitleAttr(excludeSellTax)} style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}${sellTaxMarker(excludeSellTax)}</span></div>`;
             }
         }
 
@@ -986,7 +990,7 @@ class MaxProduceable {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
                     config.offSettingChange(key, this.pricingModeHandler);
                 }
                 this.pricingModeHandler = null;

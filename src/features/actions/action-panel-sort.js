@@ -19,6 +19,7 @@ const PRICING_VALUE_SETTING_KEYS = Object.freeze([
     'profitCalc_pricingMode',
     ...PATIENT_TICK_SETTING_KEYS,
     IRONCOW_VALUATION_SETTING,
+    'profitCalc_excludeSellTax',
 ]);
 
 /**

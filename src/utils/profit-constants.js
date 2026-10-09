@@ -11,6 +11,16 @@
 export const MARKET_TAX = 0.04;
 
 /**
+ * Warning shown next to a profit figure computed with the sell-tax exclusion
+ * (`profitCalc_excludeSellTax`) on, so it is not read as what a sale would earn.
+ */
+export const SELL_TAX_EXCLUDED_WARNING = '⚠ Sell tax excluded — assumes you keep this output, not an actual sale price';
+
+/** Tooltip for the compact ⚠ marker on tile Profit/hr lines under the sell-tax exclusion. */
+export const SELL_TAX_EXCLUDED_TOOLTIP =
+    'Sell tax excluded — assumes you keep this output, not an actual sale price. Toggle it off on the skill page if you plan to sell it.';
+
+/**
  * Bag of 10 Cowbells item HRID (subject to 18% market tax)
  */
 export const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';

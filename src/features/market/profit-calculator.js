@@ -11,6 +11,7 @@ import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getProductionCost, getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
 import { getItemPrice, getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     calculateActionsPerHour,
     calculatePriceAfterTax,
@@ -77,9 +78,12 @@ class ProfitCalculator {
      * @param {string} [options.actionHrid] - The recipe this calculation is about. Pass it whenever
      *   the caller started from an action rather than from an item: two recipes can yield the same
      *   output, and without this the answer is about whichever one the lookup happens to pick.
+     * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
+     *   (`profitCalc_excludeSellTax`) and always deduct the market tax. Item tooltips, market
+     *   sorting, optimizers and planners pass it: they value output as a sale.
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
-    async calculateProfit(itemHrid, { actionHrid } = {}) {
+    async calculateProfit(itemHrid, { actionHrid, keepSellTax = false } = {}) {
         // Get item details
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (!itemDetails) {
@@ -249,8 +253,14 @@ class ProfitCalculator {
         // The rate is zero for
         // an Iron Cow character, which never has real market access to pay it on
         const netContainerRevenue = (bonusRevenue?.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
-        const marketTax =
-            (revenuePerHour + efficiencyBoostedBonusRevenue - netContainerRevenue) * outputTaxRate(MARKET_TAX);
+        // Personal-use toggle: no tax at all. Not flagged for Iron Cow, already untaxed.
+        const excludeSellTax =
+            !keepSellTax &&
+            !isIronCowCharacter() &&
+            config.getSettingValue('profitCalc_excludeSellTax', false) === true;
+        const marketTax = excludeSellTax
+            ? 0
+            : (revenuePerHour + efficiencyBoostedBonusRevenue - netContainerRevenue) * outputTaxRate(MARKET_TAX);
 
         // Total costs per hour (materials + teas + market tax)
         const totalCostPerHour = materialCostPerHour + totalTeaCostPerHour + marketTax;
@@ -288,6 +298,8 @@ class ProfitCalculator {
             outputPriceEstimated, // True when outputPriceMissing but crafting cost fallback resolved a price
             priceAfterTax, // Output price after market tax (bid or ask based on mode)
             revenuePerHour,
+            marketTax, // Market tax per hour actually deducted (0 for Iron Cow or when excluded)
+            excludeSellTax, // True when the personal-use sell-tax exclusion shaped this figure
             profitPerItem,
             profitPerHour,
             profitPerAction: calculateProfitPerAction(profitPerHour, actionsPerHour * efficiencyMultiplier), // Profit per action

@@ -685,7 +685,7 @@ class TooltipPrices {
             // Original single-action craft profit display
             // Only run for base items (enhancementLevel = 0), not enhanced items
             // Enhanced items show their cost in the enhancement path section instead
-            const profitData = await profitCalculator.calculateProfit(itemHrid);
+            const profitData = await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true });
             craftProfitData = profitData ?? null;
             if (profitData) {
                 this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip);
@@ -1984,7 +1984,7 @@ class TooltipPrices {
         let profitData = craftProfitData;
         if (profitData === undefined) {
             profitData = profitCalculator.findProductionAction?.(itemHrid)
-                ? await profitCalculator.calculateProfit(itemHrid)
+                ? await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true })
                 : null;
         }
         const comparison = profitData

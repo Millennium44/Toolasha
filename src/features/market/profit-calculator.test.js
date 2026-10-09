@@ -24,7 +24,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => mocks.settings[key], getSettingValue: (key, fallback) => fallback },
+    default: {
+        getSetting: (key) => mocks.settings[key],
+        getSettingValue: (key, fallback) =>
+            key === 'profitCalc_excludeSellTax' ? (mocks.settings[key] ?? fallback) : fallback,
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -512,6 +516,46 @@ describe('calculateProfit — itemPrice reconciliation', () => {
         mocks.resolvedPrices['/items/milk'] = 10;
         mocks.resolvedPrices['/items/cheese'] = 100;
     }
+
+    describe('the personal-use sell-tax exclusion', () => {
+        test('off (the default): tax is deducted and the result is not flagged', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+
+            const result = await profitCalculator.calculateProfit('/items/cheese');
+
+            // 360 cheese/hr at 100, 2% tax in this file's mocked constants
+            expect(result.revenuePerHour).toBe(36000);
+            expect(result.marketTax).toBeCloseTo(720, 6);
+            expect(result.profitPerHour).toBeCloseTo(36000 - 3600 - 720, 6);
+            expect(result.excludeSellTax).toBe(false);
+        });
+
+        test('on: no tax is deducted, revenue is unchanged, and the result is flagged', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+            mocks.settings.profitCalc_excludeSellTax = true;
+
+            const result = await profitCalculator.calculateProfit('/items/cheese');
+
+            expect(result.revenuePerHour).toBe(36000);
+            expect(result.marketTax).toBe(0);
+            expect(result.profitPerHour).toBeCloseTo(36000 - 3600, 6);
+            expect(result.excludeSellTax).toBe(true);
+        });
+
+        test('keepSellTax ignores the setting, for consumers that value output as a sale', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+            mocks.settings.profitCalc_excludeSellTax = true;
+
+            const result = await profitCalculator.calculateProfit('/items/cheese', { keepSellTax: true });
+
+            expect(result.marketTax).toBeCloseTo(720, 6);
+            expect(result.profitPerHour).toBeCloseTo(36000 - 3600 - 720, 6);
+            expect(result.excludeSellTax).toBe(false);
+        });
+    });
 
     test('already-net container bonuses avoid a second tax in production profit', async () => {
         simpleRecipe();
