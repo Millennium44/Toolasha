@@ -13,6 +13,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
+    modesSeen: [],
     setting: true,
     collections: null,
     characterId: 'char-1',
@@ -20,6 +21,11 @@ const game = vi.hoisted(() => ({
     profitExtra: {},
     shopUnits: 1,
     actionDetails: null,
+    /** The drinks the resolved action context holds (loadout snapshot, out-of-stock removed) */
+    drinks: [],
+    noBid: new Set(),
+    /** Setups the calculator weighs for a decompose, as overrides of its result; empty: only its pick */
+    decomposeSetups: [],
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
@@ -154,7 +160,7 @@ const LOOT = vi.hoisted(() => ({
 const BOOKS = vi.hoisted(() => ({ byItem: {} }));
 
 /** Measured daily volumes, for the liquidity bound */
-const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null }));
+const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null, asked: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -188,6 +194,10 @@ vi.mock('../../core/data-manager.js', () => ({
             bus.handlers[event] = (bus.handlers[event] || []).filter((h) => h !== handler);
         },
     },
+}));
+
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: game.drinks }),
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
@@ -288,44 +298,59 @@ const amberTransmute = (hrid, setup = {}) => ({
     ],
     ...setup,
 });
+const decomposeResult = (hrid, setup = {}) =>
+    RATES[hrid] === undefined
+        ? null
+        : {
+              itemHrid: hrid,
+              actionsPerHour: 100,
+              successRate: RATES[hrid],
+              requirementCosts: [
+                  { itemHrid: hrid, count: 1, price: BUY[hrid] },
+                  ...(OVERHEAD[hrid]
+                      ? [
+                            {
+                                itemHrid: '/items/coin',
+                                count: OVERHEAD[hrid].coin,
+                                costPerAction: OVERHEAD[hrid].coin,
+                            },
+                        ]
+                      : []),
+              ],
+              catalystCostPerHour: OVERHEAD[hrid] ? OVERHEAD[hrid].catalystPerSuccess * RATES[hrid] * 100 : 0,
+              totalTeaCostPerHour: 0,
+              // The alchemy-wide bonus drop every action rolls
+              dropRevenues: [{ itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 }],
+              ...setup,
+          };
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
-        calculateTransmuteProfit: (hrid) => (hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid)),
         // The setups the calculator weighs, when a test lists them
-        calculateCandidateResults: (type, hrid) =>
-            type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
-                ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
-                : [],
-        calculateDecomposeProfit: (hrid) =>
-            RATES[hrid] === undefined
-                ? null
-                : {
-                      itemHrid: hrid,
-                      actionsPerHour: 100,
-                      successRate: RATES[hrid],
-                      requirementCosts: [
-                          { itemHrid: hrid, count: 1, price: BUY[hrid] },
-                          ...(OVERHEAD[hrid]
-                              ? [
-                                    {
-                                        itemHrid: '/items/coin',
-                                        count: OVERHEAD[hrid].coin,
-                                        costPerAction: OVERHEAD[hrid].coin,
-                                    },
-                                ]
-                              : []),
-                      ],
-                      catalystCostPerHour: OVERHEAD[hrid] ? OVERHEAD[hrid].catalystPerSuccess * RATES[hrid] * 100 : 0,
-                      totalTeaCostPerHour: 0,
-                      // The alchemy-wide bonus drop every action rolls
-                      dropRevenues: [
-                          { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
-                      ],
-                  },
+        calculateCandidateResults: (type, hrid) => {
+            game.modesSeen.push(game.pricingMode);
+            return candidateResults(type, hrid);
+        },
+        calculateDecomposeProfit: (hrid) => {
+            game.modesSeen.push(game.pricingMode);
+            return decomposeResult(hrid);
+        },
+        calculateTransmuteProfit: (hrid) => {
+            game.modesSeen.push(game.pricingMode);
+            return hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid);
+        },
     },
 }));
+const candidateResults = (type, hrid) =>
+    type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
+        ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
+        : type === 'decompose'
+          ? game.decomposeSetups.map((setup) => decomposeResult(hrid, setup)).filter(Boolean)
+          : [];
 
 vi.mock('../../utils/market-data.js', () => ({
+    // The bid side can be empty while the ask is live: a mode other than 'ask' sees `noBid` as estimated
+    isPriceEstimated: (hrid, options = {}) =>
+        game.estimated.has(hrid) || (options.mode !== 'ask' && game.noBid.has(hrid)),
     getItemPrice: (hrid) => BUY[hrid] ?? null,
     getItemPriceInfo: (hrid, options = {}) => {
         // The profit pricing mode picks the side when no mode is named: 'optimistic' buys at the bid
@@ -336,6 +361,16 @@ vi.mock('../../utils/market-data.js', () => ({
             : { price, source: 'book', estimated: false };
     },
     getPricingMode: () => 'ask',
+    // Pins the profit mode for a synchronous call, the way the real one does
+    withProfitPricingMode: (mode, fn) => {
+        const previous = game.pricingMode;
+        game.pricingMode = mode;
+        try {
+            return fn();
+        } finally {
+            game.pricingMode = previous;
+        }
+    },
 }));
 // The shared liquidity bound: a quarter of the measured daily volume, per hour
 vi.mock('../../utils/liquidity-cap.js', () => ({
@@ -348,9 +383,12 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
             : { goldPerHour, capped: false, limit: null };
     },
     // Measuring waits on a test's gate, when it sets one
-    prefetchLiquidity: async () => {
+    prefetchLiquidity: async (items) => {
+        VOLUME.asked.push(...(items || []).map((item) => item.itemHrid));
         if (VOLUME.gate) await VOLUME.gate;
     },
+    // A volume is confirmed once it has been measured, however little trades
+    hasMeasuredVolume: (hrid) => VOLUME.perDay[hrid] !== undefined,
 }));
 vi.mock('../planner/market-liquidity.js', () => ({ LIQUIDITY_HORIZON_DAYS: 7 }));
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
@@ -391,6 +429,7 @@ const {
     buyQuote,
     realizedSalePrice,
     weeklySellable,
+    wholeActionsBatch,
     formatNet,
 } = await import('./collection-optimizer.js');
 const { bestOptions, collectionCounts, evaluateOption, indexRoutes, planTarget } =
@@ -426,15 +465,20 @@ beforeEach(() => {
     game.shopUnits = 1;
     game.actionDetails = null;
     game.estimated = new Set();
+    game.noBid = new Set();
     game.altProfit = null;
     game.mixedShop = false;
     game.ironCow = false;
     VOLUME.perDay = {};
     VOLUME.gate = null;
+    VOLUME.asked = [];
     BOOKS.byItem = {};
     game.pricingMode = 'hybrid';
+    game.modesSeen = [];
     game.noTransmute = false;
     game.milkingLevel = 10;
+    game.drinks = [];
+    game.decomposeSetups = [];
     game.unpricedTea = false;
     game.crateDrop = false;
     game.transmuteSetups = [];
@@ -737,6 +781,63 @@ describe('transmute routes', () => {
         expect(fastest.secondsPerPoint).toBeLessThanOrEqual(typeSpecific.secondsPerPoint);
     });
 
+    test('every setup the calculator weighs for a decompose is a route; identical setups are offered once', async () => {
+        // The calculator's pick is no catalyst. Prime costs 9,000 an hour of catalyst on top
+        game.decomposeSetups = [
+            {},
+            { catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst', winningTeaUsed: true },
+            // No tea to drink: the same chain as the first, offered once
+            { winningTeaUsed: false },
+        ];
+        const routes = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'decompose' && s.sourceHrid === '/items/umbral_hood'
+        );
+        expect(routes.map((r) => r.setup)).toEqual([
+            { catalystHrid: null, tea: false },
+            { catalystHrid: '/items/prime_catalyst', tea: true },
+        ]);
+        expect(routes[1].cost).toBeGreaterThan(routes[0].cost);
+        // Only the calculator's pick when it lists no setups: no setup to name
+        game.decomposeSetups = [];
+        const single = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'decompose' && s.sourceHrid === '/items/umbral_hood'
+        );
+        expect(single).toHaveLength(1);
+        expect(single[0].setup).toBeUndefined();
+    });
+
+    test('a setup needing a catalyst with no live ask is not a route; the plain setup stays', async () => {
+        game.transmuteSetups = [
+            {},
+            { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
+        ];
+        game.decomposeSetups = [
+            {},
+            { catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst', winningTeaUsed: true },
+        ];
+        game.estimated = new Set(['/items/prime_catalyst']);
+        const { sources } = await buildCollectionRoutes();
+        const transmutes = sources.filter((s) => s.route === 'transmute' && s.sourceHrid === '/items/amber');
+        expect(transmutes.map((r) => r.setup.catalystHrid)).toEqual(['/items/catalyst_of_transmutation']);
+        const decomposes = sources.filter((s) => s.route === 'decompose' && s.sourceHrid === '/items/umbral_hood');
+        expect(decomposes.map((r) => r.setup.catalystHrid)).toEqual([null]);
+    });
+
+    test('a catalyst with a live ask but no live bid is still a setup: the check pins the ask', async () => {
+        game.transmuteSetups = [
+            {},
+            { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
+        ];
+        game.noBid = new Set(['/items/prime_catalyst']);
+        const routes = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'transmute' && s.sourceHrid === '/items/amber'
+        );
+        expect(routes.map((r) => r.setup.catalystHrid)).toEqual([
+            '/items/catalyst_of_transmutation',
+            '/items/prime_catalyst',
+        ]);
+    });
+
     test('the row says which catalyst and teas the transmute uses', async () => {
         drawCollectionsTab();
         optimizer.initialize();
@@ -811,6 +912,26 @@ describe('gathering routes', () => {
         expect(milk.textContent).toContain('Gather: 1 action at Cow');
     });
 
+    test('startability reads the resolved action context, not the raw slots or the current gear', async () => {
+        // The loadout snapshot's tea (+12 levels) is what the gathering calculator prices the action
+        // under; the live slots (empty here) would call the zone locked
+        ITEMS['/items/test_milking_tea'] = {
+            name: 'Test Milking Tea',
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/milking_level', flatBoost: 12 }] },
+        };
+        ACTIONS['/actions/milking/cow'].levelRequirement.level = 20;
+        try {
+            game.drinks = [{ itemHrid: '/items/test_milking_tea' }];
+            expect(cowRoute(await buildCollectionRoutes())).toBeDefined();
+            // A slotted tea the context dropped (out of stock) no longer counts
+            game.drinks = [];
+            expect(cowRoute(await buildCollectionRoutes())).toBeUndefined();
+        } finally {
+            ACTIONS['/actions/milking/cow'].levelRequirement.level = 1;
+            delete ITEMS['/items/test_milking_tea'];
+        }
+    });
+
     test('a zone above the character’s level is no route; an unpriced tea leaves it out', async () => {
         ACTIONS['/actions/milking/cow'].levelRequirement.level = 20;
         try {
@@ -844,6 +965,57 @@ describe('whole actions for sources', () => {
 });
 
 describe('Gourmet and a craft batch', () => {
+    test('the batch is the matched output count, not the primary output of the action', async () => {
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/other', count: 15 }] };
+        game.profitExtra = { outputAmount: 7 };
+        expect((await buildCollectionRoutes()).craft[0].batch).toBe(7);
+    });
+
+    test('a crafted source is bought in whole craft actions and whole decompose actions', async () => {
+        // 2 swords an action (Gourmet's extras are not guaranteed); a decompose action eats 2: one craft
+        // action already feeds one decompose action
+        game.craftable = new Set(['/items/cheese_sword']);
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const route = (await buildCollectionRoutes()).sources.find(
+            (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+        );
+        expect(route.batch).toBe(2);
+        // 3 a craft against 2 a decompose: two crafts make three decomposes
+        expect(wholeActionsBatch(3, 2)).toBe(6);
+        expect(wholeActionsBatch(15, 2)).toBe(30);
+    });
+
+    test('a run of whole crafts is charged, timed and credited for every expected item the crafts make', async () => {
+        game.craftable = new Set(['/items/cheese_sword']);
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
+        const find = async () =>
+            (await buildCollectionRoutes()).sources.find(
+                (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+            );
+        game.profitExtra = {};
+        const plain = await find();
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const gourmet = await find();
+        // One craft makes 2.5 on average for 2.5 items of cost and time: a run of 2 sources is one craft
+        expect(gourmet.batch).toBe(2);
+        expect(gourmet.cost - plain.cost).toBeCloseTo(4 * 0.25, 9);
+        expect(gourmet.seconds).toBeGreaterThan(plain.seconds);
+        expect(gourmet.yields.get('/items/cheese_sword')).toBeCloseTo(1.25, 9);
+        expect(plain.yields.get('/items/cheese_sword')).toBe(1);
+    });
+
+    test('alchemy overhead is priced at the ask whatever the profit mode is', async () => {
+        game.pricingMode = 'optimistic';
+        game.decomposeSetups = [{}];
+        game.transmuteSetups = [{}];
+        await buildCollectionRoutes();
+        expect(game.modesSeen.length).toBeGreaterThan(0);
+        expect(new Set(game.modesSeen)).toEqual(new Set(['conservative']));
+        // And the mode is put back afterwards
+        expect(game.pricingMode).toBe('optimistic');
+    });
+
     test('the batch is the expected output per action, base count times one plus the Gourmet chance', async () => {
         game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese', count: 2 }] };
         game.profitExtra = { gourmetBonus: 0.25 };
@@ -897,6 +1069,64 @@ describe('a recipe the character cannot start', () => {
         expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
         game.altProfit = { makeCost: 4, totalItemsPerHour: 360 };
         expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
+    });
+
+    test('a recipe with a different output batch is not dominated: a small rung rounds to whole batches', async () => {
+        // /actions/x makes 15 at a time, cheaper and faster per item; /actions/alt makes 1 at a time
+        ACTIONS['/actions/x'] = {
+            hrid: '/actions/x',
+            type: '/action_types/cheesesmithing',
+            outputItems: [{ count: 15 }],
+        };
+        ACTIONS['/actions/alt'] = {
+            hrid: '/actions/alt',
+            type: '/action_types/cheesesmithing',
+            outputItems: [{ count: 1 }],
+        };
+        try {
+            game.profitExtra = { makeCost: 3, totalItemsPerHour: 720 };
+            game.altProfit = { makeCost: 4, totalItemsPerHour: 360 };
+            const routes = await buildCollectionRoutes();
+            expect(routes.craft.map((r) => [r.actionHrid, r.batch])).toEqual([
+                ['/actions/x', 15],
+                ['/actions/alt', 1],
+            ]);
+            // Cheese at 5 needs 5 more for the next rung: 15 made at 3 each against 5 made at 4 each
+            const counts = new Map([['/items/cheese', 5]]);
+            const [x, alt] = routes.craft.map((r) =>
+                evaluateOption(
+                    '/items/cheese',
+                    counts,
+                    indexRoutes(routes)
+                        .get('/items/cheese')
+                        .find((c) => c.actionHrid === r.actionHrid)
+                )
+            );
+            expect(x.units).toBe(15);
+            expect(alt.units).toBe(5);
+            expect(alt.gold).toBeLessThan(x.gold);
+        } finally {
+            delete ACTIONS['/actions/x'];
+            delete ACTIONS['/actions/alt'];
+        }
+    });
+
+    test('a craftDecompose route buys and times whole craft actions as well as whole decompose actions', async () => {
+        // Cheese swords are made 15 to an action and decomposed 2 to an action: 30 is both
+        ACTIONS['/actions/x'] = {
+            hrid: '/actions/x',
+            type: '/action_types/cheesesmithing',
+            outputItems: [{ count: 15 }],
+        };
+        game.craftable = new Set(['/items/cheese_sword']);
+        try {
+            const route = (await buildCollectionRoutes()).sources.find(
+                (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+            );
+            expect(route.batch).toBe(30);
+        } finally {
+            delete ACTIONS['/actions/x'];
+        }
     });
 
     test('an Action Level tea that raises the requirement past the level blocks it too', async () => {
@@ -1024,6 +1254,80 @@ describe('the panel', () => {
         expect(after.querySelectorAll('li').length).toBeGreaterThan(0);
         expect(after.textContent).not.toBe(before);
         expect(document.querySelector('.toolasha-collopt-target').value).toBe('5');
+    });
+
+    test('a plan warms the volume of every item its steps buy or sell, not only the ranking slice', async () => {
+        const warm = vi.spyOn(optimizer, 'warmVolumes');
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-plan')).not.toBeNull());
+        warm.mockClear();
+        VOLUME.asked = [];
+        document.querySelector('.toolasha-collopt-target').value = '5';
+        document.querySelector('.toolasha-collopt-plan').click();
+        // The plan's own steps went to the warm-up, whatever the ranking showed
+        const steps = warm.mock.calls.map(([options]) => options).find((options) => options?.[0]?.units !== undefined);
+        expect(steps?.length).toBeGreaterThan(0);
+        await optimizer.volumesWarming;
+        const wanted = new Set(steps.flatMap((step) => [...step.sold.keys(), ...step.bought.keys()]));
+        expect(wanted.size).toBeGreaterThan(0);
+        for (const hrid of wanted) expect(VOLUME.asked).toContain(hrid);
+        warm.mockRestore();
+    });
+
+    test('an item is marked asked only once measured: a failed lookup is asked again, a measured one is not', async () => {
+        const options = [{ sold: new Map([['/items/cheese', 5]]), bought: new Map() }];
+        optimizer.collapsed = true;
+        // Nothing comes back (history off, or the pool did not answer)
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(optimizer.volumesAsked.has('/items/cheese')).toBe(false);
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(VOLUME.asked.filter((hrid) => hrid === '/items/cheese')).toHaveLength(2);
+
+        // History is turned on and the lookup lands
+        VOLUME.perDay['/items/cheese'] = 1000;
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(optimizer.volumesAsked.has('/items/cheese')).toBe(true);
+        optimizer.warmVolumes(options);
+        expect(VOLUME.asked.filter((hrid) => hrid === '/items/cheese')).toHaveLength(3);
+
+        // The history setting changes: the cache no longer confirms it, so it is asked again
+        delete VOLUME.perDay['/items/cheese'];
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(VOLUME.asked.filter((hrid) => hrid === '/items/cheese')).toHaveLength(4);
+        expect(optimizer.volumesAsked.has('/items/cheese')).toBe(false);
+    });
+
+    test('the plan and the ranking warm one after the other, never two pools at once', async () => {
+        optimizer.collapsed = true;
+        let release;
+        VOLUME.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        optimizer.warmVolumes([{ sold: new Map([['/items/cheese', 1]]), bought: new Map() }]);
+        optimizer.warmVolumes([{ sold: new Map([['/items/milk', 1]]), bought: new Map() }]);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        // Only the first has started its lookups while it is still under way
+        expect(VOLUME.asked).toEqual(['/items/cheese']);
+        release();
+        await optimizer.volumesWarming;
+        expect(VOLUME.asked).toEqual(['/items/cheese', '/items/milk']);
+    });
+
+    test('an unavailable history does not redraw in a loop', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(optimizer.volumesWarming).not.toBeNull());
+        await optimizer.volumesWarming;
+        const render = vi.spyOn(optimizer, 'render');
+        await optimizer.volumesWarming;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(render).not.toHaveBeenCalled();
+        render.mockRestore();
     });
 
     test('another character does not inherit the plan on show', async () => {

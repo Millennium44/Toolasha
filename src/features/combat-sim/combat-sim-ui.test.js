@@ -477,6 +477,7 @@ vi.mock('./all-zones-runner.js', () => ({
 const liquidity = vi.hoisted(() => ({ throttleByItem: {}, calls: [] }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    hasMeasuredVolume: () => false,
     itemDailyVolume: async (itemHrid) => ({ itemHrid, unitsPerDay: 0, days: 0, known: false }),
     // Synchronous, like the real cache-only variant — never starts a lookup,
     // so the wiring test can prove the table issues none of its own.
