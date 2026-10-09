@@ -389,11 +389,11 @@ const selfUseWanted = {
  * @returns {string}
  */
 export function keepChipLabel(kept) {
-    return kept ? '☑ Kept for self-use' : '☐ Keep for self-use';
+    return kept ? '☑ Kept (K)' : '☐ Keep (K)';
 }
 
 /**
- * The tooltip section for one item: the chip and the key that flips it.
+ * The tooltip section for one item: the compact chip, which the K key also flips.
  * @param {string} itemHrid
  * @param {boolean} kept
  * @returns {string} HTML
@@ -401,9 +401,8 @@ export function keepChipLabel(kept) {
 export function buildKeepChipHTML(itemHrid, kept) {
     return (
         `<span class="${KEEP_CHIP_CLASS}" data-item-hrid="${itemHrid}" style="cursor: pointer;" ` +
-        `title="Self-use alchemy lines value a kept output at what you would pay for it; every other ` +
-        `output is valued as sold after tax.">${keepChipLabel(kept)}</span>` +
-        ` <span style="opacity: 0.6;">(press K)</span>`
+        `title="Keep for self-use: self-use alchemy lines value a kept output at what you would pay for it; ` +
+        `every other output is valued as sold after tax. Click, or press K.">${keepChipLabel(kept)}</span>`
     );
 }
 
@@ -426,13 +425,14 @@ async function flipChip(chip) {
 
 /**
  * Make the chip live: a click on it, or K while one is on screen.
+ * @param {() => boolean} [isEnabled] - Asked on every click and keypress; false makes both inert
  */
-export function installKeepToggle() {
+export function installKeepToggle(isEnabled = () => true) {
     if (typeof document === 'undefined' || toggleHandlers) return;
 
     const onClick = (event) => {
         const chip = event.target?.closest?.(`.${KEEP_CHIP_CLASS}`);
-        if (!chip) return;
+        if (!chip || !isEnabled()) return;
         event.preventDefault();
         event.stopPropagation();
         flipChip(chip);
@@ -440,7 +440,7 @@ export function installKeepToggle() {
 
     const onKeyDown = (event) => {
         if (event.key?.toLowerCase() !== KEEP_KEY || event.ctrlKey || event.altKey || event.metaKey) return;
-        if (event.repeat) return;
+        if (event.repeat || !isEnabled()) return;
 
         // Never steal a keystroke from chat, a price box or any other field being typed into
         const target = event.target;

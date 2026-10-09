@@ -85,6 +85,7 @@ const TOOLTIP_FEATURE_SETTINGS = [
     'itemTooltip_multiActionProfit',
     'itemTooltip_selfUseAlchemy',
     'itemTooltip_alchemyInsteadOfBuying',
+    'itemTooltip_selfUseKeepChip',
     'itemTooltip_gathering',
     'itemTooltip_gatheringRareDrops',
     'itemTooltip_abilityStatus',
@@ -94,16 +95,18 @@ const TOOLTIP_FEATURE_SETTINGS = [
     'itemTooltip_loadoutMarks',
 ];
 
+/** The setting that shows the Keep chip (and arms K) on tooltips */
+const KEEP_CHIP_SETTING = 'itemTooltip_selfUseKeepChip';
+
 /** Hover text on every self-use alchemy line. */
 const SELF_USE_TITLE =
     'Self-use: an output marked "Keep for self-use" is valued at what you would pay to buy it under your ' +
-    'pricing mode, with no sales tax; every other output at what selling it would bring after tax. Mark an ' +
-    'item from its own tooltip (press K, or click the chip). Decompose costs the item at the cheaper of making ' +
-    'or buying it; a held item being transmuted costs what selling it would bring after tax.';
+    'pricing mode, with no sales tax; every other output at what selling it would bring after tax. ' +
+    'Decompose costs the item at the cheaper of making or buying it; a held item being transmuted costs ' +
+    'what selling it would bring after tax.';
 
 /** Footnote under the self-use lines. */
-const SELF_USE_FOOTNOTE =
-    'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.';
+const SELF_USE_FOOTNOTE = 'Self-use: kept outputs at what you would pay, the rest sold after tax.';
 
 /** The "Instead of buying" section's class */
 const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
@@ -424,8 +427,8 @@ class TooltipPrices {
         installEnhancementSourceToggle();
 
         // The "Keep for self-use" chip, clickable and K-pressable. Inert while no chip is on
-        // screen, and a chip is drawn only while the self-use lines are on.
-        installKeepToggle();
+        // screen, and K does nothing while the chip setting is off.
+        installKeepToggle(() => !!config.getSetting(KEEP_CHIP_SETTING));
 
         // Register with centralized DOM observer
         this.setupObserver();
@@ -649,6 +652,7 @@ class TooltipPrices {
             isItemTooltip &&
             !isCollectionTooltip &&
             !(info.enhancementLevel > 0) &&
+            config.getSetting(KEEP_CHIP_SETTING) &&
             (config.getSetting('itemTooltip_selfUseAlchemy') || config.getSetting(INSTEAD_SETTING)) &&
             selfUseWanted.isAlchemyOutput(itemHrid);
 
@@ -918,7 +922,7 @@ class TooltipPrices {
             const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
             if (!tooltipText || tooltipText.querySelector(`.${KEEP_SECTION_CLASS}`)) return;
             const div = dom.createStyledDiv(
-                { color: config.COLOR_TOOLTIP_INFO, marginTop: '4px' },
+                { color: config.COLOR_TOOLTIP_INFO, marginTop: '4px', fontSize: '0.85em', opacity: '0.7' },
                 '',
                 KEEP_SECTION_CLASS
             );
