@@ -58,6 +58,7 @@ import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, ba
 import {
     buildPayloadJSON,
     applyPayload,
+    retryPendingDisplacedDeletes,
     contentHash,
     hashPayload,
     addsToRemote,
@@ -1375,7 +1376,12 @@ class SyncManager {
             silent && !takeUnapplied && known && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
         const remote = await this._readRemote(token, gistId, known, conditional);
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
-        if (remote.notModified) return { ok: true, skipped: true, reason: 'not-modified' };
+        if (remote.notModified) {
+            // An unchanged gist answers 304 before any download, so deletes an earlier pull owes are
+            // retried here too or they would wait for the gist to move
+            await retryPendingDisplacedDeletes();
+            return { ok: true, skipped: true, reason: 'not-modified' };
+        }
         const { manifest, seen } = remote;
         const payload = remote.payload;
 
@@ -1399,7 +1405,9 @@ class SyncManager {
         const replaced = this._pushWasReplaced(remote, await storage.get(KEY_LAST_PUSHED_VERSION, STORE, null));
 
         if (!retryHeld && !takeUnapplied && !replaced && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
-            // Settled: nothing in this version is news to this device
+            // Settled: nothing in this version is news to this device. Deletes an earlier pull could not
+            // land are still owed, and this path never reaches the retry in the apply
+            await retryPendingDisplacedDeletes();
             if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
             if (!silent) showToast(await this._upToDateMessage(payload));
             return { ok: true, skipped: true, reason: 'not-newer' };
@@ -1411,6 +1419,7 @@ class SyncManager {
         // nothing settles: the counter taken, nothing imported, no reload asked
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
         if (!retryHeld && !takeUnapplied && Boolean(lastHash) && contentHash(payload) === lastHash) {
+            await retryPendingDisplacedDeletes();
             await this._remember({
                 gistId,
                 exportedAt: remoteAt,
@@ -1443,6 +1452,9 @@ class SyncManager {
         // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
         // Held-back records and a replaced push keep their own paths.
         if (!retryHeld && !replaced && this._sameContent(payload, localText, localHash)) {
+            // `addsToRemote` ignores a stale out-of-window key, so this shortcut would otherwise settle
+            // over a displaced delete that is still owed
+            await retryPendingDisplacedDeletes();
             // The flush and the build above can outlast a takeover, whose own
             // record this one would roll back
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
@@ -1737,7 +1749,7 @@ class SyncManager {
             await flushPersistedRecords();
             await storage.flushAll?.();
             const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-            if (addsToRemote(localText, remoteText)) {
+            if (addsToRemote(localText, remoteText) || mergeForUpload(localText, remoteText, null).dropsFromRemote) {
                 return 'Nothing new from GitHub; this device has changes the next push will send.';
             }
         } catch (error) {

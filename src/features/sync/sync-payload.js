@@ -440,6 +440,23 @@ let lastLeftOutSummary = null;
  */
 const pendingDisplacedDeletes = new Map();
 
+/**
+ * Retry the displaced-key deletes an earlier pull could not land, for a pull that settles without applying
+ * anything (same content, not newer, in step), which would otherwise never reach the retry in `applyPayload`.
+ * @returns {Promise<number>} How many deletes are still outstanding
+ */
+export async function retryPendingDisplacedDeletes() {
+    for (const [id, { store, key }] of [...pendingDisplacedDeletes.entries()]) {
+        try {
+            const deleted = await storage.delete(key, store, { bypassRestoreLatch: true });
+            if (deleted !== false) pendingDisplacedDeletes.delete(id);
+        } catch (error) {
+            console.warn('[Sync] Retrying a displaced-key delete failed:', error);
+        }
+    }
+    return pendingDisplacedDeletes.size;
+}
+
 /** Test-only: forget the last logged "left out" summary. */
 export function resetLeftOutLogForTests() {
     lastLeftOutSummary = null;
