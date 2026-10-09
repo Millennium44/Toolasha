@@ -1136,12 +1136,12 @@ class PinnedActionsPage {
             } else {
                 const isGathering = GATHERING_TYPES.includes(details.type);
                 if (isGathering) {
-                    const profitData = await calculateGatheringProfit(actionHrid);
+                    const profitData = await calculateGatheringProfit(actionHrid, { keepSellTax: true });
                     hasMissingPrices = Boolean(profitData?.hasMissingPrices);
                     profitPerHour = hasMissingPrices ? null : (profitData?.profitPerHour ?? null);
                     sells = sellsFromProfitData(profitData);
                 } else {
-                    const profitData = await calculateProductionProfit(actionHrid);
+                    const profitData = await calculateProductionProfit(actionHrid, { keepSellTax: true });
                     hasMissingPrices = Boolean(profitData?.hasMissingPrices);
                     profitPerHour = hasMissingPrices ? null : (profitData?.profitPerHour ?? null);
                     sells = sellsFromProfitData(profitData);

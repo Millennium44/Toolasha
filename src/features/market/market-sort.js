@@ -554,7 +554,7 @@ class MarketSort {
         }
 
         // Try production profit first (craftable items)
-        const productionProfit = await profitCalculator.calculateProfit(itemHrid);
+        const productionProfit = await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true });
         if (productionProfit && productionProfit.profitPerHour !== undefined) {
             return { profit: productionProfit.hasMissingPrices ? null : productionProfit.profitPerHour, detail: null };
         }
@@ -562,7 +562,7 @@ class MarketSort {
         // Try gathering profit (find action that produces this item)
         const gatheringAction = this.findGatheringAction(itemHrid, gameData);
         if (gatheringAction) {
-            const gatheringProfit = await calculateGatheringProfit(gatheringAction);
+            const gatheringProfit = await calculateGatheringProfit(gatheringAction, { keepSellTax: true });
             if (gatheringProfit && gatheringProfit.profitPerHour !== undefined) {
                 return {
                     profit: gatheringProfit.hasMissingPrices ? null : gatheringProfit.profitPerHour,

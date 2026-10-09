@@ -19,7 +19,7 @@ const settings = vi.hoisted(() => ({
 const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
 const openableState = vi.hoisted(() => ({ drops: {} }));
-const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null }));
+const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null, options: [] }));
 /** Items the market cannot price, and the shop-conversion value (if any) for each */
 const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {}, shopSides: [], sided: {} }));
 /** The sales tax the after-tax figures take (0 keeps the older arithmetic readable) */
@@ -144,7 +144,12 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     uninstallEnhancementSourceToggle: () => {},
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParamsFor: () => null }));
-vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => gatheringState.profitData }));
+vi.mock('../actions/gathering-profit.js', () => ({
+    calculateGatheringProfit: async (_hrid, options) => {
+        gatheringState.options.push(options);
+        return gatheringState.profitData;
+    },
+}));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({ ask: 10, bid: 9 }),
     getItemPrice: (hrid, options) => {
@@ -402,6 +407,37 @@ describe('gathering tooltip prices', () => {
         expect(el.textContent).toContain('-- ⚠/hr');
         expect(el.textContent).toContain('-- ⚠/day');
         expect(el.textContent).not.toContain('800/hr');
+    });
+});
+
+describe('gathering tooltip and the sell-tax exclusion', () => {
+    test('values every gathering source as a sale, whatever the personal-use toggle says', async () => {
+        gatheringState.options = [];
+        gatheringState.actionDetailMap = {
+            '/actions/foraging/apple': {
+                hrid: '/actions/foraging/apple',
+                name: 'Apple',
+                type: '/action_types/foraging',
+                category: '/action_categories/foraging/shimmering_lake',
+                baseTimeCost: 8_000_000_000,
+                experienceGain: { skillHrid: '/skills/foraging', value: 7.5 },
+                dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 4 }],
+                essenceDropTable: [],
+                rareDropTable: [],
+                inputItems: null,
+                outputItems: null,
+            },
+        };
+        gatheringState.profitData = {
+            profitPerHour: 800,
+            hasMissingPrices: false,
+            baseOutputs: [{ itemHrid: '/items/apple', itemsPerHour: 1125 }],
+        };
+
+        await tooltipPrices.findGatheringSources('/items/apple');
+
+        expect(gatheringState.options.length).toBeGreaterThan(0);
+        expect(gatheringState.options.every((o) => o?.keepSellTax === true)).toBe(true);
     });
 });
 

@@ -18,6 +18,7 @@ vi.mock('../features/market/expected-value-calculator.js', () => ({
     default: {
         getCachedValue: vi.fn(),
         calculateSingleContainer: vi.fn(),
+        calculateGrossContainerValue: vi.fn(),
     },
 }));
 
@@ -161,5 +162,20 @@ describe('calculateBonusRevenue', () => {
 
             expect(result.bonusDrops[0].priceEach).toBe(200); // expectedValueCalculator.getCachedValue mock
         });
+    });
+
+    test('grossContainers values openable drops with the untaxed container figure', () => {
+        expectedValueCalculator.calculateGrossContainerValue.mockReturnValue(250);
+        const action = {
+            type: '/action_types/milking',
+            rareDropTable: [{ itemHrid: '/items/small_meteorite_cache', minCount: 1, maxCount: 1, dropRate: 0.05 }],
+        };
+        const items = { '/items/small_meteorite_cache': { name: 'Small Meteorite Cache', isOpenable: true } };
+
+        const taxed = calculateBonusRevenue(action, 100, new Map(), items);
+        const gross = calculateBonusRevenue(action, 100, new Map(), items, { grossContainers: true });
+
+        expect(taxed.totalBonusRevenue).toBe(1000); // 100 × 0.05 × 200 (cached taxed EV)
+        expect(gross.totalBonusRevenue).toBe(1250); // 100 × 0.05 × 250 (gross EV)
     });
 });

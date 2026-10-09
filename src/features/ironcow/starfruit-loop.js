@@ -177,7 +177,7 @@ export async function calculateStarfruitLoop() {
         const items = resolveLoopItems();
         if (!items) return null;
 
-        const foraging = await calculateGatheringProfit(items.forageActionHrid);
+        const foraging = await calculateGatheringProfit(items.forageActionHrid, { keepSellTax: true });
         const decompose = alchemyProfitCalculator.calculateDecomposeProfit(items.starfruitHrid);
         const coinify = alchemyProfitCalculator.calculateCoinifyProfit(items.essenceHrid);
 

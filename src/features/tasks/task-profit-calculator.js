@@ -435,7 +435,8 @@ function getTaskSpeedMultiplier() {
 async function calculateGatheringTaskProfit(actionHrid, quantity, remainingQuantity) {
     let profitData;
     try {
-        profitData = await calculateGatheringProfit(actionHrid);
+        // Task cards rank and total tasks without a sell-tax marker, so they always show the taxed figure
+        profitData = await calculateGatheringProfit(actionHrid, { keepSellTax: true });
     } catch (error) {
         console.error('[TaskProfitCalculator] Gathering profit calculation failed:', error);
         profitData = null;
@@ -520,7 +521,7 @@ async function calculateGatheringTaskProfit(actionHrid, quantity, remainingQuant
 async function calculateProductionTaskProfit(actionHrid, quantity, remainingQuantity) {
     let profitData;
     try {
-        profitData = await calculateProductionProfit(actionHrid);
+        profitData = await calculateProductionProfit(actionHrid, { keepSellTax: true });
     } catch (error) {
         console.error('[TaskProfitCalculator] Production profit calculation failed:', error);
         profitData = null;

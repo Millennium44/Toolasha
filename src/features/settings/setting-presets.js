@@ -189,6 +189,7 @@ const MARKET_EXTRAS = [
     'profitCalc_craftUpgradeItems',
     'actionPanel_showPricingMode',
     'actionPanel_showCraftToggle',
+    'actionPanel_showSellTaxToggle',
     'actionPanel_showProfitPerHour_gathering',
     'actionPanel_showProfitPerHour_production',
     'actionPanel_showProfitDetail',
