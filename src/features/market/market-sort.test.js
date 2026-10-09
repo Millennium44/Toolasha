@@ -601,6 +601,46 @@ describe('decompose chain mode', () => {
         expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeCloseTo(1_584_000);
     });
 
+    test('the setup is picked on the chain per hour, not the absolute net per item', async () => {
+        engine.itemDetails = {
+            '/items/item_a': gearDetails([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.bids = { '/items/term_c': 1000 };
+        // Slow and free: 1420 net over 10s. Fast with a catalyst: 1320 net over 1s.
+        const slow = step(500, 360);
+        const fast = { ...step(500, 3600), catalystCostPerHour: 360_000 };
+        engine.answers = { '/items/item_a': { decompose: slow } };
+        engine.candidates['/items/item_a'] = [slow, fast];
+        buildGrid(['item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeCloseTo(4_752_000);
+    });
+
+    test('a candidate whose catalyst or tea has only an estimated ask is not a candidate', async () => {
+        engine.itemDetails = {
+            '/items/item_a': gearDetails([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.bids = { '/items/term_c': 1000 };
+        const plain = { ...step(500, 360), catalystCostPerHour: 36_000 };
+        const withCatalyst = { ...step(500, 3600), winningCatalystHrid: '/items/cat' };
+        const withTea = { ...step(500, 3600), consumableCosts: [{ itemHrid: '/items/tea', price: 1 }] };
+        engine.answers = { '/items/item_a': { decompose: plain } };
+        engine.candidates['/items/item_a'] = [plain, withCatalyst, withTea];
+        engine.estimated = new Set(['/items/cat', '/items/tea']);
+        buildGrid(['item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        // Only the plain setup is buyable: (1920 - 500 - 100) net over 10s
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeCloseTo(475_200);
+    });
+
     test('shares one calculator pass per piece of gear across tiles and sorts', async () => {
         twoLevel();
         engine.itemDetails['/items/item_f'] = gearDetails([['/items/mid_b', 1]]);

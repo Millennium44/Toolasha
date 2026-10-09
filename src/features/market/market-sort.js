@@ -84,7 +84,7 @@ const ALCHEMY_TOOLTIP =
 const CHAIN_TOOLTIP =
     'Insta-buy at ask, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
     'decomposed, then insta-sell what is left at bid after market tax. Ranked by gold per hour of alchemy time ' +
-    'across the whole chain; each step uses the catalyst and tea setup that is best for the chain below it. Outputs with no real bid (estimated prices) are not sold. Ignores the global pricing mode on ' +
+    'across the whole chain; each step uses the catalyst and tea setup that is best for the chain per hour, skipping setups that need an item with no real ask. Outputs with no real bid (estimated prices) are not sold. Ignores the global pricing mode on ' +
     'purpose. Items with an unpriced step show no value.';
 
 /**
@@ -133,6 +133,7 @@ class MarketSort {
         // reaches the same intermediate gear from many tiles, so each piece of
         // gear is priced once per price snapshot.
         this.decomposeStepCache = new Map();
+        this.decomposeCandidateCache = new Map();
 
         // The market fetch the alchemy cache was computed against; a newer one
         // invalidates it, because every figure in it is a price.
@@ -184,6 +185,7 @@ class MarketSort {
         this.profitCache.clear();
         this.alchemyCache.clear();
         this.decomposeStepCache.clear();
+        this.decomposeCandidateCache.clear();
         this.alchemyCacheStamp = null;
     }
 
@@ -696,54 +698,78 @@ class MarketSort {
                     priceOf,
                     containerValue,
                 };
+                // A setup that needs a catalyst or tea with no real ask cannot be insta-bought,
+                // whatever the value-map estimate says it costs, so it is not a candidate.
+                const buyable = (result) =>
+                    ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((c) => c?.itemHrid)]
+                        .filter(Boolean)
+                        .some((hrid) => isPriceEstimated(hrid, { context: 'profit', side: 'buy' }));
                 const candidatesOf = (hrid) => {
-                    try {
-                        const listed = alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? [];
-                        if (listed.length > 0) return listed;
-                        return [alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0)].filter(Boolean);
-                    } catch {
-                        return [];
+                    if (!this.decomposeCandidateCache.has(hrid)) {
+                        let list = [];
+                        try {
+                            list = alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? [];
+                            if (list.length === 0) {
+                                list = [alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0)].filter(Boolean);
+                            }
+                        } catch {
+                            list = [];
+                        }
+                        this.decomposeCandidateCache.set(hrid, list.filter(buyable));
                     }
+                    return this.decomposeCandidateCache.get(hrid);
                 };
 
-                // Each step picks the catalyst/tea setup that is best for the chain
-                // below it, as the tooltip's chain line does: the gear a step yields is
-                // decomposed further, so its bid (often none) is the wrong objective.
-                // Children settle first and are memoised per price snapshot; a step is
-                // scored per item reaching it with its input cost left at 0.
-                const step = (hrid) => {
-                    if (this.decomposeStepCache.has(hrid)) return this.decomposeStepCache.get(hrid);
-                    // Placeholder first, so a cycle back to this step reads as unknown
-                    this.decomposeStepCache.set(hrid, null);
+                // The mode ranks by gold per hour of the whole chain (net over the summed
+                // seconds of every step), which is a ratio and cannot be maximized one step
+                // at a time exactly. The two levels are handled like this: a child step
+                // picks the setup that maximizes the per-hour figure of its own sub-chain
+                // (input cost left at 0, children memoised per price snapshot); the item's
+                // own top step then re-picks over its candidates against those fixed
+                // children, with its real ask in, so the ranked figure is optimized on the
+                // whole chain's per-hour value. A step that cannot be scored per hour (some
+                // branch unpriced) falls back to scoring its own outputs.
+                const pickStep = (hrid, ownUseCost, getChild) => {
                     const details = dataManager.getItemDetails(hrid);
                     const candidates = candidatesOf(hrid);
-                    const pick =
+                    return (
                         bestSelfUseCandidate(
                             candidates,
                             (result) =>
                                 selfUseDecomposeChain(hrid, {
                                     ...chainDeps,
-                                    getDecompose: (h) => (h === hrid ? result : step(h)),
-                                    ownUseCost: 0,
+                                    getDecompose: (h) => (h === hrid ? result : getChild(h)),
+                                    ownUseCost,
                                 }),
-                            'net'
+                            'netPerHour'
                         ) ??
                         bestSelfUseCandidate(
                             candidates,
-                            (result) => selfUseDecompose(result, details, { ownUseCost: 0, priceOf, containerValue }),
-                            'netPerAction'
-                        );
-                    this.decomposeStepCache.set(hrid, pick?.result ?? null);
+                            (result) => selfUseDecompose(result, details, { ownUseCost, priceOf, containerValue }),
+                            'netPerHour'
+                        )
+                    );
+                };
+                const step = (hrid) => {
+                    if (this.decomposeStepCache.has(hrid)) return this.decomposeStepCache.get(hrid);
+                    // Placeholder first, so a cycle back to this step reads as unknown
+                    this.decomposeStepCache.set(hrid, null);
+                    this.decomposeStepCache.set(hrid, pickStep(hrid, 0, step)?.result ?? null);
                     return this.decomposeStepCache.get(hrid);
                 };
 
-                const top = step(itemHrid);
-                if (!top) return;
+                const first = step(itemHrid);
+                if (!first) return;
                 // The ask is paid in coins at the book: an estimated ask is not a price to buy at
                 const ask = isPriceEstimated(itemHrid, { context: 'profit', side: 'buy' })
                     ? null
-                    : (top.requirementCosts?.[0]?.price ?? null);
-                chain = selfUseDecomposeChain(itemHrid, { ...chainDeps, getDecompose: step, ownUseCost: ask });
+                    : (first.requirementCosts?.[0]?.price ?? null);
+                const top = ask === null ? first : (pickStep(itemHrid, ask, step)?.result ?? first);
+                chain = selfUseDecomposeChain(itemHrid, {
+                    ...chainDeps,
+                    getDecompose: (h) => (h === itemHrid ? top : step(h)),
+                    ownUseCost: ask,
+                });
             });
         } catch (error) {
             console.error('[Market Sort] Decompose chain failed for', itemHrid, error);
