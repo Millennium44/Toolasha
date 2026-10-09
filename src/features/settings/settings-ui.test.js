@@ -1466,6 +1466,30 @@ describe('an open panel follows an Iron Cow reconcile', () => {
     });
 });
 
+describe('a reconciled slider or color keeps its second display in step', () => {
+    test('the slider value label and the color text follow the forced value', async () => {
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const slider = 'market_visibleItemCountOpacity';
+        mocks.settingsMap[slider] = { id: slider, type: 'slider', value: 50 };
+        settingsUI.currentSettings = { [slider]: { value: 50 } };
+        document.body.innerHTML = `<div class="toolasha-setting" data-setting-id="${slider}">
+            <input type="range" id="${slider}" value="50"><span id="${slider}_value">50</span></div>`;
+        const reconcile = vi.spyOn(ironCowMode, 'reconcile').mockImplementation(async () => {
+            mocks.settingsMap[slider].value = 20;
+        });
+        try {
+            await settingsUI._reconcileIronCow();
+            expect(document.getElementById(slider).value).toBe('20');
+            expect(document.getElementById(`${slider}_value`).textContent).toBe('20');
+        } finally {
+            reconcile.mockRestore();
+            document.body.innerHTML = '';
+            delete mocks.settingsMap[slider];
+            settingsUI.currentSettings = {};
+        }
+    });
+});
+
 describe('the tab census join does not depend on the command palette', () => {
     test('initialize() joins it and a full cleanup() leaves it', async () => {
         await settingsUI.initialize();

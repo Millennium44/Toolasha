@@ -4351,6 +4351,11 @@ class SettingsUI {
                 input.checked = entry.isTrue ?? false;
             } else {
                 input.value = entry.value ?? '';
+                // The second display handleSettingChange keeps beside a slider or a color picker
+                const valueDisplay = document.getElementById(`${id}_value`);
+                if (valueDisplay) valueDisplay.textContent = entry.value ?? '';
+                const textInput = document.getElementById(`${id}_text`);
+                if (textInput) textInput.value = entry.value ?? '';
             }
         }
     }
