@@ -2022,7 +2022,7 @@ export const settingsGroups = {
                 label: 'Profit: Exclude sell tax (producing for personal use)',
                 type: 'checkbox',
                 default: false,
-                help: 'When enabled, the Net Profit lines and tile Profit/hr on the skill pages (and the action bar and task profit) assume you keep what you produce, so the marketplace sell tax is not deducted. Use for dungeon keys, food and drinks, or anything else you do not plan to sell. These figures will be higher than what selling the output would earn, so a warning marker appears on every number it affects. Item tooltips, the market sort, alchemy, the collection optimizer and the goal planner keep valuing output as a sale.',
+                help: 'When enabled, the Net Profit lines and tile Profit/hr on the skill pages and the action bar assume you keep what you produce, so the marketplace sell tax is not deducted. Use for dungeon keys, food and drinks, or anything else you do not plan to sell. These figures will be higher than what selling the output would earn, so a warning marker appears on every number it affects. Item tooltips, task cards, the market sort, alchemy, the collection optimizer and the goal planner keep valuing output as a sale.',
             },
             offlineProgressEconomics: {
                 id: 'offlineProgressEconomics',

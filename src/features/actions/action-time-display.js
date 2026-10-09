@@ -5611,8 +5611,9 @@ class ActionTimeDisplay {
             return totalProfit;
         }
 
-        // The row is flagged so the queue can mark a figure computed without the sell tax
-        if (profitData.excludeSellTax) this._sellTaxExcludedRows.add(action);
+        // The row is flagged so the queue can mark a figure computed without the sell tax. Estimated
+        // value is gross revenue, identical with or without the tax, so only profit mode is marked.
+        if (profitData.excludeSellTax && valueMode !== 'estimated_value') this._sellTaxExcludedRows.add(action);
 
         if (profitData.baseOutputs) {
             const totals = calculateGatheringActionTotalsFromBase({

@@ -1439,7 +1439,7 @@ class TooltipPrices {
 
         // Calculate profit for solo actions
         for (const action of soloActions) {
-            const profitData = await calculateGatheringProfit(action.actionHrid);
+            const profitData = await calculateGatheringProfit(action.actionHrid, { keepSellTax: true });
             if (profitData) {
                 action.itemsPerHour = profitData.baseOutputs?.[0]?.itemsPerHour || 0;
                 action.hasMissingPrices = Boolean(profitData.hasMissingPrices);
@@ -1450,7 +1450,7 @@ class TooltipPrices {
         // Calculate items/hr for zone actions using calculateGatheringProfit for accuracy
         // (accounts for speed bonuses, gathering quantity bonus, efficiency multiplier, and avg drop amount)
         for (const action of zoneActions) {
-            const profitData = await calculateGatheringProfit(action.actionHrid);
+            const profitData = await calculateGatheringProfit(action.actionHrid, { keepSellTax: true });
             const output = profitData?.baseOutputs?.find((o) => o.itemHrid === itemHrid);
             const itemsPerHour = output?.itemsPerHour ?? 0;
 
