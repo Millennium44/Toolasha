@@ -109,6 +109,40 @@ const TOMBSTONE_COMPANIONS = {
 };
 
 /**
+ * Records and deletion keys that are not reconciled on restore (their owners
+ * apply the deletions themselves) but must still be latched as a pair.
+ *
+ * The market listing log (`features/market/estimated-listing-age.js`) records a
+ * deletion as a row taken out of the log and its id added to the graves key.
+ * A restore that wrote one of the two leaves the other open to this page's
+ * pre-restore memory: a delete or a clear made before the reload then lands
+ * half — the rows gone, the graves refused, or the reverse — and the next sync
+ * brings the rows back. Latched together, the half-write is refused whole.
+ * Literal names, duplicated for the same reason as {@link TOMBSTONE_COMPANIONS}.
+ */
+const LATCH_COMPANIONS = {
+    marketListings: [{ record: 'marketListingTimestamps', tombstones: 'marketListingGraves' }],
+};
+
+/**
+ * The key a restore latches together with this one: its tombstone companion
+ * ({@link tombstoneCompanionKey}), or the other half of a pair in
+ * {@link LATCH_COMPANIONS}.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {string|null} The key to latch with it, or null when there is none
+ */
+function latchCompanionKey(storeName, key) {
+    const companion = tombstoneCompanionKey(storeName, key);
+    if (companion) return companion;
+    for (const { record, tombstones } of LATCH_COMPANIONS[storeName] || []) {
+        if (key === record || key.startsWith(`${record}_`)) return `${tombstones}${key.slice(record.length)}`;
+        if (key === tombstones || key.startsWith(`${tombstones}_`)) return `${record}${key.slice(tombstones.length)}`;
+    }
+    return null;
+}
+
+/**
  * The key a restore writes together with this one: a record's tombstones, or
  * the record a tombstones key belongs to. A caller that leaves keys out of a
  * restore keeps each pair whole, so the reconciling below still sees both.
@@ -361,7 +395,7 @@ export async function importEverything(payload, options = {}) {
                     latch.add(key);
                     // A record and its tombstones are one unit: latching only one
                     // lets a pre-restore write to the other undo the pairing
-                    const companion = tombstoneCompanionKey(storeName, key);
+                    const companion = latchCompanionKey(storeName, key);
                     if (companion) latch.add(companion);
                 }
                 written.set(storeName, latch);

@@ -518,6 +518,24 @@ describe('importEverything reports what did not land', () => {
         expect(keys.has('enhancementTracker_sessionTombstones_abc')).toBe(true);
     });
 
+    test('latches a listing log and its graves together, whichever one the restore wrote', async () => {
+        const storage = (await import('../core/storage.js')).default;
+        db.set('marketListings', new Map());
+        const payload = await exportEverything();
+        payload.stores.marketListings = {
+            marketListingGraves_abc: { removed: { 1: 1 }, clearedThrough: 1 },
+            marketListingTimestamps_def: [],
+        };
+
+        await importEverything(payload);
+
+        const keys = storage.finishRestore.mock.calls[0][0].get('marketListings');
+        expect(keys.has('marketListingTimestamps_abc')).toBe(true);
+        expect(keys.has('marketListingGraves_def')).toBe(true);
+        // A pair is one character's: nothing else in the store is latched
+        expect(keys.size).toBe(4);
+    });
+
     test('a store that wrote nothing is not latched — nothing was restored to protect', async () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const storage = (await import('../core/storage.js')).default;
