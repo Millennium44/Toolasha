@@ -1155,6 +1155,17 @@ describe('keep for self-use chip', () => {
     const press = (key, target = document.body) =>
         target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
 
+    test('a translated client still gets the chip, from the item sprite', async () => {
+        settings.selfUseAlchemy = true;
+        const el = popper(`<div class="ItemTooltipText_itemTooltipText__x">
+            <svg><use xlink:href="/static/media/items_sprite.abc.svg#frenzy"></use></svg>
+            <div class="ItemTooltipText_name__2JAHA"><span>狂暴</span></div></div>`);
+        observerState.handler(el);
+        await settleLong();
+        const chip = el.querySelector('.toolasha-selfuse-keep-chip');
+        expect(chip?.getAttribute('data-item-hrid')).toBe('/items/frenzy');
+    });
+
     test('an alchemy output gets the chip, and K flips its mark', async () => {
         settings.selfUseAlchemy = true;
         const el = itemTooltip('Frenzy');

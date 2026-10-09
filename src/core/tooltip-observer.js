@@ -82,8 +82,11 @@ function classifyTooltip(element) {
     if (linkMatch) {
         info.itemHrid = `/items/${linkMatch[1]}`;
     } else {
-        const svgUse = element.querySelector('use[href*="items_sprite"]');
-        const spriteMatch = svgUse?.getAttribute('href')?.match(REGEX_SPRITE_NAME);
+        // Many item icons carry only `xlink:href`
+        const spriteRef = [...element.querySelectorAll('use')]
+            .map((use) => use.getAttribute('href') || use.getAttribute('xlink:href') || '')
+            .find((ref) => ref.includes('items_sprite'));
+        const spriteMatch = spriteRef?.match(REGEX_SPRITE_NAME);
         if (spriteMatch) info.itemHrid = `/items/${spriteMatch[1]}`;
     }
 

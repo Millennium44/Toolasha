@@ -608,8 +608,10 @@ class TooltipPrices {
 
         tooltipElement.dataset.pricesProcessedItem = itemName;
 
-        // Get the item HRID from the name
-        const itemHrid = this.extractItemHridFromName(itemName);
+        // The sprite or item link first: a translated client's displayed name does not match
+        // the item data's English name. The name is the fallback for tooltips that carry neither
+        const spriteHrid = info.itemHrid && dataManager.getItemDetails(info.itemHrid) ? info.itemHrid : null;
+        const itemHrid = spriteHrid || this.extractItemHridFromName(itemName);
 
         if (!itemHrid) {
             return;
