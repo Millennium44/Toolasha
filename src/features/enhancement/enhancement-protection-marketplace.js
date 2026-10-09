@@ -2,7 +2,7 @@
  * Enhancement Protection Marketplace Button
  * Adds a "Buy Cheapest" button to the Protection item selector popup in the Enhancing panel. It
  * opens the Marketplace on the cheapest protection option (the item itself, Mirror of
- * Protection, or a specific protection item), priced by getCheapestProtectionPrice.
+ * Protection, or a specific protection item), ranked by the live market ask (an option with no ask on the book is not offered).
  *
  * The picker's menu is portalled out of the protection slot, so the menu cannot say which picker
  * it belongs to. A capture-phase document click listener remembers whether the last click opened
@@ -17,7 +17,7 @@ import domObserver from '../../core/dom-observer.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { MENU_SELECTOR } from '../../utils/item-selector-dom.js';
-import { getCheapestProtectionPrice } from '../../utils/enhancement-pricing.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
 
 const PROTECTION_SELECTOR = '[class*="protectionItemInputContainer"]';
 const ENHANCING_PANEL_SELECTOR = '[class*="SkillActionDetail_enhancing"]';
@@ -25,6 +25,28 @@ const ENHANCING_PANEL_SELECTOR = '[class*="SkillActionDetail_enhancing"]';
 const MENU_WINDOW_MS = 2000;
 const BUTTON_CLASS = 'mwi-protection-marketplace-button';
 const MARK_ATTR = 'data-mwi-prot-mkt-button';
+
+/**
+ * The protection option with the lowest live ask. Unlike the shared cheapest-protection estimate
+ * this never falls back to production cost, the bid or a value-map figure: the button sends the
+ * player to buy, so only a price they can actually pay counts.
+ * @param {string} itemHrid - The item being enhanced
+ * @returns {{price: number, itemHrid: string}|null} Null when no option has an ask
+ */
+function cheapestListedProtection(itemHrid) {
+    const options = [
+        itemHrid,
+        '/items/mirror_of_protection',
+        ...(dataManager.getItemDetails(itemHrid)?.protectionItemHrids ?? []),
+    ];
+    let best = null;
+    for (const hrid of new Set(options)) {
+        const { price, source } = getItemPriceInfo(hrid, { mode: 'ask', side: 'buy', marketQuote: true });
+        if (source !== 'book' || !(price > 0)) continue;
+        if (!best || price < best.price) best = { price, itemHrid: hrid };
+    }
+    return best;
+}
 
 class EnhancementProtectionMarketplace {
     constructor() {
@@ -72,7 +94,7 @@ class EnhancementProtectionMarketplace {
         const itemHrid = this._getEnhancingItemHrid(container);
         if (!itemHrid) return;
 
-        const cheapest = getCheapestProtectionPrice(itemHrid);
+        const cheapest = cheapestListedProtection(itemHrid);
         if (!cheapest?.itemHrid || !cheapest.price) return;
 
         const itemName = dataManager.getItemDetails(cheapest.itemHrid)?.name || cheapest.itemHrid;

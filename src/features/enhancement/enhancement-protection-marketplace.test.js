@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    cheapest: { price: 1000, itemHrid: '/items/mirror_of_protection' },
+    quotes: { '/items/mirror_of_protection': { price: 1000, source: 'book', estimated: false } },
     itemDetails: { name: 'Mirror of Protection' },
     menuCallback: null,
     unregister: vi.fn(),
@@ -23,14 +23,14 @@ vi.mock('../../core/dom-observer.js', () => ({
         }),
     },
 }));
-vi.mock('../../utils/enhancement-pricing.js', () => ({
-    getCheapestProtectionPrice: vi.fn(() => mocks.cheapest),
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPriceInfo: vi.fn((hrid) => mocks.quotes[hrid] ?? { price: null, source: null, estimated: false }),
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: vi.fn() }));
 
 import config from '../../core/config.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
-import { getCheapestProtectionPrice } from '../../utils/enhancement-pricing.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
 import { EnhancementProtectionMarketplace } from './enhancement-protection-marketplace.js';
 
 // Class names match the game's shapes: the protection slot sits in the enhancing panel, and the
@@ -62,7 +62,7 @@ describe('EnhancementProtectionMarketplace', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         config.getSetting.mockReturnValue(true);
-        mocks.cheapest = { price: 1000, itemHrid: '/items/mirror_of_protection' };
+        mocks.quotes = { '/items/mirror_of_protection': { price: 1000, source: 'book', estimated: false } };
         mocks.itemDetails = { name: 'Mirror of Protection' };
         feature = new EnhancementProtectionMarketplace();
     });
@@ -78,7 +78,11 @@ describe('EnhancementProtectionMarketplace', () => {
         inner.click();
         const menu = openMenu();
 
-        expect(getCheapestProtectionPrice).toHaveBeenCalledWith('/items/sinister_cape');
+        expect(getItemPriceInfo).toHaveBeenCalledWith('/items/mirror_of_protection', {
+            mode: 'ask',
+            side: 'buy',
+            marketQuote: true,
+        });
         const btn = menu.querySelector('button');
         expect(btn).not.toBeNull();
         expect(btn.textContent).toContain('Mirror of Protection');
@@ -122,10 +126,34 @@ describe('EnhancementProtectionMarketplace', () => {
     });
 
     test('no button when nothing is priced', () => {
-        mocks.cheapest = { price: null, itemHrid: null };
+        mocks.quotes = {};
         const b = makePanel('/items/sinister_cape');
         feature.initialize();
         b.inner.click();
+        expect(openMenu().querySelector('button')).toBeNull();
+    });
+
+    test('ranks by the lowest live ask and ignores options with no book ask', () => {
+        mocks.itemDetails = { name: 'Protection Item', protectionItemHrids: ['/items/cheap_prot', '/items/est_prot'] };
+        mocks.quotes = {
+            '/items/mirror_of_protection': { price: 5000, source: 'book', estimated: false },
+            '/items/cheap_prot': { price: 300, source: 'book', estimated: false },
+            // Cheaper still, but a value-map estimate or a production-cost style figure, not an ask
+            '/items/est_prot': { price: 10, source: 'value', estimated: true },
+            '/items/sinister_cape': { price: 20, source: 'custom', estimated: false },
+        };
+        const { inner } = makePanel('/items/sinister_cape');
+        feature.initialize();
+        inner.click();
+        openMenu().querySelector('button').click();
+        expect(navigateToMarketplace).toHaveBeenCalledWith('/items/cheap_prot', 0);
+    });
+
+    test('no button when every option lacks a live ask', () => {
+        mocks.quotes = { '/items/mirror_of_protection': { price: 900, source: 'value', estimated: true } };
+        const { inner } = makePanel('/items/sinister_cape');
+        feature.initialize();
+        inner.click();
         expect(openMenu().querySelector('button')).toBeNull();
     });
 
