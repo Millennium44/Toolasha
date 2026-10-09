@@ -2097,6 +2097,18 @@ describe('the self-use keep list review', () => {
         expect(mocks.store.get('selfUseWanted_char-2')).toEqual(['/items/fierce_aura']);
     });
 
+    test('two quick presses draw one list, and cleanup leaves none', async () => {
+        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
+        selfUseWanted._reset();
+
+        await Promise.all([settingsUI.openSelfUseKeepList(), settingsUI.openSelfUseKeepList()]);
+        expect(document.querySelectorAll('.toolasha-selfuse-keep-overlay')).toHaveLength(1);
+
+        settingsUI.cleanupDOM();
+        expect(document.querySelectorAll('.toolasha-selfuse-keep-overlay')).toHaveLength(0);
+    });
+
     test('a character switch closes the list and stops it listening', async () => {
         mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');

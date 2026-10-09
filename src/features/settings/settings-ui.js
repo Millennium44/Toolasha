@@ -299,7 +299,9 @@ class SettingsUI {
         this.diagnosticsSection?.destroy();
         this.diagnosticsSection = null;
 
-        // The keep list shows one character's items; the next character must not edit from it
+        // The keep list shows one character's items; the next character must not edit from it.
+        // An open still waiting on its load is called off too.
+        this.selfUseKeepListOpening = (this.selfUseKeepListOpening || 0) + 1;
         this.closeSelfUseKeepList?.();
 
         this.unwatchPricingSideRows();
@@ -3477,11 +3479,16 @@ class SettingsUI {
     async openSelfUseKeepList() {
         try {
             this.closeSelfUseKeepList?.();
+            // Only the latest open draws: two quick presses both await the load, and the
+            // earlier one's modal would otherwise outlive every cleanup
+            this.selfUseKeepListOpening = (this.selfUseKeepListOpening || 0) + 1;
+            const opening = this.selfUseKeepListOpening;
             // Whose list this is: an action pressed after a switch must not edit the newcomer's
             const charId = dataManager.getCurrentCharacterId?.() || 'default';
             const sameCharacter = () => (dataManager.getCurrentCharacterId?.() || 'default') === charId;
             await selfUseWanted.load();
-            if (!sameCharacter()) return null;
+            if (opening !== this.selfUseKeepListOpening || !sameCharacter()) return null;
+            this.closeSelfUseKeepList?.();
 
             const overlay = document.createElement('div');
             overlay.className = 'toolasha-selfuse-keep-overlay';
