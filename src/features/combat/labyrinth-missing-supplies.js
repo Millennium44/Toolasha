@@ -14,6 +14,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { showToast } from '../../utils/toast.js';
 import { openShoppingList } from '../../utils/shopping-list.js';
 import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
 import { resolveSupplyHrids, bestOwnedTier, readSupplyCounts, SUPPLY_KINDS } from './labyrinth-supplies.js';
@@ -83,8 +84,18 @@ export function calculateMissingSupplies() {
 
 /** Open the marketplace on the current shortfall. Recomputed at press time, never cached. */
 export function handleClick() {
+    // Game data not up yet: nothing was counted, so claim nothing about the supplies
+    if (!dataManager.getInitClientData?.()?.itemDetailMap) {
+        showToast('Supply data is still loading. Try again in a moment.');
+        return;
+    }
     const missing = calculateMissingSupplies();
-    if (!missing.length) return;
+    if (!missing.length) {
+        // Evaluated at press time, so the notice can never go stale the way a disabled state could.
+        // An untradable shortfall is skipped too, so the wording covers both.
+        showToast('Nothing to buy: every supply is at its carry cap or cannot be bought.');
+        return;
+    }
     openShoppingList(missing, { heading: 'Lab supplies' });
 }
 
