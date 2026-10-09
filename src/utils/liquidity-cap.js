@@ -343,6 +343,8 @@ export function capProfitRateCached({ goldPerHour, sells } = {}) {
  */
 export async function capProfitData(profitData, sells = null) {
     if (!profitData) return profitData;
+    // Personal-use mode assumes nothing is sold, so sale volume cannot throttle it
+    if (profitData.excludeSellTax) return profitData;
 
     const bounded = await capProfitRate({
         goldPerHour: profitData.profitPerHour,

@@ -1805,8 +1805,13 @@ class ActionTimeDisplay {
                         if (key === 'actionQueue' && this.isInitialized) this.revisitOpenQueueMenu();
                         return;
                     }
-                    if (key === 'actionQueue_completionTimeStyle') this.redrawQueueMenu();
-                    else if (this.barActive) this.updateDisplay();
+                    if (key === 'actionQueue_completionTimeStyle') {
+                        this.redrawQueueMenu();
+                    } else if (key === 'profitCalc_excludeSellTax') {
+                        // Queue rows hold the old figures too, and the bar may be off
+                        if (this.barActive) this.updateDisplay();
+                        this.redrawQueueMenu();
+                    } else if (this.barActive) this.updateDisplay();
                 });
             }
         }

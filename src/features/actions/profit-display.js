@@ -63,6 +63,16 @@ function marketTaxSectionTitle(profitData, label) {
 }
 
 /**
+ * Compact marker for the collapsed Profitability summary: the full warning lives inside the
+ * collapsed content, so the headline figure carries its own caveat.
+ * @param {Object} profitData
+ * @returns {string}
+ */
+function sellTaxSummaryMark(profitData) {
+    return profitData?.excludeSellTax ? ' (no sell tax)' : '';
+}
+
+/**
  * Warning shown under Net Profit while the sell-tax exclusion is on, so the figure is not
  * mistaken for what selling the output would earn.
  * @returns {HTMLElement}
@@ -263,7 +273,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     // price instead — never a hardcoded figure that might outlive both.
     const summary = formatMissingLabel(
         netMissing,
-        `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+        `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day${sellTaxSummaryMark(profitData)}`
     );
 
     const detailsContent = document.createElement('div');
@@ -718,7 +728,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     if (profitSummaryDiv) {
         const baseSummary = formatMissingLabel(
             netMissing,
-            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day${sellTaxSummaryMark(profitData)}`
         );
 
         const gatheringTotalsForCount = (actionsCount) =>
@@ -924,7 +934,9 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     const marketTax = Math.round((revenue - netContainerRevenue) * displayMarketTaxRate(profitData));
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
     // No "| Total profit: 0" here: see the matching comment in renderGatheringProfit above.
-    const summary = netMissing ? '-- ⚠' : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    const summary = netMissing
+        ? '-- ⚠'
+        : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day${sellTaxSummaryMark(profitData)}`;
 
     const detailsContent = document.createElement('div');
 
@@ -1401,7 +1413,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     if (profitSummaryDiv) {
         const baseSummary = formatMissingLabel(
             netMissing,
-            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day${sellTaxSummaryMark(profitData)}`
         );
 
         const productionTotalsForCount = (actionsCount) =>
