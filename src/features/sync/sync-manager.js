@@ -1744,7 +1744,7 @@ class SyncManager {
             await flushPersistedRecords();
             await storage.flushAll?.();
             const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-            if (addsToRemote(localText, remoteText)) {
+            if (addsToRemote(localText, remoteText) || mergeForUpload(localText, remoteText, null).dropsFromRemote) {
                 return 'Nothing new from GitHub; this device has changes the next push will send.';
             }
         } catch (error) {

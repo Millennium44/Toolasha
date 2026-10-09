@@ -419,6 +419,20 @@ describe('pull', () => {
         expect(toasts.map((toast) => toast.message)).toContain(expected);
     });
 
+    test('a pull with nothing newer but a removal the next push would make says so', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-03-01T00:00:00.000Z';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.addsToRemote = () => false;
+        payload.drops = true;
+
+        await syncManager.pull();
+
+        expect(toasts.map((toast) => toast.message)).toContain(
+            'Nothing new from GitHub; this device has changes the next push will send.'
+        );
+    });
+
     test('a not-newer pull still retries deletes an earlier pull could not land', async () => {
         stored.map.toolasha_sync_gistId = 'abc';
         stored.map.toolasha_sync_lastSyncedAt = '2026-03-01T00:00:00.000Z';
