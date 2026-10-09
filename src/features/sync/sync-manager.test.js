@@ -67,6 +67,10 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 const payload = vi.hoisted(() => ({ text: '{"local":1}' }));
 vi.mock('./sync-payload.js', () => ({
     resetLeftOutLogForTests: () => {},
+    retryPendingDisplacedDeletes: async () => {
+        payload.retries = (payload.retries || 0) + 1;
+        return 0;
+    },
     // Read by the write counter in sync-dirty.js, which this storage fake never feeds
     payloadCarriesKey: () => true,
     buildPayloadJSON: async () => {
@@ -99,7 +103,11 @@ vi.mock('./sync-payload.js', () => ({
     // Opaque payload text here: the merged upload is the two texts side by side
     mergeForUpload: (local, remote) => {
         payload.uploadMerges = (payload.uploadMerges || 0) + 1;
-        return { text: `${remote}+${local}`, remoteAdds: payload.remoteAdds ?? local !== remote };
+        return {
+            text: `${remote}+${local}`,
+            remoteAdds: payload.remoteAdds ?? local !== remote,
+            dropsFromRemote: payload.drops ?? false,
+        };
     },
     restampRestoredSettings: () => {},
     assertExternalKeysSaved: async () => payload.assertSaved?.(),
@@ -190,6 +198,8 @@ beforeEach(() => {
     dialog.answer = null;
     dialog.last = null;
     dialog.calls = 0;
+    payload.retries = 0;
+    payload.drops = false;
     payload.text = '{"local":1}';
     payload.pendingText = undefined;
     payload.applied = undefined;
@@ -407,6 +417,16 @@ describe('pull', () => {
 
         expect(result).toMatchObject({ skipped: true, reason: 'not-newer' });
         expect(toasts.map((toast) => toast.message)).toContain(expected);
+    });
+
+    test('a not-newer pull still retries deletes an earlier pull could not land', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-03-01T00:00:00.000Z';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+
+        await syncManager.pull({ silent: true });
+
+        expect(payload.retries).toBe(1);
     });
 
     test.each([false, true])('detects queued local edits before a pull (silent=%s)', async (silent) => {
@@ -2180,6 +2200,15 @@ describe('automatic pushes merge into the upload, never into this device', () =>
             expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":2}');
             expect(stored.map.toolasha_sync_lastSyncedSeq).toBe(6);
             expect(stored.map.toolasha_sync_baseline).toEqual({ uploaded: remotePayload, local: '{"local":2}' });
+        });
+
+        test('a same-content pull still retries deletes an earlier pull could not land', async () => {
+            payload.addsToRemote = () => false;
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(result.reason).toBe('same-content');
+            expect(payload.retries).toBe(1);
         });
 
         test('the same text under another stamp is the same content, without comparing key by key', async () => {

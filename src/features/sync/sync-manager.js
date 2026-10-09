@@ -58,6 +58,7 @@ import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, ba
 import {
     buildPayloadJSON,
     applyPayload,
+    retryPendingDisplacedDeletes,
     contentHash,
     hashPayload,
     addsToRemote,
@@ -1399,7 +1400,9 @@ class SyncManager {
         const replaced = this._pushWasReplaced(remote, await storage.get(KEY_LAST_PUSHED_VERSION, STORE, null));
 
         if (!retryHeld && !takeUnapplied && !replaced && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
-            // Settled: nothing in this version is news to this device
+            // Settled: nothing in this version is news to this device. Deletes an earlier pull could not
+            // land are still owed, and this path never reaches the retry in the apply
+            await retryPendingDisplacedDeletes();
             if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
             if (!silent) showToast(await this._upToDateMessage(payload));
             return { ok: true, skipped: true, reason: 'not-newer' };
@@ -1411,6 +1414,7 @@ class SyncManager {
         // nothing settles: the counter taken, nothing imported, no reload asked
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
         if (!retryHeld && !takeUnapplied && Boolean(lastHash) && contentHash(payload) === lastHash) {
+            await retryPendingDisplacedDeletes();
             await this._remember({
                 gistId,
                 exportedAt: remoteAt,
@@ -1443,6 +1447,9 @@ class SyncManager {
         // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
         // Held-back records and a replaced push keep their own paths.
         if (!retryHeld && !replaced && this._sameContent(payload, localText, localHash)) {
+            // `addsToRemote` ignores a stale out-of-window key, so this shortcut would otherwise settle
+            // over a displaced delete that is still owed
+            await retryPendingDisplacedDeletes();
             // The flush and the build above can outlast a takeover, whose own
             // record this one would roll back
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);

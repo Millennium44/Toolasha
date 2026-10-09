@@ -72,6 +72,7 @@ vi.mock('./sync-payload.js', async (importOriginal) => ({
         if (payload.buildWait) await payload.buildWait();
         return payload.text;
     },
+    retryPendingDisplacedDeletes: async () => 0,
     applyPayload: async () => ({ complete: true, failed: [], merged: [], mergeFailed: [], mergeHeld: [] }),
     contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
     addsToRemote: (local, remote) => local !== remote,
