@@ -138,6 +138,15 @@ describe('labyrinth missing supplies', () => {
         expect(showToast).toHaveBeenCalledTimes(1);
     });
 
+    test('pressing before game data is up says it is loading, not that supplies are full', () => {
+        game.itemDetailMap = null;
+        handleClick();
+        expect(openShoppingList).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledTimes(1);
+        expect(showToast.mock.calls[0][0]).toMatch(/loading/i);
+        expect(showToast.mock.calls[0][0]).not.toMatch(/full/i);
+    });
+
     test('initialize sweeps existing grids and watches new ones; disable removes the buttons', () => {
         makeSuppliesBlock();
         feature.initialize();

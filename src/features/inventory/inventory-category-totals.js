@@ -278,7 +278,9 @@ class InventoryCategoryTotals {
         // filtered view (Favorites of tokens) holds only currencies without being Currencies
         if (labelEl.matches('[role="tab"]')) {
             const tabIconId = (getIconHref(labelEl, 'misc_sprite') ?? '').match(/#(.+)$/)?.[1];
-            if (tabIconId && (tabIconId === 'inventory_all' || tabIconId.startsWith('item_category_'))) {
+            // Any native tab icon decides (inventory_all, favorites_tab, item_category_*): only the
+            // currency category's own icon is Currencies
+            if (tabIconId) {
                 return tabIconId === CURRENCY_TAB_ICON_ID;
             }
             // No recognizable icon: fall through to the tile check

@@ -374,12 +374,15 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
         expect(tab.querySelector('.mwi-category-total')).toBeNull();
     });
 
-    test('a filtered view of only currencies on another tab keeps its total', () => {
-        const { root, tab } = drawLabelessTab('task_token', 'inventory_all');
-        badgeManagerMock.currentInventoryElem = root;
-        inventoryCategoryTotals.updateAllCategoryTotals();
-        expect(tab.querySelector('.mwi-category-total').textContent).toBe('7000');
-    });
+    test.each(['inventory_all', 'favorites_tab'])(
+        'a filtered view of only currencies on %s keeps its total',
+        (tabIcon) => {
+            const { root, tab } = drawLabelessTab('task_token', tabIcon);
+            badgeManagerMock.currentInventoryElem = root;
+            inventoryCategoryTotals.updateAllCategoryTotals();
+            expect(tab.querySelector('.mwi-category-total').textContent).toBe('7000');
+        }
+    );
 
     test('a selected tab with no icon falls back to the tile check', () => {
         const { root, tab } = drawLabelessTab('coin', null);
