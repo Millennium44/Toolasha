@@ -1974,6 +1974,13 @@ function registerFeatures() {
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
         {
+            key: 'chat_24hrTimestamps',
+            name: 'Chat 24hr Timestamps',
+            category: 'Chat',
+            module: UI.chat24hrTimestamps,
+            async: false,
+        },
+        {
             key: 'chatHistoryExtender',
             name: 'Chat History Extender',
             category: 'Chat',

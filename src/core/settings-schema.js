@@ -99,6 +99,13 @@ export const settingsGroups = {
                 type: 'text',
                 default: '150',
             },
+            chat_24hrTimestamps: {
+                id: 'chat_24hrTimestamps',
+                label: 'Chat: Reformat message timestamps',
+                type: 'checkbox',
+                default: false,
+                help: 'Rewrites chat message timestamps using your Market date/time format settings (24-hour or 12-hour, MM-DD or DD-MM) instead of the browser default',
+            },
             altClickNavigation: {
                 id: 'altClickNavigation',
                 label: 'Alt+click items to navigate to crafting/gathering or dictionary',
@@ -1792,7 +1799,7 @@ export const settingsGroups = {
                     { value: '24hour', label: '24-hour (14:30)' },
                     { value: '12hour', label: '12-hour (2:30 PM)' },
                 ],
-                help: "Time format used for every date and time Toolasha shows, not just marketplace listings and action completion times. Automatic follows each device's own clock and is resolved separately per device.",
+                help: "Time format used for every date and time Toolasha shows, including chat timestamps when that setting is on. Automatic follows each device's own clock and is resolved separately per device.",
             },
             market_listingDateFormat: {
                 id: 'market_listingDateFormat',
@@ -1803,7 +1810,7 @@ export const settingsGroups = {
                     { value: 'MM-DD', label: 'MM-DD (01-13)' },
                     { value: 'DD-MM', label: 'DD-MM (13-01)' },
                 ],
-                help: 'Date format used in marketplace listings and action completion times',
+                help: 'Date format used in marketplace listings, action completion times, and chat timestamps',
             },
             market_showOrderTotals: {
                 id: 'market_showOrderTotals',
