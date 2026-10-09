@@ -43,6 +43,9 @@ const CURRENCY_ICON_IDS = new Set([
     'guild_token',
 ]);
 
+/** Icon id of the native Currencies tab (misc sprite). */
+const CURRENCY_TAB_ICON_ID = 'item_category_currency';
+
 const CURRENCY_CATEGORY_HRID = '/item_categories/currency';
 
 /**
@@ -271,6 +274,16 @@ class InventoryCategoryTotals {
      * @returns {boolean}
      */
     isCurrenciesGrid(categoryDiv, labelEl) {
+        // A tab hosting the total names its category by its own icon, which beats the tiles: a
+        // filtered view (Favorites of tokens) holds only currencies without being Currencies
+        if (labelEl.matches('[role="tab"]')) {
+            const tabIconId = (getIconHref(labelEl, 'misc_sprite') ?? '').match(/#(.+)$/)?.[1];
+            if (tabIconId && (tabIconId === 'inventory_all' || tabIconId.startsWith('item_category_'))) {
+                return tabIconId === CURRENCY_TAB_ICON_ID;
+            }
+            // No recognizable icon: fall through to the tile check
+        }
+
         const tiles = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
         if (tiles.length > 0) {
             const allCurrencies = Array.from(tiles).every((tile) => {

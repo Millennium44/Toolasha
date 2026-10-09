@@ -321,16 +321,17 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
      * a selected role=tab in the tab strip and a grid of tiles with no Inventory_label and no
      * Inventory_categoryButton.
      * @param {string} icon - Tile sprite id
+     * @param {string|null} [tabIcon] - Selected tab's misc-sprite id; null draws a tab with no icon
      * @returns {{root: HTMLElement, tab: HTMLElement}}
      */
-    function drawLabelessTab(icon) {
+    function drawLabelessTab(icon, tabIcon = 'item_category_resource') {
         const root = document.createElement('div');
         root.className = 'Inventory_items__6SXv0';
         const strip = document.createElement('div');
         const tab = document.createElement('button');
         tab.setAttribute('role', 'tab');
         tab.setAttribute('aria-selected', 'true');
-        tab.innerHTML = '<svg><use href="/static/misc_sprite.svg#item_category_resources"></use></svg>';
+        if (tabIcon) tab.innerHTML = `<svg><use href="/static/misc_sprite.hash.svg#${tabIcon}"></use></svg>`;
         const other = document.createElement('button');
         other.setAttribute('role', 'tab');
         other.setAttribute('aria-selected', 'false');
@@ -367,7 +368,21 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
     });
 
     test.each(['coin', 'labyrinth_token', 'guild_token'])('a label-less currency tab of %s gets no total', (icon) => {
-        const { root, tab } = drawLabelessTab(icon);
+        const { root, tab } = drawLabelessTab(icon, 'item_category_currency');
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(tab.querySelector('.mwi-category-total')).toBeNull();
+    });
+
+    test('a filtered view of only currencies on another tab keeps its total', () => {
+        const { root, tab } = drawLabelessTab('task_token', 'inventory_all');
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(tab.querySelector('.mwi-category-total').textContent).toBe('7000');
+    });
+
+    test('a selected tab with no icon falls back to the tile check', () => {
+        const { root, tab } = drawLabelessTab('coin', null);
         badgeManagerMock.currentInventoryElem = root;
         inventoryCategoryTotals.updateAllCategoryTotals();
         expect(tab.querySelector('.mwi-category-total')).toBeNull();
