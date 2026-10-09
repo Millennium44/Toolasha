@@ -348,6 +348,57 @@ describe('calculateProductionActionTotalsFromBase', () => {
     });
 });
 
+describe('excludeSellTax in action totals', () => {
+    test('production: zeroes the tax, keeps revenue, raises profit by exactly the tax', () => {
+        const base = {
+            actionsCount: 10,
+            actionsPerHour: 5,
+            outputAmount: 3,
+            outputPrice: 100,
+            gourmetBonus: 0.1,
+            bonusDrops: [{ revenuePerAction: 5 }, { revenuePerAction: 7 }],
+            materialCosts: [{ totalCost: 20 }, { totalCost: 5 }],
+            totalTeaCostPerHour: 10,
+        };
+        const taxed = calculateProductionActionTotalsFromBase(base);
+        const excluded = calculateProductionActionTotalsFromBase({ ...base, excludeSellTax: true });
+
+        expect(taxed.totalMarketTax).toBeGreaterThan(0);
+        expect(excluded.totalRevenue).toBe(taxed.totalRevenue);
+        expect(excluded.totalMarketTax).toBe(0);
+        expect(excluded.totalProfit).toBeCloseTo(taxed.totalProfit + taxed.totalMarketTax, 6);
+    });
+
+    test('gathering: zeroes the tax, keeps revenue, raises profit by exactly the tax', () => {
+        const base = {
+            actionsCount: 10,
+            actionsPerHour: 4,
+            baseOutputs: [{ revenuePerAction: 3 }, { revenuePerAction: 2 }],
+            bonusDrops: [{ revenuePerAction: 1.5 }],
+            processingRevenueBonusPerAction: 0.5,
+            gourmetRevenueBonusPerAction: 0.75,
+            drinkCostPerHour: 6,
+        };
+        const taxed = calculateGatheringActionTotalsFromBase(base);
+        const excluded = calculateGatheringActionTotalsFromBase({ ...base, excludeSellTax: true });
+
+        expect(taxed.totalMarketTax).toBeGreaterThan(0);
+        expect(excluded.totalRevenue).toBe(taxed.totalRevenue);
+        expect(excluded.totalMarketTax).toBe(0);
+        expect(excluded.totalProfit).toBeCloseTo(taxed.totalProfit + taxed.totalMarketTax, 6);
+    });
+
+    test('omitting the flag leaves the tax in (the default)', () => {
+        const result = calculateGatheringActionTotalsFromBase({
+            actionsCount: 10,
+            actionsPerHour: 4,
+            baseOutputs: [{ revenuePerAction: 3 }],
+            drinkCostPerHour: 0,
+        });
+        expect(result.totalMarketTax).toBeCloseTo(30 * MARKET_TAX, 6);
+    });
+});
+
 describe('calculateGatheringActionTotalsFromBase', () => {
     test('calculates gathering totals from action-based inputs', () => {
         const actionsCount = 10;

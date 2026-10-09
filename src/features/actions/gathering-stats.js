@@ -16,6 +16,8 @@ import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { SELL_TAX_SETTING, sellTaxMarker, sellTaxTitleAttr } from '../../utils/sell-tax-marker.js';
+import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
 
 class GatheringStats {
     constructor() {
@@ -100,7 +102,7 @@ class GatheringStats {
             this.updateAllStats();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
             config.onSettingChange(key, this.pricingModeHandler);
         }
 
@@ -253,6 +255,14 @@ class GatheringStats {
         const profitData = await calculateGatheringProfit(data.actionHrid);
         const profitPerHour = profitData?.profitPerHour || null;
         const hasMissingPrices = profitData?.hasMissingPrices || false;
+        const excludeSellTax = profitData?.excludeSellTax || false;
+        // The shared sort cache holds sale-valued rates (task cards read it), so the toggle's untaxed tile
+        // figure needs a taxed twin. Only paid for while the toggle is on.
+        let taxedProfitPerHour = null;
+        if (excludeSellTax) {
+            const taxed = await calculateGatheringProfit(data.actionHrid, { keepSellTax: true });
+            taxedProfitPerHour = taxed?.hasMissingPrices ? null : (taxed?.profitPerHour ?? null);
+        }
 
         // Calculate exp/hr using shared utility
         const expData = calculateExpPerHour(data.actionHrid);
@@ -260,9 +270,13 @@ class GatheringStats {
 
         // Store profit value for sorting and update shared sort manager
         data.profitPerHour = profitPerHour;
+        data.excludeSellTax = excludeSellTax;
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
-        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour);
+        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour, {
+            excludeSellTax,
+            taxedProfitPerHour,
+        });
         actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
 
         // Check if we should hide actions with negative profit (unless pinned)
@@ -463,7 +477,7 @@ class GatheringStats {
                     : effXp != null
                       ? `Eff. XP/hr: ${formatKMB(effXp)}`
                       : `Eff. XP/hr: ${formatKMB(data.expPerHour)}`;
-                overallSpan.textContent = label + (isBestOverall ? ' 🏆' : '');
+                overallSpan.textContent = label + sellTaxMarker(data.excludeSellTax) + (isBestOverall ? ' 🏆' : '');
 
                 if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {
                     const loss = Math.abs(data.profitPerHour);
@@ -476,6 +490,13 @@ class GatheringStats {
                         `Blended: (${formatKMB(data.expPerHour)} + ${ratio.toFixed(2)} × ${formatKMB(bestProfitExp || 0)}) / ${(1 + ratio).toFixed(2)} = ${formatKMB(effXp)}`;
                 } else {
                     overallSpan.title = '';
+                }
+                // The ratio and the ranking are built from untaxed profit under the toggle
+                if (data.excludeSellTax) {
+                    overallSpan.title = overallSpan.title
+                        ? `${overallSpan.title}
+${SELL_TAX_EXCLUDED_TOOLTIP}`
+                        : SELL_TAX_EXCLUDED_TOOLTIP;
                 }
             }
 
@@ -490,7 +511,7 @@ class GatheringStats {
      * @param {Object} data - Stored action data
      */
     renderIndicators(actionPanel, data) {
-        const { profitPerHour, expPerHour, hasMissingPrices } = data;
+        const { profitPerHour, expPerHour, hasMissingPrices, excludeSellTax } = data;
         const showProfit = config.getSetting('actionPanel_showProfitPerHour_gathering');
         const showExp = config.getSetting('actionPanel_showExpPerHour_gathering');
         let html = '';
@@ -502,7 +523,7 @@ class GatheringStats {
             const profitColor = profitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             const profitSign = profitPerHour >= 0 ? '' : '-';
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="profit" style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(profitPerHour))}</span></div>`;
+            html += `<span data-stat="profit"${sellTaxTitleAttr(excludeSellTax)} style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(profitPerHour))}${sellTaxMarker(excludeSellTax)}</span></div>`;
         }
 
         if (showExp && expPerHour !== null && expPerHour > 0) {
@@ -519,7 +540,7 @@ class GatheringStats {
             expPerHour > 0
         ) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="overall" style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}</span></div>`;
+            html += `<span data-stat="overall"${sellTaxTitleAttr(excludeSellTax)} style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}${sellTaxMarker(excludeSellTax)}</span></div>`;
         }
 
         data.displayElement.innerHTML = html;
@@ -713,7 +734,7 @@ class GatheringStats {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
                     config.offSettingChange(key, this.pricingModeHandler);
                 }
                 this.pricingModeHandler = null;

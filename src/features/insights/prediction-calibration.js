@@ -372,9 +372,9 @@ class PredictionCalibration {
             const type = dataManager.getActionDetails(actionHrid)?.type;
             let data = null;
             if (GATHERING_TYPES.includes(type)) {
-                data = await calculateGatheringProfit(actionHrid);
+                data = await calculateGatheringProfit(actionHrid, { keepSellTax: true });
             } else if (PRODUCTION_TYPES.includes(type)) {
-                data = await calculateProductionProfit(actionHrid);
+                data = await calculateProductionProfit(actionHrid, { keepSellTax: true });
             }
             // Alchemy has no per-action forecast to check. Combat and enhancing
             // do, but not here: their forecasts live elsewhere (the all-zones

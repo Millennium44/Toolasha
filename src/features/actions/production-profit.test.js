@@ -20,6 +20,7 @@ const game = vi.hoisted(() => ({
 const calculator = vi.hoisted(() => ({
     /** Records every itemHrid the adapter asked about */
     requestedItems: [],
+    requestedOptions: [],
     result: null,
 }));
 
@@ -31,8 +32,9 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../market/profit-calculator.js', () => ({
     default: {
-        calculateProfit: async (itemHrid) => {
+        calculateProfit: async (itemHrid, options) => {
             calculator.requestedItems.push(itemHrid);
+            calculator.requestedOptions.push(options);
             return calculator.result;
         },
     },
@@ -74,6 +76,7 @@ function profitCalculatorResult(overrides = {}) {
 
 beforeEach(() => {
     calculator.requestedItems = [];
+    calculator.requestedOptions = [];
     calculator.result = profitCalculatorResult();
     game.initClientData = {
         actionDetailMap: {
@@ -134,5 +137,19 @@ describe('calculateProductionProfit', () => {
 
         expect(await calculateProductionProfit(BREW)).toBeNull();
         expect(calculator.requestedItems).toEqual([TEA]);
+    });
+});
+
+describe('calculateProductionProfit sell-tax option', () => {
+    test('names the recipe and passes keepSellTax through to the calculator', async () => {
+        await calculateProductionProfit(BREW, { keepSellTax: true });
+
+        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: true }]);
+    });
+
+    test('defaults to following the personal-use setting (keepSellTax false)', async () => {
+        await calculateProductionProfit(BREW);
+
+        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: false }]);
     });
 });

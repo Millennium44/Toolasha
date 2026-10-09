@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sell-tax toggle for personal-use production
+
+- An optional skill-page toggle (off by default) drops the 4% sell tax from production and gathering profit lines and tiles for things you make for your own use, with a marker so the numbers aren't mistaken for sale profits.
+
 ### Collection optimizer compares more routes
 
 - Decompose now weighs every catalyst and tea setup, recipes with different batch sizes are both kept, gathering checks your active skill loadout, and long plans fetch market volumes and retry a failed lookup.

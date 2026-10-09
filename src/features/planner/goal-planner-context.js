@@ -336,7 +336,7 @@ async function measureGoldRates() {
 
     for (const { hrid, action } of availableActions(GATHERING_TYPES)) {
         try {
-            const profit = await calculateGatheringProfit(hrid);
+            const profit = await calculateGatheringProfit(hrid, { keepSellTax: true });
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -361,7 +361,7 @@ async function measureGoldRates() {
 
     for (const { hrid, action } of availableActions(PRODUCTION_TYPES)) {
         try {
-            const profit = await calculateProductionProfit(hrid);
+            const profit = await calculateProductionProfit(hrid, { keepSellTax: true });
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;

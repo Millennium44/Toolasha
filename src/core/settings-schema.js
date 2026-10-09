@@ -262,6 +262,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionPanel_showSellTaxToggle: {
+                id: 'actionPanel_showSellTaxToggle',
+                label: 'Skill page: Sell tax toggle button',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a Tax button to the skill page that flips "Profit: Exclude sell tax (producing for personal use)" without opening Settings. Off by default.',
+            },
             market_showPricingControls: {
                 id: 'market_showPricingControls',
                 label: 'Marketplace page: Pricing dropdowns and Craft toggle',
@@ -2009,6 +2016,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'When enabled, uses crafting cost instead of market price for upgrade items if cheaper, and factors crafting time into profit/hr calculations.',
+            },
+            profitCalc_excludeSellTax: {
+                id: 'profitCalc_excludeSellTax',
+                label: 'Profit: Exclude sell tax (producing for personal use)',
+                type: 'checkbox',
+                default: false,
+                help: 'When enabled, the Net Profit lines and tile Profit/hr on the skill pages and the action bar assume you keep what you produce, so the marketplace sell tax is not deducted. Use for dungeon keys, food and drinks, or anything else you do not plan to sell. These figures will be higher than what selling the output would earn, so a warning marker appears on every number it affects. Item tooltips, task cards, the market sort, alchemy, the collection optimizer and the goal planner keep valuing output as a sale.',
             },
             offlineProgressEconomics: {
                 id: 'offlineProgressEconomics',

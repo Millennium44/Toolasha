@@ -57,6 +57,7 @@ import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js'
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { sellTaxMarkerHtml } from '../../utils/sell-tax-marker.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
     loadAllZonesSnapshot,
@@ -676,6 +677,7 @@ export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now(
 
 class ActionTimeDisplay {
     constructor() {
+        this._sellTaxExcludedRows = new WeakSet(); // Queue rows whose value was computed without the sell tax
         this.displayElement = null;
         this.profitElement = null;
         this.runElement = null;
@@ -1790,6 +1792,7 @@ class ActionTimeDisplay {
                 'profitCalc_pricingMode',
                 ...PATIENT_TICK_SETTING_KEYS,
                 IRONCOW_VALUATION_SETTING,
+                'profitCalc_excludeSellTax',
             ];
             for (const key of actionBarSettings) {
                 config.onSettingChange(key, (newValue) => {
@@ -1802,8 +1805,13 @@ class ActionTimeDisplay {
                         if (key === 'actionQueue' && this.isInitialized) this.revisitOpenQueueMenu();
                         return;
                     }
-                    if (key === 'actionQueue_completionTimeStyle') this.redrawQueueMenu();
-                    else if (this.barActive) this.updateDisplay();
+                    if (key === 'actionQueue_completionTimeStyle') {
+                        this.redrawQueueMenu();
+                    } else if (key === 'profitCalc_excludeSellTax') {
+                        // Queue rows hold the old figures too, and the bar may be off
+                        if (this.barActive) this.updateDisplay();
+                        this.redrawQueueMenu();
+                    } else if (this.barActive) this.updateDisplay();
                 });
             }
         }
@@ -5431,6 +5439,7 @@ class ActionTimeDisplay {
             let totalProfit = 0;
             let hasProfitData = false;
             let hasIncompleteProfitData = Boolean(valueTally?.incomplete);
+            let hasSellTaxExcluded = false;
 
             // Create all profit calculation promises at once (parallel execution)
             const profitPromises = actionsToCalculate.map(
@@ -5459,6 +5468,7 @@ class ActionTimeDisplay {
                     if (action.isReachable !== false) {
                         totalProfit += actionProfit;
                         hasProfitData = true;
+                        if (this._sellTaxExcludedRows.has(action)) hasSellTaxExcluded = true;
                     }
                     if (action.divIndex !== undefined) {
                         const profitDiv = document.querySelector(
@@ -5477,6 +5487,7 @@ class ActionTimeDisplay {
                                     ? 'Value'
                                     : 'Profit';
                             let html = `${valueLabel}: <span style="color: ${profitColor};">${profitSign}${formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
+                            html += sellTaxMarkerHtml(this._sellTaxExcludedRows.has(action), config.COLOR_WARNING);
                             html += this.buildQueueCoinifyCashLine(action);
                             profitDiv.innerHTML = html;
                         }
@@ -5512,7 +5523,7 @@ class ActionTimeDisplay {
                 // way the time total says it: `+ [?]`, not a quietly smaller number
                 const incomplete = hasIncompleteProfitData ? ' + [?]' : '';
                 const amount = hasProfitData
-                    ? `<span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`
+                    ? `<span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}${sellTaxMarkerHtml(hasSellTaxExcluded, config.COLOR_WARNING)}`
                     : '<span style="color: #aaa;">-- ⚠</span>';
                 const valueText = `<br>${valueLabel}: ${amount}`;
                 totalDiv.innerHTML = baseText + valueText + xpText;
@@ -5532,6 +5543,7 @@ class ActionTimeDisplay {
      * @returns {Promise<number|null>} Total value (profit or revenue) or null if unavailable
      */
     async calculateProfitForAction(action) {
+        this._sellTaxExcludedRows.delete(action);
         const actionDetails = dataManager.getActionDetails(action.actionHrid);
         if (!actionDetails) {
             return null;
@@ -5604,6 +5616,10 @@ class ActionTimeDisplay {
             return totalProfit;
         }
 
+        // The row is flagged so the queue can mark a figure computed without the sell tax. Estimated
+        // value is gross revenue, identical with or without the tax, so only profit mode is marked.
+        if (profitData.excludeSellTax && valueMode !== 'estimated_value') this._sellTaxExcludedRows.add(action);
+
         if (profitData.baseOutputs) {
             const totals = calculateGatheringActionTotalsFromBase({
                 actionsCount,
@@ -5614,6 +5630,7 @@ class ActionTimeDisplay {
                 gourmetRevenueBonusPerAction: profitData.gourmetRevenueBonusPerAction,
                 drinkCostPerHour: profitData.drinkCostPerHour,
                 efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
+                excludeSellTax: profitData.excludeSellTax,
             });
             return valueMode === 'estimated_value' ? totals.totalRevenue : totals.totalProfit;
         }
@@ -5628,6 +5645,7 @@ class ActionTimeDisplay {
             materialCosts: profitData.materialCosts,
             totalTeaCostPerHour: profitData.totalTeaCostPerHour,
             efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
+            excludeSellTax: profitData.excludeSellTax,
         });
 
         return valueMode === 'estimated_value' ? totals.totalRevenue : totals.totalProfit;
@@ -5996,6 +6014,8 @@ class ActionTimeDisplay {
             const sign = profitPerHour >= 0 ? '+' : '';
 
             let html = `<span style="color:#888;">Profit:</span> <span style="color:${profitColor}; font-weight:600;">${sign}${formatLargeNumber(Math.abs(Math.round(profitPerHour)))}/hr</span>`;
+
+            html += sellTaxMarkerHtml(profitData.excludeSellTax, config.COLOR_WARNING);
 
             // A capped figure is never shown silently
             if (profitData.liquidityLimit) {

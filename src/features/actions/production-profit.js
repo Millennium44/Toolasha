@@ -22,9 +22,11 @@ const PRODUCTION_TYPES = [
 /**
  * Calculate comprehensive profit for a production action
  * @param {string} actionHrid - Action HRID (e.g., "/actions/brewing/efficiency_tea")
+ * @param {Object} [options]
+ * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
  * @returns {Object|null} Profit data or null if not applicable
  */
-export async function calculateProductionProfit(actionHrid) {
+export async function calculateProductionProfit(actionHrid, { keepSellTax = false } = {}) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData.actionDetailMap[actionHrid];
 
@@ -51,7 +53,7 @@ export async function calculateProductionProfit(actionHrid) {
     // The action is named as well as the item: two recipes can yield the same output, and
     // without the name the calculator answers about whichever it finds first — so a caller
     // filing this margin against `actionHrid` could be filing the other recipe's number.
-    const profitData = await profitCalculator.calculateProfit(outputItemHrid, { actionHrid });
+    const profitData = await profitCalculator.calculateProfit(outputItemHrid, { actionHrid, keepSellTax });
 
     if (!profitData) {
         return null;

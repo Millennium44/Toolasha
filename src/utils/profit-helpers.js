@@ -296,6 +296,7 @@ export function createPriceCache(getItemPriceFn) {
  * @param {Array} [params.materialCosts] - Material cost entries per action
  * @param {number} params.totalTeaCostPerHour - Tea cost per hour
  * @param {number} [params.efficiencyMultiplier=1] - Efficiency multiplier for time scaling
+ * @param {boolean} [params.excludeSellTax=false] - Personal-use mode: charge no market tax
  * @returns {Object} Totals and time values
  */
 export function calculateProductionActionTotalsFromBase({
@@ -308,6 +309,7 @@ export function calculateProductionActionTotalsFromBase({
     materialCosts = [],
     totalTeaCostPerHour,
     efficiencyMultiplier = 1,
+    excludeSellTax = false,
 }) {
     const effectiveActionsPerHour = calculateEffectiveActionsPerHour(actionsPerHour, efficiencyMultiplier);
     if (!effectiveActionsPerHour || effectiveActionsPerHour <= 0) {
@@ -339,7 +341,7 @@ export function calculateProductionActionTotalsFromBase({
         (sum, drop) => sum + (drop.taxExempt ? (drop.revenuePerAction || 0) * actionsCount : 0),
         0
     );
-    const totalMarketTax = (totalRevenue - netContainerRevenue) * outputTaxRate();
+    const totalMarketTax = excludeSellTax ? 0 : (totalRevenue - netContainerRevenue) * outputTaxRate();
     const totalMaterialCost = materialCosts.reduce((sum, material) => sum + material.totalCost * actionsCount, 0);
     const hoursNeeded = calculateHoursForActions(actionsCount, effectiveActionsPerHour);
     const totalTeaCost = totalTeaCostPerHour * hoursNeeded;
@@ -375,6 +377,7 @@ export function calculateProductionActionTotalsFromBase({
  * @param {number} params.gourmetRevenueBonusPerAction - Gourmet bonus revenue per action
  * @param {number} params.drinkCostPerHour - Drink costs per hour
  * @param {number} [params.efficiencyMultiplier=1] - Efficiency multiplier for time scaling
+ * @param {boolean} [params.excludeSellTax=false] - Personal-use mode: charge no market tax
  * @returns {Object} Totals and time values
  */
 export function calculateGatheringActionTotalsFromBase({
@@ -386,6 +389,7 @@ export function calculateGatheringActionTotalsFromBase({
     gourmetRevenueBonusPerAction,
     drinkCostPerHour,
     efficiencyMultiplier = 1,
+    excludeSellTax = false,
 }) {
     const effectiveActionsPerHour = calculateEffectiveActionsPerHour(actionsPerHour, efficiencyMultiplier);
     if (!effectiveActionsPerHour || effectiveActionsPerHour <= 0) {
@@ -414,7 +418,7 @@ export function calculateGatheringActionTotalsFromBase({
         (sum, drop) => sum + (drop.taxExempt ? (drop.revenuePerAction || 0) * actionsCount : 0),
         0
     );
-    const totalMarketTax = (totalRevenue - netContainerRevenue) * outputTaxRate();
+    const totalMarketTax = excludeSellTax ? 0 : (totalRevenue - netContainerRevenue) * outputTaxRate();
     const hoursNeeded = calculateHoursForActions(actionsCount, effectiveActionsPerHour);
     const totalDrinkCost = drinkCostPerHour * hoursNeeded;
     const totalCosts = totalDrinkCost + totalMarketTax;
