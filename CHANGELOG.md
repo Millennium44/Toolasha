@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync retries owed deletes and words manual pulls accurately
+
+- A cleanup delete that failed is retried even when a pull finds nothing new, an idle character's history is never trimmed a day early across a daylight-saving change, and a manual pull says when the next push will remove something from the gist.
+
 ### Saves keep what another tab or device added
 
 - Loot, alchemy, combat-loot, item-flow, chest, production, networth, task and daily-checkpoint logs, guild loadouts, trial ability captures and listing anchors now take in what is already on disk when they save, so another tab's or a sync pull's additions are no longer wiped by this tab's next save; the trade ledger also recovers a fill another writer overwrote.
