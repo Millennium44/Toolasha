@@ -38,8 +38,9 @@ vi.mock('../../core/storage.js', () => ({
             if (game.holds[key]) await game.holds[key];
             return key in game.store ? game.store[key] : fallback;
         },
-        set: async (key, value) => {
-            game.store[key] = value;
+        // A folding write is handed what is stored when it lands, as the real one is
+        set: async (key, value, _store, _immediate, options) => {
+            game.store[key] = options?.fold ? (options.fold(game.store[key], value) ?? value) : value;
             return true;
         },
     },
@@ -223,6 +224,26 @@ describe('the capture', () => {
 
         await vi.advanceTimersByTimeAsync(2000);
         expect(game.store[guildLoadoutsStorageKey('char-1')].players.tib.name).toBe('Tib');
+    });
+
+    test('a sighting another tab stored survives this tab’s write and joins its roster', async () => {
+        // Another tab of this character saved Moo after this one had read the record
+        game.store[guildLoadoutsStorageKey('char-1')] = {
+            players: { moo: { name: 'Moo', at: Date.now() - 1000, rows: [] } },
+            updatedAt: Date.now() - 1000,
+        };
+        game.wsHandlers.battle_unit_fetched({
+            unit: { character: { name: 'Tib' }, combatDetails: { maxHitpoints: 4120, combatStats: {} } },
+        });
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(Object.keys(game.store[guildLoadoutsStorageKey('char-1')].players).sort()).toEqual(['moo', 'tib']);
+        expect(
+            guildLoadoutCapture
+                .seen()
+                .map((entry) => entry.name)
+                .sort()
+        ).toEqual(['Moo', 'Tib']);
     });
 
     test('the end-of-session message neither stores nor stands the scrape down', () => {

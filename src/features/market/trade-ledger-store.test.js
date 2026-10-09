@@ -37,9 +37,12 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value, store = 'settings') => {
+        // A folding write is handed what is stored when it lands, as the real one is
+        set: vi.fn(async (key, value, store = 'settings', _immediate, options) => {
             if (storageMock.unavailable) return false;
-            storeFor(store).set(key, structuredClone(value));
+            const map = storeFor(store);
+            const folded = options?.fold ? (options.fold(map.get(key), value) ?? value) : value;
+            map.set(key, structuredClone(folded));
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -229,6 +232,7 @@ beforeEach(() => {
     tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;
     tradeLedgerStore._statesChain = null;
+    tradeLedgerStore._writtenDays = new Map();
     for (const fn of [
         storageMock.get,
         storageMock.set,
@@ -603,6 +607,79 @@ describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
         const copy = tradeLedgerStore.getRecords();
         copy[0].price = 0;
         expect(tradeLedgerStore.records[0].price).toBe(100);
+    });
+});
+
+describe('a fill another writer wrote over comes back on the next fill', () => {
+    test('a day record a pull replaced without this tab’s fill is re-folded when another day fills', async () => {
+        seedSplit([fill(1, DAY1)]);
+        await tradeLedgerStore.load();
+        tradeLedgerStore.states = baseline3();
+
+        fillNow(DAY2 + 1000, 4);
+        await awaitSaves();
+        expect(
+            LEDGER()
+                .get(REC(DAY2))
+                .map((r) => r.listingId)
+        ).toEqual([3]);
+
+        // A sync pull lands its merged copy of that day, built from a read taken
+        // before this tab's fill committed: another device's fill, not this one's
+        LEDGER().set(REC(DAY2), [fill(8, DAY2 + 500)]);
+
+        // Nothing fills on that day again; the next fill is the next day's
+        fillNow(DAY3 + 1000, 6);
+        await awaitSaves();
+
+        expect(
+            LEDGER()
+                .get(REC(DAY2))
+                .map((r) => r.listingId)
+        ).toEqual([8, 3]);
+        expect(
+            LEDGER()
+                .get(REC(DAY3))
+                .map((r) => r.listingId)
+        ).toEqual([3]);
+    });
+
+    test('a day already holding everything is read, not written again', async () => {
+        seedSplit([fill(1, DAY1)]);
+        await tradeLedgerStore.load();
+        tradeLedgerStore.states = baseline3();
+        fillNow(DAY2 + 1000, 4);
+        await awaitSaves();
+        storageMock.set.mockClear();
+
+        fillNow(DAY3 + 1000, 6);
+        await awaitSaves();
+
+        const written = storageMock.set.mock.calls
+            .map(([key]) => key)
+            .filter((key) => key.startsWith('tradeLedgerRec_'));
+        expect(written).toEqual([REC(DAY3)]);
+    });
+
+    test('the day write folds into what is stored when it lands', async () => {
+        seedSplit([fill(1, DAY1)]);
+        await tradeLedgerStore.load();
+        tradeLedgerStore.states = baseline3();
+        // Another tab's fill lands between this save's read and its write
+        storageMock.tryGet.mockImplementationOnce(async (key, store) => {
+            const probe = { found: false, value: null };
+            storageMock.storeFor(store).set(key, [fill(9, DAY3 + 10)]);
+            return probe;
+        });
+
+        fillNow(DAY3 + 1000, 4);
+        await awaitSaves();
+
+        expect(
+            LEDGER()
+                .get(REC(DAY3))
+                .map((r) => r.listingId)
+        ).toEqual([9, 3]);
     });
 });
 

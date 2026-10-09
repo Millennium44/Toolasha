@@ -155,6 +155,41 @@ function isConnectionGone(error) {
 }
 
 /**
+ * What a fold answers to say "this key should not exist any more".
+ *
+ * A writer that removes a whole record (a history chunk that lost its last
+ * entry) folds the removal like any other write, so a copy another tab or a
+ * sync pull put there in the meantime is judged rather than wiped: the fold
+ * answers what is left, or this, and the transaction deletes the key.
+ */
+const FOLD_DELETE = Symbol('storage-fold-delete');
+
+/**
+ * The value a folding write puts down, from what is stored now.
+ *
+ * A fold is how a writer that keeps its record in memory says "combine with
+ * whatever is on disk at the moment of writing" rather than "replace it". It
+ * runs inside the write's own readwrite transaction, which IndexedDB serializes
+ * across every tab on the origin, so a save another tab committed — or a sync
+ * pull's merged copy — is in what it is handed. A fold that throws, or answers
+ * `undefined`, writes the value as given: never worse than the plain write.
+ * @param {Function} fold - `(stored, value) => next`; `stored` is undefined when nothing is stored
+ * @param {string} key - Storage key, for the log line
+ * @param {*} value - The value the caller asked to write
+ * @param {*} stored - What the transaction read (undefined when absent)
+ * @returns {*} The value to put
+ */
+function foldForWrite(fold, key, value, stored) {
+    try {
+        const next = fold(stored, value);
+        return next === undefined ? value : next;
+    } catch (error) {
+        console.error(`[Storage] Folding ${key} into the stored copy failed; writing it as given:`, error);
+        return value;
+    }
+}
+
+/**
  * How long one IndexedDB write may take before it is reported as failed.
  *
  * Writes settle from the same events reads do — `success`, `error`, `abort` —
@@ -266,6 +301,8 @@ class Storage {
          */
         this._inFlightWrites = new Set();
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
+        /** A fold's answer for "delete the key" — see {@link FOLD_DELETE} */
+        this.FOLD_DELETE = FOLD_DELETE;
 
         /**
          * Restore quiescing — see `beginRestore()`/`finishRestore()`.
@@ -1321,9 +1358,15 @@ class Storage {
      * @param {*} value - Value to store
      * @param {string} storeName - Object store name (default: 'settings')
      * @param {boolean} immediate - If true, save immediately without debouncing
+     * @param {{fold?: (stored: *, value: *) => *}} [options] - `fold` makes the write a
+     *   read-fold-write in one transaction, run when the write actually lands (after the
+     *   debounce): it is handed what is stored then and the value queued, and answers what to
+     *   put. For a record several tabs (or a sync pull) write, kept in memory by one of them.
+     *   The newest `set` of a key brings its own fold; a debounced value keeps the fold it came with.
      * @returns {Promise<boolean>} Success status
      */
-    async set(key, value, storeName = 'settings', immediate = false) {
+    async set(key, value, storeName = 'settings', immediate = false, options = {}) {
+        const fold = typeof options?.fold === 'function' ? options.fold : null;
         if (this._refuseDuringRestore(key, storeName, 'save')) return false;
         // Told now, not at commit: a debounced value sits here for seconds
         // before IndexedDB sees it, and a listener asking "has anything been
@@ -1339,7 +1382,7 @@ class Storage {
         // destroyed the value is no worse off than it was, and on a page being
         // frozen into the bfcache the queue comes back with it and the next
         // flush writes it.
-        if (this._closingForTeardown) return this._debouncedSave(key, value, storeName);
+        if (this._closingForTeardown) return this._debouncedSave(key, value, storeName, fold);
 
         if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot save key: ${key}`);
@@ -1350,9 +1393,9 @@ class Storage {
         if (this._refuseDuringRestore(key, storeName, 'save')) return false;
 
         if (immediate) {
-            return this._writeNow(key, value, storeName);
+            return this._writeNow(key, value, storeName, fold);
         } else {
-            return this._debouncedSave(key, value, storeName);
+            return this._debouncedSave(key, value, storeName, fold);
         }
     }
 
@@ -1367,12 +1410,20 @@ class Storage {
      * @param {string} key - Storage key
      * @param {*} value - Value to store
      * @param {string} storeName - Object store name
+     * @param {Function|null} [fold] - See `set`
      * @returns {Promise<boolean>} Success status
      * @private
      */
-    async _writeNow(key, value, storeName) {
+    async _writeNow(key, value, storeName, fold = null) {
         const superseded = this._supersedePending(`${storeName}:${key}`);
-        const success = await this._saveToIndexedDB(key, value, storeName);
+        // Against a queued plain write, the fold is into that value — see `_debouncedSave`
+        const replacing = fold && superseded && !superseded.fold;
+        const success = await this._saveToIndexedDB(
+            key,
+            replacing ? foldForWrite(fold, key, value, superseded.value) : value,
+            storeName,
+            replacing ? null : fold
+        );
         // The coalesced callers were awaiting a write to this key; this is it.
         for (const resolve of superseded?.resolvers || []) resolve(success);
         return success;
@@ -1414,7 +1465,7 @@ class Storage {
      * Internal: Save to IndexedDB (immediate)
      * @private
      */
-    async _saveToIndexedDB(key, value, storeName) {
+    async _saveToIndexedDB(key, value, storeName, fold = null) {
         // The debounced flush reaches here without `set`'s guard; a write that
         // lands in a reconnect gap waits it out the same way (a refused
         // debounced write is requeued by the caller, so this only shortens the
@@ -1425,7 +1476,7 @@ class Storage {
         }
         // Timer writes reach this path without set()'s post-reconnect check.
         if (this._refuseDuringRestore(key, storeName, 'save')) return false;
-        return this._guardedWrite('set', key, storeName, false, () => this._runSave(key, value, storeName));
+        return this._guardedWrite('set', key, storeName, false, () => this._runSave(key, value, storeName, fold));
     }
 
     /**
@@ -1433,10 +1484,11 @@ class Storage {
      * @param {string} key - Storage key
      * @param {*} value - Value to store
      * @param {string} storeName - Object store name
+     * @param {Function|null} [fold] - Read the key in the same transaction and write `fold(stored, value)`
      * @returns {Promise<boolean>} Whether the write landed
      * @private
      */
-    _runSave(key, value, storeName) {
+    _runSave(key, value, storeName, fold = null) {
         const failuresAtStart = this._quotaFailures;
         return new Promise((resolve, _reject) => {
             let settled = false;
@@ -1459,21 +1511,41 @@ class Storage {
             try {
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
-                const request = store.put(value, key);
+                const put = (next) => {
+                    const request = next === FOLD_DELETE ? store.delete(key) : store.put(next, key);
 
-                request.onsuccess = () => {
-                    settle(true, null);
+                    // Not settled here: a request that succeeds can still be lost
+                    // to a transaction that aborts at commit, and a caller acting
+                    // on "written" (a snapshot that stops the next write, a fold
+                    // that took entries into memory) would be acting on nothing
+                    request.onerror = () => {
+                        console.error(`[Storage] Failed to save key ${key}:`, request.error);
+                        settle(false, request.error);
+                    };
                 };
 
-                request.onerror = () => {
-                    console.error(`[Storage] Failed to save key ${key}:`, request.error);
-                    settle(false, request.error);
-                };
+                if (fold) {
+                    // Read and written in this one transaction, so nothing another
+                    // tab commits can land between the two
+                    const read = store.get(key);
+                    read.onsuccess = () => put(foldForWrite(fold, key, value, read.result));
+                    read.onerror = () => {
+                        console.error(`[Storage] Failed to read key ${key} before writing it:`, read.error);
+                        settle(false, read.error);
+                    };
+                } else {
+                    put(value);
+                }
 
                 // The commit, not the request, is what proves there was room
                 transaction.oncomplete = () => {
                     this._noteWriteCommitted(failuresAtStart);
                     this._announceCommit(storeName, [key]);
+                    settle(true, null);
+                };
+                transaction.onerror = () => {
+                    console.error(`[Storage] Save transaction failed for key ${key}:`, transaction.error);
+                    settle(false, transaction.error);
                 };
 
                 // A quota failure aborts the whole transaction; without this the
@@ -1533,7 +1605,7 @@ class Storage {
         );
         for (const resolve of superseded?.resolvers || []) resolve(Boolean(result));
         // The queued value was the newest word on the key; a failed update must not drop it.
-        if (!result && superseded) this._debouncedSave(key, superseded.value, storeName);
+        if (!result && superseded) this._debouncedSave(key, superseded.value, storeName, superseded.fold || null);
         return result;
     }
 
@@ -1567,9 +1639,14 @@ class Storage {
 
                 read.onsuccess = () => {
                     let next;
+                    // A queued value that was to be folded as it landed is folded now
+                    const folded = queued?.fold
+                        ? foldForWrite(queued.fold, key, queued.value, read.result)
+                        : queued?.value;
+                    const held = folded === FOLD_DELETE ? undefined : folded;
                     try {
                         const found = queued ? true : read.result !== undefined;
-                        next = mutate(queued ? queued.value : read.result, found);
+                        next = mutate(queued ? held : read.result, found);
                     } catch (error) {
                         console.error(`[Storage] Update of key ${key} failed while computing its value:`, error);
                         try {
@@ -1581,7 +1658,7 @@ class Storage {
                         return;
                     }
                     // Declining to change a value that was only queued still owes the queue its write.
-                    if (next === undefined && queued) next = queued.value;
+                    if (next === undefined && queued) next = held;
                     if (next === undefined) {
                         unchanged = { written: false, value: read.result };
                         return;
@@ -1876,9 +1953,14 @@ class Storage {
      * a dropped connection, an aborted transaction, a full disk — requeues the value
      * without a timer, so the next flushAll() or the next write to the same key
      * retries it instead of the value being lost.
+     * @param {string} key - Storage key
+     * @param {*} value - Value to store
+     * @param {string} storeName - Object store name
+     * @param {Function|null} [fold] - See `set`; travels with the value, so whichever path lands it folds
+     * @returns {Promise<boolean>} Whether the write landed
      * @private
      */
-    _debouncedSave(key, value, storeName) {
+    _debouncedSave(key, value, storeName, fold = null) {
         const timerKey = `${storeName}:${key}`;
 
         // The restore generation this write was scheduled under. A restore that
@@ -1889,9 +1971,20 @@ class Storage {
         const existing = this.pendingWrites.get(timerKey);
         const resolvers = existing?.resolvers || [];
 
+        // A fold folds into the key's current value. While a plain write is
+        // queued that is the queued value, not the disk — the plain write is a
+        // replacement (a reset, a purge) that has not landed yet, and folding
+        // against the disk would hand back exactly what it took out.
+        let queued = value;
+        let queuedFold = fold;
+        if (fold && existing && !existing.fold) {
+            queued = foldForWrite(fold, key, value, existing.value);
+            queuedFold = null;
+        }
+
         const generation = (this._writeGeneration.get(timerKey) || 0) + 1;
         this._writeGeneration.set(timerKey, generation);
-        this.pendingWrites.set(timerKey, { value, storeName, resolvers, generation });
+        this.pendingWrites.set(timerKey, { value: queued, storeName, resolvers, generation, fold: queuedFold });
 
         if (this.saveDebounceTimers.has(timerKey)) {
             clearTimeout(this.saveDebounceTimers.get(timerKey));
@@ -1943,7 +2036,7 @@ class Storage {
                 // Tracked from here until it settles: between the delete above
                 // and the await below this write exists nowhere a `flushAll()`
                 // can see it (see `_inFlightWrites`).
-                const inFlight = this._saveToIndexedDB(key, pending.value, pending.storeName);
+                const inFlight = this._saveToIndexedDB(key, pending.value, pending.storeName, pending.fold);
                 this._inFlightWrites.add(inFlight);
                 let success;
                 try {
@@ -1993,6 +2086,7 @@ class Storage {
                             storeName: pending.storeName,
                             resolvers: [],
                             generation: pending.generation,
+                            fold: pending.fold,
                         });
                     }
 
@@ -2077,11 +2171,12 @@ class Storage {
      * @param {*} value - Object to store
      * @param {string} storeName - Object store name (default: 'settings')
      * @param {boolean} immediate - If true, save immediately
+     * @param {{fold?: Function}} [options] - As `set`
      * @returns {Promise<boolean>} Success status
      */
-    async setJSON(key, value, storeName = 'settings', immediate = false) {
+    async setJSON(key, value, storeName = 'settings', immediate = false, options = {}) {
         // IndexedDB can store objects directly, no need to stringify
-        return this.set(key, value, storeName, immediate);
+        return this.set(key, value, storeName, immediate, options);
     }
 
     /**
@@ -2392,7 +2487,8 @@ class Storage {
      * and requeue only what failed, which a count cannot tell it.
      * @param {string} storeName - Object store name
      * @param {Record<string, *>} entries - Map of key → value to write
-     * @param {{bypassRestoreLatch?: boolean}} [options] - Restore/bookkeeping write exemption
+     * @param {{bypassRestoreLatch?: boolean, folds?: Record<string, Function>}} [options] - Restore/bookkeeping
+     *   write exemption, and the keys whose value is folded into the stored copy (see `set`)
      * @returns {Promise<Array<string>>} The keys that were written
      * @private
      */
@@ -2414,7 +2510,7 @@ class Storage {
         }
 
         return this._guardedWrite('putAll', `${keys.length} keys`, storeName, [], () =>
-            this._runPutAll(storeName, entries, keys)
+            this._runPutAll(storeName, entries, keys, options.folds || null)
         );
     }
 
@@ -2423,10 +2519,11 @@ class Storage {
      * @param {string} storeName - Object store name
      * @param {Record<string, *>} entries - Map of key → value to write
      * @param {Array<string>} keys - `Object.keys(entries)`, already computed
+     * @param {Record<string, Function>|null} [folds] - Keys read in the same transaction and written folded
      * @returns {Promise<Array<string>>} The keys that were written
      * @private
      */
-    _runPutAll(storeName, entries, keys) {
+    _runPutAll(storeName, entries, keys, folds = null) {
         const failuresAtStart = this._quotaFailures;
         return new Promise((resolve) => {
             try {
@@ -2434,8 +2531,8 @@ class Storage {
                 const store = transaction.objectStore(storeName);
                 const written = [];
 
-                for (const key of keys) {
-                    const request = store.put(entries[key], key);
+                const put = (key, value) => {
+                    const request = value === FOLD_DELETE ? store.delete(key) : store.put(value, key);
                     request.onsuccess = () => {
                         written.push(key);
                     };
@@ -2444,6 +2541,24 @@ class Storage {
                         if (this._isQuotaError(request.error)) {
                             this._handleQuotaExceeded(key, storeName, request.error);
                         }
+                    };
+                };
+
+                for (const key of keys) {
+                    const fold = folds && typeof folds[key] === 'function' ? folds[key] : null;
+                    if (!fold) {
+                        put(key, entries[key]);
+                        continue;
+                    }
+                    // Read and written inside this same transaction, so nothing
+                    // another tab commits can land between the two
+                    const read = store.get(key);
+                    read.onsuccess = () => put(key, foldForWrite(fold, key, entries[key], read.result));
+                    read.onerror = () => {
+                        console.error(
+                            `[Storage] Failed to read key ${key} in ${storeName} before writing it:`,
+                            read.error
+                        );
                     };
                 }
 
@@ -2539,7 +2654,15 @@ class Storage {
         const flushes = [];
         for (const [storeName, items] of byStore) {
             const entries = {};
-            for (const item of items) entries[item.key] = item.pending.value;
+            /** Keys whose queued value is folded into the stored copy as it lands */
+            let folds = null;
+            for (const item of items) {
+                entries[item.key] = item.pending.value;
+                if (item.pending.fold) {
+                    folds = folds || {};
+                    folds[item.key] = item.pending.fold;
+                }
+            }
 
             // Deliberately not awaited inside the loop: every store's
             // transaction is opened in this tick, and they run concurrently.
@@ -2555,7 +2678,7 @@ class Storage {
                     // isolating it is exactly right.
                     const timeoutsBefore = this._writeTimeouts;
                     try {
-                        writtenKeys = new Set(await this._putAllWritten(storeName, entries));
+                        writtenKeys = new Set(await this._putAllWritten(storeName, entries, { folds }));
                     } catch (error) {
                         console.error(`[Storage] Flush of store ${storeName} failed:`, error);
                         writtenKeys = new Set();
@@ -2594,7 +2717,13 @@ class Storage {
                     );
                     if (!wedged && stragglers.length > 0) {
                         const retried = await Promise.all(
-                            stragglers.map((item) => this._putAllWritten(storeName, { [item.key]: item.pending.value }))
+                            stragglers.map((item) =>
+                                this._putAllWritten(
+                                    storeName,
+                                    { [item.key]: item.pending.value },
+                                    item.pending.fold ? { folds: { [item.key]: item.pending.fold } } : {}
+                                )
+                            )
                         );
                         stragglers.forEach((item, i) => {
                             if (retried[i].length > 0) writtenKeys.add(item.key);

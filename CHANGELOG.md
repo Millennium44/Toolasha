@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Saves keep what another tab or device added
+
+- Loot, alchemy, combat-loot, item-flow, chest, production, networth, task and daily-checkpoint logs, guild loadouts, trial ability captures and listing anchors now take in what is already on disk when they save, so another tab's or a sync pull's additions are no longer wiped by this tab's next save; the trade ledger also recovers a fill another writer overwrote.
+
 ### Sync keeps old days pruned, and smaller sync fixes
 
 - Daily loot, item-flow, chest and production records past their keep window, and thinned networth points, no longer come back from the gist on every pull once they age out, which would have brought the "Reload now" toast back from late December.

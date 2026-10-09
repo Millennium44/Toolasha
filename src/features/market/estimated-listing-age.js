@@ -855,14 +855,41 @@ class EstimatedListingAge {
      * Debounced (no `immediate` flag) like the rest of storage — growth events
      * (a new listing, an order book response) can arrive in bursts and do not
      * each need a separate IndexedDB write.
+     *
+     * The pool is one key every tab and every device adds to, so the write
+     * folds into what is stored when it lands ({@link mergeAnchorPools}, this
+     * pool first so its timestamps stand), inside the write's own transaction.
+     * Written whole, the next order book seen here threw away the anchors a
+     * sync pull had just merged in and the ones another tab had saved. What
+     * the fold finds comes into memory too, for the estimates.
      * @returns {Promise<void>}
      */
     async _persistAnchors() {
         try {
-            await storage.setJSON(this.anchorsKey, this.anchors, LISTINGS_STORE);
+            await storage.setJSON(this.anchorsKey, this.anchors, LISTINGS_STORE, false, {
+                fold: (stored, value) => {
+                    if (!Array.isArray(stored) || !Array.isArray(value)) return value;
+                    const merged = mergeAnchorPools(value, stored);
+                    this._adoptAnchors(merged);
+                    return merged;
+                },
+            });
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to save listing anchors:', error);
         }
+    }
+
+    /**
+     * Take anchors a write found stored into the pool in hand.
+     * @param {Array<{id: number, timestamp: number}>} stored - The pool as written
+     * @returns {void}
+     */
+    _adoptAnchors(stored) {
+        if (!this.anchorsLoaded) return;
+        const held = new Set(this.anchors.map((anchor) => anchor.id));
+        if (!stored.some((anchor) => !held.has(anchor.id))) return;
+        this.anchors = mergeAnchorPools(this.anchors, stored);
+        this.rebuildEstimationPoints();
     }
 
     /**

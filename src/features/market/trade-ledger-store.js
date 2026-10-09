@@ -260,6 +260,19 @@ class TradeLedgerStore {
          * to the single key as they always did, and the next load tries again.
          */
         this._legacy = false;
+        /**
+         * The day records this tab has written for a character this session
+         * (`charId → Set<day>`), re-folded on every records save.
+         *
+         * A sync pull, or another tab, can write a day record whole in the
+         * moment after this tab wrote it, without the fill this tab had just
+         * added — and a day nobody fills again is never written again, so
+         * that fill was gone at the next reload. Re-folding the days written
+         * here puts it back on the next fill of any day, and costs a read per
+         * such day and no write when the stored copy already holds everything.
+         * @type {Map<string, Set<string>>}
+         */
+        this._writtenDays = new Map();
     }
 
     /**
@@ -649,7 +662,9 @@ class TradeLedgerStore {
                 }
 
                 const grouped = groupByBucket(this.records);
-                const days = wanted || new Set(grouped.keys());
+                const days = wanted ? new Set(wanted) : new Set(grouped.keys());
+                const writtenDays = this._writtenDays.get(charId) || new Set();
+                for (const day of writtenDays) if (grouped.has(day)) days.add(day);
                 let floorT = -Infinity;
                 if (this.records.length >= LEDGER_RECORD_CAP) {
                     floorT = Infinity;
@@ -669,14 +684,32 @@ class TradeLedgerStore {
                     if (!current()) return false;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
                     const memory = grouped.get(bucket) || [];
-                    const merged = mergeRecords(stored, memory).filter((record) => record.t >= floorT);
+                    const keep = (record) => record.t >= floorT;
+                    const merged = mergeRecords(stored, memory).filter(keep);
 
                     if (merged.length === 0) {
                         if (probe.found) await storage.delete(key, LEDGER_STORE);
                         continue;
                     }
                     if (merged.length > memory.length) carried.push(...merged);
-                    storage.set(key, merged, LEDGER_STORE);
+                    // Nothing memory holds is missing from the stored copy, and the
+                    // cap took nothing out of it: there is nothing to write
+                    const storedKeys = new Set(stored.map((record) => record && fillKey(record)));
+                    if (
+                        probe.found &&
+                        merged.length === stored.length &&
+                        merged.every((record) => storedKeys.has(fillKey(record)))
+                    ) {
+                        continue;
+                    }
+                    writtenDays.add(bucket);
+                    this._writtenDays.set(charId, writtenDays);
+                    // Folded again as it lands, inside the write's own transaction:
+                    // what another tab or a pull stored after the read above is kept
+                    storage.set(key, merged, LEDGER_STORE, false, {
+                        fold: (now, value) =>
+                            Array.isArray(now) && Array.isArray(value) ? mergeRecords(now, value).filter(keep) : value,
+                    });
                 }
 
                 // Rows only storage knew come into memory too, as they did
@@ -816,6 +849,7 @@ class TradeLedgerStore {
     async handleCharacterSwitch() {
         this.disable();
         this._generation += 1;
+        this._writtenDays = new Map();
         this.records = [];
         this.states = {};
         this.isLoaded = false;
