@@ -1020,7 +1020,7 @@ function netCost(recipe) {
 }
 
 /**
- * Whether two recipes roll the same bonus drops, equally priced: only then can one dominate the other
+ * Whether two recipes roll the same bonus drops at the same rates, equally priced: only then can one dominate the other
  * on cost and time, since different drops credit different collections and an unpriced drop takes a
  * route out of the ranking that a priced one stays in.
  * @param {{bonus?: Object|null}} a
@@ -1028,7 +1028,13 @@ function netCost(recipe) {
  * @returns {boolean}
  */
 function sameBonusDrops(a, b) {
-    const keys = (recipe) => [...(recipe.bonus?.yields?.keys?.() ?? [])].sort().join('|');
+    // Quantities too: evaluateOption caps sales at what the market absorbs and counts the real yields
+    // toward collections, so drops at different rates are not interchangeable even when netCost says so
+    const keys = (recipe) =>
+        [...(recipe.bonus?.yields?.entries?.() ?? [])]
+            .map(([hrid, qty]) => `${hrid}=${Number(qty).toPrecision(12)}`)
+            .sort()
+            .join('|');
     return keys(a) === keys(b) && Boolean(a.bonus?.partlyUnpriced) === Boolean(b.bonus?.partlyUnpriced);
 }
 

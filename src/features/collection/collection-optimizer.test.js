@@ -1177,6 +1177,12 @@ describe('a recipe the character cannot start', () => {
         // Different drops credit different collections: neither can dominate the other
         const other = { ...rich, bonus: { ...drops(0), yields: new Map([['/items/garnet', 0.1]]) } };
         expect(undominatedRecipes([plain, other]).map((r) => r.actionHrid)).toEqual(['a', 'b']);
+        // The same drop at a different rate: sales are capped by what the market absorbs, so keep both
+        const faster = {
+            ...rich,
+            bonus: { ...drops(20), yields: new Map([['/items/milking_essence', 0.3]]) },
+        };
+        expect(undominatedRecipes([plain, faster]).map((r) => r.actionHrid)).toEqual(['a', 'b']);
     });
 
     test('a recipe no cheaper and no faster than another is left out', async () => {
