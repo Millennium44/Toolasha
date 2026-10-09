@@ -56,7 +56,7 @@ import selfUseWanted, {
     installKeepToggle,
     uninstallKeepToggle,
 } from './self-use-wanted.js';
-import { liveAlternatives, INSTEAD_SETTING } from './alchemy-instead-of-buying.js';
+import { liveAlternatives, stopInsteadListeners, INSTEAD_SETTING } from './alchemy-instead-of-buying.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
@@ -2411,6 +2411,7 @@ class TooltipPrices {
             uninstallEnhancementSourceToggle();
             uninstallKeepToggle();
             selfUseWanted.stopWatching();
+            stopInsteadListeners();
 
             this.isActive = false;
             this.isInitialized = false;

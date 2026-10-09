@@ -180,23 +180,52 @@ export function findAlchemyAlternatives(targetHrid, deps) {
 const candidateCache = new Map();
 const resultCache = new Map();
 let cacheStamp = null;
-/** Bumped on every market price-update notification (a fetch or a burst of order-book patches) */
+/**
+ * Bumped on every market price-update notification (a fetch or a burst of order-book patches)
+ * and on every pushed value-map refresh (`market_item_values_updated`)
+ */
 let priceGeneration = 0;
 let listeningForPrices = false;
+
+/** One price change: every figure cached so far is from the old prices */
+function onPricesChanged() {
+    priceGeneration += 1;
+}
+
+/**
+ * Start listening for price changes, once.
+ *
+ * A fresher order-book patch is served by getPrice() without moving the fetch time; the
+ * market's price-update notification is what says a price changed. The hourly value-map
+ * push swaps the tradable bands `reconcileBook` clamps every ask and bid to
+ * (`applyMarketValuesMessage`), outside the market's notification, so it is observed too.
+ * @returns {void}
+ */
+function listenForPrices() {
+    if (listeningForPrices) return;
+    if (typeof marketAPI?.on === 'function') marketAPI.on(onPricesChanged);
+    if (typeof dataManager?.on === 'function') dataManager.on('market_item_values_updated', onPricesChanged);
+    listeningForPrices = true;
+}
+
+/**
+ * Stop listening for price changes (the tooltip feature's teardown). The next lookup
+ * listens again.
+ * @returns {void}
+ */
+export function stopInsteadListeners() {
+    if (!listeningForPrices) return;
+    if (typeof marketAPI?.off === 'function') marketAPI.off(onPricesChanged);
+    if (typeof dataManager?.off === 'function') dataManager.off('market_item_values_updated', onPricesChanged);
+    listeningForPrices = false;
+}
 
 /**
  * The snapshot every cached figure belongs to; a change empties both caches.
  * @returns {string}
  */
 function priceSnapshot() {
-    if (!listeningForPrices && typeof marketAPI?.on === 'function') {
-        // A fresher order-book patch is served by getPrice() without moving the fetch
-        // time; the market's price-update notification is what says a price changed
-        marketAPI.on(() => {
-            priceGeneration += 1;
-        });
-        listeningForPrices = true;
-    }
+    listenForPrices();
     return [
         marketAPI?.lastFetchTimestamp ?? '',
         priceGeneration,
