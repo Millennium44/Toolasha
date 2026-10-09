@@ -78,6 +78,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    hasMeasuredVolume: () => false,
     itemDailyVolume: async (itemHrid) => {
         state.asked.push(itemHrid);
         return state.volumes[itemHrid] || { itemHrid, unitsPerDay: 0, known: false };

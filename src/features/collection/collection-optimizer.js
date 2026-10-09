@@ -31,13 +31,14 @@ import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPriceInfo } from '../../utils/market-data.js';
+import { getItemPriceInfo, isPriceEstimated, withProfitPricingMode } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { capProfitRateCached, prefetchLiquidity } from '../../utils/liquidity-cap.js';
+import { capProfitRateCached, hasMeasuredVolume, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { canStartAction } from '../../utils/efficiency.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
@@ -276,6 +277,19 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
 }
 
 /**
+ * Whether a setup the calculator weighed can actually be bought: a catalyst or tea with only a
+ * value-map estimate and no live ask cannot be insta-bought, whatever it is said to cost, so a setup
+ * that needs one is not a candidate. A setup with no catalyst and no tea always passes.
+ * @param {Object|null} result - A `calculateCandidateResults` entry
+ * @returns {boolean}
+ */
+export function setupIsBuyable(result) {
+    return ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((cost) => cost?.itemHrid)]
+        .filter(Boolean)
+        .some((hrid) => isPriceEstimated(hrid, { mode: 'ask', side: 'buy' }));
+}
+
+/**
  * Every catalyst/tea setup for transmuting S, each as its own route.
  *
  * The calculator's own pick (`calculateTransmuteProfit`) is the setup with the
@@ -293,8 +307,12 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
  * @returns {Array<Object>} Source routes, each carrying its `setup`
  */
 export function transmuteSetups(sourceHrid, table, opts) {
-    const listed = alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid) ?? [];
-    const candidates = listed.length > 0 ? listed : [alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid)];
+    // The optimizer buys at the ask: catalyst and tea overhead is priced there, whatever the profit mode says
+    const listed = atAsk(() => alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid)) ?? [];
+    const candidates =
+        listed.length > 0
+            ? listed.filter(setupIsBuyable)
+            : [atAsk(() => alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid))];
     const routes = [];
     const seen = new Set();
     for (const result of candidates) {
@@ -524,8 +542,9 @@ function soldFromTerminals(terminals, sell, bonus) {
  * ({@link ownUseCompare}: materials and teas at the buy side per item made)
  * and 3600 / items made per hour.
  *
- * Decompose / shop: per item with decompose outputs, the full chain at the
- * calculator's catalyst/tea pick with an input cost of 0
+ * Decompose / shop: per item with decompose outputs, the full chain under each
+ * catalyst/tea setup the calculator weighs (one route apiece, like transmute;
+ * the ranking picks) with an input cost of 0
  * ({@link selfUseDecomposeChain}), its outputs valued at what selling them
  * realizes ({@link realizedSalePrice}), so one walk serves every way of getting
  * the item: bought at the ask, made at the bench, or bought at the shop.
@@ -592,8 +611,17 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 // One action makes a whole batch: 15 of an item made 15 at a time is one action, not
                 // 1/15. Gourmet adds expected copies from the same inputs, counted as profitData counts
                 const gourmet = Math.max(0, Number(data.gourmetBonus) || 0);
-                const batch = Math.max(1, (Number(details?.outputItems?.[0]?.count) || 1) * (1 + gourmet));
-                viable.push({ actionHrid: data.actionHrid, cost: comparison.make, seconds: 3600 / perHour, batch });
+                // The calculator hands back the count of the output that matched the item: the primary output's
+                // count would be wrong for an item made as a secondary output
+                const baseCount = Number(data.outputAmount) || Number(details?.outputItems?.[0]?.count) || 1;
+                const batch = Math.max(1, baseCount * (1 + gourmet));
+                viable.push({
+                    actionHrid: data.actionHrid,
+                    cost: comparison.make,
+                    seconds: 3600 / perHour,
+                    batch,
+                    baseCount,
+                });
             }
             // Every recipe is its own route, so each sort weighs it on its own terms: the cheapest
             // and the fastest can be different recipes
@@ -621,13 +649,44 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!decomposeResults.has(hrid)) {
             let result = null;
             try {
-                result = alchemyProfitCalculator.calculateDecomposeProfit(hrid) ?? null;
+                result = atAsk(() => alchemyProfitCalculator.calculateDecomposeProfit(hrid)) ?? null;
             } catch (error) {
                 console.error('[CollectionOptimizer] Decompose failed for', hrid, error);
             }
             decomposeResults.set(hrid, result);
         }
         return decomposeResults.get(hrid);
+    };
+    // Every catalyst/tea setup the calculator weighs for a decompose, not only its single pick: the
+    // optimizer pays the ask and ranks by gold (or time) per point, so the best taxed profit per hour
+    // can be the wrong setup here. Each setup is its own route (the way {@link transmuteSetups} offers
+    // transmutes); the steps below the top item run under the same setup where the calculator lists it
+    const candidateLists = new Map();
+    const candidatesOf = (hrid) => {
+        if (!candidateLists.has(hrid)) {
+            let list = [];
+            try {
+                list = (
+                    atAsk(() => alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid)) ?? []
+                ).filter(setupIsBuyable);
+            } catch (error) {
+                console.error('[CollectionOptimizer] Decompose setups failed for', hrid, error);
+            }
+            candidateLists.set(hrid, list);
+        }
+        return candidateLists.get(hrid);
+    };
+    const sameSetup = (a, b) =>
+        (a?.winningCatalystHrid ?? null) === (b?.winningCatalystHrid ?? null) &&
+        Boolean(a?.winningTeaUsed) === Boolean(b?.winningTeaUsed);
+    const decomposeVariants = (topHrid) => {
+        const listed = candidatesOf(topHrid);
+        if (listed.length === 0) return [{ get: getDecompose, setup: null }];
+        return listed.map((top) => ({
+            get: (hrid) =>
+                hrid === topHrid ? top : (candidatesOf(hrid).find((r) => sameSetup(r, top)) ?? getDecompose(hrid)),
+            setup: { catalystHrid: top.winningCatalystHrid ?? null, tea: Boolean(top.winningTeaUsed) },
+        }));
     };
     const isChainable = (hrid) => {
         const details = getItemDetails(hrid);
@@ -662,82 +721,102 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     for (const [hrid, details] of Object.entries(itemDetailMap)) {
         if (!details?.alchemyDetail?.decomposeItems?.length) continue;
         if (await pause()) return null;
-        const chain = selfUseDecomposeChain(hrid, {
-            getDecompose,
-            getItemDetails,
-            isChainable,
-            priceOf: saleOf,
-            ownUseCost: 0,
-            containerValue,
-        });
-        if (!chain) continue;
+        const seenChains = new Set();
+        for (const variant of decomposeVariants(hrid)) {
+            const chain = selfUseDecomposeChain(hrid, {
+                getDecompose: variant.get,
+                getItemDetails,
+                isChainable,
+                priceOf: saleOf,
+                ownUseCost: 0,
+                containerValue,
+            });
+            if (!chain) continue;
+            // A setup that comes out the same as another (no tea to drink, say) is offered once
+            const fingerprint = [
+                chain.seconds,
+                chain.overheadCost,
+                chain.partlyUnpriced,
+                ...[...chain.collected, ...chain.terminals].map((t) => `${t.itemHrid}:${t.expected}:${t.value}`),
+            ].join('|');
+            if (seenChains.has(fingerprint)) continue;
+            seenChains.add(fingerprint);
 
-        // A piece cut short by a cycle is listed as gear and as kept; it is one piece
-        const yields = new Map();
-        for (const { itemHrid, expected } of [...chain.collected, ...chain.terminals]) {
-            if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
-            yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
-        }
-        if (yields.size === 0) continue;
-        // The alchemy-wide bonus drops each step rolls: credited, never a target
-        const bonus = new Set();
-        for (const step of chain.steps) {
-            for (const drop of getDecompose(step.itemHrid)?.dropRevenues || []) {
-                if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
+            // A piece cut short by a cycle is listed as gear and as kept; it is one piece
+            const yields = new Map();
+            for (const { itemHrid, expected } of [...chain.collected, ...chain.terminals]) {
+                if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
+                yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
             }
-        }
-        const sold = soldFromTerminals(chain.terminals, sell, bonus);
-        // A crate opened to sell its contents acquired them: they count toward their own collections
-        creditOpened(sold, yields, bonus);
-        const kept = sold.kept;
-        // Coins a crate opened on the way pays back come off every way of running the chain
-        const overheadCost = chain.overheadCost - sold.coins;
-        // One alchemy action eats `bulkMultiplier` sources, whole
-        const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
-        const shared = {
-            sourceHrid: hrid,
-            batch: bulk,
-            seconds: chain.seconds,
-            yields,
-            kept,
-            bonus,
-            partlyUnpriced: chain.partlyUnpriced,
-        };
+            if (yields.size === 0) continue;
+            // The alchemy-wide bonus drops each step rolls: credited, never a target
+            const bonus = new Set();
+            for (const step of chain.steps) {
+                for (const drop of variant.get(step.itemHrid)?.dropRevenues || []) {
+                    if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
+                }
+            }
+            const sold = soldFromTerminals(chain.terminals, sell, bonus);
+            // A crate opened to sell its contents acquired them: they count toward their own collections
+            creditOpened(sold, yields, bonus);
+            const kept = sold.kept;
+            // Coins a crate opened on the way pays back come off every way of running the chain
+            const overheadCost = chain.overheadCost - sold.coins;
+            // One alchemy action eats `bulkMultiplier` sources, whole
+            const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
+            const shared = {
+                sourceHrid: hrid,
+                batch: bulk,
+                seconds: chain.seconds,
+                yields,
+                kept,
+                bonus,
+                partlyUnpriced: chain.partlyUnpriced,
+                ...(variant.setup ? { setup: variant.setup } : {}),
+            };
 
-        // Bought sources are not collected; a crafted one is, and its making takes time — two
-        // routes, each priced and timed for how the source is actually got
-        const buy = buyableQuote(hrid);
-        if (buy > 0) {
-            sources.push({
-                ...shared,
-                route: 'decompose',
-                cost: buy + overheadCost,
-                purchase: { hrid, ask: buy },
-            });
-        }
-        for (const recipe of makes.get(hrid) || []) {
-            if (!(recipe.cost > 0)) continue;
-            const withSource = new Map(yields);
-            withSource.set(hrid, (withSource.get(hrid) || 0) + 1);
-            sources.push({
-                ...shared,
-                route: 'craftDecompose',
-                actionHrid: recipe.actionHrid,
-                yields: withSource,
-                cost: recipe.cost + overheadCost,
-                seconds: chain.seconds + recipe.seconds,
-            });
-        }
-        // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
-        const offer = getShopCoinOnlyCost(hrid);
-        if (offer?.coins > 0) {
-            const units = Math.max(1, Math.floor(Number(offer.units)) || 1);
-            sources.push({
-                ...shared,
-                route: 'shop',
-                batch: leastCommonMultiple(units, bulk),
-                cost: offer.coins / units + overheadCost,
-            });
+            // Bought sources are not collected; a crafted one is, and its making takes time — two
+            // routes, each priced and timed for how the source is actually got
+            const buy = buyableQuote(hrid);
+            if (buy > 0) {
+                sources.push({
+                    ...shared,
+                    route: 'decompose',
+                    cost: buy + overheadCost,
+                    purchase: { hrid, ask: buy },
+                });
+            }
+            for (const recipe of makes.get(hrid) || []) {
+                if (!(recipe.cost > 0)) continue;
+                // recipe.cost and recipe.seconds are per expected item (Gourmet included), but a run is whole
+                // craft actions that each make baseCount for certain: one source of the run carries
+                // (1 + Gourmet) items' worth of cost and time, and credits that many to its own collection
+                const perSource = recipe.batch / recipe.baseCount;
+                const withSource = new Map(yields);
+                withSource.set(hrid, (withSource.get(hrid) || 0) + perSource);
+                sources.push({
+                    ...shared,
+                    route: 'craftDecompose',
+                    actionHrid: recipe.actionHrid,
+                    // Whole craft actions (by their guaranteed output, not the Gourmet expectation) feeding whole
+                    // decompose actions: the smallest run that is both
+                    batch: wholeActionsBatch(recipe.baseCount, bulk),
+                    yields: withSource,
+                    cost: recipe.cost * perSource + overheadCost,
+                    seconds: chain.seconds + recipe.seconds * perSource,
+                });
+            }
+            // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
+            const offer = getShopCoinOnlyCost(hrid);
+            if (offer?.coins > 0) {
+                const units = Math.max(1, Math.floor(Number(offer.units)) || 1);
+                sources.push({
+                    ...shared,
+                    route: 'shop',
+                    batch: leastCommonMultiple(units, bulk),
+                    cost: offer.coins / units + overheadCost,
+                });
+            }
         }
     }
     if (cancelled()) return null;
@@ -761,16 +840,22 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     // Gather: run a gathering action the character can start
     const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap || {};
     const levels = new Map((dataManager.getSkills?.() || []).map((skill) => [skill.skillHrid, skill.level]));
-    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment?.(), itemDetailMap);
     const canGather = (action) => {
         const requirement = action.levelRequirement;
         if (!requirement?.skillHrid) return true;
-        // Gathering has no Action Level tea; a skill-level tea counts, as the game's own check does
-        const drinks = dataManager.getActionDrinkSlots?.(action.type) || [];
+        // The context the gathering calculator prices the action under: the loadout snapshot's gear and
+        // drinks, a slotted drink with no stock left dropped. Gathering has no Action Level tea; a
+        // skill-level tea counts, as the game's own check does
+        const { equipment, drinks } = resolveActionContext(action.type);
         return canStartAction({
             requiredLevel: requirement.level || 1,
             skillLevel: levels.get(requirement.skillHrid) ?? 1,
-            teaSkillLevelBonus: parseTeaSkillLevelBonus(action.type, drinks, itemDetailMap, drinkConcentration),
+            teaSkillLevelBonus: parseTeaSkillLevelBonus(
+                action.type,
+                drinks,
+                itemDetailMap,
+                getDrinkConcentration(equipment, itemDetailMap)
+            ),
         });
     };
     for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
@@ -793,7 +878,12 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
  * beats on both cost and time per item. One that is no cheaper and no faster
  * than another (an exact copy included) is left out, since it can never be
  * either sort's pick; any trade-off between the two is kept.
- * @param {Array<{cost: number, seconds: number}>} recipes
+ *
+ * Only a recipe with the same output batch can dominate: an option is rounded
+ * up to whole batches ({@link evaluateOption}), so a cheaper-per-item recipe
+ * that makes 15 at a time still overshoots a rung that a 1-at-a-time recipe
+ * meets exactly, and either can win a given rung.
+ * @param {Array<{cost: number, seconds: number, batch?: number}>} recipes
  * @returns {Array<Object>} The survivors, in the order given
  */
 export function undominatedRecipes(recipes) {
@@ -803,12 +893,45 @@ export function undominatedRecipes(recipes) {
             !list.some(
                 (other, j) =>
                     j !== i &&
+                    (other.batch ?? 1) === (recipe.batch ?? 1) &&
                     other.cost <= recipe.cost &&
                     other.seconds <= recipe.seconds &&
                     // Strictly better somewhere, or an exact copy listed earlier
                     (other.cost < recipe.cost || other.seconds < recipe.seconds || j < i)
             )
     );
+}
+
+/**
+ * Run a synchronous calculator call with the profit pricing pinned to the ask. The optimizer buys
+ * catalyst and tea at the ask; an optimistic or patient-buy profit mode would price them at the bid.
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function atAsk(fn) {
+    return withProfitPricingMode('conservative', fn);
+}
+
+/**
+ * The smallest run of sources that is a whole number of craft actions and a whole number of
+ * decompose actions. Pass the craft's guaranteed output per action (Gourmet's expected extra
+ * copies are not guaranteed, so they stay in the recipe's per-source cost and time, not here):
+ * k craft actions make k × perAction, and the run is the least such value that is also a multiple
+ * of `bulk`. The planner rounds purchases up to this run. If perAction is fractional and no k in
+ * reach fits, the craft size is rounded up to whole sources instead, which can only overbuy.
+ * @param {number} perAction - Guaranteed sources per craft action
+ * @param {number} bulk - Sources one decompose action eats
+ * @returns {number}
+ */
+export function wholeActionsBatch(perAction, bulk) {
+    const per = Math.max(1, Number(perAction) || 1);
+    for (let k = 1; k <= 1000; k++) {
+        const run = k * per;
+        const multiples = Math.round(run / bulk);
+        if (multiples >= 1 && Math.abs(run - multiples * bulk) < 1e-9 * Math.max(1, run)) return multiples * bulk;
+    }
+    return leastCommonMultiple(Math.ceil(per - 1e-9), bulk);
 }
 
 /**
@@ -916,6 +1039,8 @@ class CollectionOptimizer {
         /** Items whose traded volume has been asked for this session */
         this.volumesAsked = new Set();
         this.volumesWarming = null;
+        /** Items a lookup is under way for, so the ranking and the plan do not both ask */
+        this.volumesInFlight = new Set();
         /** The plan on show, `{characterId}`: every redraw plans it again rather than dropping it */
         this.planShown = null;
     }
@@ -1013,6 +1138,7 @@ class CollectionOptimizer {
         this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
         this.sort = DEFAULT_SORT;
         this.volumesAsked = new Set();
+        this.volumesInFlight = new Set();
         this.volumesWarming = null;
         this.planShown = null;
         this.isInitialized = false;
@@ -1244,6 +1370,9 @@ class CollectionOptimizer {
                 );
             }
             result.appendChild(list);
+            // Every item the plan buys or sells, not only the ranking's slice: an unmeasured one is
+            // unbounded, and the plan is made again once the volumes land
+            this.warmVolumes(plan.steps);
         };
         go.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -1312,30 +1441,60 @@ class CollectionOptimizer {
     }
 
     /**
-     * Measure the traded volume of what the shown options sell and buy, once
-     * per item, and redraw when that is done: a bound only applies to a volume
-     * already measured. The lookup is the shared liquidity one, which asks the
-     * pooled history only when the player has turned it on.
-     * @param {Array<Object>} options
+     * Measure the traded volume of what the given options sell and buy, and
+     * redraw when one lands: a bound only applies to a volume already measured.
+     * The lookup is the shared liquidity one, which asks the pooled history only
+     * when the player has turned it on.
+     *
+     * `volumesAsked` holds only items with a confirmed measurement. An item whose
+     * lookup failed or had no history to ask (the opt-in is off) is asked again
+     * on the next draw, and so is one measured before the history setting or
+     * source changed (the cache keys on both, so {@link hasMeasuredVolume} no
+     * longer confirms it). A redraw follows only when something new was
+     * measured, so an unavailable history cannot loop.
+     * @param {Array<Object>} options - Ranking rows or plan steps
      */
     warmVolumes(options) {
         const fresh = [];
+        const queued = new Set();
         for (const option of options || []) {
             for (const hrid of [...(option.sold?.keys?.() || []), ...(option.bought?.keys?.() || [])]) {
-                if (this.volumesAsked.has(hrid)) continue;
-                this.volumesAsked.add(hrid);
+                if (queued.has(hrid) || this.volumesInFlight.has(hrid)) continue;
+                if (this.volumesAsked.has(hrid)) {
+                    if (hasMeasuredVolume(hrid)) continue;
+                    this.volumesAsked.delete(hrid);
+                }
+                queued.add(hrid);
                 fresh.push({ itemHrid: hrid });
             }
         }
         if (fresh.length === 0) return;
         const generation = this.generation;
+        const inFlight = this.volumesInFlight;
+        for (const { itemHrid } of fresh) inFlight.add(itemHrid);
+        // One warm-up at a time: each prefetchLiquidity runs its own four-request pool, so the plan's
+        // and the ranking's, started by the same draw, would double the bound on the pooled-history host
+        const previous = this.volumesWarming;
         this.volumesWarming = (async () => {
+            try {
+                await previous;
+            } catch {
+                // That warm-up reports its own failure
+            }
             try {
                 await prefetchLiquidity(fresh);
             } catch (error) {
                 console.error('[CollectionOptimizer] Measuring market volumes failed:', error);
             }
-            if (generation !== this.generation || this.collapsed) return;
+            for (const { itemHrid } of fresh) inFlight.delete(itemHrid);
+            if (generation !== this.generation) return;
+            let measured = 0;
+            for (const { itemHrid } of fresh) {
+                if (!hasMeasuredVolume(itemHrid)) continue;
+                this.volumesAsked.add(itemHrid);
+                measured++;
+            }
+            if (measured === 0 || this.collapsed) return;
             const root = document.querySelector(`.${PANEL_CLASS}`);
             if (root && this.index) this.render(root);
         })();
