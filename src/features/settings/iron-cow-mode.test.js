@@ -131,6 +131,10 @@ describe('iron cow mode turns the merged market dropdowns off, not to their defa
         expect(IRON_COW_SETTINGS.has('inv_valueBadges')).toBe(true);
     });
 
+    test('the self-use Keep chip is locked off with the features it serves', () => {
+        expect(IRON_COW_SETTINGS.has('itemTooltip_selfUseKeepChip')).toBe(true);
+    });
+
     test('marketplace-only buttons are locked off too', () => {
         expect(IRON_COW_SETTINGS.has('enhanceSim_protectionMarketplaceButton')).toBe(true);
         expect(IRON_COW_SETTINGS.has('labyrinthMissingSuppliesButton')).toBe(true);

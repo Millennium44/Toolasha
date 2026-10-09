@@ -45,6 +45,12 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
             return fallback;
         },
+        onSettingChange: (id, cb) => {
+            (settings.listeners ||= {})[id] = [...(settings.listeners?.[id] || []), cb];
+            return () => {
+                settings.listeners[id] = settings.listeners[id].filter((c) => c !== cb);
+            };
+        },
         COLOR_TOOLTIP_INFO: '#abc',
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_TOOLTIP_PROFIT: '#0f0',
@@ -1232,6 +1238,17 @@ describe('keep for self-use chip', () => {
         await settleLong();
         const chip = el.querySelector('.toolasha-selfuse-keep-chip');
         expect(chip?.getAttribute('data-item-hrid')).toBe('/items/frenzy');
+    });
+
+    test('turning the setting off removes a chip already drawn', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).not.toBeNull();
+        settings.keepChip = false;
+        for (const cb of settings.listeners?.itemTooltip_selfUseKeepChip || []) cb(false);
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
     });
 
     test('an alchemy output gets the chip, and K flips its mark', async () => {

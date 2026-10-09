@@ -429,6 +429,17 @@ class TooltipPrices {
         // The "Keep for self-use" chip, clickable and K-pressable. Inert while no chip is on
         // screen, and K does nothing while the chip setting is off.
         installKeepToggle(() => !!config.getSetting(KEEP_CHIP_SETTING));
+        // Turned off with a tooltip open: the chip already drawn goes too, since a tooltip
+        // already processed for its item is not redrawn on its own
+        this.unwatchKeepChipSetting?.();
+        this.unwatchKeepChipSetting =
+            typeof config.onSettingChange === 'function'
+                ? config.onSettingChange(KEEP_CHIP_SETTING, (value) => {
+                      if (!value) {
+                          for (const chip of document.querySelectorAll(`.${KEEP_SECTION_CLASS}`)) chip.remove();
+                      }
+                  })
+                : null;
 
         // Register with centralized DOM observer
         this.setupObserver();
@@ -2470,6 +2481,8 @@ class TooltipPrices {
 
             uninstallEnhancementSourceToggle();
             uninstallKeepToggle();
+            this.unwatchKeepChipSetting?.();
+            this.unwatchKeepChipSetting = null;
             selfUseWanted.stopWatching();
             stopInsteadListeners();
 
