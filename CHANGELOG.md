@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Smaller Keep chip with its own switch
+
+- The Keep for self-use chip on tooltips is now a small one-line tag behind its own setting (off by default); marks you already made still count and stay in the keep list in Settings.
+
 <!-- shipped in 3.66.0 -->
 
 ### Settings panel follows Iron Cow; keep list stays in sync
