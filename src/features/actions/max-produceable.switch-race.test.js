@@ -63,6 +63,7 @@ vi.mock('./action-panel-sort.js', () => ({
         },
         updateProfit: () => {},
         updateExpPerHour: () => {},
+        updateMaxProduceable: () => {},
         isPinned: () => false,
         triggerSort: () => {},
         registerPanel: () => {},

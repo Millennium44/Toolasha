@@ -207,3 +207,46 @@ describe('a character switch inside the pin read', () => {
         expect(actionPanelSort.sortMode).toBe('default');
     });
 });
+
+describe('Craftable sort mode', () => {
+    function makePanels(counts) {
+        const container = document.createElement('div');
+        const panels = Object.entries(counts).map(([hrid, count]) => {
+            const panel = document.createElement('div');
+            panel.dataset.hrid = hrid;
+            container.appendChild(panel);
+            actionPanelSort.registerPanel(panel, hrid);
+            if (count !== undefined) actionPanelSort.updateMaxProduceable(panel, count);
+            return panel;
+        });
+        return { container, panels };
+    }
+
+    test('orders by max produceable, most first, with uncounted panels last', () => {
+        const { container } = makePanels({
+            '/actions/a': 3,
+            '/actions/gather': undefined,
+            '/actions/b': 40,
+            '/actions/c': 0,
+        });
+        actionPanelSort.sortMode = 'craftable';
+        actionPanelSort.sortPanelsByProfit();
+        expect([...container.children].map((el) => el.dataset.hrid)).toEqual([
+            '/actions/b',
+            '/actions/a',
+            '/actions/c',
+            '/actions/gather',
+        ]);
+    });
+
+    test('a stored craftable mode is adopted and an unknown one falls back to default', async () => {
+        store.data.actionSortMode_char1 = 'craftable';
+        await actionPanelSort.initialize();
+        expect(actionPanelSort.sortMode).toBe('craftable');
+
+        actionPanelSort.onCharacterSwitching();
+        store.data.actionSortMode_char1 = 'bogus';
+        await actionPanelSort.initialize();
+        expect(actionPanelSort.sortMode).toBe('default');
+    });
+});
