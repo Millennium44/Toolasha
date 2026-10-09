@@ -769,6 +769,49 @@ describe('official alchemy rules', () => {
         expect(alchemyProfitCalculator.calculateTransmuteProfit('/items/milk').successRateBreakdown.base).toBe(0.5);
     });
 
+    test.each(paths)('%s: a no-tea candidate does not keep the success rate an Alchemy Tea lifted', (_name, run) => {
+        // Level 48 against a level 50 item: the tea's +2 levels cancel the penalty, a no-tea run does not
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 48 }];
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.teaSkillLevelBonus = (_type, slots) => (slots?.length ? 2 : 0);
+        mocks.itemPrices = {
+            '/items/cheese_hat': 100,
+            '/items/cheese': 500,
+            '/items/milk': 100,
+            '/items/alchemy_tea': 10,
+        };
+        const pick = (usesTea) => {
+            alchemyProfitCalculator._comboFilter = (combo) => combo.catalystHrid === null && combo.usesTea === usesTea;
+            try {
+                return run(alchemyProfitCalculator);
+            } finally {
+                alchemyProfitCalculator._comboFilter = null;
+            }
+        };
+
+        expect(pick(true).successRateBreakdown.levelPenalty).toBe(0);
+        expect(pick(false).successRateBreakdown.levelPenalty).toBeCloseTo((0.9 / 50) * (48 - 50), 10);
+    });
+
+    test.each(paths)('%s: an at-level character has no penalty in either candidate', (_name, run) => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.teaSkillLevelBonus = (_type, slots) => (slots?.length ? 2 : 0);
+        mocks.itemPrices = {
+            '/items/cheese_hat': 100,
+            '/items/cheese': 500,
+            '/items/milk': 100,
+            '/items/alchemy_tea': 10,
+        };
+        for (const usesTea of [true, false]) {
+            alchemyProfitCalculator._comboFilter = (combo) => combo.catalystHrid === null && combo.usesTea === usesTea;
+            try {
+                expect(run(alchemyProfitCalculator).successRateBreakdown.levelPenalty).toBe(0);
+            } finally {
+                alchemyProfitCalculator._comboFilter = null;
+            }
+        }
+    });
+
     test('keeps a captured self-return recipe priced at its base level', () => {
         mocks.initClientData.itemDetailMap['/items/celestial_alembic'] = {
             hrid: '/items/celestial_alembic',

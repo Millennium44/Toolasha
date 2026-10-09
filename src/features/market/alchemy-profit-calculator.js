@@ -449,6 +449,20 @@ class AlchemyProfitCalculator {
     }
 
     /**
+     * The under-level penalty a no-tea candidate faces: the live drinks may lift the
+     * effective alchemy level, and a candidate that drops them drops that lift too.
+     * @param {number} itemLevel
+     * @param {Array|null} skills
+     * @param {Object} noTeaEconomics - Null when no no-tea candidate exists
+     * @param {{itemDetailMap: Object, equipment: Map}} context
+     * @returns {number|null} The penalty without drinks, null when there is no no-tea candidate
+     */
+    _noTeaLevelPenalty(itemLevel, skills, noTeaEconomics, { itemDetailMap, equipment }) {
+        if (!noTeaEconomics) return null;
+        return this.getUnderLevelPenalty(itemLevel, skills, { drinkSlots: [], itemDetailMap, equipment });
+    }
+
+    /**
      * The unmodified base success rate for one kind of alchemy on one item.
      *
      * Public because the success-rate stamp written onto an alchemy session has
@@ -631,7 +645,10 @@ class AlchemyProfitCalculator {
      * @param {number} params.alchemyBonusRevenue - Bonus revenue per hour (essences + rares)
      * @param {Function} params.computeNetProfit - fn(successRate) => netProfitPerAttempt
      * @param {Function} params.computeTeaCost - fn(teaBonus) => totalTeaCostPerHour
-     * @param {number} [params.levelPenalty=0] - Under-level penalty for transmute
+     * @param {number} [params.levelPenalty=0] - Under-level penalty with the live drinks (an Alchemy Tea
+     *   raises the effective level)
+     * @param {number|null} [params.noTeaLevelPenalty] - The penalty without the drinks; the no-tea
+     *   candidates use it (null: same as `levelPenalty`)
      * @param {boolean} [params.fixedTeaSelection=false] - Keep the supplied drinks in every catalyst candidate
      * @param {boolean} [params.hasMissingTeaPrices=false] - Exclude unpriced drinks from optional searches
      * @returns {Object} { catalystBonus, catalystHrid, catalystPrice, teaBonus, teaCostPerHour, successRateBreakdown }
@@ -650,6 +667,7 @@ class AlchemyProfitCalculator {
         fixedTeaSelection = false,
         hasMissingTeaPrices = false,
         noTeaEconomics = null,
+        noTeaLevelPenalty = null,
     }) {
         const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
         const typeSpecificHrid = CATALYST_HRIDS[actionType];
@@ -704,7 +722,7 @@ class AlchemyProfitCalculator {
                 baseSuccessRate,
                 combo.catalystBonus,
                 combo.teaBonus,
-                levelPenalty
+                !combo.usesTea && noTeaLevelPenalty !== null ? noTeaLevelPenalty : levelPenalty
             );
             const successRate = successRateBreakdown.total;
 
@@ -1012,6 +1030,10 @@ class AlchemyProfitCalculator {
                 baseSuccessRate: BASE_SUCCESS_RATES.COINIFY,
                 levelPenalty: this.getUnderLevelPenalty(itemLevel, skills, {
                     drinkSlots,
+                    itemDetailMap: gameData.itemDetailMap,
+                    equipment,
+                }),
+                noTeaLevelPenalty: this._noTeaLevelPenalty(itemLevel, skills, noTeaEconomics, {
                     itemDetailMap: gameData.itemDetailMap,
                     equipment,
                 }),
@@ -1399,6 +1421,10 @@ class AlchemyProfitCalculator {
                 baseSuccessRate: BASE_SUCCESS_RATES.DECOMPOSE,
                 levelPenalty: this.getUnderLevelPenalty(itemLevel, skills, {
                     drinkSlots,
+                    itemDetailMap: gameData.itemDetailMap,
+                    equipment,
+                }),
+                noTeaLevelPenalty: this._noTeaLevelPenalty(itemLevel, skills, noTeaEconomics, {
                     itemDetailMap: gameData.itemDetailMap,
                     equipment,
                 }),
@@ -1812,6 +1838,10 @@ class AlchemyProfitCalculator {
                 },
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 levelPenalty,
+                noTeaLevelPenalty: this._noTeaLevelPenalty(itemLevel, skills, noTeaEconomics, {
+                    itemDetailMap: gameData.itemDetailMap,
+                    equipment,
+                }),
                 teaBonusOverride,
                 catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
