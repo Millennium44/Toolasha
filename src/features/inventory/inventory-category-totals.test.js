@@ -366,8 +366,8 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
         expect(other.querySelector('[data-mwi-category-total]')).toBeNull();
     });
 
-    test('a label-less currency tab gets no total', () => {
-        const { root, tab } = drawLabelessTab('coin');
+    test.each(['coin', 'labyrinth_token', 'guild_token'])('a label-less currency tab of %s gets no total', (icon) => {
+        const { root, tab } = drawLabelessTab(icon);
         badgeManagerMock.currentInventoryElem = root;
         inventoryCategoryTotals.updateAllCategoryTotals();
         expect(tab.querySelector('.mwi-category-total')).toBeNull();

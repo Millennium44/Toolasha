@@ -39,7 +39,23 @@ const CURRENCY_ICON_IDS = new Set([
     'sinister_token',
     'enchanted_token',
     'pirate_token',
+    'labyrinth_token',
+    'guild_token',
 ]);
+
+const CURRENCY_CATEGORY_HRID = '/item_categories/currency';
+
+/**
+ * Whether a tile's sprite id is a currency: the known list, or the game's own item category,
+ * so a currency the list has not caught up with still counts.
+ * @param {string|undefined} iconId
+ * @returns {boolean}
+ */
+function isCurrencyIcon(iconId) {
+    if (!iconId) return false;
+    if (CURRENCY_ICON_IDS.has(iconId)) return true;
+    return dataManager.getItemDetails?.(`/items/${iconId}`)?.categoryHrid === CURRENCY_CATEGORY_HRID;
+}
 
 const ITEMS_UPDATED_DEBOUNCE_MS = 300;
 
@@ -261,7 +277,7 @@ class InventoryCategoryTotals {
                 // Item icons often carry the sprite id on `xlink:href` alone
                 const href = getIconHref(tile, 'items_sprite') ?? '';
                 const iconId = href.match(/#(.+)$/)?.[1];
-                return iconId && CURRENCY_ICON_IDS.has(iconId);
+                return isCurrencyIcon(iconId);
             });
             if (allCurrencies) {
                 return true;
