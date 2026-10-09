@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
-import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { MARKET_TAX, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 
 const mocks = vi.hoisted(() => ({
     settings: { expectedValue_includeCowbells: true },
@@ -1002,5 +1002,16 @@ describe('calculateGrossContainerValue', () => {
     test('does not read a cached taxed value or write one when cold', () => {
         expectedValueCalculator.calculateGrossContainerValue(CHEST_HRID);
         expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBeNull();
+    });
+
+    test('takes Cowbells at a tenth of the untaxed bag, leaving the taxed path alone', () => {
+        mocks.prices['/items/bag_of_10_cowbells'] = 1000;
+        const ctx = { path: new Set(), truncated: false, gross: true };
+
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell', 0, ctx).value).toBeCloseTo(100, 6);
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell').value).toBeCloseTo(
+            (1000 * (1 - COWBELL_BAG_TAX)) / 10,
+            6
+        );
     });
 });

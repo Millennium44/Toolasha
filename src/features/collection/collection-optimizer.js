@@ -794,6 +794,28 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 const perSource = recipe.batch / recipe.baseCount;
                 const withSource = new Map(yields);
                 withSource.set(hrid, (withSource.get(hrid) || 0) + perSource);
+                // The decompose eats one source per unit of the run; the Gourmet copies beyond it are
+                // made and paid for too, and nothing else would sell them. They are sold like any output
+                const leftover = perSource - 1;
+                let keptWithLeftover = kept;
+                let leftoverUnpriced = false;
+                let leftoverCoins = 0;
+                if (leftover > 1e-9) {
+                    const extra = saleSink();
+                    if (extra.add(sell(hrid), leftover)) {
+                        keptWithLeftover = new Map(kept);
+                        for (const [keptHrid, entry] of extra.kept) {
+                            const have = keptWithLeftover.get(keptHrid);
+                            keptWithLeftover.set(keptHrid, {
+                                perSource: (have?.perSource || 0) + entry.perSource,
+                                unit: entry.unit,
+                            });
+                        }
+                        leftoverCoins = extra.coins;
+                    } else {
+                        leftoverUnpriced = true;
+                    }
+                }
                 sources.push({
                     ...shared,
                     route: 'craftDecompose',
@@ -802,7 +824,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     // decompose actions: the smallest run that is both
                     batch: wholeActionsBatch(recipe.baseCount, bulk),
                     yields: withSource,
-                    cost: recipe.cost * perSource + overheadCost,
+                    kept: keptWithLeftover,
+                    partlyUnpriced: shared.partlyUnpriced || leftoverUnpriced,
+                    cost: recipe.cost * perSource + overheadCost - leftoverCoins,
                     seconds: chain.seconds + recipe.seconds * perSource,
                 });
             }

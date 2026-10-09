@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence and Artisan's Crates.
 
+### Gourmet leftovers and untaxed Cowbells
+
+- The collection optimizer now sells the extra Gourmet copies a craft-then-decompose route makes, so those routes no longer read too expensive; with the personal-use sell-tax toggle on, Cowbells inside bonus containers are valued before tax too.
+
 ### Supplies-full notice and Currencies by tab icon
 
 - Buy missing supplies now says so when nothing is short instead of doing nothing, and a game inventory tab is judged to be Currencies by its own icon, so a filtered view that holds only tokens keeps its total.
