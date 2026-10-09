@@ -316,6 +316,63 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
         expect(staleLabel.querySelector('.mwi-category-total')).toBeNull();
     });
 
+    /**
+     * The live shape of a single-category native tab (measured on Resources, per inventory-sort.js):
+     * a selected role=tab in the tab strip and a grid of tiles with no Inventory_label and no
+     * Inventory_categoryButton.
+     * @param {string} icon - Tile sprite id
+     * @returns {{root: HTMLElement, tab: HTMLElement}}
+     */
+    function drawLabelessTab(icon) {
+        const root = document.createElement('div');
+        root.className = 'Inventory_items__6SXv0';
+        const strip = document.createElement('div');
+        const tab = document.createElement('button');
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', 'true');
+        tab.innerHTML = '<svg><use href="/static/misc_sprite.svg#item_category_resources"></use></svg>';
+        const other = document.createElement('button');
+        other.setAttribute('role', 'tab');
+        other.setAttribute('aria-selected', 'false');
+        strip.append(tab, other);
+        const panel = document.createElement('div');
+        panel.className = 'TabPanel_tabPanel__tXMJF';
+        const grid = document.createElement('div');
+        grid.className = 'Inventory_itemGrid__20YAH';
+        for (const value of [3000, 4000]) {
+            const item = document.createElement('div');
+            item.className = 'Item_itemContainer__x7kH1';
+            item.innerHTML = `<svg><use href="/static/items_sprite.svg#${icon}"></use></svg>`;
+            item.dataset.askValue = String(value);
+            grid.appendChild(item);
+        }
+        panel.appendChild(grid);
+        root.append(strip, panel);
+        document.body.appendChild(root);
+        return { root, tab, other };
+    }
+
+    test('a label-less single-category tab hosts its total on the selected tab', () => {
+        const { root, tab, other } = drawLabelessTab('cheese');
+        // A total left on a tab that is no longer selected is dropped
+        const stale = document.createElement('span');
+        stale.setAttribute('data-mwi-category-total', 'true');
+        other.appendChild(stale);
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(tab.querySelector('.mwi-category-total').textContent).toBe('7000');
+        expect(other.querySelector('[data-mwi-category-total]')).toBeNull();
+    });
+
+    test('a label-less currency tab gets no total', () => {
+        const { root, tab } = drawLabelessTab('coin');
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(tab.querySelector('.mwi-category-total')).toBeNull();
+    });
+
     test('a native tab click re-totals the newly shown panel without Inventory Sort', async () => {
         const { root, labels } = drawTabbedInventory();
         const tab = document.createElement('button');

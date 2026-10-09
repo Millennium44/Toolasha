@@ -211,13 +211,25 @@ class InventoryCategoryTotals {
             (grid) => !grid.closest('[class*="TabPanel_hidden"]')
         );
 
+        // A single-category native tab (Resources, say) draws its grid with no Inventory_label at
+        // all (see inventory-sort.js shouldSortCategory), so its total is hosted on the selected
+        // tab instead. Totals on any other tab are stale and go.
+        const selectedTab = inventoryElem.querySelector('[role="tab"][aria-selected="true"]');
+        inventoryElem.querySelectorAll(`[role="tab"] [${SPAN_ATTR}]`).forEach((span) => {
+            if (span.closest('[role="tab"]') !== selectedTab) span.remove();
+        });
+
         for (const categoryDiv of categoryDivs) {
-            const labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');
+            let labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');
+            if (!labelEl) {
+                labelEl = selectedTab;
+            }
             if (!labelEl) {
                 continue;
             }
 
             if (this.isCurrenciesGrid(categoryDiv, labelEl)) {
+                if (labelEl === selectedTab) this.injectOrUpdateLabel(labelEl, 0);
                 continue;
             }
 
@@ -254,6 +266,11 @@ class InventoryCategoryTotals {
             if (allCurrencies) {
                 return true;
             }
+        }
+
+        // A tab hosting the total has no text label to read
+        if (labelEl.matches('[role="tab"]')) {
+            return false;
         }
 
         const existingSpan = labelEl.querySelector(`[${SPAN_ATTR}]`);
