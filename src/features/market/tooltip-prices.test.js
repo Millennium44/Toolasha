@@ -179,6 +179,11 @@ vi.mock('../../core/storage.js', () => ({
         setJSON: async (_key, value) => {
             keepState.kept = new Set(value);
         },
+        update: async (_key, mutate) => {
+            const next = mutate([...keepState.kept], true);
+            if (next !== undefined) keepState.kept = new Set(next);
+            return { written: next !== undefined, value: [...keepState.kept] };
+        },
     },
 }));
 vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: () => 0 }));

@@ -180,24 +180,59 @@ function notify() {
 }
 
 /**
- * Write a new list for the character it was read for. The character is
- * captured before the read and checked after it: the write is a full
- * overwrite, so a switch landing in between must not put one character's list
- * over another's.
+ * A stored value as a list: an array as written, or JSON text from an older write.
+ * @param {*} raw
+ * @returns {Array<string>}
+ */
+function parseStored(raw) {
+    if (typeof raw === 'string') {
+        try {
+            return sanitize(JSON.parse(raw));
+        } catch {
+            return [];
+        }
+    }
+    return sanitize(raw);
+}
+
+/**
+ * Change the current character's list in one read-fold-write transaction
+ * (`storage.update`), so the change is applied to what is stored — not to this
+ * tab's cache, which another tab's mark or a second quick click may have
+ * outrun — and adopt what was stored.
+ *
+ * The character is captured before and checked inside the transaction and
+ * again after it: a switch landing in between writes nothing, and the result
+ * is never filed under the newcomer.
  * @param {(list: Array<string>) => Array<string>} change
- * @returns {Promise<Array<string>|null>} The saved list, null when the character changed
+ * @returns {Promise<Array<string>|null>} The saved list, null when the character changed or the write failed
  */
 async function update(change) {
     const charId = currentCharId();
-    const list = await load();
-    if (charId !== currentCharId()) {
-        console.warn('[SelfUseWanted] Keep list not saved: the character changed while it loaded');
+    const key = keyFor(charId);
+    watchOtherTabs();
+    let switched = false;
+    const outcome = await storage.update(
+        key,
+        (current) => {
+            if (charId !== currentCharId()) {
+                switched = true;
+                return undefined;
+            }
+            return sanitize(change(parseStored(current)));
+        },
+        'settings'
+    );
+    if (switched || charId !== currentCharId()) {
+        console.warn('[SelfUseWanted] Keep list not saved: the character changed while it was written');
         return null;
     }
-    const next = sanitize(change([...list]));
+    if (!outcome) {
+        console.error('[SelfUseWanted] Keep list could not be saved');
+        return null;
+    }
+    const next = parseStored(outcome.value);
     adopt(charId, next);
-    // Fire-and-forget: the cache already answers, the write persists behind it
-    storage.setJSON(keyFor(charId), next, 'settings');
     notify();
     return next;
 }

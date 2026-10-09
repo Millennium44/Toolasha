@@ -379,6 +379,12 @@ vi.mock('../../core/storage.js', () => ({
             mocks.store.set(key, value);
             return true;
         },
+        update: async (key, mutate) => {
+            const found = mocks.store.has(key);
+            const next = mutate(mocks.store.get(key), found);
+            if (next !== undefined) mocks.store.set(key, next);
+            return { written: next !== undefined, value: mocks.store.get(key) };
+        },
         delete: async (key) => {
             mocks.store.delete(key);
             return true;

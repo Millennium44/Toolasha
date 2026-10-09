@@ -30,6 +30,17 @@ vi.mock('../../core/storage.js', () => ({
             state.writes.push({ key, store });
             state.stored[key] = value;
         },
+        // One read-fold-write transaction over what is stored, the way core/storage.js runs it
+        update: async (key, mutate, store) => {
+            const found = key in state.stored;
+            const current = state.stored[key];
+            state.onRead?.();
+            const next = mutate(current, found);
+            if (next === undefined) return { written: false, value: current };
+            state.writes.push({ key, store });
+            state.stored[key] = next;
+            return { written: true, value: next };
+        },
         onWrite: (listener) => {
             state.writeListeners.add(listener);
             return () => state.writeListeners.delete(listener);
@@ -158,6 +169,40 @@ describe('marking items', () => {
     test('a stored list is read defensively: junk and duplicates dropped', async () => {
         state.stored.selfUseWanted_main = ['/items/frenzy', '/items/frenzy', 42, null, 'frenzy'];
         expect([...(await selfUseWanted.getSet())]).toEqual(['/items/frenzy']);
+    });
+});
+
+describe('changes land on what is stored', () => {
+    test('a mark made in another tab is kept when this tab marks another item', async () => {
+        await selfUseWanted.load();
+        // Committed by another tab, not yet heard here
+        state.stored.selfUseWanted_main = ['/items/puncture'];
+
+        await selfUseWanted.setKept('/items/frenzy', true);
+
+        expect(state.stored.selfUseWanted_main).toEqual(['/items/puncture', '/items/frenzy']);
+        expect(selfUseWanted.getCached()).toEqual(['/items/puncture', '/items/frenzy']);
+    });
+
+    test('a removal made in another tab is not undone by a later change here', async () => {
+        state.stored.selfUseWanted_main = ['/items/frenzy', '/items/puncture'];
+        await selfUseWanted.load();
+        state.stored.selfUseWanted_main = ['/items/puncture'];
+
+        await selfUseWanted.setKept('/items/puncture', false);
+
+        expect(state.stored.selfUseWanted_main).toEqual([]);
+    });
+
+    test('two quick removals both land', async () => {
+        state.stored.selfUseWanted_main = ['/items/frenzy', '/items/puncture', '/items/fierce_aura'];
+        await selfUseWanted.load();
+        await Promise.all([
+            selfUseWanted.setKept('/items/frenzy', false),
+            selfUseWanted.setKept('/items/puncture', false),
+        ]);
+        expect(state.stored.selfUseWanted_main).toEqual(['/items/fierce_aura']);
+        expect(selfUseWanted.getCached()).toEqual(['/items/fierce_aura']);
     });
 });
 
