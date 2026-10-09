@@ -13,6 +13,7 @@ const settings = vi.hoisted(() => ({
     hideInEnhanceSelector: false,
     loadoutMarksEnabled: true,
     selfUseAlchemy: false,
+    insteadOfBuying: false,
     patientTickBuy: false,
     patientTickSell: false,
 }));
@@ -21,7 +22,7 @@ const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose:
 const openableState = vi.hoisted(() => ({ drops: {} }));
 const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null }));
 /** Items the market cannot price, and the shop-conversion value (if any) for each */
-const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {}, shopSides: [], sided: {} }));
+const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {}, shopSides: [], sided: {}, info: {} }));
 /** The sales tax the after-tax figures take (0 keeps the older arithmetic readable) */
 const taxState = vi.hoisted(() => ({ rate: 0 }));
 /** The character's self-use keep list */
@@ -33,6 +34,8 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_hideInEnhanceSelector') return settings.hideInEnhanceSelector;
             if (id === 'itemTooltip_loadoutMarks') return settings.loadoutMarksEnabled;
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
+            if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
+            if (id === 'itemTooltip_alchemyInsteadGoldPerHour') return 0;
             return true;
         },
         getSettingValue: (id, fallback) => {
@@ -146,6 +149,14 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParamsFor: () => null }));
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => gatheringState.profitData }));
 vi.mock('../../utils/market-data.js', () => ({
+    // Book prices by mode, for the instead-of-buying lines: `{hrid: {ask, bid}}`
+    getItemPriceInfo: (hrid, options) => {
+        const price = priceState.info[hrid]?.[options?.mode];
+        return price == null
+            ? { price: null, source: null, estimated: false }
+            : { price, source: 'book', estimated: false };
+    },
+    withProfitPricingMode: (_mode, fn) => fn(),
     getItemPrices: () => ({ ask: 10, bid: 9 }),
     getItemPrice: (hrid, options) => {
         // Items with a separate ask and bid, keyed by side
@@ -215,6 +226,7 @@ const {
 } = await import('./tooltip-prices.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 const { default: selfUseWanted } = await import('./self-use-wanted.js');
+const { clearInsteadCache } = await import('./alchemy-instead-of-buying.js');
 
 /**
  * @param {string} innerHTML
@@ -248,6 +260,7 @@ beforeEach(async () => {
     settings.hideInEnhanceSelector = false;
     settings.loadoutMarksEnabled = true;
     settings.selfUseAlchemy = false;
+    settings.insteadOfBuying = false;
     alchemyState.profits = {};
     alchemyState.candidates = {};
     alchemyState.decompose = {};
@@ -258,6 +271,8 @@ beforeEach(async () => {
     priceState.shop = {};
     priceState.shopSides = [];
     priceState.sided = {};
+    priceState.info = {};
+    clearInsteadCache();
     taxState.rate = 0;
     keepState.kept = new Set();
     selfUseWanted._reset();
@@ -1219,5 +1234,54 @@ describe('keep for self-use chip', () => {
         observerState.handler(apple);
         await settleLong();
         expect(apple.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+});
+
+describe('instead of buying', () => {
+    // A Cheese Sword decomposes into 18 Cheese at 60% success, 100 actions an hour
+    const swordDecompose = () => ({
+        actionType: 'decompose',
+        itemHrid: '/items/cheese_sword',
+        actionsPerHour: 100,
+        successRate: 0.6,
+        requirementCosts: [{ itemHrid: '/items/cheese_sword', count: 1, price: 50 }],
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        dropRevenues: [],
+    });
+    const hoverCheese = async () => {
+        const el = itemTooltip('Cheese');
+        observerState.handler(el);
+        for (let i = 0; i < 40; i++) await Promise.resolve();
+        return el;
+    };
+
+    beforeEach(() => {
+        priceState.info = { '/items/cheese': { ask: 10, bid: 9 }, '/items/cheese_sword': { ask: 50, bid: 45 } };
+        alchemyState.candidates = { 'decompose|/items/cheese_sword': [swordDecompose()] };
+    });
+
+    test('the setting off draws nothing, even with a cheaper route', async () => {
+        const el = await hoverCheese();
+        expect(el.dataset.pricesProcessedItem).toBe('Cheese');
+        expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
+    });
+
+    test('the setting on names the cheaper source and what it saves', async () => {
+        settings.insteadOfBuying = true;
+        const el = await hoverCheese();
+        const section = el.querySelector('.mwi-alchemy-instead');
+        expect(section).not.toBeNull();
+        // 50 / (18 × 0.6) = 4.63 a cheese against an ask of 10: 5.37 saved, 1,080 cheese an hour
+        expect(section.textContent).toContain('Instead of buying: decompose Cheese Sword — saves 5/unit');
+        expect(section.textContent).toContain('5.8K/hr of alchemy');
+    });
+
+    test('the setting on draws nothing when buying is cheaper', async () => {
+        settings.insteadOfBuying = true;
+        priceState.info['/items/cheese_sword'] = { ask: 500, bid: 450 };
+        const el = await hoverCheese();
+        expect(el.dataset.pricesProcessedItem).toBe('Cheese');
+        expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
     });
 });

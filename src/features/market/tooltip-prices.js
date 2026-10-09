@@ -56,6 +56,7 @@ import selfUseWanted, {
     installKeepToggle,
     uninstallKeepToggle,
 } from './self-use-wanted.js';
+import { liveAlternatives, INSTEAD_SETTING } from './alchemy-instead-of-buying.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
@@ -78,6 +79,7 @@ const TOOLTIP_FEATURE_SETTINGS = [
     'itemTooltip_profit',
     'itemTooltip_multiActionProfit',
     'itemTooltip_selfUseAlchemy',
+    'itemTooltip_alchemyInsteadOfBuying',
     'itemTooltip_gathering',
     'itemTooltip_gatheringRareDrops',
     'itemTooltip_abilityStatus',
@@ -97,6 +99,16 @@ const SELF_USE_TITLE =
 /** Footnote under the self-use lines. */
 const SELF_USE_FOOTNOTE =
     'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.';
+
+/** The "Instead of buying" section's class */
+const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
+
+/** Hover text on every "Instead of buying" line. */
+const INSTEAD_TITLE =
+    'Instead of buying: the source bought at its ask and decomposed or transmuted, the catalyst and tea at ' +
+    'their asks, every other output sold at its bid after tax (or valued at its ask when marked "Keep for ' +
+    'self-use"), divided by the expected units of this item per action. Estimated prices are left out. With ' +
+    'a gold rate set, the alchemy time is charged at that rate.';
 
 /** Most kept outputs a self-use label names before summarizing the rest */
 const SELF_USE_KEEP_NAMES = 2;
@@ -594,6 +606,7 @@ class TooltipPrices {
                     '.market-ev-injected',
                     '.market-gathering-injected',
                     '.market-multi-action-injected',
+                    `.${INSTEAD_SECTION_CLASS}`,
                     '.market-enhancement-injected',
                     '.mwi-enhancement-milestones',
                     '.mwi-ability-status',
@@ -631,7 +644,7 @@ class TooltipPrices {
             isItemTooltip &&
             !isCollectionTooltip &&
             !(info.enhancementLevel > 0) &&
-            config.getSetting('itemTooltip_selfUseAlchemy') &&
+            (config.getSetting('itemTooltip_selfUseAlchemy') || config.getSetting(INSTEAD_SETTING)) &&
             selfUseWanted.isAlchemyOutput(itemHrid);
 
         // Check if this is an openable container first (they have no market price)
@@ -700,6 +713,11 @@ class TooltipPrices {
             await this.injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip, {
                 craftProfitData,
             });
+        }
+
+        // The cheapest alchemy route to this item, when one beats buying it
+        if (config.getSetting(INSTEAD_SETTING) && enhancementLevel === 0 && !isCollectionTooltip) {
+            await this.injectInsteadOfBuyingDisplay(tooltipElement, itemHrid, itemName);
         }
 
         // Check for gathering sources (Foraging, Woodcutting, Milking)
@@ -774,6 +792,59 @@ class TooltipPrices {
 
         // Fix tooltip overflow (ensure it stays in viewport)
         dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
+    }
+
+    /**
+     * The "Instead of buying" lines: the best alchemy routes to this item that beat its ask.
+     * Draws nothing when buying is cheapest.
+     * @param {Element} tooltipElement
+     * @param {string} itemHrid
+     * @param {string} itemName - The name this tooltip was processed for
+     * @returns {Promise<void>}
+     */
+    async injectInsteadOfBuyingDisplay(tooltipElement, itemHrid, itemName) {
+        try {
+            const wanted = await selfUseWanted.getSet();
+            // The pointer may have moved to another item during the read
+            if (tooltipElement.dataset.pricesProcessedItem !== itemName) return;
+            const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
+            if (!tooltipText || tooltipText.querySelector(`.${INSTEAD_SECTION_CLASS}`)) return;
+            const { targetAsk, alternatives } = liveAlternatives(itemHrid, wanted);
+            if (!alternatives.length) return;
+
+            const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
+            let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
+            for (const alt of alternatives) {
+                const verb = alt.actionType === 'decompose' ? 'decompose' : 'transmute';
+                const atLeast = alt.partlyUnpriced ? '≥' : '';
+                let rate = '';
+                if (alt.savingPerHour !== null) {
+                    rate =
+                        alt.timeCostPerUnit > 0
+                            ? ` (+${formatKMB(alt.savingPerHour)}/hr over your gold rate)`
+                            : ` (${formatKMB(alt.savingPerHour)}/hr of alchemy)`;
+                }
+                html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${INSTEAD_TITLE}">`;
+                html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
+                html += '</div>';
+                const parts = [`${formatKMB(alt.costPerUnit)}/unit vs ${formatKMB(targetAsk)} ask`];
+                if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
+                parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
+                if (alt.kept.length > 0) parts.push(`keeps ${alt.kept.map(nameOf).join(', ')}`);
+                if (alt.partlyUnpriced) parts.push('an output unpriced');
+                html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;
+            }
+            html += '</div>';
+            const div = dom.createStyledDiv(
+                { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
+                '',
+                INSTEAD_SECTION_CLASS
+            );
+            div.innerHTML = html;
+            tooltipText.appendChild(div);
+        } catch (error) {
+            console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
+        }
     }
 
     /**
