@@ -328,6 +328,13 @@ class Storage {
         this._restoreDepth = 0;
         /** Store names whose writes are refused until the page reloads */
         this._restorePendingStores = new Set();
+        /**
+         * Per-key latches: store name -> keys a restore wrote there. Writes to
+         * other keys of the same store go through, so a pull that replaced one
+         * key does not freeze an unrelated writer sharing the store.
+         * @type {Map<string, Set<string>>}
+         */
+        this._restorePendingKeys = new Map();
         /** Keys already warned about under the latch, so the console is not flooded */
         this._restoreWarned = new Set();
         this._reconnecting = false; // Guard against concurrent reconnection attempts
@@ -2014,8 +2021,10 @@ class Storage {
                     return;
                 }
 
-                if (this._restoreGeneration !== restoreGeneration) {
+                if (this._restoreGeneration !== restoreGeneration && this.isRestorePending(storeName, key)) {
                     // A restore replaced this key while the timer was running.
+                    // Only a key it latched: a restore that wrote other keys of
+                    // the store (or other stores) left this one's value current.
                     // Standing down is the whole point: the value in hand is the
                     // pre-restore one, and the callers were told to reload.
                     console.warn(
@@ -2055,7 +2064,9 @@ class Storage {
                     // restore, which is the one thing the latch exists to stop.
                     // Same reasoning as the pre-write check above; this is the
                     // other side of the same await.
-                    if (this._restoreGeneration !== restoreGeneration || this._restorePendingStores.has(storeName)) {
+                    // Only a key the restore latched: a failed write to any other
+                    // key is requeued below like any failure, restore or not.
+                    if (this.isRestorePending(storeName, key)) {
                         console.warn(
                             `[Storage] Dropping a failed write to ${storeName}/${key} — it predates a restore. ` +
                                 'Reload the page; changes made before reloading are not kept.'
@@ -2469,10 +2480,10 @@ class Storage {
      * @returns {Promise<number>} Number of entries successfully written
      */
     async putAll(storeName, entries, options = {}) {
-        if (!options.bypassRestoreLatch && this._restorePendingStores.has(storeName)) {
+        if (!options.bypassRestoreLatch && this.isRestorePending(storeName)) {
             // One line per store, not per key: a recorder flushing a year of
             // chunks would otherwise fill the console with the same sentence
-            if (this._refuseDuringRestore('(bulk write)', storeName, 'save')) return 0;
+            entries = this._withoutLatchedKeys(storeName, entries);
         }
         const keys = Object.keys(entries || {});
         if (keys.length > 0) this._emitWrite(storeName, keys.length > WRITE_CHANNEL_KEYS_MAX ? null : keys, 'local');
@@ -2502,7 +2513,7 @@ class Storage {
         }
 
         // Recheck after the connection wait, including flushAll's internal calls.
-        if (!options.bypassRestoreLatch && this._refuseDuringRestore('(bulk write)', storeName, 'save')) return [];
+        if (!options.bypassRestoreLatch) entries = this._withoutLatchedKeys(storeName, entries);
 
         const keys = Object.keys(entries || {});
         if (keys.length === 0) {
@@ -3159,21 +3170,44 @@ class Storage {
      * restore alert both say the same thing, because a silent drop would be a
      * worse bug than the one this replaces.
      *
-     * @param {Iterable<string>} storeNames - Stores the restore wrote
+     * @param {Iterable<string>|Map<string, Iterable<string>>} storeNames - Stores the restore wrote whole, or a
+     *   Map of store -> keys written (latches those keys only; a null value latches the whole store)
      * @returns {void}
      */
     finishRestore(storeNames) {
-        const affected = new Set(storeNames || []);
-        if (affected.size === 0) return;
+        // A Map/object of store -> keys latches only those keys; names alone
+        // (an array/Set/iterable of strings) latch whole stores, as before.
+        const wholeStores = new Set();
+        /** @type {Map<string, Set<string>>} */
+        const keyed = new Map();
+        const isKeyed =
+            storeNames instanceof Map || (storeNames && typeof storeNames === 'object' && !storeNames[Symbol.iterator]);
+        if (isKeyed) {
+            const pairs = storeNames instanceof Map ? storeNames.entries() : Object.entries(storeNames);
+            for (const [name, keys] of pairs) {
+                if (keys === null || keys === undefined) wholeStores.add(name);
+                else if ([...keys].length > 0) keyed.set(name, new Set(keys));
+            }
+        } else {
+            for (const name of storeNames || []) wholeStores.add(name);
+        }
+        if (wholeStores.size === 0 && keyed.size === 0) return;
 
         this._restoreGeneration += 1;
-        for (const name of affected) this._restorePendingStores.add(name);
+        for (const name of wholeStores) this._restorePendingStores.add(name);
+        for (const [name, keys] of keyed) {
+            const have = this._restorePendingKeys.get(name) || new Set();
+            for (const k of keys) have.add(k);
+            this._restorePendingKeys.set(name, have);
+        }
 
-        // Anything still queued for an affected store predates the restore.
+        // Anything still queued for an affected store/key predates the restore.
         // Dropping it is the point; its callers are resolved false so nothing
-        // is left awaiting a write that will never happen.
+        // is left awaiting a write that will never happen. The queue is keyed
+        // `${storeName}:${key}`, which is where the key comes from.
         for (const [timerKey, pending] of Array.from(this.pendingWrites.entries())) {
-            if (!affected.has(pending.storeName)) continue;
+            const key = timerKey.slice(pending.storeName.length + 1);
+            if (!wholeStores.has(pending.storeName) && !keyed.get(pending.storeName)?.has(key)) continue;
             const timer = this.saveDebounceTimers.get(timerKey);
             if (timer) clearTimeout(timer);
             this.saveDebounceTimers.delete(timerKey);
@@ -3183,25 +3217,57 @@ class Storage {
             for (const r of pending.resolvers || []) r(false);
         }
 
+        const described = [
+            ...wholeStores,
+            ...Array.from(keyed, ([name, keys]) => `${name} (${keys.size} key${keys.size === 1 ? '' : 's'})`),
+        ];
         console.warn(
-            `[Storage] Restored ${affected.size} store(s): ${Array.from(affected).join(', ')}. ` +
+            `[Storage] Restored ${described.length} store(s): ${described.join(', ')}. ` +
                 'Writes to them are refused until the page reloads, so nothing from before the restore ' +
                 'lands on top of it. Reload now — changes made before reloading will not be kept.'
         );
     }
 
     /**
+     * With a store and no key, true while ANY part of the store is latched
+     * (whole-store or some keys); pass `key` to ask about that key alone.
      * @param {string} [storeName] - Ask about one store, or omit for any
+     * @param {string} [key] - Ask about one key of the store
      * @returns {boolean} True while a restore is waiting for a reload
      */
-    isRestorePending(storeName) {
-        if (storeName === undefined) return this._restorePendingStores.size > 0;
-        return this._restorePendingStores.has(storeName);
+    isRestorePending(storeName, key) {
+        if (storeName === undefined) return this._restorePendingStores.size > 0 || this._restorePendingKeys.size > 0;
+        if (this._restorePendingStores.has(storeName)) return true;
+        const keys = this._restorePendingKeys.get(storeName);
+        if (!keys) return false;
+        return key === undefined ? keys.size > 0 : keys.has(key);
     }
 
     /** @returns {Array<string>} Stores a restore has latched */
     restorePendingStores() {
-        return Array.from(this._restorePendingStores);
+        return Array.from(new Set([...this._restorePendingStores, ...this._restorePendingKeys.keys()]));
+    }
+
+    /**
+     * Drop the latched keys from a bulk-write map, warning once per key.
+     * @param {string} storeName - Object store name
+     * @param {Record<string, *>} entries - Map of key -> value
+     * @returns {Record<string, *>} `entries`, or a copy without the refused keys
+     * @private
+     */
+    _withoutLatchedKeys(storeName, entries) {
+        if (!this.isRestorePending(storeName)) return entries;
+        if (this._restorePendingStores.has(storeName)) {
+            // One line per store, not per key (see putAll)
+            this._refuseDuringRestore('(bulk write)', storeName, 'save');
+            return {};
+        }
+        const out = {};
+        for (const key of Object.keys(entries || {})) {
+            if (this._refuseDuringRestore(key, storeName, 'save')) continue;
+            out[key] = entries[key];
+        }
+        return out;
     }
 
     /**
@@ -3213,12 +3279,12 @@ class Storage {
      * @private
      */
     _refuseDuringRestore(key, storeName, what) {
-        if (!this._restorePendingStores.has(storeName)) return false;
+        if (!this.isRestorePending(storeName, key)) return false;
         const seen = `${storeName}:${key}`;
         if (!this._restoreWarned.has(seen)) {
             this._restoreWarned.add(seen);
             console.warn(
-                `[Storage] Refusing to ${what} ${storeName}/${key}: a restore replaced this store and the page ` +
+                `[Storage] Refusing to ${what} ${storeName}/${key}: a restore replaced this ${this._restorePendingStores.has(storeName) ? 'store' : 'key'} and the page ` +
                     'has not reloaded yet. Reload now — changes made before reloading will not be kept.'
             );
         }

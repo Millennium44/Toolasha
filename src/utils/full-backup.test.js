@@ -497,7 +497,43 @@ describe('importEverything reports what did not land', () => {
         expect(storage.beginRestore).toHaveBeenCalled();
         // Every store took its keys, so every store is latched against
         // pre-restore writes landing on top of it
-        expect(storage.finishRestore).toHaveBeenCalledWith(new Set(['settings', 'xpHistory', 'dungeonRuns']));
+        const latched = storage.finishRestore.mock.calls[0][0];
+        expect(latched).toBeInstanceOf(Map);
+        expect(Array.from(latched.keys())).toEqual(['settings', 'xpHistory', 'dungeonRuns']);
+        // The latch names the keys the restore wrote, not the whole store
+        for (const [storeName, keys] of latched) {
+            expect(Array.from(keys).sort()).toEqual(Object.keys(payload.stores[storeName]).sort());
+        }
+    });
+
+    test('latches a restored record together with its tombstones companion key', async () => {
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+        payload.stores.settings = { enhancementTracker_sessions_abc: { sessions: [] } };
+
+        await importEverything(payload);
+
+        const keys = storage.finishRestore.mock.calls[0][0].get('settings');
+        expect(keys.has('enhancementTracker_sessions_abc')).toBe(true);
+        expect(keys.has('enhancementTracker_sessionTombstones_abc')).toBe(true);
+    });
+
+    test('latches a listing log and its graves together, whichever one the restore wrote', async () => {
+        const storage = (await import('../core/storage.js')).default;
+        db.set('marketListings', new Map());
+        const payload = await exportEverything();
+        payload.stores.marketListings = {
+            marketListingGraves_abc: { removed: { 1: 1 }, clearedThrough: 1 },
+            marketListingTimestamps_def: [],
+        };
+
+        await importEverything(payload);
+
+        const keys = storage.finishRestore.mock.calls[0][0].get('marketListings');
+        expect(keys.has('marketListingTimestamps_abc')).toBe(true);
+        expect(keys.has('marketListingGraves_def')).toBe(true);
+        // A pair is one character's: nothing else in the store is latched
+        expect(keys.size).toBe(4);
     });
 
     test('a store that wrote nothing is not latched — nothing was restored to protect', async () => {
@@ -511,7 +547,7 @@ describe('importEverything reports what did not land', () => {
 
         await importEverything(payload);
 
-        expect(storage.finishRestore).toHaveBeenCalledWith(new Set(['xpHistory', 'dungeonRuns']));
+        expect(Array.from(storage.finishRestore.mock.calls[0][0].keys())).toEqual(['xpHistory', 'dungeonRuns']);
 
         vi.restoreAllMocks();
     });
@@ -558,7 +594,7 @@ describe('importEverything reports what did not land', () => {
             return writeStore(storeName, entries);
         });
         storageMock.finishRestore.mockImplementation((stores) => {
-            protectedStores = new Set(stores);
+            protectedStores = new Set(stores instanceof Map ? stores.keys() : stores);
         });
         storageMock.endRestore.mockImplementation(async () => {
             // A recorder queued its pre-restore state while another store was
@@ -570,7 +606,7 @@ describe('importEverything reports what did not land', () => {
         await expect(importEverything(payload)).rejects.toThrow('restore interrupted');
 
         expect(db.get('settings').get('theme')).toBe('restored');
-        expect(storageMock.finishRestore).toHaveBeenCalledWith(new Set(['settings']));
+        expect(Array.from(storageMock.finishRestore.mock.calls[0][0].keys())).toEqual(['settings']);
         expect(storageMock.endRestore).toHaveBeenCalledOnce();
     });
 

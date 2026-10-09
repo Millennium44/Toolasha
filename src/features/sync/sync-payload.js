@@ -582,14 +582,31 @@ export async function buildPayloadJSON(scope = 'settings') {
  * that fresher copy then differed from the fold, which was written over it,
  * counted as combined and asked for a reload over nothing.
  *
+ * With a baseline (the automatic merge's, see {@link applyPayload}) the fold
+ * also asks which side moved since the last exchange, as the upload merge does
+ * (see {@link mergeForUpload}). A download still holding the value this device
+ * settled on at that exchange carries nothing new: it is left out unfolded. In
+ * one browser that is every startup pull of the leader tab's own push, and the
+ * fold — the download winning every tie — handed back the push-time copy of
+ * whatever a sibling tab had updated since, wrote it over the newer one and
+ * latched the store. When the gist is unmoved but the exchange left it ahead of
+ * this device (a merged upload), the fold still runs, with this device's copy
+ * as the side that wins ties if it has moved since — unless the registration
+ * has its own pull fold, which is kept. A baseline entry whose local half is
+ * unknown (a record an earlier pull held back), and a key a full-backup restore
+ * wrote (see {@link RESTORED_BASELINE}), take the plain fold.
+ *
  * @param {Object} payload - Parsed payload; its store values are mutated in place
+ * @param {Record<string, *>|null} [baseline] - Hashes at the last exchange, or null for the plain fold
+ * @param {Set<string>|null} [plainFold] - `baselineId`s that take the plain fold whatever the baseline says
+ *   (records an earlier pull held back, being retried)
  * @returns {Promise<{merged: Array<{store: string, key: string, label: string}>,
  *   failed: Array<{store: string, key: string, label: string}>,
  *   held: Array<{store: string, key: string, label: string}>,
  *   same: Set<string>}>} What was combined, what took the remote copy anyway, what was held back
  *   because the local copy could not be read, and (as `baselineId`s) the folds that added nothing
  */
-async function mergeLocalHistories(payload) {
+async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
     const merged = [];
     const failed = [];
     const held = [];
@@ -616,10 +633,35 @@ async function mergeLocalHistories(payload) {
                     continue;
                 }
                 if (!probed.found || probed.value == null) continue;
-                entries[key] = registration.mergeForPull(probed.value, entries[key]);
+                const id = baselineId(storeName, key);
+                // A key a full-backup restore wrote is folded whatever the last
+                // exchange was: the restored copy can lack entries the gist holds
+                const restored = restoredKey(baseline?.[RESTORED_BASELINE], storeName, key);
+                const was = baseline && !restored && !plainFold?.has(id) ? readBaselineEntry(baseline[id]) : null;
+                const gistUnmoved = Boolean(was) && was.local !== null && valueHash(entries[key]) === was.gist;
+                if (gistUnmoved && was.local === was.gist) {
+                    // Settled at the last exchange and unmoved since: nothing here
+                    // is news. The entry is set to this device's copy, so a rule
+                    // that puts the key back in the write (a record's tombstones
+                    // in `weighAgainstLocal`) writes what is here, not the older gist
+                    entries[key] = probed.value;
+                    same.add(id);
+                    continue;
+                }
+                // This device's side wins ties when only it moved. Only for a
+                // registration whose pull fold is its plain merge: one with its own
+                // pull fold (which takes only what can be news) or one already
+                // keeping local ties keeps that fold
+                const localWins =
+                    gistUnmoved &&
+                    valueHash(probed.value) !== was.local &&
+                    registration.mergeForPull === registration.merge;
+                entries[key] = localWins
+                    ? registration.merge(entries[key], probed.value)
+                    : registration.mergeForPull(probed.value, entries[key]);
                 merged.push({ store: storeName, key, label: registration.label });
                 if (stableStringify(entries[key]) === stableStringify(probed.value)) {
-                    same.add(baselineId(storeName, key));
+                    same.add(id);
                 }
             } catch (error) {
                 console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
@@ -662,8 +704,10 @@ async function mergeLocalHistories(payload) {
  * is written as before.
  *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
- * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null}} [options] - How settings both
- *   sides set are decided, and this device's per-key hashes of the last exchange
+ * @param {{mode?: 'pull'|'merge', baseline?: Record<string, string>|null, retryHeld?: boolean,
+ *   heldKeys?: Array<{store: string, key: string}>|null}} [options] - How settings both sides set are decided,
+ *   this device's per-key hashes of the last exchange, whether this pull retries records an earlier one held
+ *   back, and which ones: their folds ignore the baseline (every fold does when a retry cannot say which)
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<Object>, complete: boolean, merged: Array<Object>, mergeFailed: Array<Object>,
  *   mergeHeld: Array<Object>, exportedAt: string|null, applied: string}>}
@@ -672,7 +716,7 @@ async function mergeLocalHistories(payload) {
  *   combined, which were held back because this device's copy could not be read, and
  *   the payload text as actually applied
  */
-export async function applyPayload(json, { mode = 'pull', baseline = null } = {}) {
+export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
     const payload = JSON.parse(json);
     // Before anything is dropped as unowned: keys another script registered,
     // on this device on an earlier load or on another device, are carried
@@ -746,7 +790,15 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
             await settingsStorage.reconcileKeyMigrationState(landing);
         }
 
-        const histories = await mergeLocalHistories(payload);
+        // A retry of held-back records re-reads the version whose baseline already names them: those
+        // take the plain fold, every other record still the baseline's. A retry that cannot say which
+        // records were held (a marker from an older build) folds them all plainly
+        const heldIds =
+            retryHeld && Array.isArray(heldKeys)
+                ? new Set(heldKeys.map((entry) => baselineId(entry?.store, entry?.key)))
+                : null;
+        const foldBaseline = mode === 'merge' && (!retryHeld || heldIds) ? baseline : null;
+        const histories = await mergeLocalHistories(payload, foldBaseline, heldIds);
         const mergeHeld = histories.held;
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it

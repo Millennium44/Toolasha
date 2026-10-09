@@ -119,7 +119,7 @@ vi.mock('./sync-payload.js', () => ({
     registeredKeysDiverge: (local, baseline) => payload.registeredDiverge?.(local, baseline) ?? false,
     pushTrimsRegisteredKeys: () => false,
     trimmedRegisteredKeys: () => [],
-    wholeKeyHashes: (text) => ({ of: text }),
+    wholeKeyHashes: (text) => payload.hashes ?? { of: text },
     // The older raw-text hash, which the manifest gate also accepts
     hashPayload: (text) => `raw:${text}`,
 }));
@@ -206,6 +206,7 @@ beforeEach(() => {
     payload.applyCalls = 0;
     payload.applyWait = null;
     payload.applyOptions = undefined;
+    payload.hashes = undefined;
     payload.addsToRemote = undefined;
     payload.uploadMerges = 0;
     payload.remoteAdds = undefined;
@@ -1378,6 +1379,45 @@ describe('what a pull says it reconciled', () => {
         expect(result).toMatchObject({ ok: true, merged: 1 });
         expect(payload.applyCalls).toBe(2);
         expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+    });
+
+    test('the baseline a held pull leaves marks the held record as not applied here', async () => {
+        oneOfEach();
+        const sep = String.fromCharCode(0);
+        payload.hashes = { [`guildHistory${sep}chests`]: 'h-chests', [`guildHistory${sep}trials`]: 'h-trials' };
+
+        await syncManager.pull();
+
+        // Read as settled, the next pull of an unmoved gist would leave the held record out for good
+        expect(stored.map.toolasha_sync_baseline).toEqual({
+            [`guildHistory${sep}chests`]: { gist: 'h-chests', local: null },
+            [`guildHistory${sep}trials`]: 'h-trials',
+        });
+    });
+
+    test('a retry of held-back records tells the apply so', async () => {
+        oneOfEach();
+        await syncManager.pull();
+        expect(payload.applyOptions).toMatchObject({ retryHeld: false });
+
+        payload.mergeHeld = [];
+        await syncManager.pull();
+
+        expect(payload.applyOptions).toMatchObject({ retryHeld: true });
+    });
+
+    test('the held-back marker names the held records, and the retry folds only those plainly', async () => {
+        oneOfEach();
+        await syncManager.pull();
+        expect(stored.map.toolasha_sync_mergeHeld.keys).toEqual([{ store: 'guildHistory', key: 'chests' }]);
+
+        payload.mergeHeld = [];
+        await syncManager.pull();
+
+        expect(payload.applyOptions).toMatchObject({
+            retryHeld: true,
+            heldKeys: [{ store: 'guildHistory', key: 'chests' }],
+        });
     });
 
     test('a held-back record cannot be overwritten by a push before retrying the pull', async () => {

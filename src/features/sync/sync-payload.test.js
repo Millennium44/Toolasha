@@ -117,6 +117,8 @@ await import('../guild/guild-trials-store.js');
 await import('../skills/xp-tracker.js');
 // The detail snapshots' retention window, registered the way the page does
 await import('../networth/networth-history.js');
+// Task completions: a chunked history whose pull prunes the incoming side
+const { weekChunkId, WINDOW_WEEKS } = await import('../tasks/task-completion-tracker.js');
 
 const {
     payloadCarriesKey,
@@ -133,6 +135,7 @@ const {
     trimmedRegisteredKeys,
     pushTrimsRegisteredKeys,
     wholeKeyHashes,
+    exchangeBaseline,
     SETTING_STAMPS_PREFIX,
     RESTORED_BASELINE,
 } = await import('./sync-payload.js');
@@ -2166,6 +2169,364 @@ describe('a fold that adds nothing is not written over a newer save from another
             expect(result.merged.map((entry) => entry.key)).toEqual(['run_char']);
         } finally {
             off();
+        }
+    });
+});
+
+describe('a pull folds by which side moved since the last exchange', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+    /** A fold like the listing log's and the reroll history's: by id, the second side winning a tie */
+    const byId = (first, second) => {
+        const out = new Map();
+        for (const entry of [...(first || []), ...(second || [])]) out.set(entry.id, entry);
+        return [...out.values()].sort((a, b) => a.id - b.id);
+    };
+    let offs = [];
+    const register = () => {
+        offs = [
+            registerSyncMerge({ store: 'marketListings', base: 'listingLog', merge: byId, label: 'listings' }),
+            registerSyncMerge({ store: 'rerollSpending', base: 'rerollHist', merge: byId, label: 'rerolls' }),
+        ];
+    };
+    const unregister = () => {
+        for (const off of offs) off();
+        offs = [];
+    };
+
+    test('a self-pull of the push this browser made writes nothing over an entry updated since', async () => {
+        register();
+        try {
+            const pushed = { marketListings: { listingLog_a: [{ id: 1, status: 'active' }] } };
+            // The push settled: the gist and this device held the same copy
+            const baseline = wholeKeyHashes(payloadOf(pushed));
+            // A sibling tab filled the listing after the push
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1, status: 'filled' }] };
+
+            const result = await applyPayload(payloadOf(pushed), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.marketListings).toEqual({});
+            expect(storeState.stores.marketListings.listingLog_a).toEqual([{ id: 1, status: 'filled' }]);
+            expect(result.unchanged).toEqual({ marketListings: 1 });
+            expect(result.merged).toEqual([]);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a four-tab self-pull with this browser ahead writes nothing to either store', async () => {
+        register();
+        try {
+            const pushed = {
+                marketListings: {
+                    listingLog_c1: [{ id: 1, status: 'active' }],
+                    listingLog_c2: [{ id: 2, status: 'active' }],
+                    listingLog_c3: [{ id: 3, status: 'active' }],
+                    listingLog_c4: [{ id: 4, status: 'active' }],
+                    // Whole keys another script and the price cache rewrite all the time
+                    companionPositions: { open: 1 },
+                    priceCache: { a: 1 },
+                },
+                rerollSpending: {
+                    rerollData_c1: { t1: { coins: 1 } },
+                    rerollData_c2: { t2: { coins: 1 } },
+                    rerollHist_c1: [{ id: 10, spent: 1 }],
+                    rerollHist_c2: [{ id: 20, spent: 1 }],
+                },
+            };
+            const baseline = wholeKeyHashes(payloadOf(pushed));
+            // Three sibling tabs, one per character, moved on after the push
+            storeState.stores.marketListings = {
+                ...pushed.marketListings,
+                listingLog_c1: [{ id: 1, status: 'filled' }],
+                listingLog_c2: [
+                    { id: 2, status: 'active' },
+                    { id: 5, status: 'active' },
+                ],
+                listingLog_c3: [{ id: 3, status: 'cancelled' }],
+                companionPositions: { open: 2 },
+                priceCache: { a: 2 },
+            };
+            storeState.stores.rerollSpending = {
+                rerollData_c1: { t1: { coins: 2 } },
+                rerollData_c2: { t2: { coins: 1 } },
+                rerollHist_c1: [{ id: 10, spent: 2 }],
+                rerollHist_c2: [
+                    { id: 20, spent: 1 },
+                    { id: 21, spent: 1 },
+                ],
+            };
+            const before = JSON.parse(JSON.stringify(storeState.stores));
+
+            const result = await applyPayload(payloadOf(pushed), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.marketListings).toEqual({});
+            expect(importedPayloads[0].stores.rerollSpending).toEqual({});
+            expect(storeState.stores.marketListings).toEqual(before.marketListings);
+            expect(storeState.stores.rerollSpending).toEqual(before.rerollSpending);
+            expect(result.merged).toEqual([]);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('whole keys a sibling tab rewrote keep this device copy under a merged-upload baseline too', async () => {
+        const pushed = { rerollSpending: { rerollData_c1: { t1: { coins: 1 } } } };
+        // A merged upload the gist and this device agreed on for this key
+        const baseline = exchangeBaseline(payloadOf(pushed), payloadOf(pushed));
+        storeState.stores.rerollSpending = { rerollData_c1: { t1: { coins: 3 } } };
+
+        await applyPayload(payloadOf(pushed), { mode: 'merge', baseline });
+
+        expect(importedPayloads[0].stores.rerollSpending).toEqual({});
+        expect(storeState.stores.rerollSpending.rerollData_c1).toEqual({ t1: { coins: 3 } });
+    });
+
+    test('a gist that moved since the exchange still lands, the download winning ties', async () => {
+        register();
+        try {
+            const exchanged = { marketListings: { listingLog_a: [{ id: 1, status: 'active' }] } };
+            const baseline = wholeKeyHashes(payloadOf(exchanged));
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1, status: 'active' }] };
+            // Another device filled it and added a listing
+            const newer = {
+                marketListings: {
+                    listingLog_a: [
+                        { id: 1, status: 'filled' },
+                        { id: 2, status: 'active' },
+                    ],
+                },
+            };
+
+            const result = await applyPayload(payloadOf(newer), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual(newer.marketListings.listingLog_a);
+            expect(result.merged.map((entry) => entry.key)).toEqual(['listingLog_a']);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a merged upload left the gist ahead: its additions land, this device winning what it moved since', async () => {
+        register();
+        try {
+            const local = { marketListings: { listingLog_a: [{ id: 1, status: 'active' }] } };
+            const uploaded = {
+                marketListings: {
+                    listingLog_a: [
+                        { id: 1, status: 'active' },
+                        { id: 9, status: 'active' },
+                    ],
+                },
+            };
+            const baseline = exchangeBaseline(payloadOf(uploaded), payloadOf(local));
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1, status: 'filled' }] };
+
+            await applyPayload(payloadOf(uploaded), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual([
+                { id: 1, status: 'filled' },
+                { id: 9, status: 'active' },
+            ]);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a record an earlier pull held back, and a retry of one, take the plain fold', async () => {
+        register();
+        try {
+            const gist = { marketListings: { listingLog_a: [{ id: 1, status: 'active' }] } };
+            const id = 'marketListings\u0000listingLog_a';
+            const hash = wholeKeyHashes(payloadOf(gist))[id];
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1, status: 'filled' }] };
+
+            await applyPayload(payloadOf(gist), { mode: 'merge', baseline: { [id]: { gist: hash, local: null } } });
+            expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual([{ id: 1, status: 'active' }]);
+
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1, status: 'filled' }] };
+            await applyPayload(payloadOf(gist), {
+                mode: 'merge',
+                baseline: wholeKeyHashes(payloadOf(gist)),
+                retryHeld: true,
+            });
+            expect(importedPayloads[1].stores.marketListings.listingLog_a).toEqual([{ id: 1, status: 'active' }]);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a retry of held-back records folds only those plainly; other records keep the baseline', async () => {
+        register();
+        try {
+            const gist = {
+                marketListings: {
+                    listingLog_held: [{ id: 1, status: 'active' }],
+                    listingLog_other: [{ id: 2, status: 'active' }],
+                },
+            };
+            const baseline = wholeKeyHashes(payloadOf(gist));
+            storeState.stores.marketListings = {
+                listingLog_held: [{ id: 1, status: 'filled' }],
+                // A sibling tab updated this one before the retry
+                listingLog_other: [{ id: 2, status: 'filled' }],
+            };
+
+            await applyPayload(payloadOf(gist), {
+                mode: 'merge',
+                baseline,
+                retryHeld: true,
+                heldKeys: [{ store: 'marketListings', key: 'listingLog_held' }],
+            });
+
+            expect(importedPayloads[0].stores.marketListings).toEqual({
+                listingLog_held: [{ id: 1, status: 'active' }],
+            });
+            expect(storeState.stores.marketListings.listingLog_other).toEqual([{ id: 2, status: 'filled' }]);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a pull someone asked for keeps the download-wins fold', async () => {
+        register();
+        try {
+            const gist = { marketListings: { listingLog_a: [{ id: 1, status: 'active' }] } };
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1, status: 'filled' }] };
+
+            await applyPayload(payloadOf(gist), { mode: 'pull', baseline: wholeKeyHashes(payloadOf(gist)) });
+
+            expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual([{ id: 1, status: 'active' }]);
+        } finally {
+            unregister();
+        }
+    });
+});
+
+describe('the pull direction rules respect what each fold and restore needs', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+    const H = 60 * 60 * 1000;
+    const T0 = Date.UTC(2026, 0, 1);
+
+    test('a registration with its own pull fold keeps it when only this device moved', async () => {
+        // The real skill XP registration: its pull fold does not take back a sample this device thinned
+        const atPush = {
+            s: [
+                { t: T0, xp: 0 },
+                { t: T0 + 2 * H, xp: 200 },
+            ],
+        };
+        const uploaded = {
+            s: [
+                { t: T0, xp: 0 },
+                { t: T0 + H, xp: 100 },
+                { t: T0 + 2 * H, xp: 200 },
+            ],
+        };
+        const baseline = exchangeBaseline(
+            payloadOf({ xpHistory: { xpHistory_c1: uploaded } }),
+            payloadOf({ xpHistory: { xpHistory_c1: atPush } })
+        );
+        const now = { s: [...atPush.s, { t: T0 + 3 * H, xp: 300 }] };
+        storeState.stores.xpHistory = { xpHistory_c1: now };
+
+        const result = await applyPayload(payloadOf({ xpHistory: { xpHistory_c1: uploaded } }), {
+            mode: 'merge',
+            baseline,
+        });
+
+        expect(importedPayloads[0].stores.xpHistory).toEqual({});
+        expect(storeState.stores.xpHistory.xpHistory_c1).toEqual(now);
+        expect(result.merged).toEqual([]);
+    });
+
+    test('a skipped record put back in the write by its tombstones writes this device copy', async () => {
+        const off = registerSyncMerge({
+            store: 'settings',
+            key: 'enhancementTracker_sessions',
+            merge: (local, incoming) => ({ ...local, ...incoming }),
+            label: 'sessions',
+        });
+        try {
+            const gistRecord = { s0: { v: 1 }, s1: { v: 1 } };
+            const exchanged = {
+                settings: { enhancementTracker_sessions: gistRecord, enhancementTracker_sessionTombstones: { s0: 1 } },
+            };
+            const baseline = wholeKeyHashes(payloadOf(exchanged));
+            const localRecord = { s0: { v: 1 }, s1: { v: 2 }, s2: { v: 1 } };
+            storeState.stores.settings = {
+                ...storeState.stores.settings,
+                enhancementTracker_sessions: localRecord,
+                enhancementTracker_sessionTombstones: { s0: 1 },
+            };
+
+            await applyPayload(payloadOf({ settings: { enhancementTracker_sessions: gistRecord } }), {
+                mode: 'merge',
+                baseline,
+            });
+
+            // Put back by the tombstone rule, it lands as this device holds it
+            expect(importedPayloads[0].stores.settings.enhancementTracker_sessions).toEqual(localRecord);
+        } finally {
+            off();
+        }
+    });
+
+    test('a record a full-backup restore wrote is still folded with the gist', async () => {
+        const off = registerSyncMerge({
+            store: 'marketListings',
+            base: 'listingLog',
+            merge: (first, second) => {
+                const out = new Map();
+                for (const entry of [...(first || []), ...(second || [])]) out.set(entry.id, entry);
+                return [...out.values()].sort((a, b) => a.id - b.id);
+            },
+            label: 'listings',
+        });
+        try {
+            const gist = { marketListings: { listingLog_a: [{ id: 1 }, { id: 2 }] } };
+            const baseline = {
+                ...wholeKeyHashes(payloadOf(gist)),
+                [RESTORED_BASELINE]: { at: 1, keys: { marketListings: ['listingLog_a'] } },
+            };
+            // The backup restored here predates listing 2
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1 }] };
+
+            await applyPayload(payloadOf(gist), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual([{ id: 1 }, { id: 2 }]);
+        } finally {
+            off();
+        }
+    });
+});
+
+describe('a chunked history keeps its pull orientation under the direction rules', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+
+    test('an expired completion the gist still holds in the boundary week is not taken back', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            // A Wednesday noon, so the cut falls mid-week
+            vi.setSystemTime(Date.UTC(2026, 9, 7, 12));
+            const cut = Date.now() - WINDOW_WEEKS * 7 * 24 * 60 * 60 * 1000;
+            const expired = { taskId: 'old', completedAt: cut - 60 * 60 * 1000 };
+            const kept = { taskId: 'kept', completedAt: cut + 60 * 60 * 1000 };
+            expect(weekChunkId(expired.completedAt)).toBe(weekChunkId(kept.completedAt));
+            const key = `taskCompletionRec_c1_${weekChunkId(kept.completedAt)}`;
+
+            // A merged upload left the gist ahead of this device for the week,
+            // and this device has moved since (its window let the expired row go)
+            const uploaded = { rerollSpending: { [key]: [expired, kept] } };
+            const baseline = exchangeBaseline(payloadOf(uploaded), payloadOf({ rerollSpending: { [key]: [expired] } }));
+            storeState.stores.rerollSpending = { [key]: [kept] };
+
+            const result = await applyPayload(payloadOf(uploaded), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.rerollSpending).toEqual({});
+            expect(storeState.stores.rerollSpending[key]).toEqual([kept]);
+            expect(result.merged).toEqual([]);
+        } finally {
+            vi.useRealTimers();
         }
     });
 });

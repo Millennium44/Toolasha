@@ -1543,9 +1543,18 @@ class SyncManager {
             {
                 mode: silent ? 'merge' : 'pull',
                 baseline,
+                retryHeld,
+                // Which records the marker says were held, when it says
+                heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
             }
         );
-        const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
+        const pendingHeld = mergeHeld?.length
+            ? {
+                  exportedAt: remoteAt,
+                  hash: contentHash(payload),
+                  keys: mergeHeld.map(({ store, key }) => ({ store, key })),
+              }
+            : null;
 
         // An import already in progress cannot be cancelled between its store
         // transactions. If cleanup happened during it, leave the remote stamp
@@ -1644,7 +1653,7 @@ class SyncManager {
             extra: {
                 // The gist's values are now the last exchange: a key this device
                 // kept over an unmoved gist value stays "moved here" against it
-                [KEY_BASELINE]: wholeKeyHashes(payload),
+                [KEY_BASELINE]: heldAsUnapplied(wholeKeyHashes(payload), mergeHeld),
                 // Whatever an automatic merge left in the gist has landed now —
                 // unless records were held back, which the retry has to take
                 ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
@@ -2352,6 +2361,28 @@ const ACTIONABLE_KINDS = new Set(Object.keys(REMEDIES));
 function describeFailure(label, error) {
     const remedy = REMEDIES[error.kind];
     return `Sync ${label} failed: ${error.message}${remedy ? ` ${remedy}` : ''}`;
+}
+
+/**
+ * Mark the records a pull held back as not applied in the baseline it leaves.
+ *
+ * The baseline after a pull is the download's hashes, held-back records
+ * included, and a pull folding by the baseline (`applyPayload`) reads a string
+ * entry as a value this device settled on: the next pull of an unmoved gist
+ * would then leave the held record out for good. Recorded with the local half
+ * unknown instead, every other reader sees the same gist half as before.
+ * @param {Record<string, *>} baseline - The download's hashes
+ * @param {Array<{store: string, key: string}>|null|undefined} held - Records the pull held back
+ * @returns {Record<string, *>} The baseline, with those entries' local half unknown
+ */
+function heldAsUnapplied(baseline, held) {
+    if (!held?.length || !baseline || typeof baseline !== 'object') return baseline;
+    const out = { ...baseline };
+    for (const { store, key } of held) {
+        const id = `${store}\u0000${key}`;
+        if (typeof out[id] === 'string') out[id] = { gist: out[id], local: null };
+    }
+    return out;
 }
 
 /**
