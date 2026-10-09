@@ -24,6 +24,10 @@ const engine = vi.hoisted(() => ({
     marketListeners: new Set(),
     marketOnCalls: 0,
     marketOffCalls: 0,
+    // itemHrid → details ({ equipmentDetail, alchemyDetail }) for the chain mode
+    itemDetails: {},
+    // itemHrid → bid price (the 'sell' side); absent = unpriced
+    bids: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -51,6 +55,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => engine.gameData,
+        getItemDetails: (hrid) => engine.itemDetails[hrid] ?? null,
     },
 }));
 
@@ -86,7 +91,10 @@ vi.mock('./alchemy-profit-calculator.js', () => {
     };
 });
 
+vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
+
 vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (hrid) => engine.bids[hrid] ?? null,
     withProfitPricingMode: (mode, fn) => {
         engine.pricingModes.push(mode);
         return fn();
@@ -157,6 +165,8 @@ beforeEach(() => {
     engine.marketListeners.clear();
     engine.marketOnCalls = 0;
     engine.marketOffCalls = 0;
+    engine.itemDetails = {};
+    engine.bids = {};
 
     marketSort.clearCaches();
     marketSort.originalOrder = [];
@@ -170,9 +180,15 @@ beforeEach(() => {
 });
 
 describe('sort modes', () => {
-    test('offers exactly one absolute alchemy mode and one per-hour variant', () => {
-        expect(SORT_MODES.map((mode) => mode.value)).toEqual(['profit', 'alchemyProfit', 'alchemyProfitPerHour']);
-        expect(SORT_MODES.filter((mode) => mode.metric !== null)).toHaveLength(2);
+    test('offers one absolute alchemy mode, one per-hour variant and the whole-chain mode', () => {
+        expect(SORT_MODES.map((mode) => mode.value)).toEqual([
+            'profit',
+            'alchemyProfit',
+            'alchemyProfitPerHour',
+            'decomposeChainPerHour',
+        ]);
+        expect(SORT_MODES.filter((mode) => mode.metric !== null)).toHaveLength(3);
+        expect(isAlchemyMode('decomposeChainPerHour')).toBe(true);
     });
 
     test('production profit stays the default', () => {
@@ -443,5 +459,130 @@ describe('persistence', () => {
         expect(badges(container)).toEqual([null]);
         expect(marketSort.sortDirection).toBe('desc');
         expect(marketSort.hasSorted).toBe(false);
+    });
+});
+
+/**
+ * A decompose calculator answer carrying only what the chain reads.
+ * @param {number} ask - The input's ask price
+ * @param {number} actionsPerHour - Units decomposed per hour
+ * @returns {Object} A minimal decompose result
+ */
+function step(ask, actionsPerHour) {
+    return {
+        actionsPerHour,
+        successRate: 1,
+        requirementCosts: [{ itemHrid: '/items/x', count: 1, price: ask }],
+        dropRevenues: [],
+    };
+}
+
+/**
+ * Item details for a piece of gear that decomposes into the given outputs.
+ * @param {Array<Array>} outputs - [itemHrid, count] pairs
+ * @returns {Object} Item details
+ */
+function gearDetails(outputs) {
+    return {
+        equipmentDetail: {},
+        alchemyDetail: { decomposeItems: outputs.map(([itemHrid, count]) => ({ itemHrid, count })) },
+    };
+}
+
+describe('decompose chain mode', () => {
+    function twoLevel() {
+        engine.itemDetails = {
+            '/items/item_a': gearDetails([['/items/mid_b', 1]]),
+            '/items/mid_b': gearDetails([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.answers = {
+            '/items/item_a': { decompose: step(500, 3600) },
+            '/items/mid_b': { decompose: step(300, 1800) },
+        };
+        engine.bids = { '/items/term_c': 1000 };
+    }
+
+    test('ranks by the whole chain per hour, terminals taxed, and pins conservative pricing', async () => {
+        twoLevel();
+        // A second item decomposing straight to the same terminal, slower per hour
+        engine.itemDetails['/items/item_d'] = gearDetails([['/items/term_c', 2]]);
+        engine.answers['/items/item_d'] = { decompose: step(500, 360) };
+        const container = buildGrid(['item_d', 'item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        expect(order(container)).toEqual(['item_a', 'item_d']);
+        // item_a: 2 x 960 terminal - 500 ask = 1420 over 1s + 2s = 3s -> 1,704,000/hr
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeCloseTo(1_704_000);
+        // item_d: (1920 - 500) over 10s
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_d').profit).toBeCloseTo(511_200);
+        expect(engine.pricingModes).toContain('conservative');
+        expect(badges(container)[0]).toBe('+1.7M');
+        expect(container.querySelector('.toolasha-profit-indicator').title).toContain('decompose chain');
+    });
+
+    test('an item with no decompose has no value and sinks, bare', async () => {
+        twoLevel();
+        engine.itemDetails['/items/item_e'] = { alchemyDetail: null };
+        const container = buildGrid(['item_e', 'item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        expect(order(container)).toEqual(['item_a', 'item_e']);
+        expect(badges(container)).toEqual(['+1.7M', null]);
+    });
+
+    test('an unpriced terminal leaves the item without a figure', async () => {
+        twoLevel();
+        engine.bids = {};
+        buildGrid(['item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a')).toEqual({
+            profit: null,
+            detail: null,
+        });
+    });
+
+    test('shares one calculator pass per piece of gear across tiles and sorts', async () => {
+        twoLevel();
+        engine.itemDetails['/items/item_f'] = gearDetails([['/items/mid_b', 1]]);
+        engine.answers['/items/item_f'] = { decompose: step(500, 3600) };
+        let midCalls = 0;
+        const mid = engine.answers['/items/mid_b'];
+        Object.defineProperty(engine.answers, '/items/mid_b', {
+            configurable: true,
+            get() {
+                midCalls += 1;
+                return mid;
+            },
+        });
+        buildGrid(['item_a', 'item_f']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+        await marketSort.sortByProfitability();
+
+        expect(midCalls).toBe(1);
+    });
+
+    test('the mode persists, and an unknown stored value still falls back', () => {
+        marketSort.handleModeChange('decomposeChainPerHour');
+        expect(engine.writes).toEqual([['marketSort_mode', 'decomposeChainPerHour']]);
+
+        marketSort.disable();
+        engine.settings.marketSort_mode = 'decomposeChainPerHour';
+        marketSort.initialize();
+        expect(marketSort.sortMode).toBe('decomposeChainPerHour');
+
+        marketSort.disable();
+        engine.settings.marketSort_mode = 'retiredMode';
+        marketSort.initialize();
+        expect(marketSort.sortMode).toBe('profit');
     });
 });

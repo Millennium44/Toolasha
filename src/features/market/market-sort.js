@@ -28,12 +28,16 @@ import profitCalculator from './profit-calculator.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { formatLargeNumber, formatKMB } from '../../utils/formatters.js';
-import { withProfitPricingMode } from '../../utils/market-data.js';
+import { withProfitPricingMode, getItemPrice } from '../../utils/market-data.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 
 /**
  * The sort modes the button offers, in dropdown order.
  * `metric` is the field of an alchemy candidate a mode ranks by; production
- * profit has no candidates and leaves it null.
+ * profit has no candidates and leaves it null. `chain` marks the whole-chain
+ * mode, whose figure comes from `selfUseDecomposeChain` rather than from a
+ * single-action candidate.
  */
 export const SORT_MODES = [
     { value: 'profit', label: 'Profit', buttonLabel: 'Sort by Profit', metric: null },
@@ -43,6 +47,13 @@ export const SORT_MODES = [
         label: 'Alchemy profit/hr',
         buttonLabel: 'Sort by Alchemy/hr',
         metric: 'profitPerHour',
+    },
+    {
+        value: 'decomposeChainPerHour',
+        label: 'Decompose chain/hr',
+        buttonLabel: 'Sort by Chain/hr',
+        metric: 'chainProfitPerHour',
+        chain: true,
     },
 ];
 
@@ -64,6 +75,21 @@ const ALCHEMY_PRICING_MODE = 'conservative';
 const ALCHEMY_TOOLTIP =
     'Insta-buy at ask, best alchemy action, insta-sell at bid — includes catalyst cost if the ' +
     "engine's current catalyst setting uses one. Ignores the global pricing mode on purpose.";
+
+const CHAIN_TOOLTIP =
+    'Insta-buy at ask, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
+    'decomposed, then insta-sell what is left at bid after market tax. Ranked by gold per hour of alchemy time ' +
+    "across the whole chain; each step uses the engine's own catalyst pick. Ignores the global pricing mode on " +
+    'purpose. Items with an unpriced step show no value.';
+
+/**
+ * The explanation for a mode's figure.
+ * @param {string} value - Mode id
+ * @returns {string} Tooltip text
+ */
+function modeTooltipText(value) {
+    return getSortMode(value).chain ? CHAIN_TOOLTIP : ALCHEMY_TOOLTIP;
+}
 
 /**
  * Look up a sort mode descriptor, falling back to the default for anything unknown.
@@ -97,6 +123,11 @@ class MarketSort {
         // alchemy action that priced, so both alchemy modes read the same
         // computation and switching mode costs nothing.
         this.alchemyCache = new Map();
+
+        // Decompose calculator results per item, for the chain mode: a chain
+        // reaches the same intermediate gear from many tiles, so each piece of
+        // gear is priced once per price snapshot.
+        this.decomposeStepCache = new Map();
 
         // The market fetch the alchemy cache was computed against; a newer one
         // invalidates it, because every figure in it is a price.
@@ -147,6 +178,7 @@ class MarketSort {
         this.cacheRevision += 1;
         this.profitCache.clear();
         this.alchemyCache.clear();
+        this.decomposeStepCache.clear();
         this.alchemyCacheStamp = null;
     }
 
@@ -357,7 +389,7 @@ class MarketSort {
      */
     applyModeTooltip() {
         const tooltip = isAlchemyMode(this.sortMode)
-            ? ALCHEMY_TOOLTIP
+            ? modeTooltipText(this.sortMode)
             : 'Profit per hour from producing or gathering this item.';
         if (this.sortButton) this.sortButton.title = tooltip;
         if (this.modeSelect) this.modeSelect.title = tooltip;
@@ -515,6 +547,12 @@ class MarketSort {
     async calculateItemProfit(itemHrid, gameData) {
         const mode = getSortMode(this.sortMode);
 
+        if (mode.chain) {
+            const chain = this.decomposeChain(itemHrid);
+            if (!chain || chain.netPerHour === null) return { profit: null, detail: null };
+            return { profit: chain.netPerHour, detail: 'decompose chain' };
+        }
+
         if (mode.metric) {
             const best = this.bestAlchemyCandidate(itemHrid, mode.metric);
             if (!best) return { profit: null, detail: null };
@@ -614,6 +652,66 @@ class MarketSort {
     }
 
     /**
+     * The whole decompose chain of an item, ask in and taxed bid out.
+     *
+     * The chain arithmetic is `selfUseDecomposeChain`'s, the same function the
+     * item tooltip's chain line runs; this supplies the seller's prices instead
+     * of the tooltip's keep-it prices: the top item costs its ask, every
+     * terminal output is worth its bid after market tax. Each step is the
+     * calculator's own decompose result (pinned to conservative pricing), so a
+     * step with no market data leaves the chain partly unpriced and the item
+     * without a figure. Intermediate steps are memoised per price snapshot.
+     *
+     * @param {string} itemHrid - Item HRID
+     * @returns {Object|null} The chain result, or null when the item cannot be decomposed
+     */
+    decomposeChain(itemHrid) {
+        let chain = null;
+        try {
+            withProfitPricingMode(ALCHEMY_PRICING_MODE, () => {
+                const step = (hrid) => {
+                    if (!this.decomposeStepCache.has(hrid)) {
+                        let result = null;
+                        try {
+                            result = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0) ?? null;
+                        } catch {
+                            result = null;
+                        }
+                        this.decomposeStepCache.set(hrid, result);
+                    }
+                    return this.decomposeStepCache.get(hrid);
+                };
+                const top = step(itemHrid);
+                if (!top) return;
+
+                const priceOf = (hrid) => {
+                    const bid = getItemPrice(hrid, { context: 'profit', side: 'sell' });
+                    return bid === null || bid === undefined ? null : calculatePriceAfterTax(bid);
+                };
+                const containerValue = (hrid) =>
+                    untaxedContainerValue(hrid, {
+                        containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
+                        priceOf,
+                    });
+                chain = selfUseDecomposeChain(itemHrid, {
+                    getDecompose: step,
+                    getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
+                    isChainable: (hrid) => {
+                        const details = dataManager.getItemDetails(hrid);
+                        return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
+                    },
+                    priceOf,
+                    containerValue,
+                    ownUseCost: top.requirementCosts?.[0]?.price ?? null,
+                });
+            });
+        } catch (error) {
+            console.error('[Market Sort] Decompose chain failed for', itemHrid, error);
+        }
+        return chain;
+    }
+
+    /**
      * The alchemy action that pays best on an item under a given metric.
      * @param {string} itemHrid - Item HRID
      * @param {string} metric - 'profitPerAction' or 'profitPerHour'
@@ -697,7 +795,7 @@ class MarketSort {
         }
 
         if (alchemyMode && detail) {
-            indicator.title = `${detail} — ${ALCHEMY_TOOLTIP}`;
+            indicator.title = `${detail} — ${modeTooltipText(this.sortMode)}`;
         }
 
         indicator.textContent = displayText;
