@@ -47,6 +47,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { createChunkedHistory } from '../../utils/chunked-history.js';
+import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 const STORE_NAME = 'rerollSpending';
 
@@ -98,6 +99,59 @@ export function weekChunkId(t) {
     const week = 1 + Math.round((thursday.getTime() - firstThursday.getTime()) / (7 * DAY_MS));
     return `${isoYear}-W${String(week).padStart(2, '0')}`;
 }
+
+/**
+ * The first moment of an ISO week, the inverse of {@link weekChunkId}.
+ * @param {string} id - `YYYY-Www`
+ * @returns {number} Monday 00:00 UTC of that week, or NaN for something else
+ */
+export function weekStart(id) {
+    const match = /^(\d{4})-W(\d{2})$/.exec(String(id));
+    if (!match) return NaN;
+    const jan4 = new Date(Date.UTC(Number(match[1]), 0, 4));
+    const firstMonday = jan4.getTime() - ((jan4.getUTCDay() + 6) % 7) * DAY_MS;
+    return firstMonday + (Number(match[2]) - 1) * 7 * DAY_MS;
+}
+
+/**
+ * A weekly record key as the sync retention rule reads it: its character, and
+ * the latest moment a completion in it can carry.
+ * @param {string} key - Storage key
+ * @returns {{group: string, order: number, start: number, end: number}|null} The rule's reading, or null for
+ *   any other key
+ */
+export function parseCompletionRecordKey(key) {
+    const match = new RegExp(`^${RECORD_PREFIX}_([0-9a-zA-Z]+)_(\\d{4}-W\\d{2})$`).exec(String(key));
+    if (!match) return null;
+    const start = weekStart(match[2]);
+    if (!Number.isFinite(start)) return null;
+    return { group: match[1], order: start, start, end: start + 7 * DAY_MS - 1 };
+}
+
+/**
+ * The window, told to sync.
+ *
+ * Every read of the completions goes through `load()`, which keeps those at or
+ * after `now - WINDOW_MS` and nothing older, and a week whose completions have
+ * all gone is deleted by the history's save. Absence is not a deletion to sync:
+ * the gist kept the week, each pull wrote it back, and every merged push
+ * reported it as news. So a week whose last possible moment is before the
+ * owner's cut leaves both the upload and the download. A week the cut runs
+ * through is kept, and only its completions from before the cut that this
+ * device does not hold are left out of a pull (`pruneIncoming`).
+ * @param {() => number} [now] - The clock, for tests
+ * @returns {() => void} Unregister, for tests
+ */
+export function registerTaskCompletionRetention(now = () => Date.now()) {
+    return registerSyncRetention({
+        store: STORE_NAME,
+        prefix: `${RECORD_PREFIX}_`,
+        parse: parseCompletionRecordKey,
+        maxAge: { floor: () => now() - WINDOW_MS },
+    });
+}
+
+registerTaskCompletionRetention();
 
 /**
  * What a quest's rewards are, split into the two currencies and everything else.
@@ -321,6 +375,9 @@ class TaskCompletionTracker {
             legacyKey: (charId) => `taskCompletions_${charId}`,
             groupOf: (entry) => weekChunkId(entry?.completedAt),
             compare: (a, b) => (a?.completedAt || 0) - (b?.completedAt || 0),
+            // A pull does not take back a completion the window already let go of
+            // (see `registerTaskCompletionRetention` for whole weeks)
+            pruneIncoming: (entries) => pruneEntries(entries, Date.now()),
             label: 'TaskCompletionTracker',
         });
     }

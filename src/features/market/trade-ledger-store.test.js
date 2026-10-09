@@ -137,6 +137,8 @@ const RECORDS_KEY = 'tradeLedgerRecords_market123';
 const MARKER_KEY = 'tradeLedgerRecordsSplit_market123';
 const STATE_KEY = 'tradeLedgerState_market123';
 const LEDGER = () => storageMock.storeFor('marketListings');
+/** The cap's floor marker key, spelled out */
+const floorKey = (charId, bucket) => `tradeLedgerRecFloor_${charId}_${bucket}`;
 /** The day record a fill at `t` lives in */
 const REC = (t) => recordKey('market123', bucketOf({ t }));
 /** Every day-record key in the store, sorted */
@@ -434,7 +436,7 @@ describe('a fill writes its own day and nothing else', () => {
         expect(storageMock.set.mock.calls.find(([key]) => key === REC(DAY3))[3]).not.toBe(true);
     });
 
-    test('the cap shrinks the oldest day record and then removes it', async () => {
+    test('the cap keeps the floor day whole on disk, then removes it and records the floor', async () => {
         const older = [fill(1, DAY1 + 1000), fill(2, DAY1 + 2000)];
         const day2 = Array.from({ length: LEDGER_RECORD_CAP - 2 }, (_, i) => fill(100 + i, DAY2 + i));
         seedSplit([...older, ...day2]);
@@ -444,17 +446,37 @@ describe('a fill writes its own day and nothing else', () => {
 
         fillNow(DAY3, 4);
         await awaitSaves();
+        // Memory holds exactly the cap; storage keeps the floor day as a whole
+        // day record, the unit sync can see
         expect(tradeLedgerStore.records).toHaveLength(LEDGER_RECORD_CAP);
+        expect(tradeLedgerStore.records.some((r) => r.listingId === 1)).toBe(false);
         expect(
             LEDGER()
                 .get(REC(DAY1))
                 .map((r) => r.listingId)
-        ).toEqual([2]);
+        ).toEqual([1, 2]);
+        expect(LEDGER().has(floorKey('market123', bucketOf({ t: DAY1 })))).toBe(true);
 
         fillNow(DAY3 + 1000, 6);
         await awaitSaves();
         expect(LEDGER().has(REC(DAY1))).toBe(false);
         expect(LEDGER().get(REC(DAY3))).toHaveLength(2);
+        // The floor moved on, and the superseded marker went with the day it cut
+        expect(LEDGER().has(floorKey('market123', bucketOf({ t: DAY2 })))).toBe(true);
+        expect(LEDGER().has(floorKey('market123', bucketOf({ t: DAY1 })))).toBe(false);
+        expect(tradeLedgerStore.records).toHaveLength(LEDGER_RECORD_CAP);
+    });
+
+    test('a ledger loaded at its cap evicts and records its floor without waiting for a fill', async () => {
+        const day1 = [fill(1, DAY1 + 1000), fill(2, DAY1 + 2000)];
+        const day2 = Array.from({ length: LEDGER_RECORD_CAP }, (_, i) => fill(100 + i, DAY2 + i));
+        seedSplit([...day1, ...day2]);
+        await tradeLedgerStore.load();
+        await awaitSaves();
+
+        expect(LEDGER().has(REC(DAY1))).toBe(false);
+        expect(LEDGER().has(REC(DAY2))).toBe(true);
+        expect(LEDGER().has(floorKey('market123', bucketOf({ t: DAY2 })))).toBe(true);
     });
 
     test('day records the cap dropped before this save are deleted, not left behind', async () => {
@@ -497,14 +519,21 @@ describe('a fill writes its own day and nothing else', () => {
         const day1 = [fill(1, DAY1 + 1000), fill(2, DAY1 + 2000)];
         const day2 = Array.from({ length: LEDGER_RECORD_CAP }, (_, i) => fill(100 + i, DAY2 + i));
         seedSplit([...day1, ...day2]);
-        await tradeLedgerStore.load();
-
-        tradeLedgerStore.states = baseline3();
-        storageMock.tryGetAllKeys.mockResolvedValueOnce(null);
+        // Every listing fails: the load's own sweep as well as the fill's
+        storageMock.tryGetAllKeys.mockResolvedValue(null);
         storageMock.delete.mockClear();
+        try {
+            await tradeLedgerStore.load();
 
-        fillNow(DAY3, 4);
-        await awaitSaves();
+            tradeLedgerStore.states = baseline3();
+
+            fillNow(DAY3, 4);
+            await awaitSaves();
+        } finally {
+            storageMock.tryGetAllKeys.mockImplementation(async (store = 'settings') =>
+                storageMock.unavailable ? null : Array.from(storageMock.storeFor(store).keys())
+            );
+        }
 
         expect(LEDGER().has(REC(DAY1))).toBe(true);
         expect(storageMock.delete).not.toHaveBeenCalledWith(REC(DAY1), 'marketListings');

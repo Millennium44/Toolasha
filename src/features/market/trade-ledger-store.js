@@ -35,7 +35,7 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
-import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
 import { readScoped } from '../../utils/character-key.js';
 import { timeChunkId, recordKeysFor, registerCharacterScopedPrefix } from '../../utils/chunked-history.js';
 import { detectFills, trimLedger, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
@@ -60,6 +60,14 @@ const RECORD_PREFIX = 'tradeLedgerRec';
  * chosen. Registration runs at import, long before any budget report.
  */
 registerCharacterScopedPrefix(LEDGER_STORE, RECORD_PREFIX);
+
+/**
+ * Per-character cap floor, `tradeLedgerRecFloor_<charId>_<YYYY-MM-DD>`: the oldest day record the cap still
+ * keeps, in the key's name, so sync can drop every older day record (see the retention rule below). Spelled so
+ * neither the day-record prefix (`tradeLedgerRec_`) nor the single key's base (`tradeLedgerRecords`) matches
+ * it, as chunked-history spells its tombstone keys.
+ */
+const FLOOR_PREFIX = 'tradeLedgerRecFloor';
 
 /**
  * Per-character marker written once the single key has been split into day
@@ -203,6 +211,48 @@ export function recordKey(charId, bucket) {
 }
 
 /**
+ * @param {string} charId - Whose ledger
+ * @param {string} bucket - The oldest day record the cap keeps
+ * @returns {string} The key recording that floor
+ */
+export function floorKey(charId, bucket) {
+    return `${FLOOR_PREFIX}_${charId}_${bucket}`;
+}
+
+/**
+ * Days since the epoch of a `YYYY-MM-DD` day id.
+ * @param {string} bucket - Day id
+ * @returns {number} Whole days, or NaN for something else
+ */
+function dayNumber(bucket) {
+    const time = Date.parse(`${bucket}T00:00:00.000Z`);
+    return Number.isFinite(time) ? Math.round(time / 86400000) : NaN;
+}
+
+const DAY_RECORD_RE = new RegExp(`^${RECORD_PREFIX}_([0-9a-zA-Z]+)_(\\d{4}-\\d{2}-\\d{2})$`);
+const FLOOR_RE = new RegExp(`^${FLOOR_PREFIX}_([0-9a-zA-Z]+)_(\\d{4}-\\d{2}-\\d{2})$`);
+
+/**
+ * A ledger key as the sync retention rule reads it: a day record's character and day, or a floor marker's
+ * character and floor day. Null for every other key under the prefix (the single key, the split marker).
+ * @param {string} key - Storage key
+ * @returns {{group: string, order: number}|{group: string, floor: number}|null} The rule's reading
+ */
+export function parseLedgerRetentionKey(key) {
+    const day = DAY_RECORD_RE.exec(key);
+    if (day) {
+        const order = dayNumber(day[2]);
+        return Number.isFinite(order) ? { group: day[1], order } : null;
+    }
+    const floor = FLOOR_RE.exec(key);
+    if (floor) {
+        const at = dayNumber(floor[2]);
+        return Number.isFinite(at) ? { group: floor[1], floor: at } : null;
+    }
+    return null;
+}
+
+/**
  * Fills grouped by day record.
  * @param {Array<Object>} records - Fill records
  * @returns {Map<string, Array<Object>>} bucket → its records, in input order
@@ -235,6 +285,21 @@ registerSyncMerge({
     label: 'Trade ledger fills (daily)',
 });
 registerSyncMerge({ store: LEDGER_STORE, base: STATE_BASE, merge: mergeStates, label: 'Trade ledger baselines' });
+
+/*
+ * The cap, told to sync. The cap keeps the newest LEDGER_RECORD_CAP fills across every day record and evicts
+ * the day records wholly older than the oldest fill it keeps: a count over values, which no rule over key names
+ * can work out. So the store writes the cut down as a floor marker (`floorKey`), and the rule drops every day
+ * record of that character older than the highest floor either side holds, exactly the days `_evictBefore`
+ * deletes. Without it the gist kept every evicted day, each pull wrote them back, and every merged push reported
+ * news. The floor day itself is kept whole on disk (see `saveRecords`), so both sides' copies of it agree.
+ */
+registerSyncRetention({
+    store: LEDGER_STORE,
+    prefix: RECORD_PREFIX,
+    parse: parseLedgerRetentionKey,
+    floorMarkers: true,
+});
 
 class TradeLedgerStore {
     constructor() {
@@ -448,6 +513,10 @@ class TradeLedgerStore {
         }
         if (!current()) return;
         this.isLoaded = true;
+        // A ledger at its cap evicts, and records its floor for sync, on the
+        // load too: day records a pull wrote back before the floor was recorded
+        // would otherwise wait for this character's next fill to go
+        if (!this._legacy && this.records.length >= LEDGER_RECORD_CAP) this.saveRecords(new Set());
     }
 
     /**
@@ -670,6 +739,12 @@ class TradeLedgerStore {
                     floorT = Infinity;
                     for (const record of this.records) if (record.t < floorT) floorT = record.t;
                 }
+                // Storage is cut by whole days: the floor day keeps the fills
+                // below the floor that memory let go of. A day record is the
+                // unit sync can see (the floor marker names a day); one trimmed
+                // inside differed from the gist's copy of it, and every merged
+                // push reported that difference as news
+                const floorBucket = Number.isFinite(floorT) ? bucketOf({ t: floorT }) : null;
 
                 let issued = true;
                 const carried = [];
@@ -684,14 +759,16 @@ class TradeLedgerStore {
                     if (!current()) return false;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
                     const memory = grouped.get(bucket) || [];
-                    const keep = (record) => record.t >= floorT;
+                    const keep = (record) => floorBucket === null || bucketOf(record) >= floorBucket;
                     const merged = mergeRecords(stored, memory).filter(keep);
 
                     if (merged.length === 0) {
                         if (probe.found) await storage.delete(key, LEDGER_STORE);
                         continue;
                     }
-                    if (merged.length > memory.length) carried.push(...merged);
+                    // Only what memory's own cap keeps is carried into memory
+                    const reachable = merged.filter((record) => record.t >= floorT);
+                    if (reachable.length > memory.length) carried.push(...reachable);
                     // Nothing memory holds is missing from the stored copy, and the
                     // cap took nothing out of it: there is nothing to write
                     const storedKeys = new Set(stored.map((record) => record && fillKey(record)));
@@ -721,8 +798,8 @@ class TradeLedgerStore {
                 // trimming only the days being written leaves them in storage
                 // for ever. Sweep them by key, which costs one `getAllKeys`
                 // and only when the cap is actually in force.
-                if (floorT > -Infinity && floorT < Infinity) {
-                    await this._evictBefore(charId, bucketOf({ t: floorT }));
+                if (floorBucket !== null) {
+                    await this._evictBefore(charId, floorBucket);
                 }
                 return issued;
             } catch (error) {
@@ -737,11 +814,17 @@ class TradeLedgerStore {
     }
 
     /**
-     * Delete day records entirely older than the cap's floor day.
+     * Delete day records entirely older than the cap's floor day, and record
+     * the floor for sync.
      *
      * Day ids are `YYYY-MM-DD`, so a plain string comparison is a date
-     * comparison; the floor day itself is kept, because the save path trims
-     * it record by record.
+     * comparison; the floor day itself is kept whole.
+     *
+     * The floor marker (`floorKey`) is written before anything is deleted and
+     * the character's older markers are deleted after it: an eviction sync
+     * cannot see is one the gist hands back on the next pull. A marker that
+     * does not land leaves things as they were before markers, never a lost
+     * record.
      * @param {string} charId - Whose records
      * @param {string} floorBucket - Oldest day still in memory
      * @returns {Promise<number>} How many day records were deleted
@@ -756,6 +839,11 @@ class TradeLedgerStore {
             // retries the sweep — but null is still the honest answer.
             const allKeys = await storage.tryGetAllKeys(LEDGER_STORE);
             if (allKeys === null) return 0;
+            const marker = floorKey(charId, floorBucket);
+            if (!allKeys.includes(marker)) {
+                const written = await storage.set(marker, { floor: floorBucket }, LEDGER_STORE, true);
+                if (written === false) console.warn('[TradeLedger] The cap floor could not be recorded for sync');
+            }
             const keys = recordKeysFor(allKeys, RECORD_PREFIX, charId);
             const prefix = `${RECORD_PREFIX}_${charId}_`;
             let deleted = 0;
@@ -763,6 +851,11 @@ class TradeLedgerStore {
                 if (key.slice(prefix.length) >= floorBucket) continue;
                 await storage.delete(key, LEDGER_STORE);
                 deleted += 1;
+            }
+            // Superseded floors: sync reads only the highest
+            const floorPrefix = `${FLOOR_PREFIX}_${charId}_`;
+            for (const key of recordKeysFor(allKeys, FLOOR_PREFIX, charId)) {
+                if (key.slice(floorPrefix.length) < floorBucket) await storage.delete(key, LEDGER_STORE);
             }
             return deleted;
         } catch (error) {

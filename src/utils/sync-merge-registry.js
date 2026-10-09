@@ -252,10 +252,14 @@ export function listSyncMerges() {
  * @typedef {Object} SyncRetention
  * @property {string} store - Object store the keys live in
  * @property {string} prefix - Raw key prefix the rule owns
- * @property {(key: string) => {group: string, order: number, end?: number}|null} parse - Which window a key
- *   belongs to and where it sorts in it (larger is newer); null for a key the rule does not judge. `end` is the
- *   latest moment the key can hold, when that is later than `order` (a month key's last day); defaults to `order`
+ * @property {(key: string) => {group: string, order: number, end?: number, floor?: number}|null} parse - Which
+ *   window a key belongs to and where it sorts in it (larger is newer); null for a key the rule does not judge.
+ *   `end` is the latest moment the key can hold, when that is later than `order` (a month key's last day);
+ *   defaults to `order`. A key that answers with a `floor` is a floor marker rather than data (see `floorMarkers`)
  * @property {number} [keep] - How many of the newest keys each window keeps
+ * @property {boolean} [floorMarkers] - The owner records its cut as a marker key: a key whose `parse` gives a
+ *   `floor`. A window's data keys whose `end` is before its highest marker's floor are dropped, and so is every
+ *   marker below that highest one
  * @property {{floor: (newestEnd: number, newestStart: number) => number}} [maxAge] - Keys whose `end` is before
  *   `floor(newestEnd, newestStart)` are dropped: the newest `end` in the key's window, and the newest `start` (the
  *   earliest row a key could hold; `end` when `parse` gives none)
@@ -282,7 +286,13 @@ const retentions = [];
  * device that has the newer keys pushes the other side's older ones out
  * rather than keeping both.
  *
- * A rule is a count (`keep`), an age (`maxAge`), or both. An age rule is for an owner that prunes by date, not
+ * A rule is a count (`keep`), an age (`maxAge`), a floor marker (`floorMarkers`), or any of them together. A
+ * marker is for an owner whose cut cannot be read off the keys at all — a cap on the number of entries across
+ * every key of a window, say — and so writes the cut down as a key of its own, the cut in the key's name: the
+ * only thing a rule is ever shown is key names. The highest marker of a window wins, since a cut only ever moves
+ * forward, and the markers it supersedes go with the keys they cut.
+ *
+ * An age rule is for an owner that prunes by date, not
  * by count: it keeps a row for a number of days whether it has written one a day or one a week, so a count of
  * keys cannot say what it keeps. The owner supplies the cut itself, given the newest key in the window, so it
  * can be the owner's own clock-based cut capped by that newest key: a device that has been idle (or whose clock
@@ -292,14 +302,15 @@ const retentions = [];
  * @param {Object} options - The rule
  * @param {string} options.store - Object store name
  * @param {string} options.prefix - Raw key prefix
- * @param {(key: string) => {group: string, order: number, end?: number}|null} options.parse - Window, order and
- *   latest moment of a key
+ * @param {(key: string) => {group: string, order: number, end?: number, floor?: number}|null} options.parse -
+ *   Window, order and latest moment of a key; or, for a floor marker, its window and `floor`
  * @param {number} [options.keep] - Newest keys kept per window
  * @param {{floor: (newestEnd: number, newestStart: number) => number}} [options.maxAge] - The age cut, in the units
  *   `parse` returns
+ * @param {boolean} [options.floorMarkers] - The owner writes its cut as marker keys (see above)
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncRetention({ store, prefix, parse, keep, maxAge }) {
+export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floorMarkers = false }) {
     if (!store || typeof prefix !== 'string' || !prefix) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
     }
@@ -308,13 +319,20 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge }) {
     if (keep !== undefined && (!Number.isInteger(keep) || keep < 1)) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a positive keep');
     }
-    if (keep === undefined && !hasAge) {
-        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a keep or a maxAge');
+    if (keep === undefined && !hasAge && floorMarkers !== true) {
+        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a keep, a maxAge or floorMarkers');
     }
     // One rule per store and prefix: a bundle copy of the owning module makes
     // the same call again, and the first stands
     const existing = retentions.find((rule) => rule.store === store && rule.prefix === prefix);
-    const rule = existing || { store, prefix, parse, keep, maxAge: hasAge ? maxAge : undefined };
+    const rule = existing || {
+        store,
+        prefix,
+        parse,
+        keep,
+        maxAge: hasAge ? maxAge : undefined,
+        floorMarkers: floorMarkers === true,
+    };
     if (!existing) retentions.push(rule);
     return () => {
         const index = retentions.indexOf(rule);
@@ -340,6 +358,8 @@ export function retentionDrops(store, keys) {
     for (const rule of rules) {
         /** group → [{key, order}] */
         const groups = new Map();
+        /** group → [{key, floor}], the floor markers, judged apart from the data keys */
+        const markers = new Map();
         for (const key of new Set(keys)) {
             if (typeof key !== 'string' || !key.startsWith(rule.prefix)) continue;
             let parsed = null;
@@ -348,11 +368,23 @@ export function retentionDrops(store, keys) {
             } catch (error) {
                 console.error(`[SyncMergeRegistry] Retention parse for ${rule.prefix} threw:`, error);
             }
-            if (!parsed || typeof parsed.group !== 'string' || !Number.isFinite(parsed.order)) continue;
+            if (!parsed || typeof parsed.group !== 'string') continue;
+            if (rule.floorMarkers && parsed.floor !== undefined) {
+                if (!Number.isFinite(parsed.floor)) continue;
+                if (!markers.has(parsed.group)) markers.set(parsed.group, []);
+                markers.get(parsed.group).push({ key, floor: parsed.floor });
+                continue;
+            }
+            if (!Number.isFinite(parsed.order)) continue;
             if (!groups.has(parsed.group)) groups.set(parsed.group, []);
             const end = Number.isFinite(parsed.end) ? parsed.end : parsed.order;
             const start = Number.isFinite(parsed.start) ? parsed.start : end;
             groups.get(parsed.group).push({ key, order: parsed.order, end, start });
+        }
+        for (const [group, marks] of markers) {
+            const floor = Math.max(...marks.map((mark) => mark.floor));
+            for (const { key, floor: own } of marks) if (own < floor) dropped.add(key);
+            for (const { key, end } of groups.get(group) || []) if (end < floor) dropped.add(key);
         }
         for (const members of groups.values()) {
             if (rule.maxAge) {
