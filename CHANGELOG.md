@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Instead-of-buying line: no hover stall, essence and crate targets
+
+- The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence and Artisan's Crates.
+
 ### From upstream: inventory, loot log and small additions
 
 - Inventory category totals draw again under the game's tabs, dungeon tokens show value badges, enhancement tooltip prices follow your number precision, and a labyrinth run the game reissues an id for stays one Loot & XP Log row.
