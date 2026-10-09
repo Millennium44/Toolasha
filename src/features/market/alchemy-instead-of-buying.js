@@ -695,7 +695,7 @@ function sourcesToRun(sources) {
  * flat base rate in place.
  * @returns {((actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number}>)|undefined}
  */
-function makeRateChoices() {
+export function makeRateChoices() {
     const calc = alchemyProfitCalculator;
     if (
         typeof calc?.getUnderLevelPenalty !== 'function' ||
@@ -707,7 +707,12 @@ function makeRateChoices() {
     try {
         const { equipment, drinks } = resolveActionContext(ALCHEMY_ACTION_TYPE);
         const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
-        const tea = calc.calculateSuccessRateBreakdown(1, 0).tea;
+        // A tea counts only when it can be bought, the same real-ask rule buyableSetup applies to the
+        // candidates; without it the ranking scores the no-tea setup alone
+        const teaHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
+        const teaBuyable = teaHrids.length > 0 && teaHrids.every((hrid) => realPrice(hrid, 'ask') !== null);
+        const teaSetups = [{ tea: 0, drinkSlots: [] }];
+        if (teaBuyable) teaSetups.push({ tea: calc.calculateSuccessRateBreakdown(1, 0).tea, drinkSlots: drinks });
         const penalties = new Map();
         const catalysts = new Map();
         const catalystsFor = (actionType) => {
@@ -723,17 +728,22 @@ function makeRateChoices() {
         };
         return (actionType, details, baseRate) => {
             const level = details?.itemLevel || 1;
-            if (!penalties.has(level)) {
-                penalties.set(
-                    level,
-                    calc.getUnderLevelPenalty(level, null, { drinkSlots: drinks, itemDetailMap, equipment })
-                );
-            }
-            const penalty = penalties.get(level);
-            return catalystsFor(actionType).map(({ bonus, price }) => {
-                const rate = calc.calculateSuccessRateBreakdown(baseRate, bonus, tea, penalty).total;
-                return { rate, catalystPrice: price };
+            const choices = [];
+            teaSetups.forEach(({ tea, drinkSlots }, index) => {
+                const key = `${index}|${level}`;
+                if (!penalties.has(key)) {
+                    penalties.set(
+                        key,
+                        calc.getUnderLevelPenalty(level, null, { drinkSlots, itemDetailMap, equipment })
+                    );
+                }
+                const penalty = penalties.get(key);
+                for (const { bonus, price } of catalystsFor(actionType)) {
+                    const rate = calc.calculateSuccessRateBreakdown(baseRate, bonus, tea, penalty).total;
+                    choices.push({ rate, catalystPrice: price });
+                }
             });
+            return choices;
         };
     } catch (error) {
         console.error('[AlchemyInstead] Success rates unavailable for ranking:', error);
@@ -852,7 +862,8 @@ function computeAlternatives(targetHrid, wanted) {
     if (!lookupSources(targetHrid).ranked) {
         // Off the hover only (runJob's last resort): rank in one go
         const scored = [];
-        for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored);
+        const rankDeps = makeRankDeps();
+        for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored, rankDeps);
         bonusRanks.set(targetHrid, topRanked(scored));
     }
     const { sources } = lookupSources(targetHrid);

@@ -88,8 +88,8 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
         // The calculator's own success-rate logic
         getUnderLevelPenalty: (level) => (ALCHEMY_LEVEL < level ? (0.9 / level) * (ALCHEMY_LEVEL - level) : 0),
         calculateSuccessRateBreakdown: (base, catalyst = 0, tea = null, penalty = 0) => ({
-            total: Math.max(0, Math.min(1, base * (1 + catalyst + penalty + (tea ?? 0)))),
-            tea: tea ?? 0,
+            total: Math.max(0, Math.min(1, base * (1 + catalyst + penalty + (tea ?? world.liveTea ?? 0)))),
+            tea: tea ?? world.liveTea ?? 0,
         }),
         catalystSuccessBonus: (hrid) => (hrid === '/items/prime_catalyst' ? 0.25 : 0.15),
     },
@@ -104,7 +104,13 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.9 }));
 
-import { liveAlternatives, settleAlternatives, clearInsteadCache, bonusRankCost } from './alchemy-instead-of-buying.js';
+import {
+    liveAlternatives,
+    settleAlternatives,
+    clearInsteadCache,
+    bonusRankCost,
+    makeRateChoices,
+} from './alchemy-instead-of-buying.js';
 
 beforeEach(() => {
     vi.useFakeTimers();
@@ -112,6 +118,7 @@ beforeEach(() => {
     clearInsteadCache();
     world.calls = [];
     world.loadoutDrinks = [];
+    world.liveTea = 0;
     world.listeners = [];
     world.prices = { [ESSENCE]: { ask: 5000, bid: 4000 }, [SHARD]: { ask: 1100, bid: 1000 } };
 });
@@ -176,6 +183,19 @@ describe('bonus-source ranking with the real success rate', () => {
         await vi.runAllTimersAsync();
         await settled;
         expect(world.calls.some((hrid) => hrid.startsWith('/items/free_'))).toBe(true);
+    });
+
+    test('a tea nobody sells adds no rate: only the no-tea setup is offered', () => {
+        world.loadoutDrinks = ['/items/success_tea'];
+        world.liveTea = 0.5;
+        const details = { itemLevel: 10 };
+        const unsold = makeRateChoices()('decompose', details, 0.6);
+        expect(unsold.every((choice) => choice.rate <= 0.6 + 1e-9)).toBe(true);
+        world.prices['/items/success_tea'] = { ask: 100, bid: 90 };
+        const sold = makeRateChoices()('decompose', details, 0.6);
+        expect(sold.some((choice) => choice.rate > 0.6 + 1e-9)).toBe(true);
+        // Both the no-tea and the tea setup are offered when the tea can be bought
+        expect(sold.some((choice) => Math.abs(choice.rate - 0.6) < 1e-9)).toBe(true);
     });
 
     test('ranks hundreds of sources well under a calculator run each', async () => {
