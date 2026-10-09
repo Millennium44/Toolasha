@@ -134,6 +134,9 @@ it can be seen:
 - **Truth_Light** — author of
   [Edible Tools](https://greasyfork.org/en/scripts/499963) (CC-BY-NC-SA-4.0),
   whose loot-log tracker this fork's loot-log statistics are ported from.
+- **Opzon** — author of the "MilkyWayIdle 24hr Timestamps" userscript, the idea
+  behind the Chat: Reformat message timestamps setting (re-implemented, no code
+  copied).
 - **hyhfish** — author of [Milkonomy](https://hyhfish.github.io/milkonomy/),
   whose export format this fork writes.
 - **Tib** — author of the

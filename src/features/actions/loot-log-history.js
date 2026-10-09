@@ -6,6 +6,7 @@
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
+import { lootEntryIdentity, isMoreCompleteEntry } from './loot-log-analytics.js';
 
 const STORE_NAME = 'lootLogHistory';
 
@@ -52,6 +53,40 @@ const RECORD_PREFIX = 'lootLogRec';
  */
 const entryChunkId = (entry) => timeChunkId(Date.parse(entry?.startTime), 'hour');
 
+/**
+ * Every `characterActionId` this run has been seen under, as strings, in first-seen order.
+ * @param {...Object} entries - Copies of one run
+ * @returns {string[]}
+ */
+function seenActionIds(...entries) {
+    const ids = [];
+    for (const entry of entries) {
+        const own = Array.isArray(entry?.legacyIds) ? entry.legacyIds : [];
+        for (const id of [...own, entry?.characterActionId]) {
+            if (id == null) continue;
+            const text = String(id);
+            if (!ids.includes(text)) ids.push(text);
+        }
+    }
+    return ids;
+}
+
+/**
+ * The copy that is further along, carrying every id either copy has been seen under. A run whose
+ * `characterActionId` is reissued (123 -> 148) keeps one row, but a peer on the earlier build may
+ * still hold the 123 partial, and only a tombstone filed under 123 reaches it.
+ * @param {Object} winner - The copy that is kept
+ * @param {Object} other - The copy it replaces or folds with
+ * @returns {Object} The winner, copied with `legacyIds` only when it must grow
+ */
+function carryingLegacyIds(winner, other) {
+    if (!winner || !other) return winner;
+    const ids = seenActionIds(other, winner);
+    const held = seenActionIds(winner);
+    if (ids.length <= 1 || ids.length === held.length) return winner;
+    return { ...winner, legacyIds: ids };
+}
+
 class LootLogHistory {
     constructor() {
         /**
@@ -75,7 +110,24 @@ class LootLogHistory {
             // every loot message, so a deep-equality dedupe would keep two
             // copies of the same action whenever two copies of the history are
             // folded together (a sync pull, or a legacy key being absorbed).
-            identityOf: (entry) => entry?.characterActionId,
+            // Not `characterActionId` either, which the game can reissue
+            // mid-run — see `lootEntryIdentity`.
+            identityOf: lootEntryIdentity,
+            // What the identity was before, so a deletion filed under it — by
+            // this device last week, or by a peer still on that build — holds
+            legacyIdentitiesOf: (entry) => seenActionIds(entry),
+            // Two copies of one run (a reissued id's partial rows, a peer's older
+            // snapshot) fold to the one further along. Given this, every read
+            // also folds copies already side by side on disk and writes the
+            // chunk back, which is what collapses history stored before the
+            // identity changed — once, since a folded chunk has nothing to fold
+            mergeCopies: (first, second) =>
+                isMoreCompleteEntry(second, first)
+                    ? carryingLegacyIds(second, first)
+                    : carryingLegacyIds(first, second),
+            // A deletion also covers any copy no further along than the one
+            // deleted: a peer's older snapshot, or a partial row of the same run
+            revisionOf: (entry) => Number(entry?.actionCount),
             label: 'LootLogHistory',
         });
 
@@ -131,8 +183,9 @@ class LootLogHistory {
 
     /**
      * Merge entries from a loot_log_updated message into stored history.
-     * Deduplicates by characterActionId (incoming entries replace stored copies, so ongoing
-     * sessions stay fresh), keeps newest first, caps at MAX_ENTRIES.
+     * One row per entry (`lootEntryIdentity`); an incoming copy replaces the stored one when it is
+     * further along, so ongoing sessions stay fresh and a run whose `characterActionId` was reissued
+     * stays one row. Keeps newest first, caps at MAX_ENTRIES.
      *
      * Whose log it is is decided here, when the message arrives, not when the
      * chain reaches it: a merge queued behind another waits out that one's
@@ -196,7 +249,7 @@ class LootLogHistory {
         // `character_switching` already dropped this instance's cache for it.
         if (this._charId() !== charId) return;
 
-        const byId = new Map(existing.map((e) => [e.characterActionId, e]));
+        const byId = new Map(existing.map((e) => [lootEntryIdentity(e), e]));
 
         // A loot message is a handful of actions against a window of thousands spread
         // over hundreds of hourly chunks; naming the hours that moved is what keeps
@@ -204,13 +257,22 @@ class LootLogHistory {
         const touchedChunks = new Set();
         let changed = false;
         for (const entry of lootLog) {
-            const stored = byId.get(entry.characterActionId);
-            if (!stored || stored.endTime !== entry.endTime || stored.actionCount !== entry.actionCount) {
-                // A replaced entry whose startTime moved leaves one chunk and joins another
+            const id = lootEntryIdentity(entry);
+            if (id === undefined) continue;
+            const stored = byId.get(id);
+            if (isMoreCompleteEntry(entry, stored)) {
                 if (stored) touchedChunks.add(entryChunkId(stored));
                 touchedChunks.add(entryChunkId(entry));
-                byId.set(entry.characterActionId, entry);
+                byId.set(id, carryingLegacyIds(entry, stored));
                 changed = true;
+            } else {
+                // Not further along, but possibly under a reissued id the stored row has not seen
+                const folded = carryingLegacyIds(stored, entry);
+                if (folded !== stored) {
+                    touchedChunks.add(entryChunkId(stored));
+                    byId.set(id, folded);
+                    changed = true;
+                }
             }
         }
         if (!changed) return;
@@ -231,8 +293,7 @@ class LootLogHistory {
     }
 
     /**
-     * Remove one stored entry by characterActionId — queued on the same chain
-     * as `mergeAndSave`.
+     * Remove one stored entry — queued on the same chain as `mergeAndSave`.
      *
      * This used to be a direct `_load`/`_save` from the caller, outside the
      * chain: a delete landing while a `loot_log_updated` merge was mid-flight
@@ -241,24 +302,25 @@ class LootLogHistory {
      * delete, so its `merged` array still had the deleted entry — and
      * whichever `_save` ran last, usually the merge's since it goes on to
      * touch other chunks, put the entry straight back.
-     * @param {number} characterActionId - Which entry to remove
+     * @param {Object|string} target - The entry to remove, or its `lootEntryIdentity`
      * @returns {Promise<void>} Resolves when this delete has been queued for writing
      */
-    async deleteEntry(characterActionId) {
+    async deleteEntry(target) {
         // Whose entry, decided at the click, for the same reason as `mergeAndSave`
         const charId = this._charId();
-        const run = () => this._deleteEntry(characterActionId, charId);
+        const id = target && typeof target === 'object' ? lootEntryIdentity(target) : target;
+        const run = () => this._deleteEntry(id, charId);
         this._chain = this._chain.then(run, run);
         return this._chain;
     }
 
     /**
-     * @param {number} characterActionId - Which entry to remove
+     * @param {string} id - The `lootEntryIdentity` of the entry to remove
      * @param {string|null} [owner] - Whose entry, taken at the click; the current character when omitted
      * @returns {Promise<void>}
      * @private
      */
-    async _deleteEntry(characterActionId, owner = this._charId()) {
+    async _deleteEntry(id, owner = this._charId()) {
         try {
             const charId = owner;
             if (!charId || this._charId() !== charId) return;
@@ -269,7 +331,8 @@ class LootLogHistory {
             // that switched away.
             if (this._charId() !== charId) return;
 
-            const filtered = existing.filter((e) => e.characterActionId !== characterActionId);
+            if (id === undefined || id === null) return;
+            const filtered = existing.filter((e) => lootEntryIdentity(e) !== id);
             if (filtered.length === existing.length) return;
 
             this._save(filtered, undefined, charId);
@@ -282,12 +345,12 @@ class LootLogHistory {
 
     /**
      * Get entries that are in storage but not in the current game-provided set.
-     * @param {Set<number>} currentIds - characterActionIds from the current loot_log_updated
+     * @param {Set<string>} currentIds - `lootEntryIdentity` of each entry in the current loot_log_updated
      * @returns {Promise<Array>}
      */
     async getHistoricalEntries(currentIds) {
         const all = await this._load();
-        return all.filter((e) => !currentIds.has(e.characterActionId));
+        return all.filter((e) => !currentIds.has(lootEntryIdentity(e)));
     }
 
     /**

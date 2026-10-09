@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### From upstream: inventory, loot log and small additions
+
+- Inventory category totals draw again under the game's tabs, dungeon tokens show value badges, enhancement tooltip prices follow your number precision, and a labyrinth run the game reissues an id for stays one Loot & XP Log row.
+- New options (off by default): 24-hour chat timestamps, a Craftable action-panel sort, Buy Cheapest in the protection picker, and a Buy missing supplies button on the Labyrinth screen; the Metz export now reads MooPass from its expiry and includes worn speed gear.
+
 ### Tooltip: cheaper by alchemy than buying
 
 - An optional tooltip line (off by default) names the alchemy route that gets an item cheaper than buying it, such as decomposing a piece of gear for an essence, counting other outputs at what selling them nets (or your keep marks) and, if you set a gold rate, your time.

@@ -49,14 +49,27 @@ vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => character.id } }));
 
 const { default: lootLogHistory, MAX_ENTRIES } = await import('./loot-log-history.js');
+const { lootEntryIdentity } = await import('./loot-log-analytics.js');
+const { createChunkedHistory, timeChunkId } = await import('../../utils/chunked-history.js');
+const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
 /**
  * A loot log entry as the game sends it.
  * @param {number} id - characterActionId
  * @param {string} startTime - ISO start time
+ * @param {Object} [fields] - What else this entry differs by
  * @returns {Object} Entry
  */
-const entry = (id, startTime) => ({ characterActionId: id, startTime, endTime: startTime, actionCount: 1 });
+const entry = (id, startTime, fields = {}) => ({
+    characterActionId: id,
+    actionHrid: '/actions/milking/cow',
+    startTime,
+    endTime: startTime,
+    actionCount: 1,
+    drops: {},
+    xpGains: {},
+    ...fields,
+});
 
 /** Every key written that is a loot record rather than the legacy array */
 const recordWrites = () => storageMock.set.mock.calls.filter(([key]) => String(key).startsWith('lootLogRec_'));
@@ -147,7 +160,9 @@ describe('merging while a write is still pending', () => {
     test('the historical read sees entries that have not been flushed yet', async () => {
         await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T00:00:00Z'), entry(2, '2026-08-02T00:00:00Z')]);
 
-        const historical = await lootLogHistory.getHistoricalEntries(new Set([2]));
+        const historical = await lootLogHistory.getHistoricalEntries(
+            new Set([lootEntryIdentity(entry(2, '2026-08-02T00:00:00Z'))])
+        );
 
         expect(historical.map((e) => e.characterActionId)).toEqual([1]);
     });
@@ -283,7 +298,12 @@ describe('the merge sort', () => {
     // comparator returning NaN is not a valid ordering.
     test('keeps the newest first, and every entry, when start times are equal', async () => {
         const same = '2026-08-01T10:00:00Z';
-        await lootLogHistory.mergeAndSave([entry(1, same), entry(2, same), entry(3, same)]);
+        // Three different actions that happened to start together; one action at one start is one run
+        await lootLogHistory.mergeAndSave([
+            entry(1, same),
+            entry(2, same, { actionHrid: '/actions/foraging/egg' }),
+            entry(3, same, { actionHrid: '/actions/woodcutting/tree' }),
+        ]);
 
         const stored = storageMock.store.get('lootLogRec_char-1_2026-08-01T10');
         expect(stored.map((e) => e.characterActionId).sort()).toEqual([1, 2, 3]);
@@ -442,7 +462,7 @@ describe('a delete racing a merge', () => {
             // merge exactly like this; going through `deleteEntry` instead
             // queues it on the same chain, so it actually runs after the merge
             // finishes rather than interleaved with it.
-            deletion = lootLogHistory.deleteEntry(1);
+            deletion = lootLogHistory.deleteEntry(entry(1, '2026-08-01T10:00:00Z'));
 
             return existing;
         });
@@ -458,7 +478,7 @@ describe('a delete racing a merge', () => {
     test('deleteEntry does nothing before a character is known', async () => {
         character.id = null;
 
-        await lootLogHistory.deleteEntry(1);
+        await lootLogHistory.deleteEntry(entry(1, '2026-08-01T10:00:00Z'));
 
         expect(storageMock.set).not.toHaveBeenCalled();
     });
@@ -467,8 +487,180 @@ describe('a delete racing a merge', () => {
         await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T10:00:00Z')]);
         storageMock.set.mockClear();
 
-        await lootLogHistory.deleteEntry(999);
+        await lootLogHistory.deleteEntry(entry(999, '2026-08-01T10:00:00Z'));
 
         expect(storageMock.set).not.toHaveBeenCalled();
+    });
+});
+
+describe('one run under a reissued characterActionId', () => {
+    // Upstream's observation (f3608f0dd), not reproduced here: the game can reissue
+    // `characterActionId` mid-session for one continuous action — a labyrinth run across an
+    // interrupt/resume — while `startTime` stays put. Keyed on the id, one run was stored as
+    // several partial rows.
+    const START = '2026-10-07T07:50:12.000Z';
+    const CHUNK = 'lootLogRec_char-1_2026-10-07T07';
+    const TOMB = 'lootLogRecTomb_char-1';
+    const run = (id, actionCount, fields = {}) =>
+        entry(id, START, {
+            actionHrid: '/actions/labyrinth/explore',
+            endTime: `2026-10-07T${String(8 + Math.floor(actionCount / 100)).padStart(2, '0')}:00:00.000Z`,
+            actionCount,
+            drops: { '/items/labyrinth_token': actionCount * 2 },
+            ...fields,
+        });
+    const before = entry(1, '2026-10-07T05:00:00.000Z');
+    const after = entry(2, '2026-10-07T09:00:00.000Z');
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    beforeEach(() => {
+        // Writes fold against what is on disk, as the real storage's do
+        storageMock.set.mockImplementation(async (key, value, storeName, immediate, options) => {
+            const next = options?.fold ? (options.fold(storageMock.store.get(key), value) ?? value) : value;
+            storageMock.store.set(key, next);
+            return true;
+        });
+    });
+
+    test('two partial rows with different ids and the same start are stored as one, the one further along', async () => {
+        await lootLogHistory.mergeAndSave([run(123, 123)]);
+        await lootLogHistory.mergeAndSave([run(148, 148)]);
+
+        const all = await lootLogHistory._load();
+        expect(all).toHaveLength(1);
+        expect(all[0]).toMatchObject({ characterActionId: 148, actionCount: 148 });
+        expect(storageMock.store.get(CHUNK)).toHaveLength(1);
+    });
+
+    test('an older snapshot arriving after a newer one does not replace it', async () => {
+        await lootLogHistory.mergeAndSave([run(148, 148)]);
+        await lootLogHistory.mergeAndSave([run(123, 123)]);
+
+        expect((await lootLogHistory._load()).map((e) => e.actionCount)).toEqual([148]);
+    });
+
+    test('the current session hides the stored row of the same run whatever its id', async () => {
+        await lootLogHistory.mergeAndSave([before, run(123, 123)]);
+
+        const historical = await lootLogHistory.getHistoricalEntries(new Set([lootEntryIdentity(run(148, 148))]));
+
+        expect(historical.map((e) => e.characterActionId)).toEqual([1]);
+    });
+
+    test('rows already stored apart are folded on the next read and written back once', async () => {
+        storageMock.store.set(CHUNK, [run(148, 148), run(123, 123)]);
+
+        const all = await lootLogHistory._load();
+        await flush();
+
+        expect(all).toHaveLength(1);
+        expect(all[0].actionCount).toBe(148);
+        expect(storageMock.store.get(CHUNK).map((e) => e.characterActionId)).toEqual([148]);
+
+        // Idempotent: a folded chunk has nothing left to fold, so a second read writes nothing
+        lootLogHistory._store.forget();
+        storageMock.set.mockClear();
+        expect(await lootLogHistory._load()).toHaveLength(1);
+        await flush();
+        expect(storageMock.set).not.toHaveBeenCalled();
+        expect(storageMock.delete).not.toHaveBeenCalled();
+    });
+
+    test('a deletion filed under the old characterActionId identity still hides that copy', async () => {
+        // What the previous build left: a tombstone keyed by the id, for that exact copy.
+        // Made by a store keyed the old way, so the fingerprint is the real one.
+        const partial = run(123, 123);
+        const oldBuild = createChunkedHistory({
+            storeName: 'lootLogHistory',
+            prefix: 'lootLogRec',
+            legacyKey: (charId) => `lootLog_${charId}`,
+            groupOf: (e) => timeChunkId(Date.parse(e?.startTime), 'hour'),
+            compare: (a, b) => Date.parse(b?.startTime) - Date.parse(a?.startTime) || 0,
+            identityOf: (e) => e?.characterActionId,
+            label: 'OldLootLogHistory',
+        });
+        await oldBuild.save('char-1', [after, partial, before]);
+        await oldBuild.save('char-1', [after, before]);
+        await flush();
+        expect(Object.keys(storageMock.store.get(TOMB))).toEqual(['123']);
+
+        // A peer still holding the copy puts it back on disk
+        storageMock.store.set(CHUNK, [partial]);
+        lootLogHistory._store.forget();
+
+        const all = await lootLogHistory._load();
+        expect(all.map((e) => e.characterActionId).sort()).toEqual([1, 2]);
+    });
+
+    test("deleting the row also hides a peer's earlier partial copy of the run, under a different id", async () => {
+        await lootLogHistory.mergeAndSave([before, run(148, 148), after]);
+        await lootLogHistory.deleteEntry(run(148, 148));
+        await flush();
+
+        // Filed under the new identity and the old id, so a device on the old build honors it too
+        const stones = storageMock.store.get(TOMB);
+        expect(Object.keys(stones).sort()).toEqual(['148', lootEntryIdentity(run(148, 148))].sort());
+        expect(stones['148'].rev).toBe(148);
+
+        // An old-build peer still holds the run's first partial row and syncs it back
+        storageMock.store.set(CHUNK, [run(123, 123)]);
+        lootLogHistory._store.forget();
+
+        expect((await lootLogHistory._load()).map((e) => e.characterActionId).sort()).toEqual([1, 2]);
+    });
+
+    test('a folded run keeps every id it was seen under, so a clear tombstones the earlier one too', async () => {
+        await lootLogHistory.mergeAndSave([run(123, 123)]);
+        await lootLogHistory.mergeAndSave([run(148, 148)]);
+        // A third reissue that is not further along still teaches the row its id
+        await lootLogHistory.mergeAndSave([run(160, 100)]);
+
+        const [folded] = await lootLogHistory._load();
+        expect(folded.characterActionId).toBe(148);
+        expect([...folded.legacyIds].sort()).toEqual(['123', '148', '160']);
+
+        expect(await lootLogHistory._store.clear('char-1')).toBe(true);
+        const stones = storageMock.store.get(TOMB);
+        for (const id of ['123', '148', '160']) expect(stones[id]).toMatchObject({ bulk: true, rev: 148 });
+
+        // An old-build peer still holding the first partial row syncs it back
+        storageMock.store.set(CHUNK, [run(123, 123)]);
+        lootLogHistory._store.forget();
+        expect(await lootLogHistory._load()).toEqual([]);
+    });
+
+    test('rows folded on read also keep both ids', async () => {
+        storageMock.store.set(CHUNK, [run(148, 148), run(123, 123)]);
+        const [folded] = await lootLogHistory._load();
+        expect([...folded.legacyIds].sort()).toEqual(['123', '148']);
+    });
+
+    test('a copy further along than the deleted one has outlived the deletion', async () => {
+        await lootLogHistory.mergeAndSave([before, run(148, 148), after]);
+        await lootLogHistory.deleteEntry(run(148, 148));
+        await flush();
+
+        storageMock.store.set(CHUNK, [run(150, 200)]);
+        lootLogHistory._store.forget();
+
+        expect((await lootLogHistory._load()).map((e) => e.actionCount)).toContain(200);
+    });
+
+    test('a sync fold of an old-build chunk and an updated one converges on one row, either way round', () => {
+        const { merge } = mergeForKey('lootLogHistory', CHUNK);
+        // What an old build uploads: the run's partial rows side by side
+        const oldShape = [run(148, 140), run(123, 123)];
+        const newShape = [run(148, 148)];
+
+        for (const [local, incoming] of [
+            [newShape, oldShape],
+            [oldShape, newShape],
+        ]) {
+            const folded = merge(local, incoming, {});
+            expect(folded).toHaveLength(1);
+            expect(folded[0].actionCount).toBe(148);
+            // And folding the result again changes nothing
+            expect(merge(folded, oldShape, {})).toEqual(folded);
+        }
     });
 });

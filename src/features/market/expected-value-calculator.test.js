@@ -59,6 +59,12 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../utils/token-valuation.js', () => ({
+    DUNGEON_TOKEN_HRIDS: new Set([
+        '/items/chimerical_token',
+        '/items/sinister_token',
+        '/items/enchanted_token',
+        '/items/pirate_token',
+    ]),
     calculateDungeonTokenValue: (hrid) => (hrid in mocks.dungeonTokenValues ? mocks.dungeonTokenValues[hrid] : null),
     calculateDungeonTokenValueDetail: (hrid) =>
         hrid in mocks.dungeonTokenValues

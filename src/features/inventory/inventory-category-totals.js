@@ -15,6 +15,7 @@ import inventorySort from './inventory-sort.js';
 import { BADGE_MODE_SETTING, totalValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
+import { getIconHref } from '../../utils/game-lookups.js';
 
 const CSS_ID = 'mwi-inv-category-totals';
 const SPAN_ATTR = 'data-mwi-category-total';
@@ -28,6 +29,34 @@ const CSS = `
 }
 `;
 
+/** Sprite ids (the part after `#` in a tile's icon href) of the items the Currencies category holds. */
+const CURRENCY_ICON_IDS = new Set([
+    'coin',
+    'gold_coin',
+    'cowbell',
+    'task_token',
+    'chimerical_token',
+    'sinister_token',
+    'enchanted_token',
+    'pirate_token',
+    'labyrinth_token',
+    'guild_token',
+]);
+
+const CURRENCY_CATEGORY_HRID = '/item_categories/currency';
+
+/**
+ * Whether a tile's sprite id is a currency: the known list, or the game's own item category,
+ * so a currency the list has not caught up with still counts.
+ * @param {string|undefined} iconId
+ * @returns {boolean}
+ */
+function isCurrencyIcon(iconId) {
+    if (!iconId) return false;
+    if (CURRENCY_ICON_IDS.has(iconId)) return true;
+    return dataManager.getItemDetails?.(`/items/${iconId}`)?.categoryHrid === CURRENCY_CATEGORY_HRID;
+}
+
 const ITEMS_UPDATED_DEBOUNCE_MS = 300;
 
 class InventoryCategoryTotals {
@@ -38,6 +67,8 @@ class InventoryCategoryTotals {
         this.itemsUpdatedHandler = null;
         this.itemsUpdatedDebounceTimer = null;
         this.unwatchBadgeMode = null;
+        this.tabClickHandler = null;
+        this.tabSwitchDebounceTimer = null;
     }
 
     initialize() {
@@ -81,17 +112,23 @@ class InventoryCategoryTotals {
         // schedules the totals off the freshly written attributes.
         this.itemsUpdatedHandler = () => {
             clearTimeout(this.itemsUpdatedDebounceTimer);
-            this.itemsUpdatedDebounceTimer = setTimeout(() => {
-                inventoryBadgeManager.invalidateCache();
-                Promise.resolve(inventoryBadgeManager.renderAllBadges?.()).catch((error) =>
-                    console.error('[Inventory Category Totals] Re-pricing after an inventory change failed:', error)
-                );
-                // Still scheduled directly: a render that bails on its cooldown
-                // or on a closed inventory must not leave the label unwritten.
-                this.scheduleUpdate();
-            }, ITEMS_UPDATED_DEBOUNCE_MS);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => this.repriceAndSchedule(), ITEMS_UPDATED_DEBOUNCE_MS);
         };
         dataManager.on('items_updated', this.itemsUpdatedHandler);
+
+        // A native inventory tab switch shows a panel that was never totalled, and the only tab
+        // listener otherwise lives in Inventory Sort, which may be off. Same structural test it
+        // uses (role="tab" inside the inventory, not a class name or label), capture phase because
+        // the game stops propagation. With Sort on this runs alongside its own pass; both only
+        // re-price and re-sum, so the overlap is harmless (the badge manager's cooldown
+        // and the pendingUpdate flag coalesce them).
+        this.tabClickHandler = (event) => {
+            const tab = event.target?.closest?.('[role="tab"]');
+            if (!tab || !inventoryBadgeManager.currentInventoryElem?.contains(tab)) return;
+            clearTimeout(this.tabSwitchDebounceTimer);
+            this.tabSwitchDebounceTimer = setTimeout(() => this.repriceAndSchedule(), ITEMS_UPDATED_DEBOUNCE_MS);
+        };
+        document.addEventListener('click', this.tabClickHandler, true);
 
         // The badge mode decides which side an unsorted total is priced on
         // ('alwaysBid' sums bids where every other mode sums asks), so changing
@@ -100,6 +137,19 @@ class InventoryCategoryTotals {
         // Inventory Sort's own listener only fires while that feature is on,
         // and with it off the label kept the side it was drawn with.
         this.unwatchBadgeMode = config.onSettingChange(BADGE_MODE_SETTING, () => this.scheduleUpdate());
+    }
+
+    /**
+     * Re-price every tile, then total. The render writes the values the totals sum.
+     */
+    repriceAndSchedule() {
+        inventoryBadgeManager.invalidateCache();
+        Promise.resolve(inventoryBadgeManager.renderAllBadges?.()).catch((error) =>
+            console.error('[Inventory Category Totals] Re-pricing after an inventory change failed:', error)
+        );
+        // Still scheduled directly: a render that bails on its cooldown
+        // or on a closed inventory must not leave the label unwritten.
+        this.scheduleUpdate();
     }
 
     disable() {
@@ -117,6 +167,13 @@ class InventoryCategoryTotals {
             if (this.itemsUpdatedHandler) {
                 dataManager.off('items_updated', this.itemsUpdatedHandler);
                 this.itemsUpdatedHandler = null;
+            }
+
+            clearTimeout(this.tabSwitchDebounceTimer);
+            this.tabSwitchDebounceTimer = null;
+            if (this.tabClickHandler) {
+                document.removeEventListener('click', this.tabClickHandler, true);
+                this.tabClickHandler = null;
             }
 
             if (this.unwatchBadgeMode) {
@@ -161,19 +218,34 @@ class InventoryCategoryTotals {
         const mode = inventorySort.currentMode;
         const valueKey = totalValueKey(mode);
 
-        for (const categoryDiv of inventoryElem.children) {
-            const labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');
+        // Category containers are the Inventory_itemGrid elements (one Inventory_label plus that
+        // category's tiles as flat siblings). Since the 2026-09 native inventory tabs,
+        // inventoryElem's only direct child is the TabsComponent wrapper, so its children are not
+        // categories: the grids live inside the selected tab panel. A hidden panel keeps stale
+        // tiles, which must not be counted (the same search inventory-sort uses).
+        const categoryDivs = Array.from(inventoryElem.querySelectorAll('[class*="Inventory_itemGrid"]')).filter(
+            (grid) => !grid.closest('[class*="TabPanel_hidden"]')
+        );
+
+        // A single-category native tab (Resources, say) draws its grid with no Inventory_label at
+        // all (see inventory-sort.js shouldSortCategory), so its total is hosted on the selected
+        // tab instead. Totals on any other tab are stale and go.
+        const selectedTab = inventoryElem.querySelector('[role="tab"][aria-selected="true"]');
+        inventoryElem.querySelectorAll(`[role="tab"] [${SPAN_ATTR}]`).forEach((span) => {
+            if (span.closest('[role="tab"]') !== selectedTab) span.remove();
+        });
+
+        for (const categoryDiv of categoryDivs) {
+            let labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');
+            if (!labelEl) {
+                labelEl = selectedTab;
+            }
             if (!labelEl) {
                 continue;
             }
 
-            // Get label text without any injected span
-            const existingSpan = labelEl.querySelector(`[${SPAN_ATTR}]`);
-            const labelText = existingSpan
-                ? labelEl.textContent.replace(existingSpan.textContent, '').trim()
-                : labelEl.textContent.trim();
-
-            if (labelText.toLowerCase() === 'currencies') {
+            if (this.isCurrenciesGrid(categoryDiv, labelEl)) {
+                if (labelEl === selectedTab) this.injectOrUpdateLabel(labelEl, 0);
                 continue;
             }
 
@@ -188,6 +260,40 @@ class InventoryCategoryTotals {
 
             this.injectOrUpdateLabel(labelEl, total);
         }
+    }
+
+    /**
+     * Whether a category grid is the Currencies category, which gets no total.
+     * Identified by its tiles' icons first (every tile is a currency sprite), since the label is
+     * translated for a non-English client; the English label is the fallback.
+     * @param {HTMLElement} categoryDiv - The Inventory_itemGrid
+     * @param {HTMLElement} labelEl - Its Inventory_label
+     * @returns {boolean}
+     */
+    isCurrenciesGrid(categoryDiv, labelEl) {
+        const tiles = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+        if (tiles.length > 0) {
+            const allCurrencies = Array.from(tiles).every((tile) => {
+                // Item icons often carry the sprite id on `xlink:href` alone
+                const href = getIconHref(tile, 'items_sprite') ?? '';
+                const iconId = href.match(/#(.+)$/)?.[1];
+                return isCurrencyIcon(iconId);
+            });
+            if (allCurrencies) {
+                return true;
+            }
+        }
+
+        // A tab hosting the total has no text label to read
+        if (labelEl.matches('[role="tab"]')) {
+            return false;
+        }
+
+        const existingSpan = labelEl.querySelector(`[${SPAN_ATTR}]`);
+        const labelText = existingSpan
+            ? labelEl.textContent.replace(existingSpan.textContent, '').trim()
+            : labelEl.textContent.trim();
+        return labelText.toLowerCase() === 'currencies';
     }
 
     /**

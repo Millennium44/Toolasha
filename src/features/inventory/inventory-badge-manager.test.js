@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     enhancementCost: null,
     chestKeys: {},
     keyCost: 0,
+    tokenValues: {},
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, onReady: () => () => {} } }));
@@ -79,6 +80,10 @@ vi.mock('../../utils/number-parser.js', () => ({
     MAGNITUDE_SUFFIXES: { k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15 },
 }));
 vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: mocks.chestKeys }));
+vi.mock('../../utils/token-valuation.js', () => ({
+    DUNGEON_TOKEN_HRIDS: new Set(['/items/chimerical_token', '/items/pirate_token']),
+    calculateDungeonTokenValue: (hrid) => mocks.tokenValues[hrid] ?? null,
+}));
 vi.mock('../../utils/key-cost.js', () => ({ getKeyUnitCost: () => mocks.keyCost }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/background-work.js', () => ({
@@ -99,6 +104,7 @@ beforeEach(() => {
     mocks.enhancementCost = null;
     for (const k of Object.keys(mocks.chestKeys)) delete mocks.chestKeys[k];
     mocks.keyCost = 0;
+    mocks.tokenValues = {};
     mocks.yieldSpy.mockClear();
     inventoryBadgeManager.nameToHridMap = null;
 });
@@ -716,5 +722,82 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         inventoryBadgeManager.disable();
         expect(mocks.dataListeners.market_item_values_updated).toBeUndefined();
         spy.mockRestore();
+    });
+});
+
+describe('dungeon tokens', () => {
+    /**
+     * A token tile the way the pricing loop reads it: the item sprite href and a stack count.
+     * @param {string} spriteId - Sprite id after the `#`
+     * @param {number} count - Stack size
+     * @returns {HTMLElement} The item container
+     */
+    function tokenEl(spriteId, count) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        el.innerHTML = `<svg><use href="/static/items_sprite.svg#${spriteId}"></use></svg>`;
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = String(count);
+        el.appendChild(countEl);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = {
+            itemDetailMap: {
+                '/items/chimerical_token': { name: 'Chimerical Token' },
+                '/items/cowbell': { name: 'Cowbell' },
+            },
+        };
+    });
+
+    test('are valued at their best shop gold per token instead of zeroed', async () => {
+        mocks.tokenValues['/items/chimerical_token'] = 1500;
+        const el = tokenEl('chimerical_token', 10);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+
+        expect(el.dataset.askPrice).toBe('1500');
+        expect(el.dataset.bidPrice).toBe('1500');
+        expect(el.dataset.askValue).toBe('15000');
+        expect(el.dataset.bidValue).toBe('15000');
+    });
+
+    test('net-of-tax mode takes the market cut off a token too', async () => {
+        const { MARKET_TAX } = await import('../../utils/profit-constants.js');
+        mocks.settings.invSort_netOfTax = true;
+        mocks.tokenValues['/items/chimerical_token'] = 1000;
+        const el = tokenEl('chimerical_token', 10);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(Number(el.dataset.askPrice)).toBeCloseTo(1000 * (1 - MARKET_TAX));
+        expect(Number(el.dataset.bidValue)).toBeCloseTo(10000 * (1 - MARKET_TAX));
+    });
+
+    test.each([
+        'profitCalc_pricingMode',
+        'expectedValue_respectPricingMode',
+        'invSort_netOfTax',
+        'profitCalc_patientTickBuy',
+        'profitCalc_patientTickSell',
+    ])('changing %s reprices the tiles', async (key) => {
+        inventoryBadgeManager.initialize();
+        const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
+        mocks.settingListeners[key]();
+        expect(spy).toHaveBeenCalledTimes(1);
+        inventoryBadgeManager.disable();
+        expect(mocks.settingListeners[key]).toBeUndefined();
+        spy.mockRestore();
+    });
+
+    test('a token with no derivable value stays at zero', async () => {
+        const el = tokenEl('chimerical_token', 10);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.askValue).toBe('0');
+    });
+
+    test('real currencies stay at zero', async () => {
+        const el = tokenEl('cowbell', 10);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.askValue).toBe('0');
     });
 });

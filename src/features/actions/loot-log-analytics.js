@@ -37,12 +37,57 @@ function getEntryDurationMs(entry) {
 }
 
 /**
- * Union the current session's entries with stored history, deduplicated by
- * `characterActionId`.
+ * What makes two loot log entries the same entry.
  *
- * The current session wins on overlap: an action still running has its
- * `endTime` and `actionCount` rewritten with every loot message, and the copy
- * in storage is however stale the last debounced write left it.
+ * Not `characterActionId`: the game can reissue it mid-session for one
+ * continuous action (upstream saw it on labyrinth runs spanning an
+ * interrupt/resume) while `startTime` stays put, and keying on it stored one
+ * run as several partial rows. These are the fields the game's own loot log
+ * panel tells its rows apart by. An entry missing the action or the start time
+ * falls back to its `characterActionId`, so it is still told apart from others.
+ *
+ * @param {Object} entry - A loot log entry as the game sent it
+ * @returns {string|undefined} The identity, or undefined for an entry with none
+ */
+function lootEntryIdentity(entry) {
+    if (!entry || typeof entry !== 'object') return undefined;
+    if (entry.actionHrid && entry.startTime) {
+        return [
+            entry.actionHrid,
+            entry.difficultyTier ?? '',
+            entry.primaryItemHash ?? '',
+            entry.secondaryItemHash ?? '',
+            entry.partyId ?? '',
+            entry.startTime,
+        ].join('::');
+    }
+    return entry.characterActionId != null ? `id:${entry.characterActionId}` : undefined;
+}
+
+/**
+ * Whether `candidate` is further along than `existing`, for two copies of one
+ * entry: the higher action count, then the later end time. Anything beats
+ * nothing.
+ * @param {Object} candidate - One copy
+ * @param {Object|undefined} existing - The other
+ * @returns {boolean} True when `candidate` should replace `existing`
+ */
+function isMoreCompleteEntry(candidate, existing) {
+    if (!existing) return true;
+    const candidateCount = Number(candidate?.actionCount) || 0;
+    const existingCount = Number(existing?.actionCount) || 0;
+    if (candidateCount !== existingCount) return candidateCount > existingCount;
+    return (Date.parse(candidate?.endTime) || 0) > (Date.parse(existing?.endTime) || 0);
+}
+
+/**
+ * Union the current session's entries with stored history, one row per entry
+ * (`lootEntryIdentity`).
+ *
+ * The copy further along wins on overlap — usually the live one, since a
+ * still-running action has its `endTime` and `actionCount` rewritten with every
+ * loot message and the stored copy is however stale the last debounced write
+ * left it. The live copy also wins a tie.
  *
  * @param {Array} currentEntries - From the live `loot_log_updated` message
  * @param {Array} historicalEntries - From `lootLogHistory`
@@ -51,10 +96,16 @@ function getEntryDurationMs(entry) {
 function mergeCurrentAndHistoricalEntries(currentEntries, historicalEntries) {
     const seen = new Map();
     for (const entry of historicalEntries || []) {
-        if (entry?.characterActionId != null) seen.set(entry.characterActionId, entry);
+        const id = lootEntryIdentity(entry);
+        if (id === undefined) continue;
+        const held = seen.get(id);
+        if (isMoreCompleteEntry(entry, held)) seen.set(id, entry);
     }
     for (const entry of currentEntries || []) {
-        if (entry?.characterActionId != null) seen.set(entry.characterActionId, entry);
+        const id = lootEntryIdentity(entry);
+        if (id === undefined) continue;
+        const held = seen.get(id);
+        if (!held || !isMoreCompleteEntry(held, entry)) seen.set(id, entry);
     }
     return Array.from(seen.values());
 }
@@ -176,6 +227,8 @@ function computeRowRates(row, askTotal, bidTotal, sortIndexOf = () => 0) {
 export {
     EXCLUDED_XP_SKILL_HRID,
     getEntryDurationMs,
+    lootEntryIdentity,
+    isMoreCompleteEntry,
     mergeCurrentAndHistoricalEntries,
     buildActionGroupKey,
     aggregatePivotRows,

@@ -107,6 +107,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    inventoryCategoryTotals.disable();
     vi.useRealTimers();
 });
 
@@ -148,6 +149,7 @@ describe('freshness against items_updated', () => {
         // back and the total stays stale — the reported bug, intact.
         const inventory = document.createElement('div');
         const category = document.createElement('div');
+        category.className = 'Inventory_itemGrid__20YAH';
         const label = document.createElement('div');
         label.className = 'Inventory_label';
         label.textContent = 'Loots';
@@ -194,6 +196,7 @@ describe('following the badge mode', () => {
     function drawInventory() {
         const inventory = document.createElement('div');
         const category = document.createElement('div');
+        category.className = 'Inventory_itemGrid__20YAH';
         const label = document.createElement('div');
         label.className = 'Inventory_label';
         label.textContent = 'Loots';
@@ -246,5 +249,190 @@ describe('following the badge mode', () => {
 
         expect(label.querySelector('.mwi-category-total')).toBeNull();
         expect(inventoryCategoryTotals.pendingUpdate).toBe(false);
+    });
+});
+
+describe('native inventory tabs DOM (2026-09 patch)', () => {
+    /**
+     * The real nesting: Inventory_items holds one TabsComponent wrapper, whose panels hold the
+     * per-category Inventory_itemGrid (label + tiles as flat siblings). A hidden panel carries
+     * stale tiles.
+     * @returns {{ root: HTMLElement, labels: Record<string, HTMLElement> }}
+     */
+    function drawTabbedInventory() {
+        const root = document.createElement('div');
+        root.className = 'Inventory_items__6SXv0';
+        const tabs = document.createElement('div');
+        tabs.className = 'TabsComponent_tabPanelsContainer__26mzo';
+        const labels = {};
+
+        const grid = (name, tiles) => {
+            const g = document.createElement('div');
+            g.className = 'Inventory_itemGrid__20YAH';
+            const label = document.createElement('div');
+            label.className = 'Inventory_label__XEOAx';
+            const button = document.createElement('span');
+            button.className = 'Inventory_categoryButton__35s1x';
+            button.textContent = name;
+            label.appendChild(button);
+            g.appendChild(label);
+            for (const { icon, value } of tiles) {
+                const tile = document.createElement('div');
+                tile.className = 'Item_itemContainer__x7kH1';
+                tile.innerHTML = `<svg><use href="/static/items_sprite.svg#${icon}"></use></svg>`;
+                tile.dataset.askValue = String(value);
+                g.appendChild(tile);
+            }
+            labels[name] ??= label;
+            return g;
+        };
+
+        const visible = document.createElement('div');
+        visible.className = 'TabPanel_tabPanel__tXMJF';
+        visible.appendChild(grid('Currencies', [{ icon: 'coin', value: 999 }]));
+        visible.appendChild(
+            grid('Loots', [
+                { icon: 'cheese', value: 3000 },
+                { icon: 'milk', value: 4000 },
+            ])
+        );
+        const hidden = document.createElement('div');
+        hidden.className = 'TabPanel_tabPanel__tXMJF TabPanel_hidden__26UM3';
+        const stale = grid('Loots', [{ icon: 'cheese', value: 1 }]);
+        hidden.appendChild(stale);
+        tabs.append(visible, hidden);
+        root.appendChild(tabs);
+        document.body.appendChild(root);
+        return { root, labels, staleLabel: stale.querySelector('[class*="Inventory_label"]') };
+    }
+
+    test('draws a total on each category in the active panel, not on the wrapper', () => {
+        const { root, labels, staleLabel } = drawTabbedInventory();
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(labels['Loots'].querySelector('.mwi-category-total').textContent).toBe('7000');
+        expect(staleLabel.querySelector('.mwi-category-total')).toBeNull();
+    });
+
+    /**
+     * The live shape of a single-category native tab (measured on Resources, per inventory-sort.js):
+     * a selected role=tab in the tab strip and a grid of tiles with no Inventory_label and no
+     * Inventory_categoryButton.
+     * @param {string} icon - Tile sprite id
+     * @returns {{root: HTMLElement, tab: HTMLElement}}
+     */
+    function drawLabelessTab(icon) {
+        const root = document.createElement('div');
+        root.className = 'Inventory_items__6SXv0';
+        const strip = document.createElement('div');
+        const tab = document.createElement('button');
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', 'true');
+        tab.innerHTML = '<svg><use href="/static/misc_sprite.svg#item_category_resources"></use></svg>';
+        const other = document.createElement('button');
+        other.setAttribute('role', 'tab');
+        other.setAttribute('aria-selected', 'false');
+        strip.append(tab, other);
+        const panel = document.createElement('div');
+        panel.className = 'TabPanel_tabPanel__tXMJF';
+        const grid = document.createElement('div');
+        grid.className = 'Inventory_itemGrid__20YAH';
+        for (const value of [3000, 4000]) {
+            const item = document.createElement('div');
+            item.className = 'Item_itemContainer__x7kH1';
+            item.innerHTML = `<svg><use href="/static/items_sprite.svg#${icon}"></use></svg>`;
+            item.dataset.askValue = String(value);
+            grid.appendChild(item);
+        }
+        panel.appendChild(grid);
+        root.append(strip, panel);
+        document.body.appendChild(root);
+        return { root, tab, other };
+    }
+
+    test('a label-less single-category tab hosts its total on the selected tab', () => {
+        const { root, tab, other } = drawLabelessTab('cheese');
+        // A total left on a tab that is no longer selected is dropped
+        const stale = document.createElement('span');
+        stale.setAttribute('data-mwi-category-total', 'true');
+        other.appendChild(stale);
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(tab.querySelector('.mwi-category-total').textContent).toBe('7000');
+        expect(other.querySelector('[data-mwi-category-total]')).toBeNull();
+    });
+
+    test.each(['coin', 'labyrinth_token', 'guild_token'])('a label-less currency tab of %s gets no total', (icon) => {
+        const { root, tab } = drawLabelessTab(icon);
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(tab.querySelector('.mwi-category-total')).toBeNull();
+    });
+
+    test('a native tab click re-totals the newly shown panel without Inventory Sort', async () => {
+        const { root, labels } = drawTabbedInventory();
+        const tab = document.createElement('button');
+        tab.setAttribute('role', 'tab');
+        tab.innerHTML = '<svg><use href="/static/misc_sprite.svg#anything"></use></svg>';
+        root.prepend(tab);
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.initialize();
+
+        // Keep the tiles' values as drawn: the mock render would reprice them from an empty book
+        badgeManagerMock.renderAllBadges.mockImplementationOnce(async () => {});
+        tab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        await vi.runAllTimersAsync();
+
+        expect(badgeManagerMock.invalidateCache).toHaveBeenCalled();
+        expect(labels['Loots'].querySelector('.mwi-category-total').textContent).toBe('7000');
+    });
+
+    test('a click outside the inventory tabs does nothing, and disable() removes the listener', async () => {
+        const { root } = drawTabbedInventory();
+        const outside = document.createElement('button');
+        outside.setAttribute('role', 'tab');
+        document.body.appendChild(outside);
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.initialize();
+
+        outside.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        expect(badgeManagerMock.invalidateCache).not.toHaveBeenCalled();
+
+        inventoryCategoryTotals.disable();
+        const inside = document.createElement('button');
+        inside.setAttribute('role', 'tab');
+        root.appendChild(inside);
+        inside.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        expect(badgeManagerMock.invalidateCache).not.toHaveBeenCalled();
+    });
+
+    test('skips Currencies by its coin icon, whatever language the label is in', () => {
+        const { root, labels } = drawTabbedInventory();
+        labels['Currencies'].querySelector('span').textContent = 'Monedas';
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(labels['Currencies'].querySelector('.mwi-category-total')).toBeNull();
+    });
+
+    test('recognizes currency tiles whose sprite id is on xlink:href alone', () => {
+        const { root, labels } = drawTabbedInventory();
+        labels['Currencies'].querySelector('span').textContent = 'Monedas';
+        const use = labels['Currencies'].parentElement.querySelector('svg use');
+        use.removeAttribute('href');
+        use.setAttribute('xlink:href', '/static/items_sprite.svg#coin');
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(labels['Currencies'].querySelector('.mwi-category-total')).toBeNull();
     });
 });

@@ -208,7 +208,12 @@ describe('drawing the pivot', () => {
     test('one row per action, with its rates, and nothing fails to draw', async () => {
         world.history = [
             entry({ characterActionId: 1 }),
-            entry({ characterActionId: 2, totalActiveMillis: HOUR, actionCount: 50 }),
+            entry({
+                characterActionId: 2,
+                startTime: '2026-09-02T00:00:00Z',
+                totalActiveMillis: HOUR,
+                actionCount: 50,
+            }),
         ];
         await open();
 
@@ -318,7 +323,9 @@ describe('re-summing the history', () => {
         await open();
         const before = analytics.aggregateCalls;
 
-        socket.handlers.loot_log_updated[0]({ lootLog: [entry({ characterActionId: 2, actionCount: 900 })] });
+        socket.handlers.loot_log_updated[0]({
+            lootLog: [entry({ characterActionId: 2, startTime: '2026-09-02T00:00:00Z', actionCount: 900 })],
+        });
         lootLogPivotPanel.render();
 
         expect(analytics.aggregateCalls).toBeGreaterThan(before);

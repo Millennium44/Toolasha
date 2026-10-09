@@ -22,6 +22,8 @@ import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { reconcileBook } from '../../utils/market-values.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -160,6 +162,17 @@ class InventoryBadgeManager {
         this.unregisterHandlers.push(
             config.onSettingChange('networth_valueSource', () => reprice('value source change'))
         );
+        // Dungeon token values read these: the pricing side, whether the expected-value setting
+        // respects it, and the patient ticks
+        for (const key of [
+            'profitCalc_pricingMode',
+            'expectedValue_respectPricingMode',
+            // Token values (and every other market-priced tile) are taken net of tax under this one
+            'invSort_netOfTax',
+            ...PATIENT_TICK_SETTING_KEYS,
+        ]) {
+            this.unregisterHandlers.push(config.onSettingChange(key, () => reprice('token pricing setting change')));
+        }
         const onMarketValues = () => reprice('game value refresh');
         dataManager.on('market_item_values_updated', onMarketValues);
         this.unregisterHandlers.push(() => dataManager.off('market_item_values_updated', onMarketValues));
@@ -472,16 +485,9 @@ class InventoryBadgeManager {
             config.getSetting('networth_highEnhancementUseCost') && config.isFeatureEnabled('networth');
         const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
 
-        // Currency items to skip (actual currencies, not category)
-        const currencyHrids = new Set([
-            '/items/gold_coin',
-            '/items/cowbell',
-            '/items/task_token',
-            '/items/chimerical_token',
-            '/items/sinister_token',
-            '/items/enchanted_token',
-            '/items/pirate_token',
-        ]);
+        // Currency items to skip (actual currencies, not category). The dungeon tokens are
+        // handled separately below: unlike these they have a derivable gold-equivalent value.
+        const currencyHrids = new Set(['/items/gold_coin', '/items/cowbell', '/items/task_token']);
 
         let sliceStart = performance.now();
 
@@ -526,6 +532,21 @@ class InventoryBadgeManager {
             if (!countElem) continue;
 
             const itemCount = parseItemCount(countElem.textContent, 0);
+
+            // Dungeon tokens have no market listing, but each is spendable in its token shop for
+            // an item that does trade: value them by the same best gold-per-token figure the
+            // tooltips and net worth use, instead of leaving them at 0 like a true currency.
+            if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) {
+                let perToken = calculateDungeonTokenValue(itemHrid) ?? 0;
+                // The figure is gross (a shop item's market price); net-of-tax mode takes the same cut
+                // as every other market-priced tile
+                if (config.getSetting('invSort_netOfTax') && !isIronCowCharacter()) perToken *= 1 - MARKET_TAX;
+                itemElem.dataset.askPrice = perToken;
+                itemElem.dataset.bidPrice = perToken;
+                itemElem.dataset.askValue = perToken * itemCount;
+                itemElem.dataset.bidValue = perToken * itemCount;
+                continue;
+            }
 
             // Get item details (reused throughout)
             const itemDetails = gameData.itemDetailMap[itemHrid];

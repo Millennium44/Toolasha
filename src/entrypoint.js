@@ -1684,6 +1684,14 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthMissingSuppliesButton',
+            name: 'Labyrinth Missing Supplies Button',
+            category: 'Combat',
+            module: Combat.labyrinthMissingSupplies,
+            async: false,
+            liveStop: true,
+        },
+        {
             key: 'labyrinthMonsterStatCheck',
             name: 'Monster Stat Check',
             category: 'Combat',
@@ -1973,6 +1981,14 @@ function registerFeatures() {
         { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
+        {
+            key: 'chat_24hrTimestamps',
+            name: 'Chat 24hr Timestamps',
+            category: 'Chat',
+            module: UI.chat24hrTimestamps,
+            async: false,
+            liveStop: true,
+        },
         {
             key: 'chatHistoryExtender',
             name: 'Chat History Extender',
@@ -2276,6 +2292,14 @@ function registerFeatures() {
             category: 'Enhancement',
             module: UI.xphCalculator,
             async: false,
+        },
+        {
+            key: 'enhanceSim_protectionMarketplaceButton',
+            name: 'Enhancement Protection Marketplace Button',
+            category: 'Enhancement',
+            module: UI.enhancementProtectionMarketplace,
+            async: false,
+            liveStop: true,
         },
         {
             key: 'enhancementItemPins',

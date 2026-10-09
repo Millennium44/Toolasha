@@ -99,6 +99,13 @@ export const settingsGroups = {
                 type: 'text',
                 default: '150',
             },
+            chat_24hrTimestamps: {
+                id: 'chat_24hrTimestamps',
+                label: 'Chat: Reformat message timestamps',
+                type: 'checkbox',
+                default: false,
+                help: 'Rewrites chat message timestamps using your Market date/time format settings (24-hour or 12-hour, MM-DD or DD-MM) instead of the browser default',
+            },
             altClickNavigation: {
                 id: 'altClickNavigation',
                 label: 'Alt+click items to navigate to crafting/gathering or dictionary',
@@ -1133,6 +1140,13 @@ export const settingsGroups = {
                 requires: 'enhanceSim_protectFromStock',
                 help: 'Holds back this many copies of the enhanced item from the protect-from sweep and the material limit when it protects itself. Mirrors of Protection are spent freely. The game itself cannot hold copies back: it uses up whichever stack you pick, so keep spares at a different enhancement level if you want the game to leave them alone.',
             },
+            enhanceSim_protectionMarketplaceButton: {
+                id: 'enhanceSim_protectionMarketplaceButton',
+                label: 'Protection item picker: Show "Buy Cheapest" marketplace button',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a button to the Protection item selector popup in the Enhancing panel that opens the Marketplace on the cheapest available protection option',
+            },
             enhancementItemPins: {
                 id: 'enhancementItemPins',
                 label: 'Enhancing panel: Pin items in the item picker',
@@ -1834,7 +1848,7 @@ export const settingsGroups = {
                     { value: '24hour', label: '24-hour (14:30)' },
                     { value: '12hour', label: '12-hour (2:30 PM)' },
                 ],
-                help: "Time format used for every date and time Toolasha shows, not just marketplace listings and action completion times. Automatic follows each device's own clock and is resolved separately per device.",
+                help: "Time format used for every date and time Toolasha shows, including chat timestamps when that setting is on. Automatic follows each device's own clock and is resolved separately per device.",
             },
             market_listingDateFormat: {
                 id: 'market_listingDateFormat',
@@ -1845,7 +1859,7 @@ export const settingsGroups = {
                     { value: 'MM-DD', label: 'MM-DD (01-13)' },
                     { value: 'DD-MM', label: 'DD-MM (13-01)' },
                 ],
-                help: 'Date format used in marketplace listings and action completion times',
+                help: 'Date format used in marketplace listings, action completion times, and chat timestamps',
             },
             market_showOrderTotals: {
                 id: 'market_showOrderTotals',
@@ -2606,6 +2620,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows expected clear time and success rate on labyrinth skilling room tiles',
+            },
+            labyrinthMissingSuppliesButton: {
+                id: 'labyrinthMissingSuppliesButton',
+                label: 'Labyrinth: Show "Buy missing supplies" button',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
             },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',

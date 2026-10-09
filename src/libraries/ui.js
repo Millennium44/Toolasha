@@ -41,6 +41,7 @@ import mentionTracker from '../features/chat/mention-tracker.js';
 import popOutChat from '../features/chat/pop-out-chat.js';
 import chatBlockList from '../features/chat/chat-block-list.js';
 import chatHistoryExtender from '../features/chat/chat-history-extender.js';
+import chat24hrTimestamps from '../features/chat/chat-24hr-timestamps.js';
 
 // Task features
 import taskProfitDisplay from '../features/tasks/task-profit-display.js';
@@ -107,6 +108,7 @@ import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 import '../features/enhancement/enhancement-session-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 import enhancementItemPins from '../features/enhancement/enhancement-item-pins.js';
+import enhancementProtectionMarketplace from '../features/enhancement/enhancement-protection-marketplace.js';
 import wideEnhancingPanel from '../features/enhancement/wide-enhancing-panel.js';
 
 // Risk of Ruin
@@ -216,6 +218,7 @@ toolashaRoot.UI = {
     popOutChat,
     chatBlockList,
     chatHistoryExtender,
+    chat24hrTimestamps,
     taskProfitDisplay,
     taskRerollTracker,
     taskSorter,
@@ -253,6 +256,7 @@ toolashaRoot.UI = {
     enhancementFeature,
     xphCalculator,
     enhancementItemPins,
+    enhancementProtectionMarketplace,
     wideEnhancingPanel,
     riskOfRuinUI,
     predictionCalibration,

@@ -943,9 +943,10 @@ describe('LootLogStats.deleteHistoricalEntry', () => {
         // from a `loot_log_updated` message in flight at the same time could
         // have its stale read put the just-deleted entry straight back.
         // Delegating means the delete is subject to the same serialization.
-        await expect(stats.deleteHistoricalEntry(2)).resolves.toBeUndefined();
+        const stored = { characterActionId: 2, actionHrid: '/actions/milking/cow', startTime: '2026-08-01T10:00:00Z' };
+        await expect(stats.deleteHistoricalEntry(stored)).resolves.toBeUndefined();
 
-        expect(lootLogHistory.deleteEntry).toHaveBeenCalledWith(2);
+        expect(lootLogHistory.deleteEntry).toHaveBeenCalledWith(stored);
     });
 });
 

@@ -130,6 +130,11 @@ describe('iron cow mode turns the merged market dropdowns off, not to their defa
         expect(IRON_COW_SETTINGS.has('market_listingAge')).toBe(true);
         expect(IRON_COW_SETTINGS.has('inv_valueBadges')).toBe(true);
     });
+
+    test('marketplace-only buttons are locked off too', () => {
+        expect(IRON_COW_SETTINGS.has('enhanceSim_protectionMarketplaceButton')).toBe(true);
+        expect(IRON_COW_SETTINGS.has('labyrinthMissingSuppliesButton')).toBe(true);
+    });
 });
 
 // The market_ prefix on the date/time format preferences is legacy naming: they are

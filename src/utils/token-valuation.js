@@ -17,6 +17,9 @@ const TOKEN_ESSENCE_MAP = {
     '/items/pirate_token': '/items/pirate_essence',
 };
 
+/** The four dungeon currency tokens; each can be valued through its own token shop. */
+export const DUNGEON_TOKEN_HRIDS = new Set(Object.keys(TOKEN_ESSENCE_MAP));
+
 /**
  * Which side of the book a token valuation quotes, from the user's settings.
  * @param {string} pricingModeSetting - Config key for the profit pricing mode

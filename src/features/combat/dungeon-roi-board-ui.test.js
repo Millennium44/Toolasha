@@ -149,6 +149,12 @@ vi.mock('../../utils/key-cost.js', () => ({
 }));
 
 vi.mock('../../utils/token-valuation.js', () => ({
+    DUNGEON_TOKEN_HRIDS: new Set([
+        '/items/chimerical_token',
+        '/items/sinister_token',
+        '/items/enchanted_token',
+        '/items/pirate_token',
+    ]),
     calculateDungeonTokenValue: () => 100,
     calculateDungeonTokenValueDetail: () => ({ value: 100, itemHrid: null, via: 'shop' }),
     calculateLabyrinthTokenValueDetail: () => null,
