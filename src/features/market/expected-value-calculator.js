@@ -486,9 +486,10 @@ class ExpectedValueCalculator {
             const bagValue = getItemPrice(this.COWBELL_BAG_HRID, { context: 'profit', side: 'sell' }) || 0;
 
             if (bagValue > 0) {
-                // Apply the Cowbell Bag's own market tax, then divide by 10
+                // Apply the Cowbell Bag's own market tax, then divide by 10. The gross
+                // (personal-use) traversal sells nothing, so it takes the bag untaxed.
                 return {
-                    value: calculatePriceAfterTax(bagValue, COWBELL_BAG_TAX) / 10,
+                    value: (context?.gross ? bagValue : calculatePriceAfterTax(bagValue, COWBELL_BAG_TAX)) / 10,
                     source: 'cowbell',
                     needsTax: false,
                 };

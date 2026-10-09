@@ -1005,6 +1005,29 @@ describe('Gourmet and a craft batch', () => {
         expect(plain.yields.get('/items/cheese_sword')).toBe(1);
     });
 
+    test('the Gourmet copies a decompose does not eat are sold at the bid after tax', async () => {
+        game.craftable = new Set(['/items/cheese_sword']);
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
+        const find = async () =>
+            (await buildCollectionRoutes()).sources.find(
+                (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+            );
+        game.profitExtra = {};
+        const plain = await find();
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const gourmet = await find();
+        // 1.25 swords per source: one decompose eats one, a quarter of a sword is left over
+        expect(plain.kept.has('/items/cheese_sword')).toBe(false);
+        expect(gourmet.kept.get('/items/cheese_sword').perSource).toBeCloseTo(0.25, 9);
+        expect(gourmet.kept.get('/items/cheese_sword').unit).toBeCloseTo(2000 * 0.96, 9);
+        // The target (cheese) is collected, so the leftover sword brings in gold against the run
+        const counts = new Map([['/items/cheese', 1]]);
+        const sold = evaluateOption('/items/cheese', counts, gourmet);
+        const unsold = evaluateOption('/items/cheese', counts, { ...gourmet, kept: plain.kept });
+        expect(sold.units).toBe(unsold.units);
+        expect(unsold.gold - sold.gold).toBeCloseTo(sold.units * 0.25 * 2000 * 0.96, 6);
+    });
+
     test('alchemy overhead is priced at the ask whatever the profit mode is', async () => {
         game.pricingMode = 'optimistic';
         game.decomposeSetups = [{}];
