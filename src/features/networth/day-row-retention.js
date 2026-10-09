@@ -133,7 +133,11 @@ export function registerDayRowRetention({ store, recordPrefix, days, granularity
             floor: (newestEnd, newestStart) => {
                 const recorderFloor = dayNumber(localDayId(now() - days * DAY_MS));
                 if (newestEnd >= dayNumber(localDayId(now()))) return recorderFloor;
-                return Math.min(recorderFloor, newestStart - days);
+                // The recorder's floor is `localDayId(saveTime - days * DAY_MS)`, a wall-clock subtraction. Calendar
+                // arithmetic on day numbers is one day stricter than it across a spring DST change, so take the
+                // floor of the earliest save that could have filed the newest key's first row: its day's start
+                const earliestSave = dayStart(dayId(newestStart));
+                return Math.min(recorderFloor, dayNumber(localDayId(earliestSave - days * DAY_MS)));
             },
         },
     });

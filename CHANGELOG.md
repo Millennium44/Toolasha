@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Self-use transmute, decompose and decompose-chain lines now value only the outputs you mark "Keep for self-use" (tooltip chip, or press K) at what buying them costs; everything else counts at what selling it gets after tax, so an ability-book transmute no longer shows inflated numbers.
 
+### Sync retries owed deletes and words manual pulls accurately
+
+- A cleanup delete that failed is retried even when a pull finds nothing new, an idle character's history is never trimmed a day early across a daylight-saving change, and a manual pull says when the next push will remove something from the gist.
+
 ### Marketplace sort by decompose chain
 
 - A new "Decompose chain/hr" Marketplace sort ranks items by buying at the ask, decomposing them all the way down, and selling what is left at the bid after tax, per hour of alchemy.
