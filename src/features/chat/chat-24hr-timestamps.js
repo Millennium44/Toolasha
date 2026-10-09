@@ -12,20 +12,30 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { isTwelveHourClock } from '../../utils/formatters.js';
 
-// Matches the native client's "[M/D H:MM:SS AM/PM]" or "[H:MM:SS AM/PM]" timestamp text. The
+// Matches the native client's "[M/D H:MM:SS AM/PM]" or "[H:MM:SS AM/PM]" timestamp text (the
+// meridiem is absent when the browser locale is already 24-hour). The
 // client builds the string as "[" + time + "] ", so the span's own text carries a trailing space
 // after the closing bracket (the locale may also put a narrow no-break space before AM/PM).
 // The trailing whitespace is captured and preserved, never treated as absent.
-const TIMESTAMP_RE = /^\[(?:(\d{1,2}\/\d{1,2})\s+)?(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)\](\s*)$/i;
+const TIMESTAMP_RE = /^\[(?:(\d{1,2}\/\d{1,2})\s+)?(\d{1,2}):(\d{2}):(\d{2})(?:\s*(AM|PM))?\](\s*)$/i;
+
+// What the client wrote and what we wrote over it, per span. Once rewritten, the text is no longer
+// the native form, so a later resweep (a changed setting) must start from the native text again.
+const rewritten = new WeakMap();
 
 /**
  * Reformat a single timestamp span's text according to the current date/time settings.
- * No-op if the text doesn't match the expected AM/PM pattern (already reformatted, or unrecognized).
+ * Always starts from the native text, so every resweep applies the current settings.
+ * No-op if the text doesn't match the expected pattern (unrecognized).
  * @param {Element} span
  */
 function processTimestampNode(span) {
     const current = span.textContent;
-    const match = current.match(TIMESTAMP_RE);
+    const record = rewritten.get(span);
+    // Our own output is not the native text; anything else is a fresh native value (the client
+    // re-rendered the span)
+    const native = record && record.out === current ? record.native : current;
+    const match = native.match(TIMESTAMP_RE);
     if (!match) return;
 
     const [, datePart, hourStr, minuteStr, secondStr, meridiem, trailingSpace] = match;
@@ -33,8 +43,10 @@ function processTimestampNode(span) {
     const dateFormat = config.getSettingValue('market_listingDateFormat', 'MM-DD');
 
     let hour = parseInt(hourStr, 10);
-    if (meridiem.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-    if (meridiem.toUpperCase() === 'AM' && hour === 12) hour = 0;
+    if (meridiem) {
+        if (meridiem.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+        if (meridiem.toUpperCase() === 'AM' && hour === 12) hour = 0;
+    }
 
     let timeText;
     if (use24h) {
@@ -55,8 +67,9 @@ function processTimestampNode(span) {
     }
 
     newText += trailingSpace;
-    // 12-hour output is still matched by the pattern; writing identical text would re-fire the
-    // observer for nothing, so only touch the DOM when the text actually changes.
+    // Writing identical text would re-fire the observer for nothing, so only touch the DOM when
+    // the text actually changes.
+    rewritten.set(span, { native, out: newText });
     if (newText === current) return;
     span.textContent = newText;
 }

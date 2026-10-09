@@ -112,17 +112,43 @@ describe('Chat 24hr Timestamps', () => {
         expect(span.textContent).toBe('[9:31:23 PM] ');
     });
 
-    test('re-sweeps visible timestamps when the time format setting changes', () => {
+    test('re-sweeps visible timestamps when the time format setting changes (24h -> 12h round trip)', () => {
         const span = makeTimestampSpan('[9:31:23 PM] ');
         feature.initialize();
         expect(span.textContent).toBe('[21:31:23] ');
 
         settingValues.market_listingTimeFormat = '12hour';
         settingChangeCallbacks['market_listingTimeFormat'].forEach((cb) => cb());
+        expect(span.textContent).toBe('[9:31:23 PM] ');
 
-        // Already-24h text has no AM/PM token, so the regex no-ops; this documents that
-        // switching back to 12-hour does not retroactively "un-convert" already-rewritten text.
+        settingValues.market_listingTimeFormat = '24hour';
+        settingChangeCallbacks['market_listingTimeFormat'].forEach((cb) => cb());
         expect(span.textContent).toBe('[21:31:23] ');
+    });
+
+    test('re-renders already-rewritten timestamps when the date format changes', () => {
+        const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[05/22 21:31:23] ');
+
+        settingValues.market_listingDateFormat = 'DD-MM';
+        settingChangeCallbacks['market_listingDateFormat'].forEach((cb) => cb());
+        expect(span.textContent).toBe('[22/05 21:31:23] ');
+    });
+
+    test('converts a native 24-hour timestamp to 12-hour', () => {
+        settingValues.market_listingTimeFormat = '12hour';
+        const span = makeTimestampSpan('[21:31:23] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[9:31:23 PM] ');
+    });
+
+    test('a span the client re-renders is read as fresh native text', () => {
+        const span = makeTimestampSpan('[9:31:23 PM] ');
+        feature.initialize();
+        span.textContent = '[10:00:00 AM] ';
+        settingChangeCallbacks['market_listingDateFormat'].forEach((cb) => cb());
+        expect(span.textContent).toBe('[10:00:00] ');
     });
 
     test('disable() unregisters the dom observer and setting-change listeners', () => {
