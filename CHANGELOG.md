@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Optimizer counts crafting's bonus drops; no pricing past the order book
+
+- Collection optimizer craft routes now credit the essence and Artisan's Crates crafting drops (sold at the bid after tax or counted toward their own collections), and a buy larger than the visible order book is no longer priced at its deepest ask, so big plans stop where the book does.
+
 ### Instead-of-buying line: no hover stall, essence targets
 
 - The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence (including coinify routes).
