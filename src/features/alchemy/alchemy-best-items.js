@@ -12,6 +12,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -35,6 +36,38 @@ import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
+
+/** The setting that remembers which sort the table was last left on */
+const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
+
+/**
+ * The table's sort modes, in button order. `decomposeOnly` modes rank the Decompose tab
+ * alone: the whole chain only exists for a decompose, so on the other tabs the stored
+ * choice is kept but the table falls back to profit.
+ */
+export const SORT_MODES = [
+    { value: 'profit', label: 'Profit/hr' },
+    { value: 'xp', label: 'XP/hr' },
+    {
+        value: 'decomposeChainPerHour',
+        label: 'Decompose chain/hr',
+        decomposeOnly: true,
+        title:
+            'Insta-buy the item at its real ask, decompose it and everything it yields (each step on the ' +
+            'catalyst/tea setup best for the chain per hour), insta-sell what is left at bid after market tax. ' +
+            'Items with an unpriced step show no value and sort last.',
+    },
+];
+
+/**
+ * Look up a stored sort mode, falling back to profit for anything unknown.
+ * @param {*} value - A stored or requested mode id
+ * @returns {string} A known mode id
+ */
+export function normalizeSortMode(value) {
+    return SORT_MODES.some((mode) => mode.value === value) ? value : 'profit';
+}
 
 // Re-exported because this module is where both helpers were first written and
 // where other files still import them from.
@@ -85,7 +118,10 @@ class AlchemyBestItems {
         this.alchemyTab = null;
         this.tabWatcher = null;
         this.cachedRankings = {}; // { coinify: [...], decompose: [...], transmute: [...] }
-        this.sortMode = 'profit'; // 'profit' or 'xp'
+        this.sortMode = 'profit'; // a SORT_MODES id
+        // Whole-chain figures by item hrid for the current rankings (null = unpriced)
+        this.chainValues = new Map();
+        this.chainTops = new Map();
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -95,6 +131,9 @@ class AlchemyBestItems {
         this.filterPriceMin = null;
         this.filterPriceMax = null;
         this.pricingUnsubscribers = [];
+        this.profitFilterLabel = null;
+        // A market refresh or order-book patch moves the asks and bids the chains were priced on
+        this._onMarketUpdate = () => this.handleMarketUpdate();
         // True while a header dropdown writes the pricing settings — see choosePricingSide
         this._applyingPricingChoice = false;
     }
@@ -104,8 +143,31 @@ class AlchemyBestItems {
         if (!config.getSetting('alchemy_bestItems')) return;
 
         this.isInitialized = true;
+        this.sortMode = normalizeSortMode(config.getSettingValue(SORT_MODE_SETTING, 'profit'));
         this.addAlchemyTab();
         this.subscribePricingChanges();
+        marketAPI.on(this._onMarketUpdate);
+    }
+
+    /**
+     * Prices moved: drop the memoised chains so an open chain table is re-priced
+     * from one snapshot rather than mixing old and new figures.
+     */
+    handleMarketUpdate() {
+        try {
+            this.chainValues.clear();
+            this.chainTops.clear();
+            clearDecomposeChainCaches();
+            if (
+                this.modal &&
+                this.modal.style.display !== 'none' &&
+                this.effectiveSortMode() === 'decomposeChainPerHour'
+            ) {
+                this.renderTable();
+            }
+        } catch (error) {
+            console.error('[AlchemyBestItems] Re-pricing after a market update failed:', error);
+        }
     }
 
     /**
@@ -127,7 +189,20 @@ class AlchemyBestItems {
                 config.onSettingChange(key, () => this.updatePricingSelects())
             ),
             config.onSettingsLoaded(onPricingChange),
+            // The sort is a setting too: a change made in Settings applies to the open table
+            config.onSettingChange(SORT_MODE_SETTING, () => this.handleSortSettingChange()),
         ];
+    }
+
+    /**
+     * Follow a sort-mode change made outside the table (Settings). The table's own
+     * choice has already set `sortMode`, so it is a no-op there.
+     */
+    handleSortSettingChange() {
+        const next = normalizeSortMode(config.getSettingValue(SORT_MODE_SETTING, 'profit'));
+        if (next === this.sortMode) return;
+        this.sortMode = next;
+        if (this.modal && this.modal.style.display !== 'none') this.renderTable();
     }
 
     unsubscribePricingChanges() {
@@ -185,6 +260,7 @@ class AlchemyBestItems {
     disable() {
         try {
             this.unsubscribePricingChanges();
+            marketAPI.off(this._onMarketUpdate);
             if (this.tabWatcher) {
                 this.tabWatcher();
                 this.tabWatcher = null;
@@ -379,6 +455,10 @@ class AlchemyBestItems {
      *   returns
      */
     loadRankings(alchemyType) {
+        // Tea, gear and prices may have moved since the chains were last worked out
+        this.chainValues.clear();
+        this.chainTops.clear();
+        clearDecomposeChainCaches();
         const raw = this.calculateRankings(alchemyType);
         const pending = raw.map((entry) => ({ ...entry, capPending: true }));
         this.cachedRankings[alchemyType] = pending;
@@ -435,6 +515,62 @@ class AlchemyBestItems {
      */
     invalidateCache() {
         this.cachedRankings = {};
+        this.chainValues.clear();
+        this.chainTops.clear();
+        clearDecomposeChainCaches();
+    }
+
+    /**
+     * The mode the table is actually sorted by: a decompose-only mode falls back
+     * to profit on the other tabs, without forgetting the stored choice.
+     * @returns {string} A mode id
+     */
+    effectiveSortMode() {
+        const mode = SORT_MODES.find((entry) => entry.value === this.sortMode);
+        if (mode?.decomposeOnly && this.currentType !== 'decompose') return 'profit';
+        return mode ? mode.value : 'profit';
+    }
+
+    /**
+     * Choose a sort mode and remember it.
+     * @param {string} value - A SORT_MODES id
+     */
+    chooseSortMode(value) {
+        this.sortMode = normalizeSortMode(value);
+        config.setSettingValue(SORT_MODE_SETTING, this.sortMode);
+        this.renderTable();
+    }
+
+    /**
+     * The row as the chain sort sees it: the catalyst and breakdown are the top step
+     * the chain actually picked, not the single-step profit winner, so the table never
+     * ranks by one setup and tells the player to run another.
+     * @param {Object} item - A ranking row
+     * @returns {Object} The row, with the chain's setup where there is one
+     */
+    chainView(item) {
+        if (this.effectiveSortMode() !== 'decomposeChainPerHour') return item;
+        this.chainPerHour(item.itemHrid);
+        const top = this.chainTops.get(item.itemHrid);
+        if (!top) return item;
+        return { ...item, catalyst: top.winningCatalystHrid || null, profitData: top };
+    }
+
+    /**
+     * The whole-chain gold per hour of an item: bought at the ask, decomposed all the
+     * way down, sold at the bid after tax. Shares its arithmetic and per-snapshot
+     * caches with the marketplace sort. Memoised for the current rankings.
+     * @param {string} itemHrid - Item HRID
+     * @returns {number|null} Gold per hour, or null when any step is unpriced
+     */
+    chainPerHour(itemHrid) {
+        if (this.chainValues.has(itemHrid)) return this.chainValues.get(itemHrid);
+        const chain = decomposeChain(itemHrid);
+        this.chainTops.set(itemHrid, chain?.topStep ?? null);
+        const value = chain?.netPerHour;
+        const figure = Number.isFinite(value) ? value : null;
+        this.chainValues.set(itemHrid, figure);
+        return figure;
     }
 
     createModal() {
@@ -543,18 +679,16 @@ class AlchemyBestItems {
         sortLabel.textContent = 'Sort by:';
         controls.appendChild(sortLabel);
 
-        for (const mode of ['profit', 'xp']) {
+        for (const { value: mode, label, title } of SORT_MODES) {
             const btn = document.createElement('button');
-            btn.textContent = mode === 'profit' ? 'Profit/hr' : 'XP/hr';
+            btn.textContent = label;
+            if (title) btn.title = title;
             btn.setAttribute('data-mwi-sort-btn', mode);
             btn.style.cssText = `
                 padding: 3px 8px; border-radius: 4px; cursor: pointer;
                 border: 1px solid #555; font-size: 0.75rem; color: #fff;
             `;
-            btn.addEventListener('click', () => {
-                this.sortMode = mode;
-                this.renderTable();
-            });
+            btn.addEventListener('click', () => this.chooseSortMode(mode));
             controls.appendChild(btn);
         }
 
@@ -608,7 +742,11 @@ class AlchemyBestItems {
         // Profit/hr filter
         const profitFilter = document.createElement('span');
         profitFilter.style.cssText = 'display: flex; align-items: center; gap: 4px;';
-        profitFilter.innerHTML = 'Profit/hr:';
+        profitFilter.innerHTML = '';
+        const profitLabel = document.createElement('span');
+        profitLabel.textContent = 'Profit/hr:';
+        profitFilter.appendChild(profitLabel);
+        this.profitFilterLabel = profitLabel;
         const profitMin = document.createElement('input');
         profitMin.type = 'text';
         profitMin.placeholder = 'Min';
@@ -680,16 +818,18 @@ class AlchemyBestItems {
 
         const rankings = this.cachedRankings[this.currentType] || [];
 
+        const sortMode = this.effectiveSortMode();
+        const chainMode = sortMode === 'decomposeChainPerHour';
+        // The range filters the figure the chain sort ranks on, so name it
+        if (this.profitFilterLabel) this.profitFilterLabel.textContent = chainMode ? 'Chain/hr:' : 'Profit/hr:';
+        // The figure the profit filters work on
+        const profitOf = (r) => (chainMode ? this.chainPerHour(r.itemHrid) : r.profitPerHour);
+        const passes = (value, test) => value !== null && test(value);
+
         // Filter
-        let filtered = this.profitableOnly ? rankings.filter((r) => r.profitPerHour > 0) : rankings;
+        let filtered = rankings;
         if (this.searchQuery) {
             filtered = filtered.filter((r) => r.name.toLowerCase().includes(this.searchQuery));
-        }
-        if (this.filterProfitMin !== null) {
-            filtered = filtered.filter((r) => r.profitPerHour >= this.filterProfitMin);
-        }
-        if (this.filterProfitMax !== null) {
-            filtered = filtered.filter((r) => r.profitPerHour <= this.filterProfitMax);
         }
         if (this.filterPriceMin !== null) {
             filtered = filtered.filter((r) => r.itemPrice >= this.filterPriceMin);
@@ -697,10 +837,31 @@ class AlchemyBestItems {
         if (this.filterPriceMax !== null) {
             filtered = filtered.filter((r) => r.itemPrice <= this.filterPriceMax);
         }
+        // Chains are only worked out for rows still standing after the cheap filters
+        if (this.profitableOnly) {
+            filtered = filtered.filter((r) => passes(profitOf(r), (v) => v > 0));
+        }
+        if (this.filterProfitMin !== null) {
+            filtered = filtered.filter((r) => passes(profitOf(r), (v) => v >= this.filterProfitMin));
+        }
+        if (this.filterProfitMax !== null) {
+            filtered = filtered.filter((r) => passes(profitOf(r), (v) => v <= this.filterProfitMax));
+        }
 
         // Sort — secondary sort is the other metric when primary values tie
         const sorted = [...filtered].sort((a, b) => {
-            if (this.sortMode === 'xp') {
+            if (chainMode) {
+                // An unpriced chain has no figure and sorts last
+                const chainA = this.chainPerHour(a.itemHrid);
+                const chainB = this.chainPerHour(b.itemHrid);
+                if (chainA === null || chainB === null) {
+                    if (chainA === chainB) return b.profitPerHour - a.profitPerHour;
+                    return chainA === null ? 1 : -1;
+                }
+                const primary = chainB - chainA;
+                return primary !== 0 ? primary : b.profitPerHour - a.profitPerHour;
+            }
+            if (sortMode === 'xp') {
                 const primary = b.xpPerHour - a.xpPerHour;
                 return primary !== 0 ? primary : b.profitPerHour - a.profitPerHour;
             }
@@ -723,8 +884,12 @@ class AlchemyBestItems {
 
         // Update sort button styling
         this.modal.querySelectorAll('[data-mwi-sort-btn]').forEach((btn) => {
-            const isActive = btn.getAttribute('data-mwi-sort-btn') === this.sortMode;
+            const isActive = btn.getAttribute('data-mwi-sort-btn') === sortMode;
             btn.style.background = isActive ? '#555' : 'transparent';
+            const onlyDecompose = SORT_MODES.find(
+                (m) => m.value === btn.getAttribute('data-mwi-sort-btn')
+            )?.decomposeOnly;
+            btn.style.display = onlyDecompose && this.currentType !== 'decompose' ? 'none' : '';
         });
 
         // Update profitable toggle styling
@@ -745,12 +910,15 @@ class AlchemyBestItems {
         const headerRow = document.createElement('tr');
         headerRow.style.cssText = 'border-bottom: 1px solid #555;';
 
-        for (const col of ['#', 'Item', 'Lvl', 'Catalyst', 'Profit/hr', 'XP/hr']) {
+        const columns = ['#', 'Item', 'Lvl', 'Catalyst', 'Profit/hr', 'XP/hr'];
+        if (chainMode) columns.splice(4, 0, 'Chain/hr');
+        for (const col of columns) {
             const th = document.createElement('th');
             th.textContent = col;
+            if (col === 'Chain/hr') th.title = SORT_MODES.find((m) => m.value === sortMode).title;
             th.style.cssText = 'padding: 6px 8px; text-align: left; color: #aaa; font-weight: 500;';
             if (col === '#' || col === 'Lvl') th.style.textAlign = 'center';
-            if (col === 'Profit/hr' || col === 'XP/hr') th.style.textAlign = 'right';
+            if (col === 'Profit/hr' || col === 'XP/hr' || col === 'Chain/hr') th.style.textAlign = 'right';
             // The ranking's track record against finished runs, once measured
             if (col === 'Profit/hr') {
                 appendCalibrationBadge(th, 'alchemy', {
@@ -800,8 +968,9 @@ class AlchemyBestItems {
             // Catalyst
             const catTd = document.createElement('td');
             catTd.style.cssText = 'padding: 4px 8px; text-align: center;';
-            if (item.catalyst && this.itemsSpriteUrl) {
-                const symbolId = item.catalyst.replace('/items/', '');
+            const setup = this.chainView(item);
+            if (setup.catalyst && this.itemsSpriteUrl) {
+                const symbolId = setup.catalyst.replace('/items/', '');
                 const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
                 svg.setAttribute('width', '20');
                 svg.setAttribute('height', '20');
@@ -811,12 +980,28 @@ class AlchemyBestItems {
                 use.setAttribute('href', `${this.itemsSpriteUrl}#${symbolId}`);
                 svg.appendChild(use);
                 catTd.appendChild(svg);
-                catTd.title = CATALYST_LABELS[item.catalyst] || symbolId;
+                catTd.title = CATALYST_LABELS[setup.catalyst] || symbolId;
             } else {
                 catTd.textContent = '\u2014';
                 catTd.style.color = '#555';
             }
             row.appendChild(catTd);
+
+            // Chain/hr — the whole decompose chain, only while that is the sort
+            if (chainMode) {
+                const chainTd = document.createElement('td');
+                const chainValue = this.chainPerHour(item.itemHrid);
+                chainTd.setAttribute('data-mwi-chain', 'true');
+                if (chainValue === null) {
+                    chainTd.textContent = '\u2014';
+                    chainTd.title = 'Part of this chain has no real ask or bid, so it has no figure';
+                    chainTd.style.cssText = 'padding: 4px 8px; text-align: right; color: #555;';
+                } else {
+                    chainTd.textContent = formatKMB(Math.round(chainValue));
+                    chainTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${chainValue >= 0 ? '#4ade80' : '#f87171'};`;
+                }
+                row.appendChild(chainTd);
+            }
 
             // Profit/hr — the raw figure, always; a volume-bounded one always
             // says so, and one still awaiting its liquidity check says that too,
@@ -891,9 +1076,9 @@ class AlchemyBestItems {
         const expansionRow = document.createElement('tr');
         expansionRow.classList.add('mwi-best-items-breakdown');
         const td = document.createElement('td');
-        td.setAttribute('colspan', '6');
+        td.setAttribute('colspan', this.effectiveSortMode() === 'decomposeChainPerHour' ? '7' : '6');
         td.style.cssText = 'padding: 8px 16px; background: #1e1e1e; font-size: 0.75rem;';
-        td.appendChild(this.renderBreakdownContent(item));
+        td.appendChild(this.renderBreakdownContent(this.chainView(item)));
         expansionRow.appendChild(td);
         row.after(expansionRow);
     }

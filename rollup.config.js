@@ -427,6 +427,10 @@ const marketExternalGlobals = new Map([
         normalize(join(__dirname, 'src/features/market/mooket/market-history-data.js')),
         'Toolasha.Market.marketHistoryData',
     ],
+    // The decompose-chain arithmetic and its per-snapshot caches: the marketplace sort
+    // (market bundle) and the Best Items tab (actions bundle) rank by it, and two copies
+    // would be two sets of caches priced separately.
+    [normalize(join(__dirname, 'src/utils/decompose-chain-value.js')), 'Toolasha.Market.decomposeChainValue'],
     [normalize(join(__dirname, 'src/features/actions/gathering-profit.js')), 'Toolasha.Market.gatheringProfit'],
     [normalize(join(__dirname, 'src/features/actions/production-profit.js')), 'Toolasha.Market.productionProfit'],
     // A stateful singleton holding the chest tally, reached by the settings
