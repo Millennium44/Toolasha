@@ -28,6 +28,10 @@ const engine = vi.hoisted(() => ({
     itemDetails: {},
     // itemHrid → bid price (the 'sell' side); absent = unpriced
     bids: {},
+    // hrids whose price (either side) is a value-map estimate, not a book quote
+    estimated: new Set(),
+    // itemHrid → decompose results, one per catalyst/tea candidate
+    candidates: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -87,6 +91,7 @@ vi.mock('./alchemy-profit-calculator.js', () => {
             calculateCoinifyProfit: (itemHrid) => answer(itemHrid, 'coinify'),
             calculateDecomposeProfit: (itemHrid) => answer(itemHrid, 'decompose'),
             calculateTransmuteProfit: (itemHrid) => answer(itemHrid, 'transmute'),
+            calculateCandidateResults: (action, itemHrid) => engine.candidates[itemHrid] ?? [],
         },
     };
 });
@@ -95,6 +100,11 @@ vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
+    getItemPriceInfo: (hrid) => ({
+        price: engine.bids[hrid] ?? null,
+        estimated: engine.estimated.has(hrid),
+    }),
+    isPriceEstimated: (hrid) => engine.estimated.has(hrid),
     withProfitPricingMode: (mode, fn) => {
         engine.pricingModes.push(mode);
         return fn();
@@ -167,6 +177,8 @@ beforeEach(() => {
     engine.marketOffCalls = 0;
     engine.itemDetails = {};
     engine.bids = {};
+    engine.estimated = new Set();
+    engine.candidates = {};
 
     marketSort.clearCaches();
     marketSort.originalOrder = [];
@@ -547,6 +559,46 @@ describe('decompose chain mode', () => {
             profit: null,
             detail: null,
         });
+    });
+
+    test('a terminal with only an estimated bid is not insta-sellable, so the chain is unpriced', async () => {
+        twoLevel();
+        engine.estimated.add('/items/term_c');
+        buildGrid(['item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeNull();
+    });
+
+    test('an estimated ask on the item itself leaves the chain unpriced', async () => {
+        twoLevel();
+        engine.estimated.add('/items/item_a');
+        buildGrid(['item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeNull();
+    });
+
+    test('a step picks the setup that is best for the chain below it, not the seller pick', async () => {
+        twoLevel();
+        // The calculator's own (seller) answer for the middle gear: cheap but only half succeeds
+        engine.answers['/items/mid_b'] = { decompose: { ...step(300, 1800), successRate: 0.5 } };
+        // The candidate list also holds a catalyst setup: always succeeds, costs 100 per unit
+        engine.candidates['/items/mid_b'] = [
+            { ...step(300, 1800), successRate: 0.5 },
+            { ...step(300, 1800), successRate: 1, catalystCostPerHour: 180_000 },
+        ];
+        buildGrid(['item_a']);
+
+        marketSort.sortMode = 'decomposeChainPerHour';
+        await marketSort.sortByProfitability();
+
+        // 2 x 960 terminal - 500 ask - 100 catalyst = 1320 over 3s
+        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeCloseTo(1_584_000);
     });
 
     test('shares one calculator pass per piece of gear across tiles and sorts', async () => {

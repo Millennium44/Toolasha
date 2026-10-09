@@ -28,9 +28,14 @@ import profitCalculator from './profit-calculator.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { formatLargeNumber, formatKMB } from '../../utils/formatters.js';
-import { withProfitPricingMode, getItemPrice } from '../../utils/market-data.js';
+import { withProfitPricingMode, getItemPriceInfo, isPriceEstimated } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { selfUseDecomposeChain, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
+import {
+    bestSelfUseCandidate,
+    selfUseDecompose,
+    selfUseDecomposeChain,
+    untaxedContainerValue,
+} from '../../utils/self-use-alchemy.js';
 
 /**
  * The sort modes the button offers, in dropdown order.
@@ -79,7 +84,7 @@ const ALCHEMY_TOOLTIP =
 const CHAIN_TOOLTIP =
     'Insta-buy at ask, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
     'decomposed, then insta-sell what is left at bid after market tax. Ranked by gold per hour of alchemy time ' +
-    "across the whole chain; each step uses the engine's own catalyst pick. Ignores the global pricing mode on " +
+    'across the whole chain; each step uses the catalyst and tea setup that is best for the chain below it. Outputs with no real bid (estimated prices) are not sold. Ignores the global pricing mode on ' +
     'purpose. Items with an unpriced step show no value.';
 
 /**
@@ -669,32 +674,20 @@ class MarketSort {
         let chain = null;
         try {
             withProfitPricingMode(ALCHEMY_PRICING_MODE, () => {
-                const step = (hrid) => {
-                    if (!this.decomposeStepCache.has(hrid)) {
-                        let result = null;
-                        try {
-                            result = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0) ?? null;
-                        } catch {
-                            result = null;
-                        }
-                        this.decomposeStepCache.set(hrid, result);
-                    }
-                    return this.decomposeStepCache.get(hrid);
-                };
-                const top = step(itemHrid);
-                if (!top) return;
-
+                // Insta-sell value of an output: its real bid after market tax. An
+                // estimate from the official value map is no bid anyone can sell into,
+                // so it leaves the chain unpriced rather than ranking on a guess.
                 const priceOf = (hrid) => {
-                    const bid = getItemPrice(hrid, { context: 'profit', side: 'sell' });
-                    return bid === null || bid === undefined ? null : calculatePriceAfterTax(bid);
+                    const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
+                    if (info.price === null || info.price === undefined || info.estimated) return null;
+                    return calculatePriceAfterTax(info.price);
                 };
                 const containerValue = (hrid) =>
                     untaxedContainerValue(hrid, {
                         containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
                         priceOf,
                     });
-                chain = selfUseDecomposeChain(itemHrid, {
-                    getDecompose: step,
+                const chainDeps = {
                     getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
                     isChainable: (hrid) => {
                         const details = dataManager.getItemDetails(hrid);
@@ -702,8 +695,55 @@ class MarketSort {
                     },
                     priceOf,
                     containerValue,
-                    ownUseCost: top.requirementCosts?.[0]?.price ?? null,
-                });
+                };
+                const candidatesOf = (hrid) => {
+                    try {
+                        const listed = alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? [];
+                        if (listed.length > 0) return listed;
+                        return [alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0)].filter(Boolean);
+                    } catch {
+                        return [];
+                    }
+                };
+
+                // Each step picks the catalyst/tea setup that is best for the chain
+                // below it, as the tooltip's chain line does: the gear a step yields is
+                // decomposed further, so its bid (often none) is the wrong objective.
+                // Children settle first and are memoised per price snapshot; a step is
+                // scored per item reaching it with its input cost left at 0.
+                const step = (hrid) => {
+                    if (this.decomposeStepCache.has(hrid)) return this.decomposeStepCache.get(hrid);
+                    // Placeholder first, so a cycle back to this step reads as unknown
+                    this.decomposeStepCache.set(hrid, null);
+                    const details = dataManager.getItemDetails(hrid);
+                    const candidates = candidatesOf(hrid);
+                    const pick =
+                        bestSelfUseCandidate(
+                            candidates,
+                            (result) =>
+                                selfUseDecomposeChain(hrid, {
+                                    ...chainDeps,
+                                    getDecompose: (h) => (h === hrid ? result : step(h)),
+                                    ownUseCost: 0,
+                                }),
+                            'net'
+                        ) ??
+                        bestSelfUseCandidate(
+                            candidates,
+                            (result) => selfUseDecompose(result, details, { ownUseCost: 0, priceOf, containerValue }),
+                            'netPerAction'
+                        );
+                    this.decomposeStepCache.set(hrid, pick?.result ?? null);
+                    return this.decomposeStepCache.get(hrid);
+                };
+
+                const top = step(itemHrid);
+                if (!top) return;
+                // The ask is paid in coins at the book: an estimated ask is not a price to buy at
+                const ask = isPriceEstimated(itemHrid, { context: 'profit', side: 'buy' })
+                    ? null
+                    : (top.requirementCosts?.[0]?.price ?? null);
+                chain = selfUseDecomposeChain(itemHrid, { ...chainDeps, getDecompose: step, ownUseCost: ask });
             });
         } catch (error) {
             console.error('[Market Sort] Decompose chain failed for', itemHrid, error);
