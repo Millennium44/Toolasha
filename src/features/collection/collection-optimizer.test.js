@@ -1121,6 +1121,25 @@ describe('a recipe the character cannot start', () => {
             expect(option.sold.get('/items/milking_essence')).toBeCloseTo(option.units * essence, 9);
         });
 
+        test('a craft bonus the decompose chain also yields regularly stays a regular yield', async () => {
+            // Cheese swords decompose into cheese; a crafting bonus that also drops cheese must not turn
+            // the chain's cheese into a bonus-only yield and drop the route for cheese
+            game.craftable = new Set(['/items/cheese_sword']);
+            game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
+            game.profitExtra = {
+                efficiencyMultiplier: 1,
+                bonusRevenue: { bonusDrops: [{ itemHrid: '/items/cheese', dropsPerHour: 36 }] },
+            };
+            const routes = await buildCollectionRoutes();
+            const route = routes.sources.find(
+                (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+            );
+            expect(route.bonus.has('/items/cheese')).toBe(false);
+            expect((indexRoutes(routes).get('/items/cheese') ?? []).some((r) => r.route === 'craftDecompose')).toBe(
+                true
+            );
+        });
+
         test('no bonus drop: the route is the make cost alone', async () => {
             const [craft] = (await buildCollectionRoutes()).craft;
             expect(craft.yields).toBeUndefined();

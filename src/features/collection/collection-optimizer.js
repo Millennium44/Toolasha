@@ -839,7 +839,16 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 withSource.set(hrid, (withSource.get(hrid) || 0) + perSource);
                 // The bonus drops the crafting rolls, per source made, are credited and sold too
                 const craftBonusDrops = recipe.bonus;
-                const bonusWithCraft = craftBonusDrops ? new Set([...bonus, ...craftBonusDrops.bonus]) : bonus;
+                // Merged the way creditOpened does: an output the chain already yields regularly stays a
+                // regular yield (and a target) when a crate opened along the way also holds it
+                let bonusWithCraft = bonus;
+                if (craftBonusDrops) {
+                    bonusWithCraft = new Set(bonus);
+                    for (const bonusHrid of craftBonusDrops.bonus) {
+                        const regular = yields.has(bonusHrid) && !bonus.has(bonusHrid);
+                        if (!regular) bonusWithCraft.add(bonusHrid);
+                    }
+                }
                 if (craftBonusDrops) {
                     for (const [bonusHrid, expected] of craftBonusDrops.yields) {
                         withSource.set(bonusHrid, (withSource.get(bonusHrid) || 0) + expected * perSource);
