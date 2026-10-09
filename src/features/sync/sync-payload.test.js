@@ -2367,3 +2367,101 @@ describe('a pull folds by which side moved since the last exchange', () => {
         }
     });
 });
+
+describe('the pull direction rules respect what each fold and restore needs', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+    const H = 60 * 60 * 1000;
+    const T0 = Date.UTC(2026, 0, 1);
+
+    test('a registration with its own pull fold keeps it when only this device moved', async () => {
+        // The real skill XP registration: its pull fold does not take back a sample this device thinned
+        const atPush = {
+            s: [
+                { t: T0, xp: 0 },
+                { t: T0 + 2 * H, xp: 200 },
+            ],
+        };
+        const uploaded = {
+            s: [
+                { t: T0, xp: 0 },
+                { t: T0 + H, xp: 100 },
+                { t: T0 + 2 * H, xp: 200 },
+            ],
+        };
+        const baseline = exchangeBaseline(
+            payloadOf({ xpHistory: { xpHistory_c1: uploaded } }),
+            payloadOf({ xpHistory: { xpHistory_c1: atPush } })
+        );
+        const now = { s: [...atPush.s, { t: T0 + 3 * H, xp: 300 }] };
+        storeState.stores.xpHistory = { xpHistory_c1: now };
+
+        const result = await applyPayload(payloadOf({ xpHistory: { xpHistory_c1: uploaded } }), {
+            mode: 'merge',
+            baseline,
+        });
+
+        expect(importedPayloads[0].stores.xpHistory).toEqual({});
+        expect(storeState.stores.xpHistory.xpHistory_c1).toEqual(now);
+        expect(result.merged).toEqual([]);
+    });
+
+    test('a skipped record put back in the write by its tombstones writes this device copy', async () => {
+        const off = registerSyncMerge({
+            store: 'settings',
+            key: 'enhancementTracker_sessions',
+            merge: (local, incoming) => ({ ...local, ...incoming }),
+            label: 'sessions',
+        });
+        try {
+            const gistRecord = { s0: { v: 1 }, s1: { v: 1 } };
+            const exchanged = {
+                settings: { enhancementTracker_sessions: gistRecord, enhancementTracker_sessionTombstones: { s0: 1 } },
+            };
+            const baseline = wholeKeyHashes(payloadOf(exchanged));
+            const localRecord = { s0: { v: 1 }, s1: { v: 2 }, s2: { v: 1 } };
+            storeState.stores.settings = {
+                ...storeState.stores.settings,
+                enhancementTracker_sessions: localRecord,
+                enhancementTracker_sessionTombstones: { s0: 1 },
+            };
+
+            await applyPayload(payloadOf({ settings: { enhancementTracker_sessions: gistRecord } }), {
+                mode: 'merge',
+                baseline,
+            });
+
+            // Put back by the tombstone rule, it lands as this device holds it
+            expect(importedPayloads[0].stores.settings.enhancementTracker_sessions).toEqual(localRecord);
+        } finally {
+            off();
+        }
+    });
+
+    test('a record a full-backup restore wrote is still folded with the gist', async () => {
+        const off = registerSyncMerge({
+            store: 'marketListings',
+            base: 'listingLog',
+            merge: (first, second) => {
+                const out = new Map();
+                for (const entry of [...(first || []), ...(second || [])]) out.set(entry.id, entry);
+                return [...out.values()].sort((a, b) => a.id - b.id);
+            },
+            label: 'listings',
+        });
+        try {
+            const gist = { marketListings: { listingLog_a: [{ id: 1 }, { id: 2 }] } };
+            const baseline = {
+                ...wholeKeyHashes(payloadOf(gist)),
+                [RESTORED_BASELINE]: { at: 1, keys: { marketListings: ['listingLog_a'] } },
+            };
+            // The backup restored here predates listing 2
+            storeState.stores.marketListings = { listingLog_a: [{ id: 1 }] };
+
+            await applyPayload(payloadOf(gist), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual([{ id: 1 }, { id: 2 }]);
+        } finally {
+            off();
+        }
+    });
+});

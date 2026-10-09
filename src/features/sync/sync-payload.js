@@ -591,8 +591,10 @@ export async function buildPayloadJSON(scope = 'settings') {
  * whatever a sibling tab had updated since, wrote it over the newer one and
  * latched the store. When the gist is unmoved but the exchange left it ahead of
  * this device (a merged upload), the fold still runs, with this device's copy
- * as the side that wins ties if it has moved since. A baseline entry whose
- * local half is unknown (a record an earlier pull held back) takes the plain fold.
+ * as the side that wins ties if it has moved since — unless the registration
+ * has its own pull fold, which is kept. A baseline entry whose local half is
+ * unknown (a record an earlier pull held back), and a key a full-backup restore
+ * wrote (see {@link RESTORED_BASELINE}), take the plain fold.
  *
  * @param {Object} payload - Parsed payload; its store values are mutated in place
  * @param {Record<string, *>|null} [baseline] - Hashes at the last exchange, or null for the plain fold
@@ -630,17 +632,31 @@ async function mergeLocalHistories(payload, baseline = null) {
                 }
                 if (!probed.found || probed.value == null) continue;
                 const id = baselineId(storeName, key);
-                const was = baseline ? readBaselineEntry(baseline[id]) : null;
+                // A key a full-backup restore wrote is folded whatever the last
+                // exchange was: the restored copy can lack entries the gist holds
+                const restored = restoredKey(baseline?.[RESTORED_BASELINE], storeName, key);
+                const was = baseline && !restored ? readBaselineEntry(baseline[id]) : null;
                 const gistUnmoved = Boolean(was) && was.local !== null && valueHash(entries[key]) === was.gist;
                 if (gistUnmoved && was.local === was.gist) {
-                    // Settled at the last exchange and unmoved since: nothing here is news
+                    // Settled at the last exchange and unmoved since: nothing here
+                    // is news. The entry is set to this device's copy, so a rule
+                    // that puts the key back in the write (a record's tombstones
+                    // in `weighAgainstLocal`) writes what is here, not the older gist
+                    entries[key] = probed.value;
                     same.add(id);
                     continue;
                 }
-                entries[key] =
-                    gistUnmoved && valueHash(probed.value) !== was.local
-                        ? registration.merge(entries[key], probed.value)
-                        : registration.mergeForPull(probed.value, entries[key]);
+                // This device's side wins ties when only it moved. Only for a
+                // registration whose pull fold is its plain merge: one with its own
+                // pull fold (which takes only what can be news) or one already
+                // keeping local ties keeps that fold
+                const localWins =
+                    gistUnmoved &&
+                    valueHash(probed.value) !== was.local &&
+                    registration.mergeForPull === registration.merge;
+                entries[key] = localWins
+                    ? registration.merge(entries[key], probed.value)
+                    : registration.mergeForPull(probed.value, entries[key]);
                 merged.push({ store: storeName, key, label: registration.label });
                 if (stableStringify(entries[key]) === stableStringify(probed.value)) {
                     same.add(id);
