@@ -2262,7 +2262,7 @@ class AlchemyProfitCalculator {
      * exactly _bestCatalystCombo's: no / type-specific / prime catalyst × live drinks / no
      * drinks, less any it leaves out (an unpriced catalyst, unpriced drinks). The default
      * search and every other caller are untouched.
-     * @param {'decompose'|'transmute'} actionType
+     * @param {'decompose'|'transmute'|'coinify'} actionType
      * @param {string} itemHrid - A base item (enhancement level 0)
      * @returns {Array<Object>} One result per available candidate; empty when the action does not apply
      */
@@ -2270,6 +2270,7 @@ class AlchemyProfitCalculator {
         let run = null;
         if (actionType === 'decompose') run = () => this.calculateDecomposeProfit(itemHrid);
         else if (actionType === 'transmute') run = () => this.calculateTransmuteProfit(itemHrid);
+        else if (actionType === 'coinify') run = () => this.calculateCoinifyProfit(itemHrid);
         if (!run) return [];
 
         const results = [];

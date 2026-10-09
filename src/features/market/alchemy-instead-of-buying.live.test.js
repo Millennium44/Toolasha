@@ -5,7 +5,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 /** `{hrid: {ask, bid, source?}}` — source defaults to the order book */
-const world = vi.hoisted(() => ({ prices: {}, listeners: [] }));
+const world = vi.hoisted(() => ({ prices: {}, listeners: [], dataListeners: new Map() }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
 vi.mock('../../core/data-manager.js', () => {
@@ -21,6 +21,21 @@ vi.mock('../../core/data-manager.js', () => {
             currentCharacterId: 1,
             getInitClientData: () => ({ itemDetailMap, openableLootDropMap: {} }),
             getItemDetails: (hrid) => itemDetailMap[hrid] ?? null,
+            getActionDrinkSlots: () => [],
+            getInventory: () => [],
+            getEquipment: () => new Map(),
+            on: (event, callback) => {
+                const list = world.dataListeners.get(event) ?? [];
+                list.push(callback);
+                world.dataListeners.set(event, list);
+            },
+            off: (event, callback) => {
+                const list = world.dataListeners.get(event) ?? [];
+                world.dataListeners.set(
+                    event,
+                    list.filter((cb) => cb !== callback)
+                );
+            },
         },
     };
 });
@@ -28,7 +43,9 @@ vi.mock('../../api/marketplace.js', () => ({
     default: {
         lastFetchTimestamp: 1,
         on: (callback) => world.listeners.push(callback),
-        off: () => {},
+        off: (callback) => {
+            world.listeners = world.listeners.filter((cb) => cb !== callback);
+        },
     },
 }));
 vi.mock('./alchemy-profit-calculator.js', () => ({
@@ -61,7 +78,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.9 }));
 
-import { liveAlternatives, clearInsteadCache } from './alchemy-instead-of-buying.js';
+import { liveAlternatives, clearInsteadCache, stopInsteadListeners } from './alchemy-instead-of-buying.js';
 
 const ESSENCE = '/items/goblin_essence';
 const BOOMSTICK = '/items/gobo_boomstick';
@@ -99,5 +116,33 @@ describe('the cache follows the market', () => {
         world.prices[BOOMSTICK] = { ask: 2000, bid: 1900 };
         for (const listener of world.listeners) listener();
         expect(liveAlternatives(ESSENCE, new Set()).alternatives).toEqual([]);
+    });
+
+    test('a pushed value-map refresh drops the cached routes too', () => {
+        expect(liveAlternatives(ESSENCE, new Set()).alternatives).toHaveLength(1);
+        // The hourly band push moves the clamped ask without any market notification
+        world.prices[BOOMSTICK] = { ask: 2000, bid: 1900 };
+        for (const listener of world.dataListeners.get('market_item_values_updated') ?? []) listener({});
+        expect(liveAlternatives(ESSENCE, new Set()).alternatives).toEqual([]);
+    });
+
+    test('routes cached before a teardown are not served after it', () => {
+        expect(liveAlternatives(ESSENCE, new Set()).alternatives).toHaveLength(1);
+        stopInsteadListeners();
+        // Moved while nothing was listening: no notification will ever say so
+        world.prices[BOOMSTICK] = { ask: 2000, bid: 1900 };
+        expect(liveAlternatives(ESSENCE, new Set()).alternatives).toEqual([]);
+        stopInsteadListeners();
+    });
+
+    test('teardown unsubscribes, and the next lookup subscribes again', () => {
+        liveAlternatives(ESSENCE, new Set());
+        stopInsteadListeners();
+        expect(world.listeners).toHaveLength(0);
+        expect(world.dataListeners.get('market_item_values_updated') ?? []).toHaveLength(0);
+        liveAlternatives(ESSENCE, new Set());
+        expect(world.listeners).toHaveLength(1);
+        expect(world.dataListeners.get('market_item_values_updated')).toHaveLength(1);
+        stopInsteadListeners();
     });
 });

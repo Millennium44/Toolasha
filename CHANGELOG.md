@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Instead-of-buying line: no hover stall, essence targets
+
+- The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence (including coinify routes).
+
 ### Decompose chain picks the best setup for the whole chain
 
 - Chain/hr in the Marketplace sort and Alchemy Best Items now chooses every step's catalyst and tea for the whole chain's gold per hour instead of step by step, so it never reads lower than before and is often higher; the calculation also runs several times faster.

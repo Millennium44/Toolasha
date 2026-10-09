@@ -48,6 +48,11 @@ vi.mock('../../core/data-manager.js', () => ({
             alchemyDetail: { decomposeItems: DECOMPOSE },
             hrid,
         }),
+        getActionDrinkSlots: () => [],
+        getInventory: () => [],
+        getEquipment: () => new Map(),
+        on: () => {},
+        off: () => {},
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { lastFetchTimestamp: 1 } }));
