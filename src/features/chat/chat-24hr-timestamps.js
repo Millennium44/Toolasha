@@ -82,6 +82,18 @@ function reprocessAllTimestamps() {
     document.querySelectorAll('[class*="ChatMessage_timestamp"]').forEach(processTimestampNode);
 }
 
+/**
+ * Put every timestamp we rewrote back to the text the client drew, for a live switch-off.
+ * A span whose text is no longer our output was re-rendered by the client and is left alone.
+ */
+function restoreNativeTimestamps() {
+    document.querySelectorAll('[class*="ChatMessage_timestamp"]').forEach((span) => {
+        const record = rewritten.get(span);
+        if (record && record.out === span.textContent) span.textContent = record.native;
+        rewritten.delete(span);
+    });
+}
+
 class Chat24hrTimestamps {
     constructor() {
         this.isInitialized = false;
@@ -108,6 +120,7 @@ class Chat24hrTimestamps {
     }
 
     disable() {
+        restoreNativeTimestamps();
         if (this.unregisterObserver) {
             this.unregisterObserver();
             this.unregisterObserver = null;

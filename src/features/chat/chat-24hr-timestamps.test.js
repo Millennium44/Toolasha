@@ -151,6 +151,22 @@ describe('Chat 24hr Timestamps', () => {
         expect(span.textContent).toBe('[10:00:00] ');
     });
 
+    test('disable() restores the native text it rewrote', () => {
+        const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[05/22 21:31:23] ');
+        feature.disable();
+        expect(span.textContent).toBe('[5/22 9:31:23 PM] ');
+    });
+
+    test('disable() leaves a span the client has since re-rendered alone', () => {
+        const span = makeTimestampSpan('[9:31:23 PM] ');
+        feature.initialize();
+        span.textContent = '[10:00:00 AM] ';
+        feature.disable();
+        expect(span.textContent).toBe('[10:00:00 AM] ');
+    });
+
     test('disable() unregisters the dom observer and setting-change listeners', () => {
         feature.initialize();
         feature.disable();

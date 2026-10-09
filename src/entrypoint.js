@@ -1689,6 +1689,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labyrinthMissingSupplies,
             async: false,
+            liveStop: true,
         },
         {
             key: 'labyrinthMonsterStatCheck',
@@ -1986,6 +1987,7 @@ function registerFeatures() {
             category: 'Chat',
             module: UI.chat24hrTimestamps,
             async: false,
+            liveStop: true,
         },
         {
             key: 'chatHistoryExtender',
@@ -2297,6 +2299,7 @@ function registerFeatures() {
             category: 'Enhancement',
             module: UI.enhancementProtectionMarketplace,
             async: false,
+            liveStop: true,
         },
         {
             key: 'enhancementItemPins',
