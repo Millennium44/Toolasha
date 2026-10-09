@@ -158,7 +158,7 @@ const LOOT = vi.hoisted(() => ({
 const BOOKS = vi.hoisted(() => ({ byItem: {} }));
 
 /** Measured daily volumes, for the liquidity bound */
-const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null }));
+const VOLUME = vi.hoisted(() => ({ perDay: {}, gate: null, asked: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -358,9 +358,12 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
             : { goldPerHour, capped: false, limit: null };
     },
     // Measuring waits on a test's gate, when it sets one
-    prefetchLiquidity: async () => {
+    prefetchLiquidity: async (items) => {
+        VOLUME.asked.push(...(items || []).map((item) => item.itemHrid));
         if (VOLUME.gate) await VOLUME.gate;
     },
+    // A volume is confirmed once it has been measured, however little trades
+    hasMeasuredVolume: (hrid) => VOLUME.perDay[hrid] !== undefined,
 }));
 vi.mock('../planner/market-liquidity.js', () => ({ LIQUIDITY_HORIZON_DAYS: 7 }));
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
@@ -441,6 +444,7 @@ beforeEach(() => {
     game.ironCow = false;
     VOLUME.perDay = {};
     VOLUME.gate = null;
+    VOLUME.asked = [];
     BOOKS.byItem = {};
     game.pricingMode = 'hybrid';
     game.noTransmute = false;
@@ -1121,6 +1125,64 @@ describe('the panel', () => {
         expect(after.querySelectorAll('li').length).toBeGreaterThan(0);
         expect(after.textContent).not.toBe(before);
         expect(document.querySelector('.toolasha-collopt-target').value).toBe('5');
+    });
+
+    test('a plan warms the volume of every item its steps buy or sell, not only the ranking slice', async () => {
+        const warm = vi.spyOn(optimizer, 'warmVolumes');
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(document.querySelector('.toolasha-collopt-plan')).not.toBeNull());
+        warm.mockClear();
+        VOLUME.asked = [];
+        document.querySelector('.toolasha-collopt-target').value = '5';
+        document.querySelector('.toolasha-collopt-plan').click();
+        // The plan's own steps went to the warm-up, whatever the ranking showed
+        const steps = warm.mock.calls.map(([options]) => options).find((options) => options?.[0]?.units !== undefined);
+        expect(steps?.length).toBeGreaterThan(0);
+        await optimizer.volumesWarming;
+        const wanted = new Set(steps.flatMap((step) => [...step.sold.keys(), ...step.bought.keys()]));
+        expect(wanted.size).toBeGreaterThan(0);
+        for (const hrid of wanted) expect(VOLUME.asked).toContain(hrid);
+        warm.mockRestore();
+    });
+
+    test('an item is marked asked only once measured: a failed lookup is asked again, a measured one is not', async () => {
+        const options = [{ sold: new Map([['/items/cheese', 5]]), bought: new Map() }];
+        optimizer.collapsed = true;
+        // Nothing comes back (history off, or the pool did not answer)
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(optimizer.volumesAsked.has('/items/cheese')).toBe(false);
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(VOLUME.asked.filter((hrid) => hrid === '/items/cheese')).toHaveLength(2);
+
+        // History is turned on and the lookup lands
+        VOLUME.perDay['/items/cheese'] = 1000;
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(optimizer.volumesAsked.has('/items/cheese')).toBe(true);
+        optimizer.warmVolumes(options);
+        expect(VOLUME.asked.filter((hrid) => hrid === '/items/cheese')).toHaveLength(3);
+
+        // The history setting changes: the cache no longer confirms it, so it is asked again
+        delete VOLUME.perDay['/items/cheese'];
+        optimizer.warmVolumes(options);
+        await optimizer.volumesWarming;
+        expect(VOLUME.asked.filter((hrid) => hrid === '/items/cheese')).toHaveLength(4);
+        expect(optimizer.volumesAsked.has('/items/cheese')).toBe(false);
+    });
+
+    test('an unavailable history does not redraw in a loop', async () => {
+        drawCollectionsTab();
+        optimizer.initialize();
+        await vi.waitFor(() => expect(optimizer.volumesWarming).not.toBeNull());
+        await optimizer.volumesWarming;
+        const render = vi.spyOn(optimizer, 'render');
+        await optimizer.volumesWarming;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(render).not.toHaveBeenCalled();
+        render.mockRestore();
     });
 
     test('another character does not inherit the plan on show', async () => {

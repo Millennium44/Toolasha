@@ -33,7 +33,7 @@ import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { capProfitRateCached, prefetchLiquidity } from '../../utils/liquidity-cap.js';
+import { capProfitRateCached, hasMeasuredVolume, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
@@ -972,6 +972,8 @@ class CollectionOptimizer {
         /** Items whose traded volume has been asked for this session */
         this.volumesAsked = new Set();
         this.volumesWarming = null;
+        /** Items a lookup is under way for, so the ranking and the plan do not both ask */
+        this.volumesInFlight = new Set();
         /** The plan on show, `{characterId}`: every redraw plans it again rather than dropping it */
         this.planShown = null;
     }
@@ -1069,6 +1071,7 @@ class CollectionOptimizer {
         this.maxStepHours = DEFAULT_MAX_STEP_HOURS;
         this.sort = DEFAULT_SORT;
         this.volumesAsked = new Set();
+        this.volumesInFlight = new Set();
         this.volumesWarming = null;
         this.planShown = null;
         this.isInitialized = false;
@@ -1300,6 +1303,9 @@ class CollectionOptimizer {
                 );
             }
             result.appendChild(list);
+            // Every item the plan buys or sells, not only the ranking's slice: an unmeasured one is
+            // unbounded, and the plan is made again once the volumes land
+            this.warmVolumes(plan.steps);
         };
         go.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -1368,30 +1374,52 @@ class CollectionOptimizer {
     }
 
     /**
-     * Measure the traded volume of what the shown options sell and buy, once
-     * per item, and redraw when that is done: a bound only applies to a volume
-     * already measured. The lookup is the shared liquidity one, which asks the
-     * pooled history only when the player has turned it on.
-     * @param {Array<Object>} options
+     * Measure the traded volume of what the given options sell and buy, and
+     * redraw when one lands: a bound only applies to a volume already measured.
+     * The lookup is the shared liquidity one, which asks the pooled history only
+     * when the player has turned it on.
+     *
+     * `volumesAsked` holds only items with a confirmed measurement. An item whose
+     * lookup failed or had no history to ask (the opt-in is off) is asked again
+     * on the next draw, and so is one measured before the history setting or
+     * source changed (the cache keys on both, so {@link hasMeasuredVolume} no
+     * longer confirms it). A redraw follows only when something new was
+     * measured, so an unavailable history cannot loop.
+     * @param {Array<Object>} options - Ranking rows or plan steps
      */
     warmVolumes(options) {
         const fresh = [];
+        const queued = new Set();
         for (const option of options || []) {
             for (const hrid of [...(option.sold?.keys?.() || []), ...(option.bought?.keys?.() || [])]) {
-                if (this.volumesAsked.has(hrid)) continue;
-                this.volumesAsked.add(hrid);
+                if (queued.has(hrid) || this.volumesInFlight.has(hrid)) continue;
+                if (this.volumesAsked.has(hrid)) {
+                    if (hasMeasuredVolume(hrid)) continue;
+                    this.volumesAsked.delete(hrid);
+                }
+                queued.add(hrid);
                 fresh.push({ itemHrid: hrid });
             }
         }
         if (fresh.length === 0) return;
         const generation = this.generation;
+        const inFlight = this.volumesInFlight;
+        for (const { itemHrid } of fresh) inFlight.add(itemHrid);
         this.volumesWarming = (async () => {
             try {
                 await prefetchLiquidity(fresh);
             } catch (error) {
                 console.error('[CollectionOptimizer] Measuring market volumes failed:', error);
             }
-            if (generation !== this.generation || this.collapsed) return;
+            for (const { itemHrid } of fresh) inFlight.delete(itemHrid);
+            if (generation !== this.generation) return;
+            let measured = 0;
+            for (const { itemHrid } of fresh) {
+                if (!hasMeasuredVolume(itemHrid)) continue;
+                this.volumesAsked.add(itemHrid);
+                measured++;
+            }
+            if (measured === 0 || this.collapsed) return;
             const root = document.querySelector(`.${PANEL_CLASS}`);
             if (root && this.index) this.render(root);
         })();
