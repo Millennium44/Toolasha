@@ -108,14 +108,28 @@ async function load() {
  * @param {string} charId
  * @param {Array<string>} list
  */
-function adopt(charId, list) {
+function adopt(charId, list, { local = true } = {}) {
     cache = list;
     cacheCharId = charId;
     cacheGeneration += 1;
+    if (local) localGeneration += 1;
 }
 
 /** Bumped on every adoption, so a read that started before one knows it is stale */
 let cacheGeneration = 0;
+
+/**
+ * Bumped only when this tab adopts a list of its own (a load or a change): a
+ * re-read that started before one may predate it. Re-reads adopting each
+ * other's results do not count — they are ordered by {@link reloadSeq}.
+ */
+let localGeneration = 0;
+
+/** Numbers each re-read as it starts; the latest-started one that resolves wins */
+let reloadSeq = 0;
+
+/** The sequence number of the re-read whose list the cache holds */
+let adoptedReloadSeq = 0;
 
 /** Unsubscribe from `storage.onWrite`, while listening */
 let unsubscribeWrites = null;
@@ -145,17 +159,28 @@ function stopWatching() {
 
 /**
  * Re-read the cached character's list after another tab wrote it, and tell
- * listeners. Dropped when the character changed or a newer list was adopted
- * while the read was out.
+ * listeners. Dropped when the character changed or a later-started re-read
+ * already won; read again when this tab adopted its own list meanwhile.
  * @returns {Promise<void>}
  */
 async function reloadFromStorage() {
     const charId = cacheCharId;
-    const generation = cacheGeneration;
+    const generation = localGeneration;
+    reloadSeq += 1;
+    const seq = reloadSeq;
     try {
         const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
-        if (charId !== currentCharId() || charId !== cacheCharId || generation !== cacheGeneration) return;
-        adopt(charId, stored);
+        if (charId !== currentCharId() || charId !== cacheCharId) return;
+        // A re-read that started later read a list at least this new, and already won
+        if (seq < adoptedReloadSeq) return;
+        if (generation !== localGeneration) {
+            // This tab adopted its own list while the read was out: what was read may predate
+            // it, but may also hold the remote write that sent it. Read once more, after both.
+            reloadFromStorage();
+            return;
+        }
+        adoptedReloadSeq = seq;
+        adopt(charId, stored, { local: false });
         notify();
     } catch (error) {
         console.error('[SelfUseWanted] Reload after another tab wrote failed:', error);
@@ -337,6 +362,9 @@ const selfUseWanted = {
         cache = null;
         cacheCharId = null;
         cacheGeneration = 0;
+        localGeneration = 0;
+        reloadSeq = 0;
+        adoptedReloadSeq = 0;
         outputIndex = null;
         outputIndexSource = null;
         listeners.clear();

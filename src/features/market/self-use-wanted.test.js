@@ -24,6 +24,8 @@ vi.mock('../../core/storage.js', () => ({
         getJSON: async (key, _store, fallback) => {
             const value = key in state.stored ? state.stored[key] : fallback;
             state.onRead?.();
+            // A held read answers with what was stored when it started, once the test releases it
+            if (state.holdReads) return new Promise((resolve) => state.heldReads.push(() => resolve(value)));
             return value;
         },
         setJSON: async (key, value, store) => {
@@ -65,6 +67,8 @@ beforeEach(() => {
     state.itemDetailMap = {};
     selfUseWanted._reset();
     state.writeListeners = new Set();
+    state.holdReads = false;
+    state.heldReads = [];
 });
 
 /** Another tab committed `value` under `key` and announced it */
@@ -77,6 +81,52 @@ const settle = async () => {
 };
 
 describe('another tab', () => {
+    test('two writes heard before either re-read answers: the later read wins whatever order they land', async () => {
+        await selfUseWanted.load();
+        state.holdReads = true;
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy', '/items/puncture']);
+        const [older, newer] = state.heldReads;
+
+        older();
+        await settle();
+        newer();
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy', '/items/puncture']);
+    });
+
+    test('a later read that lands first is not overwritten by the earlier one', async () => {
+        await selfUseWanted.load();
+        state.holdReads = true;
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy', '/items/puncture']);
+        const [older, newer] = state.heldReads;
+
+        newer();
+        await settle();
+        older();
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy', '/items/puncture']);
+    });
+
+    test("this tab's own change beats a re-read that started before it, and a fresh read follows", async () => {
+        await selfUseWanted.load();
+        state.holdReads = true;
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        const [stale] = state.heldReads;
+
+        await selfUseWanted.setKept('/items/puncture', true);
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy', '/items/puncture']);
+
+        stale();
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy', '/items/puncture']);
+        // The read taken after the change agrees with it
+        state.heldReads.at(-1)();
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy', '/items/puncture']);
+    });
+
     test("a mark made in another tab reaches this tab's cache and its listeners", async () => {
         await selfUseWanted.load();
         const heard = vi.fn();
