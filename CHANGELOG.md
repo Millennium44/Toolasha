@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Best Items ranks by decompose chain
+
+- The Alchemy Best Items Decompose tab can now sort by "Decompose chain/hr", the same full-chain value as the Marketplace sort, and remembers the sort you pick.
+
 ### Self-use alchemy values what you keep
 
 - Self-use transmute, decompose and decompose-chain lines now value only the outputs you mark "Keep for self-use" (tooltip chip, or press K) at what buying them costs; everything else counts at what selling it gets after tax, so an ability-book transmute no longer shows inflated numbers.
