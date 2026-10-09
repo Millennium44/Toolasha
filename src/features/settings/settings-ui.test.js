@@ -2097,6 +2097,46 @@ describe('the self-use keep list review', () => {
         expect(mocks.store.get('selfUseWanted_char-2')).toEqual(['/items/fierce_aura']);
     });
 
+    test('a character switch closes the list and stops it listening', async () => {
+        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
+        selfUseWanted._reset();
+        let renders = 0;
+        await settingsUI.openSelfUseKeepList();
+        const off = selfUseWanted.onChange(() => {
+            renders = document.querySelectorAll('.toolasha-selfuse-keep-overlay').length;
+        });
+
+        mocks.characterId = 'char-2';
+        settingsUI.handleCharacterSwitch();
+        expect(document.querySelector('.toolasha-selfuse-keep-overlay')).toBe(null);
+
+        // The new character's change draws no list back up
+        await selfUseWanted.setKept('/items/puncture', true);
+        await settle();
+        expect(document.querySelector('.toolasha-selfuse-keep-overlay')).toBe(null);
+        expect(renders).toBe(0);
+        off();
+    });
+
+    test("a Remove pressed after a switch does not touch the newcomer's list", async () => {
+        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        mocks.store.set('selfUseWanted_char-2', ['/items/frenzy']);
+        const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
+        selfUseWanted._reset();
+        await settingsUI.openSelfUseKeepList();
+        const remove = document.querySelector('[data-item-hrid="/items/frenzy"] .toolasha-selfuse-keep-remove');
+
+        // Switched without the panel hearing it yet
+        mocks.characterId = 'char-2';
+        remove.click();
+        await settle();
+
+        expect(mocks.store.get('selfUseWanted_char-2')).toEqual(['/items/frenzy']);
+        expect(mocks.store.get('selfUseWanted_char-1')).toEqual(['/items/frenzy']);
+        expect(document.querySelector('.toolasha-selfuse-keep-overlay')).toBe(null);
+    });
+
     test('Clear all empties the list and says nothing is kept', async () => {
         mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');

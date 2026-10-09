@@ -299,6 +299,9 @@ class SettingsUI {
         this.diagnosticsSection?.destroy();
         this.diagnosticsSection = null;
 
+        // The keep list shows one character's items; the next character must not edit from it
+        this.closeSelfUseKeepList?.();
+
         this.unwatchPricingSideRows();
 
         // Clear state
@@ -3473,8 +3476,12 @@ class SettingsUI {
      */
     async openSelfUseKeepList() {
         try {
-            document.querySelector('.toolasha-selfuse-keep-overlay')?.remove();
+            this.closeSelfUseKeepList?.();
+            // Whose list this is: an action pressed after a switch must not edit the newcomer's
+            const charId = dataManager.getCurrentCharacterId?.() || 'default';
+            const sameCharacter = () => (dataManager.getCurrentCharacterId?.() || 'default') === charId;
             await selfUseWanted.load();
+            if (!sameCharacter()) return null;
 
             const overlay = document.createElement('div');
             overlay.className = 'toolasha-selfuse-keep-overlay';
@@ -3492,8 +3499,25 @@ class SettingsUI {
             const close = () => {
                 unsubscribe();
                 overlay.remove();
+                if (this.closeSelfUseKeepList === close) this.closeSelfUseKeepList = null;
+            };
+            this.closeSelfUseKeepList = close;
+            /**
+             * Run an edit only while the character the list was opened for is still current.
+             * @param {() => Promise<*>} edit
+             */
+            const guarded = (edit) => {
+                if (!sameCharacter()) {
+                    close();
+                    return;
+                }
+                edit();
             };
             const render = () => {
+                if (!sameCharacter()) {
+                    close();
+                    return;
+                }
                 const list = selfUseWanted.getCached();
                 modal.replaceChildren();
 
@@ -3547,7 +3571,7 @@ class SettingsUI {
                     remove.style.cssText =
                         'background:#5a2a2a; border:1px solid #7a3a3a; border-radius:3px; color:#e0e0e0; ' +
                         'cursor:pointer; font-size:12px; padding:2px 8px;';
-                    remove.addEventListener('click', () => selfUseWanted.setKept(hrid, false));
+                    remove.addEventListener('click', () => guarded(() => selfUseWanted.setKept(hrid, false)));
                     row.append(label, remove);
                     modal.appendChild(row);
                 }
@@ -3559,7 +3583,7 @@ class SettingsUI {
                 clear.style.cssText =
                     'margin-top:10px; background:#4a4a4a; border:1px solid #666; border-radius:4px; ' +
                     'color:#e0e0e0; cursor:pointer; padding:4px 12px;';
-                clear.addEventListener('click', () => selfUseWanted.clear());
+                clear.addEventListener('click', () => guarded(() => selfUseWanted.clear()));
                 modal.appendChild(clear);
             };
             const unsubscribe = selfUseWanted.onChange(render);
