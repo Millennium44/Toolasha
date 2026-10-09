@@ -120,6 +120,7 @@ class AlchemyBestItems {
         this.sortMode = 'profit'; // a SORT_MODES id
         // Whole-chain figures by item hrid for the current rankings (null = unpriced)
         this.chainValues = new Map();
+        this.chainTops = new Map();
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -416,6 +417,7 @@ class AlchemyBestItems {
     loadRankings(alchemyType) {
         // Tea, gear and prices may have moved since the chains were last worked out
         this.chainValues.clear();
+        this.chainTops.clear();
         clearDecomposeChainCaches();
         const raw = this.calculateRankings(alchemyType);
         const pending = raw.map((entry) => ({ ...entry, capPending: true }));
@@ -474,6 +476,7 @@ class AlchemyBestItems {
     invalidateCache() {
         this.cachedRankings = {};
         this.chainValues.clear();
+        this.chainTops.clear();
         clearDecomposeChainCaches();
     }
 
@@ -499,6 +502,21 @@ class AlchemyBestItems {
     }
 
     /**
+     * The row as the chain sort sees it: the catalyst and breakdown are the top step
+     * the chain actually picked, not the single-step profit winner, so the table never
+     * ranks by one setup and tells the player to run another.
+     * @param {Object} item - A ranking row
+     * @returns {Object} The row, with the chain's setup where there is one
+     */
+    chainView(item) {
+        if (this.effectiveSortMode() !== 'decomposeChainPerHour') return item;
+        this.chainPerHour(item.itemHrid);
+        const top = this.chainTops.get(item.itemHrid);
+        if (!top) return item;
+        return { ...item, catalyst: top.winningCatalystHrid || null, profitData: top };
+    }
+
+    /**
      * The whole-chain gold per hour of an item: bought at the ask, decomposed all the
      * way down, sold at the bid after tax. Shares its arithmetic and per-snapshot
      * caches with the marketplace sort. Memoised for the current rankings.
@@ -507,7 +525,9 @@ class AlchemyBestItems {
      */
     chainPerHour(itemHrid) {
         if (this.chainValues.has(itemHrid)) return this.chainValues.get(itemHrid);
-        const value = decomposeChain(itemHrid)?.netPerHour;
+        const chain = decomposeChain(itemHrid);
+        this.chainTops.set(itemHrid, chain?.topStep ?? null);
+        const value = chain?.netPerHour;
         const figure = Number.isFinite(value) ? value : null;
         this.chainValues.set(itemHrid, figure);
         return figure;
@@ -902,8 +922,9 @@ class AlchemyBestItems {
             // Catalyst
             const catTd = document.createElement('td');
             catTd.style.cssText = 'padding: 4px 8px; text-align: center;';
-            if (item.catalyst && this.itemsSpriteUrl) {
-                const symbolId = item.catalyst.replace('/items/', '');
+            const setup = this.chainView(item);
+            if (setup.catalyst && this.itemsSpriteUrl) {
+                const symbolId = setup.catalyst.replace('/items/', '');
                 const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
                 svg.setAttribute('width', '20');
                 svg.setAttribute('height', '20');
@@ -913,7 +934,7 @@ class AlchemyBestItems {
                 use.setAttribute('href', `${this.itemsSpriteUrl}#${symbolId}`);
                 svg.appendChild(use);
                 catTd.appendChild(svg);
-                catTd.title = CATALYST_LABELS[item.catalyst] || symbolId;
+                catTd.title = CATALYST_LABELS[setup.catalyst] || symbolId;
             } else {
                 catTd.textContent = '\u2014';
                 catTd.style.color = '#555';
@@ -1011,7 +1032,7 @@ class AlchemyBestItems {
         const td = document.createElement('td');
         td.setAttribute('colspan', this.effectiveSortMode() === 'decomposeChainPerHour' ? '7' : '6');
         td.style.cssText = 'padding: 8px 16px; background: #1e1e1e; font-size: 0.75rem;';
-        td.appendChild(this.renderBreakdownContent(item));
+        td.appendChild(this.renderBreakdownContent(this.chainView(item)));
         expansionRow.appendChild(td);
         row.after(expansionRow);
     }

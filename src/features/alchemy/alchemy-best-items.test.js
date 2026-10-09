@@ -1153,6 +1153,8 @@ describe('the Decompose chain/hr sort', () => {
 
     /** The marketplace sort's own fixture: item_a -> mid_b -> 2x term_c, item_d -> 2x term_c */
     function fixture() {
+        // The chain's step caches are module-level: start each fixture from empty ones
+        bestItems.invalidateCache();
         game.items = {
             '/items/item_a': gear([['/items/mid_b', 1]]),
             '/items/mid_b': gear([['/items/term_c', 2]]),
@@ -1212,6 +1214,20 @@ describe('the Decompose chain/hr sort', () => {
         bestItems.sortMode = 'decomposeChainPerHour';
         open([row('item_a', 5), row('item_d', 1)]);
         expect(chainCells()).toEqual(['\u2014', '\u2014']);
+    });
+
+    test('shows the catalyst the chain picked, not the single-step profit winner', () => {
+        fixture();
+        const slow = { ...step(500, 360), winningCatalystHrid: '/items/prime_catalyst' };
+        const fast = { ...step(500, 3600), winningCatalystHrid: '/items/catalyst_of_decomposition' };
+        market.candidates['/items/item_d'] = [slow, fast];
+        bestItems.itemsSpriteUrl = 'sprite.svg';
+        bestItems.sortMode = 'decomposeChainPerHour';
+        // The profit table's winner for this item is the slow Prime setup
+        open([{ ...row('item_d', 900), catalyst: '/items/prime_catalyst' }]);
+
+        const catalystCell = bestItems.modal.querySelector('tbody tr').children[3];
+        expect(catalystCell.title).toBe('Decompose');
     });
 
     test('falls back to profit on the other tabs and keeps the stored choice', () => {

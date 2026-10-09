@@ -49,7 +49,7 @@ export function clearDecomposeChainCaches() {
  * The whole decompose chain of an item, ask in and taxed bid out.
  *
  * @param {string} itemHrid - Item HRID
- * @returns {Object|null} The chain result (`netPerHour` is null when any step is unpriced), or null when the item cannot be decomposed
+ * @returns {Object|null} The chain result, plus `topStep`, the item's own chosen setup (`netPerHour` is null when any step is unpriced), or null when the item cannot be decomposed
  */
 export function decomposeChain(itemHrid) {
     let chain = null;
@@ -149,6 +149,8 @@ export function decomposeChain(itemHrid) {
                 getDecompose: (h) => (h === itemHrid ? top : step(h)),
                 ownUseCost: ask,
             });
+            // The calculator result the item's own step was priced with (its catalyst and teas)
+            if (chain) chain = { ...chain, topStep: top };
         });
     } catch (error) {
         console.error('[DecomposeChain] Chain failed for', itemHrid, error);
