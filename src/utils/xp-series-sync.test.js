@@ -72,6 +72,20 @@ describe('foldXPSeriesForPull', () => {
         expect(foldXPSeriesForPull(local, gist, GUILD).g).toEqual([at(0, 1), at(WEEK / MIN + 60, 5)]);
     });
 
+    test('a guild held at one reading takes the nearest older sample past the week to reach two', () => {
+        const newest = WEEK / MIN + 500;
+        const local = { g: [at(newest, 50)] };
+        const gist = { g: [at(0, 5), at(10, 6), at(newest, 50)] };
+
+        // The nearest one fills the missing place; the other would take it past two
+        expect(foldXPSeriesForPull(local, gist, GUILD).g).toEqual([at(10, 6), at(newest, 50)]);
+        // The skill rule has no such floor: a sample past the week stays out
+        expect(foldXPSeriesForPull(local, gist, SKILL)).toEqual(local);
+        // Once the series has its two, an old sample is stale again
+        const settled = { g: [at(10, 6), at(newest, 50)] };
+        expect(foldXPSeriesForPull(settled, gist, GUILD).g).toBe(settled.g);
+    });
+
     test("a gist built from this device's own uploads never changes what it holds", () => {
         // A seeded walk: samples recorded through the guild tracker's thinning,
         // the gist taking a copy of the series now and then, as pushes do

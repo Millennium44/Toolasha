@@ -6,11 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync keeps old days pruned, and smaller sync fixes
+
+- Daily loot, item-flow, chest and production records past their keep window, and thinned networth points, no longer come back from the gist on every pull once they age out, which would have brought the "Reload now" toast back from late December.
+- A failed cleanup marks the pull incomplete so it retries, a rarely viewed leaderboard guild can take an older reading to show a rate, the manual pull says when this device has changes the next push will send, and the "already the same" count no longer includes keys that are never written.
+
 ### Collection optimizer: honest profits, sort, transmute and gathering
 
-- By-products of a collection route are now valued at the bid after tax and only up to what the market can absorb in a week (a decompose that showed +430M now shows its real cost), and a bought source is always priced at the ask.
-- Gold reads as signed net ("+" earns, "−" costs), a sort choice offers Most profitable or Fastest, and transmuting and gathering are ranked as routes alongside crafting and decomposing.
-- Buying a source is priced up the order book for the quantity needed, and a step needing more than the market offers in a week is not offered; a crate nobody bids on is valued as its contents, each within its own market; every transmute catalyst and tea setup is compared; and a Plan stays on screen when the panel redraws.
+- By-products are valued at the bid after tax, within a week of market volume, and purchases are priced up the order book (a decompose that showed +430M now shows its real cost).
+- Gold reads as signed net, a sort offers Most profitable or Fastest, and transmuting and gathering are ranked alongside crafting and decomposing.
 
 ### Score can show how much better, not just the placing
 

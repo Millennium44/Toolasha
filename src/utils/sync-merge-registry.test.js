@@ -262,4 +262,25 @@ describe('retention rules', () => {
 
         expect(retentionDrops('nw', ['snap_a_1', 'snap_a_2']).size).toBe(0);
     });
+
+    test('an age rule drops keys that ended before the cut the owner makes, which is capped by the newest key', () => {
+        let clock = 100;
+        registerSyncRetention({
+            store: 'nw',
+            prefix: 'snap_',
+            parse: (key) => {
+                const match = /^snap_(.+)_(\d+)$/.exec(key);
+                return match ? { group: match[1], order: Number(match[2]), end: Number(match[2]) + 1 } : null;
+            },
+            maxAge: { floor: (newestEnd) => Math.min(clock - 10, newestEnd - 10) },
+        });
+
+        // Floor 90: a key ending at 90 stays, one ending at 89 goes
+        expect([...retentionDrops('nw', ['snap_a_89', 'snap_a_88', 'snap_a_100'])]).toEqual(['snap_a_88']);
+        // A clock past the newest key is capped at it (101): floor 91, so the key ending at 90 goes too
+        clock = 500;
+        expect([...retentionDrops('nw', ['snap_a_89', 'snap_a_90', 'snap_a_100'])]).toEqual(['snap_a_89']);
+        // Rules need a count or an age
+        expect(() => registerSyncRetention({ store: 'x', prefix: 'y_', parse })).toThrow();
+    });
 });

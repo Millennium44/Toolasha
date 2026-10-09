@@ -27,6 +27,8 @@
  *   sample, which leaves the ten minutes after it at the week's edge. So
  *   anything with less XP, short of that edge, is history this device never
  *   had: a device that started recording later than another;
+ * - while this device holds fewer than `keepLast` samples of a series, the nearest older samples with less XP
+ *   whatever their age: the series never thins below its trailing `keepLast`, so they are not stale;
  * - a whole series this device does not have, where `acceptSeries` allows it.
  *
  * Samples inside the span this device already covers are its own business: it
@@ -98,9 +100,21 @@ export function foldXPSeriesForPull(local, incoming, { windowMs, recentMs, keepL
 
         const newer = offered.filter((sample) => sample.t > last.t);
         const newest = newer.reduce((at, sample) => Math.max(at, sample.t), last.t);
-        const older = offered.filter(
-            (sample) => sample.t < first.t && sample.xp < first.xp && newest - sample.t <= windowMs - recentMs
-        );
+        const earlier = offered.filter((sample) => sample.t < first.t && sample.xp < first.xp);
+        const older = earlier.filter((sample) => newest - sample.t <= windowMs - recentMs);
+        // A series that keeps its trailing `keepLast` samples whatever their age (a guild seen once or twice) is
+        // never thinned below them, so a gist sample past the week cutoff is still news while this device holds
+        // fewer than that: without it a rarely viewed guild stayed at one reading, with no rate to show. The
+        // nearest ones fill the missing places. Once the series has them the allowance is spent, so a pull of
+        // this device's own upload still changes nothing
+        const room = keepLast - heldSamples.length - newer.length - older.length;
+        if (room > 0) {
+            const spare = earlier
+                .filter((sample) => !older.includes(sample))
+                .sort((a, b) => b.t - a.t)
+                .slice(0, room);
+            older.push(...spare);
+        }
         if (newer.length === 0 && older.length === 0) continue;
 
         const merged = [...heldSamples, ...newer, ...older].sort((a, b) => a.t - b.t);

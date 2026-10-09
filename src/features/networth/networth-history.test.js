@@ -36,7 +36,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/connection-state.js', () => ({ default: { isConnected: () => true } }));
 
 const { default: networthHistory, pruneHistory, seriesStore } = await import('./networth-history.js');
-const { retentionDrops } = await import('../../utils/sync-merge-registry.js');
+const { retentionDrops, mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
 const HOUR = 3_600_000;
 
@@ -514,5 +514,27 @@ describe("the detail snapshots' window, as sync applies it", () => {
             'networthDetail_32030_1000',
             'networthDetail_32030_1001',
         ]);
+    });
+});
+
+describe('a sync fold of a series month does not bring back thinned points', () => {
+    test('hourly points a year old are thinned again after a union with the gist, which still holds them', () => {
+        const day = Date.UTC(2025, 5, 10);
+        const local = [{ t: day, total: 1 }];
+        const gist = Array.from({ length: 24 }, (_, hour) => ({ t: day + hour * HOUR, total: hour }));
+        const registration = mergeForKey('networthHistory', 'networthSeries_char-1_2025-06');
+
+        const folded = registration.mergeForPull(local, gist);
+
+        // One point for the day, as pruneHistory leaves it: nothing for the next load to thin
+        expect(folded).toHaveLength(1);
+        expect(pruneHistory(folded)).toEqual(folded);
+    });
+
+    test('recent points are all kept', () => {
+        const now = Date.now();
+        const registration = mergeForKey('networthHistory', 'networthSeries_char-1_2026-08');
+        const folded = registration.mergeForPull([{ t: now - HOUR, total: 1 }], [{ t: now - 2 * HOUR, total: 2 }]);
+        expect(folded).toHaveLength(2);
     });
 });

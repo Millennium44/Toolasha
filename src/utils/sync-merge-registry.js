@@ -252,9 +252,13 @@ export function listSyncMerges() {
  * @typedef {Object} SyncRetention
  * @property {string} store - Object store the keys live in
  * @property {string} prefix - Raw key prefix the rule owns
- * @property {(key: string) => {group: string, order: number}|null} parse - Which window a key belongs to and
- *   where it sorts in it (larger is newer); null for a key the rule does not judge
- * @property {number} keep - How many of the newest keys each window keeps
+ * @property {(key: string) => {group: string, order: number, end?: number}|null} parse - Which window a key
+ *   belongs to and where it sorts in it (larger is newer); null for a key the rule does not judge. `end` is the
+ *   latest moment the key can hold, when that is later than `order` (a month key's last day); defaults to `order`
+ * @property {number} [keep] - How many of the newest keys each window keeps
+ * @property {{floor: (newestEnd: number, newestStart: number) => number}} [maxAge] - Keys whose `end` is before
+ *   `floor(newestEnd, newestStart)` are dropped: the newest `end` in the key's window, and the newest `start` (the
+ *   earliest row a key could hold; `end` when `parse` gives none)
  */
 
 /** @type {Array<SyncRetention>} */
@@ -278,25 +282,39 @@ const retentions = [];
  * device that has the newer keys pushes the other side's older ones out
  * rather than keeping both.
  *
+ * A rule is a count (`keep`), an age (`maxAge`), or both. An age rule is for an owner that prunes by date, not
+ * by count: it keeps a row for a number of days whether it has written one a day or one a week, so a count of
+ * keys cannot say what it keeps. The owner supplies the cut itself, given the newest key in the window, so it
+ * can be the owner's own clock-based cut capped by that newest key: a device that has been idle (or whose clock
+ * is ahead) then keeps more than the owner's own pruning would, never less, and a rule only deletes what its
+ * owner would delete anyway.
+ *
  * @param {Object} options - The rule
  * @param {string} options.store - Object store name
  * @param {string} options.prefix - Raw key prefix
- * @param {(key: string) => {group: string, order: number}|null} options.parse - Window and order of a key
- * @param {number} options.keep - Newest keys kept per window
+ * @param {(key: string) => {group: string, order: number, end?: number}|null} options.parse - Window, order and
+ *   latest moment of a key
+ * @param {number} [options.keep] - Newest keys kept per window
+ * @param {{floor: (newestEnd: number, newestStart: number) => number}} [options.maxAge] - The age cut, in the units
+ *   `parse` returns
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncRetention({ store, prefix, parse, keep }) {
+export function registerSyncRetention({ store, prefix, parse, keep, maxAge }) {
     if (!store || typeof prefix !== 'string' || !prefix) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
     }
     if (typeof parse !== 'function') throw new Error('[SyncMergeRegistry] registerSyncRetention needs a parse()');
-    if (!Number.isInteger(keep) || keep < 1) {
+    const hasAge = Boolean(maxAge) && typeof maxAge.floor === 'function';
+    if (keep !== undefined && (!Number.isInteger(keep) || keep < 1)) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a positive keep');
+    }
+    if (keep === undefined && !hasAge) {
+        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a keep or a maxAge');
     }
     // One rule per store and prefix: a bundle copy of the owning module makes
     // the same call again, and the first stands
     const existing = retentions.find((rule) => rule.store === store && rule.prefix === prefix);
-    const rule = existing || { store, prefix, parse, keep };
+    const rule = existing || { store, prefix, parse, keep, maxAge: hasAge ? maxAge : undefined };
     if (!existing) retentions.push(rule);
     return () => {
         const index = retentions.indexOf(rule);
@@ -332,10 +350,22 @@ export function retentionDrops(store, keys) {
             }
             if (!parsed || typeof parsed.group !== 'string' || !Number.isFinite(parsed.order)) continue;
             if (!groups.has(parsed.group)) groups.set(parsed.group, []);
-            groups.get(parsed.group).push({ key, order: parsed.order });
+            const end = Number.isFinite(parsed.end) ? parsed.end : parsed.order;
+            const start = Number.isFinite(parsed.start) ? parsed.start : end;
+            groups.get(parsed.group).push({ key, order: parsed.order, end, start });
         }
         for (const members of groups.values()) {
-            if (members.length <= rule.keep) continue;
+            if (rule.maxAge) {
+                let newest = -Infinity;
+                let newestStart = -Infinity;
+                for (const { end, start } of members) {
+                    newest = Math.max(newest, end);
+                    newestStart = Math.max(newestStart, start);
+                }
+                const floor = rule.maxAge.floor(newest, newestStart);
+                for (const { key, end } of members) if (end < floor) dropped.add(key);
+            }
+            if (rule.keep === undefined || members.length <= rule.keep) continue;
             // Newest first; equal orders by key, so both devices drop the same ones
             members.sort((a, b) => b.order - a.order || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
             for (const { key } of members.slice(rule.keep)) dropped.add(key);

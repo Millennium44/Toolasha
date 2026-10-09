@@ -433,9 +433,17 @@ export function redactSettingsStore(entries) {
 // Last "left out" summary logged, so an unchanged one is not repeated per build
 let lastLeftOutSummary = null;
 
+/**
+ * Displaced keys whose delete failed, retried by the next pull on this page.
+ * A reload forgets them; the owning tracker prunes the key at its next save.
+ * @type {Map<string, {store: string, key: string}>}
+ */
+const pendingDisplacedDeletes = new Map();
+
 /** Test-only: forget the last logged "left out" summary. */
 export function resetLeftOutLogForTests() {
     lastLeftOutSummary = null;
+    pendingDisplacedDeletes.clear();
 }
 
 /**
@@ -762,12 +770,35 @@ export async function applyPayload(json, { mode = 'pull', baseline = null } = {}
             await restoreMigrationRecords(migrationRecords);
             throw error;
         }
-        const { restored, expected, failed, complete } = imported;
+        const { restored, expected } = imported;
+        let { failed, complete } = imported;
         // Only where the snapshots that push them out landed, and past the
         // latch the import (or an earlier pull) set: they are part of this restore
         const landedShort = new Set((failed || []).map((entry) => entry.store));
-        for (const { store, key } of displaced) {
-            if (!landedShort.has(store)) await storage.delete(key, store, { bypassRestoreLatch: true });
+        /** Displaced keys whose delete did not land, as a short write would report them */
+        const undeleted = [];
+        // An earlier pull's failed deletes first: by now each such key looks like this device's
+        // own drop, so the next pull would never judge it displaced again
+        const retry = [...pendingDisplacedDeletes.values()].filter(
+            ({ store, key }) => !displaced.some((entry) => entry.store === store && entry.key === key)
+        );
+        for (const { store, key } of [...retry, ...displaced]) {
+            if (landedShort.has(store)) continue;
+            const deleted = await storage.delete(key, store, { bypassRestoreLatch: true });
+            // `storage.delete` answers false for a delete that did not land. A key left behind is
+            // no longer judged by the next pull (it is this device's own drop by then), so the
+            // pull must not be recorded as complete or the delete is never retried
+            if (deleted === false) {
+                undeleted.push({ store, key, expected: 1, written: 0 });
+                pendingDisplacedDeletes.set(`${store}\u0000${key}`, { store, key });
+            } else {
+                pendingDisplacedDeletes.delete(`${store}\u0000${key}`);
+            }
+        }
+        if (undeleted.length > 0) {
+            console.error('[Sync] Could not delete keys the download pushed out of their window:', undeleted);
+            failed = [...(failed || []), ...undeleted];
+            complete = false;
         }
         // The records were forgotten because the maps were about to land. A
         // settings store that did not land kept its old maps, which still match
@@ -1421,7 +1452,11 @@ function dropUnchangedKeys(payload, sameByStore) {
             delete entries[key];
             unchangedKeys.add(baselineId(storeName, key));
         }
-        unchanged[storeName] = same.size;
+        // The import strips excluded keys (device-local ones) and never counts them as written; a key it
+        // would strip is not "already the same", it is not part of the pull at all
+        unchanged[storeName] = Object.keys(
+            stripExcludedKeys(storeName, Object.fromEntries([...same].map((key) => [key, true])))
+        ).length;
     }
     return { unchanged, unchangedKeys };
 }

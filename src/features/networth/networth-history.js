@@ -98,6 +98,10 @@ const seriesStore = createChunkedHistory({
     legacyKey: (charId) => `networth_${charId}`,
     groupOf: pointChunkId,
     compare: (a, b) => (a?.t || 0) - (b?.t || 0),
+    // The year-old tail is thinned to one point a day by `pruneHistory`. A union with a peer's copy of a
+    // month brings the thinned points back (the peer, or the gist, still holds them), and this device
+    // thins them again on its next load: a pull that never settles
+    pruneEntries: (points) => pruneHistory(points),
     label: 'NetworthHistory',
 });
 

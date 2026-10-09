@@ -1401,7 +1401,7 @@ class SyncManager {
         if (!retryHeld && !takeUnapplied && !replaced && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
             // Settled: nothing in this version is news to this device
             if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
-            if (!silent) showToast('Already up to date with GitHub.');
+            if (!silent) showToast(await this._upToDateMessage(payload));
             return { ok: true, skipped: true, reason: 'not-newer' };
         }
 
@@ -1419,7 +1419,7 @@ class SyncManager {
                 syncSeq: advanceSeq(lastSeq, remoteSeq),
                 version: seen ? { ...seen, current: true } : null,
             });
-            if (!silent) showToast('Already up to date with GitHub.');
+            if (!silent) showToast(await this._upToDateMessage(payload));
             return { ok: true, skipped: true, reason: 'in-step' };
         }
 
@@ -1662,7 +1662,9 @@ class SyncManager {
             Object.values(expected).every((count) => !Number.isFinite(count) || count === 0);
         if (wroteNothing) {
             console.debug('[Sync] Pull matched this device; nothing written.', summary);
-            if (!silent) showToast('Already up to date with GitHub.');
+            // A merge that pushes back is about to say what it sent; only a bare pull has to tell
+            // whether this device is merely in step or holds changes the gist lacks
+            if (!silent) showToast(pushBack ? 'Already up to date with GitHub.' : await this._upToDateMessage(payload));
             if (pushBack) {
                 const pushed = await this._doPush(false, opToken);
                 return { ok: true, merged: 0, pushedBack: pushed?.ok === true && !pushed?.skipped };
@@ -1719,6 +1721,29 @@ class SyncManager {
         if (pushBack && mergeHeld?.length) return { ok: true, merged: merged?.length || 0, pushedBack: false };
 
         return { ok: true, merged: merged?.length || 0 };
+    }
+
+    /**
+     * What a pull that applied nothing tells the player. "Already up to date" is only true when this device
+     * has nothing the gist lacks; otherwise the next push has something to send, and saying so is the
+     * difference between a settled sync and one that is waiting on a push.
+     * @param {string} remoteText - The gist's payload, as downloaded
+     * @returns {Promise<string>} The toast text
+     * @private
+     */
+    async _upToDateMessage(remoteText) {
+        const upToDate = 'Already up to date with GitHub.';
+        try {
+            await flushPersistedRecords();
+            await storage.flushAll?.();
+            const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
+            if (addsToRemote(localText, remoteText)) {
+                return 'Nothing new from GitHub; this device has changes the next push will send.';
+            }
+        } catch (error) {
+            console.warn('[Sync] Could not tell whether this device holds changes the gist lacks:', error);
+        }
+        return upToDate;
     }
 
     /**

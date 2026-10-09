@@ -352,6 +352,15 @@ export function maxRecordsPerCharacter(storeName, keys) {
  *   sync brings together are an older and a newer version of it and only the recorder knows
  *   which is which. Given one, a read also folds any copies already sitting side by side on
  *   disk, and writes the folded chunk back.
+ * @param {Function} [options.pruneEntries] - `(entries) => entries`, the owner's own retention applied
+ *   to one chunk's worth of entries (rows past a date, points thinned to a daily outline). A sync fold
+ *   runs its result through it, because a union with a peer's copy otherwise hands back exactly what the
+ *   owner pruned: the peer still holds it, this device prunes it again on its next save, and the next
+ *   pull brings it back, for good. Must match what the owner does to a chunk it holds.
+ * @param {Function} [options.pruneIncoming] - `(entries) => entries`, the owner's retention applied only to
+ *   the entries a PULL would add: those the gist holds and this device does not. A pull never removes an entry
+ *   this device holds (the owner prunes its own, and a history it has not touched for a while is still its
+ *   own), but it stops taking back what the owner pruned. Uploads are not pruned by it.
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -369,6 +378,8 @@ class ChunkedHistory {
         immediate = false,
         identityOf,
         mergeCopies,
+        pruneEntries,
+        pruneIncoming,
         label = 'ChunkedHistory',
     }) {
         this.storeName = storeName;
@@ -381,6 +392,8 @@ class ChunkedHistory {
         /** True when `identityOf` is the caller's, so a stone may still be keyed by the old JSON */
         this._customIdentity = typeof identityOf === 'function';
         this.mergeCopies = typeof mergeCopies === 'function' ? mergeCopies : null;
+        this.pruneEntries = typeof pruneEntries === 'function' ? pruneEntries : null;
+        this.pruneIncoming = typeof pruneIncoming === 'function' ? pruneIncoming : null;
         this.label = label;
 
         /** Whose records are in memory */
@@ -467,10 +480,32 @@ class ChunkedHistory {
          * @param {*} incoming - The value coming down
          * @returns {*} Merged
          */
-        const merge = (local, incoming) => {
+        const merge = (local, incoming, context) => {
             if (!Array.isArray(local)) return incoming;
             if (!Array.isArray(incoming)) return local;
-            return this._union(local, incoming);
+            let offered = incoming;
+            if (this.pruneIncoming && !context?.forUpload) {
+                // A pull: `local` is this device's copy and `incoming` the gist's. Only gist-only entries
+                // the owner would already have pruned are left out
+                try {
+                    const held = new Set(local.map((entry) => this._identity(entry)));
+                    const fresh = incoming.filter((entry) => !held.has(this._identity(entry)));
+                    const kept = new Set(this.pruneIncoming(fresh));
+                    offered = incoming.filter((entry) => !fresh.includes(entry) || kept.has(entry));
+                } catch (error) {
+                    console.error(`[${this.label}] Pruning the incoming entries failed; keeping them:`, error);
+                    offered = incoming;
+                }
+            }
+            const united = this._union(local, offered);
+            if (!this.pruneEntries) return united;
+            try {
+                const pruned = this.pruneEntries(united);
+                return Array.isArray(pruned) ? pruned : united;
+            } catch (error) {
+                console.error(`[${this.label}] Pruning a folded chunk failed; keeping the union:`, error);
+                return united;
+            }
         };
 
         registerSyncMerge({
