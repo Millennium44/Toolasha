@@ -28,9 +28,11 @@ vi.mock('../../core/dom-observer.js', () => ({
         }),
     },
 }));
+vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('../../utils/shopping-list.js', () => ({ openShoppingList: vi.fn() }));
 
 import config from '../../core/config.js';
+import { showToast } from '../../utils/toast.js';
 import { openShoppingList } from '../../utils/shopping-list.js';
 import feature, { calculateMissingSupplies, injectButton, handleClick } from './labyrinth-missing-supplies.js';
 
@@ -133,6 +135,7 @@ describe('labyrinth missing supplies', () => {
         ];
         handleClick();
         expect(openShoppingList).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledTimes(1);
     });
 
     test('initialize sweeps existing grids and watches new ones; disable removes the buttons', () => {
