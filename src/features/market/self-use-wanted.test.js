@@ -1,3 +1,4 @@
+/** @vitest-environment happy-dom */
 /**
  * The self-use keep list: per character, persisted whole in the settings store
  * as `selfUseWanted_<characterId>`, cached for the tooltip's synchronous reads,
@@ -14,6 +15,8 @@ const state = vi.hoisted(() => ({
     /** Fired once per read, after the value is in hand — lets a test land a switch inside one */
     onRead: null,
     itemDetailMap: {},
+    /** `storage.onWrite` listeners, to announce another tab's write through */
+    writeListeners: new Set(),
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -26,6 +29,10 @@ vi.mock('../../core/storage.js', () => ({
         setJSON: async (key, value, store) => {
             state.writes.push({ key, store });
             state.stored[key] = value;
+        },
+        onWrite: (listener) => {
+            state.writeListeners.add(listener);
+            return () => state.writeListeners.delete(listener);
         },
     },
 }));
@@ -46,6 +53,67 @@ beforeEach(() => {
     state.onRead = null;
     state.itemDetailMap = {};
     selfUseWanted._reset();
+    state.writeListeners = new Set();
+});
+
+/** Another tab committed `value` under `key` and announced it */
+const otherTabWrites = (key, value, storeName = 'settings') => {
+    state.stored[key] = value;
+    for (const listener of state.writeListeners) listener({ storeName, keys: [key], origin: 'remote' });
+};
+const settle = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
+describe('another tab', () => {
+    test("a mark made in another tab reaches this tab's cache and its listeners", async () => {
+        await selfUseWanted.load();
+        const heard = vi.fn();
+        selfUseWanted.onChange(heard);
+
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        await settle();
+
+        expect(selfUseWanted.isKept('/items/frenzy')).toBe(true);
+        expect(heard).toHaveBeenCalledTimes(1);
+    });
+
+    test('a chip on screen is relabelled when another tab marks its item', async () => {
+        await selfUseWanted.load();
+        const chip = document.createElement('span');
+        chip.className = 'toolasha-selfuse-keep-chip';
+        chip.setAttribute('data-item-hrid', '/items/frenzy');
+        document.body.appendChild(chip);
+
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        await settle();
+        expect(chip.textContent).toBe('☑ Kept for self-use');
+        chip.remove();
+    });
+
+    test("another character's key, another store, or this tab's own write reloads nothing", async () => {
+        await selfUseWanted.load();
+        const heard = vi.fn();
+        selfUseWanted.onChange(heard);
+
+        otherTabWrites('selfUseWanted_alt', ['/items/frenzy']);
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy'], 'networthHistory');
+        state.stored.selfUseWanted_main = ['/items/puncture'];
+        for (const listener of state.writeListeners) {
+            listener({ storeName: 'settings', keys: ['selfUseWanted_main'], origin: 'commit' });
+        }
+        await settle();
+
+        expect(heard).not.toHaveBeenCalled();
+        expect(selfUseWanted.isKept('/items/frenzy')).toBe(false);
+    });
+
+    test('teardown stops listening', async () => {
+        await selfUseWanted.load();
+        expect(state.writeListeners.size).toBe(1);
+        selfUseWanted.stopWatching();
+        expect(state.writeListeners.size).toBe(0);
+    });
 });
 
 describe('marking items', () => {

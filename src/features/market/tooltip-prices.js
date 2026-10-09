@@ -2337,6 +2337,7 @@ class TooltipPrices {
 
             uninstallEnhancementSourceToggle();
             uninstallKeepToggle();
+            selfUseWanted.stopWatching();
 
             this.isActive = false;
             this.isInitialized = false;

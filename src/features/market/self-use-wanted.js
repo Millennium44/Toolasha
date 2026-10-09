@@ -89,19 +89,87 @@ function sanitize(value) {
  * @returns {Promise<Array<string>>}
  */
 async function load() {
+    watchOtherTabs();
     const charId = currentCharId();
     if (cache === null || cacheCharId !== charId) {
+        const generation = cacheGeneration;
         const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
         // A switch that landed during the read must not file this list under the newcomer
         if (charId !== currentCharId()) return stored;
-        cache = stored;
-        cacheCharId = charId;
+        // A change adopted while this read was out is newer than what it read
+        if (generation !== cacheGeneration && cache !== null && cacheCharId === charId) return cache;
+        adopt(charId, stored);
     }
     return cache;
 }
 
-/** Tell every listener the list changed */
+/**
+ * Make a list the cache for a character.
+ * @param {string} charId
+ * @param {Array<string>} list
+ */
+function adopt(charId, list) {
+    cache = list;
+    cacheCharId = charId;
+    cacheGeneration += 1;
+}
+
+/** Bumped on every adoption, so a read that started before one knows it is stale */
+let cacheGeneration = 0;
+
+/** Unsubscribe from `storage.onWrite`, while listening */
+let unsubscribeWrites = null;
+
+/**
+ * Hear other tabs' writes to the cached character's key, and reload it when
+ * one lands: a mark made in another tab otherwise never reached this tab's
+ * tooltips until a reload. `storeName: null` is a page back from the bfcache,
+ * which could not hear anything, so it reloads too.
+ */
+function watchOtherTabs() {
+    if (unsubscribeWrites || typeof storage.onWrite !== 'function') return;
+    unsubscribeWrites = storage.onWrite(({ storeName, keys, origin } = {}) => {
+        if (origin !== 'remote' && storeName !== null) return;
+        if (storeName !== null && storeName !== 'settings') return;
+        if (cache === null || cacheCharId === null) return;
+        if (Array.isArray(keys) && keys.length > 0 && !keys.includes(keyFor(cacheCharId))) return;
+        reloadFromStorage();
+    });
+}
+
+/** Stop hearing other tabs' writes (feature teardown) */
+function stopWatching() {
+    unsubscribeWrites?.();
+    unsubscribeWrites = null;
+}
+
+/**
+ * Re-read the cached character's list after another tab wrote it, and tell
+ * listeners. Dropped when the character changed or a newer list was adopted
+ * while the read was out.
+ * @returns {Promise<void>}
+ */
+async function reloadFromStorage() {
+    const charId = cacheCharId;
+    const generation = cacheGeneration;
+    try {
+        const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
+        if (charId !== currentCharId() || charId !== cacheCharId || generation !== cacheGeneration) return;
+        adopt(charId, stored);
+        notify();
+    } catch (error) {
+        console.error('[SelfUseWanted] Reload after another tab wrote failed:', error);
+    }
+}
+
+/** Tell every listener the list changed, and relabel the chips on screen */
 function notify() {
+    if (typeof document !== 'undefined') {
+        for (const chip of document.querySelectorAll(`.${KEEP_CHIP_CLASS}`)) {
+            const hrid = chip.getAttribute('data-item-hrid');
+            if (hrid) chip.textContent = keepChipLabel(cache?.includes(hrid) ?? false);
+        }
+    }
     for (const listener of listeners) {
         try {
             listener();
@@ -127,8 +195,7 @@ async function update(change) {
         return null;
     }
     const next = sanitize(change([...list]));
-    cache = next;
-    cacheCharId = charId;
+    adopt(charId, next);
     // Fire-and-forget: the cache already answers, the write persists behind it
     storage.setJSON(keyFor(charId), next, 'settings');
     notify();
@@ -227,10 +294,14 @@ const selfUseWanted = {
 
     isAlchemyOutput,
 
+    stopWatching,
+
     /** Forget the cache (tests) */
     _reset() {
+        stopWatching();
         cache = null;
         cacheCharId = null;
+        cacheGeneration = 0;
         outputIndex = null;
         outputIndexSource = null;
         listeners.clear();
