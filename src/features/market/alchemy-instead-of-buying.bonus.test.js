@@ -27,6 +27,11 @@ vi.mock('../../core/data-manager.js', () => {
             currentCharacterId: 1,
             getInitClientData: () => ({ itemDetailMap, openableLootDropMap: {} }),
             getItemDetails: (hrid) => itemDetailMap[hrid] ?? null,
+            getActionDrinkSlots: () => [],
+            getInventory: () => [],
+            getEquipment: () => new Map(),
+            on: () => {},
+            off: () => {},
         },
     };
 });

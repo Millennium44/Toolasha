@@ -34,6 +34,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
@@ -310,6 +311,9 @@ const SLICE_MS = 8;
 /** Background passes before a job stops re-checking a cache that prices keep emptying */
 const MAX_JOB_PASSES = 3;
 
+/** The action type every calculator run belongs to */
+const ALCHEMY_ACTION_TYPE = '/action_types/alchemy';
+
 /** The catalysts every setup search weighs, as the calculator names them */
 const CATALYST_HRIDS = {
     decompose: '/items/catalyst_of_decomposition',
@@ -386,14 +390,69 @@ function priceKey() {
     return `${marketAPI?.lastFetchTimestamp ?? ''}|${priceGeneration}`;
 }
 
+/** The buff types the calculator reads for alchemy from personal and achievement buffs */
+const ALCHEMY_BUFF_TYPES = [
+    '/buff_types/efficiency',
+    '/buff_types/action_speed',
+    '/buff_types/rare_find',
+    '/buff_types/essence_find',
+];
+
+/**
+ * Everything other than prices a calculator run reads, so a change of setup empties the
+ * cached runs: the alchemy drinks and equipment as the calculator resolves them (a saved
+ * loadout, a tea out of stock), the alchemy level, the house rooms, and the alchemy buffs
+ * (consumable, guild, achievement, personal, community). Anything this misses still ages out
+ * with the five-minute bucket.
+ * @returns {string}
+ */
+function characterSetupSignature() {
+    try {
+        const { equipment, drinks } = resolveActionContext(ALCHEMY_ACTION_TYPE);
+        const entries = equipment instanceof Map ? [...equipment] : Object.entries(equipment || {});
+        const gear = entries
+            .map(([slot, item]) => `${slot}:${item?.itemHrid ?? ''}+${item?.enhancementLevel ?? 0}`)
+            .sort()
+            .join(',');
+        const drinkList = (drinks || []).map((drink) => drink?.itemHrid ?? '').join(',');
+        const skills = dataManager.getSkills?.() || [];
+        const level = skills.find((skill) => skill?.skillHrid === '/skills/alchemy')?.level ?? '';
+        const rooms = dataManager.getHouseRooms?.();
+        const house = [...(rooms instanceof Map ? rooms : [])]
+            .map(([hrid, room]) => `${hrid}:${room?.level ?? room}`)
+            .sort()
+            .join(',');
+        const character = dataManager.characterData;
+        const buffs = JSON.stringify([
+            character?.consumableActionTypeBuffsMap?.[ALCHEMY_ACTION_TYPE] ?? null,
+            character?.guildActionTypeBuffsMap?.[ALCHEMY_ACTION_TYPE] ?? null,
+            character?.communityBuffs ?? null,
+            ALCHEMY_BUFF_TYPES.map((type) => [
+                dataManager.getAchievementBuffFlatBoost?.(ALCHEMY_ACTION_TYPE, type) ?? 0,
+                dataManager.getPersonalBuffFlatBoost?.(ALCHEMY_ACTION_TYPE, type) ?? 0,
+            ]),
+        ]);
+        return [dataManager.getBuffStateVersion?.() ?? '', gear, drinkList, level, house, buffs].join('|');
+    } catch (error) {
+        console.error('[AlchemyInstead] Setup signature failed:', error);
+        // Never reuse a run whose setup could not be read
+        return `unread:${Date.now()}`;
+    }
+}
+
 /**
  * Bring both caches up to the current snapshot. Calculator runs outlive a price change (each
- * is re-checked against the prices it ran on before reuse); finished alternatives do not.
+ * is re-checked against the prices it ran on before reuse) but not a change of character,
+ * setup or bucket; finished alternatives outlive neither.
  * @returns {void}
  */
 function syncStamps() {
     listenForPrices();
-    const hard = `${dataManager.currentCharacterId ?? ''}|${Math.floor(Date.now() / CACHE_BUCKET_MS)}`;
+    const hard = [
+        dataManager.currentCharacterId ?? '',
+        Math.floor(Date.now() / CACHE_BUCKET_MS),
+        characterSetupSignature(),
+    ].join('|');
     if (hard !== candidateStamp) {
         candidateCache.clear();
         candidateStamp = hard;
@@ -462,7 +521,7 @@ function buyableSetup(result) {
  */
 function calculatorBuyPrice(hrid) {
     const info = getItemPriceInfo(hrid, { context: 'profit', side: 'buy' });
-    return `${info?.price ?? ''}:${info?.source ?? ''}`;
+    return `${hrid}=${info?.price ?? ''}:${info?.source ?? ''}`;
 }
 
 /**
@@ -475,7 +534,7 @@ function calculatorBuyPrice(hrid) {
  */
 function setupSignature(actionType, raw) {
     const drinks = new Set();
-    const slots = dataManager.getActionDrinkSlots?.('/action_types/alchemy');
+    const slots = dataManager.getActionDrinkSlots?.(ALCHEMY_ACTION_TYPE);
     for (const drink of Array.isArray(slots) ? slots : []) {
         if (drink?.itemHrid) drinks.add(drink.itemHrid);
     }

@@ -120,6 +120,9 @@ vi.mock('../../core/data-manager.js', () => {
                 abilityDetailMap: { '/abilities/berserk': { name: 'Berserk' } },
             }),
             getItemDetails: (hrid) => itemDetailMap[hrid] || null,
+            getActionDrinkSlots: () => [],
+            getInventory: () => [],
+            getEquipment: () => new Map(),
             get characterData() {
                 return characterState.data;
             },
@@ -1369,6 +1372,18 @@ describe('instead of buying', () => {
             await settleJob();
             expect(placed.textContent).toBe('');
             expect(placed.style.display).toBe('none');
+        });
+
+        test('disabling the feature mid-job leaves the placed section unfilled', async () => {
+            const el = itemTooltip('Curd');
+            observerState.handler(el);
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            const placed = el.querySelector('.mwi-alchemy-instead');
+            expect(placed).not.toBeNull();
+            tooltipPrices.disable();
+            await settleJob();
+            expect(placed.textContent).toBe('');
+            expect(placed.isConnected && placed.style.display === '').toBe(false);
         });
 
         test('a placed section with no route behind it is removed', async () => {

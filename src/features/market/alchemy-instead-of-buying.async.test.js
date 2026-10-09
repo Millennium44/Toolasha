@@ -9,7 +9,16 @@ const SOURCE_COUNT = 120;
 const sourceHrid = (i) => `/items/source_${i}`;
 
 /** `{hrid: {ask, bid}}`, all from the order book */
-const world = vi.hoisted(() => ({ prices: {}, listeners: [], calls: [], msPerRun: 2 }));
+const world = vi.hoisted(() => ({
+    prices: {},
+    listeners: [],
+    dataListeners: new Map(),
+    calls: [],
+    msPerRun: 2,
+    /** The slotted alchemy drinks, all in stock */
+    drinks: [],
+    alchemyLevel: 50,
+}));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
 vi.mock('../../core/data-manager.js', () => {
@@ -30,6 +39,19 @@ vi.mock('../../core/data-manager.js', () => {
             currentCharacterId: 1,
             getInitClientData: () => ({ itemDetailMap, openableLootDropMap: {} }),
             getItemDetails: (hrid) => itemDetailMap[hrid] ?? null,
+            getActionDrinkSlots: () => world.drinks.map((itemHrid) => ({ itemHrid })),
+            getInventory: () => world.drinks.map((itemHrid) => ({ itemHrid, count: 10 })),
+            getEquipment: () => new Map(),
+            getSkills: () => [{ skillHrid: '/skills/alchemy', level: world.alchemyLevel }],
+            on: (event, callback) => {
+                world.dataListeners.set(event, [...(world.dataListeners.get(event) ?? []), callback]);
+            },
+            off: (event, callback) => {
+                world.dataListeners.set(
+                    event,
+                    (world.dataListeners.get(event) ?? []).filter((cb) => cb !== callback)
+                );
+            },
         },
     };
 });
@@ -48,18 +70,22 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
         calculateCandidateResults: (actionType, itemHrid) => {
             world.calls.push(itemHrid);
             vi.setSystemTime(Date.now() + world.msPerRun);
-            const setup = (catalyst, overhead) => ({
+            const setup = (catalyst, overhead, tea = null) => ({
                 actionType,
                 itemHrid,
                 actionsPerHour: 100,
-                successRate: catalyst ? 0.9 : 0.5,
+                successRate: (catalyst ? 0.9 : 0.5) + (tea ? 0.05 : 0),
                 requirementCosts: [{ itemHrid, count: 1, price: 0 }],
                 catalystCostPerHour: overhead,
-                totalTeaCostPerHour: 0,
+                // A tea setup charges the slotted tea at its ask, 10 an hour
+                totalTeaCostPerHour: tea ? 10 * (world.prices[tea]?.ask ?? 0) : 0,
+                consumableCosts: tea ? [{ itemHrid: tea }] : [],
                 dropRevenues: [],
                 winningCatalystHrid: catalyst,
             });
-            return [setup(null, 0), setup('/items/catalyst_of_decomposition', 2000)];
+            const setups = [setup(null, 0), setup('/items/catalyst_of_decomposition', 2000)];
+            for (const tea of world.drinks) setups.push(setup('/items/catalyst_of_decomposition', 2000, tea));
+            return setups;
         },
     },
 }));
@@ -79,6 +105,7 @@ import {
     liveAlternatives,
     settleAlternatives,
     clearInsteadCache,
+    stopInsteadListeners,
     findAlchemyAlternatives,
     SYNC_SOURCE_RUNS,
 } from './alchemy-instead-of-buying.js';
@@ -107,6 +134,8 @@ beforeEach(() => {
     vi.setSystemTime(new Date('2026-10-09T12:00:00Z'));
     clearInsteadCache();
     world.calls = [];
+    world.drinks = [];
+    world.alchemyLevel = 50;
     world.prices = {
         [TARGET]: { ask: 1000, bid: 900 },
         '/items/shard': { ask: 40, bid: 30 },
@@ -162,6 +191,21 @@ describe('a high-fanout target', () => {
         expect(world.calls).toEqual([]);
     });
 
+    test("the feature's teardown cancels a running job", async () => {
+        liveAlternatives(TARGET, new Set());
+        const settled = settleAlternatives(TARGET, new Set());
+        // Part-way: some sources have run
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(world.calls.length).toBeGreaterThan(0);
+        stopInsteadListeners();
+        await vi.runAllTimersAsync();
+        const found = await settled;
+        expect(found.cancelled).toBe(true);
+        expect(found.alternatives).toEqual([]);
+        expect(world.calls.length).toBeLessThan(SOURCE_COUNT);
+    });
+
     test('a cleared cache cancels a running job', async () => {
         const settled = settleAlternatives(TARGET, new Set());
         clearInsteadCache();
@@ -208,5 +252,68 @@ describe('calculator runs across a price change', () => {
         const found = await settleAll();
         expect(world.calls).toHaveLength(SOURCE_COUNT);
         expect(found.alternatives[0].sourceHrid).toBe(sourceHrid(0));
+    });
+
+    test('a pushed value-map refresh rechecks the runs and the routes', async () => {
+        await settleAll();
+        world.calls = [];
+        // The band moved source 7's clamped ask; no market notification fires
+        world.prices[sourceHrid(7)] = { ask: 10, bid: 5 };
+        for (const listener of world.dataListeners.get('market_item_values_updated') ?? []) listener({});
+        const found = liveAlternatives(TARGET, new Set());
+        expect(world.calls).toEqual([sourceHrid(7)]);
+        expect(found.alternatives[0].sourceHrid).toBe(sourceHrid(7));
+    });
+
+    test("a slotted tea's price moving reruns every source that charged it", async () => {
+        world.drinks = ['/items/catalytic_tea'];
+        world.prices['/items/catalytic_tea'] = { ask: 100, bid: 90 };
+        await settleAll();
+        world.calls = [];
+        world.prices['/items/catalytic_tea'] = { ask: 500, bid: 450 };
+        for (const listener of world.listeners) listener();
+        expect(liveAlternatives(TARGET, new Set()).pending).toBe(true);
+        await settleAll();
+        expect(world.calls).toHaveLength(SOURCE_COUNT);
+    });
+});
+
+describe('calculator runs across a change of setup', () => {
+    const settleAll = async () => {
+        const settled = settleAlternatives(TARGET, new Set());
+        await vi.runAllTimersAsync();
+        return settled;
+    };
+
+    test('swapping the slotted tea for one at the same price reruns every source', async () => {
+        world.drinks = ['/items/catalytic_tea'];
+        world.prices['/items/catalytic_tea'] = { ask: 100, bid: 90 };
+        world.prices['/items/efficiency_tea'] = { ask: 100, bid: 90 };
+        await settleAll();
+        world.calls = [];
+        world.drinks = ['/items/efficiency_tea'];
+        expect(liveAlternatives(TARGET, new Set()).pending).toBe(true);
+        const found = await settleAll();
+        expect(world.calls).toHaveLength(SOURCE_COUNT);
+        expect(found.alternatives.length).toBeGreaterThan(0);
+    });
+
+    test('an alchemy level-up reruns every source', async () => {
+        await settleAll();
+        world.calls = [];
+        world.alchemyLevel = 51;
+        expect(liveAlternatives(TARGET, new Set()).pending).toBe(true);
+        await settleAll();
+        expect(world.calls).toHaveLength(SOURCE_COUNT);
+    });
+
+    test('an unchanged setup reuses every run', async () => {
+        world.drinks = ['/items/catalytic_tea'];
+        world.prices['/items/catalytic_tea'] = { ask: 100, bid: 90 };
+        await settleAll();
+        world.calls = [];
+        for (const listener of world.listeners) listener();
+        expect(liveAlternatives(TARGET, new Set()).pending).toBeUndefined();
+        expect(world.calls).toEqual([]);
     });
 });
