@@ -176,19 +176,36 @@ export function bonusSourcesOf(targetHrid) {
 }
 
 /**
+ * The base success rate of one kind of alchemy on one item, as the calculator has it.
+ * @param {string} actionType
+ * @param {Object} alchemy - The item's alchemyDetail
+ * @returns {number}
+ */
+function baseSuccessOf(actionType, alchemy) {
+    if (actionType === 'coinify') return COINIFY_BASE_SUCCESS_RATE;
+    if (actionType === 'decompose') return DECOMPOSE_BASE_SUCCESS;
+    return alchemy.transmuteSuccessRate || 0;
+}
+
+/**
  * A cheap estimate of what one unit of a bonus drop costs from one source, for ranking only:
  * the source at its ask plus the coin fee, less its base outputs sold at the bid after tax
- * (a coinify's coins at face value), at the base success rate, over the drop's base rate. No catalyst, tea, find bonus or keep
- * list — the calculator run that follows for the best few prices all of those.
+ * (a coinify's coins at face value), over the drop's base rate. The outputs are credited at
+ * the success rate, and a catalyst is charged at that rate too: with `deps.rateChoices` the
+ * best of the success rates it offers (the character's level penalty, tea and each catalyst
+ * they could buy), otherwise the flat base rate with no catalyst. No keep list or find bonus —
+ * the calculator run that follows for the best few prices all of those.
  * @param {string} targetHrid - The bonus drop
  * @param {{sourceHrid: string, actionType: string}} source
  * @param {Object} deps
  * @param {(hrid: string) => Object|null} deps.getItemDetails
  * @param {(hrid: string) => number|null} deps.askOf
  * @param {(hrid: string) => number|null} deps.sellOf
+ * @param {(actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number}>} [deps.rateChoices]
+ *   The success rate each catalyst choice gives, and what that catalyst costs per success
  * @returns {number|null} Null when the source has no ask or never drops the target
  */
-export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemDetails, askOf, sellOf }) {
+export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemDetails, askOf, sellOf, rateChoices }) {
     const details = getItemDetails(sourceHrid);
     const alchemy = details?.alchemyDetail;
     const ask = askOf(sourceHrid);
@@ -196,25 +213,29 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
     const perAction = bonusDropsOf(details).find((drop) => drop.itemHrid === targetHrid)?.perAction ?? 0;
     if (!(perAction > 0)) return null;
     const bulk = alchemy.bulkMultiplier || 1;
-    let credit = 0;
+    // What one success credits; the rate scales it
+    let creditPerSuccess = 0;
     if (actionType === 'coinify') {
-        credit = (details.sellPrice || 0) * bulk * COINIFY_COINS_PER_SELL_PRICE * COINIFY_BASE_SUCCESS_RATE;
+        creditPerSuccess = (details.sellPrice || 0) * bulk * COINIFY_COINS_PER_SELL_PRICE;
     } else if (actionType === 'decompose') {
         for (const output of alchemy.decomposeItems || []) {
-            credit += (Number(output?.count) || 0) * bulk * DECOMPOSE_BASE_SUCCESS * (sellOf(output?.itemHrid) ?? 0);
+            creditPerSuccess += (Number(output?.count) || 0) * bulk * (sellOf(output?.itemHrid) ?? 0);
         }
     } else {
-        const success = alchemy.transmuteSuccessRate || 0;
         for (const drop of alchemy.transmuteDropTable || []) {
             const units =
-                ((Number(drop?.minCount) + Number(drop?.maxCount)) / 2) *
-                bulk *
-                (Number(drop?.dropRate) || 0) *
-                success;
-            credit += units * (drop?.itemHrid === sourceHrid ? ask : (sellOf(drop?.itemHrid) ?? 0));
+                ((Number(drop?.minCount) + Number(drop?.maxCount)) / 2) * bulk * (Number(drop?.dropRate) || 0);
+            creditPerSuccess += units * (drop?.itemHrid === sourceHrid ? ask : (sellOf(drop?.itemHrid) ?? 0));
         }
     }
-    return (ask * bulk + getAlchemyCoinCost(details, actionType) - credit) / perAction;
+    const baseRate = baseSuccessOf(actionType, alchemy);
+    const choices = rateChoices?.(actionType, details, baseRate) ?? [{ rate: baseRate, catalystPrice: 0 }];
+    const fixed = ask * bulk + getAlchemyCoinCost(details, actionType);
+    let best = Infinity;
+    for (const { rate, catalystPrice } of choices) {
+        best = Math.min(best, fixed - rate * (creditPerSuccess - catalystPrice));
+    }
+    return best / perAction;
 }
 
 /**
@@ -346,6 +367,8 @@ const jobs = new Map();
 let jobEpoch = 0;
 /** The setup prices of one action type, memoized per price snapshot */
 const setupSignatures = new Map();
+/** The alchemy drinks resolveActionContext returned at the last syncStamps */
+let resolvedDrinkHrids = [];
 /** Per bonus-drop target: its best-ranked sources under the current price snapshot */
 const bonusRanks = new Map();
 /**
@@ -426,6 +449,7 @@ function characterSetupSignature() {
             .sort()
             .join(',');
         const drinkList = (drinks || []).map((drink) => drink?.itemHrid ?? '').join(',');
+        resolvedDrinkHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
         const skills = dataManager.getSkills?.() || [];
         const level = skills.find((skill) => skill?.skillHrid === '/skills/alchemy')?.level ?? '';
         const rooms = dataManager.getHouseRooms?.();
@@ -485,6 +509,7 @@ export function clearInsteadCache() {
     candidateCache.clear();
     resultCache.clear();
     setupSignatures.clear();
+    resolvedDrinkHrids = [];
     bonusRanks.clear();
     jobs.clear();
     jobEpoch += 1;
@@ -549,6 +574,10 @@ function setupSignature(actionType, raw) {
     for (const drink of Array.isArray(slots) ? slots : []) {
         if (drink?.itemHrid) drinks.add(drink.itemHrid);
     }
+    // A saved loadout's drinks are the ones the calculator uses; an unpriced one is in neither
+    // the slots nor any result (the calculator leaves its tea setups out), so only the resolved
+    // context, read at the last syncStamps, can say its price is part of this run
+    for (const hrid of resolvedDrinkHrids) drinks.add(hrid);
     for (const result of raw) {
         for (const cost of result?.consumableCosts ?? []) {
             if (cost?.itemHrid) drinks.add(cost.itemHrid);
@@ -659,15 +688,84 @@ function sourcesToRun(sources) {
     );
 }
 
-/** The price reads a bonus-source ranking makes: real book prices only, like the costing */
-const rankDeps = {
-    getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
-    askOf: (hrid) => realPrice(hrid, 'ask'),
-    sellOf: (hrid) => {
-        const bid = realPrice(hrid, 'bid');
-        return bid === null ? null : calculatePriceAfterTax(bid);
-    },
-};
+/**
+ * The success rates a bonus-source ranking weighs, worked out the way the calculator does: base
+ * rate, the character's under-level penalty (memoized per item level), the live tea, and each
+ * catalyst with a real ask. Read once per ranking; a calculator that cannot answer leaves the
+ * flat base rate in place.
+ * @returns {((actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number}>)|undefined}
+ */
+export function makeRateChoices() {
+    const calc = alchemyProfitCalculator;
+    if (
+        typeof calc?.getUnderLevelPenalty !== 'function' ||
+        typeof calc?.calculateSuccessRateBreakdown !== 'function' ||
+        typeof calc?.catalystSuccessBonus !== 'function'
+    ) {
+        return undefined;
+    }
+    try {
+        const { equipment, drinks } = resolveActionContext(ALCHEMY_ACTION_TYPE);
+        const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
+        // A tea counts only when it can be bought, the same real-ask rule buyableSetup applies to the
+        // candidates; without it the ranking scores the no-tea setup alone
+        const teaHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
+        const teaBuyable = teaHrids.length > 0 && teaHrids.every((hrid) => realPrice(hrid, 'ask') !== null);
+        const teaSetups = [{ tea: 0, drinkSlots: [] }];
+        if (teaBuyable) teaSetups.push({ tea: calc.calculateSuccessRateBreakdown(1, 0).tea, drinkSlots: drinks });
+        const penalties = new Map();
+        const catalysts = new Map();
+        const catalystsFor = (actionType) => {
+            if (!catalysts.has(actionType)) {
+                const list = [{ bonus: 0, price: 0 }];
+                for (const hrid of [CATALYST_HRIDS[actionType], CATALYST_HRIDS.prime]) {
+                    const price = hrid ? realPrice(hrid, 'ask') : null;
+                    if (price !== null) list.push({ bonus: calc.catalystSuccessBonus(hrid), price });
+                }
+                catalysts.set(actionType, list);
+            }
+            return catalysts.get(actionType);
+        };
+        return (actionType, details, baseRate) => {
+            const level = details?.itemLevel || 1;
+            const choices = [];
+            teaSetups.forEach(({ tea, drinkSlots }, index) => {
+                const key = `${index}|${level}`;
+                if (!penalties.has(key)) {
+                    penalties.set(
+                        key,
+                        calc.getUnderLevelPenalty(level, null, { drinkSlots, itemDetailMap, equipment })
+                    );
+                }
+                const penalty = penalties.get(key);
+                for (const { bonus, price } of catalystsFor(actionType)) {
+                    const rate = calc.calculateSuccessRateBreakdown(baseRate, bonus, tea, penalty).total;
+                    choices.push({ rate, catalystPrice: price });
+                }
+            });
+            return choices;
+        };
+    } catch (error) {
+        console.error('[AlchemyInstead] Success rates unavailable for ranking:', error);
+        return undefined;
+    }
+}
+
+/**
+ * The price reads a bonus-source ranking makes: real book prices only, like the costing.
+ * @returns {Object}
+ */
+function makeRankDeps() {
+    return {
+        getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
+        askOf: (hrid) => realPrice(hrid, 'ask'),
+        sellOf: (hrid) => {
+            const bid = realPrice(hrid, 'bid');
+            return bid === null ? null : calculatePriceAfterTax(bid);
+        },
+        rateChoices: makeRateChoices(),
+    };
+}
 
 /**
  * Keep the {@link BONUS_SOURCE_LIMIT} cheapest of a ranking.
@@ -691,9 +789,10 @@ function topRanked(scored) {
  * @param {string} targetHrid
  * @param {{sourceHrid: string, actionType: string}} source
  * @param {Array<Object>} scored - Appended to
+ * @param {Object} rankDeps - From {@link makeRankDeps}
  * @returns {void}
  */
-function scoreBonusSource(targetHrid, source, scored) {
+function scoreBonusSource(targetHrid, source, scored, rankDeps) {
     const cost = bonusRankCost(targetHrid, source, rankDeps);
     if (cost !== null && Number.isFinite(cost)) scored.push({ source, cost });
 }
@@ -708,9 +807,10 @@ function scoreBonusSource(targetHrid, source, scored) {
 async function rankBonusSources(targetHrid, epoch) {
     const stamp = resultStamp;
     const scored = [];
+    const rankDeps = makeRankDeps();
     let sliceStart = Date.now();
     for (const source of bonusSourcesOf(targetHrid)) {
-        scoreBonusSource(targetHrid, source, scored);
+        scoreBonusSource(targetHrid, source, scored, rankDeps);
         if (Date.now() - sliceStart >= SLICE_MS) {
             await yieldToPage();
             if (epoch !== jobEpoch) return;
@@ -762,7 +862,8 @@ function computeAlternatives(targetHrid, wanted) {
     if (!lookupSources(targetHrid).ranked) {
         // Off the hover only (runJob's last resort): rank in one go
         const scored = [];
-        for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored);
+        const rankDeps = makeRankDeps();
+        for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored, rankDeps);
         bonusRanks.set(targetHrid, topRanked(scored));
     }
     const { sources } = lookupSources(targetHrid);
