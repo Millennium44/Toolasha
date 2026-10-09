@@ -957,8 +957,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
         html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
         html += '<td style="padding: 2px 4px; text-align: center;"></td>';
-        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatKMB(totalAsk)}</td>`;
-        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatKMB(totalBid)}</td>`;
+        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatLargeNumber(totalAsk)}</td>`;
+        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatLargeNumber(totalBid)}</td>`;
         html += '</tr>';
 
         // Item rows
@@ -966,8 +966,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
             html += '<tr>';
             html += `<td style="padding: 2px 4px;">${row.name}</td>`;
             html += `<td style="padding: 2px 4px; text-align: center;">${formatKMB(row.count)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(row.askPrice)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(row.bidPrice)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right;">${formatLargeNumber(row.askPrice)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right;">${formatLargeNumber(row.bidPrice)}</td>`;
             html += '</tr>';
         }
     } else {
@@ -1040,8 +1040,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
         html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
         html += `<td style="padding: 2px 4px; text-align: center;">${formatKMB(totalCount)}</td>`;
-        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatKMB(totalAsk)}</td>`;
-        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatKMB(totalBid)}</td>`;
+        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatLargeNumber(totalAsk)}</td>`;
+        html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatLargeNumber(totalBid)}</td>`;
         html += '</tr>';
 
         // Item rows
@@ -1050,12 +1050,12 @@ export function buildEnhancementTooltipHTML(enhancementData) {
             html += `<td style="padding: 2px 4px;">${row.name}</td>`;
             if (row.isCoin) {
                 html += '<td style="padding: 2px 4px; text-align: center;">—</td>';
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(row.count)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(row.count)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatLargeNumber(row.count)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatLargeNumber(row.count)}</td>`;
             } else {
                 html += `<td style="padding: 2px 4px; text-align: center;">${formatKMB(row.count)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(row.askPrice)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(row.bidPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatLargeNumber(row.askPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatLargeNumber(row.bidPrice)}</td>`;
             }
             html += '</tr>';
         }
@@ -1242,9 +1242,12 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
 
     const showPrices = config.getSetting('itemTooltip_prices');
     const useKMB = isAbbreviationEnabled();
-    const fmt = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 0) : numberFormatter(Math.round(n))) : '—');
+    const fmtXp = (n) =>
+        n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 0) : numberFormatter(Math.round(n))) : '—';
+    // Costs and prices defer to the configured formatting precision (a fixed one rounds close ask/bid
+    // values to the same string)
     const fmtCost = (n) =>
-        n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 1) : numberFormatter(Math.round(n))) : '—';
+        n != null && n > 0 ? (useKMB ? formatLargeNumber(n) : numberFormatter(Math.round(n))) : '—';
 
     const rows = [];
     for (const level of MILESTONE_LEVELS) {
@@ -1252,14 +1255,14 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
         if (!data) continue;
 
         const cost = fmtCost(data.optimalStrategy.totalCost);
-        const xp = data.totalExpectedXP !== null ? fmt(Math.round(data.totalExpectedXP)) : '—';
+        const xp = data.totalExpectedXP !== null ? fmtXp(Math.round(data.totalExpectedXP)) : '—';
 
         let ask = '—';
         let bid = '—';
         if (showPrices) {
             const prices = getItemPrices(itemHrid, level);
-            ask = fmt(prices?.ask);
-            bid = fmt(prices?.bid);
+            ask = fmtCost(prices?.ask);
+            bid = fmtCost(prices?.bid);
         }
 
         rows.push({ level, cost, xp, ask, bid });

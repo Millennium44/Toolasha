@@ -863,3 +863,26 @@ describe('a price that is not there', () => {
         }
     });
 });
+
+describe('enhancement tooltip prices follow the number-format precision setting', () => {
+    test('breakdown ask/bid cells use the configured precision, not a fixed one', () => {
+        settings.values.formatting_precision = '3';
+        const out = buildEnhancementTooltipHTML(calculateEnhancementPath(ITEM, 1, enhancingConfig));
+
+        // The material row's ask (5,000) and bid (4,800) at three decimals
+        expect(out).toContain('5.000K');
+        expect(out).toContain('4.800K');
+    });
+
+    test('milestone ask/bid cells use the configured precision', () => {
+        settings.values.formatting_precision = '3';
+        settings.checkboxes.itemTooltip_prices = true;
+        enhancedPrices[`${ITEM}::5`] = { ask: 123456, bid: 120000 };
+        try {
+            const out = buildEnhancementMilestonesHTML(ITEM, enhancingConfig);
+            expect(out).toContain('123.456K');
+        } finally {
+            delete enhancedPrices[`${ITEM}::5`];
+        }
+    });
+});
