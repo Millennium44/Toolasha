@@ -453,6 +453,48 @@ export function selfUseDecomposeChain(topHrid, deps) {
 }
 
 /**
+ * One step of {@link selfUseDecomposeChain}, per unit arriving at it: the walk's own
+ * arithmetic for a single step at reach 1, with the gear it yields handed back as
+ * children instead of walked. Summing these down a tree, each child weighted by its
+ * `multiplier` times its parent's reach, gives the walk's `net + ownUseCost` and
+ * `seconds`, so a caller can score setups per step without walking the chain.
+ * @param {Object} result - The step's decompose calculator result
+ * @param {Array|null} outputs - The decomposed gear's `alchemyDetail.decomposeItems`
+ * @param {Object} deps - As {@link selfUseDecomposeChain}: `isChainable`, `priceOf`,
+ *   `containerValue`, and the optional keep-list fields
+ * @returns {{net: number, seconds: number, children: Array<{hrid: string, multiplier: number}>}|null}
+ *   `net` is terminal value less the step's coin/catalyst/tea spend; null when the step cannot
+ *   run or any terminal or bonus drop of its own is (partly) unpriced
+ */
+export function decomposeStepTerms(result, outputs, deps) {
+    const basis = alchemyRunBasis(result);
+    if (!basis || !Array.isArray(outputs)) return null;
+    const unitsPerHour = basis.actionsPerHour * basis.bulk;
+    let net = -basis.overheadPerHour / unitsPerHour;
+    const children = [];
+    for (const output of outputs) {
+        const expected = output.count * basis.successRate;
+        if (!(expected > 0)) continue;
+        if (deps.isChainable(output.itemHrid)) {
+            children.push({ hrid: output.itemHrid, multiplier: expected });
+            continue;
+        }
+        const unit = usablePrice(outputPricing(output.itemHrid, deps).priceOf(output.itemHrid));
+        if (unit === null) return null;
+        net += expected * unit;
+    }
+    for (const drop of bonusDrops(result)) {
+        const units = Number(drop.dropsPerHour) || 0;
+        if (units <= 0) continue;
+        const pricing = outputPricing(drop.itemHrid, deps);
+        const unit = bonusUnitPrice(drop, pricing.priceOf, pricing.containerValue);
+        if (unit.value === null || unit.partlyUnpriced) return null;
+        net += (units / unitsPerHour) * unit.value;
+    }
+    return { net, seconds: SECONDS_PER_HOUR / unitsPerHour, children };
+}
+
+/**
  * Transmute an item you already hold, keep the wanted outputs and sell the
  * rest — versus selling the item instead.
  *
