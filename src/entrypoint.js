@@ -2285,6 +2285,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'enhanceSim_protectionMarketplaceButton',
+            name: 'Enhancement Protection Marketplace Button',
+            category: 'Enhancement',
+            module: UI.enhancementProtectionMarketplace,
+            async: false,
+        },
+        {
             key: 'enhancementItemPins',
             name: 'Enhancement Item Pins',
             category: 'Enhancement',

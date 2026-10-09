@@ -1098,6 +1098,13 @@ export const settingsGroups = {
                 requires: 'enhanceSim_protectFromStock',
                 help: 'Holds back this many copies of the enhanced item from the protect-from sweep and the material limit when it protects itself. Mirrors of Protection are spent freely. The game itself cannot hold copies back: it uses up whichever stack you pick, so keep spares at a different enhancement level if you want the game to leave them alone.',
             },
+            enhanceSim_protectionMarketplaceButton: {
+                id: 'enhanceSim_protectionMarketplaceButton',
+                label: 'Protection item picker: Show "Buy Cheapest" marketplace button',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a button to the Protection item selector popup in the Enhancing panel that opens the Marketplace on the cheapest available protection option',
+            },
             enhancementItemPins: {
                 id: 'enhancementItemPins',
                 label: 'Enhancing panel: Pin items in the item picker',
