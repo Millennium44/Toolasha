@@ -31,7 +31,7 @@ import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPriceInfo, isPriceEstimated } from '../../utils/market-data.js';
+import { getItemPriceInfo, isPriceEstimated, withProfitPricingMode } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRateCached, hasMeasuredVolume, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
@@ -307,11 +307,12 @@ export function setupIsBuyable(result) {
  * @returns {Array<Object>} Source routes, each carrying its `setup`
  */
 export function transmuteSetups(sourceHrid, table, opts) {
-    const listed = alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid) ?? [];
+    // The optimizer buys at the ask: catalyst and tea overhead is priced there, whatever the profit mode says
+    const listed = atAsk(() => alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid)) ?? [];
     const candidates =
         listed.length > 0
             ? listed.filter(setupIsBuyable)
-            : [alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid)];
+            : [atAsk(() => alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid))];
     const routes = [];
     const seen = new Set();
     for (const result of candidates) {
@@ -648,7 +649,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!decomposeResults.has(hrid)) {
             let result = null;
             try {
-                result = alchemyProfitCalculator.calculateDecomposeProfit(hrid) ?? null;
+                result = atAsk(() => alchemyProfitCalculator.calculateDecomposeProfit(hrid)) ?? null;
             } catch (error) {
                 console.error('[CollectionOptimizer] Decompose failed for', hrid, error);
             }
@@ -665,9 +666,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!candidateLists.has(hrid)) {
             let list = [];
             try {
-                list = (alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? []).filter(
-                    setupIsBuyable
-                );
+                list = (
+                    atAsk(() => alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid)) ?? []
+                ).filter(setupIsBuyable);
             } catch (error) {
                 console.error('[CollectionOptimizer] Decompose setups failed for', hrid, error);
             }
@@ -787,8 +788,12 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             }
             for (const recipe of makes.get(hrid) || []) {
                 if (!(recipe.cost > 0)) continue;
+                // recipe.cost and recipe.seconds are per expected item (Gourmet included), but a run is whole
+                // craft actions that each make baseCount for certain: one source of the run carries
+                // (1 + Gourmet) items' worth of cost and time, and credits that many to its own collection
+                const perSource = recipe.batch / recipe.baseCount;
                 const withSource = new Map(yields);
-                withSource.set(hrid, (withSource.get(hrid) || 0) + 1);
+                withSource.set(hrid, (withSource.get(hrid) || 0) + perSource);
                 sources.push({
                     ...shared,
                     route: 'craftDecompose',
@@ -797,8 +802,8 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     // decompose actions: the smallest run that is both
                     batch: wholeActionsBatch(recipe.baseCount, bulk),
                     yields: withSource,
-                    cost: recipe.cost + overheadCost,
-                    seconds: chain.seconds + recipe.seconds,
+                    cost: recipe.cost * perSource + overheadCost,
+                    seconds: chain.seconds + recipe.seconds * perSource,
                 });
             }
             // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
@@ -895,6 +900,17 @@ export function undominatedRecipes(recipes) {
                     (other.cost < recipe.cost || other.seconds < recipe.seconds || j < i)
             )
     );
+}
+
+/**
+ * Run a synchronous calculator call with the profit pricing pinned to the ask. The optimizer buys
+ * catalyst and tea at the ask; an optimistic or patient-buy profit mode would price them at the bid.
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function atAsk(fn) {
+    return withProfitPricingMode('conservative', fn);
 }
 
 /**

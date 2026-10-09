@@ -13,6 +13,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
+    modesSeen: [],
     setting: true,
     collections: null,
     characterId: 'char-1',
@@ -324,17 +325,27 @@ const decomposeResult = (hrid, setup = {}) =>
           };
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
-        calculateTransmuteProfit: (hrid) => (hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid)),
         // The setups the calculator weighs, when a test lists them
-        calculateCandidateResults: (type, hrid) =>
-            type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
-                ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
-                : type === 'decompose'
-                  ? game.decomposeSetups.map((setup) => decomposeResult(hrid, setup)).filter(Boolean)
-                  : [],
-        calculateDecomposeProfit: (hrid) => decomposeResult(hrid),
+        calculateCandidateResults: (type, hrid) => {
+            game.modesSeen.push(game.pricingMode);
+            return candidateResults(type, hrid);
+        },
+        calculateDecomposeProfit: (hrid) => {
+            game.modesSeen.push(game.pricingMode);
+            return decomposeResult(hrid);
+        },
+        calculateTransmuteProfit: (hrid) => {
+            game.modesSeen.push(game.pricingMode);
+            return hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid);
+        },
     },
 }));
+const candidateResults = (type, hrid) =>
+    type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
+        ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
+        : type === 'decompose'
+          ? game.decomposeSetups.map((setup) => decomposeResult(hrid, setup)).filter(Boolean)
+          : [];
 
 vi.mock('../../utils/market-data.js', () => ({
     // The bid side can be empty while the ask is live: a mode other than 'ask' sees `noBid` as estimated
@@ -350,6 +361,16 @@ vi.mock('../../utils/market-data.js', () => ({
             : { price, source: 'book', estimated: false };
     },
     getPricingMode: () => 'ask',
+    // Pins the profit mode for a synchronous call, the way the real one does
+    withProfitPricingMode: (mode, fn) => {
+        const previous = game.pricingMode;
+        game.pricingMode = mode;
+        try {
+            return fn();
+        } finally {
+            game.pricingMode = previous;
+        }
+    },
 }));
 // The shared liquidity bound: a quarter of the measured daily volume, per hour
 vi.mock('../../utils/liquidity-cap.js', () => ({
@@ -453,6 +474,7 @@ beforeEach(() => {
     VOLUME.asked = [];
     BOOKS.byItem = {};
     game.pricingMode = 'hybrid';
+    game.modesSeen = [];
     game.noTransmute = false;
     game.milkingLevel = 10;
     game.drinks = [];
@@ -962,6 +984,36 @@ describe('Gourmet and a craft batch', () => {
         // 3 a craft against 2 a decompose: two crafts make three decomposes
         expect(wholeActionsBatch(3, 2)).toBe(6);
         expect(wholeActionsBatch(15, 2)).toBe(30);
+    });
+
+    test('a run of whole crafts is charged, timed and credited for every expected item the crafts make', async () => {
+        game.craftable = new Set(['/items/cheese_sword']);
+        game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
+        const find = async () =>
+            (await buildCollectionRoutes()).sources.find(
+                (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+            );
+        game.profitExtra = {};
+        const plain = await find();
+        game.profitExtra = { gourmetBonus: 0.25 };
+        const gourmet = await find();
+        // One craft makes 2.5 on average for 2.5 items of cost and time: a run of 2 sources is one craft
+        expect(gourmet.batch).toBe(2);
+        expect(gourmet.cost - plain.cost).toBeCloseTo(4 * 0.25, 9);
+        expect(gourmet.seconds).toBeGreaterThan(plain.seconds);
+        expect(gourmet.yields.get('/items/cheese_sword')).toBeCloseTo(1.25, 9);
+        expect(plain.yields.get('/items/cheese_sword')).toBe(1);
+    });
+
+    test('alchemy overhead is priced at the ask whatever the profit mode is', async () => {
+        game.pricingMode = 'optimistic';
+        game.decomposeSetups = [{}];
+        game.transmuteSetups = [{}];
+        await buildCollectionRoutes();
+        expect(game.modesSeen.length).toBeGreaterThan(0);
+        expect(new Set(game.modesSeen)).toEqual(new Set(['conservative']));
+        // And the mode is put back afterwards
+        expect(game.pricingMode).toBe('optimistic');
     });
 
     test('the batch is the expected output per action, base count times one plus the Gourmet chance', async () => {
