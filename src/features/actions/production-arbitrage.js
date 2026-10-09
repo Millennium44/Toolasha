@@ -297,6 +297,7 @@ export function rankProductionArbitrage({ priceStamp, onProgress, volume = true 
                 try {
                     profitData = await profitCalculator.calculateProfit(recipe.itemHrid, {
                         actionHrid: recipe.actionHrid,
+                        keepSellTax: true,
                     });
                 } catch (error) {
                     console.error(`[ProductionArbitrage] Costing ${recipe.actionHrid} failed:`, error);

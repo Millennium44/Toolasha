@@ -343,6 +343,19 @@ class ExpectedValueCalculator {
     }
 
     /**
+     * A container's expected value with its contents left untaxed, for the personal-use mode
+     * where nothing is sold. Computed fresh and never cached: the shared cache holds the
+     * sale-valued (taxed) figure every other consumer reads.
+     * @param {string} containerHrid - Container item HRID
+     * @returns {number|null} Gross expected value, or null when unavailable
+     */
+    calculateGrossContainerValue(containerHrid) {
+        const ctx = { path: new Set([containerHrid]), truncated: false, gross: true };
+        const result = this.calculateContainerValue(containerHrid, null, ctx);
+        return result.expectedValue;
+    }
+
+    /**
      * Calculate a container's expected value, and say how much of it is missing.
      *
      * A drop nobody can price is skipped, which makes the total a lower bound rather
@@ -375,6 +388,8 @@ class ExpectedValueCalculator {
 
         let totalExpectedValue = 0;
         let missingCount = 0;
+        // Gross pass: contents are not market-taxed and the shared cache is neither read nor written
+        const gross = Boolean(ctx.gross);
 
         // Calculate expected value for each drop
         for (const drop of dropTable) {
@@ -421,7 +436,7 @@ class ExpectedValueCalculator {
             // A nested container is opened, not sold: its contents were taxed
             // when resolved. The same applies to net special-currency values.
             const dropValue =
-                canBeSold && resolved.needsTax
+                canBeSold && resolved.needsTax && !gross
                     ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
                     : avgCount * dropRate * price;
             totalExpectedValue += dropValue;
@@ -430,7 +445,7 @@ class ExpectedValueCalculator {
         // Cache the result for future lookups — but not when the cycle guard cut a
         // branch off this pass, because the figure is then an artefact of where the
         // recursion started rather than what the container is worth
-        if (!ctx.truncated) {
+        if (!ctx.truncated && !gross) {
             // The value cache stays gated on a positive figure — a zero is indistinguishable
             // from "not costed yet" to the readers that check `has()`. The missing count is
             // not: a container whose drops are ALL unpriceable is worth 0 and has N missing,
@@ -583,7 +598,7 @@ class ExpectedValueCalculator {
      * @returns {{value: number, missingCount: number}|null} Value and unpriced-drop count, or null when this is not a container
      */
     resolveContainerValue(itemHrid, context = null) {
-        if (this.containerCache.has(itemHrid)) {
+        if (!context?.gross && this.containerCache.has(itemHrid)) {
             return {
                 value: this.containerCache.get(itemHrid),
                 missingCount: this.containerMissingCounts.get(itemHrid) || 0,

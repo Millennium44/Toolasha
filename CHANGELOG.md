@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Inventory category totals draw again under the game's tabs, dungeon tokens show value badges, enhancement tooltip prices follow your number precision, and a labyrinth run the game reissues an id for stays one Loot & XP Log row.
 - New options (off by default): 24-hour chat timestamps, a Craftable action-panel sort, Buy Cheapest in the protection picker, and a Buy missing supplies button on the Labyrinth screen; the Metz export now reads MooPass from its expiry and includes worn speed gear.
 
+### Sell-tax toggle for personal-use production
+
+- An optional skill-page toggle (off by default) drops the 4% sell tax from production and gathering profit lines and tiles for things you make for your own use, with a marker so the numbers aren't mistaken for sale profits.
+
 ### Collection optimizer compares more routes
 
 - Decompose now weighs every catalyst and tea setup, recipes with different batch sizes are both kept, gathering checks your active skill loadout, and long plans fetch market volumes and retry a failed lookup.

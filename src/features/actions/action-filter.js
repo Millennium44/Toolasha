@@ -21,6 +21,7 @@ import {
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 
@@ -60,6 +61,7 @@ class ActionFilter {
         this._priceRefreshInFlight = false; // Guards against a second click while fetching
         this._updatePricingSelects = null;
         this._updateCraftBtn = null;
+        this._updateSellTaxBtn = null;
         this._updateSortBtn = null;
         // Mobile-only collapsible row — see injectFilterInput(). Desktop never
         // creates these, so they stay null there.
@@ -116,6 +118,15 @@ class ActionFilter {
             })
         );
 
+        // Personal-use sell-tax exclusion: the profit sections and tiles redraw, and the button (if
+        // shown) follows a change made from the Settings panel.
+        this.unregisterHandlers.push(
+            config.onSettingChange('profitCalc_excludeSellTax', () => {
+                if (this._updateSellTaxBtn) this._updateSellTaxBtn();
+                this._scheduleProfitRefresh();
+            })
+        );
+
         // Iron Cow valuation option: only read on an Iron Cow character, but
         // when it changes the profit sections must re-price the same as a
         // mode or tick change would. No dropdown shows this choice, so unlike
@@ -146,6 +157,7 @@ class ActionFilter {
             config.onSettingsLoaded(() => {
                 if (this._updatePricingSelects) this._updatePricingSelects();
                 if (this._updateCraftBtn) this._updateCraftBtn();
+                if (this._updateSellTaxBtn) this._updateSellTaxBtn();
                 this._scheduleProfitRefresh();
             })
         );
@@ -196,6 +208,7 @@ class ActionFilter {
             config.getSetting('actionPanel_showSort') ||
             config.getSetting('actionPanel_showPricingMode') ||
             config.getSetting('actionPanel_showCraftToggle') ||
+            config.getSetting('actionPanel_showSellTaxToggle') ||
             this._profitPerHourVisible();
 
         if (anyVisible) {
@@ -258,6 +271,7 @@ class ActionFilter {
             config.getSetting('actionPanel_showSort') ||
             config.getSetting('actionPanel_showPricingMode') ||
             config.getSetting('actionPanel_showCraftToggle') ||
+            config.getSetting('actionPanel_showSellTaxToggle') ||
             this._profitPerHourVisible();
         const mobile = isMobileMode() && hasControlsToShow;
         // Where the four control buttons get attached: the title bar directly
@@ -492,6 +506,45 @@ class ActionFilter {
             craftBtn.insertAdjacentElement('afterend', refreshBtn);
         }
         this.refreshButton = refreshBtn;
+
+        // Sell-tax exclusion toggle (personal-use production). Opt-in, so it is only created when
+        // its setting is on; the setting it flips is separate and also lives in the Settings panel.
+        if (config.getSetting('actionPanel_showSellTaxToggle')) {
+            const sellTaxBtn = document.createElement('button');
+            sellTaxBtn.id = 'mwi-action-sell-tax-toggle';
+            const updateSellTaxBtn = () => {
+                const excluded = config.getSetting('profitCalc_excludeSellTax');
+                sellTaxBtn.textContent = excluded ? '⚠ Tax: Off' : 'Tax: On';
+                sellTaxBtn.title = excluded
+                    ? SELL_TAX_EXCLUDED_TOOLTIP
+                    : 'Sell tax is included in profit figures (accurate if you plan to sell your output). Click to exclude it when producing for personal use.';
+                sellTaxBtn.style.color = excluded ? config.COLOR_WARNING : '';
+                sellTaxBtn.style.borderColor = excluded ? config.COLOR_WARNING : 'rgba(255, 255, 255, 0.23)';
+            };
+            sellTaxBtn.style.cssText = `
+                padding: 8px 12px;
+                font-size: 14px;
+                border: 1px solid rgba(255, 255, 255, 0.23);
+                border-radius: 4px;
+                background: transparent;
+                cursor: pointer;
+                font-family: inherit;
+                flex-shrink: 0;
+            `;
+            updateSellTaxBtn();
+            this._updateSellTaxBtn = updateSellTaxBtn;
+            // The setting-change handler above refreshes the profit sections and the label
+            sellTaxBtn.addEventListener('click', () => {
+                config.setSetting('profitCalc_excludeSellTax', !config.getSetting('profitCalc_excludeSellTax'));
+                updateSellTaxBtn();
+            });
+            if (controlsHost) {
+                controlsHost.appendChild(sellTaxBtn);
+            } else {
+                refreshBtn.insertAdjacentElement('afterend', sellTaxBtn);
+            }
+            this.sellTaxButton = sellTaxBtn;
+        }
 
         // Only useful where profit/hr is actually drawn — no separate setting.
         if (!this._profitPerHourVisible()) {
@@ -810,6 +863,11 @@ class ActionFilter {
             this.refreshButton = null;
         }
 
+        if (this.sellTaxButton && this.sellTaxButton.parentElement) {
+            this.sellTaxButton.remove();
+        }
+        this.sellTaxButton = null;
+
         // Mobile-only wrapper/toggle (see injectFilterInput) — no-op on desktop,
         // where these are never created.
         if (this.controlsWrapper && this.controlsWrapper.parentElement) {
@@ -825,6 +883,7 @@ class ActionFilter {
 
         this._updatePricingSelects = null;
         this._updateCraftBtn = null;
+        this._updateSellTaxBtn = null;
         this._updateSortBtn = null;
 
         if (this.noResultsMessage && this.noResultsMessage.parentElement) {

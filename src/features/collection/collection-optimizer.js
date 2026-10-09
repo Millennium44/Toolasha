@@ -583,7 +583,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (SKIP_ITEMS.has(hrid) || !profitCalculator.findProductionAction?.(hrid)) continue;
         if (await pause()) return null;
         try {
-            const preferred = await profitCalculator.calculateProfit(hrid);
+            const preferred = await profitCalculator.calculateProfit(hrid, { keepSellTax: true });
             if (!preferred) continue;
             // The calculator picks the best-margin recipe without asking whether the character can
             // start it; a locked pick must not hide another recipe for the same item that is open.
@@ -598,7 +598,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
             const recipes = [preferred];
             for (const actionHrid of preferred.productionCandidates || []) {
                 if (actionHrid === preferred.actionHrid) continue;
-                const alternative = await profitCalculator.calculateProfit(hrid, { actionHrid });
+                const alternative = await profitCalculator.calculateProfit(hrid, { actionHrid, keepSellTax: true });
                 if (alternative) recipes.push(alternative);
             }
             const viable = [];
@@ -863,7 +863,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!canGather(action)) continue;
         if (await pause()) return null;
         try {
-            const route = gatherRoute(actionHrid, await calculateGatheringProfit(actionHrid), { sell });
+            const route = gatherRoute(actionHrid, await calculateGatheringProfit(actionHrid, { keepSellTax: true }), {
+                sell,
+            });
             if (route) sources.push(route);
         } catch (error) {
             console.error('[CollectionOptimizer] Gather route failed for', actionHrid, error);

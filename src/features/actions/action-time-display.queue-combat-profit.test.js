@@ -722,6 +722,44 @@ describe('the queue value total with no priced rows', () => {
     });
 
     test.each([
+        ['profit', true],
+        ['estimated_value', false],
+    ])('sell-tax marker on queue rows and total in %s mode: %s', async (mode, marked) => {
+        game.valueMode = mode;
+        game.marketLoaded = true;
+        game.gatheringProfit = null;
+        game.actionDetails = { [CHEESE]: cheese };
+        game.productionProfit = {
+            actionsPerHour: 600,
+            outputAmount: 1,
+            outputPrice: 12,
+            materialCosts: [],
+            bonusRevenue: { bonusDrops: [], hasMissingPrices: false },
+            hasMissingPrices: false,
+            excludeSellTax: true,
+        };
+        const menu = queueMenu(['Cheese']);
+        const row = menu.querySelector('[class*="QueuedActions_action__"]');
+        const rowValue = document.createElement('div');
+        rowValue.className = 'mwi-queue-action-profit';
+        rowValue.dataset.divIndex = '0';
+        row.appendChild(rowValue);
+        const total = document.createElement('div');
+        document.body.appendChild(total);
+
+        await actionTimeDisplay.calculateAndDisplayTotalProfit(
+            total,
+            [{ actionHrid: CHEESE, count: 3, divIndex: 0, isReachable: true }],
+            'Total time: 1m',
+            menu
+        );
+
+        // Estimated value is gross revenue, the same with or without the tax, so it is not marked
+        expect(rowValue.querySelectorAll('.mwi-sell-tax-marker').length).toBe(marked ? 1 : 0);
+        expect(total.querySelectorAll('.mwi-sell-tax-marker').length).toBe(marked ? 1 : 0);
+    });
+
+    test.each([
         [
             'missing output',
             {

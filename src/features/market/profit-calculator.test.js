@@ -21,10 +21,15 @@ const mocks = vi.hoisted(() => ({
     efficiencyContext: {},
     buyMode: 'ask',
     bonusRevenue: null,
+    bonusOptions: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => mocks.settings[key], getSettingValue: (key, fallback) => fallback },
+    default: {
+        getSetting: (key) => mocks.settings[key],
+        getSettingValue: (key, fallback) =>
+            key === 'profitCalc_excludeSellTax' ? (mocks.settings[key] ?? fallback) : fallback,
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -37,7 +42,12 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
 vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mocks.efficiencyContext }));
-vi.mock('../../utils/bonus-revenue-calculator.js', () => ({ calculateBonusRevenue: () => mocks.bonusRevenue }));
+vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
+    calculateBonusRevenue: (_a, _b, _c, _d, options) => {
+        mocks.bonusOptions.push(options);
+        return mocks.bonusRevenue;
+    },
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: (hrid, mode) => {
         const cost = mocks.productionCosts[hrid];
@@ -512,6 +522,59 @@ describe('calculateProfit — itemPrice reconciliation', () => {
         mocks.resolvedPrices['/items/milk'] = 10;
         mocks.resolvedPrices['/items/cheese'] = 100;
     }
+
+    describe('the personal-use sell-tax exclusion', () => {
+        test('off (the default): tax is deducted and the result is not flagged', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+
+            const result = await profitCalculator.calculateProfit('/items/cheese');
+
+            // 360 cheese/hr at 100, 2% tax in this file's mocked constants
+            expect(result.revenuePerHour).toBe(36000);
+            expect(result.marketTax).toBeCloseTo(720, 6);
+            expect(result.profitPerHour).toBeCloseTo(36000 - 3600 - 720, 6);
+            expect(result.excludeSellTax).toBe(false);
+        });
+
+        test('on: no tax is deducted, revenue is unchanged, and the result is flagged', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+            mocks.settings.profitCalc_excludeSellTax = true;
+
+            const result = await profitCalculator.calculateProfit('/items/cheese');
+
+            expect(result.revenuePerHour).toBe(36000);
+            expect(result.marketTax).toBe(0);
+            expect(result.profitPerHour).toBeCloseTo(36000 - 3600, 6);
+            expect(result.excludeSellTax).toBe(true);
+        });
+
+        test('container bonus drops are valued gross only while the exclusion applies', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+            mocks.settings.profitCalc_excludeSellTax = true;
+            mocks.bonusOptions.length = 0;
+
+            await profitCalculator.calculateProfit('/items/cheese');
+            expect(mocks.bonusOptions.at(-1)).toEqual({ grossContainers: true });
+
+            await profitCalculator.calculateProfit('/items/cheese', { keepSellTax: true });
+            expect(mocks.bonusOptions.at(-1)).toEqual({ grossContainers: false });
+        });
+
+        test('keepSellTax ignores the setting, for consumers that value output as a sale', async () => {
+            simpleRecipe();
+            mocks.marketPrices['/items/cheese'] = 100;
+            mocks.settings.profitCalc_excludeSellTax = true;
+
+            const result = await profitCalculator.calculateProfit('/items/cheese', { keepSellTax: true });
+
+            expect(result.marketTax).toBeCloseTo(720, 6);
+            expect(result.profitPerHour).toBeCloseTo(36000 - 3600 - 720, 6);
+            expect(result.excludeSellTax).toBe(false);
+        });
+    });
 
     test('already-net container bonuses avoid a second tax in production profit', async () => {
         simpleRecipe();

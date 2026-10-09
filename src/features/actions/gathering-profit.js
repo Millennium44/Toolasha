@@ -67,9 +67,13 @@ function buildProcessingConversionCache(gameData) {
 /**
  * Calculate comprehensive profit for a gathering action
  * @param {string} actionHrid - Action HRID (e.g., "/actions/foraging/asteroid_belt")
+ * @param {Object} [options]
+ * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
+ *   (`profitCalc_excludeSellTax`) and always deduct the market tax. Pass it from any consumer
+ *   that values output as a sale (planners, optimizers, rankings, calibration).
  * @returns {Object|null} Profit data or null if not applicable
  */
-export async function calculateGatheringProfit(actionHrid) {
+export async function calculateGatheringProfit(actionHrid, { keepSellTax = false } = {}) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData.actionDetailMap[actionHrid];
 
@@ -247,7 +251,13 @@ export async function calculateGatheringProfit(actionHrid) {
     // Calculate bonus revenue from essence and rare find drops. This is intentionally returned
     // as-is (base actions/hour, not efficiency-scaled): profit-display.js's bonusDrops rendering
     // depends on that and re-applies efficiencyMultiplier itself via getBonusDropPerHourTotals.
-    const bonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap);
+    // The personal-use toggle also zeroes the tax; the flag is false for Iron Cow (already untaxed)
+    // so the "sell tax excluded" marker never shows on a character it changes nothing for.
+    const excludeSellTax =
+        !keepSellTax && !isIronCowCharacter() && config.getSettingValue('profitCalc_excludeSellTax', false) === true;
+    const bonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap, {
+        grossContainers: excludeSellTax,
+    });
 
     // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
     const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
@@ -266,7 +276,7 @@ export async function calculateGatheringProfit(actionHrid) {
     // market at all, so its revenue (vendor sale, coinify, or the value-map fallback
     // for an item with neither) is never actually taxed.
     const netContainerRevenue = (bonusRevenue.taxExemptBonusRevenue || 0) * efficiencyMultiplier;
-    const marketTax = isIronCowCharacter() ? 0 : (revenuePerHour - netContainerRevenue) * MARKET_TAX;
+    const marketTax = isIronCowCharacter() || excludeSellTax ? 0 : (revenuePerHour - netContainerRevenue) * MARKET_TAX;
 
     // Calculate net profit (revenue - market tax - drink costs)
     const profitPerHour = revenuePerHour - marketTax - drinkCostPerHour;
@@ -276,6 +286,8 @@ export async function calculateGatheringProfit(actionHrid) {
         profitPerAction: calculateProfitPerAction(profitPerHour, actionsPerHour * efficiencyMultiplier), // Profit per action
         profitPerDay: calculateProfitPerDay(profitPerHour), // Profit per day
         revenuePerHour,
+        marketTax, // Market tax per hour actually deducted (0 for Iron Cow or when excluded)
+        excludeSellTax, // True when the personal-use sell-tax exclusion shaped this figure
         drinkCostPerHour,
         drinkCosts, // Array of individual drink costs {name, priceEach, costPerHour}
         actionsPerHour, // Base actions per hour (without efficiency)

@@ -19,6 +19,7 @@ const PRICING_VALUE_SETTING_KEYS = Object.freeze([
     'profitCalc_pricingMode',
     ...PATIENT_TICK_SETTING_KEYS,
     IRONCOW_VALUATION_SETTING,
+    'profitCalc_excludeSellTax',
 ]);
 
 /** Sort modes the toolbar button cycles through; anything else stored is treated as 'default' */
@@ -216,14 +217,34 @@ class ActionPanelSort {
      * Update profit for a registered panel
      * @param {HTMLElement} actionPanel - The action panel element
      * @param {number|null} profitPerHour - Profit per hour
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.excludeSellTax=false] - The figure leaves out the market tax (personal-use
+     *   toggle). The panel sort follows it, but `cachedStats` is read by sale-valued consumers (task cards'
+     *   opportunity cost, the pinned page), so an untaxed figure is never written there.
+     * @param {number|null} [options.taxedProfitPerHour] - The sale-valued (taxed) rate to cache instead when
+     *   `excludeSellTax` is set; without a finite one nothing is cached.
      */
-    updateProfit(actionPanel, profitPerHour) {
+    updateProfit(actionPanel, profitPerHour, { excludeSellTax = false, taxedProfitPerHour = null } = {}) {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.profitPerHour = profitPerHour;
+            let cachedRate = profitPerHour;
+            if (excludeSellTax) {
+                if (!Number.isFinite(taxedProfitPerHour)) {
+                    // Unpriceable now: a rate cached earlier is stale, but the XP beside it is still good
+                    const stale = this.cachedStats[data.actionHrid];
+                    if (stale) {
+                        delete stale.profitPerHour;
+                        delete stale.liquidityChecked;
+                        delete stale.liquidityLimit;
+                    }
+                    return;
+                }
+                cachedRate = taxedProfitPerHour;
+            }
             if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
             const entry = this.cachedStats[data.actionHrid];
-            entry.profitPerHour = profitPerHour;
+            entry.profitPerHour = cachedRate;
             // An uncapped tile figure replaces any liquidity-capped one the pinned page left
             delete entry.liquidityChecked;
             delete entry.liquidityLimit;
