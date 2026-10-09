@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync stops rewinding a tab's own data
+
+- A tab that pulls what its sibling tab just pushed no longer folds the older copy over newer data or asks for a reload, a real pull only locks the keys it wrote instead of the whole store, and listings, trade-ledger days and task weeks pruned on one device stop coming back from the sync gist.
+
 <!-- shipped in 3.66.0 -->
 
 ### Settings panel follows Iron Cow; keep list stays in sync
