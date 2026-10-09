@@ -644,6 +644,17 @@ describe('picking the catalyst for self-use', () => {
         expect(best.optimized).toBe(false);
     });
 
+    test('with rankPartial, a partial upper-bound score beats a worse complete one', () => {
+        const partial = { id: 'partial' };
+        const complete = { id: 'complete' };
+        const evaluate = (c) =>
+            c === partial ? { netPerHour: -100, partlyUnpriced: true } : { netPerHour: -500, partlyUnpriced: false };
+        expect(bestSelfUseCandidate([complete, partial], evaluate, 'netPerHour', { rankPartial: true }).result).toBe(
+            partial
+        );
+        expect(bestSelfUseCandidate([complete, partial], evaluate, 'netPerHour').result).toBe(complete);
+    });
+
     test('keeps the cheaper setup when the catalyst does not pay for self-use either', () => {
         const dear = { ...prime, catalystCostPerHour: 5000 };
         expect(bestSelfUseCandidate([dear, plain], evaluate, 'netPerHour').result).toBe(plain);

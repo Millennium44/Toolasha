@@ -96,9 +96,9 @@ export function alchemyRunBasis(result) {
  * @param {(result: Object) => Object|null} evaluate - The self-use valuation of one result
  * @param {string} objective - The evaluation field to maximize (e.g. `netPerHour`)
  * @param {Object} [options]
- * @param {boolean} [options.rankPartial=false] - When every candidate is partly unpriced, return the
- *   best-scoring one instead of the first. Only right where a missing price can only lower the score
- *   (a cost that is an upper bound), so the partial scores still order the setups.
+ * @param {boolean} [options.rankPartial=false] - Rank partly unpriced candidates by score, against each
+ *   other and against complete ones, instead of using the first partial only as a fallback. Only right
+ *   where a missing price can only lower the score (a cost that is an upper bound).
  * @returns {{result: Object, evaluation: Object}|null} The best candidate, null when none evaluates
  */
 export function bestSelfUseCandidate(candidates, evaluate, objective, options = {}) {
@@ -122,6 +122,7 @@ export function bestSelfUseCandidate(candidates, evaluate, objective, options = 
         best = { result, evaluation, optimized: true };
         bestScore = score;
     }
+    if (options.rankPartial && firstPartial && partialScore > bestScore) return firstPartial;
     return best ?? firstPartial;
 }
 
