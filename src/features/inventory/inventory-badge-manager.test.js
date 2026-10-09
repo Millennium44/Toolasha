@@ -773,6 +773,21 @@ describe('dungeon tokens', () => {
         expect(Number(el.dataset.bidValue)).toBeCloseTo(10000 * (1 - MARKET_TAX));
     });
 
+    test.each([
+        'profitCalc_pricingMode',
+        'expectedValue_respectPricingMode',
+        'profitCalc_patientTickBuy',
+        'profitCalc_patientTickSell',
+    ])('changing %s reprices the tiles', async (key) => {
+        inventoryBadgeManager.initialize();
+        const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
+        mocks.settingListeners[key]();
+        expect(spy).toHaveBeenCalledTimes(1);
+        inventoryBadgeManager.disable();
+        expect(mocks.settingListeners[key]).toBeUndefined();
+        spy.mockRestore();
+    });
+
     test('a token with no derivable value stays at zero', async () => {
         const el = tokenEl('chimerical_token', 10);
         await inventoryBadgeManager.calculateItemPrices([el], [], new Map());

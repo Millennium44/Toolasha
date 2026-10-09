@@ -22,6 +22,7 @@ import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { reconcileBook } from '../../utils/market-values.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
@@ -161,6 +162,15 @@ class InventoryBadgeManager {
         this.unregisterHandlers.push(
             config.onSettingChange('networth_valueSource', () => reprice('value source change'))
         );
+        // Dungeon token values read these: the pricing side, whether the expected-value setting
+        // respects it, and the patient ticks
+        for (const key of [
+            'profitCalc_pricingMode',
+            'expectedValue_respectPricingMode',
+            ...PATIENT_TICK_SETTING_KEYS,
+        ]) {
+            this.unregisterHandlers.push(config.onSettingChange(key, () => reprice('token pricing setting change')));
+        }
         const onMarketValues = () => reprice('game value refresh');
         dataManager.on('market_item_values_updated', onMarketValues);
         this.unregisterHandlers.push(() => dataManager.off('market_item_values_updated', onMarketValues));
