@@ -29,7 +29,8 @@
  * A source bought on the market (`route.purchase`) is priced for the quantity a
  * step buys, not at the top ask for any quantity: up the ask side of the order
  * book where one has been seen, and never past what the market trades in a week
- * ({@link buyCost}). A step that needs more than that is no option at all.
+ * ({@link buyCost}). A step that needs more than that is no option at all: past the visible book a unit
+ * has no price, and the option is left out as partly unpriced.
  *
  * Nothing here reads the game: the panel builds the routes and hands them in,
  * so every function is pure and the tests drive it with plain objects.
@@ -199,7 +200,8 @@ export function indexRoutes(routes) {
         byItem.get(hrid).push(route);
     };
     for (const route of routes?.craft || []) {
-        if (route?.itemHrid && Number.isFinite(route.unitCost)) add(route.itemHrid, route);
+        // A bonus drop with no price would count as worth nothing, as it would on a source route
+        if (route?.itemHrid && Number.isFinite(route.unitCost) && !route.partlyUnpriced) add(route.itemHrid, route);
     }
     for (const route of routes?.sources || []) {
         if (!Number.isFinite(route?.cost) || !(route.yields instanceof Map)) continue;
@@ -221,15 +223,14 @@ export function indexRoutes(routes) {
  * The ask side of the book, best first, where one has been seen: each level is
  * taken in turn, never below the current top ask (`ask`), since a book read
  * earlier cannot make buying cheaper than the quote today. Past the depth the
- * book shows, nothing says what the units cost, so they are priced at the
- * deepest level reached: a lower bound, the least anyone there was asking. With
- * no book, every unit is at the top ask.
+ * book shows, nothing says what the units cost, and they are not guessed at: a
+ * buy larger than the visible depth is partly unpriced (`unpriced`), not
+ * feasible, and `gold` is NaN. With no book, every unit is at the top ask.
  *
- * What can be bought at all is the larger of the book's visible depth and
- * `weekly`, the units the market trades in a week (the bound selling has, from
- * the same measured volume). A buy past it is not feasible: no price was ever
- * seen for those units, and the market does not turn over that many. An
- * unmeasured item has no weekly bound.
+ * With no book, what can be bought at all is bounded by `weekly`, the units the
+ * market trades in a week (the bound selling has, from the same measured
+ * volume); a buy past it is not feasible. An unmeasured item has no weekly
+ * bound. With a book, the visible depth is the bound.
  *
  * @param {number} units - Units this step buys
  * @param {Object} opts
@@ -237,8 +238,9 @@ export function indexRoutes(routes) {
  * @param {Array<{price: number, quantity: number}>|null} [opts.listings] - Ask side, best first
  * @param {number} [opts.weekly=Infinity] - Units the market trades in a week
  * @param {number} [opts.already=0] - Units earlier steps bought
- * @returns {{gold: number, feasible: boolean, limit: number, fromBook: boolean}} `gold` is NaN when not
- *   feasible; `limit` is the most that can be bought in all
+ * @returns {{gold: number, feasible: boolean, limit: number, fromBook: boolean, unpriced: boolean}} `gold` is NaN
+ *   when not feasible; `limit` is the most that can be priced in all; `unpriced` is true when the buy runs
+ *   past the visible book
  */
 export function buyCost(units, { ask, listings = null, weekly = Infinity, already = 0 } = {}) {
     const top = Number(ask) > 0 ? Number(ask) : 0;
@@ -251,22 +253,23 @@ export function buyCost(units, { ask, listings = null, weekly = Infinity, alread
         : [];
     const depth = book.reduce((sum, level) => sum + level.quantity, 0);
     const week = Number(weekly);
-    const limit = Math.max(depth, Number.isNaN(week) ? Infinity : Math.max(0, week));
     const fromBook = book.length > 0;
-    if (total > limit + 1e-9) return { gold: NaN, feasible: false, limit, fromBook };
+    // With a book seen, nothing past its depth has a price; with none, the week's volume is the bound
+    const limit = fromBook ? depth : Number.isNaN(week) ? Infinity : Math.max(0, week);
+    if (total > limit + 1e-9) return { gold: NaN, feasible: false, limit, fromBook, unpriced: fromBook };
     const costOf = (quantity) => {
         if (!(quantity > 0)) return 0;
         if (!fromBook) return quantity * top;
-        const walk = walkForQuantity(book, quantity);
-        return walk.gold + (quantity - walk.filled) * (walk.price ?? top);
+        return walkForQuantity(book, quantity).gold;
     };
-    return { gold: costOf(total) - costOf(before), feasible: true, limit, fromBook };
+    return { gold: costOf(total) - costOf(before), feasible: true, limit, fromBook, unpriced: false };
 }
 
 /**
  * One route's option for one item's next rung.
  *
- * Craft: units = needed; gold = units × unitCost; time = units × unitSeconds.
+ * Craft: units = needed; gold = units × unitCost − the bonus drops it rolls, sold (`route.kept`, per item
+ * made, bounded by `sellable` like a source route's); time = units × unitSeconds.
  *
  * Source routes, with y_X the expected units of the target per unit of the route:
  *   units n  = ⌈needed / y_X⌉, rounded up to a multiple of `route.batch` (the bulk of one
@@ -303,24 +306,46 @@ export function evaluateOption(itemHrid, counts, route, { sellable, buyQuote } =
         const units = Math.ceil(step.needed / batch - 1e-9) * batch;
         const before = counts.get(itemHrid) || 0;
         const gain = pointsFromCount(before + units) - pointsFromCount(before);
-        const gold = units * route.unitCost;
         const seconds = units * (Number(route.unitSeconds) || 0);
         const credits = new Map([[itemHrid, units]]);
+        // The bonus drops each completion rolls (a skill's essence, an Artisan's Crate): credited toward
+        // their own collections, and sold as far as the market takes them
+        let collateral = 0;
+        for (const [hrid, expected] of route.yields || []) {
+            if (hrid === itemHrid) continue;
+            const added = units * expected;
+            credits.set(hrid, (credits.get(hrid) || 0) + added);
+            const have = counts.get(hrid) || 0;
+            collateral += pointsFromCount(have + added) - pointsFromCount(have);
+        }
+        let revenue = 0;
+        const sold = new Map();
+        for (const [hrid, entry] of route.kept || []) {
+            if (hrid === itemHrid) continue;
+            const produced = units * (Number(entry?.perSource) || 0);
+            const room = sellable ? Number(sellable(hrid)) : Infinity;
+            const sellUnits = Math.min(produced, Number.isNaN(room) ? Infinity : Math.max(0, room));
+            if (!(sellUnits > 0)) continue;
+            sold.set(hrid, sellUnits);
+            revenue += sellUnits * (Number(entry?.unit) || 0);
+        }
+        const gold = units * route.unitCost - revenue;
+        const points = gain + collateral;
         return {
             ...base,
             sourceHrid: null,
             actionHrid: route.actionHrid ?? null,
             needed: step.needed,
             units,
-            collateral: 0,
+            collateral,
             gain,
-            points: gain,
+            points,
             gold,
             seconds,
-            goldPerPoint: gold / gain,
-            secondsPerPoint: seconds / gain,
+            goldPerPoint: gold / points,
+            secondsPerPoint: seconds / points,
             credits,
-            sold: new Map(),
+            sold,
             bought: new Map(),
         };
     }

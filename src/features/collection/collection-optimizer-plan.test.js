@@ -524,6 +524,7 @@ describe('buying a source', () => {
             feasible: true,
             limit: Infinity,
             fromBook: false,
+            unpriced: false,
         });
     });
 
@@ -533,16 +534,21 @@ describe('buying a source', () => {
         expect(quote.fromBook).toBe(true);
     });
 
-    test('past the depth on show, at the deepest level, while the week trades that many', () => {
-        // 30 a day trade: a quarter of that for a week is 52.5
+    test('past the depth on show, the units are unpriced, not priced at the deepest ask', () => {
+        // 30 a day trade: a quarter of that for a week is 52.5, but only 11 are on show
         const quote = buyCost(15, { ask: 6_300_000, listings: EARRING_ASKS, weekly: 52.5 });
-        const book = 2 * 6_300_000 + 6_350_000 + 3 * 6_400_000 + 6_500_000 + 4 * 6_800_000;
-        expect(quote.gold).toBe(book + 4 * 6_800_000);
-        expect(quote.limit).toBe(52.5);
+        expect(quote.feasible).toBe(false);
+        expect(quote.unpriced).toBe(true);
+        expect(quote.gold).toBeNaN();
+        expect(quote.limit).toBe(11);
+        // Exactly the depth is still priced, to the last level
+        const all = buyCost(11, { ask: 6_300_000, listings: EARRING_ASKS, weekly: 52.5 });
+        expect(all.unpriced).toBe(false);
+        expect(all.gold).toBe(2 * 6_300_000 + 6_350_000 + 3 * 6_400_000 + 6_500_000 + 4 * 6_800_000);
     });
 
-    test('no more than the book shows or the week trades, whichever is more', () => {
-        // The live feed's 1 a day: a week's share is 1.75, but 11 are on show
+    test('no more than the book shows; with no book, no more than the week trades', () => {
+        // The live feed's 1 a day: a week's share is 1.75, and 11 are on show
         expect(buyCost(11, { ask: 6_300_000, listings: EARRING_ASKS, weekly: 1.75 }).feasible).toBe(true);
         const short = buyCost(12, { ask: 6_300_000, listings: EARRING_ASKS, weekly: 1.75 });
         expect(short.feasible).toBe(false);
@@ -580,11 +586,28 @@ describe('buying a source', () => {
         expect(option.units).toBe(1);
         expect(option.gold).toBeCloseTo(6_306_536, 6);
         expect(option.bought.get('/items/earrings_of_essence_find')).toBe(1);
-        // 10 → 100 Amber is 19 earrings: 11 on the book, 8 more at its deepest level
-        const step = evaluateOption('/items/amber', new Map([['/items/amber', 10]]), earrings(), { buyQuote });
+        // 10 → 100 Amber is 19 earrings, 8 more than the 11 on show: the 8 have no price, so the
+        // step is left out as partly unpriced rather than priced at the deepest ask
+        expect(evaluateOption('/items/amber', new Map([['/items/amber', 10]]), earrings(), { buyQuote })).toBeNull();
+        // A book deep enough to show all 19 prices them level by level
+        const deep = [...EARRING_ASKS, { listingId: 7000, price: 7_000_000, quantity: 20 }];
+        const step = evaluateOption('/items/amber', new Map([['/items/amber', 10]]), earrings(), {
+            buyQuote: (purchase, units) => buyCost(units, { ask: purchase.ask, listings: deep }),
+        });
         expect(step.units).toBe(19);
         const book = 2 * 6_300_000 + 6_350_000 + 3 * 6_400_000 + 6_500_000 + 4 * 6_800_000;
-        expect(step.gold).toBeCloseTo(19 * 6536 + book + 8 * 6_800_000, 6);
+        expect(step.gold).toBeCloseTo(19 * 6536 + book + 8 * 7_000_000, 6);
+    });
+
+    test('a plan that buys past the visible depth comes back without the unpriced step, short of the target', () => {
+        const buyQuote = (purchase, units, already) =>
+            buyCost(units, { ask: purchase.ask, listings: EARRING_ASKS, weekly: 1000, already });
+        const plan = planTarget(new Map([['/items/amber', 10]]), indexRoutes({ sources: [earrings()] }), 90, {
+            buyQuote,
+        });
+        expect(plan.steps).toEqual([]);
+        expect(plan.reached).toBe(false);
+        expect(plan.gold).toBe(0);
     });
 
     test('a step needing more than the market offers is no option, so a dearer route ranks instead', () => {
