@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collection optimizer: honest profits, sort, transmute and gathering
+
+- By-products of a collection route are now valued at the bid after tax and only up to what the market can absorb in a week (a decompose that showed +430M now shows its real cost), and a bought source is always priced at the ask.
+- Gold reads as signed net ("+" earns, "−" costs), a sort choice offers Most profitable or Fastest, and transmuting and gathering are ranked as routes alongside crafting and decomposing.
+- Buying a source is priced up the order book for the quantity needed, and a step needing more than the market offers in a week is not offered; a crate nobody bids on is valued as its contents, each within its own market; every transmute catalyst and tea setup is compared; and a Plan stays on screen when the panel redraws.
+
 ### Score can show how much better, not just the placing
 
 - The upgrade analyzer's Score can now be "% of best": each column scores a row against the best one and the Score averages them, so a row four times slower reads 25 instead of one place lower. Combat levels uses it by default; the gear table keeps Points unless you switch it in ⚙ Columns.
