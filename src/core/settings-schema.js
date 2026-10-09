@@ -1409,10 +1409,12 @@ export const settingsGroups = {
                     { value: 'profit', label: 'Production/gathering profit per hour' },
                     { value: 'alchemyProfit', label: 'Alchemy profit per item' },
                     { value: 'alchemyProfitPerHour', label: 'Alchemy profit per hour' },
+                    { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour' },
                 ],
                 help:
                     'Which figure the marketplace sort button ranks by. The alchemy modes insta-buy the item at ask, ' +
-                    'run its best alchemy action, and insta-sell the outputs at bid, whatever the global pricing mode is. ' +
+                    'run its best alchemy action, and insta-sell the outputs at bid, whatever the global pricing mode is. The chain mode decomposes the item and ' +
+                    'then everything it yields, selling what is left at bid after tax. ' +
                     'The dropdown next to the sort button changes this too.',
             },
             fillMarketOrderPrice: {

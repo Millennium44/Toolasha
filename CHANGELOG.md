@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Self-use transmute, decompose and decompose-chain lines now value only the outputs you mark "Keep for self-use" (tooltip chip, or press K) at what buying them costs; everything else counts at what selling it gets after tax, so an ability-book transmute no longer shows inflated numbers.
 
+### Marketplace sort by decompose chain
+
+- A new "Decompose chain/hr" Marketplace sort ranks items by buying at the ask, decomposing them all the way down, and selling what is left at the bid after tax, per hour of alchemy.
+
 ### Saves keep what another tab or device added
 
 - Loot, alchemy, combat-loot, item-flow, chest, production, networth, task and daily-checkpoint logs, guild loadouts, trial ability captures and listing anchors now take in what is already on disk when they save, so another tab's or a sync pull's additions are no longer wiped by this tab's next save; the trade ledger also recovers a fill another writer overwrote.
