@@ -1287,6 +1287,12 @@ describe('official alchemy rules', () => {
                 '/items/catalyst_of_transmutation',
                 (calc) => calc.calculateTransmuteProfit('/items/milk'),
             ],
+            [
+                'coinify',
+                '/items/cheese',
+                '/items/catalyst_of_coinification',
+                (calc) => calc.calculateCoinifyProfit('/items/cheese'),
+            ],
         ])(
             '%s: one full result per catalyst/tea candidate; the default search is unchanged',
             (type, hrid, typeCatalyst, run) => {
@@ -1331,7 +1337,9 @@ describe('official alchemy rules', () => {
         test('an action that does not apply has no candidates', () => {
             mocks.itemPrices = { '/items/milk': 100 };
             expect(alchemyProfitCalculator.calculateCandidateResults('decompose', '/items/milk')).toEqual([]);
-            expect(alchemyProfitCalculator.calculateCandidateResults('coinify', '/items/cheese')).toEqual([]);
+            // Cheese Hat is not coinifiable, and unrefine has no candidate list
+            expect(alchemyProfitCalculator.calculateCandidateResults('coinify', '/items/cheese_hat')).toEqual([]);
+            expect(alchemyProfitCalculator.calculateCandidateResults('unrefine', '/items/cheese')).toEqual([]);
         });
     });
 });

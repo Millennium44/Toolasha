@@ -36,6 +36,7 @@ import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
+import { COINIFY_BASE_SUCCESS_RATE, COINIFY_COINS_PER_SELL_PRICE } from '../../utils/ironcow-valuation.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 
@@ -130,10 +131,10 @@ export function bonusDropsOf(details) {
 }
 
 /**
- * Every source of every bonus drop: each item that can be decomposed or transmuted, under
- * the bonus drops its actions roll.
+ * Every source of every bonus drop: each item that can be decomposed, transmuted or
+ * coinified, under the bonus drops its actions roll.
  * @param {Object} itemDetailMap
- * @returns {Map<string, Array<{sourceHrid: string, actionType: 'decompose'|'transmute'}>>}
+ * @returns {Map<string, Array<{sourceHrid: string, actionType: 'decompose'|'transmute'|'coinify'}>>}
  */
 export function buildBonusSourceIndex(itemDetailMap) {
     const index = new Map();
@@ -143,6 +144,8 @@ export function buildBonusSourceIndex(itemDetailMap) {
         const actionTypes = [];
         if (alchemy.decomposeItems?.length) actionTypes.push('decompose');
         if (alchemy.transmuteDropTable?.length) actionTypes.push('transmute');
+        // Coinify rolls the same bonus drops; the calculator runs it only for these
+        if (alchemy.isCoinifiable === true) actionTypes.push('coinify');
         if (actionTypes.length === 0) continue;
         for (const { itemHrid } of bonusDropsOf(details)) {
             if (itemHrid === sourceHrid) continue;
@@ -158,7 +161,7 @@ export function buildBonusSourceIndex(itemDetailMap) {
  * Every item whose actions roll one bonus drop, from the cached index. Unranked and
  * unbounded: {@link bonusRankCost} narrows it.
  * @param {string} targetHrid
- * @returns {Array<{sourceHrid: string, actionType: 'decompose'|'transmute'}>}
+ * @returns {Array<{sourceHrid: string, actionType: 'decompose'|'transmute'|'coinify'}>}
  */
 export function bonusSourcesOf(targetHrid) {
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
@@ -172,8 +175,8 @@ export function bonusSourcesOf(targetHrid) {
 
 /**
  * A cheap estimate of what one unit of a bonus drop costs from one source, for ranking only:
- * the source at its ask plus the coin fee, less its base outputs sold at the bid after tax,
- * at the base success rate, over the drop's base rate. No catalyst, tea, find bonus or keep
+ * the source at its ask plus the coin fee, less its base outputs sold at the bid after tax
+ * (a coinify's coins at face value), at the base success rate, over the drop's base rate. No catalyst, tea, find bonus or keep
  * list — the calculator run that follows for the best few prices all of those.
  * @param {string} targetHrid - The bonus drop
  * @param {{sourceHrid: string, actionType: string}} source
@@ -192,7 +195,9 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
     if (!(perAction > 0)) return null;
     const bulk = alchemy.bulkMultiplier || 1;
     let credit = 0;
-    if (actionType === 'decompose') {
+    if (actionType === 'coinify') {
+        credit = (details.sellPrice || 0) * bulk * COINIFY_COINS_PER_SELL_PRICE * COINIFY_BASE_SUCCESS_RATE;
+    } else if (actionType === 'decompose') {
         for (const output of alchemy.decomposeItems || []) {
             credit += (Number(output?.count) || 0) * bulk * DECOMPOSE_BASE_SUCCESS * (sellOf(output?.itemHrid) ?? 0);
         }
@@ -316,6 +321,7 @@ const ALCHEMY_ACTION_TYPE = '/action_types/alchemy';
 
 /** The catalysts every setup search weighs, as the calculator names them */
 const CATALYST_HRIDS = {
+    coinify: '/items/catalyst_of_coinification',
     decompose: '/items/catalyst_of_decomposition',
     transmute: '/items/catalyst_of_transmutation',
     prime: '/items/prime_catalyst',
@@ -609,10 +615,12 @@ function liveCandidates(actionType, hrid) {
             withProfitPricingMode(PURCHASE_PRICING_MODE, () => {
                 raw = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
                 if (raw.length === 0) {
-                    const single =
-                        actionType === 'decompose'
-                            ? alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0)
-                            : alchemyProfitCalculator.calculateTransmuteProfit(hrid);
+                    let single = null;
+                    if (actionType === 'decompose') single = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0);
+                    else if (actionType === 'transmute')
+                        single = alchemyProfitCalculator.calculateTransmuteProfit(hrid);
+                    else if (actionType === 'coinify')
+                        single = alchemyProfitCalculator.calculateCoinifyProfit?.(hrid, 0);
                     raw = [single].filter(Boolean);
                 }
             });

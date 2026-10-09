@@ -880,7 +880,7 @@ class TooltipPrices {
         const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
         let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
         for (const alt of alternatives) {
-            const verb = alt.actionType === 'decompose' ? 'decompose' : 'transmute';
+            const verb = ['decompose', 'coinify'].includes(alt.actionType) ? alt.actionType : 'transmute';
             const atLeast = alt.partlyUnpriced ? '≥' : '';
             let rate = '';
             if (alt.savingPerHour !== null) {

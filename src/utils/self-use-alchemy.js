@@ -41,6 +41,9 @@ export const CHAIN_MAX_DEPTH = 12;
 
 const SECONDS_PER_HOUR = 3600;
 
+/** Coins: worth their face value, never on the market */
+const COIN_HRID = '/items/coin';
+
 /**
  * A usable price: a finite number at or above zero. `null`/`undefined`/NaN
  * mean unpriced, never free.
@@ -602,7 +605,7 @@ export function selfUseTransmuteHeld(result, itemDetails, opts) {
  * @param {Object} result - `calculateDecomposeProfit` / `calculateTransmuteProfit` (or one candidate) for the source
  * @param {Object} sourceDetails - The source item's details (`alchemyDetail`)
  * @param {Object} opts
- * @param {'decompose'|'transmute'} opts.actionType
+ * @param {'decompose'|'transmute'|'coinify'} opts.actionType - Coinify's output is its coins, at face value
  * @param {string} opts.targetHrid - The item to obtain
  * @param {number|null} opts.inputPrice - What one unit of the source costs
  * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price (kept outputs)
@@ -628,6 +631,12 @@ export function alchemySourceUnitCost(result, sourceDetails, opts) {
             itemHrid: output?.itemHrid,
             units: (Number(output?.count) || 0) * bulk * successRate,
         }));
+    } else if (actionType === 'coinify' && alchemy) {
+        // The coins are the calculator's own count (sell price × bulk × 5), worth their face value
+        const coins = (Array.isArray(result.dropRevenues) ? result.dropRevenues : []).find(
+            (drop) => drop?.itemHrid === COIN_HRID && !drop.isEssence && !drop.isRare
+        );
+        outputs = [{ itemHrid: COIN_HRID, units: (Number(coins?.count) || 0) * successRate }];
     } else if (actionType === 'transmute' && Array.isArray(alchemy?.transmuteDropTable)) {
         outputs = alchemy.transmuteDropTable.map((drop) => ({
             itemHrid: drop?.itemHrid,
@@ -654,6 +663,10 @@ export function alchemySourceUnitCost(result, sourceDetails, opts) {
         }
         if (itemHrid === sourceHrid) {
             creditPerAction += units * input;
+            continue;
+        }
+        if (itemHrid === COIN_HRID) {
+            creditPerAction += units;
             continue;
         }
         const pricing = outputPricing(itemHrid, opts);
