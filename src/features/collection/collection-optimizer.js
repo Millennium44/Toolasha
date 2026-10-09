@@ -38,6 +38,7 @@ import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { canStartAction } from '../../utils/efficiency.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
@@ -761,16 +762,22 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     // Gather: run a gathering action the character can start
     const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap || {};
     const levels = new Map((dataManager.getSkills?.() || []).map((skill) => [skill.skillHrid, skill.level]));
-    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment?.(), itemDetailMap);
     const canGather = (action) => {
         const requirement = action.levelRequirement;
         if (!requirement?.skillHrid) return true;
-        // Gathering has no Action Level tea; a skill-level tea counts, as the game's own check does
-        const drinks = dataManager.getActionDrinkSlots?.(action.type) || [];
+        // The context the gathering calculator prices the action under: the loadout snapshot's gear and
+        // drinks, a slotted drink with no stock left dropped. Gathering has no Action Level tea; a
+        // skill-level tea counts, as the game's own check does
+        const { equipment, drinks } = resolveActionContext(action.type);
         return canStartAction({
             requiredLevel: requirement.level || 1,
             skillLevel: levels.get(requirement.skillHrid) ?? 1,
-            teaSkillLevelBonus: parseTeaSkillLevelBonus(action.type, drinks, itemDetailMap, drinkConcentration),
+            teaSkillLevelBonus: parseTeaSkillLevelBonus(
+                action.type,
+                drinks,
+                itemDetailMap,
+                getDrinkConcentration(equipment, itemDetailMap)
+            ),
         });
     };
     for (const [actionHrid, action] of Object.entries(actionDetailMap)) {

@@ -20,6 +20,8 @@ const game = vi.hoisted(() => ({
     profitExtra: {},
     shopUnits: 1,
     actionDetails: null,
+    /** The drinks the resolved action context holds (loadout snapshot, out-of-stock removed) */
+    drinks: [],
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
@@ -188,6 +190,10 @@ vi.mock('../../core/data-manager.js', () => ({
             bus.handlers[event] = (bus.handlers[event] || []).filter((h) => h !== handler);
         },
     },
+}));
+
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: game.drinks }),
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
@@ -435,6 +441,7 @@ beforeEach(() => {
     game.pricingMode = 'hybrid';
     game.noTransmute = false;
     game.milkingLevel = 10;
+    game.drinks = [];
     game.unpricedTea = false;
     game.crateDrop = false;
     game.transmuteSetups = [];
@@ -809,6 +816,26 @@ describe('gathering routes', () => {
         );
         expect(milk.dataset.route).toBe('gather');
         expect(milk.textContent).toContain('Gather: 1 action at Cow');
+    });
+
+    test('startability reads the resolved action context, not the raw slots or the current gear', async () => {
+        // The loadout snapshot's tea (+12 levels) is what the gathering calculator prices the action
+        // under; the live slots (empty here) would call the zone locked
+        ITEMS['/items/test_milking_tea'] = {
+            name: 'Test Milking Tea',
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/milking_level', flatBoost: 12 }] },
+        };
+        ACTIONS['/actions/milking/cow'].levelRequirement.level = 20;
+        try {
+            game.drinks = [{ itemHrid: '/items/test_milking_tea' }];
+            expect(cowRoute(await buildCollectionRoutes())).toBeDefined();
+            // A slotted tea the context dropped (out of stock) no longer counts
+            game.drinks = [];
+            expect(cowRoute(await buildCollectionRoutes())).toBeUndefined();
+        } finally {
+            ACTIONS['/actions/milking/cow'].levelRequirement.level = 1;
+            delete ITEMS['/items/test_milking_tea'];
+        }
     });
 
     test('a zone above the character’s level is no route; an unpriced tea leaves it out', async () => {
