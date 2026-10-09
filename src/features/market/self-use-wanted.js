@@ -98,6 +98,10 @@ async function load() {
         if (charId !== currentCharId()) return stored;
         // A change adopted while this read was out is newer than what it read
         if (generation !== cacheGeneration && cache !== null && cacheCharId === charId) return cache;
+        // A stop during the read (cache cleared, generation bumped) must not be undone by adopting:
+        // the list would be cached with nobody listening for other tabs' marks. Return the read
+        // without caching it; the next load() re-subscribes and reads afresh.
+        if (generation !== cacheGeneration) return stored;
         adopt(charId, stored);
     }
     return cache;
