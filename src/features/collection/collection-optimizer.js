@@ -31,7 +31,7 @@ import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { ownUseCompare } from '../market/tooltip-prices.js';
-import { getItemPriceInfo } from '../../utils/market-data.js';
+import { getItemPriceInfo, isPriceEstimated } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRateCached, hasMeasuredVolume, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { LIQUIDITY_HORIZON_DAYS } from '../planner/market-liquidity.js';
@@ -277,6 +277,19 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
 }
 
 /**
+ * Whether a setup the calculator weighed can actually be bought: a catalyst or tea with only a
+ * value-map estimate and no live ask cannot be insta-bought, whatever it is said to cost, so a setup
+ * that needs one is not a candidate. A setup with no catalyst and no tea always passes.
+ * @param {Object|null} result - A `calculateCandidateResults` entry
+ * @returns {boolean}
+ */
+export function setupIsBuyable(result) {
+    return ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((cost) => cost?.itemHrid)]
+        .filter(Boolean)
+        .some((hrid) => isPriceEstimated(hrid, { context: 'profit', side: 'buy' }));
+}
+
+/**
  * Every catalyst/tea setup for transmuting S, each as its own route.
  *
  * The calculator's own pick (`calculateTransmuteProfit`) is the setup with the
@@ -295,7 +308,10 @@ export function transmuteRoute(sourceHrid, result, table, { buy, sell: sellParts
  */
 export function transmuteSetups(sourceHrid, table, opts) {
     const listed = alchemyProfitCalculator.calculateCandidateResults?.('transmute', sourceHrid) ?? [];
-    const candidates = listed.length > 0 ? listed : [alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid)];
+    const candidates =
+        listed.length > 0
+            ? listed.filter(setupIsBuyable)
+            : [alchemyProfitCalculator.calculateTransmuteProfit(sourceHrid)];
     const routes = [];
     const seen = new Set();
     for (const result of candidates) {
@@ -640,7 +656,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         if (!candidateLists.has(hrid)) {
             let list = [];
             try {
-                list = alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? [];
+                list = (alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? []).filter(
+                    setupIsBuyable
+                );
             } catch (error) {
                 console.error('[CollectionOptimizer] Decompose setups failed for', hrid, error);
             }

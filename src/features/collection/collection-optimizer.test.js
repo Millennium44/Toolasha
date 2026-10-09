@@ -336,6 +336,7 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
 }));
 
 vi.mock('../../utils/market-data.js', () => ({
+    isPriceEstimated: (hrid) => game.estimated.has(hrid),
     getItemPrice: (hrid) => BUY[hrid] ?? null,
     getItemPriceInfo: (hrid, options = {}) => {
         // The profit pricing mode picks the side when no mode is named: 'optimistic' buys at the bid
@@ -776,6 +777,23 @@ describe('transmute routes', () => {
         );
         expect(single).toHaveLength(1);
         expect(single[0].setup).toBeUndefined();
+    });
+
+    test('a setup needing a catalyst with no live ask is not a route; the plain setup stays', async () => {
+        game.transmuteSetups = [
+            {},
+            { successRate: 0.75, catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst' },
+        ];
+        game.decomposeSetups = [
+            {},
+            { catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst', winningTeaUsed: true },
+        ];
+        game.estimated = new Set(['/items/prime_catalyst']);
+        const { sources } = await buildCollectionRoutes();
+        const transmutes = sources.filter((s) => s.route === 'transmute' && s.sourceHrid === '/items/amber');
+        expect(transmutes.map((r) => r.setup.catalystHrid)).toEqual(['/items/catalyst_of_transmutation']);
+        const decomposes = sources.filter((s) => s.route === 'decompose' && s.sourceHrid === '/items/umbral_hood');
+        expect(decomposes.map((r) => r.setup.catalystHrid)).toEqual([null]);
     });
 
     test('the row says which catalyst and teas the transmute uses', async () => {
