@@ -129,7 +129,7 @@ afterEach(() => {
 });
 
 describe('the bonus-drop index', () => {
-    test('every decomposable, transmutable or coinifiable item is a source of essence and of its crate size', () => {
+    test('every decomposable, transmutable or coinifiable item is a source of essence, and the unlisted crates are no target', () => {
         const index = buildBonusSourceIndex({
             '/items/low': { itemLevel: 10, alchemyDetail: { decomposeItems: [{ itemHrid: SHARD, count: 1 }] } },
             '/items/mid': {
@@ -153,14 +153,10 @@ describe('the bonus-drop index', () => {
             { sourceHrid: '/items/high', actionType: 'transmute' },
             { sourceHrid: '/items/coinable', actionType: 'coinify' },
         ]);
-        expect(index.get('/items/small_artisans_crate')).toEqual([
-            { sourceHrid: '/items/low', actionType: 'decompose' },
-            { sourceHrid: '/items/coinable', actionType: 'coinify' },
-        ]);
-        expect(index.get('/items/medium_artisans_crate')).toEqual([
-            { sourceHrid: '/items/mid', actionType: 'transmute' },
-        ]);
-        expect(index.get('/items/large_artisans_crate')).toHaveLength(2);
+        // The crates are openable loot, never listed: nothing to buy, so no target
+        expect(index.has('/items/small_artisans_crate')).toBe(false);
+        expect(index.has('/items/medium_artisans_crate')).toBe(false);
+        expect(index.has('/items/large_artisans_crate')).toBe(false);
     });
 
     test('the ranking puts the source whose outputs pay for more of it first', () => {

@@ -4,8 +4,8 @@
  * On the tooltip of an item T (a Goblin Essence before an enhancing session),
  * every item S whose decompose outputs or transmute drop table include T is a
  * way to get T without buying it: buy S at its ask, run the action, keep T and
- * sell (or keep) everything else. Alchemy Essence and the Artisan's Crates, which
- * no item yields as a base output but every alchemy action can drop, take their
+ * sell (or keep) everything else. Alchemy Essence, which no item yields as a base
+ * output but every alchemy action can drop, takes its
  * sources from those bonus drops: ranked on prices alone, and only the best
  * {@link BONUS_SOURCE_LIMIT} costed in full. The arithmetic per unit of T is
  * `alchemySourceUnitCost` in `utils/self-use-alchemy.js`; this module finds the
@@ -131,7 +131,7 @@ export function bonusDropsOf(details) {
 }
 
 /**
- * Every source of every bonus drop: each item that can be decomposed, transmuted or
+ * Every source of the bonus drop that can be bought (Alchemy Essence): each item that can be decomposed, transmuted or
  * coinified, under the bonus drops its actions roll.
  * @param {Object} itemDetailMap
  * @returns {Map<string, Array<{sourceHrid: string, actionType: 'decompose'|'transmute'|'coinify'}>>}
@@ -148,7 +148,9 @@ export function buildBonusSourceIndex(itemDetailMap) {
         if (alchemy.isCoinifiable === true) actionTypes.push('coinify');
         if (actionTypes.length === 0) continue;
         for (const { itemHrid } of bonusDropsOf(details)) {
-            if (itemHrid === sourceHrid) continue;
+            // Only what can be bought has an "instead of buying": the Artisan's Crates are
+            // openable loot that is never listed, so they are no target
+            if (itemHrid !== ALCHEMY_ESSENCE_HRID || itemHrid === sourceHrid) continue;
             const list = index.get(itemHrid) || [];
             for (const actionType of actionTypes) list.push({ sourceHrid, actionType });
             index.set(itemHrid, list);

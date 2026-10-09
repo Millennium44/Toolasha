@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Instead-of-buying line: no hover stall, essence and crate targets
+### Instead-of-buying line: no hover stall, essence targets
 
-- The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence and Artisan's Crates.
+- The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence (including coinify routes).
 
 ### Decompose chain picks the best setup for the whole chain
 
