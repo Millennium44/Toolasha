@@ -159,6 +159,7 @@ function computeCapResult(goldPerHour, sells) {
 }
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    hasMeasuredVolume: () => false,
     itemDailyVolume: async (itemHrid) => ({ itemHrid, unitsPerDay: 0, days: 0, known: false }),
     sellsFromProfitData: (profitData) =>
         (profitData?.dropRevenues || [])

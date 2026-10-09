@@ -59,6 +59,7 @@ vi.mock('./gathering-profit.js', () => ({
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculateProfit: async () => null } }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: {} }));
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    hasMeasuredVolume: () => false,
     itemDailyVolume: async (itemHrid) => ({ itemHrid, unitsPerDay: 0, days: 0, known: false }),
     capProfitData: async (data) => data,
     liquidityMarkerHtml: () => '',

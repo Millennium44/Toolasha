@@ -78,6 +78,7 @@ vi.mock('../../utils/item-navigation.js', () => ({
 }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    hasMeasuredVolume: () => false,
     itemDailyVolume: async (itemHrid) => ({ itemHrid, unitsPerDay: 0, days: 0, known: false }),
     liquidityMarkerHtml: (limit, { compact = false } = {}) =>
         limit ? `<span title="${limit.note} — ${limit.detail}">${compact ? 'vol-capped' : limit.note}</span>` : '',
