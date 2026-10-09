@@ -4,7 +4,10 @@
  * On the tooltip of an item T (a Goblin Essence before an enhancing session),
  * every item S whose decompose outputs or transmute drop table include T is a
  * way to get T without buying it: buy S at its ask, run the action, keep T and
- * sell (or keep) everything else. The arithmetic per unit of T is
+ * sell (or keep) everything else. Alchemy Essence and the Artisan's Crates, which
+ * no item yields as a base output but every alchemy action can drop, take their
+ * sources from those bonus drops: ranked on prices alone, and only the best
+ * {@link BONUS_SOURCE_LIMIT} costed in full. The arithmetic per unit of T is
  * `alchemySourceUnitCost` in `utils/self-use-alchemy.js`; this module finds the
  * sources, picks each one's best catalyst/tea setup, prices them and compares
  * the result with T's ask.
@@ -31,6 +34,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 
@@ -90,6 +94,119 @@ export function sourcesOf(targetHrid) {
         sourceIndexOf = itemDetailMap;
     }
     return sourceIndex.get(targetHrid) || [];
+}
+
+/** The essence every alchemy action can drop */
+export const ALCHEMY_ESSENCE_HRID = '/items/alchemy_essence';
+
+/**
+ * Most bonus-drop sources run through the calculator for one target. Every alchemy action
+ * can drop Alchemy Essence, so its sources are ranked on prices alone
+ * ({@link bonusRankCost}) and only this many of the cheapest are costed in full.
+ */
+export const BONUS_SOURCE_LIMIT = 10;
+
+/** Decompose's base success rate, as the calculator has it; a transmute's is the item's own */
+const DECOMPOSE_BASE_SUCCESS = 0.6;
+
+let bonusIndex = null;
+let bonusIndexOf = null;
+
+/**
+ * The alchemy-wide bonus drops one source item rolls on every action, at their base rates
+ * (before the character's essence and rare find), as the calculator works them out: Alchemy
+ * Essence at (100 + level) / 1800, and an Artisan's Crate sized by the item's level.
+ * @param {Object} details - The source item's details
+ * @returns {Array<{itemHrid: string, perAction: number}>}
+ */
+export function bonusDropsOf(details) {
+    const level = details?.itemLevel || 1;
+    let crate;
+    if (level < 35) crate = { itemHrid: '/items/small_artisans_crate', perAction: (100 + level) / 144000 };
+    else if (level < 70) crate = { itemHrid: '/items/medium_artisans_crate', perAction: (65 + level) / 216000 };
+    else crate = { itemHrid: '/items/large_artisans_crate', perAction: (30 + level) / 288000 };
+    return [{ itemHrid: ALCHEMY_ESSENCE_HRID, perAction: (100 + level) / 1800 }, crate];
+}
+
+/**
+ * Every source of every bonus drop: each item that can be decomposed or transmuted, under
+ * the bonus drops its actions roll.
+ * @param {Object} itemDetailMap
+ * @returns {Map<string, Array<{sourceHrid: string, actionType: 'decompose'|'transmute'}>>}
+ */
+export function buildBonusSourceIndex(itemDetailMap) {
+    const index = new Map();
+    for (const [sourceHrid, details] of Object.entries(itemDetailMap || {})) {
+        const alchemy = details?.alchemyDetail;
+        if (!alchemy) continue;
+        const actionTypes = [];
+        if (alchemy.decomposeItems?.length) actionTypes.push('decompose');
+        if (alchemy.transmuteDropTable?.length) actionTypes.push('transmute');
+        if (actionTypes.length === 0) continue;
+        for (const { itemHrid } of bonusDropsOf(details)) {
+            if (itemHrid === sourceHrid) continue;
+            const list = index.get(itemHrid) || [];
+            for (const actionType of actionTypes) list.push({ sourceHrid, actionType });
+            index.set(itemHrid, list);
+        }
+    }
+    return index;
+}
+
+/**
+ * Every item whose actions roll one bonus drop, from the cached index. Unranked and
+ * unbounded: {@link bonusRankCost} narrows it.
+ * @param {string} targetHrid
+ * @returns {Array<{sourceHrid: string, actionType: 'decompose'|'transmute'}>}
+ */
+export function bonusSourcesOf(targetHrid) {
+    const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
+    if (!itemDetailMap) return [];
+    if (bonusIndex === null || bonusIndexOf !== itemDetailMap) {
+        bonusIndex = buildBonusSourceIndex(itemDetailMap);
+        bonusIndexOf = itemDetailMap;
+    }
+    return bonusIndex.get(targetHrid) || [];
+}
+
+/**
+ * A cheap estimate of what one unit of a bonus drop costs from one source, for ranking only:
+ * the source at its ask plus the coin fee, less its base outputs sold at the bid after tax,
+ * at the base success rate, over the drop's base rate. No catalyst, tea, find bonus or keep
+ * list — the calculator run that follows for the best few prices all of those.
+ * @param {string} targetHrid - The bonus drop
+ * @param {{sourceHrid: string, actionType: string}} source
+ * @param {Object} deps
+ * @param {(hrid: string) => Object|null} deps.getItemDetails
+ * @param {(hrid: string) => number|null} deps.askOf
+ * @param {(hrid: string) => number|null} deps.sellOf
+ * @returns {number|null} Null when the source has no ask or never drops the target
+ */
+export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemDetails, askOf, sellOf }) {
+    const details = getItemDetails(sourceHrid);
+    const alchemy = details?.alchemyDetail;
+    const ask = askOf(sourceHrid);
+    if (!alchemy || ask === null) return null;
+    const perAction = bonusDropsOf(details).find((drop) => drop.itemHrid === targetHrid)?.perAction ?? 0;
+    if (!(perAction > 0)) return null;
+    const bulk = alchemy.bulkMultiplier || 1;
+    let credit = 0;
+    if (actionType === 'decompose') {
+        for (const output of alchemy.decomposeItems || []) {
+            credit += (Number(output?.count) || 0) * bulk * DECOMPOSE_BASE_SUCCESS * (sellOf(output?.itemHrid) ?? 0);
+        }
+    } else {
+        const success = alchemy.transmuteSuccessRate || 0;
+        for (const drop of alchemy.transmuteDropTable || []) {
+            const units =
+                ((Number(drop?.minCount) + Number(drop?.maxCount)) / 2) *
+                bulk *
+                (Number(drop?.dropRate) || 0) *
+                success;
+            credit += units * (drop?.itemHrid === sourceHrid ? ask : (sellOf(drop?.itemHrid) ?? 0));
+        }
+    }
+    return (ask * bulk + getAlchemyCoinCost(details, actionType) - credit) / perAction;
 }
 
 /**
@@ -217,6 +334,8 @@ const jobs = new Map();
 let jobEpoch = 0;
 /** The setup prices of one action type, memoized per price snapshot */
 const setupSignatures = new Map();
+/** Per bonus-drop target: its best-ranked sources under the current price snapshot */
+const bonusRanks = new Map();
 /**
  * Bumped on every market price-update notification (a fetch or a burst of order-book patches)
  * and on every pushed value-map refresh (`market_item_values_updated`)
@@ -283,6 +402,7 @@ function syncStamps() {
     if (full !== resultStamp) {
         resultCache.clear();
         setupSignatures.clear();
+        bonusRanks.clear();
         resultStamp = full;
     }
 }
@@ -295,12 +415,15 @@ export function clearInsteadCache() {
     candidateCache.clear();
     resultCache.clear();
     setupSignatures.clear();
+    bonusRanks.clear();
     jobs.clear();
     jobEpoch += 1;
     candidateStamp = null;
     resultStamp = null;
     sourceIndex = null;
     sourceIndexOf = null;
+    bonusIndex = null;
+    bonusIndexOf = null;
 }
 
 /**
@@ -464,6 +587,86 @@ function sourcesToRun(sources) {
     );
 }
 
+/** The price reads a bonus-source ranking makes: real book prices only, like the costing */
+const rankDeps = {
+    getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
+    askOf: (hrid) => realPrice(hrid, 'ask'),
+    sellOf: (hrid) => {
+        const bid = realPrice(hrid, 'bid');
+        return bid === null ? null : calculatePriceAfterTax(bid);
+    },
+};
+
+/**
+ * Keep the {@link BONUS_SOURCE_LIMIT} cheapest of a ranking.
+ * @param {Array<{source: Object, cost: number}>} scored
+ * @returns {Array<{sourceHrid: string, actionType: string}>}
+ */
+function topRanked(scored) {
+    return scored
+        .sort(
+            (a, b) =>
+                a.cost - b.cost ||
+                a.source.sourceHrid.localeCompare(b.source.sourceHrid) ||
+                a.source.actionType.localeCompare(b.source.actionType)
+        )
+        .slice(0, BONUS_SOURCE_LIMIT)
+        .map(({ source }) => source);
+}
+
+/**
+ * Score one bonus source for the ranking.
+ * @param {string} targetHrid
+ * @param {{sourceHrid: string, actionType: string}} source
+ * @param {Array<Object>} scored - Appended to
+ * @returns {void}
+ */
+function scoreBonusSource(targetHrid, source, scored) {
+    const cost = bonusRankCost(targetHrid, source, rankDeps);
+    if (cost !== null && Number.isFinite(cost)) scored.push({ source, cost });
+}
+
+/**
+ * Rank a bonus drop's sources in slices that yield to the page, and keep the best few for
+ * the current price snapshot.
+ * @param {string} targetHrid
+ * @param {number} epoch - The cache epoch the job started in
+ * @returns {Promise<void>}
+ */
+async function rankBonusSources(targetHrid, epoch) {
+    const stamp = resultStamp;
+    const scored = [];
+    let sliceStart = Date.now();
+    for (const source of bonusSourcesOf(targetHrid)) {
+        scoreBonusSource(targetHrid, source, scored);
+        if (Date.now() - sliceStart >= SLICE_MS) {
+            await yieldToPage();
+            if (epoch !== jobEpoch) return;
+            sliceStart = Date.now();
+        }
+    }
+    syncStamps();
+    // Prices that moved during the ranking leave it for the next pass
+    if (stamp === resultStamp) bonusRanks.set(targetHrid, topRanked(scored));
+}
+
+/**
+ * Every source one lookup costs: the items whose base outputs include the target, and —
+ * for a bonus drop — its best-ranked sources once they are ranked for this price snapshot.
+ * @param {string} targetHrid
+ * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, ranked: boolean}} `ranked` is
+ *   false while a bonus drop still waits for its ranking
+ */
+function lookupSources(targetHrid) {
+    const base = sourcesOf(targetHrid);
+    if (bonusSourcesOf(targetHrid).length === 0) return { sources: base, ranked: true };
+    const best = bonusRanks.get(targetHrid);
+    if (!best) return { sources: base, ranked: false };
+    const seen = new Set(base.map(({ sourceHrid, actionType }) => `${actionType}|${sourceHrid}`));
+    const extra = best.filter(({ sourceHrid, actionType }) => !seen.has(`${actionType}|${sourceHrid}`));
+    return { sources: [...base, ...extra], ranked: true };
+}
+
 /**
  * The key one lookup's finished result is cached under.
  * @param {string} targetHrid
@@ -484,7 +687,13 @@ function resultKey(targetHrid, wanted) {
  */
 function computeAlternatives(targetHrid, wanted) {
     const { key, goldPerHour } = resultKey(targetHrid, wanted);
-    const sources = sourcesOf(targetHrid);
+    if (!lookupSources(targetHrid).ranked) {
+        // Off the hover only (runJob's last resort): rank in one go
+        const scored = [];
+        for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored);
+        bonusRanks.set(targetHrid, topRanked(scored));
+    }
+    const { sources } = lookupSources(targetHrid);
     let found = { targetAsk: null, alternatives: [] };
     if (sources.length > 0) {
         const askOf = (hrid) => realPrice(hrid, 'ask');
@@ -561,7 +770,13 @@ async function runJob(targetHrid, wanted, epoch) {
         syncStamps();
         const { key } = resultKey(targetHrid, wanted);
         if (resultCache.has(key)) return resultCache.get(key);
-        const pending = sourcesToRun(sourcesOf(targetHrid));
+        if (!lookupSources(targetHrid).ranked) {
+            await rankBonusSources(targetHrid, epoch);
+            if (epoch !== jobEpoch) return cancelled;
+            syncStamps();
+            if (!lookupSources(targetHrid).ranked) continue;
+        }
+        const pending = sourcesToRun(lookupSources(targetHrid).sources);
         if (pending.length === 0) break;
         let sliceStart = Date.now();
         for (const { sourceHrid, actionType } of pending) {
@@ -581,11 +796,25 @@ async function runJob(targetHrid, wanted, epoch) {
 }
 
 /**
+ * The answer for a lookup that needs no source costed: nothing yields the target, or it
+ * has no real ask to beat (what {@link findAlchemyAlternatives} answers then too).
+ * @param {string} targetHrid
+ * @returns {{targetAsk: null, alternatives: Array}|null} Null when the sources need costing
+ */
+function answerWithoutSources(targetHrid) {
+    const none = { targetAsk: null, alternatives: [] };
+    if (sourcesOf(targetHrid).length === 0 && bonusSourcesOf(targetHrid).length === 0) return none;
+    const targetAsk = realPrice(targetHrid, 'ask');
+    return targetAsk === null || !(targetAsk > 0) ? none : null;
+}
+
+/**
  * The live alternatives for one item, cached per snapshot.
  *
  * Synchronous, and never makes more than {@link SYNC_SOURCE_RUNS} calculator runs: a target
- * with more sources still to run comes back `{pending: true}` with no alternatives, and the
- * work carries on in the background — {@link settleAlternatives} waits for it.
+ * with more sources still to run, or a bonus drop whose sources are not yet ranked for these
+ * prices, comes back `{pending: true}` with no alternatives, and the work carries on in the
+ * background — {@link settleAlternatives} waits for it.
  * @param {string} targetHrid
  * @param {Set<string>} wanted - The character's keep list
  * @returns {{targetAsk: number|null, alternatives: Array<Object>, pending?: boolean}}
@@ -594,7 +823,13 @@ export function liveAlternatives(targetHrid, wanted) {
     syncStamps();
     const { key } = resultKey(targetHrid, wanted);
     if (resultCache.has(key)) return resultCache.get(key);
-    if (sourcesToRun(sourcesOf(targetHrid)).length > SYNC_SOURCE_RUNS) {
+    const settled = answerWithoutSources(targetHrid);
+    if (settled) {
+        resultCache.set(key, settled);
+        return settled;
+    }
+    const { sources, ranked } = lookupSources(targetHrid);
+    if (!ranked || sourcesToRun(sources).length > SYNC_SOURCE_RUNS) {
         settleAlternatives(targetHrid, wanted);
         return { targetAsk: null, alternatives: [], pending: true };
     }
