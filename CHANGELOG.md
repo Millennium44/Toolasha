@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings panel follows Iron Cow; keep list stays in sync
+
+- An open Settings panel now shows the values Iron Cow mode locks as they change instead of until reopened, and the self-use keep list no longer stays cached without hearing other tabs' marks after a load races a character switch.
+
 ### Instead-of-buying line: no hover stall, essence targets
 
 - The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence (including coinify routes).
