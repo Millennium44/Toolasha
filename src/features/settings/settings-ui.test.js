@@ -1356,10 +1356,19 @@ describe('a panel load that predates an Iron Cow reconcile', () => {
         panels.className = 'TabsComponent_tabPanelsContainer__def';
         host.append(tabs, panels);
         document.body.appendChild(host);
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const enabled = vi.spyOn(ironCowMode, 'isEnabled').mockReturnValue(true);
         try {
             await settingsUI.injectSettingsTab();
             expect(settingsUI.currentSettings[id].isTrue).toBe(false);
+            // With the mode off the fresh stored read wins (another tab may have changed it)
+            enabled.mockReturnValue(false);
+            mocks.loadResult = { ...mocks.settingsMap, [id]: { id, type: 'checkbox', isTrue: true, value: true } };
+            document.querySelector('#toolasha-settings-tab')?.remove();
+            await settingsUI.injectSettingsTab();
+            expect(settingsUI.currentSettings[id].isTrue).toBe(true);
         } finally {
+            enabled.mockRestore();
             mocks.loadResult = null;
             delete mocks.settingsMap[id];
             document.body.innerHTML = '';

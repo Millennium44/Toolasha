@@ -444,8 +444,9 @@ class SettingsUI {
             const [currentSettings] = await Promise.all([settingsStorage.loadSettings(), this.loadPanelState()]);
             this.currentSettings = currentSettings;
             // The stored read can predate an Iron Cow reconcile that finished while it was in flight;
-            // the runtime values are the truth for the settings the mode manages
-            this._overlayIronCowValues();
+            // while the mode is on, its runtime values are the truth for the settings it manages. Off,
+            // the fresh read wins: another tab may have changed one, and config does not hear that
+            if (ironCowMode.isEnabled()) this._overlayIronCowValues();
 
             // React can remount the settings panel while that read is in flight,
             // and the two containers captured above are then orphaned nodes. The
