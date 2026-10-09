@@ -763,6 +763,16 @@ describe('dungeon tokens', () => {
         expect(el.dataset.bidValue).toBe('15000');
     });
 
+    test('net-of-tax mode takes the market cut off a token too', async () => {
+        const { MARKET_TAX } = await import('../../utils/profit-constants.js');
+        mocks.settings.invSort_netOfTax = true;
+        mocks.tokenValues['/items/chimerical_token'] = 1000;
+        const el = tokenEl('chimerical_token', 10);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(Number(el.dataset.askPrice)).toBeCloseTo(1000 * (1 - MARKET_TAX));
+        expect(Number(el.dataset.bidValue)).toBeCloseTo(10000 * (1 - MARKET_TAX));
+    });
+
     test('a token with no derivable value stays at zero', async () => {
         const el = tokenEl('chimerical_token', 10);
         await inventoryBadgeManager.calculateItemPrices([el], [], new Map());

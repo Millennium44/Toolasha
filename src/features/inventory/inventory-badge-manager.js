@@ -525,7 +525,10 @@ class InventoryBadgeManager {
             // an item that does trade: value them by the same best gold-per-token figure the
             // tooltips and net worth use, instead of leaving them at 0 like a true currency.
             if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) {
-                const perToken = calculateDungeonTokenValue(itemHrid) ?? 0;
+                let perToken = calculateDungeonTokenValue(itemHrid) ?? 0;
+                // The figure is gross (a shop item's market price); net-of-tax mode takes the same cut
+                // as every other market-priced tile
+                if (config.getSetting('invSort_netOfTax') && !isIronCowCharacter()) perToken *= 1 - MARKET_TAX;
                 itemElem.dataset.askPrice = perToken;
                 itemElem.dataset.bidPrice = perToken;
                 itemElem.dataset.askValue = perToken * itemCount;
