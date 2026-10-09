@@ -117,6 +117,8 @@ await import('../guild/guild-trials-store.js');
 await import('../skills/xp-tracker.js');
 // The detail snapshots' retention window, registered the way the page does
 await import('../networth/networth-history.js');
+// Task completions: a chunked history whose pull prunes the incoming side
+const { weekChunkId, WINDOW_WEEKS } = await import('../tasks/task-completion-tracker.js');
 
 const {
     payloadCarriesKey,
@@ -2494,6 +2496,37 @@ describe('the pull direction rules respect what each fold and restore needs', ()
             expect(importedPayloads[0].stores.marketListings.listingLog_a).toEqual([{ id: 1 }, { id: 2 }]);
         } finally {
             off();
+        }
+    });
+});
+
+describe('a chunked history keeps its pull orientation under the direction rules', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: '2026-01-01T00:00:00.000Z', stores });
+
+    test('an expired completion the gist still holds in the boundary week is not taken back', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            // A Wednesday noon, so the cut falls mid-week
+            vi.setSystemTime(Date.UTC(2026, 9, 7, 12));
+            const cut = Date.now() - WINDOW_WEEKS * 7 * 24 * 60 * 60 * 1000;
+            const expired = { taskId: 'old', completedAt: cut - 60 * 60 * 1000 };
+            const kept = { taskId: 'kept', completedAt: cut + 60 * 60 * 1000 };
+            expect(weekChunkId(expired.completedAt)).toBe(weekChunkId(kept.completedAt));
+            const key = `taskCompletionRec_c1_${weekChunkId(kept.completedAt)}`;
+
+            // A merged upload left the gist ahead of this device for the week,
+            // and this device has moved since (its window let the expired row go)
+            const uploaded = { rerollSpending: { [key]: [expired, kept] } };
+            const baseline = exchangeBaseline(payloadOf(uploaded), payloadOf({ rerollSpending: { [key]: [expired] } }));
+            storeState.stores.rerollSpending = { [key]: [kept] };
+
+            const result = await applyPayload(payloadOf(uploaded), { mode: 'merge', baseline });
+
+            expect(importedPayloads[0].stores.rerollSpending).toEqual({});
+            expect(storeState.stores.rerollSpending[key]).toEqual([kept]);
+            expect(result.merged).toEqual([]);
+        } finally {
+            vi.useRealTimers();
         }
     });
 });
