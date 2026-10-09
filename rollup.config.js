@@ -443,6 +443,10 @@ const marketExternalGlobals = new Map([
     // "nothing recorded" (the row read "started before recording" though the owner copy was
     // actively recording).
     [normalize(join(__dirname, 'src/features/networth/item-flow-recorder.js')), 'Toolasha.Market.itemFlowRecorder'],
+    // The self-use keep list: cached per character, read by the item tooltip and edited from
+    // the settings panel's review list (ui bundle). Left inline, the settings copy's removals
+    // would land in a cache the tooltip never reads.
+    [normalize(join(__dirname, 'src/features/market/self-use-wanted.js')), 'Toolasha.Market.selfUseWanted'],
 ]);
 
 const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());

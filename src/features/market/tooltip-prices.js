@@ -50,6 +50,12 @@ import {
     selfUseTransmuteHeld,
     untaxedContainerValue,
 } from '../../utils/self-use-alchemy.js';
+import selfUseWanted, {
+    KEEP_SECTION_CLASS,
+    buildKeepChipHTML,
+    installKeepToggle,
+    uninstallKeepToggle,
+} from './self-use-wanted.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
@@ -83,12 +89,17 @@ const TOOLTIP_FEATURE_SETTINGS = [
 
 /** Hover text on every self-use alchemy line. */
 const SELF_USE_TITLE =
-    'Self-use: you keep the outputs instead of selling them, so no sales tax is taken and each output is ' +
-    'valued at what you would pay to buy it under your pricing mode. Decompose costs the item at the cheaper ' +
-    'of making or buying it; a held item being transmuted costs what selling it would bring after tax.';
+    'Self-use: an output marked "Keep for self-use" is valued at what you would pay to buy it under your ' +
+    'pricing mode, with no sales tax; every other output at what selling it would bring after tax. Mark an ' +
+    'item from its own tooltip (press K, or click the chip). Decompose costs the item at the cheaper of making ' +
+    'or buying it; a held item being transmuted costs what selling it would bring after tax.';
 
 /** Footnote under the self-use lines. */
-const SELF_USE_FOOTNOTE = 'Self-use: untaxed, outputs at what you would pay for them.';
+const SELF_USE_FOOTNOTE =
+    'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.';
+
+/** Most kept outputs a self-use label names before summarizing the rest */
+const SELF_USE_KEEP_NAMES = 2;
 
 /** Whether any tooltip-injection feature is enabled. */
 function anyTooltipFeatureEnabled() {
@@ -395,6 +406,10 @@ class TooltipPrices {
         // Make the "Yours / Pro" chip on enhancement sections clickable (and P-pressable)
         installEnhancementSourceToggle();
 
+        // The "Keep for self-use" chip, clickable and K-pressable. Inert while no chip is on
+        // screen, and a chip is drawn only while the self-use lines are on.
+        installKeepToggle();
+
         // Register with centralized DOM observer
         this.setupObserver();
     }
@@ -583,6 +598,7 @@ class TooltipPrices {
                     '.mwi-enhancement-milestones',
                     '.mwi-ability-status',
                     '.mwi-loadout-marks',
+                    `.${KEEP_SECTION_CLASS}`,
                 ];
                 for (const sel of staleSelectors) {
                     tooltipText.querySelector(sel)?.remove();
@@ -606,6 +622,16 @@ class TooltipPrices {
             return;
         }
 
+        // The keep mark the self-use lines read, on the tooltip of anything alchemy can yield —
+        // drawn last, and in the container branch too, which returns early: an Artisan's Crate
+        // is a bonus drop.
+        const showKeepChip =
+            isItemTooltip &&
+            !isCollectionTooltip &&
+            !(info.enhancementLevel > 0) &&
+            config.getSetting('itemTooltip_selfUseAlchemy') &&
+            selfUseWanted.isAlchemyOutput(itemHrid);
+
         // Check if this is an openable container first (they have no market price)
         if (itemDetails.isOpenable && config.getSetting('itemTooltip_expectedValue')) {
             const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
@@ -627,6 +653,7 @@ class TooltipPrices {
                     this.injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip);
                 }
             }
+            if (showKeepChip) await this.injectKeepChip(tooltipElement, itemHrid, itemName);
             // Fix tooltip overflow before returning
             dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
             return; // Skip price/profit display for containers
@@ -741,8 +768,36 @@ class TooltipPrices {
             }
         }
 
+        if (showKeepChip) await this.injectKeepChip(tooltipElement, itemHrid, itemName);
+
         // Fix tooltip overflow (ensure it stays in viewport)
         dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
+    }
+
+    /**
+     * Put the "Keep for self-use" chip on an item tooltip.
+     * @param {Element} tooltipElement
+     * @param {string} itemHrid
+     * @param {string} itemName - The name this tooltip was processed for
+     * @returns {Promise<void>}
+     */
+    async injectKeepChip(tooltipElement, itemHrid, itemName) {
+        try {
+            const kept = (await selfUseWanted.getSet()).has(itemHrid);
+            // The pointer may have moved to another item during the read
+            if (tooltipElement.dataset.pricesProcessedItem !== itemName) return;
+            const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
+            if (!tooltipText || tooltipText.querySelector(`.${KEEP_SECTION_CLASS}`)) return;
+            const div = dom.createStyledDiv(
+                { color: config.COLOR_TOOLTIP_INFO, marginTop: '4px' },
+                '',
+                KEEP_SECTION_CLASS
+            );
+            div.innerHTML = buildKeepChipHTML(itemHrid, kept);
+            tooltipText.appendChild(div);
+        } catch (error) {
+            console.error('[TooltipPrices] Keep chip failed:', error);
+        }
     }
 
     /**
@@ -1714,6 +1769,57 @@ class TooltipPrices {
                 }
                 return crateValues.get(hrid);
             };
+
+            // An output not on the keep list is sold: the bid after the character-aware tax,
+            // the seller's figure every taxed line uses. A shop-only output is converted and
+            // the conversion sold, taxed like the calculator's own figure.
+            const sellOf = (hrid) => {
+                const market = getItemPrice(hrid, { context: 'profit', side: 'sell' });
+                if (market != null) return calculatePriceAfterTax(market);
+                const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
+                if (!shop) return null;
+                shopSources.set(hrid, shop);
+                return calculatePriceAfterTax(shop.valuePerUnit);
+            };
+            // An unwanted crate with no order book: its contents sold, each after its own tax
+            // (coin, dungeon tokens and cowbells through the sell-side resolver's special values)
+            const soldCrateValues = new Map();
+            const sellContainerValue = (hrid) => {
+                if (!soldCrateValues.has(hrid)) {
+                    soldCrateValues.set(
+                        hrid,
+                        untaxedContainerValue(hrid, {
+                            containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
+                            priceOf: (h) => {
+                                const resolved = expectedValueCalculator.resolveSellSideValue?.(h);
+                                if (resolved && Number.isFinite(resolved.value)) {
+                                    return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
+                                }
+                                return sellOf(h);
+                            },
+                        })
+                    );
+                }
+                return soldCrateValues.get(hrid);
+            };
+            // With nothing marked, nothing but a transmute's self-return is kept
+            const wanted = await selfUseWanted.getSet();
+            const pricing = {
+                priceOf,
+                containerValue,
+                isWanted: (hrid) => wanted.has(hrid),
+                sellOf,
+                sellContainerValue,
+            };
+            const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
+            // "self-use, keep Frenzy" / "self-use, sell outputs": which outputs the figure keeps
+            const keepTag = (kept) => {
+                const list = Array.isArray(kept) ? kept : [];
+                if (list.length === 0) return 'self-use, sell outputs';
+                const names = list.slice(0, SELF_USE_KEEP_NAMES).map(nameOf).join(', ');
+                const more = list.length > SELF_USE_KEEP_NAMES ? ` +${list.length - SELF_USE_KEEP_NAMES} more` : '';
+                return `self-use, keep ${names}${more}`;
+            };
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const decompose = alchemyProfits?.decompose;
             const lineColor = (value) => (value >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS);
@@ -1741,14 +1847,14 @@ class TooltipPrices {
 
                 const stepPick = bestSelfUseCandidate(
                     candidatesFor('decompose', itemHrid, () => decompose),
-                    (result) => selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, containerValue }),
+                    (result) => selfUseDecompose(result, itemDetails, { ...pricing, ownUseCost }),
                     'netPerHour'
                 );
                 const step = stepPick?.evaluation;
                 if (step) {
                     const lowerBound = step.partlyUnpriced ? '≥' : '';
                     lines.push({
-                        text: `Decompose (self-use): ${lowerBound}${formatKMB(step.netPerHour)}/hr`,
+                        text: `Decompose (${keepTag(step.kept)}): ${lowerBound}${formatKMB(step.netPerHour)}/hr`,
                         detail: `(${lowerBound}${formatKMB(step.netPerAction)}/action${unpricedTag(step.partlyUnpriced, stepPick.optimized)})`,
                         color: step.partlyUnpriced ? config.COLOR_TOOLTIP_INFO : lineColor(step.netPerHour),
                     });
@@ -1766,8 +1872,7 @@ class TooltipPrices {
                         const details = dataManager.getItemDetails(hrid);
                         return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
                     },
-                    priceOf,
-                    containerValue,
+                    ...pricing,
                 };
                 const chainSteps = new Map();
                 const bestChainStep = (hrid) => {
@@ -1791,8 +1896,7 @@ class TooltipPrices {
                             ) ??
                             bestSelfUseCandidate(
                                 candidates,
-                                (result) =>
-                                    selfUseDecompose(result, details, { ownUseCost: 0, priceOf, containerValue }),
+                                (result) => selfUseDecompose(result, details, { ...pricing, ownUseCost: 0 }),
                                 'netPerAction'
                             );
                         chainSteps.set(hrid, pick?.result ?? null);
@@ -1812,7 +1916,7 @@ class TooltipPrices {
                     const time = timeReadable(chain.seconds);
                     if (chain.net !== null) {
                         lines.push({
-                            text: `Full decompose chain (self-use): ${formatKMB(chain.net)}/item`,
+                            text: `Full decompose chain (${keepTag(chain.kept)}): ${formatKMB(chain.net)}/item`,
                             detail: `(${time}, ${formatKMB(chain.netPerHour)}/hr)`,
                             note: `collects ${names}`,
                             color: lineColor(chain.net),
@@ -1822,7 +1926,7 @@ class TooltipPrices {
                         // that silently leaves a branch out
                         lines.push({
                             text:
-                                `Full decompose chain (self-use): materials ≥${formatKMB(chain.terminalValue)} ` +
+                                `Full decompose chain (${keepTag(chain.kept)}): materials ≥${formatKMB(chain.terminalValue)} ` +
                                 `vs cost ${formatKMB(chain.cost)}`,
                             detail: `(${time}, partly unpriced, setup not optimized)`,
                             note: `collects ${names}`,
@@ -1837,14 +1941,14 @@ class TooltipPrices {
                 const sellPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
                 const heldPick = bestSelfUseCandidate(
                     candidatesFor('transmute', itemHrid, () => transmute),
-                    (result) => selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, containerValue }),
+                    (result) => selfUseTransmuteHeld(result, itemDetails, { ...pricing, sellPrice }),
                     'netPerHour'
                 );
                 const held = heldPick?.evaluation;
                 if (held) {
                     const lowerBound = held.partlyUnpriced ? '≥' : '';
                     lines.push({
-                        text: `Transmute held item (self-use): ${lowerBound}${formatKMB(held.netPerHour)}/hr`,
+                        text: `Transmute held item (${keepTag(held.kept)}): ${lowerBound}${formatKMB(held.netPerHour)}/hr`,
                         detail: `(${lowerBound}${formatKMB(held.netPerAction)}/action${unpricedTag(held.partlyUnpriced, heldPick.optimized)})`,
                         color: held.partlyUnpriced ? config.COLOR_TOOLTIP_INFO : lineColor(held.netPerHour),
                     });
@@ -2232,6 +2336,7 @@ class TooltipPrices {
             }
 
             uninstallEnhancementSourceToggle();
+            uninstallKeepToggle();
 
             this.isActive = false;
             this.isInitialized = false;

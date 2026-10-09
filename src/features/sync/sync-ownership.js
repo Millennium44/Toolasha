@@ -233,6 +233,8 @@ export const OWNED_KEY_PREFIXES = [
     'alchemyItemPins',
     'alchemyItemSortOrder',
     'alchemyProtectedCategories_',
+    // The self-use keep list (`features/market/self-use-wanted.js`)
+    'selfUseWanted_',
     'enhancementItemPins',
     'enhancementTracker_',
     'networth_exclusions_',
