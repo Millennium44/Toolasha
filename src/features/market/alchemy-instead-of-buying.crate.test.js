@@ -8,8 +8,27 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const TARGET = '/items/target';
 const SOURCE = '/items/source';
 const CONTENT = '/items/crate_content';
+const CRATE = '/items/artisans_crate';
+
+/** One catalyst/tea setup; `overhead` is what the setup costs per hour */
+const setup = (overhead, dropRevenues = []) => ({
+    actionType: 'decompose',
+    itemHrid: SOURCE,
+    actionsPerHour: 100,
+    successRate: 1,
+    requirementCosts: [{ itemHrid: SOURCE, count: 1, price: 0 }],
+    catalystCostPerHour: overhead,
+    totalTeaCostPerHour: 0,
+    dropRevenues,
+    overhead,
+});
 
 const book = vi.hoisted(() => ({}));
+const setups = vi.hoisted(() => ({ list: [] }));
+const DECOMPOSE = vi.hoisted(() => [
+    { itemHrid: '/items/target', count: 1 },
+    { itemHrid: '/items/unpriced', count: 1 },
+]);
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -17,14 +36,14 @@ vi.mock('../../core/data-manager.js', () => ({
         currentCharacterId: 'c1',
         getInitClientData: () => ({
             itemDetailMap: {
-                '/items/source': { alchemyDetail: { decomposeItems: [{ itemHrid: '/items/target', count: 1 }] } },
+                '/items/source': { alchemyDetail: { decomposeItems: DECOMPOSE } },
             },
             openableLootDropMap: {
                 '/items/artisans_crate': [{ itemHrid: '/items/crate_content', dropRate: 1, minCount: 1, maxCount: 1 }],
             },
         }),
         getItemDetails: (hrid) => ({
-            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/target', count: 1 }] },
+            alchemyDetail: { decomposeItems: DECOMPOSE },
             hrid,
         }),
     },
@@ -32,25 +51,15 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../api/marketplace.js', () => ({ default: { lastFetchTimestamp: 1 } }));
 vi.mock('./alchemy-profit-calculator.js', () => ({
     default: {
-        calculateCandidateResults: () => [
-            {
-                actionType: 'decompose',
-                itemHrid: '/items/source',
-                actionsPerHour: 100,
-                successRate: 1,
-                requirementCosts: [{ itemHrid: '/items/source', count: 1, price: 0 }],
-                catalystCostPerHour: 0,
-                totalTeaCostPerHour: 0,
-                dropRevenues: [{ itemHrid: '/items/artisans_crate', isRare: true, dropsPerHour: 100 }],
-            },
-        ],
+        calculateCandidateResults: () => setups.list,
     },
 }));
 // The sell side resolves to the ask, as the hybrid profit mode does, and wants tax taken off
 vi.mock('./expected-value-calculator.js', () => ({
     default: {
         resolveSellSideValue: (hrid) => ({ value: book[hrid]?.ask ?? null, needsTax: true }),
-        resolveBuySideValue: (hrid) => ({ value: book[hrid]?.ask ?? null }),
+        // A custom override: no listing behind it
+        resolveBuySideValue: () => ({ value: 50 }),
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -64,6 +73,7 @@ import { liveAlternatives, clearInsteadCache } from './alchemy-instead-of-buying
 describe('an unwanted crate in the live valuation', () => {
     beforeEach(() => {
         clearInsteadCache();
+        setups.list = [setup(0, [{ itemHrid: CRATE, isRare: true, dropsPerHour: 100 }])];
         book[TARGET] = { ask: 1000, bid: 900 };
         book[SOURCE] = { ask: 100, bid: 90 };
         book[CONTENT] = { ask: 200, bid: 100 };
@@ -83,5 +93,26 @@ describe('an unwanted crate in the live valuation', () => {
         book[CONTENT] = undefined;
         const { alternatives } = liveAlternatives(TARGET, new Set());
         expect(alternatives[0].costPerUnit).toBeGreaterThan(priced);
+    });
+
+    test('a kept crate is opened at real book asks, not a custom or estimated price', () => {
+        const { alternatives } = liveAlternatives(TARGET, new Set([CRATE]));
+        // one crate per action, its content at the book ask of 200: 100 - 200
+        expect(alternatives[0].costPerUnit).toBeCloseTo(100 - 200, 6);
+    });
+
+    test('a kept crate content with no book ask is unpriced', () => {
+        book[CONTENT] = undefined;
+        const { alternatives } = liveAlternatives(TARGET, new Set([CRATE]));
+        expect(alternatives[0].partlyUnpriced).toBe(true);
+        expect(alternatives[0].costPerUnit).toBeCloseTo(100, 6);
+    });
+
+    test('when every setup is partly unpriced, the cheapest is picked, not the first', () => {
+        // The unpriced decompose output leaves every setup partial; the first has a costly tea
+        setups.list = [setup(10000), setup(0)];
+        const { alternatives } = liveAlternatives(TARGET, new Set());
+        expect(alternatives).toHaveLength(1);
+        expect(alternatives[0].result.overhead).toBe(0);
     });
 });

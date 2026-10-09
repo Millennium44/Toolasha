@@ -27,7 +27,6 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
-import expectedValueCalculator from './expected-value-calculator.js';
 import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
@@ -147,7 +146,9 @@ export function findAlchemyAlternatives(targetHrid, deps) {
                 if (!evaluation) return null;
                 return { ...evaluation, score: -(evaluation.costPerUnit + timeCost(evaluation)) };
             },
-            'score'
+            'score',
+            // Missing credits make each cost an upper bound, so the lowest partial one is the pick
+            { rankPartial: true }
         );
         const evaluation = pick?.evaluation;
         if (!evaluation) continue;
@@ -306,7 +307,8 @@ export function liveAlternatives(targetHrid, wanted) {
                     `k|${hrid}`,
                     untaxedContainerValue(hrid, {
                         containerDrops,
-                        priceOf: (h) => expectedValueCalculator.resolveBuySideValue?.(h)?.value ?? askOf(h),
+                        // Real book asks only, like every kept output: no custom or value-map price
+                        priceOf: askOf,
                     })
                 );
             }
