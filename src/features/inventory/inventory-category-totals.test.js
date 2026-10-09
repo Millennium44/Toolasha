@@ -148,6 +148,7 @@ describe('freshness against items_updated', () => {
         // back and the total stays stale — the reported bug, intact.
         const inventory = document.createElement('div');
         const category = document.createElement('div');
+        category.className = 'Inventory_itemGrid__20YAH';
         const label = document.createElement('div');
         label.className = 'Inventory_label';
         label.textContent = 'Loots';
@@ -194,6 +195,7 @@ describe('following the badge mode', () => {
     function drawInventory() {
         const inventory = document.createElement('div');
         const category = document.createElement('div');
+        category.className = 'Inventory_itemGrid__20YAH';
         const label = document.createElement('div');
         label.className = 'Inventory_label';
         label.textContent = 'Loots';
@@ -246,5 +248,80 @@ describe('following the badge mode', () => {
 
         expect(label.querySelector('.mwi-category-total')).toBeNull();
         expect(inventoryCategoryTotals.pendingUpdate).toBe(false);
+    });
+});
+
+describe('native inventory tabs DOM (2026-09 patch)', () => {
+    /**
+     * The real nesting: Inventory_items holds one TabsComponent wrapper, whose panels hold the
+     * per-category Inventory_itemGrid (label + tiles as flat siblings). A hidden panel carries
+     * stale tiles.
+     * @returns {{ root: HTMLElement, labels: Record<string, HTMLElement> }}
+     */
+    function drawTabbedInventory() {
+        const root = document.createElement('div');
+        root.className = 'Inventory_items__6SXv0';
+        const tabs = document.createElement('div');
+        tabs.className = 'TabsComponent_tabPanelsContainer__26mzo';
+        const labels = {};
+
+        const grid = (name, tiles) => {
+            const g = document.createElement('div');
+            g.className = 'Inventory_itemGrid__20YAH';
+            const label = document.createElement('div');
+            label.className = 'Inventory_label__XEOAx';
+            const button = document.createElement('span');
+            button.className = 'Inventory_categoryButton__35s1x';
+            button.textContent = name;
+            label.appendChild(button);
+            g.appendChild(label);
+            for (const { icon, value } of tiles) {
+                const tile = document.createElement('div');
+                tile.className = 'Item_itemContainer__x7kH1';
+                tile.innerHTML = `<svg><use href="/static/items_sprite.svg#${icon}"></use></svg>`;
+                tile.dataset.askValue = String(value);
+                g.appendChild(tile);
+            }
+            labels[name] ??= label;
+            return g;
+        };
+
+        const visible = document.createElement('div');
+        visible.className = 'TabPanel_tabPanel__tXMJF';
+        visible.appendChild(grid('Currencies', [{ icon: 'coin', value: 999 }]));
+        visible.appendChild(
+            grid('Loots', [
+                { icon: 'cheese', value: 3000 },
+                { icon: 'milk', value: 4000 },
+            ])
+        );
+        const hidden = document.createElement('div');
+        hidden.className = 'TabPanel_tabPanel__tXMJF TabPanel_hidden__26UM3';
+        const stale = grid('Loots', [{ icon: 'cheese', value: 1 }]);
+        hidden.appendChild(stale);
+        tabs.append(visible, hidden);
+        root.appendChild(tabs);
+        document.body.appendChild(root);
+        return { root, labels, staleLabel: stale.querySelector('[class*="Inventory_label"]') };
+    }
+
+    test('draws a total on each category in the active panel, not on the wrapper', () => {
+        const { root, labels, staleLabel } = drawTabbedInventory();
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(labels['Loots'].querySelector('.mwi-category-total').textContent).toBe('7000');
+        expect(staleLabel.querySelector('.mwi-category-total')).toBeNull();
+    });
+
+    test('skips Currencies by its coin icon, whatever language the label is in', () => {
+        const { root, labels } = drawTabbedInventory();
+        labels['Currencies'].querySelector('span').textContent = 'Monedas';
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(labels['Currencies'].querySelector('.mwi-category-total')).toBeNull();
     });
 });

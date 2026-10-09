@@ -28,6 +28,18 @@ const CSS = `
 }
 `;
 
+/** Sprite ids (the part after `#` in a tile's icon href) of the items the Currencies category holds. */
+const CURRENCY_ICON_IDS = new Set([
+    'coin',
+    'gold_coin',
+    'cowbell',
+    'task_token',
+    'chimerical_token',
+    'sinister_token',
+    'enchanted_token',
+    'pirate_token',
+]);
+
 const ITEMS_UPDATED_DEBOUNCE_MS = 300;
 
 class InventoryCategoryTotals {
@@ -161,19 +173,22 @@ class InventoryCategoryTotals {
         const mode = inventorySort.currentMode;
         const valueKey = totalValueKey(mode);
 
-        for (const categoryDiv of inventoryElem.children) {
+        // Category containers are the Inventory_itemGrid elements (one Inventory_label plus that
+        // category's tiles as flat siblings). Since the 2026-09 native inventory tabs,
+        // inventoryElem's only direct child is the TabsComponent wrapper, so its children are not
+        // categories: the grids live inside the selected tab panel. A hidden panel keeps stale
+        // tiles, which must not be counted (the same search inventory-sort uses).
+        const categoryDivs = Array.from(inventoryElem.querySelectorAll('[class*="Inventory_itemGrid"]')).filter(
+            (grid) => !grid.closest('[class*="TabPanel_hidden"]')
+        );
+
+        for (const categoryDiv of categoryDivs) {
             const labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');
             if (!labelEl) {
                 continue;
             }
 
-            // Get label text without any injected span
-            const existingSpan = labelEl.querySelector(`[${SPAN_ATTR}]`);
-            const labelText = existingSpan
-                ? labelEl.textContent.replace(existingSpan.textContent, '').trim()
-                : labelEl.textContent.trim();
-
-            if (labelText.toLowerCase() === 'currencies') {
+            if (this.isCurrenciesGrid(categoryDiv, labelEl)) {
                 continue;
             }
 
@@ -188,6 +203,34 @@ class InventoryCategoryTotals {
 
             this.injectOrUpdateLabel(labelEl, total);
         }
+    }
+
+    /**
+     * Whether a category grid is the Currencies category, which gets no total.
+     * Identified by its tiles' icons first (every tile is a currency sprite), since the label is
+     * translated for a non-English client; the English label is the fallback.
+     * @param {HTMLElement} categoryDiv - The Inventory_itemGrid
+     * @param {HTMLElement} labelEl - Its Inventory_label
+     * @returns {boolean}
+     */
+    isCurrenciesGrid(categoryDiv, labelEl) {
+        const tiles = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+        if (tiles.length > 0) {
+            const allCurrencies = Array.from(tiles).every((tile) => {
+                const href = tile.querySelector('svg use')?.getAttribute('href') ?? '';
+                const iconId = href.match(/#(.+)$/)?.[1];
+                return iconId && CURRENCY_ICON_IDS.has(iconId);
+            });
+            if (allCurrencies) {
+                return true;
+            }
+        }
+
+        const existingSpan = labelEl.querySelector(`[${SPAN_ATTR}]`);
+        const labelText = existingSpan
+            ? labelEl.textContent.replace(existingSpan.textContent, '').trim()
+            : labelEl.textContent.trim();
+        return labelText.toLowerCase() === 'currencies';
     }
 
     /**
