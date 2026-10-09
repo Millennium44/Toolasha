@@ -27,6 +27,8 @@ import { resolveActionContext } from '../../utils/action-context.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { SELL_TAX_SETTING, sellTaxMarker, sellTaxTitleAttr } from '../../utils/sell-tax-marker.js';
+import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
 
 /**
  * Action type constants for classification
@@ -143,7 +145,7 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
             config.onSettingChange(key, this.pricingModeHandler);
         }
 
@@ -450,6 +452,7 @@ class MaxProduceable {
         let profitPerHour = null;
         let hasMissingPrices = false;
         let outputPriceEstimated = false;
+        let excludeSellTax = false;
         const actionDetails = dataManager.getActionDetails(data.actionHrid);
 
         if (actionDetails) {
@@ -457,18 +460,31 @@ class MaxProduceable {
                 const profitData = await calculateGatheringProfit(data.actionHrid);
                 profitPerHour = profitData?.profitPerHour || null;
                 hasMissingPrices = profitData?.hasMissingPrices || false;
+                excludeSellTax = profitData?.excludeSellTax || false;
             } else if (PRODUCTION_TYPES.includes(actionDetails.type)) {
                 const profitData = await calculateProductionProfit(data.actionHrid);
                 profitPerHour = profitData?.profitPerHour || null;
                 hasMissingPrices = profitData?.hasMissingPrices || false;
                 outputPriceEstimated = profitData?.outputPriceEstimated || false;
+                excludeSellTax = profitData?.excludeSellTax || false;
             }
+        }
+
+        // The shared sort cache holds sale-valued rates (task cards read it), so the toggle's untaxed tile
+        // figure needs a taxed twin. Only paid for while the toggle is on.
+        let taxedProfitPerHour = null;
+        if (excludeSellTax && actionDetails) {
+            const taxed = GATHERING_TYPES.includes(actionDetails.type)
+                ? await calculateGatheringProfit(data.actionHrid, { keepSellTax: true })
+                : await calculateProductionProfit(data.actionHrid, { keepSellTax: true });
+            taxedProfitPerHour = taxed?.hasMissingPrices ? null : (taxed?.profitPerHour ?? null);
         }
 
         // Store profit value for sorting and update shared sort manager
         const resolvedProfitPerHour = hasMissingPrices ? null : profitPerHour;
         data.profitPerHour = resolvedProfitPerHour;
-        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour);
+        data.excludeSellTax = excludeSellTax;
+        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour, { excludeSellTax, taxedProfitPerHour });
 
         // Check if we should hide actions with negative profit (unless pinned)
         const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');
@@ -538,7 +554,7 @@ class MaxProduceable {
                 const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
                 const estimatedNote = outputPriceEstimated ? ' ⚠' : '';
                 html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-                html += `<span data-stat="profit" style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}</span></div>`;
+                html += `<span data-stat="profit"${sellTaxTitleAttr(excludeSellTax)} style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}${sellTaxMarker(excludeSellTax)}</span></div>`;
             }
         }
 
@@ -556,7 +572,7 @@ class MaxProduceable {
             expPerHour > 0
         ) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="overall" style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}</span></div>`;
+            html += `<span data-stat="overall"${sellTaxTitleAttr(excludeSellTax)} style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}${sellTaxMarker(excludeSellTax)}</span></div>`;
         }
 
         data.displayElement.innerHTML = html;
@@ -743,8 +759,11 @@ class MaxProduceable {
             const overallSpan = data.displayElement.querySelector('[data-stat="overall"]');
             if (overallSpan) {
                 const effXp = data.effectiveXpPerHour;
-                const label = effXp != null ? `Eff. XP/hr: ${formatKMB(effXp)}` : stripEmoji(overallSpan.textContent);
-                overallSpan.textContent = label + (isBestOverall ? ' 🏆' : '');
+                const label =
+                    effXp != null
+                        ? `Eff. XP/hr: ${formatKMB(effXp)}`
+                        : stripEmoji(overallSpan.textContent).replace(sellTaxMarker(true), '');
+                overallSpan.textContent = label + sellTaxMarker(data.excludeSellTax) + (isBestOverall ? ' 🏆' : '');
 
                 if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {
                     const loss = Math.abs(data.profitPerHour);
@@ -757,6 +776,13 @@ class MaxProduceable {
                         `Blended: (${formatKMB(data.expPerHour)} + ${ratio.toFixed(2)} × ${formatKMB(bestProfitExp || 0)}) / ${(1 + ratio).toFixed(2)} = ${formatKMB(effXp)}`;
                 } else {
                     overallSpan.title = '';
+                }
+                // The ratio and the ranking are built from untaxed profit under the toggle
+                if (data.excludeSellTax) {
+                    overallSpan.title = overallSpan.title
+                        ? `${overallSpan.title}
+${SELL_TAX_EXCLUDED_TOOLTIP}`
+                        : SELL_TAX_EXCLUDED_TOOLTIP;
                 }
             }
 
@@ -986,7 +1012,7 @@ class MaxProduceable {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, SELL_TAX_SETTING]) {
                     config.offSettingChange(key, this.pricingModeHandler);
                 }
                 this.pricingModeHandler = null;

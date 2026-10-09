@@ -19,9 +19,18 @@ import { getItemPrice } from './market-data.js';
  * @param {number} actionsPerHour - Base actions per hour (efficiency not applied)
  * @param {Map} characterEquipment - Equipment map
  * @param {Object} itemDetailMap - Item details map
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.grossContainers=false] - Value openable containers with untaxed contents
+ *   (personal-use mode: nothing is sold, so no tax is owed on anything inside)
  * @returns {Object} Bonus revenue data with essence and rare find drops
  */
-export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap) {
+export function calculateBonusRevenue(
+    actionDetails,
+    actionsPerHour,
+    characterEquipment,
+    itemDetailMap,
+    { grossContainers = false } = {}
+) {
     // Get Essence Find bonus from equipment
     const essenceFindBonus = parseEssenceFindBonus(characterEquipment, itemDetailMap);
 
@@ -90,10 +99,11 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
             let isMissingPrice = false;
             if (itemDetails.isOpenable) {
                 // Use expected value for openable containers (with on-demand fallback)
-                itemPrice =
-                    expectedValueCalculator.getCachedValue(drop.itemHrid) ||
-                    expectedValueCalculator.calculateSingleContainer(drop.itemHrid) ||
-                    0;
+                itemPrice = grossContainers
+                    ? expectedValueCalculator.calculateGrossContainerValue(drop.itemHrid) || 0
+                    : expectedValueCalculator.getCachedValue(drop.itemHrid) ||
+                      expectedValueCalculator.calculateSingleContainer(drop.itemHrid) ||
+                      0;
                 if (itemPrice === 0) {
                     console.warn(`[BonusRevenue] EV lookup returned 0 for openable container: ${drop.itemHrid}`);
                     isMissingPrice = true;
@@ -153,10 +163,11 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
             let isMissingPrice = false;
             if (itemDetails.isOpenable) {
                 // Use expected value for openable containers (with on-demand fallback)
-                itemPrice =
-                    expectedValueCalculator.getCachedValue(drop.itemHrid) ||
-                    expectedValueCalculator.calculateSingleContainer(drop.itemHrid) ||
-                    0;
+                itemPrice = grossContainers
+                    ? expectedValueCalculator.calculateGrossContainerValue(drop.itemHrid) || 0
+                    : expectedValueCalculator.getCachedValue(drop.itemHrid) ||
+                      expectedValueCalculator.calculateSingleContainer(drop.itemHrid) ||
+                      0;
                 if (itemPrice === 0) {
                     console.warn(`[BonusRevenue] EV lookup returned 0 for openable container: ${drop.itemHrid}`);
                     isMissingPrice = true;

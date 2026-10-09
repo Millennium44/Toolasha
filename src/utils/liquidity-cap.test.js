@@ -506,6 +506,17 @@ describe('capProfitData', () => {
         expect(bounded.profitPerAction).toBe(250);
     });
 
+    test('sell-tax-excluded data is never volume-capped (nothing is sold)', async () => {
+        history.rows['/items/essence'] = tradedAt(24);
+
+        const original = { ...gathering(), excludeSellTax: true };
+        const result = await capProfitData(original);
+
+        expect(result).toBe(original);
+        expect(result.liquidityLimit).toBeUndefined();
+        expect(result.profitPerHour).toBe(1_000_000);
+    });
+
     test('the original calculator result is never touched', async () => {
         history.rows['/items/essence'] = tradedAt(24);
 
