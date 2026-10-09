@@ -151,10 +151,18 @@ function watchOtherTabs() {
     });
 }
 
-/** Stop hearing other tabs' writes (feature teardown) */
+/**
+ * Stop hearing other tabs' writes (feature teardown), and forget the cache:
+ * whatever another tab writes while nobody listens is never announced again,
+ * so the next `load()` reads the key afresh rather than trusting a list that
+ * can no longer be kept current. A re-read in flight is dropped with it.
+ */
 function stopWatching() {
     unsubscribeWrites?.();
     unsubscribeWrites = null;
+    cache = null;
+    cacheCharId = null;
+    cacheGeneration += 1;
 }
 
 /**

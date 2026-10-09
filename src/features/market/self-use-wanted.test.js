@@ -169,6 +169,17 @@ describe('another tab', () => {
         expect(selfUseWanted.isKept('/items/frenzy')).toBe(false);
     });
 
+    test('a change made in another tab while nobody listened is read when listening resumes', async () => {
+        await selfUseWanted.load();
+        selfUseWanted.stopWatching();
+        // Committed while this tab was not listening, so never announced to it
+        state.stored.selfUseWanted_main = ['/items/frenzy'];
+
+        expect(await selfUseWanted.load()).toEqual(['/items/frenzy']);
+        expect(selfUseWanted.isKept('/items/frenzy')).toBe(true);
+        expect(state.writeListeners.size).toBe(1);
+    });
+
     test('teardown stops listening', async () => {
         await selfUseWanted.load();
         expect(state.writeListeners.size).toBe(1);
