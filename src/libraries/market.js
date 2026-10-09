@@ -54,6 +54,7 @@ import collectionOptimizer from '../features/collection/collection-optimizer.js'
 // its own copy. See marketExternalGlobals in rollup.config.js.
 import * as gatheringProfit from '../features/actions/gathering-profit.js';
 import * as productionProfit from '../features/actions/production-profit.js';
+import * as decomposeChainValue from '../utils/decompose-chain-value.js';
 
 // Networth/Economy features
 import networthFeature from '../features/networth/index.js';
@@ -143,6 +144,7 @@ toolashaRoot.Market = {
     networkAlert,
     profitCalculator,
     alchemyProfitCalculator,
+    decomposeChainValue,
     networthFeature,
     networthCalculator,
     itemFlowRecorder,
