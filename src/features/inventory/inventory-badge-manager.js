@@ -167,6 +167,8 @@ class InventoryBadgeManager {
         for (const key of [
             'profitCalc_pricingMode',
             'expectedValue_respectPricingMode',
+            // Token values (and every other market-priced tile) are taken net of tax under this one
+            'invSort_netOfTax',
             ...PATIENT_TICK_SETTING_KEYS,
         ]) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => reprice('token pricing setting change')));

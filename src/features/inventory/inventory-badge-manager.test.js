@@ -776,6 +776,7 @@ describe('dungeon tokens', () => {
     test.each([
         'profitCalc_pricingMode',
         'expectedValue_respectPricingMode',
+        'invSort_netOfTax',
         'profitCalc_patientTickBuy',
         'profitCalc_patientTickSell',
     ])('changing %s reprices the tiles', async (key) => {
