@@ -267,8 +267,9 @@ class GuildLoadoutCapture {
         if (cleaned.purged.length) {
             console.warn('[GuildLoadoutCapture] Dropping stored monster sheets:', cleaned.purged.join(', '));
             this.record = cleaned.record;
-            // A purge is a removal: written as it stands, not folded back into the disk copy
-            await saveLoadouts(this.characterId, this.record, this.guildName, { replace: true });
+            // The fold purges monster sheets itself, so the disk copy cannot hand them back, and a
+            // sighting stored since this record was read is kept
+            await saveLoadouts(this.characterId, this.record, this.guildName);
         }
         if (!stillOurs(ticket)) return;
 

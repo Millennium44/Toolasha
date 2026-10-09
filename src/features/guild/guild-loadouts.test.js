@@ -582,7 +582,7 @@ describe('a save folds into what another tab or device stored', () => {
         expect(Object.keys(memory.players).sort()).toEqual(['bob', 'tib']);
     });
 
-    test('a purge written with replace is not undone, and a later fold does not bring an impostor back', async () => {
+    test('a purge is not undone, and a later fold does not bring an impostor back', async () => {
         const key = guildLoadoutsStorageKey('char-1', 'Guild');
         game.store[key] = {
             players: {
@@ -592,20 +592,45 @@ describe('a save folds into what another tab or device stored', () => {
             updatedAt: now,
         };
 
-        await saveLoadouts(
-            'char-1',
-            { players: { tib: { name: 'Tib', at: now, rows: [] } }, updatedAt: now },
-            'Guild',
-            {
-                replace: true,
-            }
-        );
+        await saveLoadouts('char-1', { players: { tib: { name: 'Tib', at: now, rows: [] } }, updatedAt: now }, 'Guild');
         expect(Object.keys(game.store[key].players)).toEqual(['tib']);
 
         // Another tab still holding the sheet writes it back; this tab's next fold drops it
         game.store[key].players['trial chameleon'] = { name: 'Trial Chameleon', isPlayer: false, at: now, rows: [] };
         await saveLoadouts('char-1', foldLoadout(null, { name: 'Rick', at: now, rows: [1] }), 'Guild');
         expect(Object.keys(game.store[key].players).sort()).toEqual(['rick', 'tib']);
+    });
+});
+
+describe('removals keep sightings stored after the record was read', () => {
+    beforeEach(() => {
+        game.store = {};
+        game.clientData = {};
+    });
+
+    test('a prune drops only its own keys, keeping a sighting another tab stored meanwhile', async () => {
+        const key = guildLoadoutsStorageKey('char-1', null);
+        game.store[key] = {
+            players: {
+                tib: { name: 'Tib', at: now, rows: [] },
+                legacy: { name: 'Legacy', at: now - 1, rows: [] },
+            },
+            updatedAt: now,
+        };
+        // Another tab lands a new sighting between the prune's read and its write
+        const realLoad = game.store[key];
+        await saveLoadouts('char-1', { players: { legacy: realLoad.players.legacy }, updatedAt: now }, null, {
+            allowEmpty: true,
+            remove: ['tib'],
+            onMerged: null,
+        });
+        game.store[key].players.newcomer = { name: 'Newcomer', at: now, rows: [] };
+        await saveLoadouts('char-1', { players: { legacy: realLoad.players.legacy }, updatedAt: now }, null, {
+            allowEmpty: true,
+            remove: ['tib'],
+        });
+
+        expect(Object.keys(game.store[key].players).sort()).toEqual(['legacy', 'newcomer']);
     });
 });
 
