@@ -584,10 +584,10 @@ describe("the maintainer's Amber row: Decompose 1472× Earrings Of Essence Find,
             ],
         };
         expect(buyQuote(route.purchase, 4).gold).toBe(2 * 6_300_000 + 6_350_000 + 6_400_000);
-        // Nothing measured: past the book at its deepest level
-        expect(buyQuote(route.purchase, 13).gold).toBe(
-            2 * 6_300_000 + 6_350_000 + 3 * 6_400_000 + 6_500_000 + 6 * 6_800_000
-        );
+        // Past the 11 on show nothing says what a unit costs: unpriced, however much the week trades
+        const past = buyQuote(route.purchase, 13);
+        expect(past.feasible).toBe(false);
+        expect(past.unpriced).toBe(true);
         // One a day trades: the 1,459 the Amber row needs are not to be had
         VOLUME.perDay['/items/earrings_of_essence_find'] = 1;
         expect(buyQuote(route.purchase, 1459).feasible).toBe(false);
@@ -1085,6 +1085,61 @@ describe('a recipe the character cannot start', () => {
         expect(bestOptions(counts, index, { sort: 'fastest' })[0].actionHrid).toBe('/actions/alt');
         // A max time per step only the fast recipe fits still ranks the item
         expect(bestOptions(counts, index, { maxSeconds: 30 })[0].actionHrid).toBe('/actions/alt');
+    });
+
+    describe('the bonus drops crafting rolls', () => {
+        // 360 items an hour at +50% efficiency: 36 essence and 3.6 crates an hour at base actions
+        const bonusProfit = () => ({
+            efficiencyMultiplier: 1.5,
+            bonusRevenue: {
+                bonusDrops: [
+                    { itemHrid: '/items/milking_essence', dropsPerHour: 36 },
+                    { itemHrid: '/items/small_artisans_crate', dropsPerHour: 3.6 },
+                ],
+            },
+        });
+
+        test('come off what an item costs, sold at the bid after tax and a crate as its contents', async () => {
+            game.profitExtra = bonusProfit();
+            const routes = await buildCollectionRoutes();
+            const craft = routes.craft[0];
+            // Per item made: 36 × 1.5 / 360 essence, 3.6 × 1.5 / 360 crates
+            const essence = 0.15;
+            const crates = 0.015;
+            expect(craft.yields.get('/items/milking_essence')).toBeCloseTo(essence, 9);
+            expect(craft.yields.get('/items/small_artisans_crate')).toBeCloseTo(crates, 9);
+            const crateValue = 0.96 * (3 * 13_700 + 0.5 * 21_000 + 0.2 * 13_350);
+            const perItem = essence * 0.96 * 50 + crates * crateValue;
+            const counts = new Map([['/items/cheese', 5]]);
+            const plain = evaluateOption('/items/cheese', counts, { ...craft, yields: undefined, kept: undefined });
+            const option = evaluateOption('/items/cheese', counts, craft);
+            expect(option.units).toBe(plain.units);
+            expect(plain.gold).toBeCloseTo(plain.units * 4, 9);
+            expect(option.gold).toBeCloseTo(plain.units * (4 - perItem), 6);
+            // The crate's contents are acquired, so they count toward their own collections
+            expect(option.credits.get('/items/star_fragment')).toBeCloseTo(option.units * crates * 3, 9);
+            expect(option.sold.get('/items/milking_essence')).toBeCloseTo(option.units * essence, 9);
+        });
+
+        test('no bonus drop: the route is the make cost alone', async () => {
+            const [craft] = (await buildCollectionRoutes()).craft;
+            expect(craft.yields).toBeUndefined();
+            expect(craft.unitCost).toBe(4);
+        });
+
+        test('a bonus drop nobody prices leaves the route out of the ranking', async () => {
+            game.profitExtra = {
+                efficiencyMultiplier: 1,
+                bonusRevenue: { bonusDrops: [{ itemHrid: '/items/unpriced_thing', dropsPerHour: 36 }] },
+            };
+            const routes = await buildCollectionRoutes();
+            expect(routes.craft[0].partlyUnpriced).toBe(true);
+            expect(
+                indexRoutes(routes)
+                    .get('/items/cheese')
+                    ?.filter((r) => r.route === 'craft') ?? []
+            ).toEqual([]);
+        });
     });
 
     test('a recipe no cheaper and no faster than another is left out', async () => {

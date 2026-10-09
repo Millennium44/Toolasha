@@ -519,6 +519,39 @@ function creditOpened(sink, yields, bonus) {
 }
 
 /**
+ * The bonus drops a production action rolls (its skill essence, an Artisan's Crate), per item made,
+ * as the sale of them comes to: the calculator's `bonusRevenue.bonusDrops`, each priced the way every
+ * other sold output is ({@link saleParts}: the bid after the market tax, a crate nobody bids on as its
+ * contents) and not at the calculator's own profit-mode figure. The rolls repeat with efficiency, so
+ * they are scaled by it, then divided by the items made an hour.
+ * @param {Object|null} profit - A `calculateProfit` result
+ * @param {(hrid: string) => Array<Object>|null} sell - {@link saleParts}
+ * @returns {{yields: Map, kept: Map, bonus: Set, coins: number, partlyUnpriced: boolean}|null} Per item made;
+ *   null when the action rolls no bonus drop
+ */
+export function craftBonus(profit, sell) {
+    const drops = profit?.bonusRevenue?.bonusDrops;
+    const perHour = Number(profit?.totalItemsPerHour);
+    if (!Array.isArray(drops) || drops.length === 0 || !(perHour > 0)) return null;
+    const efficiency = Number(profit.efficiencyMultiplier) > 0 ? Number(profit.efficiencyMultiplier) : 1;
+    const sink = saleSink();
+    const yields = new Map();
+    const bonus = new Set();
+    let partlyUnpriced = false;
+    for (const drop of drops) {
+        const perItem = ((Number(drop?.dropsPerHour) || 0) * efficiency) / perHour;
+        if (!drop?.itemHrid || SKIP_ITEMS.has(drop.itemHrid) || !(perItem > 0)) continue;
+        yields.set(drop.itemHrid, (yields.get(drop.itemHrid) || 0) + perItem);
+        bonus.add(drop.itemHrid);
+        if (!sink.add(sell(drop.itemHrid), perItem, true)) partlyUnpriced = true;
+    }
+    if (yields.size === 0) return null;
+    // A crate opened to sell its contents acquired them: they count toward their own collections
+    creditOpened(sink, yields, bonus);
+    return { yields, kept: sink.kept, bonus, coins: sink.coins, partlyUnpriced };
+}
+
+/**
  * What a decompose chain's terminals come to as they are sold, per source.
  * @param {Iterable<{itemHrid: string, expected: number, value: number|null}>} terminals
  * @param {(hrid: string) => Array<Object>|null} sell - {@link saleParts}
@@ -565,6 +598,30 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         const info = getItemPriceInfo(hrid, { mode: 'ask', side: 'buy', marketQuote: true });
         if (!info || info.estimated || !['book', 'custom'].includes(info.source)) return null;
         return info.price > 0 ? info.price : null;
+    };
+
+    // Every output a route yields besides its target is sold. A crate nobody bids on is opened and
+    // its contents sold
+    const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
+    const isContainer = (h) => Array.isArray(containerDrops(h)) && containerDrops(h).length > 0;
+    const salePrices = new Map();
+    const saleOf = (hrid) => {
+        // Coins are worth their face, untaxed
+        if (hrid === COIN_HRID) return 1;
+        if (!salePrices.has(hrid)) salePrices.set(hrid, realizedSalePrice(hrid, isContainer));
+        return salePrices.get(hrid);
+    };
+    const sales = new Map();
+    const sell = (hrid) => {
+        if (!sales.has(hrid)) sales.set(hrid, saleParts(hrid, { saleOf, containerDrops }));
+        return sales.get(hrid);
+    };
+    const crateValues = new Map();
+    const containerValue = (hrid) => {
+        if (!crateValues.has(hrid)) {
+            crateValues.set(hrid, untaxedContainerValue(hrid, { containerDrops, priceOf: saleOf }));
+        }
+        return crateValues.get(hrid);
     };
 
     const craft = [];
@@ -621,6 +678,7 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     seconds: 3600 / perHour,
                     batch,
                     baseCount,
+                    bonus: craftBonus(data, sell),
                 });
             }
             // Every recipe is its own route, so each sort weighs it on its own terms: the cheapest
@@ -633,9 +691,18 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     route: 'craft',
                     itemHrid: hrid,
                     actionHrid: recipe.actionHrid,
-                    unitCost: recipe.cost,
+                    // The essence and Artisan's Crate each completion rolls come off what an item costs
+                    unitCost: recipe.cost - (recipe.bonus?.coins || 0),
                     unitSeconds: recipe.seconds,
                     batch: recipe.batch,
+                    ...(recipe.bonus
+                        ? {
+                              yields: recipe.bonus.yields,
+                              kept: recipe.bonus.kept,
+                              bonus: recipe.bonus.bonus,
+                              partlyUnpriced: recipe.bonus.partlyUnpriced,
+                          }
+                        : {}),
                 });
             }
         } catch (error) {
@@ -691,30 +758,6 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     const isChainable = (hrid) => {
         const details = getItemDetails(hrid);
         return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
-    };
-
-    // Every output a route yields besides its target is sold. A crate nobody bids on is opened and
-    // its contents sold
-    const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
-    const isContainer = (h) => Array.isArray(containerDrops(h)) && containerDrops(h).length > 0;
-    const salePrices = new Map();
-    const saleOf = (hrid) => {
-        // Coins are worth their face, untaxed
-        if (hrid === COIN_HRID) return 1;
-        if (!salePrices.has(hrid)) salePrices.set(hrid, realizedSalePrice(hrid, isContainer));
-        return salePrices.get(hrid);
-    };
-    const sales = new Map();
-    const sell = (hrid) => {
-        if (!sales.has(hrid)) sales.set(hrid, saleParts(hrid, { saleOf, containerDrops }));
-        return sales.get(hrid);
-    };
-    const crateValues = new Map();
-    const containerValue = (hrid) => {
-        if (!crateValues.has(hrid)) {
-            crateValues.set(hrid, untaxedContainerValue(hrid, { containerDrops, priceOf: saleOf }));
-        }
-        return crateValues.get(hrid);
     };
 
     const sources = [];
@@ -794,16 +837,34 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 const perSource = recipe.batch / recipe.baseCount;
                 const withSource = new Map(yields);
                 withSource.set(hrid, (withSource.get(hrid) || 0) + perSource);
+                // The bonus drops the crafting rolls, per source made, are credited and sold too
+                const craftBonusDrops = recipe.bonus;
+                const bonusWithCraft = craftBonusDrops ? new Set([...bonus, ...craftBonusDrops.bonus]) : bonus;
+                if (craftBonusDrops) {
+                    for (const [bonusHrid, expected] of craftBonusDrops.yields) {
+                        withSource.set(bonusHrid, (withSource.get(bonusHrid) || 0) + expected * perSource);
+                    }
+                }
                 // The decompose eats one source per unit of the run; the Gourmet copies beyond it are
                 // made and paid for too, and nothing else would sell them. They are sold like any output
                 const leftover = perSource - 1;
                 let keptWithLeftover = kept;
+                if (craftBonusDrops) {
+                    keptWithLeftover = new Map(kept);
+                    for (const [keptHrid, entry] of craftBonusDrops.kept) {
+                        const have = keptWithLeftover.get(keptHrid);
+                        keptWithLeftover.set(keptHrid, {
+                            perSource: (have?.perSource || 0) + entry.perSource * perSource,
+                            unit: entry.unit,
+                        });
+                    }
+                }
                 let leftoverUnpriced = false;
                 let leftoverCoins = 0;
                 if (leftover > 1e-9) {
                     const extra = saleSink();
                     if (extra.add(sell(hrid), leftover)) {
-                        keptWithLeftover = new Map(kept);
+                        keptWithLeftover = new Map(keptWithLeftover);
                         for (const [keptHrid, entry] of extra.kept) {
                             const have = keptWithLeftover.get(keptHrid);
                             keptWithLeftover.set(keptHrid, {
@@ -825,8 +886,14 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     batch: wholeActionsBatch(recipe.baseCount, bulk),
                     yields: withSource,
                     kept: keptWithLeftover,
-                    partlyUnpriced: shared.partlyUnpriced || leftoverUnpriced,
-                    cost: recipe.cost * perSource + overheadCost - leftoverCoins,
+                    bonus: bonusWithCraft,
+                    partlyUnpriced:
+                        shared.partlyUnpriced || leftoverUnpriced || Boolean(craftBonusDrops?.partlyUnpriced),
+                    cost:
+                        recipe.cost * perSource +
+                        overheadCost -
+                        leftoverCoins -
+                        (craftBonusDrops?.coins || 0) * perSource,
                     seconds: chain.seconds + recipe.seconds * perSource,
                 });
             }
