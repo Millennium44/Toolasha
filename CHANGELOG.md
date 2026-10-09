@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The optional instead-of-buying tooltip line no longer stalls the first hover of an item with many sources (it fills in a moment later), refreshes on the hourly market value update and when you change teas or gear, and now also covers Alchemy Essence and Artisan's Crates.
 
+### Decompose chain picks the best setup for the whole chain
+
+- Chain/hr in the Marketplace sort and Alchemy Best Items now chooses every step's catalyst and tea for the whole chain's gold per hour instead of step by step, so it never reads lower than before and is often higher; the calculation also runs several times faster.
+
 ### Gourmet leftovers and untaxed Cowbells
 
 - The collection optimizer now sells the extra Gourmet copies a craft-then-decompose route makes, so those routes no longer read too expensive; with the personal-use sell-tax toggle on, Cowbells inside bonus containers are valued before tax too.
