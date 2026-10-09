@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Tooltip: cheaper by alchemy than buying
 
 - An optional tooltip line (off by default) names the alchemy route that gets an item cheaper than buying it, such as decomposing a piece of gear for an essence, counting other outputs at what selling them nets (or your keep marks) and, if you set a gold rate, your time.
+- Alchemy profit no longer gives a no-tea setup the level boost of the Alchemy Tea you have slotted, which made under-level decompose, transmute and coinify setups look likelier to succeed than they are.
 
 ### Collection optimizer compares more routes
 
