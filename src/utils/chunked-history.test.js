@@ -1114,6 +1114,44 @@ describe('a deleted entry is not handed back by the next pull', () => {
     });
 });
 
+describe('clearing under a changed identity', () => {
+    test('tombstones the earlier identity too, so an old-identity store honors the clear', async () => {
+        const build2 = (identityOf, extra = {}) =>
+            createChunkedHistory({
+                storeName: 'testStore',
+                prefix: 'rec',
+                legacyKey: (charId) => `legacy_${charId}`,
+                groupOf: (point) => timeChunkId(point?.t, 'month'),
+                compare: (a, b) => a.t - b.t,
+                identityOf,
+                label: 'Test',
+                ...extra,
+            });
+        const points = [at(2026, 6, 1), at(2026, 6, 2)];
+
+        const next = build2((point) => `new:${point.t}`, {
+            legacyIdentitiesOf: (point) => [String(point.t)],
+            revisionOf: (point) => point.t,
+        });
+        await next.save('c1', points);
+        expect(await next.clear('c1')).toBe(true);
+        const stones = storageMock.store.get('recTomb_c1');
+        for (const point of points) {
+            expect(stones[`new:${point.t}`]).toBeDefined();
+            expect(stones[String(point.t)]).toMatchObject({ bulk: true, rev: point.t });
+        }
+
+        // An old-build store keyed by the earlier identity drops its copies
+        const tombs = JSON.parse(JSON.stringify(storageMock.store.get('recTomb_c1')));
+        restoreDisk([
+            ['rec_c1_2026-06', points],
+            ['recTomb_c1', tombs],
+        ]);
+        const old = build2((point) => String(point.t), { revisionOf: (point) => point.t });
+        expect(await readBack(old)).toEqual([]);
+    });
+});
+
 describe('a copy touched since the deletion keeps the entry', () => {
     /*
      * The loot log's live session: `endTime` and `actionCount` are rewritten

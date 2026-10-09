@@ -1750,7 +1750,11 @@ class ChunkedHistory {
             if (id === undefined || id === null) continue;
             // `bulk`, so the mass-delete refusal lets it through on the other
             // device: emptying the record is precisely what the user asked for
-            stones[id] = this._stoneFor(entry, at, true);
+            const stone = this._stoneFor(entry, at, true);
+            stones[id] = stone;
+            // Under the earlier identity too, as `_recordDeletions` does, so a device on the
+            // earlier build drops its own copy instead of uploading it again
+            for (const legacy of this._legacyIdentities(entry, id)) stones[legacy] = { ...stone };
         }
         ageTombstones(stones);
         if (Object.keys(stones).length > 0) await this._writeTombs(charId, stones);
