@@ -51,6 +51,8 @@ class InventoryCategoryTotals {
         this.itemsUpdatedHandler = null;
         this.itemsUpdatedDebounceTimer = null;
         this.unwatchBadgeMode = null;
+        this.tabClickHandler = null;
+        this.tabSwitchDebounceTimer = null;
     }
 
     initialize() {
@@ -94,17 +96,23 @@ class InventoryCategoryTotals {
         // schedules the totals off the freshly written attributes.
         this.itemsUpdatedHandler = () => {
             clearTimeout(this.itemsUpdatedDebounceTimer);
-            this.itemsUpdatedDebounceTimer = setTimeout(() => {
-                inventoryBadgeManager.invalidateCache();
-                Promise.resolve(inventoryBadgeManager.renderAllBadges?.()).catch((error) =>
-                    console.error('[Inventory Category Totals] Re-pricing after an inventory change failed:', error)
-                );
-                // Still scheduled directly: a render that bails on its cooldown
-                // or on a closed inventory must not leave the label unwritten.
-                this.scheduleUpdate();
-            }, ITEMS_UPDATED_DEBOUNCE_MS);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => this.repriceAndSchedule(), ITEMS_UPDATED_DEBOUNCE_MS);
         };
         dataManager.on('items_updated', this.itemsUpdatedHandler);
+
+        // A native inventory tab switch shows a panel that was never totalled, and the only tab
+        // listener otherwise lives in Inventory Sort, which may be off. Same structural test it
+        // uses (role="tab" inside the inventory, not a class name or label), capture phase because
+        // the game stops propagation. With Sort on this runs alongside its own pass; both only
+        // re-price and re-sum, so the overlap is harmless (the badge manager's cooldown
+        // and the pendingUpdate flag coalesce them).
+        this.tabClickHandler = (event) => {
+            const tab = event.target?.closest?.('[role="tab"]');
+            if (!tab || !inventoryBadgeManager.currentInventoryElem?.contains(tab)) return;
+            clearTimeout(this.tabSwitchDebounceTimer);
+            this.tabSwitchDebounceTimer = setTimeout(() => this.repriceAndSchedule(), ITEMS_UPDATED_DEBOUNCE_MS);
+        };
+        document.addEventListener('click', this.tabClickHandler, true);
 
         // The badge mode decides which side an unsorted total is priced on
         // ('alwaysBid' sums bids where every other mode sums asks), so changing
@@ -113,6 +121,19 @@ class InventoryCategoryTotals {
         // Inventory Sort's own listener only fires while that feature is on,
         // and with it off the label kept the side it was drawn with.
         this.unwatchBadgeMode = config.onSettingChange(BADGE_MODE_SETTING, () => this.scheduleUpdate());
+    }
+
+    /**
+     * Re-price every tile, then total. The render writes the values the totals sum.
+     */
+    repriceAndSchedule() {
+        inventoryBadgeManager.invalidateCache();
+        Promise.resolve(inventoryBadgeManager.renderAllBadges?.()).catch((error) =>
+            console.error('[Inventory Category Totals] Re-pricing after an inventory change failed:', error)
+        );
+        // Still scheduled directly: a render that bails on its cooldown
+        // or on a closed inventory must not leave the label unwritten.
+        this.scheduleUpdate();
     }
 
     disable() {
@@ -130,6 +151,13 @@ class InventoryCategoryTotals {
             if (this.itemsUpdatedHandler) {
                 dataManager.off('items_updated', this.itemsUpdatedHandler);
                 this.itemsUpdatedHandler = null;
+            }
+
+            clearTimeout(this.tabSwitchDebounceTimer);
+            this.tabSwitchDebounceTimer = null;
+            if (this.tabClickHandler) {
+                document.removeEventListener('click', this.tabClickHandler, true);
+                this.tabClickHandler = null;
             }
 
             if (this.unwatchBadgeMode) {

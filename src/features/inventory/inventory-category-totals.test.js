@@ -107,6 +107,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    inventoryCategoryTotals.disable();
     vi.useRealTimers();
 });
 
@@ -313,6 +314,46 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
 
         expect(labels['Loots'].querySelector('.mwi-category-total').textContent).toBe('7000');
         expect(staleLabel.querySelector('.mwi-category-total')).toBeNull();
+    });
+
+    test('a native tab click re-totals the newly shown panel without Inventory Sort', async () => {
+        const { root, labels } = drawTabbedInventory();
+        const tab = document.createElement('button');
+        tab.setAttribute('role', 'tab');
+        tab.innerHTML = '<svg><use href="/static/misc_sprite.svg#anything"></use></svg>';
+        root.prepend(tab);
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.initialize();
+
+        // Keep the tiles' values as drawn: the mock render would reprice them from an empty book
+        badgeManagerMock.renderAllBadges.mockImplementationOnce(async () => {});
+        tab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        await vi.runAllTimersAsync();
+
+        expect(badgeManagerMock.invalidateCache).toHaveBeenCalled();
+        expect(labels['Loots'].querySelector('.mwi-category-total').textContent).toBe('7000');
+    });
+
+    test('a click outside the inventory tabs does nothing, and disable() removes the listener', async () => {
+        const { root } = drawTabbedInventory();
+        const outside = document.createElement('button');
+        outside.setAttribute('role', 'tab');
+        document.body.appendChild(outside);
+        badgeManagerMock.currentInventoryElem = root;
+        inventoryCategoryTotals.initialize();
+
+        outside.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        expect(badgeManagerMock.invalidateCache).not.toHaveBeenCalled();
+
+        inventoryCategoryTotals.disable();
+        const inside = document.createElement('button');
+        inside.setAttribute('role', 'tab');
+        root.appendChild(inside);
+        inside.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        expect(badgeManagerMock.invalidateCache).not.toHaveBeenCalled();
     });
 
     test('skips Currencies by its coin icon, whatever language the label is in', () => {
