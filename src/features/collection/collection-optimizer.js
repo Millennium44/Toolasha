@@ -525,8 +525,9 @@ function soldFromTerminals(terminals, sell, bonus) {
  * ({@link ownUseCompare}: materials and teas at the buy side per item made)
  * and 3600 / items made per hour.
  *
- * Decompose / shop: per item with decompose outputs, the full chain at the
- * calculator's catalyst/tea pick with an input cost of 0
+ * Decompose / shop: per item with decompose outputs, the full chain under each
+ * catalyst/tea setup the calculator weighs (one route apiece, like transmute;
+ * the ranking picks) with an input cost of 0
  * ({@link selfUseDecomposeChain}), its outputs valued at what selling them
  * realizes ({@link realizedSalePrice}), so one walk serves every way of getting
  * the item: bought at the ask, made at the bench, or bought at the shop.
@@ -630,6 +631,35 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
         }
         return decomposeResults.get(hrid);
     };
+    // Every catalyst/tea setup the calculator weighs for a decompose, not only its single pick: the
+    // optimizer pays the ask and ranks by gold (or time) per point, so the best taxed profit per hour
+    // can be the wrong setup here. Each setup is its own route (the way {@link transmuteSetups} offers
+    // transmutes); the steps below the top item run under the same setup where the calculator lists it
+    const candidateLists = new Map();
+    const candidatesOf = (hrid) => {
+        if (!candidateLists.has(hrid)) {
+            let list = [];
+            try {
+                list = alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? [];
+            } catch (error) {
+                console.error('[CollectionOptimizer] Decompose setups failed for', hrid, error);
+            }
+            candidateLists.set(hrid, list);
+        }
+        return candidateLists.get(hrid);
+    };
+    const sameSetup = (a, b) =>
+        (a?.winningCatalystHrid ?? null) === (b?.winningCatalystHrid ?? null) &&
+        Boolean(a?.winningTeaUsed) === Boolean(b?.winningTeaUsed);
+    const decomposeVariants = (topHrid) => {
+        const listed = candidatesOf(topHrid);
+        if (listed.length === 0) return [{ get: getDecompose, setup: null }];
+        return listed.map((top) => ({
+            get: (hrid) =>
+                hrid === topHrid ? top : (candidatesOf(hrid).find((r) => sameSetup(r, top)) ?? getDecompose(hrid)),
+            setup: { catalystHrid: top.winningCatalystHrid ?? null, tea: Boolean(top.winningTeaUsed) },
+        }));
+    };
     const isChainable = (hrid) => {
         const details = getItemDetails(hrid);
         return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
@@ -663,82 +693,95 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
     for (const [hrid, details] of Object.entries(itemDetailMap)) {
         if (!details?.alchemyDetail?.decomposeItems?.length) continue;
         if (await pause()) return null;
-        const chain = selfUseDecomposeChain(hrid, {
-            getDecompose,
-            getItemDetails,
-            isChainable,
-            priceOf: saleOf,
-            ownUseCost: 0,
-            containerValue,
-        });
-        if (!chain) continue;
+        const seenChains = new Set();
+        for (const variant of decomposeVariants(hrid)) {
+            const chain = selfUseDecomposeChain(hrid, {
+                getDecompose: variant.get,
+                getItemDetails,
+                isChainable,
+                priceOf: saleOf,
+                ownUseCost: 0,
+                containerValue,
+            });
+            if (!chain) continue;
+            // A setup that comes out the same as another (no tea to drink, say) is offered once
+            const fingerprint = [
+                chain.seconds,
+                chain.overheadCost,
+                chain.partlyUnpriced,
+                ...[...chain.collected, ...chain.terminals].map((t) => `${t.itemHrid}:${t.expected}:${t.value}`),
+            ].join('|');
+            if (seenChains.has(fingerprint)) continue;
+            seenChains.add(fingerprint);
 
-        // A piece cut short by a cycle is listed as gear and as kept; it is one piece
-        const yields = new Map();
-        for (const { itemHrid, expected } of [...chain.collected, ...chain.terminals]) {
-            if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
-            yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
-        }
-        if (yields.size === 0) continue;
-        // The alchemy-wide bonus drops each step rolls: credited, never a target
-        const bonus = new Set();
-        for (const step of chain.steps) {
-            for (const drop of getDecompose(step.itemHrid)?.dropRevenues || []) {
-                if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
+            // A piece cut short by a cycle is listed as gear and as kept; it is one piece
+            const yields = new Map();
+            for (const { itemHrid, expected } of [...chain.collected, ...chain.terminals]) {
+                if (SKIP_ITEMS.has(itemHrid) || !(expected > 0)) continue;
+                yields.set(itemHrid, Math.max(yields.get(itemHrid) || 0, expected));
             }
-        }
-        const sold = soldFromTerminals(chain.terminals, sell, bonus);
-        // A crate opened to sell its contents acquired them: they count toward their own collections
-        creditOpened(sold, yields, bonus);
-        const kept = sold.kept;
-        // Coins a crate opened on the way pays back come off every way of running the chain
-        const overheadCost = chain.overheadCost - sold.coins;
-        // One alchemy action eats `bulkMultiplier` sources, whole
-        const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
-        const shared = {
-            sourceHrid: hrid,
-            batch: bulk,
-            seconds: chain.seconds,
-            yields,
-            kept,
-            bonus,
-            partlyUnpriced: chain.partlyUnpriced,
-        };
+            if (yields.size === 0) continue;
+            // The alchemy-wide bonus drops each step rolls: credited, never a target
+            const bonus = new Set();
+            for (const step of chain.steps) {
+                for (const drop of variant.get(step.itemHrid)?.dropRevenues || []) {
+                    if (drop?.itemHrid && (drop.isEssence || drop.isRare)) bonus.add(drop.itemHrid);
+                }
+            }
+            const sold = soldFromTerminals(chain.terminals, sell, bonus);
+            // A crate opened to sell its contents acquired them: they count toward their own collections
+            creditOpened(sold, yields, bonus);
+            const kept = sold.kept;
+            // Coins a crate opened on the way pays back come off every way of running the chain
+            const overheadCost = chain.overheadCost - sold.coins;
+            // One alchemy action eats `bulkMultiplier` sources, whole
+            const bulk = Math.max(1, Math.floor(Number(details.alchemyDetail.bulkMultiplier)) || 1);
+            const shared = {
+                sourceHrid: hrid,
+                batch: bulk,
+                seconds: chain.seconds,
+                yields,
+                kept,
+                bonus,
+                partlyUnpriced: chain.partlyUnpriced,
+                ...(variant.setup ? { setup: variant.setup } : {}),
+            };
 
-        // Bought sources are not collected; a crafted one is, and its making takes time — two
-        // routes, each priced and timed for how the source is actually got
-        const buy = buyableQuote(hrid);
-        if (buy > 0) {
-            sources.push({
-                ...shared,
-                route: 'decompose',
-                cost: buy + overheadCost,
-                purchase: { hrid, ask: buy },
-            });
-        }
-        for (const recipe of makes.get(hrid) || []) {
-            if (!(recipe.cost > 0)) continue;
-            const withSource = new Map(yields);
-            withSource.set(hrid, (withSource.get(hrid) || 0) + 1);
-            sources.push({
-                ...shared,
-                route: 'craftDecompose',
-                actionHrid: recipe.actionHrid,
-                yields: withSource,
-                cost: recipe.cost + overheadCost,
-                seconds: chain.seconds + recipe.seconds,
-            });
-        }
-        // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
-        const offer = getShopCoinOnlyCost(hrid);
-        if (offer?.coins > 0) {
-            const units = Math.max(1, Math.floor(Number(offer.units)) || 1);
-            sources.push({
-                ...shared,
-                route: 'shop',
-                batch: leastCommonMultiple(units, bulk),
-                cost: offer.coins / units + overheadCost,
-            });
+            // Bought sources are not collected; a crafted one is, and its making takes time — two
+            // routes, each priced and timed for how the source is actually got
+            const buy = buyableQuote(hrid);
+            if (buy > 0) {
+                sources.push({
+                    ...shared,
+                    route: 'decompose',
+                    cost: buy + overheadCost,
+                    purchase: { hrid, ask: buy },
+                });
+            }
+            for (const recipe of makes.get(hrid) || []) {
+                if (!(recipe.cost > 0)) continue;
+                const withSource = new Map(yields);
+                withSource.set(hrid, (withSource.get(hrid) || 0) + 1);
+                sources.push({
+                    ...shared,
+                    route: 'craftDecompose',
+                    actionHrid: recipe.actionHrid,
+                    yields: withSource,
+                    cost: recipe.cost + overheadCost,
+                    seconds: chain.seconds + recipe.seconds,
+                });
+            }
+            // A bundle is bought whole and decomposed in whole actions: the smallest run that is both
+            const offer = getShopCoinOnlyCost(hrid);
+            if (offer?.coins > 0) {
+                const units = Math.max(1, Math.floor(Number(offer.units)) || 1);
+                sources.push({
+                    ...shared,
+                    route: 'shop',
+                    batch: leastCommonMultiple(units, bulk),
+                    cost: offer.coins / units + overheadCost,
+                });
+            }
         }
     }
     if (cancelled()) return null;

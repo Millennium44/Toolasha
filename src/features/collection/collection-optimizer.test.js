@@ -22,6 +22,8 @@ const game = vi.hoisted(() => ({
     actionDetails: null,
     /** The drinks the resolved action context holds (loadout snapshot, out-of-stock removed) */
     drinks: [],
+    /** Setups the calculator weighs for a decompose, as overrides of its result; empty: only its pick */
+    decomposeSetups: [],
 }));
 /** Per-character storage as the character-key helpers see it: `${characterId}:${base}` → value */
 const scoped = vi.hoisted(() => ({ values: new Map(), gate: null }));
@@ -294,6 +296,31 @@ const amberTransmute = (hrid, setup = {}) => ({
     ],
     ...setup,
 });
+const decomposeResult = (hrid, setup = {}) =>
+    RATES[hrid] === undefined
+        ? null
+        : {
+              itemHrid: hrid,
+              actionsPerHour: 100,
+              successRate: RATES[hrid],
+              requirementCosts: [
+                  { itemHrid: hrid, count: 1, price: BUY[hrid] },
+                  ...(OVERHEAD[hrid]
+                      ? [
+                            {
+                                itemHrid: '/items/coin',
+                                count: OVERHEAD[hrid].coin,
+                                costPerAction: OVERHEAD[hrid].coin,
+                            },
+                        ]
+                      : []),
+              ],
+              catalystCostPerHour: OVERHEAD[hrid] ? OVERHEAD[hrid].catalystPerSuccess * RATES[hrid] * 100 : 0,
+              totalTeaCostPerHour: 0,
+              // The alchemy-wide bonus drop every action rolls
+              dropRevenues: [{ itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 }],
+              ...setup,
+          };
 vi.mock('../market/alchemy-profit-calculator.js', () => ({
     default: {
         calculateTransmuteProfit: (hrid) => (hrid !== '/items/amber' || game.noTransmute ? null : amberTransmute(hrid)),
@@ -301,33 +328,10 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateCandidateResults: (type, hrid) =>
             type === 'transmute' && hrid === '/items/amber' && !game.noTransmute
                 ? game.transmuteSetups.map((setup) => amberTransmute(hrid, setup))
-                : [],
-        calculateDecomposeProfit: (hrid) =>
-            RATES[hrid] === undefined
-                ? null
-                : {
-                      itemHrid: hrid,
-                      actionsPerHour: 100,
-                      successRate: RATES[hrid],
-                      requirementCosts: [
-                          { itemHrid: hrid, count: 1, price: BUY[hrid] },
-                          ...(OVERHEAD[hrid]
-                              ? [
-                                    {
-                                        itemHrid: '/items/coin',
-                                        count: OVERHEAD[hrid].coin,
-                                        costPerAction: OVERHEAD[hrid].coin,
-                                    },
-                                ]
-                              : []),
-                      ],
-                      catalystCostPerHour: OVERHEAD[hrid] ? OVERHEAD[hrid].catalystPerSuccess * RATES[hrid] * 100 : 0,
-                      totalTeaCostPerHour: 0,
-                      // The alchemy-wide bonus drop every action rolls
-                      dropRevenues: [
-                          { itemHrid: '/items/alchemy_essence', isEssence: true, dropsPerHour: 10, price: 0 },
-                      ],
-                  },
+                : type === 'decompose'
+                  ? game.decomposeSetups.map((setup) => decomposeResult(hrid, setup)).filter(Boolean)
+                  : [],
+        calculateDecomposeProfit: (hrid) => decomposeResult(hrid),
     },
 }));
 
@@ -442,6 +446,7 @@ beforeEach(() => {
     game.noTransmute = false;
     game.milkingLevel = 10;
     game.drinks = [];
+    game.decomposeSetups = [];
     game.unpricedTea = false;
     game.crateDrop = false;
     game.transmuteSetups = [];
@@ -742,6 +747,31 @@ describe('transmute routes', () => {
         // Fastest compares the same routes on time per point
         const [fastest] = bestOptions(counts, index, { sort: 'fastest' });
         expect(fastest.secondsPerPoint).toBeLessThanOrEqual(typeSpecific.secondsPerPoint);
+    });
+
+    test('every setup the calculator weighs for a decompose is a route; identical setups are offered once', async () => {
+        // The calculator's pick is no catalyst. Prime costs 9,000 an hour of catalyst on top
+        game.decomposeSetups = [
+            {},
+            { catalystCostPerHour: 9000, winningCatalystHrid: '/items/prime_catalyst', winningTeaUsed: true },
+            // No tea to drink: the same chain as the first, offered once
+            { winningTeaUsed: false },
+        ];
+        const routes = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'decompose' && s.sourceHrid === '/items/umbral_hood'
+        );
+        expect(routes.map((r) => r.setup)).toEqual([
+            { catalystHrid: null, tea: false },
+            { catalystHrid: '/items/prime_catalyst', tea: true },
+        ]);
+        expect(routes[1].cost).toBeGreaterThan(routes[0].cost);
+        // Only the calculator's pick when it lists no setups: no setup to name
+        game.decomposeSetups = [];
+        const single = (await buildCollectionRoutes()).sources.filter(
+            (s) => s.route === 'decompose' && s.sourceHrid === '/items/umbral_hood'
+        );
+        expect(single).toHaveLength(1);
+        expect(single[0].setup).toBeUndefined();
     });
 
     test('the row says which catalyst and teas the transmute uses', async () => {
