@@ -142,6 +142,19 @@ describe('a write folds into the session another tab or device stored', () => {
         expect(disk.keys[key].roster.map((member) => member.name)).toEqual(['Alice', 'Bob']);
     });
 
+    test('a fold still in flight from before a recapture does not hand the old captures to the new session', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const before = s._sessionGeneration || 0;
+        const old = { ...s.session };
+
+        s.recapture(NOW + 1000);
+        // The earlier write's fold lands now and tries to adopt the discarded session
+        s._adoptStored(sessionStorageKey('Cats'), old, before);
+
+        expect(s.session.players).toEqual({});
+    });
+
     test('a recapture is written as it stands, not folded back into the old captures', () => {
         const s = session(['Alice', 'Bob']);
         s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });

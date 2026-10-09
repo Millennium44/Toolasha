@@ -1307,6 +1307,10 @@ class GuildTrialAbilities {
     _persist({ replace = false } = {}) {
         if (!this.session) return;
         const key = sessionStorageKey(this.guildName, this.characterId);
+        // A replacement starts a new generation: a fold already in flight for the session it
+        // replaced must not hand that session's captures to the fresh one
+        if (replace) this._sessionGeneration = (this._sessionGeneration || 0) + 1;
+        const generation = this._sessionGeneration || 0;
         const fold = replace
             ? undefined
             : (stored, value) => {
@@ -1324,7 +1328,7 @@ class GuildTrialAbilities {
                       ...merged,
                       completedAt: value.completedAt ?? null,
                   };
-                  this._adoptStored(key, session);
+                  this._adoptStored(key, session, generation);
                   return { ...session, roster: value.roster, trialKey: value.trialKey };
               };
         storage
@@ -1352,10 +1356,12 @@ class GuildTrialAbilities {
      * since is somebody else's, and the stored copy stays on disk for its read.
      * @param {string} key - The key the write went to
      * @param {Object} stored - The folded session, roster and trial key removed
+     * @param {number} [generation] - The session generation the write started under
      * @returns {void}
      */
-    _adoptStored(key, stored) {
+    _adoptStored(key, stored, generation = this._sessionGeneration || 0) {
         if (!this.session || key !== sessionStorageKey(this.guildName, this.characterId)) return;
+        if (generation !== (this._sessionGeneration || 0)) return;
         if (Math.abs(this.session.startedAt - stored.startedAt) > SESSION_MAX_AGE_MS) return;
         const completedAt = this.session.completedAt;
         this.session = { ...mergeSessions(stored, this.session), completedAt };
