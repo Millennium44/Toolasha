@@ -148,7 +148,7 @@ describe('another tab', () => {
 
         otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
         await settle();
-        expect(chip.textContent).toBe('☑ Kept for self-use');
+        expect(chip.textContent).toBe('☑ Kept (K)');
         chip.remove();
     });
 

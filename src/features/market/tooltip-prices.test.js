@@ -13,6 +13,7 @@ const settings = vi.hoisted(() => ({
     hideInEnhanceSelector: false,
     loadoutMarksEnabled: true,
     selfUseAlchemy: false,
+    keepChip: true,
     insteadOfBuying: false,
     patientTickBuy: false,
     patientTickSell: false,
@@ -34,6 +35,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_hideInEnhanceSelector') return settings.hideInEnhanceSelector;
             if (id === 'itemTooltip_loadoutMarks') return settings.loadoutMarksEnabled;
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
+            if (id === 'itemTooltip_selfUseKeepChip') return settings.keepChip;
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
             if (id === 'itemTooltip_alchemyInsteadGoldPerHour') return 0;
             return true;
@@ -42,6 +44,12 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
             if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
             return fallback;
+        },
+        onSettingChange: (id, cb) => {
+            (settings.listeners ||= {})[id] = [...(settings.listeners?.[id] || []), cb];
+            return () => {
+                settings.listeners[id] = settings.listeners[id].filter((c) => c !== cb);
+            };
         },
         COLOR_TOOLTIP_INFO: '#abc',
         COLOR_TEXT_SECONDARY: '#999',
@@ -279,6 +287,7 @@ beforeEach(async () => {
     settings.hideInEnhanceSelector = false;
     settings.loadoutMarksEnabled = true;
     settings.selfUseAlchemy = false;
+    settings.keepChip = true;
     settings.insteadOfBuying = false;
     alchemyState.profits = {};
     alchemyState.candidates = {};
@@ -1231,24 +1240,78 @@ describe('keep for self-use chip', () => {
         expect(chip?.getAttribute('data-item-hrid')).toBe('/items/frenzy');
     });
 
+    test('turning the setting off removes a chip already drawn', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).not.toBeNull();
+        settings.keepChip = false;
+        for (const cb of settings.listeners?.itemTooltip_selfUseKeepChip || []) cb(false);
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+
+    test('a chip switched off while the keep list is still loading is not drawn', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        // Off before the pending read settles
+        settings.keepChip = false;
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+
     test('an alchemy output gets the chip, and K flips its mark', async () => {
         settings.selfUseAlchemy = true;
         const el = itemTooltip('Frenzy');
         observerState.handler(el);
         await settleLong();
         const chip = el.querySelector('.toolasha-selfuse-keep-chip');
-        expect(chip?.textContent).toBe('☐ Keep for self-use');
+        expect(chip?.textContent).toBe('☐ Keep (K)');
         expect(chip.getAttribute('data-item-hrid')).toBe('/items/frenzy');
 
         press('k');
         await settleLong();
         expect(keepState.kept.has('/items/frenzy')).toBe(true);
-        expect(chip.textContent).toBe('☑ Kept for self-use');
+        expect(chip.textContent).toBe('☑ Kept (K)');
 
         press('K');
         await settleLong();
         expect(keepState.kept.has('/items/frenzy')).toBe(false);
-        expect(chip.textContent).toBe('☐ Keep for self-use');
+        expect(chip.textContent).toBe('☐ Keep (K)');
+    });
+
+    test('no chip with the keep-chip setting off, even with the self-use lines on', async () => {
+        settings.selfUseAlchemy = true;
+        settings.keepChip = false;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+
+    test('K is inert with the keep-chip setting off', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).not.toBeNull();
+        settings.keepChip = false;
+        press('k');
+        await settleLong();
+        expect(keepState.kept.size).toBe(0);
+        el.querySelector('.toolasha-selfuse-keep-chip').click();
+        await settleLong();
+        expect(keepState.kept.size).toBe(0);
+    });
+
+    test('the chip is one compact tag with no separate press-K hint', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        const section = el.querySelector('.toolasha-selfuse-keep-chip').parentElement;
+        expect(section.textContent).toBe('☐ Keep (K)');
     });
 
     test('a click on the chip flips the mark too', async () => {

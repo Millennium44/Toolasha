@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Smaller Keep chip with its own switch
+
+- The Keep for self-use chip on tooltips is now a small one-line tag behind its own setting (off by default); marks you already made still count and stay in the keep list in Settings.
+
 ### Sync stops rewinding a tab's own data
 
 - A tab that pulls what its sibling tab just pushed no longer folds the older copy over newer data or asks for a reload, a real pull only locks the keys it wrote instead of the whole store, and listings, trade-ledger days and task weeks pruned on one device stop coming back from the sync gist.

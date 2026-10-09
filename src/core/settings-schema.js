@@ -862,6 +862,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Adds self-use lines to the alternative actions: decompose once, the full decompose chain down to materials (with the gear it collects along the way, for the collection log), and transmuting an item you already hold. An output you mark "Keep for self-use" (press K on its tooltip, or click the chip there) is valued at what you would pay for it under your pricing mode, with no sales tax; every other output at what selling it would bring after tax, so with nothing marked a line reads as "do it and sell the outputs". The decomposed item costs the cheaper of making or buying it, and a held item costs what selling it would bring after tax. The ordinary taxed figures are unchanged.',
             },
+            itemTooltip_selfUseKeepChip: {
+                id: 'itemTooltip_selfUseKeepChip',
+                label: 'Show the Keep for self-use chip on tooltips',
+                type: 'checkbox',
+                default: false,
+                help: 'A small "Keep (K)" tag on the tooltip of an alchemy output, clickable or toggled with the K key, for marking it kept. Needs the self-use lines or the cheaper-routes setting to be on. Marks made earlier still count with this off, and the keep list below can still review and remove them.',
+            },
             itemTooltip_selfUseKeepList: {
                 id: 'itemTooltip_selfUseKeepList',
                 label: 'Self-use keep list (this character)',
