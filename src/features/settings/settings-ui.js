@@ -33,6 +33,9 @@ import ironCowMode, { IRON_COW_SETTINGS, pricingRowsLocked as isPricingRowsLocke
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
 import treasureTracker from '../inventory/treasure-tracker.js';
+// The market bundle's instance at runtime (rollup externals), so a removal here lands in the
+// cache the item tooltip reads
+import selfUseWanted from '../market/self-use-wanted.js';
 import overlayPanel from '../ui/overlay-panel.js';
 import overlayTabButton from '../ui/overlay-tab-button.js';
 import commandPalette from '../ui/command-palette.js';
@@ -295,6 +298,11 @@ class SettingsUI {
 
         this.diagnosticsSection?.destroy();
         this.diagnosticsSection = null;
+
+        // The keep list shows one character's items; the next character must not edit from it.
+        // An open still waiting on its load is called off too.
+        this.selfUseKeepListOpening = (this.selfUseKeepListOpening || 0) + 1;
+        this.closeSelfUseKeepList?.();
 
         this.unwatchPricingSideRows();
 
@@ -569,6 +577,9 @@ class SettingsUI {
                 }
                 if (e.target.dataset.settingId === 'spawnCensusExport') {
                     this.exportSpawnCensus(e.target);
+                }
+                if (e.target.dataset.settingId === 'itemTooltip_selfUseKeepList') {
+                    this.openSelfUseKeepList();
                 }
             }
         });
@@ -3458,6 +3469,143 @@ class SettingsUI {
         // Add to page
         markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
+    }
+
+    /**
+     * Review the current character's self-use keep list: every marked item, each with a
+     * Remove button, and Clear all. Marks are made from item tooltips, not here.
+     * @returns {Promise<HTMLElement|null>} The overlay, null when it could not open
+     */
+    async openSelfUseKeepList() {
+        try {
+            this.closeSelfUseKeepList?.();
+            // Only the latest open draws: two quick presses both await the load, and the
+            // earlier one's modal would otherwise outlive every cleanup
+            this.selfUseKeepListOpening = (this.selfUseKeepListOpening || 0) + 1;
+            const opening = this.selfUseKeepListOpening;
+            // Whose list this is: an action pressed after a switch must not edit the newcomer's
+            const charId = dataManager.getCurrentCharacterId?.() || 'default';
+            const sameCharacter = () => (dataManager.getCurrentCharacterId?.() || 'default') === charId;
+            await selfUseWanted.load();
+            if (opening !== this.selfUseKeepListOpening || !sameCharacter()) return null;
+            this.closeSelfUseKeepList?.();
+
+            const overlay = document.createElement('div');
+            overlay.className = 'toolasha-selfuse-keep-overlay';
+            overlay.style.cssText = `
+                position: fixed; inset: 0; background: rgba(0, 0, 0, 0.8);
+                z-index: ${PANEL_Z_CAP + 1}; display: flex; align-items: center; justify-content: center;
+            `;
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                background: #1a1a1a; border: 2px solid #3a3a3a; border-radius: 8px; padding: 16px;
+                max-width: 420px; width: 90%; max-height: 80%; overflow-y: auto; color: #e0e0e0;
+            `;
+            overlay.appendChild(modal);
+
+            const close = () => {
+                unsubscribe();
+                overlay.remove();
+                if (this.closeSelfUseKeepList === close) this.closeSelfUseKeepList = null;
+            };
+            this.closeSelfUseKeepList = close;
+            /**
+             * Run an edit only while the character the list was opened for is still current.
+             * @param {() => Promise<*>} edit
+             */
+            const guarded = (edit) => {
+                if (!sameCharacter()) {
+                    close();
+                    return;
+                }
+                edit();
+            };
+            const render = () => {
+                if (!sameCharacter()) {
+                    close();
+                    return;
+                }
+                const list = selfUseWanted.getCached();
+                modal.replaceChildren();
+
+                const header = document.createElement('div');
+                header.style.cssText =
+                    'display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;';
+                const title = document.createElement('h3');
+                title.style.margin = '0';
+                title.textContent = `Kept for self-use (${list.length})`;
+                const closeBtn = document.createElement('button');
+                closeBtn.type = 'button';
+                closeBtn.className = 'toolasha-selfuse-keep-close';
+                closeBtn.textContent = '×';
+                closeBtn.style.cssText =
+                    'background:none; border:none; color:#e0e0e0; font-size:24px; cursor:pointer; line-height:1;';
+                closeBtn.addEventListener('click', close);
+                header.append(title, closeBtn);
+                modal.appendChild(header);
+
+                const help = document.createElement('div');
+                help.style.cssText = 'color:#888; font-size:12px; margin-bottom:10px;';
+                help.textContent =
+                    'Self-use alchemy lines value these outputs at what you would pay for them, and sell ' +
+                    'everything else after tax. Mark an item with K on its tooltip.';
+                modal.appendChild(help);
+
+                if (list.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'toolasha-selfuse-keep-empty';
+                    empty.style.cssText = 'color:#aaa; font-style:italic;';
+                    empty.textContent = 'Nothing marked: every output is valued as sold.';
+                    modal.appendChild(empty);
+                    return;
+                }
+
+                const names = list
+                    .map((hrid) => ({ hrid, name: dataManager.getItemDetails?.(hrid)?.name || hrid.split('/').pop() }))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+                for (const { hrid, name } of names) {
+                    const row = document.createElement('div');
+                    row.className = 'toolasha-selfuse-keep-row';
+                    row.dataset.itemHrid = hrid;
+                    row.style.cssText =
+                        'display:flex; justify-content:space-between; align-items:center; padding:3px 0;';
+                    const label = document.createElement('span');
+                    label.textContent = name;
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'toolasha-selfuse-keep-remove';
+                    remove.textContent = 'Remove';
+                    remove.style.cssText =
+                        'background:#5a2a2a; border:1px solid #7a3a3a; border-radius:3px; color:#e0e0e0; ' +
+                        'cursor:pointer; font-size:12px; padding:2px 8px;';
+                    remove.addEventListener('click', () => guarded(() => selfUseWanted.setKept(hrid, false)));
+                    row.append(label, remove);
+                    modal.appendChild(row);
+                }
+
+                const clear = document.createElement('button');
+                clear.type = 'button';
+                clear.className = 'toolasha-selfuse-keep-clear';
+                clear.textContent = 'Clear all';
+                clear.style.cssText =
+                    'margin-top:10px; background:#4a4a4a; border:1px solid #666; border-radius:4px; ' +
+                    'color:#e0e0e0; cursor:pointer; padding:4px 12px;';
+                clear.addEventListener('click', () => guarded(() => selfUseWanted.clear()));
+                modal.appendChild(clear);
+            };
+            const unsubscribe = selfUseWanted.onChange(render);
+            overlay.addEventListener('click', (event) => {
+                if (event.target === overlay) close();
+            });
+            render();
+
+            markToolashaSurface(overlay, 'modal');
+            document.body.appendChild(overlay);
+            return overlay;
+        } catch (error) {
+            console.error('[SettingsUI] Self-use keep list failed to open:', error);
+            return null;
+        }
     }
 
     /**
