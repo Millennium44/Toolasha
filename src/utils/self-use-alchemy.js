@@ -4,9 +4,15 @@
  * Every other alchemy figure in the item tooltip is a seller's: outputs are
  * priced at the sell side minus the market tax, because the question there is
  * "is this worth doing to sell the result". A player filling the collection
- * log, or decomposing gear for materials they will craft with, never sells
- * the outputs — so the tax belongs on neither side, and each output is worth
- * what it would cost to buy instead (the user's pricing mode, buy side).
+ * log, or decomposing gear for materials they will craft with, keeps some
+ * outputs — and a kept output is worth what it would cost to buy instead (the
+ * user's pricing mode, buy side, no tax).
+ *
+ * Which outputs are kept is the caller's `isWanted` (the tooltip's per-character
+ * keep list). A kept output is valued at `priceOf` / `containerValue` (untaxed
+ * buy side); every other output at `sellOf` / `sellContainerValue` (what selling
+ * it realizes, after tax). Without `isWanted` every output is kept — the
+ * collection optimizer relies on that, passing its own sale prices as `priceOf`.
  *
  * Nothing here re-derives alchemy mechanics. Success rate, actions per hour
  * (efficiency included), catalyst and tea spend, coin cost, bulk multiplier
@@ -125,6 +131,26 @@ function bonusDrops(result) {
 }
 
 /**
+ * The price sources one output is valued from: the keeper's (untaxed buy side)
+ * when it is wanted, the seller's (after tax) when it is not.
+ * @param {string} hrid
+ * @param {Object} opts
+ * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price
+ * @param {Function} [opts.containerValue] - A crate's untaxed opened value
+ * @param {(hrid: string) => boolean} [opts.isWanted] - Kept outputs; absent means every output is kept
+ * @param {(hrid: string) => number|null} [opts.sellOf] - What selling one unit realizes, after tax
+ * @param {Function} [opts.sellContainerValue] - A crate's opened value with its contents sold after tax
+ * @returns {{priceOf: (hrid: string) => number|null, containerValue: Function|undefined, kept: boolean,
+ *   marked: boolean}} `marked` is true only for an output a keep list names (never for the
+ *   keep-everything default)
+ */
+export function outputPricing(hrid, { priceOf, containerValue, isWanted, sellOf, sellContainerValue }) {
+    if (typeof isWanted !== 'function') return { priceOf, containerValue, kept: true, marked: false };
+    if (isWanted(hrid)) return { priceOf, containerValue, kept: true, marked: true };
+    return { priceOf: sellOf ?? (() => null), containerValue: sellContainerValue, kept: false, marked: false };
+}
+
+/**
  * What opening a container is worth to someone who keeps the contents: the
  * expected value of its drop table at the untaxed buy side. The calculator's
  * own crate figure (`expectedValueCalculator`) is a seller's — it takes the
@@ -133,6 +159,10 @@ function bonusDrops(result) {
  * A content that is itself a container is valued as opened, the same way; a
  * cycle contributes nothing. Unpriced contents are skipped, so the known
  * subtotal is a lower bound and `partlyUnpriced` carries that fact to callers.
+ *
+ * The walk itself takes no side: handed an after-tax sale price as `priceOf`,
+ * it values a crate whose contents are sold (an unwanted crate, the collection
+ * optimizer's sale figure).
  * @param {string} containerHrid
  * @param {Object} deps
  * @param {(hrid: string) => Array|null} deps.containerDrops - The container's drop table
@@ -200,11 +230,12 @@ function bonusValuePerHour(drop, priceOf, containerValue) {
 }
 
 /**
- * Decompose once, keeping everything it yields.
+ * Decompose once, keeping the wanted outputs and selling the rest.
  *
- * Per hour:
- *   outputs  = Σ base output: count × bulk × successRate × actionsPerHour × buyPrice
- *            + Σ bonus drop: dropsPerHour × buyPrice (crate: its contents at the buy side, untaxed)
+ * Per hour, with `unit` the buy side for a wanted output and its after-tax sale otherwise
+ * ({@link outputPricing}):
+ *   outputs  = Σ base output: count × bulk × successRate × actionsPerHour × unit
+ *            + Σ bonus drop: dropsPerHour × unit (crate: its contents, kept or sold the same way)
  *   cost     = ownUseCost × bulk × actionsPerHour + coin + catalyst + tea (per hour)
  *   net      = outputs − cost;  net per action = net / actionsPerHour
  *
@@ -215,10 +246,15 @@ function bonusValuePerHour(drop, priceOf, containerValue) {
  * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price
  * @param {(hrid: string) => number|{value: number|null, partlyUnpriced?: boolean}|null} [opts.containerValue]
  *   A crate's untaxed opened value
+ * @param {(hrid: string) => boolean} [opts.isWanted] - Kept outputs ({@link outputPricing})
+ * @param {(hrid: string) => number|null} [opts.sellOf] - After-tax sale of an unwanted output
+ * @param {Function} [opts.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @returns {Object|null} `{netPerHour, netPerAction, outputValuePerHour, costPerHour,
- *   actionsPerHour, successRate, unpriced, partlyUnpriced}`, or null when the step cannot run
+ *   actionsPerHour, successRate, unpriced, partlyUnpriced, kept}`, or null when the step cannot run;
+ *   `kept` lists the outputs the keep list names
  */
-export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, containerValue }) {
+export function selfUseDecompose(result, itemDetails, opts) {
+    const { ownUseCost } = opts;
     const basis = alchemyRunBasis(result);
     const outputs = itemDetails?.alchemyDetail?.decomposeItems;
     const cost = usablePrice(ownUseCost);
@@ -226,10 +262,13 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
 
     const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
     const unpriced = [];
+    const kept = new Set();
     let partlyUnpriced = false;
     let outputValuePerHour = 0;
     for (const output of outputs) {
-        const unit = usablePrice(priceOf(output.itemHrid));
+        const pricing = outputPricing(output.itemHrid, opts);
+        if (pricing.marked) kept.add(output.itemHrid);
+        const unit = usablePrice(pricing.priceOf(output.itemHrid));
         if (unit === null) {
             unpriced.push(output.itemHrid);
             continue;
@@ -237,7 +276,9 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
         outputValuePerHour += output.count * bulk * successRate * actionsPerHour * unit;
     }
     for (const drop of bonusDrops(result)) {
-        const value = bonusValuePerHour(drop, priceOf, containerValue);
+        const pricing = outputPricing(drop.itemHrid, opts);
+        if (pricing.marked) kept.add(drop.itemHrid);
+        const value = bonusValuePerHour(drop, pricing.priceOf, pricing.containerValue);
         if (value.value === null) unpriced.push(drop.itemHrid);
         else outputValuePerHour += value.value;
         if (value.partlyUnpriced && value.value !== null) unpriced.push(drop.itemHrid);
@@ -255,18 +296,20 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
         successRate,
         unpriced,
         partlyUnpriced: unpriced.length > 0 || partlyUnpriced,
+        kept: [...kept],
     };
 }
 
 /**
  * Decompose one item, then every piece of gear that yields, down to materials.
  *
- * Only terminal outputs are valued (untaxed, buy side); the gear in between is
- * consumed by the next step and never counted. Per ONE top item, with
+ * Only terminal outputs are valued — a wanted one at the untaxed buy side, any
+ * other at its after-tax sale ({@link outputPricing}); the gear in between is
+ * consumed by the next step and never counted, marked or not. Per ONE top item, with
  * `reach` the expected number of units arriving at a step (1 for the top,
  * then reach × count × successRate for each piece of gear it yields):
- *   terminal value = Σ reach × count × successRate × buyPrice   (base materials)
- *                  + Σ reach × dropsPerHour / unitsPerHour × buyPrice   (bonus drops)
+ *   terminal value = Σ reach × count × successRate × unit   (base materials)
+ *                  + Σ reach × dropsPerHour / unitsPerHour × unit   (bonus drops)
  *   step seconds   = reach × 3600 / unitsPerHour,  unitsPerHour = actionsPerHour × bulk
  *   step spend     = reach × (coin + catalyst + tea per hour) / unitsPerHour
  *   net            = terminal value − ownUseCost(top) − Σ step spend
@@ -284,22 +327,17 @@ export function selfUseDecompose(result, itemDetails, { ownUseCost, priceOf, con
  * @param {number|null} deps.ownUseCost - The top item's own-use cost
  * @param {(hrid: string) => number|{value: number|null, partlyUnpriced?: boolean}|null} [deps.containerValue]
  *   A crate's untaxed opened value
+ * @param {(hrid: string) => boolean} [deps.isWanted] - Kept terminals ({@link outputPricing})
+ * @param {(hrid: string) => number|null} [deps.sellOf] - After-tax sale of an unwanted terminal
+ * @param {Function} [deps.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @param {number} [deps.maxDepth=CHAIN_MAX_DEPTH]
  * @returns {Object|null} `{net, netPerHour, terminalValue, cost, ownUseCost, overheadCost, seconds,
  *   collected: [{itemHrid, expected}], terminals: [{itemHrid, expected, value}], steps, unpriced,
- *   partlyUnpriced, truncated}`, or null
+ *   partlyUnpriced, truncated, kept}`, or null
  *   when the top item cannot be decomposed at all
  */
 export function selfUseDecomposeChain(topHrid, deps) {
-    const {
-        getDecompose,
-        getItemDetails,
-        isChainable,
-        priceOf,
-        ownUseCost,
-        containerValue,
-        maxDepth = CHAIN_MAX_DEPTH,
-    } = deps;
+    const { getDecompose, getItemDetails, isChainable, ownUseCost, maxDepth = CHAIN_MAX_DEPTH } = deps;
     const top = getDecompose(topHrid);
     if (!alchemyRunBasis(top) || !Array.isArray(getItemDetails(topHrid)?.alchemyDetail?.decomposeItems)) {
         return null;
@@ -310,6 +348,7 @@ export function selfUseDecomposeChain(topHrid, deps) {
     let seconds = 0;
     let truncated = false;
     const unpriced = new Set();
+    const kept = new Set();
     const collected = new Map();
     const steps = [];
 
@@ -322,8 +361,13 @@ export function selfUseDecomposeChain(topHrid, deps) {
         entry.value = entry.value === null || value === null ? null : entry.value + value;
         terminals.set(hrid, entry);
     };
+    const pricingFor = (hrid) => {
+        const pricing = outputPricing(hrid, deps);
+        if (pricing.marked) kept.add(hrid);
+        return pricing;
+    };
     const valueTerminal = (hrid, expected) => {
-        const unit = usablePrice(priceOf(hrid));
+        const unit = usablePrice(pricingFor(hrid).priceOf(hrid));
         if (unit === null) unpriced.add(hrid);
         else terminalValue += expected * unit;
         keepTerminal(hrid, expected, unit === null ? null : expected * unit);
@@ -363,7 +407,8 @@ export function selfUseDecomposeChain(topHrid, deps) {
         for (const drop of bonusDrops(result)) {
             const units = Number(drop.dropsPerHour) || 0;
             if (units <= 0) continue;
-            const unit = bonusUnitPrice(drop, priceOf, containerValue);
+            const pricing = pricingFor(drop.itemHrid);
+            const unit = bonusUnitPrice(drop, pricing.priceOf, pricing.containerValue);
             const expected = (reach * units) / unitsPerHour;
             if (unit.value === null) unpriced.add(drop.itemHrid);
             else terminalValue += expected * unit.value;
@@ -393,21 +438,23 @@ export function selfUseDecomposeChain(topHrid, deps) {
         unpriced: [...unpriced],
         partlyUnpriced,
         truncated,
+        kept: [...kept],
     };
 }
 
 /**
- * Transmute an item you already hold, and keep what comes out — versus
- * selling the item instead.
+ * Transmute an item you already hold, keep the wanted outputs and sell the
+ * rest — versus selling the item instead.
  *
  * The input's cost is what selling it would realize (sell-side price after the
- * character-aware tax); the outputs are worth what you would pay for them
- * (buy side, untaxed). A self-return gives the item back, so it is worth the
- * same as the input. Per hour:
+ * character-aware tax); a wanted output is worth what you would pay for it
+ * (buy side, untaxed), any other what selling it realizes (after tax). A
+ * self-return gives the item back, so it is worth the same as the input,
+ * marked or not. Per hour, with `unit` as {@link outputPricing} picks it:
  *   input    = calculatePriceAfterTax(sellPrice)
- *   outputs  = Σ non-self drop: avg(min,max) × bulk × dropRate × successRate × actionsPerHour × buyPrice
+ *   outputs  = Σ non-self drop: avg(min,max) × bulk × dropRate × successRate × actionsPerHour × unit
  *            + Σ self-return:   avg(min,max) × bulk × dropRate × successRate × actionsPerHour × input
- *            + Σ bonus drop:    dropsPerHour × buyPrice
+ *            + Σ bonus drop:    dropsPerHour × unit
  *   cost     = input × bulk × actionsPerHour + coin + catalyst + tea (per hour)
  *   net      = outputs − cost;  net per action = net / actionsPerHour
  *
@@ -418,10 +465,15 @@ export function selfUseDecomposeChain(topHrid, deps) {
  * @param {(hrid: string) => number|null} opts.priceOf - Untaxed buy-side price
  * @param {(hrid: string) => number|{value: number|null, partlyUnpriced?: boolean}|null} [opts.containerValue]
  *   A crate's untaxed opened value
+ * @param {(hrid: string) => boolean} [opts.isWanted] - Kept outputs ({@link outputPricing})
+ * @param {(hrid: string) => number|null} [opts.sellOf] - After-tax sale of an unwanted output
+ * @param {Function} [opts.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @returns {Object|null} `{netPerHour, netPerAction, inputValue, outputValuePerHour, costPerHour,
- *   actionsPerHour, successRate, unpriced, partlyUnpriced}`
+ *   actionsPerHour, successRate, unpriced, partlyUnpriced, kept}` — `kept` lists the outputs the
+ *   keep list names, the self-return aside
  */
-export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, containerValue }) {
+export function selfUseTransmuteHeld(result, itemDetails, opts) {
+    const { sellPrice } = opts;
     const basis = alchemyRunBasis(result);
     const table = itemDetails?.alchemyDetail?.transmuteDropTable;
     const sell = usablePrice(sellPrice);
@@ -431,13 +483,19 @@ export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, 
     const selfHrid = result.itemHrid;
     const { actionsPerHour, bulk, successRate, overheadPerHour } = basis;
     const unpriced = [];
+    const kept = new Set();
     let partlyUnpriced = false;
     let outputValuePerHour = 0;
     for (const drop of table) {
         const average = (Number(drop.minCount) + Number(drop.maxCount)) / 2;
         const units = average * bulk * (Number(drop.dropRate) || 0) * successRate * actionsPerHour;
         if (!(units > 0)) continue;
-        const unit = drop.itemHrid === selfHrid ? inputValue : usablePrice(priceOf(drop.itemHrid));
+        let unit = inputValue;
+        if (drop.itemHrid !== selfHrid) {
+            const pricing = outputPricing(drop.itemHrid, opts);
+            if (pricing.marked) kept.add(drop.itemHrid);
+            unit = usablePrice(pricing.priceOf(drop.itemHrid));
+        }
         if (unit === null) {
             unpriced.push(drop.itemHrid);
             continue;
@@ -445,7 +503,9 @@ export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, 
         outputValuePerHour += units * unit;
     }
     for (const drop of bonusDrops(result)) {
-        const value = bonusValuePerHour(drop, priceOf, containerValue);
+        const pricing = outputPricing(drop.itemHrid, opts);
+        if (pricing.marked) kept.add(drop.itemHrid);
+        const value = bonusValuePerHour(drop, pricing.priceOf, pricing.containerValue);
         if (value.value === null) unpriced.push(drop.itemHrid);
         else outputValuePerHour += value.value;
         if (value.partlyUnpriced && value.value !== null) unpriced.push(drop.itemHrid);
@@ -464,5 +524,6 @@ export function selfUseTransmuteHeld(result, itemDetails, { sellPrice, priceOf, 
         successRate,
         unpriced,
         partlyUnpriced: unpriced.length > 0 || partlyUnpriced,
+        kept: [...kept],
     };
 }

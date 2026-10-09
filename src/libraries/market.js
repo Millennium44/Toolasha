@@ -81,6 +81,7 @@ import dungeonTokenTooltips from '../features/inventory/dungeon-token-tooltips.j
 import dungeonShopPlanner from '../features/inventory/dungeon-shop-planner.js';
 import treasureTracker from '../features/inventory/treasure-tracker.js';
 import tradeLedgerStore from '../features/market/trade-ledger-store.js';
+import selfUseWanted from '../features/market/self-use-wanted.js';
 import tradeLedgerView from '../features/market/trade-ledger-view.js';
 import staleCapitalView from '../features/market/stale-capital-view.js';
 import watchlist, { watchlistPanel, watchItem } from '../features/inventory/watchlist.js';
@@ -152,6 +153,7 @@ toolashaRoot.Market = {
     dungeonTokenTooltips,
     dungeonShopPlanner,
     treasureTracker,
+    selfUseWanted,
     tradeLedgerStore,
     tradeLedgerView,
     staleCapitalView,
