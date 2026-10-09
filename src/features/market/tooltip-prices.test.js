@@ -88,6 +88,17 @@ vi.mock('../../core/data-manager.js', () => {
         },
         '/items/frenzy': { name: 'Frenzy' },
         '/items/puncture': { name: 'Puncture' },
+        // Curd has more alchemy sources than one hover works out itself
+        '/items/curd': { name: 'Curd' },
+        ...Object.fromEntries(
+            [1, 2, 3, 4, 5, 6].map((i) => [
+                `/items/curd_knife_${i}`,
+                {
+                    name: `Curd Knife ${i}`,
+                    alchemyDetail: { decomposeItems: [{ itemHrid: '/items/curd', count: 10 }] },
+                },
+            ])
+        ),
         // Gear that decomposes into more gear, for the chain
         '/items/twin_sword': {
             name: 'Twin Sword',
@@ -1311,6 +1322,64 @@ describe('instead of buying', () => {
         // 50 / (18 × 0.6) = 4.63 a cheese against an ask of 10: 5.37 saved, 1,080 cheese an hour
         expect(section.textContent).toContain('Instead of buying: decompose Cheese Sword — saves 5/unit');
         expect(section.textContent).toContain('5.8K/hr of alchemy');
+    });
+
+    describe('an item with many sources', () => {
+        const knife = (i) => `/items/curd_knife_${i}`;
+        const knifeDecompose = (i) => ({ ...swordDecompose(), itemHrid: knife(i), successRate: 1 });
+        /** Let the background job's slices run */
+        const settleJob = async () => {
+            for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+
+        beforeEach(() => {
+            settings.insteadOfBuying = true;
+            priceState.info['/items/curd'] = { ask: 100, bid: 90 };
+            for (const i of [1, 2, 3, 4, 5, 6]) {
+                // Knife 3 is the cheapest: 10 curd for 30 + 10 × i
+                priceState.info[knife(i)] = { ask: i === 3 ? 30 : 300 + 10 * i, bid: 1 };
+                alchemyState.candidates[`decompose|${knife(i)}`] = [knifeDecompose(i)];
+            }
+        });
+
+        test('the hover places a hidden section and fills it once the routes are known', async () => {
+            const el = itemTooltip('Curd');
+            observerState.handler(el);
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            const placed = el.querySelector('.mwi-alchemy-instead');
+            expect(placed).not.toBeNull();
+            expect(placed.style.display).toBe('none');
+            expect(placed.textContent).toBe('');
+
+            await settleJob();
+            const section = el.querySelector('.mwi-alchemy-instead');
+            expect(section).toBe(placed);
+            expect(section.style.display).toBe('');
+            // 30 / 10 = 3 a curd against an ask of 100
+            expect(section.textContent).toContain('Instead of buying: decompose Curd Knife 3 — saves 97/unit');
+        });
+
+        test('a tooltip that moved on is not filled', async () => {
+            const el = itemTooltip('Curd');
+            observerState.handler(el);
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            const placed = el.querySelector('.mwi-alchemy-instead');
+            // The tooltip is processing another item by the time the routes are known
+            el.dataset.pricesProcessedItem = 'Apple';
+            await settleJob();
+            expect(placed.textContent).toBe('');
+            expect(placed.style.display).toBe('none');
+        });
+
+        test('a placed section with no route behind it is removed', async () => {
+            for (const i of [1, 2, 3, 4, 5, 6]) priceState.info[knife(i)] = { ask: 5000, bid: 1 };
+            const el = itemTooltip('Curd');
+            observerState.handler(el);
+            for (let i = 0; i < 40; i++) await Promise.resolve();
+            expect(el.querySelector('.mwi-alchemy-instead')).not.toBeNull();
+            await settleJob();
+            expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
+        });
     });
 
     test('the setting on draws nothing when buying is cheaper', async () => {

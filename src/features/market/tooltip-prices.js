@@ -56,7 +56,12 @@ import selfUseWanted, {
     installKeepToggle,
     uninstallKeepToggle,
 } from './self-use-wanted.js';
-import { liveAlternatives, stopInsteadListeners, INSTEAD_SETTING } from './alchemy-instead-of-buying.js';
+import {
+    liveAlternatives,
+    settleAlternatives,
+    stopInsteadListeners,
+    INSTEAD_SETTING,
+} from './alchemy-instead-of-buying.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
@@ -797,6 +802,10 @@ class TooltipPrices {
     /**
      * The "Instead of buying" lines: the best alchemy routes to this item that beat its ask.
      * Draws nothing when buying is cheapest.
+     *
+     * An item with many alchemy sources is worked out in the background rather than on the
+     * hover: its section is placed now, empty and hidden, so the line keeps its place among
+     * the others, and filled when the routes are known — unless the tooltip has moved on.
      * @param {Element} tooltipElement
      * @param {string} itemHrid
      * @param {string} itemName - The name this tooltip was processed for
@@ -809,42 +818,89 @@ class TooltipPrices {
             if (tooltipElement.dataset.pricesProcessedItem !== itemName) return;
             const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
             if (!tooltipText || tooltipText.querySelector(`.${INSTEAD_SECTION_CLASS}`)) return;
-            const { targetAsk, alternatives } = liveAlternatives(itemHrid, wanted);
-            if (!alternatives.length) return;
-
-            const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
-            let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
-            for (const alt of alternatives) {
-                const verb = alt.actionType === 'decompose' ? 'decompose' : 'transmute';
-                const atLeast = alt.partlyUnpriced ? '≥' : '';
-                let rate = '';
-                if (alt.savingPerHour !== null) {
-                    rate =
-                        alt.timeCostPerUnit > 0
-                            ? ` (+${formatKMB(alt.savingPerHour)}/hr over your gold rate)`
-                            : ` (${formatKMB(alt.savingPerHour)}/hr of alchemy)`;
-                }
-                html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${INSTEAD_TITLE}">`;
-                html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
-                html += '</div>';
-                const parts = [`${formatKMB(alt.costPerUnit)}/unit vs ${formatKMB(targetAsk)} ask`];
-                if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
-                parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
-                if (alt.kept.length > 0) parts.push(`keeps ${alt.kept.map(nameOf).join(', ')}`);
-                if (alt.partlyUnpriced) parts.push('an output unpriced');
-                html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;
+            const found = liveAlternatives(itemHrid, wanted);
+            if (found.pending) {
+                const placeholder = dom.createStyledDiv(
+                    { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
+                    '',
+                    INSTEAD_SECTION_CLASS
+                );
+                placeholder.style.display = 'none';
+                tooltipText.appendChild(placeholder);
+                // Not awaited: the rest of the tooltip draws without waiting for the routes
+                this.fillInsteadLater(tooltipElement, placeholder, itemHrid, itemName, wanted);
+                return;
             }
-            html += '</div>';
+            if (!found.alternatives.length) return;
             const div = dom.createStyledDiv(
                 { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
                 '',
                 INSTEAD_SECTION_CLASS
             );
-            div.innerHTML = html;
+            div.innerHTML = this.buildInsteadOfBuyingHTML(found.targetAsk, found.alternatives);
             tooltipText.appendChild(div);
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
         }
+    }
+
+    /**
+     * Fill a placed "Instead of buying" section once its routes are worked out.
+     * @param {Element} tooltipElement
+     * @param {Element} section - The hidden section placed on the hover
+     * @param {string} itemHrid
+     * @param {string} itemName - The name this tooltip was processed for
+     * @param {Set<string>} wanted - The keep list the lookup was made with
+     * @returns {Promise<void>}
+     */
+    async fillInsteadLater(tooltipElement, section, itemHrid, itemName, wanted) {
+        try {
+            const { targetAsk, alternatives } = await settleAlternatives(itemHrid, wanted);
+            // A stale section is removed when the tooltip moves to another item
+            if (!section.isConnected || tooltipElement.dataset.pricesProcessedItem !== itemName) return;
+            if (!alternatives.length) {
+                section.remove();
+                return;
+            }
+            section.innerHTML = this.buildInsteadOfBuyingHTML(targetAsk, alternatives);
+            section.style.display = '';
+            dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
+        } catch (error) {
+            console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
+        }
+    }
+
+    /**
+     * The "Instead of buying" section's contents.
+     * @param {number} targetAsk
+     * @param {Array<Object>} alternatives - From `liveAlternatives`, cheapest first
+     * @returns {string}
+     */
+    buildInsteadOfBuyingHTML(targetAsk, alternatives) {
+        const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
+        let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
+        for (const alt of alternatives) {
+            const verb = alt.actionType === 'decompose' ? 'decompose' : 'transmute';
+            const atLeast = alt.partlyUnpriced ? '≥' : '';
+            let rate = '';
+            if (alt.savingPerHour !== null) {
+                rate =
+                    alt.timeCostPerUnit > 0
+                        ? ` (+${formatKMB(alt.savingPerHour)}/hr over your gold rate)`
+                        : ` (${formatKMB(alt.savingPerHour)}/hr of alchemy)`;
+            }
+            html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${INSTEAD_TITLE}">`;
+            html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
+            html += '</div>';
+            const parts = [`${formatKMB(alt.costPerUnit)}/unit vs ${formatKMB(targetAsk)} ask`];
+            if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
+            parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
+            if (alt.kept.length > 0) parts.push(`keeps ${alt.kept.map(nameOf).join(', ')}`);
+            if (alt.partlyUnpriced) parts.push('an output unpriced');
+            html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;
+        }
+        html += '</div>';
+        return html;
     }
 
     /**
