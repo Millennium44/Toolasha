@@ -18,8 +18,8 @@
  * With a gold rate set, the alchemy time is charged at that rate: the line then
  * appears only when the route still beats buying after paying for your time.
  *
- * Results are cached per target for one price snapshot (market fetch, character,
- * keep list, gold rate, five-minute bucket), and the per-source calculator runs
+ * Results are cached per target for one price snapshot (market fetch or price-update
+ * notification, character, keep list, gold rate, five-minute bucket), and the per-source calculator runs
  * are shared across targets in the same snapshot, so a repeat hover reads a map.
  */
 
@@ -179,14 +179,26 @@ export function findAlchemyAlternatives(targetHrid, deps) {
 const candidateCache = new Map();
 const resultCache = new Map();
 let cacheStamp = null;
+/** Bumped on every market price-update notification (a fetch or a burst of order-book patches) */
+let priceGeneration = 0;
+let listeningForPrices = false;
 
 /**
  * The snapshot every cached figure belongs to; a change empties both caches.
  * @returns {string}
  */
 function priceSnapshot() {
+    if (!listeningForPrices && typeof marketAPI?.on === 'function') {
+        // A fresher order-book patch is served by getPrice() without moving the fetch
+        // time; the market's price-update notification is what says a price changed
+        marketAPI.on(() => {
+            priceGeneration += 1;
+        });
+        listeningForPrices = true;
+    }
     return [
         marketAPI?.lastFetchTimestamp ?? '',
+        priceGeneration,
         dataManager.currentCharacterId ?? '',
         Math.floor(Date.now() / CACHE_BUCKET_MS),
     ].join('|');
@@ -205,14 +217,16 @@ export function clearInsteadCache() {
 }
 
 /**
- * A price you could actually trade at, on one side: the book's, never a value-map estimate.
+ * A price you could actually trade at, on one side: the order book's. A value-map
+ * estimate is no listing, and neither is a player's custom price override — a route
+ * costed on either could not be bought at the figure shown.
  * @param {string} hrid
  * @param {'ask'|'bid'} mode
  * @returns {number|null}
  */
 function realPrice(hrid, mode) {
     const info = getItemPriceInfo(hrid, { mode, marketQuote: true });
-    if (info.price === null || info.price === undefined || info.estimated) return null;
+    if (info.price === null || info.price === undefined || info.source !== 'book') return null;
     return info.price;
 }
 
