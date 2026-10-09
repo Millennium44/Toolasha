@@ -53,6 +53,40 @@ const RECORD_PREFIX = 'lootLogRec';
  */
 const entryChunkId = (entry) => timeChunkId(Date.parse(entry?.startTime), 'hour');
 
+/**
+ * Every `characterActionId` this run has been seen under, as strings, in first-seen order.
+ * @param {...Object} entries - Copies of one run
+ * @returns {string[]}
+ */
+function seenActionIds(...entries) {
+    const ids = [];
+    for (const entry of entries) {
+        const own = Array.isArray(entry?.legacyIds) ? entry.legacyIds : [];
+        for (const id of [...own, entry?.characterActionId]) {
+            if (id == null) continue;
+            const text = String(id);
+            if (!ids.includes(text)) ids.push(text);
+        }
+    }
+    return ids;
+}
+
+/**
+ * The copy that is further along, carrying every id either copy has been seen under. A run whose
+ * `characterActionId` is reissued (123 -> 148) keeps one row, but a peer on the earlier build may
+ * still hold the 123 partial, and only a tombstone filed under 123 reaches it.
+ * @param {Object} winner - The copy that is kept
+ * @param {Object} other - The copy it replaces or folds with
+ * @returns {Object} The winner, copied with `legacyIds` only when it must grow
+ */
+function carryingLegacyIds(winner, other) {
+    if (!winner || !other) return winner;
+    const ids = seenActionIds(other, winner);
+    const held = seenActionIds(winner);
+    if (ids.length <= 1 || ids.length === held.length) return winner;
+    return { ...winner, legacyIds: ids };
+}
+
 class LootLogHistory {
     constructor() {
         /**
@@ -81,13 +115,16 @@ class LootLogHistory {
             identityOf: lootEntryIdentity,
             // What the identity was before, so a deletion filed under it — by
             // this device last week, or by a peer still on that build — holds
-            legacyIdentitiesOf: (entry) => (entry?.characterActionId != null ? [entry.characterActionId] : []),
+            legacyIdentitiesOf: (entry) => seenActionIds(entry),
             // Two copies of one run (a reissued id's partial rows, a peer's older
             // snapshot) fold to the one further along. Given this, every read
             // also folds copies already side by side on disk and writes the
             // chunk back, which is what collapses history stored before the
             // identity changed — once, since a folded chunk has nothing to fold
-            mergeCopies: (first, second) => (isMoreCompleteEntry(second, first) ? second : first),
+            mergeCopies: (first, second) =>
+                isMoreCompleteEntry(second, first)
+                    ? carryingLegacyIds(second, first)
+                    : carryingLegacyIds(first, second),
             // A deletion also covers any copy no further along than the one
             // deleted: a peer's older snapshot, or a partial row of the same run
             revisionOf: (entry) => Number(entry?.actionCount),
@@ -226,8 +263,16 @@ class LootLogHistory {
             if (isMoreCompleteEntry(entry, stored)) {
                 if (stored) touchedChunks.add(entryChunkId(stored));
                 touchedChunks.add(entryChunkId(entry));
-                byId.set(id, entry);
+                byId.set(id, carryingLegacyIds(entry, stored));
                 changed = true;
+            } else {
+                // Not further along, but possibly under a reissued id the stored row has not seen
+                const folded = carryingLegacyIds(stored, entry);
+                if (folded !== stored) {
+                    touchedChunks.add(entryChunkId(stored));
+                    byId.set(id, folded);
+                    changed = true;
+                }
             }
         }
         if (!changed) return;

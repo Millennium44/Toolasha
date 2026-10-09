@@ -609,6 +609,32 @@ describe('one run under a reissued characterActionId', () => {
         expect((await lootLogHistory._load()).map((e) => e.characterActionId).sort()).toEqual([1, 2]);
     });
 
+    test('a folded run keeps every id it was seen under, so a clear tombstones the earlier one too', async () => {
+        await lootLogHistory.mergeAndSave([run(123, 123)]);
+        await lootLogHistory.mergeAndSave([run(148, 148)]);
+        // A third reissue that is not further along still teaches the row its id
+        await lootLogHistory.mergeAndSave([run(160, 100)]);
+
+        const [folded] = await lootLogHistory._load();
+        expect(folded.characterActionId).toBe(148);
+        expect([...folded.legacyIds].sort()).toEqual(['123', '148', '160']);
+
+        expect(await lootLogHistory._store.clear('char-1')).toBe(true);
+        const stones = storageMock.store.get(TOMB);
+        for (const id of ['123', '148', '160']) expect(stones[id]).toMatchObject({ bulk: true, rev: 148 });
+
+        // An old-build peer still holding the first partial row syncs it back
+        storageMock.store.set(CHUNK, [run(123, 123)]);
+        lootLogHistory._store.forget();
+        expect(await lootLogHistory._load()).toEqual([]);
+    });
+
+    test('rows folded on read also keep both ids', async () => {
+        storageMock.store.set(CHUNK, [run(148, 148), run(123, 123)]);
+        const [folded] = await lootLogHistory._load();
+        expect([...folded.legacyIds].sort()).toEqual(['123', '148']);
+    });
+
     test('a copy further along than the deleted one has outlived the deletion', async () => {
         await lootLogHistory.mergeAndSave([before, run(148, 148), after]);
         await lootLogHistory.deleteEntry(run(148, 148));
