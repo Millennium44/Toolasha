@@ -412,7 +412,7 @@ vi.mock('../../core/settings-storage.js', () => ({
     default: {
         loadSettings: async () => {
             if (mocks.loadGate) await mocks.loadGate;
-            return mocks.settingsMap;
+            return mocks.loadResult ?? mocks.settingsMap;
         },
         setSetting: async () => {},
         exportSettings: async () => '{}',
@@ -1342,6 +1342,41 @@ describe('injecting the tab into a panel React may take away', () => {
     });
 });
 
+describe('a panel load that predates an Iron Cow reconcile', () => {
+    test('takes the runtime value of a managed setting over the stale stored one', async () => {
+        const id = 'itemTooltip_selfUseAlchemy';
+        mocks.settingsMap[id] = { id, type: 'checkbox', isTrue: false, value: false };
+        // The stored read was captured before the reconcile forced the setting off
+        mocks.loadResult = { ...mocks.settingsMap, [id]: { id, type: 'checkbox', isTrue: true, value: true } };
+        const host = document.createElement('div');
+        host.className = 'SettingsPanel_tabsComponentContainer__abc';
+        const tabs = document.createElement('div');
+        tabs.className = 'MuiTabs-flexContainer';
+        const panels = document.createElement('div');
+        panels.className = 'TabsComponent_tabPanelsContainer__def';
+        host.append(tabs, panels);
+        document.body.appendChild(host);
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const enabled = vi.spyOn(ironCowMode, 'isEnabled').mockReturnValue(true);
+        try {
+            await settingsUI.injectSettingsTab();
+            expect(settingsUI.currentSettings[id].isTrue).toBe(false);
+            // With the mode off the fresh stored read wins (another tab may have changed it)
+            enabled.mockReturnValue(false);
+            mocks.loadResult = { ...mocks.settingsMap, [id]: { id, type: 'checkbox', isTrue: true, value: true } };
+            document.querySelector('#toolasha-settings-tab')?.remove();
+            await settingsUI.injectSettingsTab();
+            expect(settingsUI.currentSettings[id].isTrue).toBe(true);
+        } finally {
+            enabled.mockRestore();
+            mocks.loadResult = null;
+            delete mocks.settingsMap[id];
+            document.body.innerHTML = '';
+            settingsUI.currentSettings = {};
+        }
+    });
+});
+
 describe("switching tabs only touches this panel's own tab list", () => {
     /**
      * The game's settings panel, with one existing (non-Toolasha) tab already
@@ -1437,6 +1472,55 @@ describe('Iron Cow catches up with settings it came to manage later', () => {
         } finally {
             reconcile.mockRestore();
             settingsUI.cleanup();
+        }
+    });
+});
+
+describe('an open panel follows an Iron Cow reconcile', () => {
+    test('the working copy and the input take the value the reconcile forced', async () => {
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const id = 'itemTooltip_selfUseAlchemy';
+        mocks.settingsMap[id] = { id, type: 'checkbox', isTrue: true, value: true };
+        settingsUI.currentSettings = { [id]: { isTrue: true } };
+        document.body.innerHTML = `<div class="toolasha-setting" data-setting-id="${id}">
+            <input type="checkbox" id="${id}" checked></div>`;
+        const reconcile = vi.spyOn(ironCowMode, 'reconcile').mockImplementation(async () => {
+            mocks.settingsMap[id].isTrue = false;
+            mocks.settingsMap[id].value = false;
+        });
+        try {
+            await settingsUI._reconcileIronCow();
+            expect(settingsUI.currentSettings[id].isTrue).toBe(false);
+            expect(document.getElementById(id).checked).toBe(false);
+        } finally {
+            reconcile.mockRestore();
+            document.body.innerHTML = '';
+            delete mocks.settingsMap[id];
+            settingsUI.currentSettings = {};
+        }
+    });
+});
+
+describe('a reconciled slider or color keeps its second display in step', () => {
+    test('the slider value label and the color text follow the forced value', async () => {
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const slider = 'market_visibleItemCountOpacity';
+        mocks.settingsMap[slider] = { id: slider, type: 'slider', value: 50 };
+        settingsUI.currentSettings = { [slider]: { value: 50 } };
+        document.body.innerHTML = `<div class="toolasha-setting" data-setting-id="${slider}">
+            <input type="range" id="${slider}" value="50"><span id="${slider}_value">50</span></div>`;
+        const reconcile = vi.spyOn(ironCowMode, 'reconcile').mockImplementation(async () => {
+            mocks.settingsMap[slider].value = 20;
+        });
+        try {
+            await settingsUI._reconcileIronCow();
+            expect(document.getElementById(slider).value).toBe('20');
+            expect(document.getElementById(`${slider}_value`).textContent).toBe('20');
+        } finally {
+            reconcile.mockRestore();
+            document.body.innerHTML = '';
+            delete mocks.settingsMap[slider];
+            settingsUI.currentSettings = {};
         }
     });
 });

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings panel follows Iron Cow; keep list stays in sync
+
+- An open Settings panel now shows the values Iron Cow mode locks as they change instead of until reopened, and the self-use keep list no longer stays cached without hearing other tabs' marks after a load races a character switch.
+
 ### Optimizer counts crafting's bonus drops; no pricing past the order book
 
 - Collection optimizer craft routes now credit the essence and Artisan's Crates crafting drops (sold at the bid after tax or counted toward their own collections), and a buy larger than the visible order book is no longer priced at its deepest ask, so big plans stop where the book does.

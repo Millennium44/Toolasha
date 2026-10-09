@@ -180,6 +180,23 @@ describe('another tab', () => {
         expect(state.writeListeners.size).toBe(1);
     });
 
+    test('a stop during the first read leaves no adopted cache without a subscription', async () => {
+        state.stored.selfUseWanted_main = ['/items/frenzy'];
+        state.holdReads = true;
+        const pending = selfUseWanted.load();
+        await settle();
+        selfUseWanted.stopWatching();
+        state.heldReads[0]();
+        await pending;
+
+        expect(selfUseWanted.getCached()).toEqual([]);
+        expect(state.writeListeners.size).toBe(0);
+        // The next load listens again and reads afresh
+        state.holdReads = false;
+        expect(await selfUseWanted.load()).toEqual(['/items/frenzy']);
+        expect(state.writeListeners.size).toBe(1);
+    });
+
     test('teardown stops listening', async () => {
         await selfUseWanted.load();
         expect(state.writeListeners.size).toBe(1);

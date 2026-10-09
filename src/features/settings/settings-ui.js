@@ -154,17 +154,11 @@ class SettingsUI {
 
         // A setting the mode came to manage after it was switched on is forced now. Not awaited:
         // rows are painted only when the panel opens, and initialize() must not suspend here
-        ironCowMode.reconcile().catch((error) => {
-            console.error('[SettingsUI] Iron Cow reconcile failed:', error);
-        });
+        this._reconcileIronCow();
         // ...and again for every character's settings that load later, as a switch does
         if (!this._ironCowReconcileHooked) {
             this._ironCowReconcileHooked = true;
-            config.onSettingsLoaded?.(() => {
-                ironCowMode.reconcile().catch((error) => {
-                    console.error('[SettingsUI] Iron Cow reconcile failed:', error);
-                });
-            });
+            config.onSettingsLoaded?.(() => this._reconcileIronCow());
         }
 
         // Current settings come from config's already-loaded map rather than a
@@ -449,6 +443,10 @@ class SettingsUI {
             // rather than at startup
             const [currentSettings] = await Promise.all([settingsStorage.loadSettings(), this.loadPanelState()]);
             this.currentSettings = currentSettings;
+            // The stored read can predate an Iron Cow reconcile that finished while it was in flight;
+            // while the mode is on, its runtime values are the truth for the settings it manages. Off,
+            // the fresh read wins: another tab may have changed one, and config does not hear that
+            if (ironCowMode.isEnabled()) this._overlayIronCowValues();
 
             // React can remount the settings panel while that read is in flight,
             // and the two containers captured above are then orphaned nodes. The
@@ -1792,6 +1790,48 @@ class SettingsUI {
             flash(`Exported ${waveCount.toLocaleString()} waves ✓`);
         } else {
             flash('Nothing recorded yet');
+        }
+    }
+
+    /**
+     * Run the Iron Cow reconcile, then bring an open panel up to what it forced. The reconcile
+     * writes through config only, so the panel's working copy and inputs would otherwise keep
+     * painting the stale value until reopened (and a character switch can finish it after the
+     * panel is rebuilt).
+     * @returns {Promise<void>}
+     */
+    async _reconcileIronCow() {
+        try {
+            await ironCowMode.reconcile();
+            this._syncPanelToIronCow();
+        } catch (error) {
+            console.error('[SettingsUI] Iron Cow reconcile failed:', error);
+        }
+    }
+
+    /**
+     * Copy the Iron Cow-managed settings from config into the panel's working copy and any open
+     * inputs, and re-run the disabled-by state.
+     */
+    _syncPanelToIronCow() {
+        this._overlayIronCowValues();
+        this._syncIronCowSettingInputs();
+        this.applyDisabledByState();
+    }
+
+    /**
+     * Copy the runtime value of every Iron Cow-managed setting into the panel's working copy.
+     */
+    _overlayIronCowValues() {
+        for (const id of IRON_COW_SETTINGS) {
+            const entry = config.settingsMap[id];
+            const own = this.currentSettings?.[id];
+            if (!entry || !own) continue;
+            if (entry.type === 'checkbox') {
+                own.isTrue = entry.isTrue;
+            } else {
+                own.value = entry.value;
+            }
         }
     }
 
@@ -4322,6 +4362,11 @@ class SettingsUI {
                 input.checked = entry.isTrue ?? false;
             } else {
                 input.value = entry.value ?? '';
+                // The second display handleSettingChange keeps beside a slider or a color picker
+                const valueDisplay = document.getElementById(`${id}_value`);
+                if (valueDisplay) valueDisplay.textContent = entry.value ?? '';
+                const textInput = document.getElementById(`${id}_text`);
+                if (textInput) textInput.value = entry.value ?? '';
             }
         }
     }
