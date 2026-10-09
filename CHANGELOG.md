@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - An optional skill-page toggle (off by default) drops the 4% sell tax from production and gathering profit lines and tiles for things you make for your own use, with a marker so the numbers aren't mistaken for sale profits.
 
+### Collection optimizer compares more routes
+
+- Decompose now weighs every catalyst and tea setup, recipes with different batch sizes are both kept, gathering checks your active skill loadout, and long plans fetch market volumes and retry a failed lookup.
+
 ### Self-use alchemy values what you keep
 
 - Self-use transmute, decompose and decompose-chain lines now value only the outputs you mark "Keep for self-use" (tooltip chip, or press K) at what buying them costs; everything else counts at what selling it gets after tax, so an ability-book transmute no longer shows inflated numbers.

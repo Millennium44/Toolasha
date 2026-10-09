@@ -166,6 +166,24 @@ export async function itemDailyVolume(itemHrid, enhancementLevel = 0) {
 }
 
 /**
+ * Whether an item's traded volume has been measured under the history source and
+ * setting that are current now — read from the cache, never a lookup. A failed or
+ * unavailable lookup (history off, the pool unreachable) is not a measurement, and
+ * neither is one made before the pooled-history setting changed.
+ * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel=0] - Which variant
+ * @returns {boolean}
+ */
+export function hasMeasuredVolume(itemHrid, enhancementLevel = 0) {
+    try {
+        return liquidity().cachedDailyVolume(itemHrid, enhancementLevel)?.known === true;
+    } catch (error) {
+        console.error(`[LiquidityCap] Reading the cached volume for ${itemHrid} failed:`, error);
+        return false;
+    }
+}
+
+/**
  * Warm the shared volume cache for a batch of items, before bounding a lot of
  * rows one at a time.
  *
@@ -396,6 +414,7 @@ export default {
     liquidityCapEnabled,
     sellsFromProfitData,
     itemDailyVolume,
+    hasMeasuredVolume,
     prefetchLiquidity,
     capProfitRate,
     capProfitRateCached,

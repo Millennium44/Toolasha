@@ -59,6 +59,7 @@ const {
     LIQUIDITY_CAP_SETTING,
     liquidityCapEnabled,
     sellsFromProfitData,
+    hasMeasuredVolume,
     prefetchLiquidity,
     capProfitRate,
     capProfitRateCached,
@@ -229,6 +230,16 @@ describe('capProfitRateCached', () => {
 
         expect(fromCache).toEqual(fromFetch);
         expect(fromCache.capped).toBe(true);
+    });
+
+    test('hasMeasuredVolume confirms a measurement, not a lookup that found nothing', async () => {
+        expect(hasMeasuredVolume('/items/essence')).toBe(false);
+        // The pool has no rows for it: asked, but nothing measured
+        await prefetchLiquidity([{ itemHrid: '/items/essence' }]);
+        expect(hasMeasuredVolume('/items/essence')).toBe(false);
+        history.rows['/items/essence'] = tradedAt(10);
+        await prefetchLiquidity([{ itemHrid: '/items/essence' }]);
+        expect(hasMeasuredVolume('/items/essence')).toBe(true);
     });
 
     test('coins never bind a row, however thin the pool says a coin market is', async () => {
