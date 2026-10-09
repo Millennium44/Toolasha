@@ -2021,8 +2021,10 @@ class Storage {
                     return;
                 }
 
-                if (this._restoreGeneration !== restoreGeneration) {
+                if (this._restoreGeneration !== restoreGeneration && this.isRestorePending(storeName, key)) {
                     // A restore replaced this key while the timer was running.
+                    // Only a key it latched: a restore that wrote other keys of
+                    // the store (or other stores) left this one's value current.
                     // Standing down is the whole point: the value in hand is the
                     // pre-restore one, and the callers were told to reload.
                     console.warn(
@@ -2062,7 +2064,9 @@ class Storage {
                     // restore, which is the one thing the latch exists to stop.
                     // Same reasoning as the pre-write check above; this is the
                     // other side of the same await.
-                    if (this._restoreGeneration !== restoreGeneration || this.isRestorePending(storeName, key)) {
+                    // Only a key the restore latched: a failed write to any other
+                    // key is requeued below like any failure, restore or not.
+                    if (this.isRestorePending(storeName, key)) {
                         console.warn(
                             `[Storage] Dropping a failed write to ${storeName}/${key} — it predates a restore. ` +
                                 'Reload the page; changes made before reloading are not kept.'

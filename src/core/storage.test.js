@@ -1608,6 +1608,32 @@ describe('Storage restore quiescing', () => {
             expect(await dropped).toBe(false);
         });
 
+        test('a debounced write to an unlatched key, timed across a keyed restore, still lands', async () => {
+            const write = storage.set('flipPositions', 'mine', 'marketListings');
+            storage.finishRestore(keyed());
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+            expect(await write).toBe(true);
+            expect(storage._saveToIndexedDB).toHaveBeenCalledWith('flipPositions', 'mine', 'marketListings', null);
+        });
+
+        test('a failed write to an unlatched key that crossed a keyed restore is requeued, a latched one dropped', async () => {
+            const settle = [];
+            storage._saveToIndexedDB.mockImplementation(() => new Promise((resolve) => settle.push(resolve)));
+            storage.set('flipPositions', 'mine', 'marketListings');
+            storage.set('listingLog', 'pre', 'marketListings');
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+            expect(settle).toHaveLength(2);
+
+            // The restore lands while both transactions are in flight, and both fail
+            storage.finishRestore(keyed());
+            for (const resolve of settle) resolve(false);
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(storage.pendingWrites.get('marketListings:flipPositions')?.value).toBe('mine');
+            expect(storage.pendingWrites.has('marketListings:listingLog')).toBe(false);
+        });
+
         test('store names only still latch the whole store', async () => {
             storage.finishRestore(['marketListings']);
 
