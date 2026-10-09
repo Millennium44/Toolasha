@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Self-use alchemy values what you keep
+
+- Self-use transmute, decompose and decompose-chain lines now value only the outputs you mark "Keep for self-use" (tooltip chip, or press K) at what buying them costs; everything else counts at what selling it gets after tax, so an ability-book transmute no longer shows inflated numbers.
+
 ### Saves keep what another tab or device added
 
 - Loot, alchemy, combat-loot, item-flow, chest, production, networth, task and daily-checkpoint logs, guild loadouts, trial ability captures and listing anchors now take in what is already on disk when they save, so another tab's or a sync pull's additions are no longer wiped by this tab's next save; the trade ledger also recovers a fill another writer overwrote.
