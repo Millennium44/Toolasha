@@ -334,11 +334,11 @@ export function computeRates(entries, now = Date.now()) {
     const midnight = new Date(now);
     midnight.setHours(0, 0, 0, 0);
     const dayStart = midnight.getTime();
-    const weekStart = now - 7 * DAY_MS;
+    const weekAgo = now - 7 * DAY_MS;
 
     return {
         session: rateOver(sorted.filter((entry) => entry.completedAt >= dayStart)),
-        week: rateOver(sorted.filter((entry) => entry.completedAt >= weekStart)),
+        week: rateOver(sorted.filter((entry) => entry.completedAt >= weekAgo)),
         total: rateOver(sorted),
     };
 }
