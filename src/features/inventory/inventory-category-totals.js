@@ -15,6 +15,7 @@ import inventorySort from './inventory-sort.js';
 import { BADGE_MODE_SETTING, totalValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
+import { getIconHref } from '../../utils/game-lookups.js';
 
 const CSS_ID = 'mwi-inv-category-totals';
 const SPAN_ATTR = 'data-mwi-category-total';
@@ -217,7 +218,8 @@ class InventoryCategoryTotals {
         const tiles = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
         if (tiles.length > 0) {
             const allCurrencies = Array.from(tiles).every((tile) => {
-                const href = tile.querySelector('svg use')?.getAttribute('href') ?? '';
+                // Item icons often carry the sprite id on `xlink:href` alone
+                const href = getIconHref(tile, 'items_sprite') ?? '';
                 const iconId = href.match(/#(.+)$/)?.[1];
                 return iconId && CURRENCY_ICON_IDS.has(iconId);
             });

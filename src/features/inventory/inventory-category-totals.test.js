@@ -324,4 +324,17 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
 
         expect(labels['Currencies'].querySelector('.mwi-category-total')).toBeNull();
     });
+
+    test('recognizes currency tiles whose sprite id is on xlink:href alone', () => {
+        const { root, labels } = drawTabbedInventory();
+        labels['Currencies'].querySelector('span').textContent = 'Monedas';
+        const use = labels['Currencies'].parentElement.querySelector('svg use');
+        use.removeAttribute('href');
+        use.setAttribute('xlink:href', '/static/items_sprite.svg#coin');
+        badgeManagerMock.currentInventoryElem = root;
+
+        inventoryCategoryTotals.updateAllCategoryTotals();
+
+        expect(labels['Currencies'].querySelector('.mwi-category-total')).toBeNull();
+    });
 });
