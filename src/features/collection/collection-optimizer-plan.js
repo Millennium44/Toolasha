@@ -13,15 +13,29 @@
  * - **Decompose**: obtain a source item S (crafted or bought — buying S does
  *   not count S, but everything decomposing it yields does) and decompose it,
  *   and every piece of gear that yields, down to materials. Per S:
- *   cost = own-use cost of S + the chain's coin/catalyst/tea spend, less the
- *   untaxed value of the kept outputs other than the target.
+ *   cost = S at the ask (or its make cost) + the chain's coin/catalyst/tea spend.
  * - **Shop gear**: the same chain, with S bought from the in-game shop at its
  *   coin price.
+ * - **Transmute**: buy S at the ask and transmute it, transmuting again every
+ *   copy of S that comes back, so each bought S is 1 / (1 − r) attempts.
+ * - **Gather**: run a gathering action, whole actions; nothing goes in but its
+ *   teas.
+ *
+ * Every other output a route yields is sold: it is credited at the bid after
+ * the market tax, and only as many units as the market takes in a week
+ * (`sellable`); the rest is collected and worth nothing. The target itself is
+ * collected, never sold.
+ *
+ * A source bought on the market (`route.purchase`) is priced for the quantity a
+ * step buys, not at the top ask for any quantity: up the ask side of the order
+ * book where one has been seen, and never past what the market trades in a week
+ * ({@link buyCost}). A step that needs more than that is no option at all.
  *
  * Nothing here reads the game: the panel builds the routes and hands them in,
  * so every function is pure and the tests drive it with plain objects.
  */
 
+import { walkForQuantity } from '../../utils/order-book.js';
 import { pointsFromCount, nextPointCount } from '../../utils/points-from-count.js';
 
 /** The display name of each route */
@@ -30,7 +44,45 @@ export const ROUTE_LABELS = {
     decompose: 'Decompose',
     craftDecompose: 'Craft + decompose',
     shop: 'Shop gear',
+    transmute: 'Transmute',
+    gather: 'Gather',
 };
+
+/**
+ * The ranking orders. "Cheapest per point" is not one of them: net gold per
+ * point is minus the cost per point, so the two orders are the same order
+ * whatever the signs.
+ */
+export const SORT_MODES = {
+    profit: 'Most profitable',
+    fastest: 'Fastest',
+};
+
+/** The order the ranking starts in */
+export const DEFAULT_SORT = 'profit';
+
+/**
+ * A sort mode, or the default for anything unknown.
+ * @param {*} value
+ * @returns {string}
+ */
+export function validSort(value) {
+    return typeof value === 'string' && Object.hasOwn(SORT_MODES, value) ? value : DEFAULT_SORT;
+}
+
+/**
+ * Order two options for a sort mode: most profitable is the lowest gold (cost)
+ * per point first; fastest is the least time per point first, ties broken by
+ * gold per point.
+ * @param {string} sort
+ * @returns {(a: Object, b: Object) => number}
+ */
+export function compareOptions(sort) {
+    if (validSort(sort) === 'fastest') {
+        return (a, b) => a.secondsPerPoint - b.secondsPerPoint || a.goldPerPoint - b.goldPerPoint;
+    }
+    return (a, b) => a.goldPerPoint - b.goldPerPoint;
+}
 
 /**
  * The alchemy-wide bonus drops. They roll on every alchemy action whatever the
@@ -129,12 +181,15 @@ export function nextAchievementTarget(targets, total) {
 /**
  * Index routes by the item each can collect.
  *
- * A craft route collects its own item. A decompose or shop route collects
- * every item in its `yields` — the gear in between and the kept outputs.
+ * A craft route collects its own item. A source route (decompose, shop,
+ * transmute, gather) collects every item in its `yields` — the gear in between
+ * and the kept outputs.
  * @param {{craft?: Iterable<Object>, sources?: Iterable<Object>}} routes
  *   craft: `{route: 'craft', itemHrid, unitCost, unitSeconds}`;
- *   sources: `{route: 'decompose'|'shop', sourceHrid, cost, seconds, yields: Map, kept: Map,
- *   batch?: number, bonus?: Set}` — `bonus` names yields that are alchemy-wide bonus drops
+ *   sources: `{route, sourceHrid, actionHrid?, cost, seconds, yields: Map, kept: Map, batch?: number,
+ *   bonus?: Set}` — per unit of the route (one source item, or one gathering action): `yields` the
+ *   expected units of each item collected, `kept` each sold output as `{perSource, unit}` (expected
+ *   units and the realized price of one), `bonus` the yields that are bonus drops
  * @returns {Map<string, Array<Object>>}
  */
 export function indexRoutes(routes) {
@@ -161,24 +216,83 @@ export function indexRoutes(routes) {
 }
 
 /**
+ * What buying `units` more of an item costs, after `already` have been bought.
+ *
+ * The ask side of the book, best first, where one has been seen: each level is
+ * taken in turn, never below the current top ask (`ask`), since a book read
+ * earlier cannot make buying cheaper than the quote today. Past the depth the
+ * book shows, nothing says what the units cost, so they are priced at the
+ * deepest level reached: a lower bound, the least anyone there was asking. With
+ * no book, every unit is at the top ask.
+ *
+ * What can be bought at all is the larger of the book's visible depth and
+ * `weekly`, the units the market trades in a week (the bound selling has, from
+ * the same measured volume). A buy past it is not feasible: no price was ever
+ * seen for those units, and the market does not turn over that many. An
+ * unmeasured item has no weekly bound.
+ *
+ * @param {number} units - Units this step buys
+ * @param {Object} opts
+ * @param {number} opts.ask - The top ask now
+ * @param {Array<{price: number, quantity: number}>|null} [opts.listings] - Ask side, best first
+ * @param {number} [opts.weekly=Infinity] - Units the market trades in a week
+ * @param {number} [opts.already=0] - Units earlier steps bought
+ * @returns {{gold: number, feasible: boolean, limit: number, fromBook: boolean}} `gold` is NaN when not
+ *   feasible; `limit` is the most that can be bought in all
+ */
+export function buyCost(units, { ask, listings = null, weekly = Infinity, already = 0 } = {}) {
+    const top = Number(ask) > 0 ? Number(ask) : 0;
+    const before = Math.max(0, Number(already) || 0);
+    const total = before + Math.max(0, Number(units) || 0);
+    const book = Array.isArray(listings)
+        ? listings
+              .filter((level) => Number(level?.price) > 0 && Number(level?.quantity) > 0)
+              .map((level) => ({ price: Math.max(Number(level.price), top), quantity: Number(level.quantity) }))
+        : [];
+    const depth = book.reduce((sum, level) => sum + level.quantity, 0);
+    const week = Number(weekly);
+    const limit = Math.max(depth, Number.isNaN(week) ? Infinity : Math.max(0, week));
+    const fromBook = book.length > 0;
+    if (total > limit + 1e-9) return { gold: NaN, feasible: false, limit, fromBook };
+    const costOf = (quantity) => {
+        if (!(quantity > 0)) return 0;
+        if (!fromBook) return quantity * top;
+        const walk = walkForQuantity(book, quantity);
+        return walk.gold + (quantity - walk.filled) * (walk.price ?? top);
+    };
+    return { gold: costOf(total) - costOf(before), feasible: true, limit, fromBook };
+}
+
+/**
  * One route's option for one item's next rung.
  *
  * Craft: units = needed; gold = units × unitCost; time = units × unitSeconds.
  *
- * Decompose / shop, with y_X the expected units of the target per source item:
- *   sources n = ⌈needed / y_X⌉, rounded up to a multiple of `route.batch` (the bulk of one
- *               alchemy action, or the units one shop purchase delivers)
- *   gold      = n × (cost − Σ_{Y≠X} kept value of Y)
- *   time      = n × chain seconds
- *   points    = the target's step + Σ_{Y≠X} points the other yields cross
+ * Source routes, with y_X the expected units of the target per unit of the route:
+ *   units n  = ⌈needed / y_X⌉, rounded up to a multiple of `route.batch` (the bulk of one
+ *              alchemy action, or the units one shop purchase delivers)
+ *   sold Y   = min(n × perSource_Y, sellable(Y))  for every kept Y ≠ X
+ *   gold     = n × cost − Σ_{Y≠X} sold Y × unit_Y
+ *              (a bought source: its n units priced by `buyQuote` in place of n × its ask)
+ *   time     = n × seconds
+ *   points   = the target's step + Σ_{Y≠X} points the other yields cross
+ *
+ * Gold is what the step costs: negative when the sold outputs bring in more
+ * than the route spends.
  *
  * @param {string} itemHrid - The target item
  * @param {Map<string, number>} counts - Current counts
  * @param {Object} route - A craft or source route
- * @returns {Object|null} `{itemHrid, route, sourceHrid, from, to, needed, gain, collateral, points,
- *   gold, seconds, goldPerPoint, units, credits: Map}` — `credits` is every count the option adds
+ * @param {Object} [opts]
+ * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes; unbounded when absent
+ * @param {(purchase: {hrid: string, ask: number}, units: number) => {gold: number, feasible: boolean}} [opts.buyQuote]
+ *   What buying a route's source costs ({@link buyCost}); every unit at the ask when absent
+ * @returns {Object|null} `{itemHrid, route, sourceHrid, actionHrid, setup, from, to, needed, gain, collateral, points,
+ *   gold, seconds, goldPerPoint, secondsPerPoint, units, credits: Map, sold: Map, bought: Map}` — `credits` is
+ *   every count the option adds, `sold` the units of each output it sells, `bought` of each source it buys.
+ *   Null when the step needs more of a bought source than the market offers
  */
-export function evaluateOption(itemHrid, counts, route) {
+export function evaluateOption(itemHrid, counts, route, { sellable, buyQuote } = {}) {
     const step = pointsStep(counts.get(itemHrid) || 0);
     if (!step || !route) return null;
     const base = { itemHrid, route: route.route, from: step.count, to: step.threshold, gain: step.gain };
@@ -190,19 +304,24 @@ export function evaluateOption(itemHrid, counts, route) {
         const before = counts.get(itemHrid) || 0;
         const gain = pointsFromCount(before + units) - pointsFromCount(before);
         const gold = units * route.unitCost;
+        const seconds = units * (Number(route.unitSeconds) || 0);
         const credits = new Map([[itemHrid, units]]);
         return {
             ...base,
             sourceHrid: null,
+            actionHrid: route.actionHrid ?? null,
             needed: step.needed,
             units,
             collateral: 0,
             gain,
             points: gain,
             gold,
-            seconds: units * (Number(route.unitSeconds) || 0),
+            seconds,
             goldPerPoint: gold / gain,
+            secondsPerPoint: seconds / gain,
             credits,
+            sold: new Map(),
+            bought: new Map(),
         };
     }
 
@@ -212,18 +331,41 @@ export function evaluateOption(itemHrid, counts, route) {
     // every one of them is charged and credited
     const batch = Math.max(1, Math.floor(Number(route.batch)) || 1);
     const units = Math.ceil(step.needed / perSource / batch - 1e-9) * batch;
-    let keptOthers = 0;
     let collateral = 0;
     const credits = new Map();
     for (const [hrid, expected] of route.yields) {
         const added = units * expected;
         credits.set(hrid, added);
         if (hrid === itemHrid) continue;
-        keptOthers += Number(route.kept?.get(hrid)) || 0;
         const before = counts.get(hrid) || 0;
         collateral += pointsFromCount(before + added) - pointsFromCount(before);
     }
-    const gold = units * (route.cost - keptOthers);
+    // The other outputs are sold, as far as the market takes them; the target is collected, not sold
+    let revenue = 0;
+    const sold = new Map();
+    for (const [hrid, entry] of route.kept || []) {
+        if (hrid === itemHrid) continue;
+        const produced = units * (Number(entry?.perSource) || 0);
+        const room = sellable ? Number(sellable(hrid)) : Infinity;
+        const sellUnits = Math.min(produced, Number.isNaN(room) ? Infinity : Math.max(0, room));
+        if (!(sellUnits > 0)) continue;
+        sold.set(hrid, sellUnits);
+        revenue += sellUnits * (Number(entry?.unit) || 0);
+    }
+    // A bought source at what that many actually cost, in place of the top ask the route was priced at
+    let purchaseExtra = 0;
+    const bought = new Map();
+    const purchase = route.purchase;
+    if (purchase?.hrid && Number(purchase.ask) > 0) {
+        if (buyQuote) {
+            const quote = buyQuote(purchase, units);
+            if (quote && !quote.feasible) return null;
+            if (quote && Number.isFinite(quote.gold)) purchaseExtra = quote.gold - units * purchase.ask;
+        }
+        bought.set(purchase.hrid, units);
+    }
+    const gold = units * route.cost - revenue + purchaseExtra;
+    const seconds = units * (Number(route.seconds) || 0);
     // The whole batch counts: a yield of 18 takes an uncollected item past 1 and 10 at once
     const before = counts.get(itemHrid) || 0;
     const targetGain = pointsFromCount(before + units * perSource) - pointsFromCount(before);
@@ -231,69 +373,98 @@ export function evaluateOption(itemHrid, counts, route) {
     return {
         ...base,
         gain: targetGain,
-        sourceHrid: route.sourceHrid,
+        sourceHrid: route.sourceHrid ?? null,
+        actionHrid: route.actionHrid ?? null,
+        setup: route.setup ?? null,
         needed: step.needed,
         units,
         collateral,
         points,
         gold,
-        seconds: units * (Number(route.seconds) || 0),
+        seconds,
         goldPerPoint: gold / points,
+        secondsPerPoint: seconds / points,
         credits,
+        sold,
+        bought,
     };
 }
 
 /**
- * Each item's cheapest next rung, cheapest gold per point first.
+ * Each item's best next rung, in the sort's order.
  * @param {Map<string, number>} counts
  * @param {Map<string, Array<Object>>} index - From {@link indexRoutes}
  * @param {Object} [opts]
  * @param {number} [opts.maxSeconds=Infinity] - Leave out any option slower than this
+ * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes
+ * @param {Function} [opts.buyQuote] - What buying a source costs; see {@link evaluateOption}
+ * @param {string} [opts.sort='profit'] - A {@link SORT_MODES} key: which route is best per item, and the order
  * @returns {Array<Object>} One option per item a route can collect within the time
  */
-export function bestOptions(counts, index, { maxSeconds = Infinity } = {}) {
+export function bestOptions(counts, index, { maxSeconds = Infinity, sellable, buyQuote, sort = DEFAULT_SORT } = {}) {
     const limit = Number(maxSeconds) > 0 ? Number(maxSeconds) : Infinity;
+    const compare = compareOptions(sort);
     const options = [];
     for (const [itemHrid, routes] of index) {
         let best = null;
         for (const route of routes) {
-            const option = evaluateOption(itemHrid, counts, route);
+            const option = evaluateOption(itemHrid, counts, route, { sellable, buyQuote });
             if (!option || !Number.isFinite(option.goldPerPoint)) continue;
             if (!(option.seconds <= limit)) continue;
-            if (!best || option.goldPerPoint < best.goldPerPoint) best = option;
+            if (!best || compare(option, best) < 0) best = option;
         }
         if (best) options.push(best);
     }
-    return options.sort((a, b) => a.goldPerPoint - b.goldPerPoint);
+    return options.sort(compare);
 }
 
 /**
- * The cheapest list of rungs found greedily to gain `targetPoints`.
+ * The best list of rungs, in the sort's sense, found greedily to gain
+ * `targetPoints`.
  *
- * Takes the lowest gold-per-point option, credits every count it adds (the
- * target and anything else the route collects), and looks again: the item's
- * next rung is then on offer at its new price. Stops at the target or after
- * `maxSteps`.
+ * Takes the first option in the sort's order, credits every count it adds (the
+ * target and anything else the route collects), counts what it sells against
+ * what the market takes, and looks again: the item's next rung is then on
+ * offer at its new price. Stops at the target or after `maxSteps`.
  * @param {Map<string, number>} counts - Current counts (not modified)
  * @param {Map<string, Array<Object>>} index - From {@link indexRoutes}
  * @param {number} targetPoints - Points wanted
  * @param {Object} [opts]
  * @param {number} [opts.maxSteps=300]
  * @param {number} [opts.maxSeconds=Infinity] - Leave out any step slower than this
+ * @param {(hrid: string) => number} [opts.sellable] - Units of an item the market takes over the whole plan
+ * @param {(purchase: Object, units: number, already: number) => Object} [opts.buyQuote] - What buying a source
+ *   costs after `already` units were bought by earlier steps ({@link buyCost})
+ * @param {string} [opts.sort='profit'] - A {@link SORT_MODES} key
  * @returns {{steps: Array<Object>, points: number, gold: number, seconds: number, reached: boolean}}
  */
-export function planTarget(counts, index, targetPoints, { maxSteps = 300, maxSeconds = Infinity } = {}) {
+export function planTarget(
+    counts,
+    index,
+    targetPoints,
+    { maxSteps = 300, maxSeconds = Infinity, sellable, buyQuote, sort = DEFAULT_SORT } = {}
+) {
     const working = new Map(counts);
     const start = totalCollectionPoints(working);
     const want = Math.max(0, Math.floor(Number(targetPoints) || 0));
+    // What earlier steps sold leaves less room for later ones
+    const soldSoFar = new Map();
+    const room = sellable ? (hrid) => Number(sellable(hrid)) - (soldSoFar.get(hrid) || 0) : undefined;
+    // And what they bought: a later step buys further up the book, against what is left of the week
+    const boughtSoFar = new Map();
+    const quote = buyQuote
+        ? (purchase, units) => buyQuote(purchase, units, boughtSoFar.get(purchase.hrid) || 0)
+        : undefined;
     const steps = [];
     let gold = 0;
     let seconds = 0;
     let gained = 0;
     while (gained < want && steps.length < maxSteps) {
-        const [pick] = bestOptions(working, index, { maxSeconds });
+        const [pick] = bestOptions(working, index, { maxSeconds, sellable: room, buyQuote: quote, sort });
         if (!pick) break;
         for (const [hrid, added] of pick.credits) working.set(hrid, (working.get(hrid) || 0) + added);
+        for (const [hrid, units] of pick.sold) soldSoFar.set(hrid, (soldSoFar.get(hrid) || 0) + units);
+        for (const [hrid, units] of pick.bought) boughtSoFar.set(hrid, (boughtSoFar.get(hrid) || 0) + units);
         gained = totalCollectionPoints(working) - start;
         gold += pick.gold;
         seconds += pick.seconds;
