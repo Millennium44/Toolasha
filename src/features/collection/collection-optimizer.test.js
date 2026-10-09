@@ -1173,6 +1173,22 @@ describe('the panel', () => {
         expect(optimizer.volumesAsked.has('/items/cheese')).toBe(false);
     });
 
+    test('the plan and the ranking warm one after the other, never two pools at once', async () => {
+        optimizer.collapsed = true;
+        let release;
+        VOLUME.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        optimizer.warmVolumes([{ sold: new Map([['/items/cheese', 1]]), bought: new Map() }]);
+        optimizer.warmVolumes([{ sold: new Map([['/items/milk', 1]]), bought: new Map() }]);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        // Only the first has started its lookups while it is still under way
+        expect(VOLUME.asked).toEqual(['/items/cheese']);
+        release();
+        await optimizer.volumesWarming;
+        expect(VOLUME.asked).toEqual(['/items/cheese', '/items/milk']);
+    });
+
     test('an unavailable history does not redraw in a loop', async () => {
         drawCollectionsTab();
         optimizer.initialize();

@@ -1405,7 +1405,15 @@ class CollectionOptimizer {
         const generation = this.generation;
         const inFlight = this.volumesInFlight;
         for (const { itemHrid } of fresh) inFlight.add(itemHrid);
+        // One warm-up at a time: each prefetchLiquidity runs its own four-request pool, so the plan's
+        // and the ranking's, started by the same draw, would double the bound on the pooled-history host
+        const previous = this.volumesWarming;
         this.volumesWarming = (async () => {
+            try {
+                await previous;
+            } catch {
+                // That warm-up reports its own failure
+            }
             try {
                 await prefetchLiquidity(fresh);
             } catch (error) {
