@@ -129,6 +129,18 @@ describe('per-day recorder retention', () => {
         expect([...retentionDrops(STORE, [newest, aged])]).toEqual([]);
     });
 
+    test('an idle character is never cut stricter than the recorder across a spring DST change', () => {
+        process.env.TZ = 'America/New_York';
+        vi.setSystemTime(Date.UTC(2027, 5, 1));
+        // Last saved at 2026-05-01 00:30 EDT: the recorder's floor was localDayId(save - 100 days) = 2026-01-20
+        // (that instant is 23:30 on 01-20 in EST), one day earlier than calendar subtraction (01-21)
+        expect(localDayId(new Date(2026, 4, 1, 0, 30).getTime() - 100 * DAY)).toBe('2026-01-20');
+        const prefix = 'combatLootRec';
+        const key = (id) => `${prefix}_32030_${timeChunkId(dayStart(id), 'day')}`;
+        const newest = key('2026-05-01');
+        expect([...retentionDrops(STORE, [newest, key('2026-01-20'), key('2026-01-19')])]).toEqual([key('2026-01-19')]);
+    });
+
     test("an idle character's newest month key caps from the month's first day, not its last", () => {
         process.env.TZ = 'UTC';
         vi.setSystemTime(Date.UTC(2028, 5, 1));

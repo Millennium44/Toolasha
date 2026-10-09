@@ -123,6 +123,7 @@ const {
     buildPayloadJSON,
     resetLeftOutLogForTests,
     applyPayload,
+    retryPendingDisplacedDeletes,
     hashPayload,
     readExportedAt,
     redactSettingsStore,
@@ -2001,6 +2002,25 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         });
 
         expect(Object.keys(storeState.stores[DAY])).toHaveLength(25);
+    });
+
+    test('a settled pull retries a failed displaced delete without applying anything', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        storeState.deleteFails = true;
+        try {
+            await applyPayload(payloadOf({ [DAY]: snapshots('32030', T0 + 20 * 3_600_000, 10) }), {
+                mode: 'merge',
+                baseline: {},
+            });
+            expect(await retryPendingDisplacedDeletes()).toBeGreaterThan(0);
+        } finally {
+            storeState.deleteFails = false;
+        }
+        const before = Object.keys(storeState.stores[DAY]).length;
+
+        expect(await retryPendingDisplacedDeletes()).toBe(0);
+
+        expect(Object.keys(storeState.stores[DAY]).length).toBeLessThan(before);
     });
 
     test('snapshots this device would drop by itself are left to its own pruning', async () => {
