@@ -226,7 +226,10 @@ export function clearInsteadCache() {
  * @returns {number|null}
  */
 function realPrice(hrid, mode) {
-    const info = getItemPriceInfo(hrid, { mode, marketQuote: true });
+    // The override checked must be the one for this side: a buy-side override is what the
+    // calculator costs a catalyst or tea with, and a sell-side check would miss it.
+    const side = mode === 'ask' ? 'buy' : 'sell';
+    const info = getItemPriceInfo(hrid, { mode, side, marketQuote: true });
     if (info.price === null || info.price === undefined || info.source !== 'book') return null;
     return info.price;
 }

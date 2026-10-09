@@ -24,6 +24,8 @@ const setup = (overhead, dropRevenues = []) => ({
 });
 
 const book = vi.hoisted(() => ({}));
+/** Buy-side custom overrides: the calculator costs a catalyst or tea with these */
+const buyOverride = vi.hoisted(() => ({}));
 const setups = vi.hoisted(() => ({ list: [] }));
 const DECOMPOSE = vi.hoisted(() => [
     { itemHrid: '/items/target', count: 1 },
@@ -63,7 +65,10 @@ vi.mock('./expected-value-calculator.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPriceInfo: (hrid, { mode }) => ({ price: book[hrid]?.[mode] ?? null, source: book[hrid] ? 'book' : null }),
+    getItemPriceInfo: (hrid, { mode, side = 'sell' }) =>
+        side === 'buy' && buyOverride[hrid] !== undefined
+            ? { price: buyOverride[hrid], source: 'custom' }
+            : { price: book[hrid]?.[mode] ?? null, source: book[hrid] ? 'book' : null },
     withProfitPricingMode: (_mode, fn) => fn(),
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.9 }));
@@ -77,6 +82,15 @@ describe('an unwanted crate in the live valuation', () => {
         book[TARGET] = { ask: 1000, bid: 900 };
         book[SOURCE] = { ask: 100, bid: 90 };
         book[CONTENT] = { ask: 200, bid: 100 };
+        for (const hrid of Object.keys(buyOverride)) delete buyOverride[hrid];
+    });
+
+    test('a setup whose catalyst has only a buy-side override is not buyable', () => {
+        const CATALYST = '/items/catalyst';
+        book[CATALYST] = { ask: 500, bid: 400 };
+        buyOverride[CATALYST] = 1;
+        setups.list = [{ ...setup(0), winningCatalystHrid: CATALYST }];
+        expect(liveAlternatives(TARGET, new Set()).alternatives).toHaveLength(0);
     });
 
     test('credits the contents at the book bid after tax, not the resolved ask', () => {
