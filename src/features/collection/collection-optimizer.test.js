@@ -1000,6 +1000,24 @@ describe('a recipe the character cannot start', () => {
         }
     });
 
+    test('a craftDecompose route buys and times whole craft actions as well as whole decompose actions', async () => {
+        // Cheese swords are made 15 to an action and decomposed 2 to an action: 30 is both
+        ACTIONS['/actions/x'] = {
+            hrid: '/actions/x',
+            type: '/action_types/cheesesmithing',
+            outputItems: [{ count: 15 }],
+        };
+        game.craftable = new Set(['/items/cheese_sword']);
+        try {
+            const route = (await buildCollectionRoutes()).sources.find(
+                (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
+            );
+            expect(route.batch).toBe(30);
+        } finally {
+            delete ACTIONS['/actions/x'];
+        }
+    });
+
     test('an Action Level tea that raises the requirement past the level blocks it too', async () => {
         game.profitExtra = { baseRequirement: 40, skillLevel: 42, teaSkillLevelBonus: 0, actionLevelBonus: 5 };
         expect((await buildCollectionRoutes()).craft).toEqual([]);

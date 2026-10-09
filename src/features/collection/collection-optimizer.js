@@ -766,6 +766,8 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     ...shared,
                     route: 'craftDecompose',
                     actionHrid: recipe.actionHrid,
+                    // Whole craft actions feeding whole decompose actions: the smallest run that is both
+                    batch: leastCommonMultiple(Math.max(1, Math.floor(recipe.batch) || 1), bulk),
                     yields: withSource,
                     cost: recipe.cost + overheadCost,
                     seconds: chain.seconds + recipe.seconds,
