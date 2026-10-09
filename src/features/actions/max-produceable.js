@@ -472,7 +472,7 @@ class MaxProduceable {
         // Store profit value for sorting and update shared sort manager
         const resolvedProfitPerHour = hasMissingPrices ? null : profitPerHour;
         data.profitPerHour = resolvedProfitPerHour;
-        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour);
+        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour, { excludeSellTax });
 
         // Check if we should hide actions with negative profit (unless pinned)
         const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');

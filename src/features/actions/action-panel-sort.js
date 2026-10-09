@@ -213,11 +213,16 @@ class ActionPanelSort {
      * Update profit for a registered panel
      * @param {HTMLElement} actionPanel - The action panel element
      * @param {number|null} profitPerHour - Profit per hour
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.excludeSellTax=false] - The figure leaves out the market tax (personal-use
+     *   toggle). The panel sort follows it, but `cachedStats` is read by sale-valued consumers (task cards'
+     *   opportunity cost, the pinned page), so an untaxed figure is never written there.
      */
-    updateProfit(actionPanel, profitPerHour) {
+    updateProfit(actionPanel, profitPerHour, { excludeSellTax = false } = {}) {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.profitPerHour = profitPerHour;
+            if (excludeSellTax) return;
             if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
             const entry = this.cachedStats[data.actionHrid];
             entry.profitPerHour = profitPerHour;

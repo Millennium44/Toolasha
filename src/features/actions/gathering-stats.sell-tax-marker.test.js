@@ -7,7 +7,7 @@
 
 import { describe, test, expect, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ profitData: {} }));
+const state = vi.hoisted(() => ({ profitData: {}, updateProfitCalls: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -21,7 +21,11 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getActionDetails: (hrid) => ({ name: hrid.split('/').at(-1) }) },
 }));
 vi.mock('./action-panel-sort.js', () => ({
-    default: { updateProfit: () => {}, updateExpPerHour: () => {}, isPinned: () => false },
+    default: {
+        updateProfit: (...args) => state.updateProfitCalls.push(args),
+        updateExpPerHour: () => {},
+        isPinned: () => false,
+    },
 }));
 vi.mock('./action-filter.js', () => ({ default: { isFilterHidden: () => false } }));
 vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => state.profitData }));
@@ -61,5 +65,16 @@ describe('gathering tile Profit/hr and the sell-tax exclusion', () => {
 
         expect(span.textContent).not.toContain('⚠');
         expect(span.getAttribute('title')).toBeNull();
+    });
+
+    test('the shared sort cache is told when the figure is untaxed', async () => {
+        state.updateProfitCalls.length = 0;
+        state.profitData = { profitPerHour: 1200, hasMissingPrices: false, excludeSellTax: true };
+        await renderTile();
+        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: true });
+
+        state.profitData = { profitPerHour: 1200, hasMissingPrices: false, excludeSellTax: false };
+        await renderTile();
+        expect(state.updateProfitCalls.at(-1)[2]).toEqual({ excludeSellTax: false });
     });
 });

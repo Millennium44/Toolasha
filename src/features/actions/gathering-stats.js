@@ -265,7 +265,7 @@ class GatheringStats {
         data.excludeSellTax = excludeSellTax;
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
-        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour);
+        actionPanelSort.updateProfit(actionPanel, hasMissingPrices ? null : profitPerHour, { excludeSellTax });
         actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
 
         // Check if we should hide actions with negative profit (unless pinned)
