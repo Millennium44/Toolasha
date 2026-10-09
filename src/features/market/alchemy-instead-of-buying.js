@@ -318,13 +318,9 @@ export function liveAlternatives(targetHrid, wanted) {
                     `s|${hrid}`,
                     untaxedContainerValue(hrid, {
                         containerDrops,
-                        priceOf: (h) => {
-                            const resolved = expectedValueCalculator.resolveSellSideValue?.(h);
-                            if (resolved && Number.isFinite(resolved.value)) {
-                                return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
-                            }
-                            return sellOf(h);
-                        },
+                        // The book's bid after tax, like every other unwanted output: the profit mode's
+                        // sell-side resolution (the ask, under hybrid) and custom prices are no listing
+                        priceOf: sellOf,
                     })
                 );
             }
