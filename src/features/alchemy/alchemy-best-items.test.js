@@ -56,6 +56,17 @@ const settings = vi.hoisted(() => ({
     loadedListeners: [],
 }));
 
+const marketListeners = vi.hoisted(() => ({ list: [] }));
+
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        on: (cb) => marketListeners.list.push(cb),
+        off: (cb) => {
+            marketListeners.list = marketListeners.list.filter((c) => c !== cb);
+        },
+    },
+}));
+
 vi.mock('../../core/config.js', () => ({
     default: {
         // 'alchemy_bestItems' and other gates default to on; keys tests care
@@ -1265,5 +1276,33 @@ describe('the Decompose chain/hr sort', () => {
         bestItems.initialize();
         expect(bestItems.sortMode).toBe('profit');
         bestItems.disable();
+    });
+
+    test('a market update re-prices an open chain table and cleanup unsubscribes', () => {
+        fixture();
+        bestItems.isInitialized = false;
+        bestItems.initialize();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 900), row('item_a', 1)]);
+        expect(chainCells()[0]).not.toBe('—');
+        const before = bestItems.chainPerHour('/items/item_a');
+
+        // The terminal bid doubles; the open panel must follow without a reopen
+        market.bids = { '/items/term_c': 2000 };
+        for (const cb of [...marketListeners.list]) cb();
+        expect(bestItems.chainPerHour('/items/item_a')).toBeGreaterThan(before);
+
+        bestItems.disable();
+        expect(marketListeners.list).toHaveLength(0);
+    });
+
+    test('the profit range is named for the figure it filters in chain mode', () => {
+        fixture();
+        open([row('item_d', 900)]);
+        const label = () =>
+            bestItems.modal.querySelector('input[placeholder="Min"]').parentElement.firstChild.textContent;
+        expect(label()).toBe('Profit/hr:');
+        bestItems.chooseSortMode('decomposeChainPerHour');
+        expect(label()).toBe('Chain/hr:');
     });
 });

@@ -11,6 +11,7 @@
  */
 
 import config from '../../core/config.js';
+import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import assetManifest from '../../utils/asset-manifest.js';
@@ -130,6 +131,9 @@ class AlchemyBestItems {
         this.filterPriceMin = null;
         this.filterPriceMax = null;
         this.pricingUnsubscribers = [];
+        this.profitFilterLabel = null;
+        // A market refresh or order-book patch moves the asks and bids the chains were priced on
+        this._onMarketUpdate = () => this.handleMarketUpdate();
         // True while a header dropdown writes the pricing settings — see choosePricingSide
         this._applyingPricingChoice = false;
     }
@@ -142,6 +146,28 @@ class AlchemyBestItems {
         this.sortMode = normalizeSortMode(config.getSettingValue(SORT_MODE_SETTING, 'profit'));
         this.addAlchemyTab();
         this.subscribePricingChanges();
+        marketAPI.on(this._onMarketUpdate);
+    }
+
+    /**
+     * Prices moved: drop the memoised chains so an open chain table is re-priced
+     * from one snapshot rather than mixing old and new figures.
+     */
+    handleMarketUpdate() {
+        try {
+            this.chainValues.clear();
+            this.chainTops.clear();
+            clearDecomposeChainCaches();
+            if (
+                this.modal &&
+                this.modal.style.display !== 'none' &&
+                this.effectiveSortMode() === 'decomposeChainPerHour'
+            ) {
+                this.renderTable();
+            }
+        } catch (error) {
+            console.error('[AlchemyBestItems] Re-pricing after a market update failed:', error);
+        }
     }
 
     /**
@@ -221,6 +247,7 @@ class AlchemyBestItems {
     disable() {
         try {
             this.unsubscribePricingChanges();
+            marketAPI.off(this._onMarketUpdate);
             if (this.tabWatcher) {
                 this.tabWatcher();
                 this.tabWatcher = null;
@@ -702,7 +729,11 @@ class AlchemyBestItems {
         // Profit/hr filter
         const profitFilter = document.createElement('span');
         profitFilter.style.cssText = 'display: flex; align-items: center; gap: 4px;';
-        profitFilter.innerHTML = 'Profit/hr:';
+        profitFilter.innerHTML = '';
+        const profitLabel = document.createElement('span');
+        profitLabel.textContent = 'Profit/hr:';
+        profitFilter.appendChild(profitLabel);
+        this.profitFilterLabel = profitLabel;
         const profitMin = document.createElement('input');
         profitMin.type = 'text';
         profitMin.placeholder = 'Min';
@@ -776,6 +807,8 @@ class AlchemyBestItems {
 
         const sortMode = this.effectiveSortMode();
         const chainMode = sortMode === 'decomposeChainPerHour';
+        // The range filters the figure the chain sort ranks on, so name it
+        if (this.profitFilterLabel) this.profitFilterLabel.textContent = chainMode ? 'Chain/hr:' : 'Profit/hr:';
         // The figure the profit filters work on
         const profitOf = (r) => (chainMode ? this.chainPerHour(r.itemHrid) : r.profitPerHour);
         const passes = (value, test) => value !== null && test(value);
