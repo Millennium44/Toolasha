@@ -167,6 +167,37 @@ describe('Chat 24hr Timestamps', () => {
         expect(span.textContent).toBe('[10:00:00 AM] ');
     });
 
+    test.each([
+        ['[PM 9:31:23] ', '[21:31:23] '],
+        ['[오후 9:31:23] ', '[21:31:23] '],
+        ['[오전 12:05:09] ', '[00:05:09] '],
+        ['[下午9:31:23] ', '[21:31:23] '],
+        ['[上午12:05:09] ', '[00:05:09] '],
+        ['[午後 12:30:00] ', '[12:30:00] '],
+        ['[午前9:31:23] ', '[09:31:23] '],
+        ['[5/22 오후 9:31:23] ', '[05/22 21:31:23] '],
+        ['[9:31:23 午後] ', '[21:31:23] '],
+        ['[12:00:00 PM] ', '[12:00:00] '],
+        ['[12:00:00 AM] ', '[00:00:00] '],
+    ])('converts the localized day-period form %s', (native, expected) => {
+        const span = makeTimestampSpan(native);
+        feature.initialize();
+        expect(span.textContent).toBe(expected);
+    });
+
+    test('a day-period-first timestamp converts back to 12-hour', () => {
+        settingValues.market_listingTimeFormat = '12hour';
+        const span = makeTimestampSpan('[오후 9:31:23] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[9:31:23 PM] ');
+    });
+
+    test('leaves localized-digit timestamps unchanged', () => {
+        const span = makeTimestampSpan('[م ٩:٣١:٢٣] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[م ٩:٣١:٢٣] ');
+    });
+
     test('disable() unregisters the dom observer and setting-change listeners', () => {
         feature.initialize();
         feature.disable();
