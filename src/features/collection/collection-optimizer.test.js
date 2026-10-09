@@ -926,6 +926,46 @@ describe('a recipe the character cannot start', () => {
         expect((await buildCollectionRoutes()).craft.map((r) => r.actionHrid)).toEqual(['/actions/x']);
     });
 
+    test('a recipe with a different output batch is not dominated: a small rung rounds to whole batches', async () => {
+        // /actions/x makes 15 at a time, cheaper and faster per item; /actions/alt makes 1 at a time
+        ACTIONS['/actions/x'] = {
+            hrid: '/actions/x',
+            type: '/action_types/cheesesmithing',
+            outputItems: [{ count: 15 }],
+        };
+        ACTIONS['/actions/alt'] = {
+            hrid: '/actions/alt',
+            type: '/action_types/cheesesmithing',
+            outputItems: [{ count: 1 }],
+        };
+        try {
+            game.profitExtra = { makeCost: 3, totalItemsPerHour: 720 };
+            game.altProfit = { makeCost: 4, totalItemsPerHour: 360 };
+            const routes = await buildCollectionRoutes();
+            expect(routes.craft.map((r) => [r.actionHrid, r.batch])).toEqual([
+                ['/actions/x', 15],
+                ['/actions/alt', 1],
+            ]);
+            // Cheese at 5 needs 5 more for the next rung: 15 made at 3 each against 5 made at 4 each
+            const counts = new Map([['/items/cheese', 5]]);
+            const [x, alt] = routes.craft.map((r) =>
+                evaluateOption(
+                    '/items/cheese',
+                    counts,
+                    indexRoutes(routes)
+                        .get('/items/cheese')
+                        .find((c) => c.actionHrid === r.actionHrid)
+                )
+            );
+            expect(x.units).toBe(15);
+            expect(alt.units).toBe(5);
+            expect(alt.gold).toBeLessThan(x.gold);
+        } finally {
+            delete ACTIONS['/actions/x'];
+            delete ACTIONS['/actions/alt'];
+        }
+    });
+
     test('an Action Level tea that raises the requirement past the level blocks it too', async () => {
         game.profitExtra = { baseRequirement: 40, skillLevel: 42, teaSkillLevelBonus: 0, actionLevelBonus: 5 };
         expect((await buildCollectionRoutes()).craft).toEqual([]);

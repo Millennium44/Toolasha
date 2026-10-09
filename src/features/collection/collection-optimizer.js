@@ -800,7 +800,12 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
  * beats on both cost and time per item. One that is no cheaper and no faster
  * than another (an exact copy included) is left out, since it can never be
  * either sort's pick; any trade-off between the two is kept.
- * @param {Array<{cost: number, seconds: number}>} recipes
+ *
+ * Only a recipe with the same output batch can dominate: an option is rounded
+ * up to whole batches ({@link evaluateOption}), so a cheaper-per-item recipe
+ * that makes 15 at a time still overshoots a rung that a 1-at-a-time recipe
+ * meets exactly, and either can win a given rung.
+ * @param {Array<{cost: number, seconds: number, batch?: number}>} recipes
  * @returns {Array<Object>} The survivors, in the order given
  */
 export function undominatedRecipes(recipes) {
@@ -810,6 +815,7 @@ export function undominatedRecipes(recipes) {
             !list.some(
                 (other, j) =>
                     j !== i &&
+                    (other.batch ?? 1) === (recipe.batch ?? 1) &&
                     other.cost <= recipe.cost &&
                     other.seconds <= recipe.seconds &&
                     // Strictly better somewhere, or an exact copy listed earlier
