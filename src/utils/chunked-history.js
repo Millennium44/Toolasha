@@ -1292,7 +1292,8 @@ class ChunkedHistory {
                 // hold (`pruneIncoming`) judges them alone; one that prunes the whole union judges both
                 const pruned = this.pruneIncoming
                     ? this.pruneIncoming(adopted)
-                    : this.pruneEntries([...(mine.get(chunkId) || []), ...adopted]);
+                    : // In order: a pruner may thin by position (one point per day, the last kept)
+                      this.pruneEntries(this._sorted([...(mine.get(chunkId) || []), ...adopted]));
                 if (!Array.isArray(pruned)) {
                     kept.push(...adopted);
                     continue;

@@ -1562,6 +1562,30 @@ describe('review round: folds that rerun, removals, and the owner’s prune', ()
         expect(storageMock.store.has(JUNE)).toBe(false);
     });
 
+    test('adopted entries are pruned beside the caller’s in chronological order', async () => {
+        const seen = [];
+        const history = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'rec',
+            legacyKey: (charId) => `legacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            pruneEntries: (points) => {
+                seen.push(points.map((point) => point.t));
+                return points;
+            },
+            label: 'SortedPruneTest',
+        });
+        await history.save('c1', [at(2026, 7, 10)]);
+        storageMock.store.set(JULY, [at(2026, 7, 2), at(2026, 7, 10)]);
+        await history.save('c1', [at(2026, 7, 10), at(2026, 7, 12)]);
+        await history.save('c1', [at(2026, 7, 10), at(2026, 7, 12), at(2026, 7, 14)]);
+
+        const last = seen.at(-1);
+        expect(last).toEqual([...last].sort((a, b) => a - b));
+        expect(last.length).toBe(4);
+    });
+
     test('a store that prunes only incoming entries prunes adopted ones the same way', async () => {
         let cutoff = Date.UTC(2026, 6, 1);
         const history = createChunkedHistory({
