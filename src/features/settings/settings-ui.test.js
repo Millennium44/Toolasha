@@ -1441,6 +1441,31 @@ describe('Iron Cow catches up with settings it came to manage later', () => {
     });
 });
 
+describe('an open panel follows an Iron Cow reconcile', () => {
+    test('the working copy and the input take the value the reconcile forced', async () => {
+        const { default: ironCowMode } = await import('./iron-cow-mode.js');
+        const id = 'itemTooltip_selfUseAlchemy';
+        mocks.settingsMap[id] = { id, type: 'checkbox', isTrue: true, value: true };
+        settingsUI.currentSettings = { [id]: { isTrue: true } };
+        document.body.innerHTML = `<div class="toolasha-setting" data-setting-id="${id}">
+            <input type="checkbox" id="${id}" checked></div>`;
+        const reconcile = vi.spyOn(ironCowMode, 'reconcile').mockImplementation(async () => {
+            mocks.settingsMap[id].isTrue = false;
+            mocks.settingsMap[id].value = false;
+        });
+        try {
+            await settingsUI._reconcileIronCow();
+            expect(settingsUI.currentSettings[id].isTrue).toBe(false);
+            expect(document.getElementById(id).checked).toBe(false);
+        } finally {
+            reconcile.mockRestore();
+            document.body.innerHTML = '';
+            delete mocks.settingsMap[id];
+            settingsUI.currentSettings = {};
+        }
+    });
+});
+
 describe('the tab census join does not depend on the command palette', () => {
     test('initialize() joins it and a full cleanup() leaves it', async () => {
         await settingsUI.initialize();
