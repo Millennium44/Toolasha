@@ -1251,6 +1251,16 @@ describe('keep for self-use chip', () => {
         expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
     });
 
+    test('a chip switched off while the keep list is still loading is not drawn', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        // Off before the pending read settles
+        settings.keepChip = false;
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+
     test('an alchemy output gets the chip, and K flips its mark', async () => {
         settings.selfUseAlchemy = true;
         const el = itemTooltip('Frenzy');

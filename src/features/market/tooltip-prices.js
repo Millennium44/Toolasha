@@ -928,8 +928,10 @@ class TooltipPrices {
     async injectKeepChip(tooltipElement, itemHrid, itemName) {
         try {
             const kept = (await selfUseWanted.getSet()).has(itemHrid);
-            // The pointer may have moved to another item during the read
+            // The pointer may have moved to another item during the read, or the chip been
+            // switched off while it was pending
             if (tooltipElement.dataset.pricesProcessedItem !== itemName) return;
+            if (!config.getSetting(KEEP_CHIP_SETTING)) return;
             const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
             if (!tooltipText || tooltipText.querySelector(`.${KEEP_SECTION_CLASS}`)) return;
             const div = dom.createStyledDiv(
