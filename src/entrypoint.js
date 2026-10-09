@@ -1684,6 +1684,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthMissingSuppliesButton',
+            name: 'Labyrinth Missing Supplies Button',
+            category: 'Combat',
+            module: Combat.labyrinthMissingSupplies,
+            async: false,
+        },
+        {
             key: 'labyrinthMonsterStatCheck',
             name: 'Monster Stat Check',
             category: 'Combat',

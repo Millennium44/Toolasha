@@ -2572,6 +2572,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows expected clear time and success rate on labyrinth skilling room tiles',
             },
+            labyrinthMissingSuppliesButton: {
+                id: 'labyrinthMissingSuppliesButton',
+                label: 'Labyrinth: Show "Buy missing supplies" button',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
+            },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',
                 label: 'Monster stat check (sim diagnostic)',

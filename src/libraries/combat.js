@@ -57,6 +57,7 @@ import labyrinthRunLedger from '../features/combat/labyrinth-run-ledger.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
 import labyrinthClearRate from '../features/combat/labyrinth-clear-rate.js';
+import labyrinthMissingSupplies from '../features/combat/labyrinth-missing-supplies.js';
 import monsterStatCheckUI from '../features/combat/monster-stat-check-ui.js';
 import labyrinthRoomLogs from '../features/combat/labyrinth-room-logs.js';
 import labyrinthCapture from '../features/combat/labyrinth-capture.js';
@@ -162,6 +163,7 @@ toolashaRoot.Combat = {
     labyrinthBestLevel,
     labyrinthShopPrices,
     labyrinthClearRate,
+    labyrinthMissingSupplies,
     monsterStatCheckUI,
     labyrinthRoomLogs,
     labyrinthCapture,
