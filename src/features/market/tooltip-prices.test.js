@@ -21,7 +21,11 @@ const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose:
 const openableState = vi.hoisted(() => ({ drops: {} }));
 const gatheringState = vi.hoisted(() => ({ actionDetailMap: {}, profitData: null }));
 /** Items the market cannot price, and the shop-conversion value (if any) for each */
-const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {}, shopSides: [] }));
+const priceState = vi.hoisted(() => ({ unpriced: new Set(), shop: {}, shopSides: [], sided: {} }));
+/** The sales tax the after-tax figures take (0 keeps the older arithmetic readable) */
+const taxState = vi.hoisted(() => ({ rate: 0 }));
+/** The character's self-use keep list */
+const keepState = vi.hoisted(() => ({ kept: new Set() }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -68,6 +72,19 @@ vi.mock('../../core/data-manager.js', () => {
             equipmentDetail: {},
             alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 18 }] },
         },
+        // An ability book transmutes into other books, or comes back as itself
+        '/items/vampirism': {
+            name: 'Vampirism',
+            alchemyDetail: {
+                transmuteDropTable: [
+                    { itemHrid: '/items/frenzy', dropRate: 0.3, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/puncture', dropRate: 0.3, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/vampirism', dropRate: 0.4, minCount: 1, maxCount: 1 },
+                ],
+            },
+        },
+        '/items/frenzy': { name: 'Frenzy' },
+        '/items/puncture': { name: 'Puncture' },
         // Gear that decomposes into more gear, for the chain
         '/items/twin_sword': {
             name: 'Twin Sword',
@@ -130,10 +147,15 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParam
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => gatheringState.profitData }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({ ask: 10, bid: 9 }),
-    getItemPrice: (hrid) =>
-        hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' || priceState.unpriced.has(hrid)
+    getItemPrice: (hrid, options) => {
+        // Items with a separate ask and bid, keyed by side
+        if (priceState.sided[hrid]) return priceState.sided[hrid][options?.side] ?? null;
+        return hrid === '/items/small_artisans_crate' ||
+            hrid === '/items/missing_material' ||
+            priceState.unpriced.has(hrid)
             ? null
-            : 10,
+            : 10;
+    },
 }));
 vi.mock('../../utils/alchemy-shop-value.js', () => ({
     getAlchemyOutputShopValue: (hrid, options) => {
@@ -148,7 +170,21 @@ vi.mock('../../utils/ability-cost-calculator.js', () => ({
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: () => 0,
-    calculatePriceAfterTax: (price) => price,
+    calculatePriceAfterTax: (price) => price * (1 - taxState.rate),
+}));
+// The keep list's storage: one character's list, read and written whole
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        getJSON: async () => [...keepState.kept],
+        setJSON: async (_key, value) => {
+            keepState.kept = new Set(value);
+        },
+        update: async (_key, mutate) => {
+            const next = mutate([...keepState.kept], true);
+            if (next !== undefined) keepState.kept = new Set(next);
+            return { written: next !== undefined, value: [...keepState.kept] };
+        },
+    },
 }));
 vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: () => 0 }));
 vi.mock('../../utils/game-lookups.js', () => ({
@@ -178,6 +214,7 @@ const {
     loadoutsContainingItem,
 } = await import('./tooltip-prices.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
+const { default: selfUseWanted } = await import('./self-use-wanted.js');
 
 /**
  * @param {string} innerHTML
@@ -220,6 +257,10 @@ beforeEach(async () => {
     priceState.unpriced = new Set();
     priceState.shop = {};
     priceState.shopSides = [];
+    priceState.sided = {};
+    taxState.rate = 0;
+    keepState.kept = new Set();
+    selfUseWanted._reset();
     characterState.data = null;
     await tooltipPrices.initialize();
 });
@@ -901,9 +942,9 @@ describe('self-use alchemy lines', () => {
         const block = await blockFor('/items/cheese_sword');
         // 18 cheese x 10 x 0.6 x 100/hr = 10,800 kept, against 100 swords x 50 (not craftable
         // here, so the own-use cost is the buy side) = 5,000
-        expect(block.textContent).toContain('Decompose (self-use): 5.8K/hr');
+        expect(block.textContent).toContain('Decompose (self-use, sell outputs): 5.8K/hr');
         expect(block.textContent).toContain('(58/action)');
-        expect(block.textContent).toContain('Self-use: untaxed');
+        expect(block.textContent).toContain('Self-use: kept outputs at what you would pay');
         // The ordinary taxed line is still there, unchanged
         expect(block.textContent).toContain('Decompose: -500/hr');
         // No gear comes out of a cheese sword, so no chain line repeats the step
@@ -927,10 +968,10 @@ describe('self-use alchemy lines', () => {
         const block = await blockFor('/items/cheese_sword');
         // 18 cheese x 10 x 0.6 x 100 = 10,800; crate's known cheese subtotal adds 500,
         // less 5,000 of input cost. The unresolved drop must not erase that lower bound.
-        expect(block.textContent).toContain('Decompose (self-use): ≥6.3K/hr');
+        expect(block.textContent).toContain('Decompose (self-use, sell outputs): ≥6.3K/hr');
         expect(block.textContent).toContain('partly unpriced');
         expect(block.textContent).toContain('setup not optimized');
-        expect(block.textContent).toContain('Self-use: untaxed');
+        expect(block.textContent).toContain('Self-use: kept outputs at what you would pay');
     });
 
     // The same decompose on a prime catalyst: the seller passed it over (at a taxed bid
@@ -950,7 +991,7 @@ describe('self-use alchemy lines', () => {
         };
         const block = await blockFor('/items/cheese_sword');
         // 18 x 10 x 0.75 x 100 = 13,500 kept, less 5,000 of swords and 2,000 of catalyst
-        expect(block.textContent).toContain('Decompose (self-use): 6.5K/hr');
+        expect(block.textContent).toContain('Decompose (self-use, sell outputs): 6.5K/hr');
         expect(block.textContent).toContain('(65/action)');
         // The seller's line keeps the seller's pick
         expect(block.textContent).toContain('Decompose: -500/hr');
@@ -973,7 +1014,7 @@ describe('self-use alchemy lines', () => {
         const block = await blockFor('/items/twin_sword');
         // Per twin sword: 5 cheese (50) + one sword decomposed on prime: 18 x 0.75 cheese (135)
         // less 2,000/100 = 20 of catalyst; cost 100. The seller's sword setup would give 58.
-        expect(block.textContent).toContain('Full decompose chain (self-use): 65/item');
+        expect(block.textContent).toContain('Full decompose chain (self-use, sell outputs): 65/item');
     });
 
     test('a chain step is scored by what its gear yields further down, not its market price', async () => {
@@ -992,7 +1033,7 @@ describe('self-use alchemy lines', () => {
         // Valued as it comes out (the sword at its price of 10) the plain setup wins, 30 to 10 per
         // twin. But the sword is decomposed again for 18 x 0.6 x 10 = 108, so per twin the
         // catalyst gives 50 + 108 - 50 = 108 against 0.5 x 158 = 79; less the twin's 100
-        expect(block.textContent).toContain('Full decompose chain (self-use): 8/item');
+        expect(block.textContent).toContain('Full decompose chain (self-use, sell outputs): 8/item');
     });
 
     // Decomposing a seal yields Labyrinth Tokens: untradeable, so the market has no price for
@@ -1004,8 +1045,26 @@ describe('self-use alchemy lines', () => {
         requirementCosts: [{ itemHrid: '/items/seal_of_gathering', count: 1, price: 50 }],
     });
 
-    test('a shop-only output is priced through its shop conversion, untaxed, not left unpriced', async () => {
+    test('an unwanted shop-only output is priced through its shop conversion, sold after tax', async () => {
         settings.selfUseAlchemy = true;
+        taxState.rate = 0.1;
+        priceState.unpriced.add('/items/labyrinth_token');
+        priceState.shop['/items/labyrinth_token'] = 30;
+        alchemyState.profits = { decompose: sealDecompose() };
+        const el = itemTooltip('Seal of Gathering');
+        await tooltipPrices.injectMultiActionProfitDisplay(el, '/items/seal_of_gathering', 0);
+        const text = el.querySelector('.market-multi-action-injected').textContent;
+        // 20 tokens x 27 (30 after 10% tax) x 100/hr = 54,000, against 100 seals x 50 = 5,000
+        expect(text).toContain('Decompose (self-use, sell outputs): 49.0K/hr');
+        expect(priceState.shopSides).toContain('sell');
+        expect(priceState.shopSides).not.toContain('buy');
+        expect(text).toMatch(/Labyrinth Token valued at its Labyrinth Shop conversion \(.+\), not a market price\./);
+    });
+
+    test('a kept shop-only output is priced through its shop conversion, untaxed, not left unpriced', async () => {
+        settings.selfUseAlchemy = true;
+        taxState.rate = 0.1;
+        keepState.kept = new Set(['/items/labyrinth_token']);
         priceState.unpriced.add('/items/labyrinth_token');
         priceState.shop['/items/labyrinth_token'] = 30;
         alchemyState.profits = { decompose: sealDecompose() };
@@ -1013,8 +1072,8 @@ describe('self-use alchemy lines', () => {
         await tooltipPrices.injectMultiActionProfitDisplay(el, '/items/seal_of_gathering', 0);
         const text = el.querySelector('.market-multi-action-injected').textContent;
         // 20 tokens x 30 x 100/hr = 60,000 kept, against 100 seals x 50 = 5,000
-        expect(text).toContain('Decompose (self-use): 55.0K/hr');
-        // Valued at what keeping them saves: the shop items on the buy side, like every other output
+        expect(text).toContain('Decompose (self-use, keep Labyrinth Token): 55.0K/hr');
+        // Valued at what keeping them saves: the shop items on the buy side, like every other kept output
         expect(priceState.shopSides).toContain('buy');
         expect(priceState.shopSides).not.toContain('sell');
         // The figure is named as a shop conversion, not passed off as a market price
@@ -1032,8 +1091,133 @@ describe('self-use alchemy lines', () => {
         expect(el.querySelector('.market-multi-action-injected').textContent).toContain('partly unpriced');
     });
 
+    // Transmuting a held Vampirism: 100 actions/hr, always succeeds, one book per action
+    const vampirismTransmute = () => ({
+        actionType: 'transmute',
+        itemHrid: '/items/vampirism',
+        profitPerHour: 100,
+        profitPerAction: 1,
+        actionsPerHour: 100,
+        successRate: 1,
+        requirementCosts: [{ itemHrid: '/items/vampirism', count: 1, price: 700 }],
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        dropRevenues: [],
+    });
+    const bookPrices = () => {
+        taxState.rate = 0.1;
+        priceState.sided = {
+            '/items/frenzy': { buy: 1000, sell: 900 },
+            '/items/puncture': { buy: 500, sell: 400 },
+            '/items/vampirism': { buy: 700, sell: 600 },
+        };
+    };
+    const transmuteText = async () => {
+        alchemyState.profits = { transmute: vampirismTransmute() };
+        const el = itemTooltip('Vampirism');
+        await tooltipPrices.injectMultiActionProfitDisplay(el, '/items/vampirism', 0);
+        return el.querySelector('.market-multi-action-injected').textContent;
+    };
+
+    test('with nothing kept, a transmute sells every output after tax and says so', async () => {
+        settings.selfUseAlchemy = true;
+        bookPrices();
+        // Input: 600 after tax = 540, 100/hr = 54,000. Outputs: 30 Frenzy x 810 + 30 Puncture x 360
+        // + 40 Vampirism back at the input's 540 = 56,700. Not 30 x 1,000 + 30 x 500 at the ask.
+        expect(await transmuteText()).toContain('Transmute held item (self-use, sell outputs): 2.7K/hr');
+    });
+
+    test('a kept book is valued at the ask and named; the rest still sell after tax', async () => {
+        settings.selfUseAlchemy = true;
+        bookPrices();
+        keepState.kept = new Set(['/items/frenzy']);
+        // 30 Frenzy x 1,000 + 30 Puncture x 360 + 40 x 540 = 62,400, less 54,000
+        expect(await transmuteText()).toContain('Transmute held item (self-use, keep Frenzy): 8.4K/hr');
+    });
+
+    test('a kept item that is not among the outputs leaves the line selling', async () => {
+        settings.selfUseAlchemy = true;
+        bookPrices();
+        keepState.kept = new Set(['/items/cheese']);
+        expect(await transmuteText()).toContain('Transmute held item (self-use, sell outputs): 2.7K/hr');
+    });
+
     test('nothing to say about an item no alchemy applies to', async () => {
         settings.selfUseAlchemy = true;
         expect(await blockFor('/items/cheese_sword')).toBeNull();
+    });
+});
+
+describe('keep for self-use chip', () => {
+    const settleLong = async () => {
+        for (let i = 0; i < 40; i++) await Promise.resolve();
+    };
+    const press = (key, target = document.body) =>
+        target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+
+    test('a translated client still gets the chip, from the item sprite', async () => {
+        settings.selfUseAlchemy = true;
+        const el = popper(`<div class="ItemTooltipText_itemTooltipText__x">
+            <svg><use xlink:href="/static/media/items_sprite.abc.svg#frenzy"></use></svg>
+            <div class="ItemTooltipText_name__2JAHA"><span>狂暴</span></div></div>`);
+        observerState.handler(el);
+        await settleLong();
+        const chip = el.querySelector('.toolasha-selfuse-keep-chip');
+        expect(chip?.getAttribute('data-item-hrid')).toBe('/items/frenzy');
+    });
+
+    test('an alchemy output gets the chip, and K flips its mark', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        const chip = el.querySelector('.toolasha-selfuse-keep-chip');
+        expect(chip?.textContent).toBe('☐ Keep for self-use');
+        expect(chip.getAttribute('data-item-hrid')).toBe('/items/frenzy');
+
+        press('k');
+        await settleLong();
+        expect(keepState.kept.has('/items/frenzy')).toBe(true);
+        expect(chip.textContent).toBe('☑ Kept for self-use');
+
+        press('K');
+        await settleLong();
+        expect(keepState.kept.has('/items/frenzy')).toBe(false);
+        expect(chip.textContent).toBe('☐ Keep for self-use');
+    });
+
+    test('a click on the chip flips the mark too', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        el.querySelector('.toolasha-selfuse-keep-chip').click();
+        await settleLong();
+        expect(keepState.kept.has('/items/frenzy')).toBe(true);
+    });
+
+    test('K typed into a field is left alone', async () => {
+        settings.selfUseAlchemy = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        const input = document.createElement('input');
+        document.body.appendChild(input);
+        press('k', input);
+        await settleLong();
+        expect(keepState.kept.size).toBe(0);
+    });
+
+    test('no chip with the self-use lines off, or on an item alchemy never yields', async () => {
+        const off = itemTooltip('Frenzy');
+        observerState.handler(off);
+        await settleLong();
+        expect(off.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+
+        settings.selfUseAlchemy = true;
+        const apple = itemTooltip('Apple');
+        observerState.handler(apple);
+        await settleLong();
+        expect(apple.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
     });
 });

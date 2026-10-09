@@ -970,7 +970,7 @@ function scanWrites(files, sinks = SINKS, meta = {}) {
     for (const file of files) {
         const mod = loadModule(file);
         const rel = file.slice(srcRoot.length + 1).replace(/\\/g, '/');
-        const callRe = /storage\s*\.\s*(set|setJSON|putAll)\s*\(/g;
+        const callRe = /storage\s*\.\s*(set|setJSON|update|putAll)\s*\(/g;
         let m;
         while ((m = callRe.exec(mod.text))) {
             const open = m.index + m[0].length - 1;

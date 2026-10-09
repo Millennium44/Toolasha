@@ -834,7 +834,14 @@ export const settingsGroups = {
                 label: 'Show self-use alchemy lines (no sales tax)',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds self-use lines to the alternative actions: decompose once, the full decompose chain down to materials (with the gear it collects along the way, for the collection log), and transmuting an item you already hold. Outputs you keep are valued at what you would pay for them under your pricing mode, with no sales tax; the decomposed item costs the cheaper of making or buying it, and a held item costs what selling it would bring after tax. The ordinary taxed figures are unchanged.',
+                help: 'Adds self-use lines to the alternative actions: decompose once, the full decompose chain down to materials (with the gear it collects along the way, for the collection log), and transmuting an item you already hold. An output you mark "Keep for self-use" (press K on its tooltip, or click the chip there) is valued at what you would pay for it under your pricing mode, with no sales tax; every other output at what selling it would bring after tax, so with nothing marked a line reads as "do it and sell the outputs". The decomposed item costs the cheaper of making or buying it, and a held item costs what selling it would bring after tax. The ordinary taxed figures are unchanged.',
+            },
+            itemTooltip_selfUseKeepList: {
+                id: 'itemTooltip_selfUseKeepList',
+                label: 'Self-use keep list (this character)',
+                type: 'button',
+                buttonLabel: 'Review kept items',
+                help: 'The items this character marked "Keep for self-use" from their tooltips, which the self-use alchemy lines value at what you would pay for them. Remove one, or clear the list.',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
