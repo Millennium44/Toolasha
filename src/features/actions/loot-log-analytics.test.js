@@ -10,6 +10,8 @@
 import { describe, test, expect } from 'vitest';
 import {
     getEntryDurationMs,
+    lootEntryIdentity,
+    isMoreCompleteEntry,
     mergeCurrentAndHistoricalEntries,
     buildActionGroupKey,
     aggregatePivotRows,
@@ -66,6 +68,50 @@ describe('getEntryDurationMs', () => {
     });
 });
 
+describe('lootEntryIdentity', () => {
+    test('a reissued characterActionId does not change the identity', () => {
+        expect(lootEntryIdentity(entry({ characterActionId: 123 }))).toBe(
+            lootEntryIdentity(entry({ characterActionId: 148 }))
+        );
+    });
+
+    test('the start, the tier, the items and the party each tell runs apart', () => {
+        const base = lootEntryIdentity(entry());
+        expect(lootEntryIdentity(entry({ startTime: '2026-09-02T00:00:00Z' }))).not.toBe(base);
+        expect(lootEntryIdentity(entry({ difficultyTier: 1 }))).not.toBe(base);
+        expect(lootEntryIdentity(entry({ primaryItemHash: 'a' }))).not.toBe(base);
+        expect(lootEntryIdentity(entry({ secondaryItemHash: 'a' }))).not.toBe(base);
+        expect(lootEntryIdentity(entry({ partyId: 9 }))).not.toBe(base);
+        expect(lootEntryIdentity(entry({ actionHrid: '/actions/milking/goat' }))).not.toBe(base);
+    });
+
+    test('an entry without an action or a start falls back to its id, and one with neither has none', () => {
+        expect(lootEntryIdentity({ characterActionId: 5 })).toBe('id:5');
+        expect(lootEntryIdentity({ actionCount: 1 })).toBeUndefined();
+        expect(lootEntryIdentity(null)).toBeUndefined();
+    });
+});
+
+describe('isMoreCompleteEntry', () => {
+    test('anything beats nothing', () => {
+        expect(isMoreCompleteEntry(entry(), undefined)).toBe(true);
+    });
+
+    test('the higher action count wins whatever the end times say', () => {
+        const ahead = entry({ actionCount: 150, endTime: '2026-09-01T01:00:00Z' });
+        const behind = entry({ actionCount: 100, endTime: '2026-09-01T05:00:00Z' });
+        expect(isMoreCompleteEntry(ahead, behind)).toBe(true);
+        expect(isMoreCompleteEntry(behind, ahead)).toBe(false);
+    });
+
+    test('a tie on count goes to the later end, and an exact tie replaces nothing', () => {
+        const later = entry({ endTime: '2026-09-01T02:00:00Z' });
+        expect(isMoreCompleteEntry(later, entry())).toBe(true);
+        expect(isMoreCompleteEntry(entry(), later)).toBe(false);
+        expect(isMoreCompleteEntry(entry(), entry())).toBe(false);
+    });
+});
+
 describe('mergeCurrentAndHistoricalEntries', () => {
     test('the live copy of a still-running action wins over the stored one', () => {
         const stored = entry({ characterActionId: 7, actionCount: 10 });
@@ -76,12 +122,23 @@ describe('mergeCurrentAndHistoricalEntries', () => {
         expect(merged[0].actionCount).toBe(40);
     });
 
-    test('entries only one side has are kept, and entries with no id are dropped', () => {
+    test('entries only one side has are kept, and entries with no identity are dropped', () => {
         const merged = mergeCurrentAndHistoricalEntries(
-            [entry({ characterActionId: 1 }), entry({ characterActionId: null })],
-            [entry({ characterActionId: 2 })]
+            [entry({ characterActionId: 1 }), { characterActionId: null, actionCount: 5, drops: {}, xpGains: {} }],
+            [entry({ characterActionId: 2, startTime: '2026-09-02T00:00:00Z' })]
         );
         expect(merged.map((e) => e.characterActionId).sort()).toEqual([1, 2]);
+    });
+
+    test('a run whose characterActionId was reissued mid-session is one row, the copy further along', () => {
+        // Upstream's observation: a labyrinth run spanning an interrupt/resume came back
+        // under a new characterActionId with the same startTime
+        const stored = entry({ characterActionId: 123, actionHrid: '/actions/labyrinth/explore', actionCount: 123 });
+        const live = entry({ characterActionId: 148, actionHrid: '/actions/labyrinth/explore', actionCount: 148 });
+
+        expect(mergeCurrentAndHistoricalEntries([live], [stored])).toEqual([live]);
+        // Further along wins whichever side it is on
+        expect(mergeCurrentAndHistoricalEntries([stored], [live])).toEqual([live]);
     });
 
     test('either side may be missing entirely', () => {

@@ -34,6 +34,7 @@ import {
 } from '../../utils/gathering-drop-model.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
+import { lootEntryIdentity } from './loot-log-analytics.js';
 import { reconstructEnhancingRun, computeEnhancingSummary, mergeEnhancingSummaries } from './enhancing-loot-summary.js';
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
 import { getEnhancementMaterialPrice, getCheapestProtectionPrice } from '../enhancement/tooltip-enhancement.js';
@@ -1826,7 +1827,7 @@ class LootLogStats {
         if (!this.currentLootLogData) return;
 
         // Build set of current IDs
-        const currentIds = new Set(this.currentLootLogData.map((e) => e.characterActionId));
+        const currentIds = new Set(this.currentLootLogData.map(lootEntryIdentity));
 
         // Get historical entries not in current set
         const gen = ++this.historyRenderGen;
@@ -1945,7 +1946,7 @@ class LootLogStats {
         button.addEventListener('click', async () => {
             try {
                 const current = this.currentLootLogData || [];
-                const currentIds = new Set(current.map((e) => e.characterActionId));
+                const currentIds = new Set(current.map(lootEntryIdentity));
                 const historical = await lootLogHistory.getHistoricalEntries(currentIds);
                 const rows = buildLootLogRows([...current, ...historical], {
                     itemInfo: (baseHrid) => this.resolveItemPricing(baseHrid),
@@ -2008,7 +2009,7 @@ class LootLogStats {
             deleteBtn.style.background = 'none';
         });
         deleteBtn.addEventListener('click', async () => {
-            await this.deleteHistoricalEntry(entry.characterActionId);
+            await this.deleteHistoricalEntry(entry);
             entryEl.remove();
             // Update separator count
             const wrapper = document.querySelector('.mwi-loot-log-history');
@@ -2105,17 +2106,17 @@ class LootLogStats {
     }
 
     /**
-     * Delete a single historical entry by characterActionId.
+     * Delete a single historical entry (matched by `lootEntryIdentity`, not `characterActionId`).
      *
      * Delegates to `lootLogHistory.deleteEntry`, which queues the delete on the
      * same chain as `mergeAndSave` — this used to read and save directly, which
      * raced a merge arriving from a `loot_log_updated` message in flight at the
      * same time and could have the merge's stale read put the just-deleted
      * entry straight back.
-     * @param {number} characterActionId
+     * @param {Object} entry - The stored entry the row was drawn from
      */
-    async deleteHistoricalEntry(characterActionId) {
-        await lootLogHistory.deleteEntry(characterActionId);
+    async deleteHistoricalEntry(entry) {
+        await lootLogHistory.deleteEntry(entry);
     }
 
     /**

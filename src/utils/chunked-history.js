@@ -117,11 +117,12 @@ function fingerprintOf(entry) {
 /**
  * A stored tombstone map, absent or corrupt one included.
  *
- * The shape is `id → {at, fp, bulk}`: when the deletion happened, what the
- * entry looked like when it did, and whether it came from a whole-record
- * `clear()` rather than from a single-entry deletion.
+ * The shape is `id → {at, fp, bulk, rev?}`: when the deletion happened, what
+ * the entry looked like when it did, whether it came from a whole-record
+ * `clear()` rather than from a single-entry deletion, and — for a store that
+ * names a `revisionOf` — how far along the deleted copy was.
  * @param {*} value - What was under the tombstone key
- * @returns {Object<string, {at: number, fp: string, bulk: boolean}>} The map
+ * @returns {Object<string, {at: number, fp: string, bulk: boolean, rev?: number}>} The map
  */
 function stonesOf(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -134,6 +135,7 @@ function stonesOf(value) {
             fp: typeof stone.fp === 'string' ? stone.fp : '',
             bulk: stone.bulk === true,
         };
+        if (Number.isFinite(stone.rev)) out[id].rev = stone.rev;
     }
     return out;
 }
@@ -361,6 +363,13 @@ export function maxRecordsPerCharacter(storeName, keys) {
  *   the entries a PULL would add: those the gist holds and this device does not. A pull never removes an entry
  *   this device holds (the owner prunes its own, and a history it has not touched for a while is still its
  *   own), but it stops taking back what the owner pruned. Uploads are not pruned by it.
+ * @param {Function} [options.legacyIdentitiesOf] - `(entry) => Array<*>`, the identities an entry had under
+ *   an earlier `identityOf`. A deletion recorded under one of them still applies, and a new deletion is
+ *   filed under them as well, so a device still running the earlier build honors it too.
+ * @param {Function} [options.revisionOf] - `(entry) => number`, how far along a copy of an entry that is
+ *   rewritten in place has got (a session's action count). A tombstone then also deletes any copy no further
+ *   along than the one deleted — an older snapshot a peer still holds — where without it only the exact
+ *   deleted copy (same fingerprint) is matched. A copy further along has outlived the deletion.
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -380,6 +389,8 @@ class ChunkedHistory {
         mergeCopies,
         pruneEntries,
         pruneIncoming,
+        legacyIdentitiesOf,
+        revisionOf,
         label = 'ChunkedHistory',
     }) {
         this.storeName = storeName;
@@ -394,6 +405,8 @@ class ChunkedHistory {
         this.mergeCopies = typeof mergeCopies === 'function' ? mergeCopies : null;
         this.pruneEntries = typeof pruneEntries === 'function' ? pruneEntries : null;
         this.pruneIncoming = typeof pruneIncoming === 'function' ? pruneIncoming : null;
+        this.legacyIdentitiesOf = typeof legacyIdentitiesOf === 'function' ? legacyIdentitiesOf : null;
+        this.revisionOf = typeof revisionOf === 'function' ? revisionOf : null;
         this.label = label;
 
         /** Whose records are in memory */
@@ -760,14 +773,68 @@ class ChunkedHistory {
         const keys = this._stoneKeys(id, entry, stones);
         if (keys.length === 0) return undefined;
         const fp = fingerprintOf(entry);
+        const rev = this._revision(entry);
         for (const key of keys) {
             const stone = stones[key];
             // Aged out here as well as on the way in: a fold can run for hours
             // against a map that was read when the page loaded
             if (Date.now() - stone.at >= TOMBSTONE_MAX_AGE_MS) continue;
             if (stone.fp !== '' && stone.fp === fp) return key;
+            // An older snapshot of the deleted copy — a peer's, or a partial row
+            // folded into the one that was deleted — is no news to the deletion
+            if (rev !== undefined && Number.isFinite(stone.rev) && rev <= stone.rev) return key;
         }
         return undefined;
+    }
+
+    /**
+     * @param {Object} entry - A history entry
+     * @returns {number|undefined} How far along this copy is, when the store measures it
+     * @private
+     */
+    _revision(entry) {
+        if (!this.revisionOf || entry == null) return undefined;
+        try {
+            const rev = this.revisionOf(entry);
+            return Number.isFinite(rev) ? rev : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
+     * @param {Object} entry - A history entry
+     * @param {*} id - Its current identity, left out of the answer
+     * @returns {Array<string>} The identities it had under an earlier `identityOf`, as tombstone keys
+     * @private
+     */
+    _legacyIdentities(entry, id) {
+        if (!this.legacyIdentitiesOf || entry == null) return [];
+        try {
+            const ids = this.legacyIdentitiesOf(entry);
+            if (!Array.isArray(ids)) return [];
+            return ids
+                .filter((legacy) => legacy !== undefined && legacy !== null)
+                .map(String)
+                .filter((legacy) => legacy !== String(id));
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * The tombstone a deletion of this copy leaves.
+     * @param {Object} entry - The copy deleted
+     * @param {number} at - When
+     * @param {boolean} bulk - Whether a whole-record clear made it
+     * @returns {{at: number, fp: string, bulk: boolean, rev?: number}} The stone
+     * @private
+     */
+    _stoneFor(entry, at, bulk) {
+        const stone = { at, fp: fingerprintOf(entry), bulk };
+        const rev = this._revision(entry);
+        if (rev !== undefined) stone.rev = rev;
+        return stone;
     }
 
     /**
@@ -788,6 +855,11 @@ class ChunkedHistory {
         const keys = [];
         if (id !== undefined && id !== null && stones[id]) keys.push(id);
         if (!this._customIdentity) return keys;
+        // An id from before the store's identity last changed (the loot log's
+        // `characterActionId`): a deletion filed under it is still a deletion
+        for (const legacy of this._legacyIdentities(entry, id)) {
+            if (stones[legacy] && !keys.includes(legacy)) keys.push(legacy);
+        }
         // Serialising every entry a fold meets is not free; a history nobody
         // has deleted from has no stone to find and must not pay for it
         for (const key in stones) {
@@ -1567,7 +1639,11 @@ class ChunkedHistory {
             const entry = previous[index];
             const id = this._identity(entry);
             if (id === undefined || id === null || surviving.has(id)) continue;
-            this._tombs[id] = { at, fp: fingerprintOf(entry), bulk: false };
+            const stone = this._stoneFor(entry, at, false);
+            this._tombs[id] = stone;
+            // Under the earlier identity too, so a device on the earlier build
+            // drops its own copy instead of handing it back on the next sync
+            for (const legacy of this._legacyIdentities(entry, id)) this._tombs[legacy] = { ...stone };
             added = true;
         }
         if (!added) return;
@@ -1674,7 +1750,7 @@ class ChunkedHistory {
             if (id === undefined || id === null) continue;
             // `bulk`, so the mass-delete refusal lets it through on the other
             // device: emptying the record is precisely what the user asked for
-            stones[id] = { at, fp: fingerprintOf(entry), bulk: true };
+            stones[id] = this._stoneFor(entry, at, true);
         }
         ageTombstones(stones);
         if (Object.keys(stones).length > 0) await this._writeTombs(charId, stones);
