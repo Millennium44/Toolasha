@@ -412,7 +412,7 @@ vi.mock('../../core/settings-storage.js', () => ({
     default: {
         loadSettings: async () => {
             if (mocks.loadGate) await mocks.loadGate;
-            return mocks.settingsMap;
+            return mocks.loadResult ?? mocks.settingsMap;
         },
         setSetting: async () => {},
         exportSettings: async () => '{}',
@@ -1339,6 +1339,32 @@ describe('injecting the tab into a panel React may take away', () => {
         await settingsUI.injectSettingsTab();
 
         expect(second.tabs.querySelector('#toolasha-settings-tab')).not.toBeNull();
+    });
+});
+
+describe('a panel load that predates an Iron Cow reconcile', () => {
+    test('takes the runtime value of a managed setting over the stale stored one', async () => {
+        const id = 'itemTooltip_selfUseAlchemy';
+        mocks.settingsMap[id] = { id, type: 'checkbox', isTrue: false, value: false };
+        // The stored read was captured before the reconcile forced the setting off
+        mocks.loadResult = { ...mocks.settingsMap, [id]: { id, type: 'checkbox', isTrue: true, value: true } };
+        const host = document.createElement('div');
+        host.className = 'SettingsPanel_tabsComponentContainer__abc';
+        const tabs = document.createElement('div');
+        tabs.className = 'MuiTabs-flexContainer';
+        const panels = document.createElement('div');
+        panels.className = 'TabsComponent_tabPanelsContainer__def';
+        host.append(tabs, panels);
+        document.body.appendChild(host);
+        try {
+            await settingsUI.injectSettingsTab();
+            expect(settingsUI.currentSettings[id].isTrue).toBe(false);
+        } finally {
+            mocks.loadResult = null;
+            delete mocks.settingsMap[id];
+            document.body.innerHTML = '';
+            settingsUI.currentSettings = {};
+        }
     });
 });
 

@@ -443,6 +443,9 @@ class SettingsUI {
             // rather than at startup
             const [currentSettings] = await Promise.all([settingsStorage.loadSettings(), this.loadPanelState()]);
             this.currentSettings = currentSettings;
+            // The stored read can predate an Iron Cow reconcile that finished while it was in flight;
+            // the runtime values are the truth for the settings the mode manages
+            this._overlayIronCowValues();
 
             // React can remount the settings panel while that read is in flight,
             // and the two containers captured above are then orphaned nodes. The
@@ -1810,6 +1813,15 @@ class SettingsUI {
      * inputs, and re-run the disabled-by state.
      */
     _syncPanelToIronCow() {
+        this._overlayIronCowValues();
+        this._syncIronCowSettingInputs();
+        this.applyDisabledByState();
+    }
+
+    /**
+     * Copy the runtime value of every Iron Cow-managed setting into the panel's working copy.
+     */
+    _overlayIronCowValues() {
         for (const id of IRON_COW_SETTINGS) {
             const entry = config.settingsMap[id];
             const own = this.currentSettings?.[id];
@@ -1820,8 +1832,6 @@ class SettingsUI {
                 own.value = entry.value;
             }
         }
-        this._syncIronCowSettingInputs();
-        this.applyDisabledByState();
     }
 
     /**
