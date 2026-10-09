@@ -950,15 +950,17 @@ describe('Gourmet and a craft batch', () => {
     });
 
     test('a crafted source is bought in whole craft actions and whole decompose actions', async () => {
-        // 2 swords at 25% Gourmet is 2.5 an action; a decompose action eats 2: four craft actions make 10
+        // 2 swords an action (Gourmet's extras are not guaranteed); a decompose action eats 2: one craft
+        // action already feeds one decompose action
         game.craftable = new Set(['/items/cheese_sword']);
         game.actionDetails = { outputItems: [{ itemHrid: '/items/cheese_sword', count: 2 }] };
         game.profitExtra = { gourmetBonus: 0.25 };
         const route = (await buildCollectionRoutes()).sources.find(
             (s) => s.route === 'craftDecompose' && s.sourceHrid === '/items/cheese_sword'
         );
-        expect(route.batch).toBe(10);
-        expect(wholeActionsBatch(2.2, 2)).toBe(22);
+        expect(route.batch).toBe(2);
+        // 3 a craft against 2 a decompose: two crafts make three decomposes
+        expect(wholeActionsBatch(3, 2)).toBe(6);
         expect(wholeActionsBatch(15, 2)).toBe(30);
     });
 

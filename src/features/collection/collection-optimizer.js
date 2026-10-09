@@ -614,7 +614,13 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                 // count would be wrong for an item made as a secondary output
                 const baseCount = Number(data.outputAmount) || Number(details?.outputItems?.[0]?.count) || 1;
                 const batch = Math.max(1, baseCount * (1 + gourmet));
-                viable.push({ actionHrid: data.actionHrid, cost: comparison.make, seconds: 3600 / perHour, batch });
+                viable.push({
+                    actionHrid: data.actionHrid,
+                    cost: comparison.make,
+                    seconds: 3600 / perHour,
+                    batch,
+                    baseCount,
+                });
             }
             // Every recipe is its own route, so each sort weighs it on its own terms: the cheapest
             // and the fastest can be different recipes
@@ -787,8 +793,9 @@ export async function buildCollectionRoutes({ cancelled = () => false } = {}) {
                     ...shared,
                     route: 'craftDecompose',
                     actionHrid: recipe.actionHrid,
-                    // Whole craft actions feeding whole decompose actions: the smallest run that is both
-                    batch: wholeActionsBatch(recipe.batch, bulk),
+                    // Whole craft actions (by their guaranteed output, not the Gourmet expectation) feeding whole
+                    // decompose actions: the smallest run that is both
+                    batch: wholeActionsBatch(recipe.baseCount, bulk),
                     yields: withSource,
                     cost: recipe.cost + overheadCost,
                     seconds: chain.seconds + recipe.seconds,
@@ -892,13 +899,12 @@ export function undominatedRecipes(recipes) {
 
 /**
  * The smallest run of sources that is a whole number of craft actions and a whole number of
- * decompose actions. A craft action makes `perAction` sources on average (Gourmet makes that
- * fractional: 2 items at 25% is 2.5), so k craft actions make k × perAction; the run is the least
- * k × perAction that is also a multiple of `bulk`. Each per-source cost and time stays the recipe's
- * (k whole actions make exactly the run), and the planner rounds purchases up to this run.
- * With no such k in reach (an irrational-looking bonus), the craft size is rounded up to whole
- * sources instead, which can only overbuy.
- * @param {number} perAction - Expected sources per craft action
+ * decompose actions. Pass the craft's guaranteed output per action (Gourmet's expected extra
+ * copies are not guaranteed, so they stay in the recipe's per-source cost and time, not here):
+ * k craft actions make k × perAction, and the run is the least such value that is also a multiple
+ * of `bulk`. The planner rounds purchases up to this run. If perAction is fractional and no k in
+ * reach fits, the craft size is rounded up to whole sources instead, which can only overbuy.
+ * @param {number} perAction - Guaranteed sources per craft action
  * @param {number} bulk - Sources one decompose action eats
  * @returns {number}
  */
