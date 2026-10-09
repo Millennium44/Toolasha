@@ -126,6 +126,15 @@ describe('the cache follows the market', () => {
         expect(liveAlternatives(ESSENCE, new Set()).alternatives).toEqual([]);
     });
 
+    test('routes cached before a teardown are not served after it', () => {
+        expect(liveAlternatives(ESSENCE, new Set()).alternatives).toHaveLength(1);
+        stopInsteadListeners();
+        // Moved while nothing was listening: no notification will ever say so
+        world.prices[BOOMSTICK] = { ask: 2000, bid: 1900 };
+        expect(liveAlternatives(ESSENCE, new Set()).alternatives).toEqual([]);
+        stopInsteadListeners();
+    });
+
     test('teardown unsubscribes, and the next lookup subscribes again', () => {
         liveAlternatives(ESSENCE, new Set());
         stopInsteadListeners();

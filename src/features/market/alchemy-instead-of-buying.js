@@ -376,6 +376,9 @@ function listenForPrices() {
 export function stopInsteadListeners() {
     jobEpoch += 1;
     jobs.clear();
+    // Prices can move while nothing is listening, so nothing cached before now may be served
+    // after the next lookup subscribes again
+    priceGeneration += 1;
     if (!listeningForPrices) return;
     if (typeof marketAPI?.off === 'function') marketAPI.off(onPricesChanged);
     if (typeof dataManager?.off === 'function') dataManager.off('market_item_values_updated', onPricesChanged);
