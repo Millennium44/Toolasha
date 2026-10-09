@@ -996,12 +996,40 @@ export function undominatedRecipes(recipes) {
                 (other, j) =>
                     j !== i &&
                     (other.batch ?? 1) === (recipe.batch ?? 1) &&
-                    other.cost <= recipe.cost &&
+                    sameBonusDrops(other, recipe) &&
+                    netCost(other) <= netCost(recipe) &&
                     other.seconds <= recipe.seconds &&
                     // Strictly better somewhere, or an exact copy listed earlier
-                    (other.cost < recipe.cost || other.seconds < recipe.seconds || j < i)
+                    (netCost(other) < netCost(recipe) || other.seconds < recipe.seconds || j < i)
             )
     );
+}
+
+/**
+ * What a recipe costs per item made once its bonus drops are sold: the make cost less the coins and
+ * the sale value of what it keeps ({@link craftBonus}).
+ * @param {{cost: number, bonus?: Object|null}} recipe
+ * @returns {number}
+ */
+function netCost(recipe) {
+    const bonus = recipe.bonus;
+    if (!bonus) return recipe.cost;
+    let credit = Number(bonus.coins) || 0;
+    for (const entry of bonus.kept?.values?.() ?? []) credit += (entry.perSource || 0) * (entry.unit || 0);
+    return recipe.cost - credit;
+}
+
+/**
+ * Whether two recipes roll the same bonus drops, equally priced: only then can one dominate the other
+ * on cost and time, since different drops credit different collections and an unpriced drop takes a
+ * route out of the ranking that a priced one stays in.
+ * @param {{bonus?: Object|null}} a
+ * @param {{bonus?: Object|null}} b
+ * @returns {boolean}
+ */
+function sameBonusDrops(a, b) {
+    const keys = (recipe) => [...(recipe.bonus?.yields?.keys?.() ?? [])].sort().join('|');
+    return keys(a) === keys(b) && Boolean(a.bonus?.partlyUnpriced) === Boolean(b.bonus?.partlyUnpriced);
 }
 
 /**

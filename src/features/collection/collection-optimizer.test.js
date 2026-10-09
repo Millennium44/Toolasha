@@ -431,6 +431,7 @@ const {
     weeklySellable,
     wholeActionsBatch,
     formatNet,
+    undominatedRecipes,
 } = await import('./collection-optimizer.js');
 const { bestOptions, collectionCounts, evaluateOption, indexRoutes, planTarget } =
     await import('./collection-optimizer-plan.js');
@@ -1159,6 +1160,23 @@ describe('a recipe the character cannot start', () => {
                     ?.filter((r) => r.route === 'craft') ?? []
             ).toEqual([]);
         });
+    });
+
+    test('a dearer recipe whose bonus drops make it cheaper once sold is kept', () => {
+        const drops = (value) => ({
+            yields: new Map([['/items/milking_essence', 0.1]]),
+            kept: new Map([['/items/milking_essence', { perSource: 0.1, unit: value }]]),
+            bonus: new Set(['/items/milking_essence']),
+            coins: 0,
+            partlyUnpriced: false,
+        });
+        const plain = { actionHrid: 'a', cost: 4, seconds: 10, batch: 1, bonus: drops(0) };
+        const rich = { actionHrid: 'b', cost: 5, seconds: 10, batch: 1, bonus: drops(20) };
+        // 5 - 0.1 x 20 = 3 net, against 4: the dearer recipe is the cheaper one
+        expect(undominatedRecipes([plain, rich]).map((r) => r.actionHrid)).toEqual(['b']);
+        // Different drops credit different collections: neither can dominate the other
+        const other = { ...rich, bonus: { ...drops(0), yields: new Map([['/items/garnet', 0.1]]) } };
+        expect(undominatedRecipes([plain, other]).map((r) => r.actionHrid)).toEqual(['a', 'b']);
     });
 
     test('a recipe no cheaper and no faster than another is left out', async () => {
