@@ -716,6 +716,7 @@ export function makeRateChoices() {
         const { equipment, drinks } = context;
         const gameData = dataManager.getInitClientData?.();
         const itemDetailMap = gameData?.itemDetailMap;
+        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
         // A tea counts only when it can be bought, the same real-ask rule buyableSetup applies to the
         // candidates; without it the ranking scores the no-tea setup alone
         const teaHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
@@ -726,7 +727,7 @@ export function makeRateChoices() {
             // Drink Concentration, each at its ask)
             const teaCostPerHour = calculateTeaCostsPerHour({
                 drinkSlots: drinks,
-                drinkConcentration: getDrinkConcentration(equipment, itemDetailMap),
+                drinkConcentration,
                 itemDetailMap,
                 getItemPrice: (hrid) => realPrice(hrid, 'ask'),
             }).totalCostPerHour;
@@ -739,7 +740,7 @@ export function makeRateChoices() {
         }
         // Actions per hour with efficiency, as the full costing divides the hourly spend by it
         const rates = new Map();
-        const actionsPerHourOf = (actionType, level, index, setupContext) => {
+        const actionsPerHourOf = (actionType, level, index, setupContext, drinkSlots) => {
             const key = `${index}|${actionType}|${level}`;
             if (!rates.has(key)) {
                 const actionDetails = gameData?.actionDetailMap?.[`/actions/alchemy/${actionType}`];
@@ -754,10 +755,19 @@ export function makeRateChoices() {
                           levelRequirementOverride: level,
                       })
                     : null;
-                rates.set(
-                    key,
-                    stats ? calculateActionsPerHour(stats.actionTime) * (1 + stats.totalEfficiency / 100) : null
-                );
+                // calculateActionStats leaves drink speed out; the full costing folds the tea speed in
+                // afterwards, so do the same or a speed tea's hourly spend lands on too few actions
+                const actionTime =
+                    stats && typeof calc.actionSpeedStats === 'function'
+                        ? calc.actionSpeedStats(actionDetails, {
+                              equipment,
+                              itemDetailMap,
+                              drinkSlots: drinkSlots || [],
+                              drinkConcentration,
+                              actionTime: stats.actionTime,
+                          }).actionTime
+                        : stats?.actionTime;
+                rates.set(key, stats ? calculateActionsPerHour(actionTime) * (1 + stats.totalEfficiency / 100) : null);
             }
             return rates.get(key);
         };
@@ -778,7 +788,8 @@ export function makeRateChoices() {
             const level = details?.itemLevel || 1;
             const choices = [];
             teaSetups.forEach(({ tea, drinkSlots, teaCostPerHour, context: setupContext }, index) => {
-                const perHour = teaCostPerHour > 0 ? actionsPerHourOf(actionType, level, index, setupContext) : null;
+                const perHour =
+                    teaCostPerHour > 0 ? actionsPerHourOf(actionType, level, index, setupContext, drinkSlots) : null;
                 const teaPerAction = perHour > 0 ? teaCostPerHour / perHour : 0;
                 const key = `${index}|${level}`;
                 if (!penalties.has(key)) {

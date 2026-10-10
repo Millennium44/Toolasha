@@ -489,6 +489,17 @@ class AlchemyProfitCalculator {
      * @param {string|null} catalystHrid - Candidate item
      * @returns {number} Multiplicative bonus, 0 when it is not a catalyst
      */
+    /**
+     * Fold the tea speed into an action time from calculateActionStats(), as the full costing does.
+     * Exposed so a ranking divides the hourly tea spend by the same actions per hour.
+     * @param {Object} actionDetails - Action detail object from game data
+     * @param {Object} params - See buildActionSpeedStats
+     * @returns {{actionTime: number, actionSpeedBreakdown: Object}}
+     */
+    actionSpeedStats(actionDetails, params) {
+        return buildActionSpeedStats(actionDetails, params);
+    }
+
     catalystSuccessBonus(catalystHrid) {
         if (!catalystHrid) return 0;
         if (catalystHrid === CATALYST_HRIDS.prime) return CATALYST_BONUSES.prime;

@@ -101,6 +101,10 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
             tea: tea ?? world.liveTea ?? 0,
         }),
         catalystSuccessBonus: (hrid) => (hrid === '/items/prime_catalyst' ? 0.25 : 0.15),
+        // The calculator folds a speed tea into the action time after calculateActionStats
+        actionSpeedStats: (details, { drinkSlots, actionTime }) => ({
+            actionTime: drinkSlots.length > 0 ? actionTime / (1 + (world.teaSpeed || 0)) : actionTime,
+        }),
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -131,6 +135,7 @@ beforeEach(() => {
     world.calls = [];
     world.loadoutDrinks = [];
     world.liveTea = 0;
+    world.teaSpeed = 0;
     world.listeners = [];
     world.prices = { [ESSENCE]: { ask: 5000, bid: 4000 }, [SHARD]: { ask: 1100, bid: 1000 } };
 });
@@ -219,6 +224,17 @@ describe('bonus-source ranking with the real success rate', () => {
         // 12 drinks an hour at 600 over 720 actions an hour
         for (const choice of teaChoices) expect(choice.teaPerAction).toBeCloseTo((12 * 600) / 720);
         expect(choices.some((choice) => choice.teaPerAction === 0)).toBe(true);
+    });
+
+    test('a speed tea spreads its hourly spend over the faster actions', () => {
+        world.loadoutDrinks = [TEA];
+        world.prices[TEA] = { ask: 600, bid: 500 };
+        world.teaSpeed = 0.5;
+        const choices = makeRateChoices()('decompose', { itemLevel: 10 }, 0.6);
+        const teaChoices = choices.filter((choice) => choice.teaPerAction > 0);
+        expect(teaChoices.length).toBeGreaterThan(0);
+        // 5 s / 1.5 makes 1080 actions an hour, not 720
+        for (const choice of teaChoices) expect(choice.teaPerAction).toBeCloseTo((12 * 600) / 1080);
     });
 
     test('a tea nobody sells adds no rate: only the no-tea setup is offered', () => {
