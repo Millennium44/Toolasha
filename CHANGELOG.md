@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Decompose chain values return; K can mark items to sell
+
+- Best Items and the Market's Decompose chain/hr no longer show "—" on every item: bonus Artisan's Crate contents are priced like the tooltip prices them, a partly priced crate gives a "≥" lower bound, and a chain that really can't be priced names what's missing; a new setting lets K mark items to sell (keep the rest) instead of to keep.
+
 ### Fixes from Codex's late reviews
 
 - An unstar or cleared name on a saved meter session now wins over another device's old copy, a fight still running when you press Clear is kept when it ends, Task Statistics zone rows pad the pre-filled fight count like Go and say when a zone could not be simulated, and the trigger optimizer runs on a snapshot of your build and really charges 10 points per extra death per hour.
