@@ -9712,6 +9712,37 @@ describe('the Triggers option', () => {
         expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('1 skipped: changed since analysis');
     });
 
+    test('Apply writes nothing after a guild shrine or scroll edit made during the analysis', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+
+        mocks.editedDTOs.player1.guildShrineLevels = { '/guild_shrines/attack': 3 };
+        ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+        expect(mocks.triggerApplied.flat()).toHaveLength(0);
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('1 skipped: changed since analysis');
+    });
+
+    test('Apply writes nothing when another simulated party member changed', async () => {
+        await enableSetting();
+        mocks.editedDTOs.player2 = { hrid: 'player2', equipment: {}, attackLevel: 50 };
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+
+        mocks.editedDTOs.player2.attackLevel = 90;
+        ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+        expect(mocks.triggerApplied.flat()).toHaveLength(0);
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('1 skipped: changed since analysis');
+    });
+
     test('Copy puts one line per change on the clipboard', async () => {
         await enableSetting();
         const writeText = vi.fn().mockResolvedValue(undefined);

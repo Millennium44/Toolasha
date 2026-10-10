@@ -286,24 +286,16 @@ function stableStringify(value) {
 }
 
 /**
- * A stable fingerprint of the parts of a player DTO that decide a sim's outcome: equipment,
- * every skill level, abilities, consumables and house rooms. The trigger analysis records it at
- * the start so Apply can tell that the build was edited in place while the run was going.
+ * A stable fingerprint of a whole player DTO: equipment, levels, abilities, consumables, house
+ * rooms, guild shrines and buffs, scrolls, achievement and community buffs, token upgrades — every
+ * field the engine can read. The trigger analysis records it at the start so Apply can tell that
+ * the build was edited in place while the run was going.
  * @param {Object|null|undefined} dto - Player DTO
  * @returns {string} Stable JSON
  */
 export function buildDtoSignature(dto) {
     if (!dto) return '';
-    const levels = {};
-    for (const key of Object.keys(dto)) if (/Level$/.test(key)) levels[key] = dto[key];
-    return stableStringify({
-        equipment: dto.equipment ?? null,
-        levels,
-        abilities: dto.abilities ?? null,
-        food: dto.food ?? null,
-        drinks: dto.drinks ?? null,
-        houseRooms: dto.houseRooms ?? null,
-    });
+    return stableStringify(dto);
 }
 
 /**
@@ -10241,8 +10233,8 @@ class CombatSimUI {
      * @param {Object} result - The optimizer result
      * @param {Object} gameData - Game data payload
      * @param {Array<Object>} playerDTOs - The live DTO objects the analysis copied; Apply refuses a player replaced since
-     * @param {Map<string, string>} [signatures] - hrid -> {@link buildDtoSignature} taken when the analysis began;
-     *   Apply skips a player whose build no longer matches
+     * @param {Map<string, string>} [signatures] - hrid -> {@link buildDtoSignature} for every simulated member,
+     *   taken when the analysis began; Apply writes nothing if any member or the roster changed since
      * @private
      */
     _wireTriggerResultButtons(result, gameData, playerDTOs, signatures = new Map()) {
@@ -10254,14 +10246,19 @@ class CombatSimUI {
             }
             const byHrid = new Map((playerDTOs || []).map((dto) => [dto.hrid, dto]));
             const edited = this._editor.getEditedDTOs();
+            // Every simulated member shapes the measured result (encounter rate, the party objective,
+            // the all-together check), so an edit to any of them, or a changed roster, voids it all
+            const liveHrids = Object.keys(edited || {}).sort();
+            const recordedHrids = [...signatures.keys()].sort();
+            const setupChanged =
+                signatures.size > 0 &&
+                (liveHrids.join('|') !== recordedHrids.join('|') ||
+                    recordedHrids.some((hrid) => buildDtoSignature(edited[hrid]) !== signatures.get(hrid)));
             const unchanged = [];
             const changedBuild = [];
             for (const c of buildEditorChanges(result)) {
                 const change = { ...c, dtoRef: byHrid.get(c.playerHrid) };
-                const recorded = signatures.get(c.playerHrid);
-                const stale =
-                    recorded !== undefined && buildDtoSignature(edited[c.playerHrid] ?? change.dtoRef) !== recorded;
-                (stale ? changedBuild : unchanged).push(change);
+                (setupChanged ? changedBuild : unchanged).push(change);
             }
             const outcome = unchanged.length
                 ? this._editor.applyTriggerValueChanges(unchanged)
