@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### From upstream: Max buy button, chat date separator
+
+- A Max button in the Shop, Task Shop, Labyrinth Shop and Cowbell Store buy dialogs fills in the most you can afford, respecting purchase limits (it never buys; on by default), and chat timestamps now separate the date with "-" like the Market.
+
 ### Stricter crate pricing and remembered optimizer choices
 
 - Labyrinth Tokens and Cowbells inside a decompose chain's bonus crate now need a real order-book bid like every other crate item (otherwise the chain shows "≥"), and the trigger optimizer remembers its party, precision and minimum-gain choices.

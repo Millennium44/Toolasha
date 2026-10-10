@@ -79,14 +79,14 @@ describe('Chat 24hr Timestamps', () => {
     test('preserves and reorders the date prefix for Guild/Party/Whisper/Moderator messages', () => {
         const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
         feature.initialize();
-        expect(span.textContent).toBe('[05/22 21:31:23] ');
+        expect(span.textContent).toBe('[05-22 21:31:23] ');
     });
 
     test('respects DD-MM date format setting', () => {
         settingValues.market_listingDateFormat = 'DD-MM';
         const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
         feature.initialize();
-        expect(span.textContent).toBe('[22/05 21:31:23] ');
+        expect(span.textContent).toBe('[22-05 21:31:23] ');
     });
 
     test('keeps 12-hour format when market_listingTimeFormat is 12hour, just normalizing padding', () => {
@@ -129,11 +129,11 @@ describe('Chat 24hr Timestamps', () => {
     test('re-renders already-rewritten timestamps when the date format changes', () => {
         const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
         feature.initialize();
-        expect(span.textContent).toBe('[05/22 21:31:23] ');
+        expect(span.textContent).toBe('[05-22 21:31:23] ');
 
         settingValues.market_listingDateFormat = 'DD-MM';
         settingChangeCallbacks['market_listingDateFormat'].forEach((cb) => cb());
-        expect(span.textContent).toBe('[22/05 21:31:23] ');
+        expect(span.textContent).toBe('[22-05 21:31:23] ');
     });
 
     test('converts a native 24-hour timestamp to 12-hour', () => {
@@ -154,7 +154,7 @@ describe('Chat 24hr Timestamps', () => {
     test('disable() restores the native text it rewrote', () => {
         const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
         feature.initialize();
-        expect(span.textContent).toBe('[05/22 21:31:23] ');
+        expect(span.textContent).toBe('[05-22 21:31:23] ');
         feature.disable();
         expect(span.textContent).toBe('[5/22 9:31:23 PM] ');
     });
@@ -175,7 +175,7 @@ describe('Chat 24hr Timestamps', () => {
         ['[上午12:05:09] ', '[00:05:09] '],
         ['[午後 12:30:00] ', '[12:30:00] '],
         ['[午前9:31:23] ', '[09:31:23] '],
-        ['[5/22 오후 9:31:23] ', '[05/22 21:31:23] '],
+        ['[5/22 오후 9:31:23] ', '[05-22 21:31:23] '],
         ['[9:31:23 午後] ', '[21:31:23] '],
         ['[12:00:00 PM] ', '[12:00:00] '],
         ['[12:00:00 AM] ', '[00:00:00] '],
