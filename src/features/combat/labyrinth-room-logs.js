@@ -121,6 +121,10 @@ export function sessionIdentity(session) {
 const newestFirst = (a, b) => (Number(b?.startedAt) || 0) - (Number(a?.startedAt) || 0);
 /** Used when the setting is unreadable; the setting itself is the real bound */
 const DEFAULT_SESSIONS = 120;
+
+/** The largest log the setting allows, which is also the most an upload carries */
+const MAX_LOG_SESSIONS = 500;
+
 /** However large the log is set, one room cannot fill it */
 const MAX_ACTIONS = 60;
 /** A room retried this many times has made its point */
@@ -303,7 +307,7 @@ class LabyrinthRoomLogs {
     /** How many rooms of history to keep */
     logSize() {
         const raw = Number(config.getSettingValue('labyrinthRoomLogSize', DEFAULT_SESSIONS));
-        return Math.min(500, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
+        return Math.min(MAX_LOG_SESSIONS, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
     }
 
     /**
@@ -3999,7 +4003,7 @@ const roomTime = (session) => Number(session?.endedAt) || Number(session?.starte
 function mergeRoomLogsCleared(base, fresh, size) {
     const asEntries = (value) => ({ clearedAt: clearedAtOf(value), entries: value?.sessions });
     const fold = mergeClearable((a, b) => mergeRoomLogs({ sessions: a }, { sessions: b }, size).sessions, roomTime, {
-        limit: 500,
+        limit: MAX_LOG_SESSIONS,
         label: 'labyrinth room',
     });
     const folded = fold(asEntries(base), asEntries(fresh));
@@ -4017,10 +4021,12 @@ const labyrinthRoomLogs = new LabyrinthRoomLogs();
 registerSyncMerge({
     store: 'settings',
     base: STORAGE_KEY,
-    // The cap is this device's own setting: it trims local storage on a pull,
-    // never an upload, where it would delete sessions the other device keeps
+    // The cap is this device's own setting: it trims local storage on a pull.
+    // An upload keeps the largest log any device can be set to, so it deletes
+    // nothing another device keeps — and stays within the Clear's refusal
+    // limit, which an uncapped gist outgrew, so a Clear never reached it
     merge: (local, incoming, context) =>
-        mergeRoomLogsCleared(local, incoming, context?.forUpload ? Infinity : labyrinthRoomLogs.logSize()),
+        mergeRoomLogsCleared(local, incoming, context?.forUpload ? MAX_LOG_SESSIONS : labyrinthRoomLogs.logSize()),
     label: 'Labyrinth room logs',
     capsLocally: true,
 });

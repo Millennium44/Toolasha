@@ -1779,6 +1779,30 @@ describe('the sync merge keeps this device’s log size out of the upload', () =
         expect(registration.merge(local, gist, { forUpload: true }).sessions).toHaveLength(500);
     });
 
+    test('a Clear reaches a gist holding more than 500 pre-clear rooms', async () => {
+        await import('./labyrinth-room-logs.js');
+        const { mergeForUpload } = await import('../sync/sync-payload.js');
+        const payloadOf = (log) =>
+            JSON.stringify({
+                formatVersion: 1,
+                exportedAt: 'x',
+                syncScope: 'everything',
+                stores: { settings: { labyrinthRoomLogs_c1: log } },
+            });
+        // Two devices' unions left the gist past any one log's size
+        const gist = { sessions: sessions(1000, 700) };
+        const cleared = { sessions: [], clearedAt: 1_000_000 };
+        // This device moved since the exchange; the gist did not
+        const { wholeKeyHashes } = await import('../sync/sync-payload.js');
+        const baseline = wholeKeyHashes(payloadOf(gist));
+
+        const { text } = mergeForUpload(payloadOf(cleared), payloadOf(gist), baseline);
+
+        const uploaded = JSON.parse(text).stores.settings.labyrinthRoomLogs_c1;
+        expect(uploaded.sessions).toEqual([]);
+        expect(uploaded.clearedAt).toBe(1_000_000);
+    });
+
     test('a push over this device’s cap reports the log, and one with nothing extra on the gist does not', async () => {
         await import('./labyrinth-room-logs.js');
         const { trimmedRegisteredKeys } = await import('../sync/sync-payload.js');
