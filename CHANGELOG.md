@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers: alchemy source ranking and small sync fixes
+
+- Instead-of-buying's essence source ranking now counts tea cost, so a tea route can no longer push a cheaper route off the top-10 list; a deletion that failed to sync is retried instead of being settled over, restoring a legacy enhancing backup no longer keeps restored sessions hidden, and the collection optimizer credits bonus copies of the item being crafted.
+
 ### Combat sim trigger optimizer
 
 - An optional Triggers option (off by default) in the combat sim's Upgrade tab tunes the HP/MP thresholds on your ability and food triggers, confirms each change on fresh runs, and offers only real score gains (minimum gain selectable) to apply in the sim or copy and enter by hand.
