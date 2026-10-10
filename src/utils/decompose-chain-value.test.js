@@ -32,7 +32,11 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../core/config.js', () => ({
-    default: { getSettingValue: (key, fallback) => fallback, getSetting: () => null },
+    default: {
+        getSettingValue: (key, fallback) => fallback,
+        // Cowbells count unless a test turns them off
+        getSetting: (key) => engine.settings?.[key] ?? (key === 'expectedValue_includeCowbells' ? true : null),
+    },
 }));
 vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
     default: {
@@ -540,6 +544,36 @@ describe('a bonus crate', () => {
         } finally {
             engine.customs = undefined;
             engine.rawBids = undefined;
+        }
+    });
+
+    test('a custom override on the bag does not hide its book bid, even when the resolver gives up', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/cowbell', dropRate: 1, minCount: 1, maxCount: 1 }];
+        // A custom 0 on the bag: the resolver answers null, but the book still has a bid
+        delete engine.sellResolved['/items/cowbell'];
+        engine.customs = new Set(['/items/bag_of_10_cowbells']);
+        engine.rawBids = { '/items/bag_of_10_cowbells': 1000 };
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(false);
+            expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * ((1000 * 0.82) / 10)) * 3600);
+        } finally {
+            engine.customs = undefined;
+            engine.rawBids = undefined;
+        }
+    });
+
+    test('with Cowbells not counted, they are worth zero and the crate is not partial', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/cowbell', dropRate: 1, minCount: 1, maxCount: 1 }];
+        engine.settings = { expectedValue_includeCowbells: false };
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(false);
+            expect(chain.netPerHour).toBeCloseTo((1920 - 500) * 3600);
+        } finally {
+            engine.settings = undefined;
         }
     });
 

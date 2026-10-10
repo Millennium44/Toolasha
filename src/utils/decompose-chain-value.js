@@ -24,6 +24,7 @@
  * setup moved calls {@link clearDecomposeChainCaches}.
  */
 
+import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import expectedValueCalculator from '../features/market/expected-value-calculator.js';
@@ -218,10 +219,9 @@ export function decomposeChain(itemHrid) {
                 }
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
                 if (hrid === COWBELL_HRID) {
-                    // The resolver's zero is the "count Cowbells" setting being off: keep it. Otherwise the
-                    // Cowbell Bag must have a real order-book bid; the resolver's figure may be a custom or estimate
-                    if (!resolved) return null;
-                    if (resolved.value === 0) return 0;
+                    // Not counting Cowbells values them at zero. Otherwise the Cowbell Bag's raw order-book bid
+                    // decides, whatever the resolver made of a custom price or estimate
+                    if (!config.getSetting('expectedValue_includeCowbells')) return 0;
                     const bagBid = bookBidOf(COWBELL_BAG_HRID);
                     return bagBid === null ? null : calculatePriceAfterTax(bagBid, COWBELL_BAG_TAX) / 10;
                 }
