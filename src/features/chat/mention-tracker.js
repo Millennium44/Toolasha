@@ -174,7 +174,7 @@ class MentionTracker {
             '/chat_channel_types/guild': 'Guild',
             '/chat_channel_types/local': 'Local',
             '/chat_channel_types/whisper': 'Whisper',
-            '/chat_channel_types/global': 'Global',
+            '/chat_channel_types/general': 'General',
         };
         return channelMap[channel] || channel;
     }
@@ -229,13 +229,13 @@ class MentionTracker {
             Guild: '/chat_channel_types/guild',
             Local: '/chat_channel_types/local',
             Whisper: '/chat_channel_types/whisper',
-            Global: '/chat_channel_types/global',
+            Global: '/chat_channel_types/general',
             General: '/chat_channel_types/general',
             Trade: '/chat_channel_types/trade',
             Beginner: '/chat_channel_types/beginner',
             Recruit: '/chat_channel_types/recruit',
             Ironcow: '/chat_channel_types/ironcow',
-            Mod: '/chat_channel_types/mod',
+            Mod: '/chat_channel_types/moderator',
         };
         return nameMap[cleanName] || null;
     }

@@ -400,3 +400,11 @@ describe('mention tracker — chat_message_updated (deletion)', () => {
         expect(() => game.wsHandlers.chat_message_updated({ message: { isDeleted: true } })).not.toThrow();
     });
 });
+
+describe('channel ids match the game', () => {
+    test('Global and Mod tabs map to the real general and moderator channel types', () => {
+        expect(mentionTracker.getChannelFromTabName('Global')).toBe('/chat_channel_types/general');
+        expect(mentionTracker.getChannelFromTabName('Mod')).toBe('/chat_channel_types/moderator');
+        expect(mentionTracker.getChannelFromTabName('General')).toBe('/chat_channel_types/general');
+    });
+});
