@@ -263,6 +263,15 @@ export function listSyncMerges() {
  * @property {{floor: (newestEnd: number, newestStart: number) => number}} [maxAge] - Keys whose `end` is before
  *   `floor(newestEnd, newestStart)` are dropped: the newest `end` in the key's window, and the newest `start` (the
  *   earliest row a key could hold; `end` when `parse` gives none)
+ * @property {SyncRetentionIndex} [index] - The window is a list the owner keeps in a key of its own; see
+ *   `registerSyncRetention`
+ */
+
+/**
+ * @typedef {Object} SyncRetentionIndex
+ * @property {(group: string) => string} key - The key, in the same store, holding a window's list
+ * @property {(value: *) => Array<string>|null} ids - The ids that list names; null when the value is not a list
+ *   the rule can read
  */
 
 /** @type {Array<SyncRetention>} */
@@ -308,9 +317,13 @@ const retentions = [];
  * @param {{floor: (newestEnd: number, newestStart: number) => number}} [options.maxAge] - The age cut, in the units
  *   `parse` returns
  * @param {boolean} [options.floorMarkers] - The owner writes its cut as marker keys (see above)
+ * @param {SyncRetentionIndex} [options.index] - The owner lists what it keeps in an index key per window, and a
+ *   key that list does not name is outside the window. `parse` then answers `{group, id}`. Unlike the other rules
+ *   this one reads a value, so it is only applied where the caller passes `valueOf` to {@link retentionDrops}, and a
+ *   window whose index is absent or unreadable drops nothing
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floorMarkers = false }) {
+export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floorMarkers = false, index }) {
     if (!store || typeof prefix !== 'string' || !prefix) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
     }
@@ -319,8 +332,12 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
     if (keep !== undefined && (!Number.isInteger(keep) || keep < 1)) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a positive keep');
     }
-    if (keep === undefined && !hasAge && floorMarkers !== true) {
-        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a keep, a maxAge or floorMarkers');
+    const hasIndex = Boolean(index) && typeof index.key === 'function' && typeof index.ids === 'function';
+    if (index !== undefined && !hasIndex) {
+        throw new Error('[SyncMergeRegistry] registerSyncRetention needs an index with key() and ids()');
+    }
+    if (keep === undefined && !hasAge && floorMarkers !== true && !hasIndex) {
+        throw new Error('[SyncMergeRegistry] registerSyncRetention needs a keep, a maxAge, floorMarkers or an index');
     }
     // One rule per store and prefix: a bundle copy of the owning module makes
     // the same call again, and the first stands
@@ -332,6 +349,7 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
         keep,
         maxAge: hasAge ? maxAge : undefined,
         floorMarkers: floorMarkers === true,
+        index: hasIndex ? index : undefined,
     };
     if (!existing) retentions.push(rule);
     return () => {
@@ -346,21 +364,35 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
  *
  * Keys no rule owns, and keys a rule's `parse` declines, are never dropped.
  *
+ * An index rule is judged only when `valueOf` is given, since it reads the
+ * window's index value: each key whose id that index does not name is dropped,
+ * and a window whose index `valueOf` cannot answer (absent, or not a list the
+ * rule reads) drops nothing. Which side's index is the one in force is the
+ * caller's to say, through `valueOf`.
+ *
  * @param {string} store - Object store name
  * @param {Iterable<string>} keys - Every key in play (this device's and the other side's)
+ * @param {(key: string) => *} [valueOf] - The value in force for a key, for index rules
+ * @param {{indexOnly?: boolean}} [options] - `indexOnly` judges the index rules alone
  * @returns {Set<string>} The keys to leave out
  */
-export function retentionDrops(store, keys) {
+export function retentionDrops(store, keys, valueOf, { indexOnly = false } = {}) {
     const dropped = new Set();
     const rules = retentions.filter((rule) => rule.store === store);
     if (rules.length === 0) return dropped;
+    const keyList = [...new Set(keys)];
 
     for (const rule of rules) {
+        if (rule.index) {
+            if (typeof valueOf === 'function') indexDrops(rule, keyList, valueOf, dropped);
+            if (rule.keep === undefined && !rule.maxAge && !rule.floorMarkers) continue;
+        }
+        if (indexOnly) continue;
         /** group → [{key, order}] */
         const groups = new Map();
         /** group → [{key, floor}], the floor markers, judged apart from the data keys */
         const markers = new Map();
-        for (const key of new Set(keys)) {
+        for (const key of keyList) {
             if (typeof key !== 'string' || !key.startsWith(rule.prefix)) continue;
             let parsed = null;
             try {
@@ -404,6 +436,42 @@ export function retentionDrops(store, keys) {
         }
     }
     return dropped;
+}
+
+/**
+ * An index rule's drops: every key whose id its window's index does not name.
+ * @param {SyncRetention} rule - A rule with an `index`
+ * @param {Array<string>} keys - Every key in play
+ * @param {(key: string) => *} valueOf - The value in force for a key
+ * @param {Set<string>} dropped - Added to
+ */
+function indexDrops(rule, keys, valueOf, dropped) {
+    /** group → [{key, id}] */
+    const groups = new Map();
+    for (const key of keys) {
+        if (typeof key !== 'string' || !key.startsWith(rule.prefix)) continue;
+        let parsed = null;
+        try {
+            parsed = rule.parse(key);
+        } catch (error) {
+            console.error(`[SyncMergeRegistry] Retention parse for ${rule.prefix} threw:`, error);
+        }
+        if (!parsed || typeof parsed.group !== 'string' || typeof parsed.id !== 'string') continue;
+        if (!groups.has(parsed.group)) groups.set(parsed.group, []);
+        groups.get(parsed.group).push({ key, id: parsed.id });
+    }
+    for (const [group, members] of groups) {
+        let ids = null;
+        try {
+            ids = rule.index.ids(valueOf(rule.index.key(group)));
+        } catch (error) {
+            console.error(`[SyncMergeRegistry] Retention index for ${rule.prefix} threw:`, error);
+        }
+        // No index, or one that cannot be read: nothing is known to be outside it
+        if (!Array.isArray(ids)) continue;
+        const named = new Set(ids);
+        for (const { key, id } of members) if (!named.has(id)) dropped.add(key);
+    }
 }
 
 /**

@@ -149,6 +149,13 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // Periods this machine timed off its own network, on the same reasoning:
     // another device's arrival times are not this one's
     'tickPeriodTally',
+    // A dungeon run in progress, rewritten every battle. Another device's
+    // mid-run record is not a run this one is in; resuming a run across
+    // devices is given up so it neither travels nor wakes a push each battle
+    'dungeonTracker_inProgressRun',
+    // What this device's settings carry-over could not decide, waiting to be
+    // shown once here. Another device's notice is not this one's to show
+    'settings_shared_scope_conflicts',
 ];
 
 /**
@@ -1368,6 +1375,9 @@ export function restampRestoredSettings(payload, now = Date.now()) {
  * download's keys and this device's together, are dropped from the download
  * (see `registerSyncRetention`): a snapshot this device pruned is not written
  * back, and neither is an older one the window no longer has room for.
+ * After the baseline rule, an index rule drops each download key the index in
+ * force does not name — the download's index when it is still in the write,
+ * else this device's — without ever deleting a local key for it.
  *
  * Then each remaining key this device already holds with the same value is
  * noted (compared with object keys sorted, as `addsToRemote` compares), for
@@ -1407,6 +1417,19 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
             retentionDropped = true;
         }
     };
+    // Index rules, once the baseline rule has decided which index lands: the
+    // download's when it is still in the write, else this device's. A body
+    // that index does not name is not written. Never a delete here (never
+    // `displaced`): a local body the gist's index leaves out may be one
+    // another tab has written and not yet listed, and its owner sweeps its
+    // own orphans
+    const dropOutsideIndex = (storeName, entries, localValues) => {
+        const valueOf = (key) => (Object.hasOwn(entries, key) ? entries[key] : localValues[key]);
+        for (const key of retentionDrops(storeName, Object.keys(entries), valueOf, { indexOnly: true })) {
+            delete entries[key];
+            retentionDropped = true;
+        }
+    };
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
         // Before the baseline rule removes any: a companion it kept as this
@@ -1421,6 +1444,7 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
             if (!Array.isArray(entries)) {
                 dropOutsideRetention(storeName, entries, []);
+                dropOutsideIndex(storeName, entries, {});
                 // A record with tombstones beside it lands with them, as below; nothing here can weigh the pair
                 const folded = Object.keys(entries).filter(
                     (key) => foldsSame.has(baselineId(storeName, key)) && !tombstoneCompanionKey(storeName, key)
@@ -1446,6 +1470,10 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
                     delete entries[key];
                 }
             }
+        }
+        if (!Array.isArray(entries)) {
+            const localValues = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
+            dropOutsideIndex(storeName, entries, localValues);
         }
         if (!local || typeof local !== 'object' || Array.isArray(entries)) continue;
         const same = new Set(
@@ -1725,7 +1753,9 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
         }
         // Stamps for a map only this device has came across with it above;
         // stamps the gist holds for a map it alone has stay with that map
-        for (const key of retentionDrops(storeName, Object.keys(out))) {
+        // An index rule reads the index the upload carries: a body it does not
+        // name leaves the gist with the rest
+        for (const key of retentionDrops(storeName, Object.keys(out), (name) => out[name])) {
             if (Object.hasOwn(theirs, key)) dropsFromRemote = true;
             delete out[key];
         }
@@ -1795,7 +1825,9 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
         const theirs = remote[storeName] && typeof remote[storeName] === 'object' ? remote[storeName] : {};
         // A key outside its owner's retention window, over both sides' keys, is
         // one neither side keeps: not news, whichever side still holds it
-        const outside = retentionDrops(storeName, [...Object.keys(entries || {}), ...Object.keys(theirs)]);
+        const outside = retentionDrops(storeName, [...Object.keys(entries || {}), ...Object.keys(theirs)], (key) =>
+            Object.hasOwn(entries || {}, key) ? entries[key] : theirs[key]
+        );
         for (const [key, value] of Object.entries(entries || {})) {
             if (outside.has(key)) continue;
             if (!Object.hasOwn(theirs, key)) return true;

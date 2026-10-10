@@ -30,6 +30,13 @@ vi.mock('../../core/storage.js', () => ({
             return true;
         },
         delete: async (key) => opts.stored.delete(key),
+        tryGetAllKeys: async () => [...opts.stored.keys()],
+        tryGet: async (key) =>
+            opts.tryGetFails
+                ? null
+                : opts.stored.has(key)
+                  ? { found: true, value: opts.stored.get(key) }
+                  : { found: false, value: null },
     },
 }));
 
@@ -252,5 +259,61 @@ describe('the list', () => {
         expect(formatSessionDuration(45)).toBe('45s');
         expect(formatSessionDuration(725)).toBe('12m 05s');
         expect(formatSessionDuration(3720)).toBe('1h 02m');
+    });
+});
+
+describe('orphaned bodies', () => {
+    const orphan = historyEntryKey('A', 'combat', 'combat_1');
+
+    test('a body the index never listed is deleted at the save after the read that found it', async () => {
+        opts.stored.set(orphan, entry('combat_1', 1_000));
+        await loadHistoryIndex('combat', 'A');
+        // Found, not yet deleted: another tab may be about to list it
+        expect(opts.stored.has(orphan)).toBe(true);
+
+        await saveHistoryEntry(entry('combat_9', 9_000), 'A');
+        expect(opts.stored.has(orphan)).toBe(false);
+        expect(opts.stored.has(historyEntryKey('A', 'combat', 'combat_9'))).toBe(true);
+    });
+
+    test('the save whose own first read found it does not delete it', async () => {
+        opts.stored.set(orphan, entry('combat_1', 1_000));
+        await saveHistoryEntry(entry('combat_9', 9_000), 'A');
+        expect(opts.stored.has(orphan)).toBe(true);
+        await saveHistoryEntry(entry('combat_10', 10_000), 'A');
+        expect(opts.stored.has(orphan)).toBe(false);
+    });
+
+    test('a body another tab listed in the meantime stays', async () => {
+        opts.stored.set(orphan, entry('combat_1', 1_000));
+        await loadHistoryIndex('combat', 'A');
+        // The other tab's index write lands after this tab's read
+        opts.stored.set(historyIndexKey('A', 'combat'), [{ id: 'combat_1', type: 'combat', endedAt: 1_000 }]);
+
+        await saveHistoryEntry(entry('combat_9', 9_000), 'A');
+        expect(opts.stored.has(orphan)).toBe(true);
+    });
+
+    test('an index that cannot be read at the save deletes nothing', async () => {
+        opts.stored.set(orphan, entry('combat_1', 1_000));
+        await loadHistoryIndex('combat', 'A');
+        opts.tryGetFails = true;
+        try {
+            await saveHistoryEntry(entry('combat_9', 9_000), 'A');
+        } finally {
+            opts.tryGetFails = false;
+        }
+        expect(opts.stored.has(orphan)).toBe(true);
+    });
+
+    test("another character's and another type's bodies are not this index's orphans", async () => {
+        const other = historyEntryKey('B', 'combat', 'combat_1');
+        const trial = historyEntryKey('A', 'trial', 'trial_x_1');
+        opts.stored.set(other, entry('combat_1', 1_000));
+        opts.stored.set(trial, { ...entry('trial_x_1', 1_000), type: 'trial' });
+        await loadHistoryIndex('combat', 'A');
+        await saveHistoryEntry(entry('combat_9', 9_000), 'A');
+        expect(opts.stored.has(other)).toBe(true);
+        expect(opts.stored.has(trial)).toBe(true);
     });
 });

@@ -334,3 +334,57 @@ describe('retention rules', () => {
         });
     });
 });
+
+describe('index retention rules', () => {
+    const rule = () =>
+        registerSyncRetention({
+            store: 'combatExport',
+            prefix: 'body_',
+            parse: (key) => {
+                const [, group, id] = key.split('_');
+                return group && id ? { group, id } : null;
+            },
+            index: {
+                key: (group) => `index_${group}`,
+                ids: (value) => (Array.isArray(value) ? value.map((entry) => entry?.id).filter(Boolean) : null),
+            },
+        });
+    const keys = ['index_a', 'body_a_1', 'body_a_2', 'body_a_3', 'body_b_1'];
+
+    test('a body the index in force does not list is dropped, per group', () => {
+        rule();
+        const values = { index_a: [{ id: '1' }, { id: '3' }], index_b: [{ id: '1' }] };
+        expect([...retentionDrops('combatExport', keys, (key) => values[key])]).toEqual(['body_a_2']);
+    });
+
+    test('a group with no index, or one that cannot be read, drops nothing', () => {
+        rule();
+        const values = { index_a: 'not a list' };
+        expect(retentionDrops('combatExport', keys, (key) => values[key]).size).toBe(0);
+    });
+
+    test('without valueOf an index rule is not judged', () => {
+        rule();
+        expect(retentionDrops('combatExport', keys).size).toBe(0);
+    });
+
+    test('indexOnly leaves the count rules out', () => {
+        rule();
+        registerSyncRetention({
+            store: 'combatExport',
+            prefix: 'snap_',
+            parse: (key) => ({ group: 'g', order: Number(key.slice(5)) }),
+            keep: 1,
+        });
+        const all = [...keys, 'snap_1', 'snap_2'];
+        const values = { index_a: [{ id: '1' }, { id: '2' }, { id: '3' }] };
+        expect([...retentionDrops('combatExport', all, (key) => values[key])]).toEqual(['snap_1']);
+        expect(retentionDrops('combatExport', all, (key) => values[key], { indexOnly: true }).size).toBe(0);
+    });
+
+    test('an index needs both key() and ids()', () => {
+        expect(() =>
+            registerSyncRetention({ store: 's', prefix: 'p_', parse: () => null, index: { key: () => 'x' } })
+        ).toThrow();
+    });
+});

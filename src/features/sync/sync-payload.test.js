@@ -119,6 +119,8 @@ await import('../skills/xp-tracker.js');
 await import('../networth/networth-history.js');
 // Task completions: a chunked history whose pull prunes the incoming side
 const { weekChunkId, WINDOW_WEEKS } = await import('../tasks/task-completion-tracker.js');
+// Saved meter sessions: bodies kept exactly while their index lists them
+await import('../combat/meter-history.js');
 
 const {
     payloadCarriesKey,
@@ -2528,5 +2530,145 @@ describe('a chunked history keeps its pull orientation under the direction rules
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('saved meter sessions travel only while their index lists them', () => {
+    const STORE = 'combatExport';
+    const INDEX = 'meterHistoryIndex_32030_combat';
+    const body = (id) => `meterHistory_32030_combat_${id}`;
+    const summary = (id, extra = {}) => ({ id, type: 'combat', endedAt: Number(id.split('_')[1]), ...extra });
+    const session = (id) => ({ id, type: 'combat', dealt: { players: [] } });
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-09T00:00:00.000Z', syncScope: 'everything', stores });
+
+    test('a pull does not write back a body the index in force no longer lists', async () => {
+        storeState.stores[STORE] = {};
+        // The gist still holds combat_1, which its owner's index dropped; combat_0 is an old starred one
+        const gist = {
+            [INDEX]: [summary('combat_3'), summary('combat_0', { favourite: true })],
+            [body('combat_0')]: session('combat_0'),
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_3')]: session('combat_3'),
+        };
+
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(Object.keys(importedPayloads[0].stores[STORE]).sort()).toEqual(
+            [INDEX, body('combat_0'), body('combat_3')].sort()
+        );
+    });
+
+    test("when this device's index wins the baseline, the gist's bodies it does not list stay out", async () => {
+        const gistIndex = [summary('combat_1'), summary('combat_2')];
+        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { [INDEX]: gistIndex } }));
+        // Moved here since the exchange: combat_2 deleted, combat_4 saved
+        storeState.stores[STORE] = {
+            [INDEX]: [summary('combat_4'), summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_4')]: session('combat_4'),
+        };
+        const gist = {
+            [INDEX]: gistIndex,
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_2')]: session('combat_2'),
+        };
+
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline });
+
+        const landed = importedPayloads[0].stores[STORE];
+        expect(Object.hasOwn(landed, INDEX)).toBe(false);
+        expect(Object.hasOwn(landed, body('combat_2'))).toBe(false);
+        expect(storeState.stores[STORE][body('combat_4')]).toBeDefined();
+    });
+
+    test('a local body another tab has not listed yet is never deleted by a pull', async () => {
+        // Another tab wrote combat_5's body and has not yet written its index
+        storeState.stores[STORE] = {
+            [INDEX]: [summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_5')]: session('combat_5'),
+        };
+        storeState.deleteCalls = [];
+        const gist = {
+            [INDEX]: [summary('combat_3'), summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_3')]: session('combat_3'),
+        };
+
+        const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(storeState.stores[STORE][body('combat_5')]).toBeDefined();
+        expect(storeState.deleteCalls.filter((call) => call.name === STORE)).toEqual([]);
+        expect(result.complete).toBe(true);
+    });
+
+    test('a body with no index on either side is left alone', async () => {
+        storeState.stores[STORE] = {};
+        await applyPayload(payloadOf({ [STORE]: { [body('combat_1')]: session('combat_1') } }), {
+            mode: 'merge',
+            baseline: {},
+        });
+        expect(Object.hasOwn(importedPayloads[0].stores[STORE], body('combat_1'))).toBe(true);
+    });
+
+    test("an upload sheds the gist's orphans and keeps an old starred body", () => {
+        const index = [summary('combat_3'), summary('combat_0', { favourite: true })];
+        const local = {
+            [INDEX]: index,
+            [body('combat_0')]: session('combat_0'),
+            [body('combat_3')]: session('combat_3'),
+        };
+        const gist = { ...local, [body('combat_1')]: session('combat_1'), [body('combat_2')]: session('combat_2') };
+
+        const { text, dropsFromRemote, remoteAdds } = mergeForUpload(
+            payloadOf({ [STORE]: local }),
+            payloadOf({ [STORE]: gist }),
+            null
+        );
+
+        expect(Object.keys(JSON.parse(text).stores[STORE]).sort()).toEqual(Object.keys(local).sort());
+        expect(dropsFromRemote).toBe(true);
+        expect(remoteAdds).toBe(false);
+    });
+
+    test('a gist-only body outside the index is not news to this device', () => {
+        const local = { [INDEX]: [summary('combat_3')], [body('combat_3')]: session('combat_3') };
+        const gist = { ...local, [body('combat_1')]: session('combat_1') };
+
+        expect(addsToRemote(payloadOf({ [STORE]: gist }), payloadOf({ [STORE]: local }))).toBe(false);
+        // Listed, the same body is news
+        const listed = { ...gist, [INDEX]: [summary('combat_3'), summary('combat_1')] };
+        expect(addsToRemote(payloadOf({ [STORE]: listed }), payloadOf({ [STORE]: local }))).toBe(true);
+    });
+});
+
+describe('device-only records added to the local-only prefixes', () => {
+    const KEYS = [
+        'dungeonTracker_inProgressRun_32030',
+        'dungeonTracker_inProgressRun',
+        'settings_shared_scope_conflicts',
+    ];
+
+    test.each(KEYS)('%s never reaches a payload', (key) => {
+        expect(payloadCarriesKey('settings', key)).toBe(false);
+        expect(Object.hasOwn(redactSettingsStore({ [key]: { at: 1 } }), key)).toBe(false);
+    });
+
+    test('a payload carrying them does not write them here', async () => {
+        const incoming = Object.fromEntries(KEYS.map((key) => [key, { at: 1 }]));
+        await applyPayload(
+            JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { ...incoming, other_key: 1 } } })
+        );
+        const landed = importedPayloads.at(-1).stores.settings;
+        for (const key of KEYS) expect(Object.hasOwn(landed, key)).toBe(false);
+    });
+
+    test('a built payload leaves them out', async () => {
+        storeState.stores.settings.dungeonTracker_inProgressRun_32030 = { wave: 3 };
+        storeState.stores.settings.settings_shared_scope_conflicts = { at: 1, conflicts: [{ id: 'x' }] };
+        const built = JSON.parse(await buildPayloadJSON('settings'));
+        expect(Object.hasOwn(built.stores.settings, 'dungeonTracker_inProgressRun_32030')).toBe(false);
+        expect(Object.hasOwn(built.stores.settings, 'settings_shared_scope_conflicts')).toBe(false);
     });
 });
