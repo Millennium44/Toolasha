@@ -425,6 +425,7 @@ describe('successiveHalving', () => {
             measure: makeMeasure([], (v) => (v === 10 ? 50 : 0)),
             score,
         });
+        expect(result.diff.mean).toBeLessThan(0);
     });
 
     test('a noisy selection gain stays small', async () => {
