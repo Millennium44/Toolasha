@@ -990,6 +990,12 @@ describe('MarketAPI persisted retry deferral', () => {
                 set: vi.fn(async (key, value) => void store.set(key, value)),
                 setJSON: vi.fn(async (key, value) => void store.set(key, value)),
                 delete: vi.fn(async (key) => void store.delete(key)),
+                update: vi.fn(async (key, mutate) => {
+                    const next = mutate(store.get(key), store.has(key));
+                    if (next === undefined) return { written: false, value: store.get(key) };
+                    store.set(key, next);
+                    return { written: true, value: next };
+                }),
             },
         }));
         vi.doMock('../features/market/network-alert.js', () => ({ default: { hide: vi.fn(), show: vi.fn() } }));
@@ -1027,6 +1033,41 @@ describe('MarketAPI persisted retry deferral', () => {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
         vi.doUnmock('../core/storage.js');
+    });
+
+    test('a plain failure in one tab does not downgrade an active rate-limit deferral from another tab', async () => {
+        staleCache();
+        store.set(RETRY_KEY, { until: NOW + 5 * 60_000, rateLimited: true });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.recordDeferral(false);
+
+        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 5 * 60_000, rateLimited: true });
+    });
+
+    test('a recorded deferral moves the pending auto-refresh check to the retry time', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const check = vi.spyOn(marketAPI, '_fetchUnderRefreshLock').mockResolvedValue(null);
+        marketAPI._cacheExpiresAt = NOW + 15 * 60_000;
+        marketAPI.startAutoRefresh();
+
+        await marketAPI.recordDeferral(false);
+        // 60 s deferral plus at most 60 s of jitter, well before the old 15-minute check
+        await vi.advanceTimersByTimeAsync(121_000);
+
+        expect(check).toHaveBeenCalled();
+        marketAPI.stopAutoRefresh?.();
+    });
+
+    test('Fetch Latest Prices keeps the old snapshot when the forced request is refused', async () => {
+        staleCache();
+        fetch.mockResolvedValue(refusal(429));
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        const data = await marketAPI.clearCacheAndRefetch();
+
+        expect(store.has('Toolasha_marketAPI_json')).toBe(true);
+        expect(data).toEqual({ '/items/cheese': { 0: { a: 20, b: 19 } } });
     });
 
     test('a 429 with Retry-After: 600 defers 600 s', async () => {

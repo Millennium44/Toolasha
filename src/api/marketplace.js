@@ -396,13 +396,32 @@ class MarketAPI {
     async recordDeferral(rateLimited, retryAfterMs) {
         const base = rateLimited ? this.RATE_LIMIT_DEFER_MS : this.FAILURE_DEFER_MS;
         const wait = Math.min(Math.max(base, Number.isFinite(retryAfterMs) ? retryAfterMs : 0), this.MAX_DEFER_MS);
-        const until = Date.now() + wait;
-        this._cacheExpiresAt = until;
+        const now = Date.now();
+        let record = { until: now + wait, rateLimited };
         try {
-            await storage.setJSON(this.CACHE_KEY_RETRY, { until, rateLimited }, 'settings', true);
+            // Merge with what another tab may have written: keep the later deadline, and never
+            // downgrade an active rate-limit to a plain failure
+            const result = await storage.update(
+                this.CACHE_KEY_RETRY,
+                (current) => {
+                    const currentUntil = Number(current?.until);
+                    const active =
+                        Number.isFinite(currentUntil) && currentUntil > now && currentUntil - now <= this.MAX_DEFER_MS;
+                    if (!active) return record;
+                    return {
+                        until: Math.max(currentUntil, record.until),
+                        rateLimited: Boolean(current.rateLimited) || rateLimited,
+                    };
+                },
+                'settings'
+            );
+            if (result?.value) record = result.value;
         } catch (error) {
             this.logError('Saving the retry deferral failed', error);
         }
+        this._cacheExpiresAt = record.until;
+        // The auto-refresh check was scheduled for the old cache expiry: move it to the retry time
+        this._alignAutoRefresh();
     }
 
     /** Forget the deferral after a successful fetch. */
@@ -863,15 +882,8 @@ class MarketAPI {
         // A 403/429 deferral holds even for a user press; leave the cache alone so it still serves
         if (await this.getRateLimitRetryAt()) return null;
 
-        // Clear storage cache
-        await storage.delete(this.CACHE_KEY_DATA, 'settings');
-        await storage.delete(this.CACHE_KEY_TIMESTAMP, 'settings');
-
-        // Clear in-memory state
-        this.marketData = null;
-        this.lastFetchTimestamp = null;
-
-        // Force fresh fetch
+        // Force a fresh fetch. The old snapshot stays until the new one lands: a refused or failed
+        // request falls back to it rather than leaving every price reader empty for the cooldown.
         return await this.fetch(true, { ignoreFailureDeferral: true });
     }
 
