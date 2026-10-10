@@ -9649,6 +9649,22 @@ describe('the Triggers option', () => {
         expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('1 skipped: changed since analysis');
     });
 
+    test('the Min gain select defaults to 0.5 and its choice reaches the optimizer', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        const select = ui.panel.querySelector('#mwi-csim-trigger-mingain');
+        expect(select.value).toBe('0.5');
+        mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+        await ui._onUpgradeAnalyze();
+        expect(mocks.triggerRuns[0].minGain).toBe(0.5);
+
+        select.value = '2';
+        await ui._onUpgradeAnalyze();
+        expect(mocks.triggerRuns[1].minGain).toBe(2);
+    });
+
     test('Apply writes the changes into the sim editor and nothing else', async () => {
         await enableSetting();
         ui.buildPanel();

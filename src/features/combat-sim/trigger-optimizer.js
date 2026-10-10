@@ -26,6 +26,7 @@ import {
     estimateTriggerSims,
     runTriggerSearch,
     zoneMaxEnemies,
+    MIN_GAIN,
 } from './trigger-tuning.js';
 
 /** Ceiling on simultaneous sims, whatever the thread setting says (matches the upgrade advisor) */
@@ -112,6 +113,7 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
  * @param {string} [params.scope] - 'me' (the selected player's triggers, judged on their figures) or
  *   'party' (everyone's triggers, judged on the party total)
  * @param {string} [params.precision] - 'quick', 'standard' or 'precise'
+ * @param {number} [params.minGain] - Smallest score gain worth offering
  * @param {Object} [params.playerNames] - hrid → display name
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
@@ -128,6 +130,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         communityBuffs,
         scope = 'me',
         precision: precisionKey = DEFAULT_PRECISION,
+        minGain = MIN_GAIN,
         playerNames = {},
     } = params;
     const { abortSignal } = options;
@@ -221,6 +224,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         measure,
         precision,
         maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
+        minGain,
         onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
         aborted: stopped,
     });
@@ -230,6 +234,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         ...result,
         scope: wholeParty ? 'party' : 'me',
         precision: precision.key,
+        minGain,
         simCount,
         tunableCount: tunables.length,
     };

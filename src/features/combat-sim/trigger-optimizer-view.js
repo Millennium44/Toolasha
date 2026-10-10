@@ -5,7 +5,7 @@
  */
 
 import { formatKMB } from '../../utils/formatters.js';
-import { PRECISIONS, DEFAULT_PRECISION, describeRow } from './trigger-tuning.js';
+import { PRECISIONS, DEFAULT_PRECISION, MIN_GAIN, MIN_GAIN_OPTIONS, describeRow } from './trigger-tuning.js';
 
 const ACCENT = '#4a9eff';
 const BTN_STYLE =
@@ -37,6 +37,9 @@ export function triggerChipOptionsHtml() {
             (p) => `<option value="${p.key}"${p.key === DEFAULT_PRECISION ? ' selected' : ''}>${esc(p.label)}</option>`
         )
         .join('');
+    const minGainOptions = MIN_GAIN_OPTIONS.map(
+        (v) => `<option value="${v}"${v === MIN_GAIN ? ' selected' : ''}>Min gain ${v}</option>`
+    ).join('');
     return `
         <span data-mode-options="triggers" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
@@ -48,6 +51,10 @@ export function triggerChipOptionsHtml() {
             <select class="toolasha-select" id="mwi-csim-trigger-precision" style="${SELECT_STYLE}"
                 title="How long each candidate value is simulated. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">
                 ${precisionOptions}
+            </select>
+            <select class="toolasha-select" id="mwi-csim-trigger-mingain" style="${SELECT_STYLE}"
+                title="Min gain: the smallest score gain worth offering, in score points. A change must also pass a 95% check against luck on fresh seeds, whatever this is set to.">
+                ${minGainOptions}
             </select>
         </span>`;
 }
@@ -144,7 +151,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
     body +=
         `<div style="font-size:11px; color:#666; margin-top:6px;">` +
         `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, less 10 points per extra ` +
-        `death per hour. A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least half a point. ` +
+        `death per hour. A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least ${esc(result.minGain ?? MIN_GAIN)} points. ` +
         `${esc(result.simCount)} sims${result.stopped ? ' (stopped early, showing what was accepted)' : ''}. ` +
         `The userscript never changes triggers in the game; enter these by hand.</div>`;
 

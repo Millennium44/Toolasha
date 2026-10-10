@@ -46,6 +46,17 @@ describe('renderTriggerResultsHtml', () => {
         expect(html).toContain('mwi-csim-trigger-copy');
     });
 
+    test('the footer shows the chosen minimum gain', () => {
+        const render = (minGain) =>
+            renderTriggerResultsHtml(
+                { scope: 'me', changes: [change()], unchanged: [], minGain, simCount: 1 },
+                gameData
+            );
+        expect(render(2)).toContain('gains at least 2 points');
+        expect(render(0.25)).toContain('gains at least 0.25 points');
+        expect(render(undefined)).toContain('gains at least 0.5 points');
+    });
+
     test('a party run groups rows under each player', () => {
         const html = renderTriggerResultsHtml(
             {
@@ -131,5 +142,8 @@ describe('triggerChipOptionsHtml', () => {
         expect(html).toContain('value="quick"');
         expect(html).toContain('value="standard" selected');
         expect(html).toContain('value="precise"');
+        for (const v of [0.25, 0.5, 1, 2]) expect(html).toContain(`value="${v}"`);
+        expect(html).toContain('value="0.5" selected');
+        expect(html).toContain('smallest score gain worth offering');
     });
 });

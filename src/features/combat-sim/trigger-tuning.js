@@ -67,6 +67,9 @@ export const ROUND_GROWTH = 1.5;
  */
 export const MIN_GAIN = 0.5;
 
+/** Minimum-gain choices the Triggers chip offers */
+export const MIN_GAIN_OPTIONS = [0.25, 0.5, 1, 2];
+
 /** Seeds in a confirmation or the final head-to-head, at least; enough for a t test that is not near-useless */
 export const CONFIRM_SEEDS_MIN = 8;
 
@@ -658,6 +661,7 @@ function metricsMean(samples, hrids) {
  *   many seeds. Samples are `{ perPlayer, encounters, pools }`; null means stopped.
  * @param {Object} params.precision - An entry of PRECISIONS
  * @param {number} [params.maxEnemies] - Most enemies up at once in the zone
+ * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
  * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline
@@ -668,6 +672,7 @@ export async function runTriggerSearch({
     measure,
     precision,
     maxEnemies = 1,
+    minGain = MIN_GAIN,
     onProgress,
     aborted,
 }) {
@@ -727,7 +732,7 @@ export async function runTriggerSearch({
         screen.push({
             tunable: t,
             range: Math.max(...means) - Math.min(...means),
-            promising: bestDiff.mean >= MIN_GAIN && bestDiff.mean > SCREEN_Z * bestDiff.se,
+            promising: bestDiff.mean >= minGain && bestDiff.mean > SCREEN_Z * bestDiff.se,
         });
     }
     screen.sort((a, b) => b.range - a.range);
@@ -764,7 +769,7 @@ export async function runTriggerSearch({
         });
         if (!selection || stopped()) return false;
         // The selection gain is inflated by having been chosen; half the bar is a cheap way to skip hopeless ones
-        if (selection.winner === before || selection.diff.mean < MIN_GAIN / 2) return false;
+        if (selection.winner === before || selection.diff.mean < minGain / 2) return false;
 
         progress(`Triggers: ${t.itemName} (confirming)`);
         const stream = `confirm:${step}`;
@@ -777,7 +782,7 @@ export async function runTriggerSearch({
             winnerSamples.map((s) => score(s)),
             referenceSamples.map((s) => score(s))
         );
-        if (!accepts(diff)) return false;
+        if (!accepts(diff, minGain)) return false;
 
         state.get(t.key).current = selection.winner;
         overrides[t.key] = selection.winner;
@@ -845,7 +850,7 @@ export async function runTriggerSearch({
                 deltaDeaths: a.deaths - b.deaths,
                 seeds: diff.n,
             };
-            reliable = accepts(diff);
+            reliable = accepts(diff, minGain);
             if (!reliable) {
                 rejected = changes;
                 changes = [];

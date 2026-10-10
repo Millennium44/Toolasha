@@ -181,6 +181,17 @@ describe('runTriggerOptimization', () => {
         expect(result).toBeNull();
     });
 
+    test('the minimum gain reaches the search and is reported back', async () => {
+        const dtos = [dto('player1')];
+        const byDefault = await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0 });
+        expect(byDefault.minGain).toBe(0.5);
+        const strict = await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0, minGain: 1000 });
+        expect(strict.minGain).toBe(1000);
+        // the fake world gains about 40 points, so a bar of 1000 refuses it where 0.5 offered it
+        expect(byDefault.changes).toHaveLength(1);
+        expect(strict.changes).toEqual([]);
+    });
+
     test('a failing sim stops the queue and surfaces the error', async () => {
         let started = 0;
         sims.respond = () => {

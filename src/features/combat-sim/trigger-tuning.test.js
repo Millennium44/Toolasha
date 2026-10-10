@@ -28,6 +28,7 @@ import {
     accepts,
     tCritical,
     MIN_GAIN,
+    MIN_GAIN_OPTIONS,
     zoneMaxEnemies,
     successiveHalving,
     runTriggerSearch,
@@ -363,6 +364,11 @@ describe('paired statistics and the acceptance rule', () => {
         expect(accepts({ mean: 5, se: 2, n: 8 })).toBe(true);
     });
 
+    test('the default minimum gain is half a point, among the offered choices', () => {
+        expect(MIN_GAIN).toBe(0.5);
+        expect(MIN_GAIN_OPTIONS).toEqual([0.25, 0.5, 1, 2]);
+    });
+
     test('t critical values follow the degrees of freedom', () => {
         expect(tCritical(3)).toBeCloseTo(3.182, 3);
         expect(tCritical(7)).toBeCloseTo(2.365, 3);
@@ -565,6 +571,25 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(result.changes).toEqual([]);
         expect(result.combined).toBeNull();
         expect(calls.some((c) => c.stream === 'final')).toBe(false);
+    });
+
+    test('the minimum gain is a setting: offered at 0.25, refused at 1', async () => {
+        // about +0.6 score points: xp 1000 -> ~1030 at the optimum
+        const lenient = await run(world({ gain: 0.1 }).measure, { minGain: 0.25 });
+        const strict = await run(world({ gain: 0.1 }).measure, { minGain: 1 });
+        expect(lenient.changes).toHaveLength(1);
+        expect(lenient.changes[0].deltaScore).toBeGreaterThan(0.25);
+        expect(lenient.changes[0].deltaScore).toBeLessThan(1);
+        expect(strict.changes).toEqual([]);
+        expect(strict.screened.find((s) => s.key.includes(FIREBALL)).promising).toBe(false);
+    });
+
+    test('the minimum gain also gates the final combination', async () => {
+        // every step clears 0.25, but the combination on fresh seeds only gains about 0.6 of a point less than asked
+        const { measure } = world({ gain: 0.1, afterFinal: (overrides) => (Object.keys(overrides).length ? -20 : 0) });
+        const result = await run(measure, { minGain: 0.25 });
+        expect(result.reliable).toBe(false);
+        expect(result.changes).toEqual([]);
     });
 
     test('a real but tiny gain (a fraction of a point) is not offered', async () => {

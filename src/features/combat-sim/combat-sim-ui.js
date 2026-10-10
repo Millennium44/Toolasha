@@ -124,7 +124,13 @@ import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { runTriggerOptimization } from './trigger-optimizer.js';
-import { buildEditorChanges, formatChangesText, TRIGGER_OPTIMIZER_SETTING } from './trigger-tuning.js';
+import {
+    buildEditorChanges,
+    formatChangesText,
+    MIN_GAIN,
+    MIN_GAIN_OPTIONS,
+    TRIGGER_OPTIMIZER_SETTING,
+} from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
 import storage from '../../core/storage.js';
 import {
@@ -10084,6 +10090,8 @@ class CombatSimUI {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
         const scope = this.panel.querySelector('#mwi-csim-trigger-scope')?.value === 'party' ? 'party' : 'me';
         const precision = this.panel.querySelector('#mwi-csim-trigger-precision')?.value || 'standard';
+        const minGainValue = parseFloat(this.panel.querySelector('#mwi-csim-trigger-mingain')?.value);
+        const minGain = MIN_GAIN_OPTIONS.includes(minGainValue) ? minGainValue : MIN_GAIN;
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
             return;
@@ -10147,6 +10155,7 @@ class CombatSimUI {
                     communityBuffs: getCommunityBuffs(),
                     scope,
                     precision,
+                    minGain,
                     playerNames,
                 },
                 ({ current, total, description }) => {
