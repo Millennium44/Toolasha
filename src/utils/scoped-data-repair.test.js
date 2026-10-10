@@ -111,6 +111,16 @@ describe('moveScopedData', () => {
         expect(settings.has('enhancementTracker_sessionTombstones')).toBe(false);
     });
 
+    it('claimLegacyData un-hides restored sessions the destination had tombstoned, and keeps its other graves', async () => {
+        const settings = mockStorage.storeFor('settings');
+        settings.set('enhancementTracker_sessions', { s1: {}, s2: {} });
+        settings.set('enhancementTracker_sessionTombstones_marketChar', { s1: 9, s7: 4 });
+
+        await claimLegacyData('marketChar');
+
+        expect(settings.get('enhancementTracker_sessionTombstones_marketChar')).toEqual({ s7: 4 });
+    });
+
     it('claimLegacyData overwrites a stale scoped copy with the bare value', async () => {
         mockStorage.storeFor('settings').set('watchlist', ['restored', 'full']);
         mockStorage.storeFor('settings').set('watchlist_marketChar', []);

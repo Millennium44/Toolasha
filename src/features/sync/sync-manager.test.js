@@ -69,7 +69,7 @@ vi.mock('./sync-payload.js', () => ({
     resetLeftOutLogForTests: () => {},
     retryPendingDisplacedDeletes: async () => {
         payload.retries = (payload.retries || 0) + 1;
-        return 0;
+        return payload.outstandingDeletes || 0;
     },
     // Read by the write counter in sync-dirty.js, which this storage fake never feeds
     payloadCarriesKey: () => true,
@@ -199,6 +199,7 @@ beforeEach(() => {
     dialog.last = null;
     dialog.calls = 0;
     payload.retries = 0;
+    payload.outstandingDeletes = 0;
     payload.drops = false;
     payload.text = '{"local":1}';
     payload.pendingText = undefined;
@@ -2271,6 +2272,17 @@ describe('automatic pushes merge into the upload, never into this device', () =>
 
             expect(result.reason).toBe('same-content');
             expect(payload.retries).toBe(1);
+        });
+
+        test('a same-content pull does not stand down while a displaced delete is still owed', async () => {
+            payload.addsToRemote = () => false;
+            payload.outstandingDeletes = 1;
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(payload.retries).toBe(1);
+            expect(result.reason).not.toBe('same-content');
+            expect(payload.applyCalls).toBe(1);
         });
 
         test('the same text under another stamp is the same content, without comparing key by key', async () => {

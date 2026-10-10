@@ -17,7 +17,11 @@ vi.mock('../../utils/market-data.js', () => ({
     withProfitPricingMode: (_mode, fn) => fn(),
 }));
 // A flat 10% tax keeps the arithmetic readable
-vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.9 }));
+vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => price * 0.9,
+    calculateActionsPerHour: () => 0,
+    calculateTeaCostsPerHour: () => ({ totalCostPerHour: 0 }),
+}));
 
 import { buildSourceIndex, findAlchemyAlternatives } from './alchemy-instead-of-buying.js';
 

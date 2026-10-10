@@ -76,7 +76,11 @@ vi.mock('../../utils/market-data.js', () => ({
             : { price: book[hrid]?.[mode] ?? null, source: book[hrid] ? 'book' : null },
     withProfitPricingMode: (_mode, fn) => fn(),
 }));
-vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.9 }));
+vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => price * 0.9,
+    calculateActionsPerHour: () => 0,
+    calculateTeaCostsPerHour: () => ({ totalCostPerHour: 0 }),
+}));
 
 import { liveAlternatives, clearInsteadCache } from './alchemy-instead-of-buying.js';
 

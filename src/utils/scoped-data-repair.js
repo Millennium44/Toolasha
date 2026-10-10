@@ -129,6 +129,17 @@ export async function claimLegacyData(toId, options = {}) {
                     await storage.delete(companion, storeName);
                 }
                 claimed.push(`${storeName}:${companion}`);
+            } else if (companion && !dryRun) {
+                // No bare tombstones came with the backup, so the destination's own stay in place and would
+                // keep hiding a restored session it had deleted. Drop only the ids the restored map holds.
+                const graves = await storage.get(`${companion}_${toId}`, storeName, null);
+                if (graves && typeof graves === 'object' && value && typeof value === 'object') {
+                    const kept = { ...graves };
+                    for (const id of Object.keys(value)) delete kept[id];
+                    if (Object.keys(kept).length !== Object.keys(graves).length) {
+                        await storage.set(`${companion}_${toId}`, kept, storeName, true);
+                    }
+                }
             }
         }
     }

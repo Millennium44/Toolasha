@@ -41,7 +41,12 @@ vi.mock('../../core/data-manager.js', () => {
     return {
         default: {
             currentCharacterId: 1,
-            getInitClientData: () => ({ itemDetailMap, openableLootDropMap: {} }),
+            getInitClientData: () => ({
+                itemDetailMap,
+                openableLootDropMap: {},
+                actionDetailMap: { '/actions/alchemy/decompose': { baseTimeCost: 20e9 } },
+            }),
+            getSkills: () => [],
             getItemDetails: (hrid) => itemDetailMap[hrid] ?? null,
             getActionDrinkSlots: () => [],
             getInventory: () => [],
@@ -56,6 +61,10 @@ vi.mock('../../utils/action-context.js', () => ({
         equipment: new Map(),
         drinks: world.loadoutDrinks.map((itemHrid) => ({ itemHrid })),
     }),
+}));
+// 5 s an action and no efficiency: 720 actions an hour
+vi.mock('../../utils/action-calculator.js', () => ({
+    calculateActionStats: () => ({ actionTime: 5, totalEfficiency: 0 }),
 }));
 vi.mock('../../api/marketplace.js', () => ({
     default: {
@@ -92,6 +101,10 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
             tea: tea ?? world.liveTea ?? 0,
         }),
         catalystSuccessBonus: (hrid) => (hrid === '/items/prime_catalyst' ? 0.25 : 0.15),
+        // The calculator folds a speed tea into the action time after calculateActionStats
+        actionSpeedStats: (details, { drinkSlots, actionTime }) => ({
+            actionTime: drinkSlots.length > 0 ? actionTime / (1 + (world.teaSpeed || 0)) : actionTime,
+        }),
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -102,7 +115,10 @@ vi.mock('../../utils/market-data.js', () => ({
     },
     withProfitPricingMode: (_mode, fn) => fn(),
 }));
-vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.9 }));
+vi.mock('../../utils/profit-helpers.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    calculatePriceAfterTax: (price) => price * 0.9,
+}));
 
 import {
     liveAlternatives,
@@ -119,6 +135,7 @@ beforeEach(() => {
     world.calls = [];
     world.loadoutDrinks = [];
     world.liveTea = 0;
+    world.teaSpeed = 0;
     world.listeners = [];
     world.prices = { [ESSENCE]: { ask: 5000, bid: 4000 }, [SHARD]: { ask: 1100, bid: 1000 } };
 });
@@ -183,6 +200,41 @@ describe('bonus-source ranking with the real success rate', () => {
         await vi.runAllTimersAsync();
         await settled;
         expect(world.calls.some((hrid) => hrid.startsWith('/items/free_'))).toBe(true);
+    });
+
+    test('a tea setup is ranked with its spend per action, not as a free rate boost', () => {
+        const source = { sourceHrid: '/items/x', actionType: 'decompose' };
+        const tea = { rate: 0.9, catalystPrice: 0, teaPerAction: 0 };
+        const noTea = { rate: 0.6, catalystPrice: 0 };
+        // 2,100 for the source and its fee, 1,800 back per success: 0.9 beats 0.6 only while the tea is free
+        const free = bonusRankCost(ESSENCE, source, rateDeps([noTea, tea]));
+        expect(free).toBeCloseTo((2100 - 0.9 * 1800) / (110 / 1800));
+        // A tea that costs 600 an action is worse than going without
+        const dear = bonusRankCost(ESSENCE, source, rateDeps([noTea, { ...tea, teaPerAction: 600 }]));
+        expect(dear).toBeCloseTo((2100 - 0.6 * 1800) / (110 / 1800));
+        expect(dear).toBeGreaterThan(free);
+    });
+
+    test('makeRateChoices charges the tea an hour of drinks spread over the actions in it', () => {
+        world.loadoutDrinks = [TEA];
+        world.prices[TEA] = { ask: 600, bid: 500 };
+        const choices = makeRateChoices()('decompose', { itemLevel: 10 }, 0.6);
+        const teaChoices = choices.filter((choice) => choice.teaPerAction > 0);
+        expect(teaChoices.length).toBeGreaterThan(0);
+        // 12 drinks an hour at 600 over 720 actions an hour
+        for (const choice of teaChoices) expect(choice.teaPerAction).toBeCloseTo((12 * 600) / 720);
+        expect(choices.some((choice) => choice.teaPerAction === 0)).toBe(true);
+    });
+
+    test('a speed tea spreads its hourly spend over the faster actions', () => {
+        world.loadoutDrinks = [TEA];
+        world.prices[TEA] = { ask: 600, bid: 500 };
+        world.teaSpeed = 0.5;
+        const choices = makeRateChoices()('decompose', { itemLevel: 10 }, 0.6);
+        const teaChoices = choices.filter((choice) => choice.teaPerAction > 0);
+        expect(teaChoices.length).toBeGreaterThan(0);
+        // 5 s / 1.5 makes 1080 actions an hour, not 720
+        for (const choice of teaChoices) expect(choice.teaPerAction).toBeCloseTo((12 * 600) / 1080);
     });
 
     test('a tea nobody sells adds no rate: only the no-tea setup is offered', () => {
