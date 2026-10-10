@@ -499,7 +499,23 @@ export function constructSelfPlayer(characterObj, clientObj) {
     // When abilityDetailMap is available (game page), use isSpecialAbility for precise detection.
     // On Shykai (cross-domain, no clientObj), fall back to the convention that combatAbilities[0]
     // is the special/aura ability when 4 or more abilities are present.
-    const combatAbilities = characterObj.combatUnit?.combatAbilities || [];
+    // combatUnit.combatAbilities carries no slotNumber and its order is the server's to choose, so
+    // normal slots are ordered by characterAbilities' slotNumber. The sort is stable and an ability
+    // with no slot (absent, or 0 for unequipped) sorts after every slotted one, so a payload without
+    // slot numbers keeps its order.
+    const slotNumberByHrid = {};
+    for (const ability of characterObj.characterAbilities || []) {
+        if (ability?.abilityHrid) slotNumberByHrid[ability.abilityHrid] = ability.slotNumber;
+    }
+    const combatAbilities = [...(characterObj.combatUnit?.combatAbilities || [])].sort((a, b) => {
+        const slotA = slotNumberByHrid[a?.abilityHrid];
+        const slotB = slotNumberByHrid[b?.abilityHrid];
+        const knownA = Number(slotA) > 0;
+        const knownB = Number(slotB) > 0;
+        if (knownA && knownB) return Number(slotA) - Number(slotB);
+        if (knownA !== knownB) return knownA ? -1 : 1;
+        return 0;
+    });
     const hasDetailMap = !!clientObj?.abilityDetailMap;
     let normalAbilityIndex = 1;
 
