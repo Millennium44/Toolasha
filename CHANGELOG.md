@@ -10,6 +10,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Meter sessions dropped from the saved list, loot-log hours past the 2,000 cap, old guild-ledger weeks, expired deletion markers, a migrated loot-log key and one-off records like the Restore snapshot no longer come back from the sync gist, and Clear in combat-session history and labyrinth room logs now sticks across devices; the in-progress dungeon run no longer syncs.
 
+### From upstream: live sim triggers, zone task progress and fixes
+
+- Edited combat triggers and new achievements reach the combat-sim export without a reload; Task Statistics can show per-zone combat task progress (off by default); other scripts' inventory elements are no longer squeezed into the grid; the Metz export drops skilling tools; chat uses the game's real channel ids.
+
+### Enhancing: whole-attempt buys, adjustable amounts, honest tracker figures
+
+- Missing Mats buys for whole attempts, lets you set the attempts and copies, and Return reopens the item; auto-resumed and merged tracker sessions show summed expected attempts, count every attempt and time each resumed run.
+
+### Enhance-to-sell Profit/h on the market
+
+- An optional Profit/h column (off by default) on enhanced items' order books shows what enhancing the item yourself and selling at each ask earns per hour, using your enhancing stats and the cheapest protection.
+
 ### Smaller Keep chip with its own switch
 
 - The Keep for self-use chip on tooltips is now a small one-line tag behind its own setting (off by default); marks you already made still count and stay in the keep list in Settings.
