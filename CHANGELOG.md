@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat sim trigger optimizer
 
-- An optional Triggers option (off by default) in the combat sim's Upgrade tab tunes the HP/MP thresholds on your ability and food triggers, confirms each change on fresh runs, and offers only real score gains to apply in the sim or copy and enter by hand.
+- An optional Triggers option (off by default) in the combat sim's Upgrade tab tunes the HP/MP thresholds on your ability and food triggers, confirms each change on fresh runs, and offers only real score gains (minimum gain selectable) to apply in the sim or copy and enter by hand.
 
 ### Sync stops bringing back what you or a cap removed
 
