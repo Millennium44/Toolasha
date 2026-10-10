@@ -530,10 +530,12 @@ function updateEnhancementButton(panel) {
     const key = [itemHrid, startLevel, targetLevel, resolvedProtectionItem, resolvedProtectFrom, repeatCount].join('|');
     let adjust = enhancementAdjustments.get(panel);
     if (!adjust || adjust.key !== key) {
-        adjust = { key, attempts: null, copies: 1 };
+        adjust = { key, attempts: null, copies: 1, computed: computedAttempts, render: null };
         enhancementAdjustments.set(panel, adjust);
         panel.querySelector(`#${CONTROLS_ID}`)?.remove();
     }
+    // Controls outlive a refresh, so they read the current computed value and renderer from here
+    adjust.computed = computedAttempts;
 
     const strategyInfo = autoProtection
         ? { protectFrom: resolvedProtectFrom, protectionItemHrid: resolvedProtectionItem }
@@ -577,7 +579,7 @@ function updateEnhancementButton(panel) {
             attempts,
             missingMaterials.length === 0,
             strategyInfo,
-            { copies: adjust.copies, adjustedAttempts: adjust.attempts !== null, computedAttempts }
+            { copies: adjust.copies, adjustedAttempts: adjust.attempts !== null, computedAttempts: adjust.computed }
         );
         const controls = panel.querySelector(`#${CONTROLS_ID}`);
         if (controls) {
@@ -587,9 +589,10 @@ function updateEnhancementButton(panel) {
         }
     };
 
+    adjust.render = renderButton;
     const controls = panel.querySelector(`#${CONTROLS_ID}`);
     if (!controls) {
-        placeNode(createAdjustControls(adjust, computedAttempts, renderButton));
+        placeNode(createAdjustControls(adjust));
     } else {
         // Keep what the player is typing; refresh the prefill only when it is not theirs
         const attemptsInput = controls.querySelector('[data-mwi-adjust="attempts"]');
@@ -605,21 +608,21 @@ function updateEnhancementButton(panel) {
  * @param {string} raw - Input text
  * @returns {number|null} Whole number in range, or null when empty/unparseable
  */
-function clampAdjustment(raw) {
+function clampAdjustment(raw, computed = null) {
     if (raw === '' || raw === null || raw === undefined) return null;
     const value = Math.floor(Number(raw));
     if (!Number.isFinite(value)) return null;
-    return Math.max(1, Math.min(ADJUST_MAX, value));
+    // An edit never shrinks an automatic figure that is itself past the usual cap
+    return Math.max(1, Math.min(Math.max(ADJUST_MAX, computed || 0), value));
 }
 
 /**
  * Build the attempts / copies row that sits above the Missing Mats button on an Enhancing panel
- * @param {{attempts: number|null, copies: number}} adjust - Per-panel adjustment state (mutated)
- * @param {number|null} computedAttempts - Whole attempts the bill covers untouched
- * @param {Function} onChange - Re-renders the button after an adjustment
+ * @param {{attempts: number|null, copies: number, computed: number|null, render: Function}} adjust - Per-panel
+ *   adjustment state (mutated); computed and render are refreshed on every redraw
  * @returns {HTMLElement} Controls row
  */
-function createAdjustControls(adjust, computedAttempts, onChange) {
+function createAdjustControls(adjust) {
     const row = document.createElement('div');
     row.id = CONTROLS_ID;
     row.style.cssText = 'display: flex; align-items: center; gap: 8px; margin: 8px 0 0 0; flex-wrap: wrap;';
@@ -634,7 +637,7 @@ function createAdjustControls(adjust, computedAttempts, onChange) {
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '1';
-        input.max = String(ADJUST_MAX);
+        if (field === 'copies') input.max = String(ADJUST_MAX);
         input.step = '1';
         input.dataset.mwiAdjust = field;
         input.value = initial === null || initial === undefined ? '' : String(initial);
@@ -659,7 +662,7 @@ function createAdjustControls(adjust, computedAttempts, onChange) {
         'attempts',
         'Attempts',
         'Attempts to buy materials for, per copy. Resets when the item, target, protection or repeat changes.',
-        adjust.attempts ?? computedAttempts
+        adjust.attempts ?? adjust.computed
     );
     const copies = makeField(
         'copies',
@@ -669,18 +672,18 @@ function createAdjustControls(adjust, computedAttempts, onChange) {
     );
 
     attempts.input.addEventListener('input', () => {
-        const value = clampAdjustment(attempts.input.value);
+        const value = clampAdjustment(attempts.input.value, adjust.computed);
         // An empty box falls back to the computed attempts rather than buying for nothing
-        adjust.attempts = value === computedAttempts ? null : value;
-        onChange();
+        adjust.attempts = value === adjust.computed ? null : value;
+        adjust.render();
     });
     copies.input.addEventListener('input', () => {
         adjust.copies = clampAdjustment(copies.input.value) ?? 1;
-        onChange();
+        adjust.render();
     });
     // On blur show the clamped value the bill is actually using
     attempts.input.addEventListener('change', () => {
-        attempts.input.value = String(adjust.attempts ?? computedAttempts ?? '');
+        attempts.input.value = String(adjust.attempts ?? adjust.computed ?? '');
     });
     copies.input.addEventListener('change', () => {
         copies.input.value = String(adjust.copies);

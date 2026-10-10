@@ -407,6 +407,37 @@ describe('enhancement missing-material reservation handoff', () => {
             expect(seen).not.toHaveBeenCalled();
         });
 
+        test('a computed value that moves without a key change is still not treated as manual', async () => {
+            const panel = document.querySelector('.SkillActionDetail_enhancingComponent__17bOx');
+            panel.insertAdjacentHTML('afterbegin', '<div><span>Repeat</span><input type="text" value="∞"></div>');
+            state.wholeAttempts = 7;
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            expect(field('attempts').value).toBe('7');
+
+            // Gear or tea changes the expectation; the panel redraws with the same key
+            state.wholeAttempts = 9;
+            missingMaterials.cleanup();
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            expect(field('attempts').value).toBe('9');
+
+            await type(field('attempts'), '9');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(null); // still automatic
+            field('attempts').dispatchEvent(new Event('change', { bubbles: true }));
+            expect(field('attempts').value).toBe('9');
+
+            // An automatic figure past 9999 is not shrunk by an edit
+            await type(field('attempts'), '20000');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(9999);
+            state.wholeAttempts = 20000;
+            missingMaterials.cleanup();
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            await type(field('attempts'), '20000');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(null);
+        });
+
         test('a different item resets both fields', async () => {
             missingMaterials.initialize();
             await vi.advanceTimersByTimeAsync(600);

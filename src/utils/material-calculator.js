@@ -511,7 +511,13 @@ export function calculateEnhancementMaterialRequirements(
     // Add protection item if applicable
     // Skip Philosopher's Mirror — special mechanic, not consumed as standard protection
     if (calc.protectionCount > 0 && protectionItemHrid && protectionItemHrid !== '/items/philosophers_mirror') {
-        const totalProtection = Math.ceil(calc.protectionCount) * copyCount;
+        // Protections scale with the attempts bought for, as the materials do: expected protections
+        // per expected attempt, times the attempts shown (no change when the attempts are the expected ones)
+        const protectionPerCopy =
+            repeatCount != null && calc.attempts > 0
+                ? (calc.protectionCount * wholeAttempts) / calc.attempts
+                : calc.protectionCount;
+        const totalProtection = Math.ceil(protectionPerCopy - 1e-9) * copyCount;
         const protDetails = gameData.itemDetailMap[protectionItemHrid];
 
         if (protDetails) {

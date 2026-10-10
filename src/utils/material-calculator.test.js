@@ -483,9 +483,29 @@ describe('calculateEnhancementMaterialRequirements', () => {
         expect(pick(one, '/items/nail')).toMatchObject({ required: 20 }); // default: one copy, 10 attempts
         // Attempts stay per copy: 2 nails * 4 attempts * 3 copies = 24, with the 5 held counted once
         expect(pick(three, '/items/nail')).toMatchObject({ required: 24, have: 5, missing: 19 });
-        // Protection is ceil(2.5) = 3 per copy, 9 in all, with the 2 held counted once
-        expect(pick(three, '/items/protection_scroll')).toMatchObject({ required: 9, missing: 7 });
+        // 2.5 expected protections over 10 attempts is 1 at 4 attempts: 3 in all, with the 2 held counted once
+        expect(pick(three, '/items/protection_scroll')).toMatchObject({ required: 3, missing: 1 });
         state.inventory = [];
+    });
+
+    test('protection scales with the attempts bought for, and not at all when they are the expected ones', () => {
+        state.enhancementResult = { attempts: 100, protectionCount: 4 };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        const prot = (repeat, copies = 1) =>
+            calculateEnhancementMaterialRequirements(
+                '/items/sword',
+                0,
+                5,
+                '/items/protection_scroll',
+                2,
+                repeat,
+                null,
+                copies
+            ).find((m) => m.itemHrid === '/items/protection_scroll').required;
+        expect(prot(null)).toBe(4);
+        expect(prot(100)).toBe(4); // expected attempts: float noise must not buy a spare
+        expect(prot(500)).toBe(20);
+        expect(prot(50, 2)).toBe(4); // 2 per copy, two copies
     });
 
     test('an attempts override changes the quantities; one copy reproduces the default', () => {
