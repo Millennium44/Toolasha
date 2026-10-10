@@ -191,6 +191,12 @@ describe('calculateDungeonTokenValue', () => {
         expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(90);
     });
 
+    test('the instant-sale pin takes order-book bids only, not a custom price', () => {
+        game.sources['/items/cape'] = 'custom';
+        // The cape line is no bid anyone can sell into; the essence (a book bid) is the fallback
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(180);
+    });
+
     describe('patient +1 tick', () => {
         test('following the global mode, a sale at the ask steps one tick down', () => {
             game.settings.profitCalc_pricingMode = 'hybrid';

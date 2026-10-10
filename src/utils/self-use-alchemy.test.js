@@ -647,6 +647,15 @@ describe('picking the catalyst for self-use', () => {
         expect(best.optimized).toBe(false);
     });
 
+    test('when every candidate is partial, the fallback is the one with the best finite figure', () => {
+        const low = { id: 'low' };
+        const high = { id: 'high' };
+        const evaluate = (c) => ({ netPerHour: c === high ? 9000 : 100, partlyUnpriced: true });
+        const best = bestSelfUseCandidate([low, high], evaluate, 'netPerHour');
+        expect(best.result).toBe(high);
+        expect(best.optimized).toBe(false);
+    });
+
     test('with rankPartial, a partial upper-bound score beats a worse complete one', () => {
         const partial = { id: 'partial' };
         const complete = { id: 'complete' };

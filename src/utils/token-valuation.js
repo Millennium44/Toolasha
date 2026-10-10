@@ -53,7 +53,8 @@ function tokenPricingSide(pricingModeSetting, respectModeSetting) {
  * @param {string} tokenHrid - Token HRID (e.g., '/items/chimerical_token')
  * @param {string} pricingModeSetting - Config setting key for pricing mode (default: 'profitCalc_pricingMode')
  * @param {string|false} respectModeSetting - Config setting key for respect pricing mode flag (default:
- *   'expectedValue_respectPricingMode'), or `false` to pin the bid regardless of settings
+ *   'expectedValue_respectPricingMode'), or `false` for an instant sale: order-book bids only, whatever
+ *   the settings say
  * @returns {number|null} Value per token, or null if no data
  */
 export function calculateDungeonTokenValue(
@@ -127,6 +128,15 @@ export function calculateLabyrinthTokenValueDetail(
  * @returns {Function} `(itemHrid) => number|null`
  */
 function tokenPriceOf(pricingModeSetting, respectModeSetting) {
+    // An instant-sale caller (`false`) gets order-book bids only: a custom price or value-map
+    // estimate is no bid anyone can sell into
+    if (respectModeSetting === false) {
+        return (hrid) => {
+            if (!hrid) return null;
+            const { price, source, estimated } = getItemPriceInfo(hrid, { mode: 'bid' });
+            return source === 'book' && !estimated && price > 0 ? price : null;
+        };
+    }
     const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);
     // Following the global mode, a sale at the ask is a patient one and takes the
     // +1 tick like every other profit price. Respect switched off pins the bid,

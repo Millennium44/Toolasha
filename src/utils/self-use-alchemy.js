@@ -99,9 +99,9 @@ export function alchemyRunBasis(result) {
  * @param {(result: Object) => Object|null} evaluate - The self-use valuation of one result
  * @param {string} objective - The evaluation field to maximize (e.g. `netPerHour`)
  * @param {Object} [options]
- * @param {boolean} [options.rankPartial=false] - Rank partly unpriced candidates by score, against each
- *   other and against complete ones, instead of using the first partial only as a fallback. Only right
- *   where a missing price can only lower the score (a cost that is an upper bound).
+ * @param {boolean} [options.rankPartial=false] - Let a partly unpriced candidate beat a complete one on
+ *   score, instead of serving only as a fallback. Only right where a missing price can only lower the
+ *   score (a cost that is an upper bound). Partial candidates are always ranked against each other.
  * @returns {{result: Object, evaluation: Object}|null} The best candidate, null when none evaluates
  */
 export function bestSelfUseCandidate(candidates, evaluate, objective, options = {}) {
@@ -114,7 +114,9 @@ export function bestSelfUseCandidate(candidates, evaluate, objective, options = 
         const evaluation = evaluate(result);
         if (evaluation?.partlyUnpriced) {
             const partial = Number(evaluation?.[objective]);
-            if (!firstPartial || (options.rankPartial && Number.isFinite(partial) && partial > partialScore)) {
+            // Among partial candidates the one with the best finite figure is the fallback, so a chain
+            // whose bonus crate is only partly priced shows its best lower bound, not an arbitrary setup
+            if (!firstPartial || (Number.isFinite(partial) && partial > partialScore)) {
                 firstPartial = { result, evaluation, optimized: false };
                 partialScore = Number.isFinite(partial) ? partial : -Infinity;
             }
