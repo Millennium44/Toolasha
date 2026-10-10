@@ -272,19 +272,41 @@ export function mergeSessions(base, fresh) {
  * compared against each run's own last-seen instant, so a run archived after
  * the Clear survives it. See utils/cleared-record.js. A list stored before the
  * epoch existed is a bare array and reads as never cleared.
+ *
+ * Stored as a bare array until a Clear has happened, as every earlier build
+ * stored it: a build that predates the epoch folds anything else as an empty
+ * list, so its next save or upload would drop every run. Only a record that
+ * has been cleared carries `{clearedAt, entries}` (see {@link storedShape}).
  */
-export const mergeSessionHistory = mergeClearable(
-    mergeSessions,
-    (session) => lastSeenAt(session) || startedAt(session),
-    {
-        label: 'combat session',
-    }
-);
+const foldClearable = mergeClearable(mergeSessions, (session) => lastSeenAt(session) || startedAt(session), {
+    label: 'combat session',
+});
+
+/**
+ * The value written for a list: the bare array older builds read, or, once a
+ * Clear has happened, the record that carries its epoch.
+ * @param {Array<Object>} entries - The runs
+ * @param {number} clearedAt - The clear epoch, 0 for none
+ * @returns {Array<Object>|{clearedAt: number, entries: Array<Object>}}
+ */
+function storedShape(entries, clearedAt) {
+    return clearedAt > 0 ? clearedRecord(entries, clearedAt) : entries;
+}
+
+/**
+ * @param {*} base - This device's copy, in either shape
+ * @param {*} fresh - The other copy, in either shape
+ * @returns {Array<Object>|{clearedAt: number, entries: Array<Object>}} The fold, in {@link storedShape}
+ */
+export function mergeSessionHistory(base, fresh) {
+    const folded = foldClearable(base, fresh);
+    return storedShape(folded.entries, folded.clearedAt);
+}
 
 const sessionRecord = createPersistedRecord({
     base: STORE_KEY,
     store: STORE_NAME,
-    empty: () => clearedRecord(),
+    empty: () => [],
     merge: mergeSessionHistory,
     label: 'CombatSessionHistory',
 });
@@ -377,7 +399,7 @@ export async function archiveSession(snapshot) {
         const sessions = record();
         await sessions.load();
         await sessions.update((history) =>
-            clearedRecord(withSession(entriesOf(history), snapshot), clearedAtOf(history))
+            storedShape(withSession(entriesOf(history), snapshot), clearedAtOf(history))
         );
         return entriesOf(sessions.get()).slice();
     } catch (error) {

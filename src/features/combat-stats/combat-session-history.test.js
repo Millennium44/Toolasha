@@ -464,8 +464,25 @@ describe('Clear survives a sync pull', () => {
         // An older build stored and uploaded a bare array
         const merged = pull([a], [b]);
         expect(starts(merged)).toEqual(['2026-08-03T02:00:00Z', '2026-08-03T01:00:00Z']);
-        expect(merged.clearedAt).toBe(0);
-        expect(mergeSessionHistory([a], [b]).entries).toEqual(mergeSessions([a], [b]));
+        // Still the bare array a 3.66.0 build reads: it folds anything else as an empty list
+        expect(Array.isArray(merged)).toBe(true);
+        expect(mergeSessionHistory([a], [b])).toEqual(mergeSessions([a], [b]));
+    });
+
+    test('an archive on a list never cleared stores the bare array older builds read', async () => {
+        // A character whose record no earlier test has cleared in memory
+        game.characterId = 'char7';
+        await archiveSession(stamped('2026-08-03T01:00:00Z', OLD));
+        expect(Array.isArray(storageMock.storeFor('combatStats').get('combatSessionHistory_char7'))).toBe(true);
+    });
+
+    test('a cleared list keeps its epoch through the next archive', async () => {
+        await archiveSession(stamped('2026-08-03T01:00:00Z', OLD));
+        await clearSessions();
+        await archiveSession(stamped('2026-08-03T05:00:00Z', Date.now() + 60_000));
+        const stored = storageMock.storeFor('combatStats').get(KEY);
+        expect(stored.clearedAt).toBeGreaterThan(0);
+        expect(entriesOf(stored)).toHaveLength(1);
     });
 
     function starts(record) {
