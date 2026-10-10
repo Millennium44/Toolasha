@@ -407,4 +407,25 @@ describe('channel ids match the game', () => {
         expect(mentionTracker.getChannelFromTabName('Mod')).toBe('/chat_channel_types/moderator');
         expect(mentionTracker.getChannelFromTabName('General')).toBe('/chat_channel_types/general');
     });
+
+    test('Moderator and the language rooms map by tab text, and the popup names general and moderator', () => {
+        expect(mentionTracker.getChannelFromTabName('Moderator2')).toBe('/chat_channel_types/moderator');
+        const rooms = {
+            English: 'english',
+            Русский: 'russian',
+            中文: 'chinese',
+            한국어: 'korean',
+            日本語: 'japanese',
+            Português: 'portuguese',
+            Español: 'spanish',
+            Français: 'french',
+            Deutsch: 'german',
+            'Tiếng Việt': 'vietnamese',
+        };
+        for (const [label, name] of Object.entries(rooms)) {
+            expect(mentionTracker.getChannelFromTabName(label)).toBe(`/chat_channel_types/${name}`);
+        }
+        expect(mentionTracker.getChannelDisplayName('/chat_channel_types/general')).toBe('General');
+        expect(mentionTracker.getChannelDisplayName('/chat_channel_types/moderator')).toBe('Moderator');
+    });
 });
