@@ -27,6 +27,8 @@ export const DUNGEON_TOKEN_HRIDS = new Set(Object.keys(TOKEN_ESSENCE_MAP));
  * @returns {'ask'|'bid'}
  */
 function tokenPricingSide(pricingModeSetting, respectModeSetting) {
+    // `false` in place of a setting key pins the bid outright, for a caller that promises an instant sale
+    if (respectModeSetting === false) return 'bid';
     const pricingMode = config.getSettingValue(pricingModeSetting, 'hybrid');
     const respectPricingMode = config.getSettingValue(respectModeSetting, true);
     if (!respectPricingMode) return 'bid';
@@ -50,7 +52,8 @@ function tokenPricingSide(pricingModeSetting, respectModeSetting) {
  *
  * @param {string} tokenHrid - Token HRID (e.g., '/items/chimerical_token')
  * @param {string} pricingModeSetting - Config setting key for pricing mode (default: 'profitCalc_pricingMode')
- * @param {string} respectModeSetting - Config setting key for respect pricing mode flag (default: 'expectedValue_respectPricingMode')
+ * @param {string|false} respectModeSetting - Config setting key for respect pricing mode flag (default:
+ *   'expectedValue_respectPricingMode'), or `false` to pin the bid regardless of settings
  * @returns {number|null} Value per token, or null if no data
  */
 export function calculateDungeonTokenValue(

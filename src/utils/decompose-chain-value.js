@@ -29,6 +29,7 @@ import expectedValueCalculator from '../features/market/expected-value-calculato
 import { withProfitPricingMode, getItemPriceInfo, isPriceEstimated } from './market-data.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 import { getAlchemyOutputShopValue } from './alchemy-shop-value.js';
+import { DUNGEON_TOKEN_HRIDS, calculateDungeonTokenValue } from './token-valuation.js';
 import {
     CHAIN_MAX_DEPTH,
     bestSelfUseCandidate,
@@ -182,6 +183,11 @@ export function decomposeChain(itemHrid) {
             // anything else at its real bid. Only the crate's contents get this latitude; the top
             // item's ask and the base outputs stay on the strict real-price rule.
             const contentPriceOf = (hrid) => {
+                // A token's shop conversion follows the user's pricing setting, which the conservative
+                // override above does not reach; this chain sells instantly, so pin it to the bid
+                if (DUNGEON_TOKEN_HRIDS.has(hrid)) {
+                    return calculateDungeonTokenValue(hrid, 'profitCalc_pricingMode', false);
+                }
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
                 // market, custom or value-map figure goes through the real-bid check below
