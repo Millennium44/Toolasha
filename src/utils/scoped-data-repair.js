@@ -46,6 +46,7 @@ export const ADOPTED_BASES = {
         // unrepairable for the layout every live build stores
         'overlayPanelV2',
         'combatSimUpgradeModes',
+        'combatSimTriggerChoices',
         'enhancementTracker_sessions',
         'enhancementTracker_currentSession',
         'labSimUpgradeMode',

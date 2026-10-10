@@ -9569,6 +9569,51 @@ describe('the Triggers option', () => {
         expect(checked.length).toBeGreaterThan(0);
     });
 
+    describe('remembered choices', () => {
+        const choices = () => ({
+            scope: ui.panel.querySelector('#mwi-csim-trigger-scope').value,
+            precision: ui.panel.querySelector('#mwi-csim-trigger-precision').value,
+            minGain: ui.panel.querySelector('#mwi-csim-trigger-mingain').value,
+        });
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        test('defaults are unchanged when nothing is stored', async () => {
+            await enableSetting();
+            ui.buildPanel();
+            await settle();
+            expect(choices()).toEqual({ scope: 'me', precision: 'standard', minGain: '0.5' });
+        });
+
+        test('a changed choice survives a panel rebuild', async () => {
+            await enableSetting();
+            ui.buildPanel();
+            await settle();
+            const set = (id, value) => {
+                const select = ui.panel.querySelector(id);
+                select.value = value;
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+            set('#mwi-csim-trigger-scope', 'party');
+            set('#mwi-csim-trigger-precision', 'precise');
+            set('#mwi-csim-trigger-mingain', '2');
+            await settle();
+
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            expect(choices()).toEqual({ scope: 'party', precision: 'precise', minGain: '2' });
+        });
+
+        test('an invalid stored value falls back to the default', async () => {
+            const { writeScoped } = await import('../../utils/character-key.js');
+            await writeScoped('combatSimTriggerChoices', { scope: 'everyone', precision: 'ludicrous', minGain: 7 });
+            await enableSetting();
+            ui.buildPanel();
+            await settle();
+            expect(choices()).toEqual({ scope: 'me', precision: 'standard', minGain: '0.5' });
+        });
+    });
+
     test('the results box sits outside the ranking container, so a redraw cannot wipe it', async () => {
         await enableSetting();
         ui.buildPanel();
