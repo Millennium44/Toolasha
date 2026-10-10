@@ -14,6 +14,7 @@ import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper
 import { padFightCount } from '../../utils/fight-confidence.js';
 import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } from '../../utils/combat-zone-open.js';
 import { calculateTaskProfit, calculateTaskRewardValue, formatTokenFigure } from './task-profit-calculator.js';
+import { computeZoneBottleneck } from './task-zone-bottleneck.js';
 import {
     isCardInConfirmState,
     isConfirmPendingFor,
@@ -2175,31 +2176,22 @@ class TaskProfitDisplay {
             }
 
             if (zoneTaskCount > 1) {
-                let bottleneck = null;
-                for (const [mHrid, entry] of perMonster) {
-                    const mKillsPerHour = (simResult.deaths?.[mHrid] ?? 0) / 1; // SIM_HOURS = 1
-                    entry.hoursNeeded = mKillsPerHour > 0 ? entry.remaining / mKillsPerHour : Infinity;
-                    if (!bottleneck || entry.hoursNeeded > bottleneck.hoursNeeded) bottleneck = entry;
-                }
-
-                // Fights = encounters cleared, not monsters killed — one encounter
-                // spawns several monsters, so summing deaths overcounts by the
-                // average wave size (fallback kept for pre-encounter-count sims)
-                const totalFightsPerHour =
-                    (simResult.encounters ?? 0) > 0
-                        ? simResult.encounters / 1 // SIM_HOURS = 1
-                        : Object.values(simResult.deaths).reduce((s, v) => s + v, 0);
+                const bottleneck = computeZoneBottleneck(
+                    [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry })),
+                    simResult
+                );
 
                 const summary = document.createElement('div');
                 summary.style.cssText =
                     'margin-top: 4px; font-size: 0.7rem; color: #aaddff; border-top: 1px solid #333; padding-top: 4px;';
                 const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name || 'Zone';
                 const bottleneckLabel =
-                    bottleneck.taskCount > 1 ? `${bottleneck.name} ×${bottleneck.taskCount}` : bottleneck.name;
+                    bottleneck.bottleneckTaskCount > 1
+                        ? `${bottleneck.bottleneckName} ×${bottleneck.bottleneckTaskCount}`
+                        : bottleneck.bottleneckName;
                 if (Number.isFinite(bottleneck.hoursNeeded)) {
                     const totalSeconds = Math.round(bottleneck.hoursNeeded * 3600);
-                    const fightsNeeded = Math.round(totalFightsPerHour * bottleneck.hoursNeeded);
-                    summary.textContent = `${zoneName}: ~${formatKMB(fightsNeeded)} fights | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
+                    summary.textContent = `${zoneName}: ~${formatKMB(bottleneck.fightsNeeded)} fights | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
                 } else {
                     summary.textContent = `${zoneName}: ??? (no kills for ${bottleneckLabel} in sim)`;
                 }
