@@ -2325,3 +2325,102 @@ describe('imported players fill vacant slots, never past 5', () => {
         delete navigator.clipboard;
     });
 });
+
+describe('applying optimizer trigger values', () => {
+    const TARGET = '/combat_trigger_dependencies/targeted_enemy';
+    const HP = '/combat_trigger_conditions/current_hp';
+    const GTE = '/combat_trigger_comparators/greater_than_equal';
+    const FIREBALL = '/abilities/fireball';
+    const defaults = [{ dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 1 }];
+
+    const change = (to, extra = {}) => ({
+        playerHrid: 'player1',
+        slotType: 'abilities',
+        itemHrid: FIREBALL,
+        rowIndex: 0,
+        dependencyHrid: TARGET,
+        conditionHrid: HP,
+        comparatorHrid: GTE,
+        from: 1,
+        to,
+        ...extra,
+    });
+
+    function editorWithFireball(triggers) {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        const dto = emptyDTO('x');
+        dto.abilities[1] = { hrid: FIREBALL, level: 10, triggers };
+        editor.importPlayers([dto], ['Milkman']);
+        vi.spyOn(editor, '_getDefaultTriggers').mockReturnValue(defaults);
+        return editor;
+    }
+
+    const slotOf = (editor) => editor.getEditedDTOs().player1.abilities[1];
+
+    test('a default-following slot gets a custom list holding the new value', () => {
+        const editor = editorWithFireball(null);
+        const out = editor.applyTriggerValueChanges([change(600)]);
+        expect(out).toEqual({ applied: 1, skipped: [] });
+        expect(slotOf(editor).triggers).toEqual([
+            { dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 600 },
+        ]);
+    });
+
+    test('a value that lands back on the game default stores null', () => {
+        const editor = editorWithFireball([{ ...defaults[0], value: 600 }]);
+        expect(editor.applyTriggerValueChanges([change(1)]).applied).toBe(1);
+        expect(slotOf(editor).triggers).toBeNull();
+    });
+
+    test('a row that is no longer the one measured is skipped, not overwritten', () => {
+        const editor = editorWithFireball([
+            {
+                dependencyHrid: TARGET,
+                conditionHrid: '/combat_trigger_conditions/missing_hp',
+                comparatorHrid: GTE,
+                value: 5,
+            },
+        ]);
+        const out = editor.applyTriggerValueChanges([change(600)]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toMatch(/changed since/);
+        expect(slotOf(editor).triggers[0].value).toBe(5);
+    });
+
+    test('an ability that is no longer equipped is skipped', () => {
+        const editor = editorWithFireball(null);
+        const out = editor.applyTriggerValueChanges([change(600, { itemHrid: '/abilities/other' })]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toMatch(/not equipped/);
+    });
+
+    test('a list past the editor four-row limit is refused', () => {
+        const row = { ...defaults[0], value: 5 };
+        const editor = editorWithFireball([row, row, row, row, row]);
+        const out = editor.applyTriggerValueChanges([change(600)]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toMatch(/too many/);
+    });
+
+    test('several edits to one slot land together', () => {
+        const second = {
+            dependencyHrid: '/combat_trigger_dependencies/all_enemies',
+            conditionHrid: '/combat_trigger_conditions/lowest_hp_percentage',
+            comparatorHrid: '/combat_trigger_comparators/less_than_equal',
+            value: 50,
+        };
+        const editor = editorWithFireball([{ ...defaults[0], value: 3 }, second]);
+        const out = editor.applyTriggerValueChanges([
+            change(700),
+            change(30, {
+                rowIndex: 1,
+                dependencyHrid: second.dependencyHrid,
+                conditionHrid: second.conditionHrid,
+                comparatorHrid: second.comparatorHrid,
+            }),
+        ]);
+        expect(out.applied).toBe(2);
+        expect(slotOf(editor).triggers.map((t) => t.value)).toEqual([700, 30]);
+    });
+});

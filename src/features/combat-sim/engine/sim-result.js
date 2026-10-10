@@ -14,6 +14,9 @@ class SimResult {
         this.manapointsGained = {};
         this.debuffOnLevelGap = {};
         this.dropRateMultiplier = {};
+        // Per player: the HP and MP pools the run ended with, which the trigger optimizer scales its
+        // food thresholds to
+        this.playerPools = {};
         this.rareFindMultiplier = {};
         this.combatDropQuantity = {};
         this.playerRanOutOfMana = {
@@ -294,6 +297,13 @@ class SimResult {
         }
 
         this.manapointsGained[unit.hrid][source] += amount;
+    }
+
+    setPlayerPools(unit) {
+        this.playerPools[unit.hrid] = {
+            maxHitpoints: unit.combatDetails.maxHitpoints,
+            maxManapoints: unit.combatDetails.maxManapoints,
+        };
     }
 
     setDropRateMultipliers(unit) {

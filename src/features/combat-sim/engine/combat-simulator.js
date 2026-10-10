@@ -468,6 +468,7 @@ class CombatSimulator {
 
         for (let i = 0; i < this.players.length; i++) {
             this.simResult.setDropRateMultipliers(this.players[i]);
+            this.simResult.setPlayerPools(this.players[i]);
             this.simResult.setManaUsed(this.players[i]);
         }
 

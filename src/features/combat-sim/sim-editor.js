@@ -39,6 +39,7 @@ import {
 } from '../../utils/shared-profile-status.js';
 import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -2354,6 +2355,74 @@ export class SimEditor {
         return `<button data-trigger-slot="${slotType}-${slotIndex}" title="${title}" style="background:rgba(255,255,255,0.06); border:1px solid ${border}; color:${color}; padding:1px 5px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">⚡</button>`;
     }
 
+    /**
+     * Write optimizer-chosen trigger thresholds into the loaded players' slots, so
+     * the next Simulate uses them. Only a row's numeric value changes.
+     *
+     * Each edit names the row it was measured on (dependency, condition,
+     * comparator, position); if the slot's triggers have been edited since, so
+     * the row at that position is no longer that row, the edit is skipped rather
+     * than guessed at. A slot that ends up equal to the game's defaults goes back
+     * to `null`, and a list longer than the editor's four-row limit is refused.
+     * This only edits the simulator's own setup; nothing reaches the game.
+     * @param {Array<Object>} changes - { playerHrid, slotType, itemHrid, rowIndex, dependencyHrid,
+     *   conditionHrid, comparatorHrid, to }
+     * @returns {{applied: number, skipped: Array<{change: Object, reason: string}>}}
+     */
+    applyTriggerValueChanges(changes) {
+        const skipped = [];
+        let applied = 0;
+        const gameData = buildGameDataPayload();
+        const groups = new Map();
+        for (const change of changes || []) {
+            const id = `${change.playerHrid}|${change.slotType}|${change.itemHrid}`;
+            if (!groups.has(id)) groups.set(id, []);
+            groups.get(id).push(change);
+        }
+
+        for (const group of groups.values()) {
+            const { playerHrid, slotType, itemHrid } = group[0];
+            const slot = (this._editedDTOs?.[playerHrid]?.[slotType] || []).find((s) => s?.hrid === itemHrid);
+            if (!slot) {
+                for (const change of group) skipped.push({ change, reason: 'not equipped any more' });
+                continue;
+            }
+            const defaults = this._getDefaultTriggers(slotType, itemHrid, gameData);
+            const rows = (Array.isArray(slot.triggers) ? slot.triggers : defaults).map((t) => ({
+                dependencyHrid: t.dependencyHrid,
+                conditionHrid: t.conditionHrid,
+                comparatorHrid: t.comparatorHrid,
+                value: Number(t.value) || 0,
+            }));
+            if (rows.length > MAX_TRIGGERS) {
+                for (const change of group) skipped.push({ change, reason: 'too many trigger rows' });
+                continue;
+            }
+            let touched = 0;
+            for (const change of group) {
+                const row = rows[change.rowIndex];
+                const same =
+                    row &&
+                    row.dependencyHrid === change.dependencyHrid &&
+                    row.conditionHrid === change.conditionHrid &&
+                    row.comparatorHrid === change.comparatorHrid;
+                if (!same) {
+                    skipped.push({ change, reason: 'trigger changed since the analysis' });
+                    continue;
+                }
+                row.value = Math.max(0, Math.round(Number(change.to) || 0));
+                touched++;
+            }
+            if (touched > 0) {
+                slot.triggers = triggersForStorage(rows, defaults);
+                applied += touched;
+            }
+        }
+
+        if (applied > 0) this.renderEditor();
+        return { applied, skipped };
+    }
+
     /** @private */
     _openTriggerEditor(slotType, slotIndex, dto, gameData) {
         document.getElementById('mwi-csim-trigger-editor')?.remove();
@@ -2399,7 +2468,6 @@ export class SimEditor {
             compHrid === '/combat_trigger_comparators/is_active' ||
             compHrid === '/combat_trigger_comparators/is_inactive';
 
-        const MAX_TRIGGERS = 4;
         const toRow = (t) => ({
             dependencyHrid: t.dependencyHrid,
             conditionHrid: t.conditionHrid,
@@ -2549,19 +2617,7 @@ export class SimEditor {
             renderRows();
         });
         footer.querySelector('#mwi-csim-trigger-save').addEventListener('click', () => {
-            const normalized = rows.map((r) => ({ ...r, value: Number(r.value) || 0 }));
-            const matchesDefault =
-                normalized.length === defaults.length &&
-                normalized.every((r, i) => {
-                    const d = defaults[i];
-                    return (
-                        r.dependencyHrid === d.dependencyHrid &&
-                        r.conditionHrid === d.conditionHrid &&
-                        r.comparatorHrid === d.comparatorHrid &&
-                        r.value === (Number(d.value) || 0)
-                    );
-                });
-            slotItem.triggers = matchesDefault ? null : normalized;
+            slotItem.triggers = triggersForStorage(rows, defaults);
             closeEditor();
             this.renderEditor();
         });
