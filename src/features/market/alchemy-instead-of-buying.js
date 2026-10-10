@@ -35,9 +35,15 @@ import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
+import { calculateActionStats } from '../../utils/action-calculator.js';
+import { getDrinkConcentration } from '../../utils/tea-parser.js';
+import {
+    calculateActionsPerHour,
+    calculatePriceAfterTax,
+    calculateTeaCostsPerHour,
+} from '../../utils/profit-helpers.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { COINIFY_BASE_SUCCESS_RATE, COINIFY_COINS_PER_SELL_PRICE } from '../../utils/ironcow-valuation.js';
-import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
 
 /** The setting that draws the lines */
@@ -201,8 +207,9 @@ function baseSuccessOf(actionType, alchemy) {
  * @param {(hrid: string) => Object|null} deps.getItemDetails
  * @param {(hrid: string) => number|null} deps.askOf
  * @param {(hrid: string) => number|null} deps.sellOf
- * @param {(actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number}>} [deps.rateChoices]
- *   The success rate each catalyst choice gives, and what that catalyst costs per success
+ * @param {(actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number, teaPerAction?: number}>} [deps.rateChoices]
+ *   The success rate each catalyst/tea choice gives, what that catalyst costs per success, and what
+ *   the tea costs per action (every action drinks, whether or not it succeeds)
  * @returns {number|null} Null when the source has no ask or never drops the target
  */
 export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemDetails, askOf, sellOf, rateChoices }) {
@@ -232,8 +239,8 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
     const choices = rateChoices?.(actionType, details, baseRate) ?? [{ rate: baseRate, catalystPrice: 0 }];
     const fixed = ask * bulk + getAlchemyCoinCost(details, actionType);
     let best = Infinity;
-    for (const { rate, catalystPrice } of choices) {
-        best = Math.min(best, fixed - rate * (creditPerSuccess - catalystPrice));
+    for (const { rate, catalystPrice, teaPerAction = 0 } of choices) {
+        best = Math.min(best, fixed + teaPerAction - rate * (creditPerSuccess - catalystPrice));
     }
     return best / perAction;
 }
@@ -693,7 +700,7 @@ function sourcesToRun(sources) {
  * rate, the character's under-level penalty (memoized per item level), the live tea, and each
  * catalyst with a real ask. Read once per ranking; a calculator that cannot answer leaves the
  * flat base rate in place.
- * @returns {((actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number}>)|undefined}
+ * @returns {((actionType: string, details: Object, baseRate: number) => Array<{rate: number, catalystPrice: number, teaPerAction: number}>)|undefined}
  */
 export function makeRateChoices() {
     const calc = alchemyProfitCalculator;
@@ -705,14 +712,55 @@ export function makeRateChoices() {
         return undefined;
     }
     try {
-        const { equipment, drinks } = resolveActionContext(ALCHEMY_ACTION_TYPE);
-        const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
+        const context = resolveActionContext(ALCHEMY_ACTION_TYPE);
+        const { equipment, drinks } = context;
+        const gameData = dataManager.getInitClientData?.();
+        const itemDetailMap = gameData?.itemDetailMap;
         // A tea counts only when it can be bought, the same real-ask rule buyableSetup applies to the
         // candidates; without it the ranking scores the no-tea setup alone
         const teaHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
         const teaBuyable = teaHrids.length > 0 && teaHrids.every((hrid) => realPrice(hrid, 'ask') !== null);
-        const teaSetups = [{ tea: 0, drinkSlots: [] }];
-        if (teaBuyable) teaSetups.push({ tea: calc.calculateSuccessRateBreakdown(1, 0).tea, drinkSlots: drinks });
+        const teaSetups = [{ tea: 0, drinkSlots: [], teaCostPerHour: 0 }];
+        if (teaBuyable) {
+            // The same hourly drink spend the full costing charges (drinks per hour at the character's
+            // Drink Concentration, each at its ask)
+            const teaCostPerHour = calculateTeaCostsPerHour({
+                drinkSlots: drinks,
+                drinkConcentration: getDrinkConcentration(equipment, itemDetailMap),
+                itemDetailMap,
+                getItemPrice: (hrid) => realPrice(hrid, 'ask'),
+            }).totalCostPerHour;
+            teaSetups.push({
+                tea: calc.calculateSuccessRateBreakdown(1, 0).tea,
+                drinkSlots: drinks,
+                teaCostPerHour,
+                context,
+            });
+        }
+        // Actions per hour with efficiency, as the full costing divides the hourly spend by it
+        const rates = new Map();
+        const actionsPerHourOf = (actionType, level, index, setupContext) => {
+            const key = `${index}|${actionType}|${level}`;
+            if (!rates.has(key)) {
+                const actionDetails = gameData?.actionDetailMap?.[`/actions/alchemy/${actionType}`];
+                const stats = actionDetails
+                    ? calculateActionStats(actionDetails, {
+                          skills: dataManager.getSkills(),
+                          equipment,
+                          actionContext: setupContext,
+                          itemDetailMap,
+                          includeCommunityBuff: true,
+                          includeBreakdown: true,
+                          levelRequirementOverride: level,
+                      })
+                    : null;
+                rates.set(
+                    key,
+                    stats ? calculateActionsPerHour(stats.actionTime) * (1 + stats.totalEfficiency / 100) : null
+                );
+            }
+            return rates.get(key);
+        };
         const penalties = new Map();
         const catalysts = new Map();
         const catalystsFor = (actionType) => {
@@ -729,7 +777,9 @@ export function makeRateChoices() {
         return (actionType, details, baseRate) => {
             const level = details?.itemLevel || 1;
             const choices = [];
-            teaSetups.forEach(({ tea, drinkSlots }, index) => {
+            teaSetups.forEach(({ tea, drinkSlots, teaCostPerHour, context: setupContext }, index) => {
+                const perHour = teaCostPerHour > 0 ? actionsPerHourOf(actionType, level, index, setupContext) : null;
+                const teaPerAction = perHour > 0 ? teaCostPerHour / perHour : 0;
                 const key = `${index}|${level}`;
                 if (!penalties.has(key)) {
                     penalties.set(
@@ -740,7 +790,7 @@ export function makeRateChoices() {
                 const penalty = penalties.get(key);
                 for (const { bonus, price } of catalystsFor(actionType)) {
                     const rate = calc.calculateSuccessRateBreakdown(baseRate, bonus, tea, penalty).total;
-                    choices.push({ rate, catalystPrice: price });
+                    choices.push({ rate, catalystPrice: price, teaPerAction });
                 }
             });
             return choices;
