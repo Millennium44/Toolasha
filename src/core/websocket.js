@@ -135,6 +135,11 @@ const SKIP_DEDUP_TYPES = new Set([
     // Opening the same player's loadout twice gives the same reply; a dropped repeat would leave a
     // fetch waiting on a reply that already came, and the capture a step behind the server.
     'loadout_shared',
+    // Two trigger edits in a row open with the same type and ability or item hrid; the changed
+    // conditions sit past the prefix, so the second edit would be dropped as a repeat.
+    'all_combat_triggers_updated',
+    'combat_triggers_updated',
+    'achievements_updated',
 ]);
 
 /** How many characters from each end of a message go into the TTL dedup key */
