@@ -8,6 +8,7 @@ import {
     canExtendSession,
     addProtectionCost,
     calibrationObservation,
+    summedLegPredictions,
     canResumeSession,
     getActiveSpans,
     getProtectionBreakdown,
@@ -569,6 +570,53 @@ describe('resumeSession keeps one leg when nothing about the forecast changed', 
         const session = ended();
         resumeSession(session, 9000, { newPredictions: { ...prediction }, startedAt: 100 });
         expect(session.segmentStartTime).toBe(3000);
+    });
+});
+
+describe('summedLegPredictions', () => {
+    test('sums each leg, banked and current, and is null for a one-leg session', () => {
+        expect(summedLegPredictions({ predictions: { expectedAttempts: 5 } })).toBeNull();
+        const resumed = {
+            legPredictions: [{ predictions: { expectedAttempts: 400, expectedProtections: 10 } }],
+            predictions: { expectedAttempts: 90, expectedAttemptsExact: 90.4, expectedProtections: 2 },
+        };
+        expect(summedLegPredictions(resumed)).toEqual({ legs: 2, expectedAttempts: 490, expectedProtections: 12 });
+        const merged = { legPredictions: resumed.legPredictions, predictions: null };
+        expect(summedLegPredictions(merged)).toEqual({ legs: 1, expectedAttempts: 400, expectedProtections: 10 });
+        expect(summedLegPredictions({ legPredictions: [{ predictions: null }], predictions: null })).toBeNull();
+    });
+
+    test('a merged session folds in the survivor own current leg and stays out of calibration', () => {
+        const a = {
+            id: 'a',
+            state: SessionState.COMPLETED,
+            startLevel: 0,
+            currentLevel: 3,
+            targetLevel: 8,
+            startTime: 1000,
+            lastUpdateTime: 2000,
+            endTime: 2000,
+            totalAttempts: 100,
+            predictions: { expectedAttempts: 400 },
+        };
+        const b = {
+            id: 'b',
+            state: SessionState.COMPLETED,
+            startLevel: 3,
+            currentLevel: 8,
+            targetLevel: 8,
+            startTime: 3000,
+            lastUpdateTime: 4000,
+            endTime: 4000,
+            totalAttempts: 80,
+            legPredictions: [{ sessionId: 'b', startLevel: 3, predictions: { expectedAttempts: 60 } }],
+            predictions: { expectedAttempts: 30 },
+        };
+        const merged = foldSessions([a, b]);
+        expect(merged.legPredictions.map((leg) => leg.predictions.expectedAttempts)).toEqual([400, 60, 30]);
+        expect(summedLegPredictions(merged)).toMatchObject({ legs: 3, expectedAttempts: 490 });
+        expect(merged.totalAttempts).toBe(180);
+        expect(calibrationObservation(merged)).toBeNull();
     });
 });
 

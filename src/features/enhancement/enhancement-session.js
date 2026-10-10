@@ -617,21 +617,24 @@ export function foldSessions(ordered) {
     const firstStartTime = Math.min(...ordered.map((session) => session.startTime || Infinity));
 
     // Each run's own prediction, kept as it was made (on the stats the player had then) for the
-    // leg it describes, in chain order. Nothing composes them yet; see calibrationObservation.
+    // leg it describes, in chain order. The panel sums them (summedLegPredictions); calibration
+    // ignores them (calibrationObservation).
     // A run merged before already carries its legs.
-    const legPredictions = ordered.flatMap((session) =>
-        Array.isArray(session.legPredictions)
-            ? session.legPredictions
-            : [
-                  {
-                      sessionId: session.id,
-                      startLevel: session.startLevel,
-                      targetLevel: session.targetLevel,
-                      protectFrom: session.protectFrom || 0,
-                      predictions: session.predictions || null,
-                  },
-              ]
-    );
+    const legPredictions = ordered.flatMap((session) => {
+        const banked = Array.isArray(session.legPredictions) ? session.legPredictions : [];
+        // A run that is itself in a later leg (resumed) still holds that leg's prediction
+        if (banked.length > 0 && !session.predictions) return banked;
+        return [
+            ...banked,
+            {
+                sessionId: session.id,
+                startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
+                targetLevel: session.targetLevel,
+                protectFrom: session.protectFrom || 0,
+                predictions: session.predictions || null,
+            },
+        ];
+    });
 
     const spans = [];
     const breakdowns = ordered.map((session) => getProtectionBreakdown(session));
@@ -726,6 +729,32 @@ export function foldSessions(ordered) {
         ...older.flatMap((session) => [...(session.mergedFrom || []), session.id]),
     ];
     return newest;
+}
+
+/**
+ * The expected attempts and protections of a session that ran in several legs (merged, or
+ * auto-resumed under changed stats): the sum of each leg's own prediction, every one made on the
+ * stats the player had for that leg. The matching actual figure is the session's total attempts.
+ *
+ * A leg that ended short of the next leg's start level is still predicted to the target, so a
+ * chain that climbed in stages reads a little high on expected; the factor is a rough one.
+ * @param {Object} session - Session object
+ * @returns {{legs: number, expectedAttempts: number, expectedProtections: number}|null} Null for
+ *   a one-leg session, or when any leg has no prediction
+ */
+export function summedLegPredictions(session) {
+    const banked = Array.isArray(session?.legPredictions) ? session.legPredictions : [];
+    if (banked.length === 0) return null;
+    const legs = banked.map((leg) => leg?.predictions || null);
+    if (session.predictions) legs.push(session.predictions);
+    if (legs.some((prediction) => !prediction)) return null;
+    const attempts = legs.reduce(
+        (sum, p) =>
+            sum + (Number.isFinite(p.expectedAttemptsExact) ? p.expectedAttemptsExact : p.expectedAttempts || 0),
+        0
+    );
+    const protections = legs.reduce((sum, p) => sum + (p.expectedProtections || 0), 0);
+    return { legs: legs.length, expectedAttempts: Math.round(attempts), expectedProtections: Math.round(protections) };
 }
 
 /**

@@ -241,20 +241,59 @@ describe('runs protected by different items', () => {
 });
 
 describe('a merged session', () => {
-    test('shows no expected attempts or factors, and the confirmation says why', async () => {
+    const legs = [
+        { sessionId: 'session_7', startLevel: 0, predictions: { expectedAttempts: 400, expectedProtections: 10 } },
+        { sessionId: 'session_8', startLevel: 3, predictions: { expectedAttempts: 100, expectedProtections: 2 } },
+    ];
+
+    test('the confirmation says the figures are summed and not calibrated', async () => {
         const { seven, eight } = spatulaRuns();
         game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: false, protectFromDiffers: false };
         const confirm = vi.fn(() => false);
         vi.stubGlobal('confirm', confirm);
         enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
         await enhancementUI.commitMerge();
-        expect(confirm.mock.calls[0][0]).toContain('shows no expected attempts, protections or factors');
+        expect(confirm.mock.calls[0][0]).toContain("summed from each run's own prediction");
+        expect(confirm.mock.calls[0][0]).toContain('not used for prediction calibration');
+        expect(confirm.mock.calls[0][0]).not.toContain('shows no expected');
+    });
 
-        const merged = { ...eight, predictions: null, mergedFrom: ['session_7'], totalAttempts: 467 };
+    test('shows the summed expected figures and the factor against all attempts, with no percentile', () => {
+        const { eight } = spatulaRuns();
+        const merged = {
+            ...eight,
+            predictions: null,
+            mergedFrom: ['session_7'],
+            legPredictions: legs,
+            totalAttempts: 625,
+            protectionCount: 6,
+            state: SessionState.COMPLETED,
+            currentLevel: 8,
+        };
         const box = document.createElement('div');
         box.innerHTML = enhancementUI.generateSessionHTML(merged);
-        expect(box.querySelector('.enh-merged-runs').textContent).toContain('— (merged runs)');
-        expect(box.textContent).not.toContain('(merged runs differ)');
+        const text = box.textContent.replace(/\s+/g, ' ');
+        expect(text).toContain('Expected Attempts: 500');
+        expect(text).toContain('Expected Prots: 12');
+        // 625 / 500 and 6 / 12
+        expect(text).toContain('Attempt Factor: 1.25x');
+        expect(text).toContain('Prot Factor: 0.50x');
+        expect(text).not.toContain('of runs take that many');
+        expect(box.querySelector('.enh-merged-runs')).toBeNull();
+        expect(text).not.toContain('(merged runs differ)');
+    });
+
+    test('a leg with no prediction leaves nothing honest to sum', () => {
+        const { eight } = spatulaRuns();
+        const merged = {
+            ...eight,
+            predictions: null,
+            mergedFrom: ['session_7'],
+            legPredictions: [{ sessionId: 'session_7', predictions: null }, legs[1]],
+        };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(merged);
+        expect(box.querySelector('.enh-merged-runs')).not.toBeNull();
         expect(box.textContent).not.toContain('Attempt Factor');
     });
 
