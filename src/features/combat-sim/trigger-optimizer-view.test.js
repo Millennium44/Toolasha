@@ -74,6 +74,26 @@ describe('renderTriggerResultsHtml', () => {
         expect(without).toContain('Stopped before the all-together check');
     });
 
+    test('a rejected combination says so, recommends nothing and offers no buttons', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                changes: [],
+                rejected: [change()],
+                unchanged: [{ itemName: 'Fireball' }],
+                reliable: false,
+                combined: { deltaScore: -0.2, se: 0.4, deltaXp: 0, deltaProfit: 0, deltaDeaths: 0, seeds: 8 },
+                simCount: 100,
+            },
+            gameData
+        );
+        expect(html).toContain('No reliable improvement found');
+        expect(html).toContain('All changes together');
+        expect(html).not.toContain('Targeted enemy: Current HP');
+        expect(html).not.toContain('mwi-csim-trigger-apply');
+        expect(html).not.toContain('mwi-csim-trigger-copy');
+    });
+
     test('no changes means no buttons and an honest sentence', () => {
         const html = renderTriggerResultsHtml(
             { scope: 'me', changes: [], unchanged: [{ itemName: 'Donut' }] },

@@ -96,7 +96,13 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
     const showNames = players.size > 1 || result.scope === 'party';
 
     let body = '';
-    if (changes.length === 0) {
+    if (result.reliable === false) {
+        body +=
+            '<div style="color:#ff9800; font-size:12px; font-weight:600;">No reliable improvement found.</div>' +
+            '<div style="color:#aaa; font-size:12px; margin-top:2px;">Some values looked better in single runs, ' +
+            'but the combination did not beat your current triggers on fresh seeds by a clear margin, so none ' +
+            'are recommended.</div>';
+    } else if (changes.length === 0) {
         body += '<div style="color:#e0e0e0; font-size:12px;">No change beat the current thresholds by a clear margin.';
         body += ' Your triggers are already about as good as this search can tell.</div>';
     }
@@ -116,10 +122,11 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
 
     if (result.combined) {
         const c = result.combined;
+        const good = c.deltaScore > 0 && result.reliable !== false;
         body +=
             `<div style="font-size:12px; margin-top:8px; padding-top:6px; border-top:1px solid #2a2a4a;">` +
             `<b>All changes together</b> (fresh seeds, ${c.seeds} runs): ` +
-            `<span style="color:${c.deltaScore > 0 ? '#4caf50' : '#ff9800'};">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span>` +
+            `<span style="color:${good ? '#4caf50' : '#ff9800'};">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span>` +
             ` <span style="color:#888;">· ${deltaCells(c)}</span></div>`;
     } else if (changes.length > 0) {
         body +=
@@ -137,7 +144,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
     body +=
         `<div style="font-size:11px; color:#666; margin-top:6px;">` +
         `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, less 10 points per extra ` +
-        `death per hour. A change is kept only when its gain beats 2 standard errors on matched seeds. ` +
+        `death per hour. A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least half a point. ` +
         `${esc(result.simCount)} sims${result.stopped ? ' (stopped early, showing what was accepted)' : ''}. ` +
         `The userscript never changes triggers in the game; enter these by hand.</div>`;
 

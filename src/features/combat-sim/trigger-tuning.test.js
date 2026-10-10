@@ -26,6 +26,9 @@ import {
     scopeMetrics,
     pairedDiff,
     accepts,
+    tCritical,
+    MIN_GAIN,
+    zoneMaxEnemies,
     successiveHalving,
     runTriggerSearch,
     estimateTriggerSims,
@@ -160,6 +163,46 @@ describe('activeRows and collectTunables', () => {
         expect(new Set(solo.map((t) => t.playerHrid))).toEqual(new Set(['player1']));
         const party = collectTunables({ playerDTOs: dtos, playerIndices: [0, 1], gameData: gameData() });
         expect(new Set(party.map((t) => t.playerHrid))).toEqual(new Set(['player1', 'player2']));
+    });
+});
+
+describe('multi-enemy scaling and oversize lists', () => {
+    test('a row on all enemies scales its range with the most enemies up at once', () => {
+        const ctx = { partyDps: 100, pools: {}, maxEnemies: 4 };
+        const all = { kind: KIND_ENEMY_HP, original: 1, dependencyHrid: ENEMIES };
+        const one = { kind: KIND_ENEMY_HP, original: 1, dependencyHrid: TARGET };
+        expect(coarseGrid(all, ctx).at(-1)).toBe(2400);
+        expect(coarseGrid(one, ctx).at(-1)).toBe(600);
+        expect(coarseGrid(all, { partyDps: 100, pools: {} }).at(-1)).toBe(600);
+    });
+
+    test('the zone maximum comes from its spawn tables', () => {
+        const data = {
+            actionDetailMap: {
+                '/actions/combat/fly': { combatZoneInfo: { fightInfo: { randomSpawnInfo: { maxSpawnCount: 3 } } } },
+                '/actions/combat/dungeon': {
+                    combatZoneInfo: {
+                        dungeonInfo: {
+                            randomSpawnInfoMap: { 1: { maxSpawnCount: 2 } },
+                            fixedSpawnsMap: { 5: [1, 2, 3, 4, 5] },
+                        },
+                    },
+                },
+            },
+        };
+        expect(zoneMaxEnemies(data, '/actions/combat/fly')).toBe(3);
+        expect(zoneMaxEnemies(data, '/actions/combat/dungeon')).toBe(5);
+        expect(zoneMaxEnemies(data, '/actions/combat/unknown')).toBe(1);
+    });
+
+    test('a slot with more rows than the editor can hold is not tuned', () => {
+        const rows = [1, 2, 3, 4, 5].map((v) => row(TARGET, C_HP, GTE, v));
+        const tunables = collectTunables({
+            playerDTOs: [playerDTO('player1', { abilityTriggers: rows })],
+            playerIndices: [0],
+            gameData: gameData(),
+        });
+        expect(tunables.some((t) => t.itemHrid === FIREBALL)).toBe(false);
     });
 });
 
@@ -305,13 +348,27 @@ describe('paired statistics and the acceptance rule', () => {
         expect(accepts(d)).toBe(false);
     });
 
-    test('accepts only a positive gain beyond two standard errors', () => {
-        expect(accepts({ mean: 5, se: 2 })).toBe(true);
-        expect(accepts({ mean: 4, se: 2 })).toBe(false);
-        expect(accepts({ mean: 3.9, se: 2 })).toBe(false);
-        expect(accepts({ mean: -5, se: 0.1 })).toBe(false);
-        expect(accepts({ mean: 0, se: 0 })).toBe(false);
-        expect(accepts({ mean: 1, se: 0 })).toBe(true);
+    test('accepts only a gain of at least the minimum that clears the t bound for its own seeds', () => {
+        const n8 = (mean, se) => ({ mean, se, n: 8 });
+        // df 7: t = 2.365
+        expect(accepts(n8(5, 2))).toBe(true);
+        expect(accepts(n8(4.6, 2))).toBe(false);
+        expect(accepts(n8(-5, 0.1))).toBe(false);
+        expect(accepts(n8(0, 0))).toBe(false);
+        // noiseless but too small to be worth offering
+        expect(accepts(n8(MIN_GAIN - 0.01, 0))).toBe(false);
+        expect(accepts(n8(MIN_GAIN, 0))).toBe(true);
+        // the same gain and error are less convincing with fewer seeds
+        expect(accepts({ mean: 5, se: 2, n: 4 })).toBe(false);
+        expect(accepts({ mean: 5, se: 2, n: 8 })).toBe(true);
+    });
+
+    test('t critical values follow the degrees of freedom', () => {
+        expect(tCritical(3)).toBeCloseTo(3.182, 3);
+        expect(tCritical(7)).toBeCloseTo(2.365, 3);
+        expect(tCritical(30)).toBeCloseTo(2.042, 3);
+        expect(tCritical(500)).toBeCloseTo(1.96, 2);
+        expect(tCritical(0)).toBe(Infinity);
     });
 });
 
@@ -344,7 +401,6 @@ describe('successiveHalving', () => {
         ]);
         expect(result.rounds).toBe(3);
         expect(result.winner).toBe(21);
-        expect(result.accepted).toBe(true);
         expect(result.means.get(10)).toBeCloseTo(11.5, 6);
     });
 
@@ -361,7 +417,7 @@ describe('successiveHalving', () => {
         expect(secondRound.sort((a, b) => a - b)).toEqual([0, 7, 8, 9]);
     });
 
-    test('a winner no better than the reference is not accepted', async () => {
+    test('a winner no better than the reference has no selection gain', async () => {
         const result = await successiveHalving({
             values: [1, 2, 3],
             reference: 10,
@@ -369,10 +425,9 @@ describe('successiveHalving', () => {
             measure: makeMeasure([], (v) => (v === 10 ? 50 : 0)),
             score,
         });
-        expect(result.accepted).toBe(false);
     });
 
-    test('a noisy gain inside two standard errors is not accepted', async () => {
+    test('a noisy selection gain stays small', async () => {
         const noise = { 5: [0, 0, 0, 0], 6: [3, -3, 3, -2] };
         const result = await successiveHalving({
             values: [6],
@@ -383,7 +438,6 @@ describe('successiveHalving', () => {
         });
         expect(result.winner).toBe(6);
         expect(result.diff.mean).toBeCloseTo(0.25, 6);
-        expect(result.accepted).toBe(false);
     });
 
     test('stopping returns null before a first round, and the partial state after', async () => {
@@ -416,38 +470,56 @@ describe('successiveHalving', () => {
 
 describe('runTriggerSearch with deterministic fakes', () => {
     const precision = { ...PRECISIONS.standard, seeds: 4, pointHours: 40 };
+    const FIRE_KEY = `player1|abilities|${FIREBALL}|0`;
+
+    /** A deterministic gaussian from a string, so a fake can have noise and still be repeatable */
+    function gauss(text) {
+        let h = 2166136261;
+        for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+        const next = () => {
+            h = (h + 0x6d2b79f5) | 0;
+            let t = Math.imul(h ^ (h >>> 15), 1 | h);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        return Math.sqrt(-2 * Math.log(next() + 1e-12)) * Math.cos(2 * Math.PI * next());
+    }
 
     /**
      * A world where Fireball's enemy-HP threshold has a sharp optimum at 300
      * and the Donut threshold does nothing at all. Every seed adds the same
-     * offset to every setup, which is what makes the runs paired.
+     * offset to every setup, which is what makes the runs paired. `noise` adds
+     * the kind of per-run luck a real sim has (a shared per-seed part and a
+     * part that differs between setups), repeatable by `salt`.
      */
-    function world({ optimum = 300 } = {}) {
+    function world({ optimum = 300, gain = 1, noise = 0, salt = 'x', afterFinal = null } = {}) {
         const calls = [];
-        const measure = async (overrides, hours, seedSet) => {
-            calls.push({ overrides: { ...overrides }, hours, seedSet });
-            const fireball = overrides[`player1|abilities|${FIREBALL}|0`] ?? 1;
-            return [0, 1, 2, 3].map((k) => ({
-                perPlayer: {
-                    player1: { xp: 1000 - Math.abs(fireball - optimum) + k * 3, profit: 0, deaths: 0, dps: 100 },
-                },
-                encounters: 10,
-                pools: { player1: { hp: 1000, mp: 500 } },
-            }));
+        const measure = async (overrides, hours, stream, count) => {
+            calls.push({ overrides: { ...overrides }, hours, stream, count });
+            const fireball = overrides[FIRE_KEY] ?? 1;
+            const sig = JSON.stringify(overrides);
+            return Array.from({ length: count }, (_, k) => {
+                const seedLuck = gauss(`${salt}|${stream}|${k}`) * noise;
+                const setupLuck = gauss(`${salt}|${stream}|${k}|${sig}|${hours}`) * noise;
+                let xp = 1000 - gain * Math.abs(fireball - optimum) + k * 3 + seedLuck + setupLuck;
+                if (afterFinal && stream === 'final') xp += afterFinal(overrides);
+                return {
+                    perPlayer: { player1: { xp, profit: 0, deaths: 0, dps: 100 } },
+                    encounters: 10,
+                    pools: { player1: { hp: 1000, mp: 500 } },
+                };
+            });
         };
         return { measure, calls };
     }
 
     const tunables = () => collectTunables({ playerDTOs: [playerDTO()], playerIndices: [0], gameData: gameData() });
+    const run = (measure, extra = {}) =>
+        runTriggerSearch({ tunables: tunables(), scopeHrids: ['player1'], measure, precision, ...extra });
 
     test('finds the optimum, leaves the inert trigger alone and confirms the combination', async () => {
         const { measure, calls } = world();
-        const result = await runTriggerSearch({
-            tunables: tunables(),
-            scopeHrids: ['player1'],
-            measure,
-            precision,
-        });
+        const result = await run(measure);
         expect(result.changes).toHaveLength(1);
         const [change] = result.changes;
         expect(change.itemName).toBe('Fireball');
@@ -457,70 +529,119 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(change.deltaXp).toBeGreaterThan(200);
         expect(result.unchanged.map((t) => t.itemName)).toEqual(['Donut']);
         expect(result.combined.deltaScore).toBeGreaterThan(5);
-        expect(result.combined.seeds).toBe(4);
+        expect(result.combined.seeds).toBe(8);
+        expect(result.reliable).toBe(true);
         expect(result.stopped).toBe(false);
-        // the combination ran on the fresh seed set; the search never did
-        const final = calls.filter((c) => c.seedSet === 'final');
+        // the combination ran on its own seeds, with enough of them for a real t test
+        const final = calls.filter((c) => c.stream === 'final');
         expect(final).toHaveLength(2);
-        expect(calls.filter((c) => c.seedSet === 'search').length).toBeGreaterThan(20);
+        expect(final.every((c) => c.count === 8)).toBe(true);
         // the baseline's party DPS and pools came through to the grids
         expect(result.partyDps).toBe(100);
         expect(result.screened.find((s) => s.key.includes(FIREBALL)).promising).toBe(true);
         expect(result.screened.find((s) => s.key.includes(DONUT)).promising).toBe(false);
     });
 
+    test('a winner is picked on one set of seeds and tested on another', async () => {
+        const { measure, calls } = world();
+        await run(measure);
+        const streams = (prefix) => new Set(calls.filter((c) => c.stream.startsWith(prefix)).map((c) => c.stream));
+        const select = streams('select:');
+        const confirm = streams('confirm:');
+        expect(select.size).toBeGreaterThan(0);
+        expect(confirm.size).toBeGreaterThan(0);
+        for (const name of confirm) expect(select.has(name)).toBe(false);
+        // each step has its own, and none of them is the screen's, baseline's or final's
+        const everything = [...select, ...confirm, 'baseline', 'final', `screen:${FIRE_KEY}`];
+        expect(new Set(everything).size).toBe(everything.length);
+        // confirmations compare the winner with the current value, on enough seeds
+        expect(calls.filter((c) => c.stream.startsWith('confirm:')).every((c) => c.count === 8)).toBe(true);
+    });
+
     test('nothing to improve means no changes and no combined check', async () => {
         const { measure, calls } = world({ optimum: 1 });
-        const result = await runTriggerSearch({ tunables: tunables(), scopeHrids: ['player1'], measure, precision });
+        const result = await run(measure);
         expect(result.changes).toEqual([]);
         expect(result.combined).toBeNull();
-        expect(calls.some((c) => c.seedSet === 'final')).toBe(false);
+        expect(calls.some((c) => c.stream === 'final')).toBe(false);
+    });
+
+    test('a real but tiny gain (a fraction of a point) is not offered', async () => {
+        // a tenth of a percent of xp is a fraction of a score point: noiseless, so "significant", yet not worth offering
+        const { measure } = world({ gain: 0.002 });
+        const result = await run(measure);
+        expect(result.changes).toEqual([]);
+        expect(result.screened.find((s) => s.key.includes(FIREBALL)).promising).toBe(false);
+    });
+
+    test('a food change whose only gain is profit from eating less is not offered', async () => {
+        // Raising the Donut threshold saves a little food spend: profit +2K/h on 2M/h, nothing else moves
+        const donutKey = `player1|food|${DONUT}|0`;
+        const measure = async (overrides, hours, stream, count) =>
+            Array.from({ length: count }, (_, k) => ({
+                perPlayer: {
+                    player1: {
+                        xp: 1000 + k,
+                        profit: 2_000_000 + ((overrides[donutKey] ?? 100) > 100 ? 2000 : 0),
+                        deaths: 0,
+                        dps: 100,
+                    },
+                },
+                encounters: 10,
+                pools: { player1: { hp: 1000, mp: 500 } },
+            }));
+        const result = await run(measure);
+        expect(result.changes).toEqual([]);
+        expect(result.reliable).toBeNull();
+        expect(result.combined).toBeNull();
+        expect(result.unchanged.map((t) => t.itemName)).toContain('Donut');
+    });
+
+    test('a null world yields no accepted changes, run after run', async () => {
+        const salts = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
+        for (const salt of salts) {
+            const { measure } = world({ optimum: 1, noise: 12, salt });
+            const result = await run(measure);
+            expect(result.changes, `salt ${salt}`).toEqual([]);
+        }
+    });
+
+    test('the combination gates the result: nothing is recommended when it does not hold up', async () => {
+        const { measure } = world({ afterFinal: (overrides) => (Object.keys(overrides).length ? -400 : 0) });
+        const result = await run(measure);
+        expect(result.reliable).toBe(false);
+        expect(result.changes).toEqual([]);
+        expect(result.rejected).toHaveLength(1);
+        expect(result.unchanged.map((t) => t.itemName)).toContain('Fireball');
+        expect(result.combined.deltaScore).toBeLessThan(0);
     });
 
     test('stopping keeps what was accepted and skips the combined check', async () => {
         const { measure } = world();
-        let finalCalls = 0;
         let stop = false;
-        const result = await runTriggerSearch({
-            tunables: tunables(),
-            scopeHrids: ['player1'],
-            measure: async (overrides, hours, seedSet) => {
-                if (seedSet === 'final') finalCalls++;
-                // stop as soon as Fireball has an accepted value
-                if (overrides[`player1|abilities|${FIREBALL}|0`] > 1 && hours > (40 / 4) * 1.5 * 1.5 * 0.99)
-                    stop = true;
-                return measure(overrides, hours, seedSet);
+        const result = await run(
+            async (overrides, hours, stream, count) => {
+                if (stream === 'final') stop = true;
+                return measure(overrides, hours, stream, count);
             },
-            precision,
-            aborted: () => stop,
-        });
+            { aborted: () => stop }
+        );
         expect(result.stopped).toBe(true);
         expect(result.combined).toBeNull();
-        expect(finalCalls).toBe(0);
+        expect(result.changes).toHaveLength(1);
     });
 
     test('a stop before the baseline returns null', async () => {
-        const result = await runTriggerSearch({
-            tunables: tunables(),
-            scopeHrids: ['player1'],
-            measure: async () => null,
-            precision,
-        });
-        expect(result).toBeNull();
+        expect(await run(async () => null)).toBeNull();
     });
 
     test('progress is reported by step', async () => {
         const { measure } = world();
         const seen = [];
-        await runTriggerSearch({
-            tunables: tunables(),
-            scopeHrids: ['player1'],
-            measure,
-            precision,
-            onProgress: ({ description }) => seen.push(description),
-        });
+        await run(measure, { onProgress: ({ description }) => seen.push(description) });
         expect(seen[0]).toMatch(/baseline/);
         expect(seen.some((d) => /screening Fireball/.test(d))).toBe(true);
+        expect(seen.some((d) => /Fireball \(confirming\)/.test(d))).toBe(true);
         expect(seen.some((d) => /confirming all changes/.test(d))).toBe(true);
     });
 

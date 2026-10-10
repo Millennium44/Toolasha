@@ -135,15 +135,16 @@ describe('runTriggerOptimization', () => {
         // every sim carried both players, and the other player's Fireball was never touched
         expect(sims.calls.every((c) => c.playerDTOs.length === 2)).toBe(true);
         expect(sims.calls.every((c) => c.playerDTOs[1].abilities[1].triggers === null)).toBe(true);
-        // sims are paired: the same seed list shows up for different threshold values
-        const seedsByValue = new Map();
+        // sims are paired: a seed is shared by different threshold values within a stream...
+        const valuesBySeed = new Map();
         for (const c of sims.calls) {
             const value = c.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
-            if (!seedsByValue.has(value)) seedsByValue.set(value, new Set());
-            seedsByValue.get(value).add(c.seed);
+            if (!valuesBySeed.has(c.seed)) valuesBySeed.set(c.seed, new Set());
+            valuesBySeed.get(c.seed).add(value);
         }
-        const seedSets = [...seedsByValue.values()].map((s) => [...s].sort().join());
-        expect(new Set(seedSets).size).toBeLessThanOrEqual(2);
+        expect([...valuesBySeed.values()].some((values) => values.size > 1)).toBe(true);
+        // ...and the many streams (screen, each selection, each confirmation, the final) never reuse one
+        expect(valuesBySeed.size).toBeGreaterThan(16);
         expect(sims.calls.every((c) => Number.isInteger(c.seed))).toBe(true);
     });
 
@@ -170,7 +171,7 @@ describe('runTriggerOptimization', () => {
 
     test('stopping returns what exists and does not throw on cancelled sims', async () => {
         let stop = false;
-        sims.respond = (params) => {
+        sims.respond = () => {
             stop = true;
             throw new Error('cancelled');
         };
@@ -178,6 +179,19 @@ describe('runTriggerOptimization', () => {
             abortSignal: () => stop,
         });
         expect(result).toBeNull();
+    });
+
+    test('a failing sim stops the queue and surfaces the error', async () => {
+        let started = 0;
+        sims.respond = () => {
+            started++;
+            throw new Error('worker crashed');
+        };
+        await expect(runTriggerOptimization({ ...base, playerDTOs: [dto('player1')], playerIndex: 0 })).rejects.toThrow(
+            'worker crashed'
+        );
+        // the baseline batch is the first to run; nothing past it is started once one has failed
+        expect(started).toBeLessThanOrEqual(4);
     });
 
     test('the setting key matches', () => {

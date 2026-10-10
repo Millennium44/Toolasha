@@ -2629,6 +2629,25 @@ const UPGRADE_MODES = [
 ];
 
 /**
+ * One candidate-set chip: its checkbox, label and any options it owns.
+ * @param {Object} mode - An UPGRADE_MODES entry
+ * @returns {string} HTML
+ */
+function modeChipHtml(mode) {
+    return `
+            <span data-mode-chip="${mode.key}" style="display:inline-flex; align-items:center; gap:6px;
+                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
+                <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
+                        mode.defaultOn ? ' checked' : ''
+                    }>
+                    ${mode.label}
+                </label>
+                ${MODE_OPTIONS[mode.key] || ''}
+            </span>`;
+}
+
+/**
  * The candidate sets the Upgrade tab offers right now. A set with a `setting` is
  * only offered while that setting is on.
  * @param {Function} [isEnabled] - `(settingKey) => boolean`; defaults to the live settings
@@ -3171,21 +3190,7 @@ class CombatSimUI {
             <label style="color:#888; font-size:12px;">Player</label>
             <select class="toolasha-select" id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
-            ${visibleUpgradeModes()
-                .map(
-                    (mode) => `
-            <span data-mode-chip="${mode.key}" style="display:inline-flex; align-items:center; gap:6px;
-                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
-                <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                    <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
-                        mode.defaultOn ? ' checked' : ''
-                    }>
-                    ${mode.label}
-                </label>
-                ${MODE_OPTIONS[mode.key] || ''}
-            </span>`
-                )
-                .join('')}
+            ${visibleUpgradeModes().map(modeChipHtml).join('')}
             <button id="mwi-csim-upgrade-run" style="
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
@@ -3290,7 +3295,14 @@ class CombatSimUI {
         upgradeContent.appendChild(abilityTargetsGrid);
         upgradeContent.appendChild(houseTargetsGrid);
         upgradeContent.appendChild(shrineTargetsGrid);
+        // The trigger tuning box lives outside the results container: every sort, column menu and
+        // budget replan redraws that container wholesale
+        const triggerBox = document.createElement('div');
+        triggerBox.id = 'mwi-csim-trigger-box';
+        triggerBox.style.cssText = 'flex-shrink:0; max-height:45%; overflow-y:auto; padding:0 14px;';
+
         upgradeContent.appendChild(upgradeProgress);
+        upgradeContent.appendChild(triggerBox);
         upgradeContent.appendChild(upgradeResults);
 
         // Status bar
@@ -3370,12 +3382,9 @@ class CombatSimUI {
             // make the button appear unresponsive for a very long time.
             cancelActiveSimulations();
         });
-        this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
-            box.addEventListener('change', () => {
-                this._onUpgradeModesChanged();
-                this._saveUpgradeModes();
-            });
-        });
+        this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => this._wireModeBox(box));
+        this._unsubscribeTriggerChip?.();
+        this._unsubscribeTriggerChip = config.onSettingChange(TRIGGER_OPTIMIZER_SETTING, () => this._syncTriggerChip());
         this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
             this._saveSwapAuraOnly();
         });
@@ -9140,6 +9149,8 @@ class CombatSimUI {
         this._detachDrag = null;
         this._unsubscribeSkipSkillingRooms?.();
         this._unsubscribeSkipSkillingRooms = null;
+        this._unsubscribeTriggerChip?.();
+        this._unsubscribeTriggerChip = null;
         this._unsubscribeSoloMode?.();
         this._unsubscribeSoloMode = null;
         if (this._loadoutUpdateHandler) {
@@ -9432,6 +9443,36 @@ class CombatSimUI {
     }
 
     /**
+     * Save and re-lay-out the Upgrade tab whenever a candidate-set checkbox changes.
+     * @param {HTMLInputElement} box - The checkbox
+     * @private
+     */
+    _wireModeBox(box) {
+        box.addEventListener('change', () => {
+            this._onUpgradeModesChanged();
+            this._saveUpgradeModes();
+        });
+    }
+
+    /**
+     * Show or remove the Triggers chip to match its setting, without rebuilding the panel.
+     * @private
+     */
+    _syncTriggerChip() {
+        if (!this.panel) return;
+        const mode = UPGRADE_MODES.find((m) => m.key === 'triggers');
+        const chip = this.panel.querySelector('[data-mode-chip="triggers"]');
+        const wanted = config.getSetting(TRIGGER_OPTIMIZER_SETTING) === true;
+        if (wanted && !chip) {
+            this.panel.querySelector('#mwi-csim-upgrade-run')?.insertAdjacentHTML('beforebegin', modeChipHtml(mode));
+            this._wireModeBox(this.panel.querySelector('[data-upgrade-mode="triggers"]'));
+        } else if (!wanted && chip) {
+            chip.remove();
+        }
+        this._onUpgradeModesChanged();
+    }
+
+    /**
      * Candidate sets currently checked on the Upgrade tab.
      * @returns {string[]}
      * @private
@@ -9704,7 +9745,14 @@ class CombatSimUI {
     async _restoreUpgradeModes() {
         try {
             const saved = await readScoped(UPGRADE_MODES_KEY, 'settings', null);
-            if (Array.isArray(saved) && saved.length > 0) {
+            const present = new Set(
+                [...(this.panel?.querySelectorAll('[data-upgrade-mode]') || [])].map((box) =>
+                    box.getAttribute('data-upgrade-mode')
+                )
+            );
+            // A remembered set that names only options this panel no longer offers (Triggers, with its
+            // setting off) would leave every box unchecked; keep the defaults instead
+            if (Array.isArray(saved) && saved.some((key) => present.has(key))) {
                 const wanted = new Set(saved);
                 this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
                     box.checked = wanted.has(box.getAttribute('data-upgrade-mode'));
@@ -9873,6 +9921,8 @@ class CombatSimUI {
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
         resultsEl.innerHTML = '';
+        const staleTriggerBox = this.panel.querySelector('#mwi-csim-trigger-box');
+        if (staleTriggerBox) staleTriggerBox.innerHTML = '';
         // A new run replaces the table the menu was configuring, so the menu
         // goes with it rather than reappearing over the results that arrive
         this._setUpgradeColumnMenuOpen(false);
@@ -9880,6 +9930,7 @@ class CombatSimUI {
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
         this._upgradeRunning = true;
+        let analysisFailed = false;
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -10001,6 +10052,7 @@ class CombatSimUI {
                 });
             }
         } catch (error) {
+            analysisFailed = true;
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
         } finally {
@@ -10010,7 +10062,7 @@ class CombatSimUI {
             stopBtn.style.display = 'none';
         }
 
-        if (wantsTriggers && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
+        if (wantsTriggers && !analysisFailed && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
             await this._onTriggerAnalyze({ append: true });
         }
     }
@@ -10067,9 +10119,16 @@ class CombatSimUI {
         const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
         const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
+        const triggerBox = this.panel.querySelector('#mwi-csim-trigger-box');
         progressEl.style.display = 'block';
-        if (!append) resultsEl.innerHTML = '';
-        resultsEl.querySelector('#mwi-csim-trigger-results')?.remove();
+        const fillEl = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
+        if (fillEl) fillEl.style.width = '0%';
+        if (!append) {
+            // Triggers alone: the old ranking table would otherwise come back on the next re-render
+            resultsEl.innerHTML = '';
+            this._upgradeResultsData = null;
+        }
+        triggerBox.innerHTML = '';
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
@@ -10104,12 +10163,10 @@ class CombatSimUI {
             );
             if (!this._stillSameCharacter(ownerId)) return;
 
-            this._lastTriggerResult = result;
-            resultsEl.insertAdjacentHTML(
-                'beforeend',
-                renderTriggerResultsHtml(result, gameData, { canApply: Boolean(this._editor?.getEditedDTOs()) })
-            );
-            this._wireTriggerResultButtons(result, gameData);
+            triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
+                canApply: Boolean(this._editor?.getEditedDTOs()),
+            });
+            this._wireTriggerResultButtons(result, gameData, playerDTOs);
             this._setStatus(
                 result?.changes?.length
                     ? `Trigger tuning ${this._upgradeAborted ? 'stopped' : 'complete'}: ${result.changes.length} change(s) found.`
@@ -10118,6 +10175,9 @@ class CombatSimUI {
                       : 'Trigger tuning complete: nothing clearly better found.'
             );
         } catch (error) {
+            // Not a Stop: make sure sims already queued do not keep running behind the re-enabled button
+            this._upgradeAborted = true;
+            cancelActiveSimulations();
             console.error('[CombatSimUI] Trigger tuning failed:', error);
             this._setStatus('Trigger tuning failed: ' + error.message);
         } finally {
@@ -10132,21 +10192,26 @@ class CombatSimUI {
      * Wire the Apply and Copy buttons of the trigger results box.
      * @param {Object} result - The optimizer result
      * @param {Object} gameData - Game data payload
+     * @param {Array<Object>} playerDTOs - The DTO objects the analysis read; Apply refuses a player replaced since
      * @private
      */
-    _wireTriggerResultButtons(result, gameData) {
+    _wireTriggerResultButtons(result, gameData, playerDTOs) {
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
         applyBtn?.addEventListener('click', () => {
             if (!this._editor?.getEditedDTOs()) {
                 this._setStatus('Open the sim editor first (Configure tab) so there is a setup to write into.');
                 return;
             }
-            const { applied, skipped } = this._editor.applyTriggerValueChanges(buildEditorChanges(result));
-            applyBtn.disabled = true;
+            const byHrid = new Map((playerDTOs || []).map((dto) => [dto.hrid, dto]));
+            const changes = buildEditorChanges(result).map((c) => ({ ...c, dtoRef: byHrid.get(c.playerHrid) }));
+            const { applied, skipped } = this._editor.applyTriggerValueChanges(changes);
+            if (applied > 0) applyBtn.disabled = true;
             this._setStatus(
-                `Applied ${applied} trigger value${applied === 1 ? '' : 's'} to the sim editor` +
+                (applied > 0
+                    ? `Applied ${applied} trigger value${applied === 1 ? '' : 's'} to the sim editor`
+                    : 'Nothing applied') +
                     (skipped.length ? ` (${skipped.length} skipped: ${skipped[0].reason})` : '') +
-                    '. Run Simulate to use them.'
+                    (applied > 0 ? '. Run Simulate to use them.' : '.')
             );
         });
         this.panel.querySelector('#mwi-csim-trigger-copy')?.addEventListener('click', async () => {

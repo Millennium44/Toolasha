@@ -25,13 +25,14 @@ import {
     collectTunables,
     estimateTriggerSims,
     runTriggerSearch,
+    zoneMaxEnemies,
 } from './trigger-tuning.js';
 
 /** Ceiling on simultaneous sims, whatever the thread setting says (matches the upgrade advisor) */
 const MAX_CONCURRENCY = 6;
 
-/** Offset that keeps the final head-to-head's seeds apart from the search's */
-const FINAL_SEED_OFFSET = 5000;
+/** Seeds one stream can hold; stream N's seeds are indices N * this + k */
+const STREAM_WIDTH = 64;
 
 /**
  * How many sims may be in flight at once.
@@ -144,6 +145,15 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const total = estimateTriggerSims(tunables.length, precision.key);
     let simCount = 0;
     const cache = new Map();
+    // A sim that failed stops the rest: the queue would otherwise keep starting sims for a run already lost
+    let failed = false;
+    const stopped = () => failed || Boolean(abortSignal?.());
+    // Each named stream gets its own block of seeds, so selection, confirmation and the final check never share data
+    const streamIds = new Map();
+    const streamId = (name) => {
+        if (!streamIds.has(name)) streamIds.set(name, streamIds.size);
+        return streamIds.get(name);
+    };
 
     const signature = (overrides) =>
         JSON.stringify(
@@ -153,21 +163,22 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         );
 
     /**
-     * One paired-seed batch: the same threshold values on every seed.
+     * One paired-seed batch: the same threshold values on every seed of a stream.
      * @param {Object} overrides - tunable key → value
      * @param {number} hours - Hours per seed
-     * @param {string} seedSet - 'search' or 'final'
+     * @param {string} stream - Name of the seed set
+     * @param {number} count - How many seeds
      * @returns {Promise<Array<Object>|null>} One sample per seed; null once stopped
      */
-    const measure = (overrides, hours, seedSet) => {
-        const id = `${signature(overrides)}|${hours}|${seedSet}`;
+    const measure = (overrides, hours, stream, count) => {
+        const id = `${signature(overrides)}|${hours}|${stream}|${count}`;
         if (cache.has(id)) return cache.get(id);
 
         const dtos = applyTriggerValues(playerDTOs, tunables, overrides);
-        const offset = seedSet === 'final' ? FINAL_SEED_OFFSET : 0;
-        const runs = Array.from({ length: precision.seeds }, (_, k) =>
+        const base = streamId(stream) * STREAM_WIDTH;
+        const runs = Array.from({ length: count }, (_, k) =>
             limit(async () => {
-                if (abortSignal?.()) return null;
+                if (stopped()) return null;
                 try {
                     const simResult = await runSimulation(
                         {
@@ -177,7 +188,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                             difficultyTier,
                             hours,
                             communityBuffs,
-                            seed: deriveSeed(baseSeed, offset + k),
+                            seed: deriveSeed(baseSeed, base + k),
                             taskDamageMode: TASK_DAMAGE_OFF,
                         },
                         null,
@@ -190,7 +201,8 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                     return sampleFromResult(simResult, gameData, allHrids, hours);
                 } catch (error) {
                     // A stopped run cancels the sims in flight; that is not a failure
-                    if (abortSignal?.()) return null;
+                    if (stopped()) return null;
+                    failed = true;
                     throw error;
                 }
             })
@@ -208,8 +220,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         scopeHrids,
         measure,
         precision,
+        maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
         onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
-        aborted: abortSignal,
+        aborted: stopped,
     });
     if (!result) return null;
 

@@ -2360,13 +2360,13 @@ export class SimEditor {
      * the next Simulate uses them. Only a row's numeric value changes.
      *
      * Each edit names the row it was measured on (dependency, condition,
-     * comparator, position); if the slot's triggers have been edited since, so
-     * the row at that position is no longer that row, the edit is skipped rather
-     * than guessed at. A slot that ends up equal to the game's defaults goes back
+     * comparator, position) and the value it started from; if that row has been
+     * edited since, or the player's build was replaced (`dtoRef`, the DTO object
+     * the analysis read), the edit is skipped rather than guessed at. A slot that ends up equal to the game's defaults goes back
      * to `null`, and a list longer than the editor's four-row limit is refused.
      * This only edits the simulator's own setup; nothing reaches the game.
      * @param {Array<Object>} changes - { playerHrid, slotType, itemHrid, rowIndex, dependencyHrid,
-     *   conditionHrid, comparatorHrid, to }
+     *   conditionHrid, comparatorHrid, from, to, dtoRef }
      * @returns {{applied: number, skipped: Array<{change: Object, reason: string}>}}
      */
     applyTriggerValueChanges(changes) {
@@ -2383,6 +2383,11 @@ export class SimEditor {
         for (const group of groups.values()) {
             const { playerHrid, slotType, itemHrid } = group[0];
             const slot = (this._editedDTOs?.[playerHrid]?.[slotType] || []).find((s) => s?.hrid === itemHrid);
+            const replaced = group.some((c) => c.dtoRef && c.dtoRef !== this._editedDTOs?.[playerHrid]);
+            if (replaced) {
+                for (const change of group) skipped.push({ change, reason: 'changed since analysis' });
+                continue;
+            }
             if (!slot) {
                 for (const change of group) skipped.push({ change, reason: 'not equipped any more' });
                 continue;
@@ -2405,9 +2410,10 @@ export class SimEditor {
                     row &&
                     row.dependencyHrid === change.dependencyHrid &&
                     row.conditionHrid === change.conditionHrid &&
-                    row.comparatorHrid === change.comparatorHrid;
+                    row.comparatorHrid === change.comparatorHrid &&
+                    (change.from === undefined || row.value === change.from);
                 if (!same) {
-                    skipped.push({ change, reason: 'trigger changed since the analysis' });
+                    skipped.push({ change, reason: 'changed since analysis' });
                     continue;
                 }
                 row.value = Math.max(0, Math.round(Number(change.to) || 0));

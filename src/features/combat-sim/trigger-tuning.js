@@ -60,11 +60,22 @@ export const KEEP_FRACTION = 1 / 3;
 /** How much longer each successive-halving round simulates */
 export const ROUND_GROWTH = 1.5;
 
-/** A change is accepted only when its paired gain exceeds this many standard errors */
-export const ACCEPT_Z = 2;
+/**
+ * Smallest score gain worth offering, in score points. A change that is
+ * statistically real but worth less than this (a food that saves a few coins
+ * and moves nothing else) is not recommended.
+ */
+export const MIN_GAIN = 0.5;
 
-/** The importance screen keeps a trigger only when its best coarse value beats the current by this many SE */
-export const SCREEN_Z = 1;
+/** Seeds in a confirmation or the final head-to-head, at least; enough for a t test that is not near-useless */
+export const CONFIRM_SEEDS_MIN = 8;
+
+/**
+ * The importance screen keeps a trigger only when its best coarse value beats
+ * the current by this many SE and by `MIN_GAIN`. Picking the best of ~12 values
+ * makes a bar of 1 SE pass nearly every trigger that does nothing.
+ */
+export const SCREEN_Z = 2;
 
 /** Enemy-HP thresholds are tried from 0 up to this many seconds of party damage */
 export const ENEMY_HP_DPS_SPAN = 6;
@@ -225,6 +236,8 @@ export function collectTunables({ playerDTOs, playerIndices, gameData, playerNam
             slots.forEach((slot, slotIndex) => {
                 if (!slot?.hrid) return;
                 const { rows, fromDefault } = activeRows(slot, slotType, gameData);
+                // The sim editor cannot store more rows than this, so Apply could never write them back
+                if (rows.length > MAX_TRIGGERS) return;
                 const itemName =
                     (slotType === ABILITY_SLOT
                         ? gameData?.abilityDetailMap?.[slot.hrid]?.name
@@ -323,7 +336,11 @@ export function gridMaximum(tunable, ctx) {
     if (tunable.kind === KIND_ENEMY_PCT) return 100;
     if (tunable.kind === KIND_ENEMY_HP) {
         const dps = Number(ctx?.partyDps);
-        return dps > 0 ? Math.round(dps * ENEMY_HP_DPS_SPAN) : fallback;
+        // `all_enemies` current/missing HP is the sum over every living enemy, so the range scales with
+        // how many can be up at once (the zone's largest spawn). A targeted-enemy row reads one enemy.
+        // Limit: the count is the zone's maximum, not the average, so the top of the grid can overshoot.
+        const count = tunable.dependencyHrid === DEP_ALL_ENEMIES ? Math.max(1, Number(ctx?.maxEnemies) || 1) : 1;
+        return dps > 0 ? Math.round(dps * ENEMY_HP_DPS_SPAN * count) : fallback;
     }
     const pool = ctx?.pools?.[tunable.playerHrid]?.[tunable.kind === KIND_HP_POOL ? 'hp' : 'mp'];
     return pool > 0 ? Math.round(pool) : fallback;
@@ -385,6 +402,20 @@ export function fineGrid(tunable, ctx, center, tried = new Set()) {
         .map((o) => clampValue(tunable.kind, center + o))
         .filter((v) => v !== center && !tried.has(v));
     return uniqueSorted(values);
+}
+
+/**
+ * The most enemies a zone or dungeon can have up at once, from its spawn tables.
+ * @param {Object} gameData - Game data payload
+ * @param {string} zoneHrid - Zone action hrid
+ * @returns {number} At least 1
+ */
+export function zoneMaxEnemies(gameData, zoneHrid) {
+    const info = gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+    const counts = [info?.fightInfo?.randomSpawnInfo?.maxSpawnCount, info?.fightInfo?.bossSpawns?.length];
+    for (const spawn of Object.values(info?.dungeonInfo?.randomSpawnInfoMap || {})) counts.push(spawn?.maxSpawnCount);
+    for (const wave of Object.values(info?.dungeonInfo?.fixedSpawnsMap || {})) counts.push(wave?.length);
+    return Math.max(1, ...counts.map((c) => Number(c) || 0));
 }
 
 // ─── Objective ──────────────────────────────────────────────────────────────
@@ -472,15 +503,32 @@ export function pairedDiff(a, b) {
     return { mean: m, se: Math.sqrt(variance / n), n };
 }
 
+/** Two-sided 95% Student t critical values for 1..30 degrees of freedom */
+const T_95 = [
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.16, 2.145, 2.131, 2.12, 2.11,
+    2.101, 2.093, 2.086, 2.08, 2.074, 2.069, 2.064, 2.06, 2.056, 2.052, 2.048, 2.045, 2.042,
+];
+
 /**
- * The acceptance rule: a candidate replaces the current value only when its
- * paired gain is positive and exceeds `ACCEPT_Z` standard errors.
- * @param {{mean: number, se: number}} diff - From `pairedDiff`
- * @param {number} [z] - Standard errors required
+ * The two-sided 95% t critical value for a number of degrees of freedom.
+ * @param {number} df - Degrees of freedom (seeds - 1)
+ * @returns {number}
+ */
+export function tCritical(df) {
+    if (!(df >= 1)) return Infinity;
+    return df > T_95.length ? 1.96 : T_95[Math.floor(df) - 1];
+}
+
+/**
+ * The acceptance rule: a paired gain is believed only when it is at least
+ * `minGain` points and exceeds the 95% t bound for its own number of seeds.
+ * @param {{mean: number, se: number, n?: number}} diff - From `pairedDiff`
+ * @param {number} [minGain] - Smallest gain worth having
  * @returns {boolean}
  */
-export function accepts(diff, z = ACCEPT_Z) {
-    return diff.mean > 0 && Number.isFinite(diff.se) && diff.mean > z * diff.se;
+export function accepts(diff, minGain = MIN_GAIN) {
+    if (!Number.isFinite(diff.se) || diff.mean < minGain || !(diff.mean > 0)) return false;
+    return diff.mean > tCritical((diff.n ?? 0) - 1) * diff.se;
 }
 
 // ─── Successive halving ─────────────────────────────────────────────────────
@@ -492,7 +540,8 @@ export function accepts(diff, z = ACCEPT_Z) {
  * same seeds; the best third survive into a round that simulates 1.5× longer,
  * and so on until the next cut would leave a single survivor. That survivor is
  * the winner, and its gain over the reference — paired per seed, from the last
- * round's samples — decides whether it is believed.
+ * round's samples is only a hint: the winner was picked on those samples, so
+ * the caller must confirm it on seeds that took no part in the selection.
  * @param {Object} params
  * @param {Array<number>} params.values - Candidate values, excluding the reference
  * @param {number} params.reference - The current value
@@ -500,8 +549,7 @@ export function accepts(diff, z = ACCEPT_Z) {
  * @param {Function} params.measure - `(value, hours) => Promise<Array<Sample>|null>`; null means stopped
  * @param {Function} params.score - `(sample) => number`
  * @param {Function} [params.aborted] - `() => boolean`
- * @returns {Promise<Object|null>} `{ winner, diff, rounds, means, winnerSamples, referenceSamples,
- *   accepted }`, or null when the run was stopped before a first round finished
+ * @returns {Promise<Object|null>} `{ winner, diff, rounds, means, winnerSamples, referenceSamples }`, or null when the run was stopped before a first round finished
  */
 export async function successiveHalving({ values, reference, hours, measure, score, aborted }) {
     let alive = [...values];
@@ -548,7 +596,6 @@ export async function successiveHalving({ values, reference, hours, measure, sco
         means: firstMeans,
         winnerSamples: last.samples.get(winner),
         referenceSamples: last.samples.get(reference),
-        accepted: accepts(diff),
     };
 }
 
@@ -556,16 +603,20 @@ export async function successiveHalving({ values, reference, hours, measure, sco
 
 /**
  * Estimate how many sims a search will run, for the progress bar. It is an
- * estimate: the real count depends on how many triggers the screen drops.
+ * estimate: the real count depends on how many triggers the screen drops and
+ * how many winners reach confirmation.
  * @param {number} tunableCount - Tunable rows
  * @param {string} [precision] - Precision key
  * @returns {number}
  */
 export function estimateTriggerSims(tunableCount, precision = DEFAULT_PRECISION) {
     const seeds = (PRECISIONS[precision] || PRECISIONS[DEFAULT_PRECISION]).seeds;
+    const confirmSeeds = Math.max(CONFIRM_SEEDS_MIN, seeds);
     // screen 13 points; coarse halving 13 + 5 + 3; fine halving 5 + 3; second pass 8
-    const perTunable = (13 + 21 + 8 + 8) * seeds;
-    return seeds + tunableCount * perTunable + 2 * (seeds + 2);
+    const selection = (13 + 21 + 8 + 8) * seeds;
+    // about one confirmation (winner and reference) per trigger that is worth it
+    const confirmation = 2 * confirmSeeds;
+    return seeds + tunableCount * (selection + confirmation) + 2 * confirmSeeds;
 }
 
 function metricsMean(samples, hrids) {
@@ -580,37 +631,59 @@ function metricsMean(samples, hrids) {
 /**
  * Run the full trigger search against an injected measuring function.
  *
- * 1. Baseline on the original setup: scope figures, party DPS, HP/MP pools.
- * 2. Importance screen: each tunable across its coarse grid alone; ordered by
- *    how far its scores spread, and dropped when no value beats the current by
- *    `SCREEN_Z` standard errors.
- * 3. Coordinate descent, most impactful first, keeping earlier winners: a
- *    coarse halving, then a fine halving around the winner; then one more fine
- *    pass over every kept trigger once the others have moved.
- * 4. A fresh-seed head-to-head of the original setup against all the winners.
+ * Selection and confirmation never share data. Choosing the best of many
+ * candidates on a set of seeds and then testing it on those same seeds reports
+ * the luck that made it win, so:
  *
- * Stopping keeps whatever has been accepted so far (and skips the final
- * head-to-head).
+ * 1. Baseline on the original setup: scope figures, party DPS, HP/MP pools.
+ * 2. Importance screen: each tunable across its coarse grid alone, on its own
+ *    seeds; ordered by how far its scores spread and dropped unless some value
+ *    clearly beats the current one.
+ * 3. Coordinate descent, most impactful first, keeping earlier winners. Each
+ *    step (a coarse halving, a fine halving, then a second fine pass) picks a
+ *    winner on its own seeds, then runs winner against current on fresh seeds;
+ *    only that second measurement can accept it (t test at the real number of
+ *    seeds, and at least `MIN_GAIN` points).
+ * 4. A fresh-seed head-to-head of the original setup against all the winners
+ *    gates the whole result: if it is not significantly better, nothing is
+ *    recommended.
+ *
+ * Stopping keeps whatever has been accepted so far (each already confirmed) and
+ * skips the final head-to-head.
  * @param {Object} params
  * @param {Array<Object>} params.tunables - From `collectTunables`
  * @param {Array<string>} params.scopeHrids - Players whose figures are judged
- * @param {Function} params.measure - `(overrides, hoursPerSeed, seedSet) => Promise<Array<Sample>|null>`;
- *   `seedSet` is 'search' or 'final'. Samples are `{ perPlayer, encounters, pools }`.
+ * @param {Function} params.measure - `(overrides, hoursPerSeed, stream, count) => Promise<Array<Sample>|null>`;
+ *   `stream` names a set of seeds (equal names share seeds, different names never do), `count` is how
+ *   many seeds. Samples are `{ perPlayer, encounters, pools }`; null means stopped.
  * @param {Object} params.precision - An entry of PRECISIONS
+ * @param {number} [params.maxEnemies] - Most enemies up at once in the zone
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
- * @returns {Promise<Object|null>} See `buildResult`; null when stopped before the baseline
+ * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline
  */
-export async function runTriggerSearch({ tunables, scopeHrids, measure, precision, onProgress, aborted }) {
+export async function runTriggerSearch({
+    tunables,
+    scopeHrids,
+    measure,
+    precision,
+    maxEnemies = 1,
+    onProgress,
+    aborted,
+}) {
     const hoursPerSeed = precision.pointHours / precision.seeds;
+    const confirmSeeds = Math.max(CONFIRM_SEEDS_MIN, precision.seeds);
+    const confirmHours = hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH;
     const overrides = {};
     const progress = (description) => onProgress?.({ description });
+    const stopped = () => Boolean(aborted?.());
 
-    const measureWith = (extra, hours, seedSet = 'search') => measure({ ...overrides, ...extra }, hours, seedSet);
+    const measureWith = (extra, hours, stream, count = precision.seeds) =>
+        measure({ ...overrides, ...extra }, hours, stream, count);
 
     progress('Triggers: measuring the baseline');
-    const baselineSamples = await measureWith({}, hoursPerSeed * ROUND_GROWTH);
-    if (!baselineSamples || aborted?.()) return null;
+    const baselineSamples = await measureWith({}, hoursPerSeed * ROUND_GROWTH, 'baseline');
+    if (!baselineSamples || stopped()) return null;
 
     const baseScope = (() => {
         const ms = baselineSamples.map((s) => scopeMetrics(s, scopeHrids));
@@ -629,78 +702,87 @@ export async function runTriggerSearch({ tunables, scopeHrids, measure, precisio
     );
     const pools = {};
     for (const [hrid, p] of Object.entries(baselineSamples[0]?.pools || {})) pools[hrid] = p;
-    const ctx = { partyDps, pools };
+    const ctx = { partyDps, pools, maxEnemies };
 
-    const state = new Map(tunables.map((t) => [t.key, { tunable: t, current: t.original, step: null }]));
+    const state = new Map(tunables.map((t) => [t.key, { tunable: t, current: t.original }]));
     const currentOf = (t) => state.get(t.key).current;
     const tried = new Map(tunables.map((t) => [t.key, new Set([t.original])]));
 
-    // Run one halving for a tunable over candidate values, against its current value
-    const halve = async (t, values, label) => {
-        const candidates = values.filter((v) => v !== currentOf(t));
-        if (candidates.length === 0) return null;
-        for (const v of candidates) tried.get(t.key).add(v);
-        progress(`Triggers: ${t.itemName} (${label})`);
-        return successiveHalving({
-            values: candidates,
-            reference: currentOf(t),
-            hours: hoursPerSeed,
-            measure: (value, hours) => measureWith({ [t.key]: value }, hours),
-            score,
-            aborted,
-        });
-    };
-
-    // 2. Importance screen
+    // 2. Importance screen, each trigger on its own seeds
     const screen = [];
     for (const t of tunables) {
-        if (aborted?.()) break;
+        if (stopped()) break;
         const grid = coarseGrid(t, ctx).filter((v) => v !== t.original);
         progress(`Triggers: screening ${t.itemName}`);
         const entries = [t.original, ...grid];
-        const measured = await Promise.all(entries.map((v) => measureWith({ [t.key]: v }, hoursPerSeed)));
-        if (aborted?.() || measured.some((m) => !m)) break;
+        const measured = await Promise.all(
+            entries.map((v) => measureWith({ [t.key]: v }, hoursPerSeed, `screen:${t.key}`))
+        );
+        if (stopped() || measured.some((m) => !m)) break;
         const scores = entries.map((_, i) => measured[i].map((s) => score(s)));
         const means = scores.map(mean);
-        const refScores = scores[0];
         let bestIndex = 1;
         for (let i = 2; i < entries.length; i++) if (means[i] > means[bestIndex]) bestIndex = i;
-        const bestDiff = bestIndex < entries.length ? pairedDiff(scores[bestIndex], refScores) : { mean: 0, se: 1 };
+        const bestDiff = grid.length > 0 ? pairedDiff(scores[bestIndex], scores[0]) : { mean: 0, se: Infinity };
         screen.push({
             tunable: t,
             range: Math.max(...means) - Math.min(...means),
-            promising: grid.length > 0 && bestDiff.mean > SCREEN_Z * bestDiff.se,
+            promising: bestDiff.mean >= MIN_GAIN && bestDiff.mean > SCREEN_Z * bestDiff.se,
         });
     }
-    const stopped = () => Boolean(aborted?.());
     screen.sort((a, b) => b.range - a.range);
 
     // 3. Coordinate descent
     const changeLog = new Map();
-    const record = (t, result, before) => {
-        const after = currentOf(t);
-        if (after === before) return;
+    let stepCounter = 0;
+    const record = (t, diff, winnerSamples, referenceSamples) => {
         const entry = changeLog.get(t.key) || { deltaScore: 0, variance: 0, xp: 0, profit: 0, deaths: 0 };
-        const refM = metricsMean(result.referenceSamples, scopeHrids);
-        const winM = metricsMean(result.winnerSamples, scopeHrids);
-        entry.deltaScore += result.diff.mean;
-        entry.variance += result.diff.se ** 2;
+        const refM = metricsMean(referenceSamples, scopeHrids);
+        const winM = metricsMean(winnerSamples, scopeHrids);
+        entry.deltaScore += diff.mean;
+        entry.variance += diff.se ** 2;
         entry.xp += winM.xp - refM.xp;
         entry.profit += winM.profit - refM.profit;
         entry.deaths += winM.deaths - refM.deaths;
         changeLog.set(t.key, entry);
     };
     const tune = async (t, values, label) => {
+        const candidates = values.filter((v) => v !== currentOf(t));
+        if (candidates.length === 0) return false;
+        for (const v of candidates) tried.get(t.key).add(v);
+        const step = ++stepCounter;
+        progress(`Triggers: ${t.itemName} (${label})`);
         const before = currentOf(t);
-        const result = await halve(t, values, label);
-        if (!result || stopped()) return false;
-        if (result.accepted) {
-            state.get(t.key).current = result.winner;
-            overrides[t.key] = result.winner;
-            record(t, result, before);
-            return true;
-        }
-        return false;
+
+        const selection = await successiveHalving({
+            values: candidates,
+            reference: before,
+            hours: hoursPerSeed,
+            measure: (value, hours) => measureWith({ [t.key]: value }, hours, `select:${step}`),
+            score,
+            aborted,
+        });
+        if (!selection || stopped()) return false;
+        // The selection gain is inflated by having been chosen; half the bar is a cheap way to skip hopeless ones
+        if (selection.winner === before || selection.diff.mean < MIN_GAIN / 2) return false;
+
+        progress(`Triggers: ${t.itemName} (confirming)`);
+        const stream = `confirm:${step}`;
+        const [referenceSamples, winnerSamples] = await Promise.all([
+            measureWith({ [t.key]: before }, confirmHours, stream, confirmSeeds),
+            measureWith({ [t.key]: selection.winner }, confirmHours, stream, confirmSeeds),
+        ]);
+        if (!referenceSamples || !winnerSamples || stopped()) return false;
+        const diff = pairedDiff(
+            winnerSamples.map((s) => score(s)),
+            referenceSamples.map((s) => score(s))
+        );
+        if (!accepts(diff)) return false;
+
+        state.get(t.key).current = selection.winner;
+        overrides[t.key] = selection.winner;
+        record(t, diff, winnerSamples, referenceSamples);
+        return true;
     };
 
     const keepers = screen.filter((s) => s.promising).map((s) => s.tunable);
@@ -719,15 +801,34 @@ export async function runTriggerSearch({ tunables, scopeHrids, measure, precisio
         }
     }
 
-    // 4. Combined re-measure on fresh seeds
+    // 4. The combination, on seeds nothing above has seen, gates the whole result
     let combined = null;
-    const changedKeys = Object.keys(overrides).filter((k) => overrides[k] !== state.get(k).tunable.original);
-    if (changedKeys.length > 0 && !stopped()) {
+    let reliable = null;
+    const buildChanges = () => {
+        const out = [];
+        for (const t of tunables) {
+            const log = changeLog.get(t.key);
+            if (currentOf(t) === t.original || !log) continue;
+            out.push({
+                ...t,
+                from: t.original,
+                to: currentOf(t),
+                deltaScore: log.deltaScore,
+                se: Math.sqrt(log.variance),
+                deltaXp: log.xp,
+                deltaProfit: log.profit,
+                deltaDeaths: log.deaths,
+            });
+        }
+        return out.sort((a, b) => b.deltaScore - a.deltaScore);
+    };
+    let changes = buildChanges();
+    let rejected = [];
+    if (changes.length > 0 && !stopped()) {
         progress('Triggers: confirming all changes together');
-        const finalHours = hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH;
         const [orig, tuned] = await Promise.all([
-            measure({}, finalHours, 'final'),
-            measure({ ...overrides }, finalHours, 'final'),
+            measure({}, confirmHours, 'final', confirmSeeds),
+            measure({ ...overrides }, confirmHours, 'final', confirmSeeds),
         ]);
         if (orig && tuned && !stopped()) {
             const diff = pairedDiff(
@@ -744,39 +845,25 @@ export async function runTriggerSearch({ tunables, scopeHrids, measure, precisio
                 deltaDeaths: a.deaths - b.deaths,
                 seeds: diff.n,
             };
+            reliable = accepts(diff);
+            if (!reliable) {
+                rejected = changes;
+                changes = [];
+            }
         }
     }
 
-    const changes = [];
-    const unchanged = [];
-    for (const t of tunables) {
-        const to = currentOf(t);
-        const log = changeLog.get(t.key);
-        if (to === t.original || !log) {
-            unchanged.push(t);
-            continue;
-        }
-        changes.push({
-            ...t,
-            from: t.original,
-            to,
-            deltaScore: log.deltaScore,
-            se: Math.sqrt(log.variance),
-            deltaXp: log.xp,
-            deltaProfit: log.profit,
-            deltaDeaths: log.deaths,
-        });
-    }
-    changes.sort((a, b) => b.deltaScore - a.deltaScore);
-
+    const kept = new Set(changes.map((c) => c.key));
     return {
         stopped: stopped(),
         baseline: baseScope,
         partyDps,
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),
         changes,
-        unchanged,
+        rejected,
+        unchanged: tunables.filter((t) => !kept.has(t.key)),
         combined,
+        reliable,
     };
 }
 

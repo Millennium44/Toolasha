@@ -126,11 +126,16 @@ const mocks = vi.hoisted(() => ({
     triggerRuns: [],
     /** Every list of changes handed to the editor's `applyTriggerValueChanges` */
     triggerApplied: [],
+    /** When set, `runTriggerOptimization` throws it */
+    triggerFail: null,
+    /** When set, the SimEditor stub answers `applyTriggerValueChanges` with this */
+    applyOutcome: null,
 }));
 
 vi.mock('./trigger-optimizer.js', () => ({
     runTriggerOptimization: async (params) => {
         mocks.triggerRuns.push(params);
+        if (mocks.triggerFail) throw mocks.triggerFail;
         return mocks.triggerResult;
     },
 }));
@@ -551,7 +556,7 @@ vi.mock('./sim-editor.js', () => ({
         }
         applyTriggerValueChanges(changes) {
             mocks.triggerApplied.push(changes);
-            return { applied: changes.length, skipped: [] };
+            return mocks.applyOutcome || { applied: changes.length, skipped: [] };
         }
         isInitialized() {
             return true;
@@ -9524,6 +9529,124 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns[0].scope).toBe('party');
         expect(mocks.triggerRuns[0].precision).toBe('quick');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+    });
+
+    test('the chip appears and disappears live with its setting', async () => {
+        const { default: config } = await import('../../core/config.js');
+        let on = false;
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_triggerOptimizer' ? on : fallback
+        );
+        let notify = null;
+        vi.spyOn(config, 'onSettingChange').mockImplementation((key, callback) => {
+            if (key === 'combatSim_triggerOptimizer') notify = callback;
+            return () => {};
+        });
+        ui.buildPanel();
+        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
+
+        on = true;
+        notify();
+        const box = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
+        expect(box).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-scope')).not.toBeNull();
+        // the new checkbox is wired like the others: checking it shows its options
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+        expect(ui.panel.querySelector('[data-mode-options="triggers"]').style.display).toBe('inline-flex');
+
+        on = false;
+        notify();
+        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
+    });
+
+    test('remembered modes naming only Triggers fall back to the defaults while it is off', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('combatSimUpgradeModes', ['triggers']);
+        ui.buildPanel();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const checked = [...ui.panel.querySelectorAll('[data-upgrade-mode]')].filter((box) => box.checked);
+        expect(checked.length).toBeGreaterThan(0);
+    });
+
+    test('the results box sits outside the ranking container, so a redraw cannot wipe it', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
+        ui.panel.querySelector('[data-upgrade-mode="triggers"]').checked = true;
+
+        await ui._onUpgradeAnalyze();
+
+        const box = ui.panel.querySelector('#mwi-csim-trigger-results');
+        expect(box).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-results').contains(box)).toBe(false);
+        ui._renderUpgradeResults(mocks.upgradeResult);
+        expect(ui.panel.querySelector('#mwi-csim-trigger-results')).not.toBeNull();
+    });
+
+    test('a triggers-only run drops the stale ranking so a re-render cannot bring it back', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
+        await ui._onUpgradeAnalyze();
+        expect(ui._upgradeResultsData).not.toBeNull();
+
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+
+        expect(ui._upgradeResultsData).toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).not.toContain('Main gear');
+    });
+
+    test('a failing optimizer cancels queued sims before the button comes back', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        const cancelsBefore = mocks.cancelActiveCalls;
+        mocks.triggerFail = new Error('worker crashed');
+
+        await ui._onUpgradeAnalyze();
+        mocks.triggerFail = null;
+
+        expect(mocks.cancelActiveCalls).toBe(cancelsBefore + 1);
+        expect(ui._upgradeAborted).toBe(true);
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-run').style.display).toBe('inline-block');
+    });
+
+    test('in a combined run, triggers do not start after the ranking analysis threw', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        ui.panel.querySelector('[data-upgrade-mode="triggers"]').checked = true;
+        mocks.onRun = () => {
+            throw new Error('ranking failed');
+        };
+
+        await ui._onUpgradeAnalyze();
+        mocks.onRun = null;
+
+        expect(mocks.triggerRuns).toHaveLength(0);
+    });
+
+    test('Apply that skips everything leaves the button usable and says why', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        mocks.applyOutcome = { applied: 0, skipped: [{ reason: 'changed since analysis' }] };
+        await ui._onUpgradeAnalyze();
+
+        ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+        mocks.applyOutcome = null;
+
+        expect(ui.panel.querySelector('#mwi-csim-trigger-apply').disabled).toBe(false);
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('1 skipped: changed since analysis');
     });
 
     test('Apply writes the changes into the sim editor and nothing else', async () => {

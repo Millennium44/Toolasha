@@ -2369,7 +2369,7 @@ describe('applying optimizer trigger values', () => {
 
     test('a value that lands back on the game default stores null', () => {
         const editor = editorWithFireball([{ ...defaults[0], value: 600 }]);
-        expect(editor.applyTriggerValueChanges([change(1)]).applied).toBe(1);
+        expect(editor.applyTriggerValueChanges([change(1, { from: 600 })]).applied).toBe(1);
         expect(slotOf(editor).triggers).toBeNull();
     });
 
@@ -2386,6 +2386,28 @@ describe('applying optimizer trigger values', () => {
         expect(out.applied).toBe(0);
         expect(out.skipped[0].reason).toMatch(/changed since/);
         expect(slotOf(editor).triggers[0].value).toBe(5);
+    });
+
+    test('a row whose value is no longer what the analysis started from is skipped', () => {
+        const editor = editorWithFireball([{ ...defaults[0], value: 900 }]);
+        const out = editor.applyTriggerValueChanges([change(600)]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toBe('changed since analysis');
+        expect(slotOf(editor).triggers[0].value).toBe(900);
+    });
+
+    test('a player whose build was replaced since the analysis is skipped', () => {
+        const editor = editorWithFireball(null);
+        const analyzed = editor.getEditedDTOs().player1;
+        const fresh = emptyDTO('x');
+        fresh.abilities[1] = { hrid: FIREBALL, level: 10, triggers: null };
+        editor.replacePlayer('player1', fresh, 'Someone else');
+        const out = editor.applyTriggerValueChanges([change(600, { dtoRef: analyzed })]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toBe('changed since analysis');
+        expect(slotOf(editor).triggers).toBeNull();
+        // the same edit against the build it was measured on goes through
+        expect(editor.applyTriggerValueChanges([change(600, { dtoRef: fresh })]).applied).toBe(1);
     });
 
     test('an ability that is no longer equipped is skipped', () => {
@@ -2412,8 +2434,9 @@ describe('applying optimizer trigger values', () => {
         };
         const editor = editorWithFireball([{ ...defaults[0], value: 3 }, second]);
         const out = editor.applyTriggerValueChanges([
-            change(700),
+            change(700, { from: 3 }),
             change(30, {
+                from: 50,
                 rowIndex: 1,
                 dependencyHrid: second.dependencyHrid,
                 conditionHrid: second.conditionHrid,
