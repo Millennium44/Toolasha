@@ -79,6 +79,7 @@ const row = (over = {}) => ({
     bottleneckHrid: '/monsters/ooze',
     bottleneckName: 'Ooze',
     taskCount: 1,
+    shared: false,
     ...over,
 });
 
@@ -194,5 +195,18 @@ describe('Zone Task Progress section', () => {
         await flush();
         expect(popupText()).toContain('Could not compute');
         expect(popupText()).not.toContain('Computing…');
+    });
+
+    test('notes that shared monsters count toward each zone only when some row is shared', async () => {
+        h.compute.mockResolvedValue([row({ shared: true })]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        expect(popupText()).toContain('counts toward each of those zones');
+
+        taskStatistics.closePopup();
+        h.compute.mockResolvedValue([row()]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        expect(popupText()).not.toContain('counts toward each of those zones');
     });
 });

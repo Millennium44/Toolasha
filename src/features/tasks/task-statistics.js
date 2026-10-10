@@ -740,6 +740,15 @@ class TaskStatistics {
             };
             section.appendChild(row);
         }
+        if (zones.some((z) => z.shared)) {
+            section.appendChild(
+                this.createRow(
+                    'Note',
+                    'A monster found in several zones counts toward each of those zones',
+                    config.COLOR_TEXT_SECONDARY
+                )
+            );
+        }
         if (stillComputing) section.appendChild(this.createRow('Status', 'Computing…', config.COLOR_TEXT_SECONDARY));
     }
 

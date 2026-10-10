@@ -20,27 +20,44 @@ import { characterIdentityChanged } from '../../utils/combat-zone-open.js';
 import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
 
 /**
- * Active combat tasks, grouped zone -> monster. Tasks and monsters are keyed by hrid; duplicate
- * tasks for one monster sum, because each kill progresses only one task at a time.
- * @param {Object} actionDetailMap - Game action details (used to skip dungeons)
+ * Active combat tasks, grouped zone -> monster, the way the task card's zone summary counts them:
+ * a task belongs to every non-dungeon zone whose spawn table (regular or boss) contains its
+ * monster, so a monster shared between zones shows up in each of them. Tasks and monsters are
+ * keyed by hrid; duplicate tasks for one monster sum, because each kill progresses only one task
+ * at a time. Finished tasks (0 remaining) are left out, and a zone with nothing left is dropped.
+ * @param {Object} actionDetailMap - Game action details
  * @returns {Map<string, Map<string, {hrid: string, remaining: number, taskCount: number}>>}
  */
 export function groupCombatTasksByZone(actionDetailMap) {
-    const byZone = new Map();
+    const tasks = new Map();
     for (const quest of dataManager.characterQuests || []) {
         if (quest.category !== '/quest_category/random_task') continue;
         if (quest.status !== '/quest_status/in_progress' || !quest.monsterHrid) continue;
 
-        const zoneHrid = dataManager.getCombatZoneForMonster(quest.monsterHrid);
-        if (!zoneHrid || actionDetailMap?.[zoneHrid]?.combatZoneInfo?.isDungeon) continue;
-
         const remaining = Math.max((quest.goalCount ?? 0) - (quest.currentCount ?? 0), 0);
-        if (!byZone.has(zoneHrid)) byZone.set(zoneHrid, new Map());
-        const monsters = byZone.get(zoneHrid);
-        const entry = monsters.get(quest.monsterHrid) || { hrid: quest.monsterHrid, remaining: 0, taskCount: 0 };
+        if (remaining === 0) continue;
+        const entry = tasks.get(quest.monsterHrid) || { hrid: quest.monsterHrid, remaining: 0, taskCount: 0 };
         entry.remaining += remaining;
         entry.taskCount += 1;
-        monsters.set(quest.monsterHrid, entry);
+        tasks.set(quest.monsterHrid, entry);
+    }
+
+    const byZone = new Map();
+    if (tasks.size === 0) return byZone;
+
+    for (const [zoneHrid, action] of Object.entries(actionDetailMap || {})) {
+        if (action?.type !== '/action_types/combat' || action.combatZoneInfo?.isDungeon) continue;
+        const fightInfo = action.combatZoneInfo?.fightInfo;
+        const spawned = new Set(
+            [...(fightInfo?.randomSpawnInfo?.spawns || []), ...(fightInfo?.bossSpawns || [])].map(
+                (s) => s.combatMonsterHrid
+            )
+        );
+        const monsters = new Map();
+        for (const [monsterHrid, entry] of tasks) {
+            if (spawned.has(monsterHrid)) monsters.set(monsterHrid, { ...entry });
+        }
+        if (monsters.size > 0) byZone.set(zoneHrid, monsters);
     }
     return byZone;
 }
@@ -63,7 +80,8 @@ function sortRows(rows) {
  * @param {(rows: Array<Object>) => void} [options.onProgress] - Called with the rows so far
  *   (sorted) after each zone finishes
  * @returns {Promise<Array<{zoneHrid: string, zoneName: string, tier: number, hoursNeeded: number,
- *   fightsNeeded: number, bottleneckHrid: string, bottleneckName: string, taskCount: number}>|null>}
+ *   fightsNeeded: number, bottleneckHrid: string, bottleneckName: string, taskCount: number,
+ *   shared: boolean}>|null>}
  *   Sorted ascending by hoursNeeded; empty when there are no combat tasks (no sim runs). Null when
  *   cancelled or the character changed mid-run: nothing in it belongs to anyone on screen.
  */
@@ -85,6 +103,10 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
     const communityBuffs = getCommunityBuffs();
     const monsterDetailMap = gameData.combatMonsterDetailMap || {};
     const rows = [];
+    const zonesPerMonster = new Map();
+    for (const monsters of byZone.values()) {
+        for (const hrid of monsters.keys()) zonesPerMonster.set(hrid, (zonesPerMonster.get(hrid) || 0) + 1);
+    }
 
     for (const [zoneHrid, monsters] of byZone) {
         const tier = lastUsedTierForZone(dataManager.getCurrentActions?.() || [], zoneHrid) ?? 0;
@@ -127,6 +149,8 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
                 bottleneckHrid: bottleneck.bottleneckHrid,
                 bottleneckName: bottleneck.bottleneckName,
                 taskCount: bottleneck.bottleneckTaskCount,
+                // Some of this zone's tasks are also counted in another zone's row
+                shared: [...monsters.keys()].some((hrid) => zonesPerMonster.get(hrid) > 1),
             });
             onProgress?.(sortRows(rows));
         }

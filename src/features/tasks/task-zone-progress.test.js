@@ -5,7 +5,6 @@ const h = vi.hoisted(() => ({
     characterId: 'char-1',
     switching: false,
     actions: [],
-    zoneOf: {},
     runSimulation: vi.fn(),
     buildAllPlayerDTOs: vi.fn(),
     gameData: null,
@@ -16,7 +15,6 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterQuests() {
             return h.quests;
         },
-        getCombatZoneForMonster: (hrid) => h.zoneOf[hrid] ?? null,
         getCurrentActions: () => h.actions,
         getCurrentCharacterId: () => h.characterId,
         getIsCharacterSwitching: () => h.switching,
@@ -34,6 +32,19 @@ import { computeAllZoneProgress } from './task-zone-progress.js';
 const ZONE_A = '/actions/combat/zone_a';
 const ZONE_B = '/actions/combat/zone_b';
 
+/** A non-dungeon combat zone spawning these monsters, shaped like the game's action detail. */
+const zone = (name, spawns, bossSpawns = []) => ({
+    name,
+    type: '/action_types/combat',
+    combatZoneInfo: {
+        isDungeon: false,
+        fightInfo: {
+            randomSpawnInfo: { spawns: spawns.map((combatMonsterHrid) => ({ combatMonsterHrid })) },
+            bossSpawns: bossSpawns.map((combatMonsterHrid) => ({ combatMonsterHrid })),
+        },
+    },
+});
+
 const quest = (monsterHrid, goalCount = 100, currentCount = 0, extra = {}) => ({
     category: '/quest_category/random_task',
     status: '/quest_status/in_progress',
@@ -49,15 +60,10 @@ beforeEach(() => {
     h.switching = false;
     h.actions = [];
     h.quests = [];
-    h.zoneOf = {
-        '/monsters/slime': ZONE_A,
-        '/monsters/ooze': ZONE_A,
-        '/monsters/imp': ZONE_B,
-    };
     h.gameData = {
         actionDetailMap: {
-            [ZONE_A]: { name: 'Zone A' },
-            [ZONE_B]: { name: 'Zone B' },
+            [ZONE_A]: zone('Zone A', ['/monsters/slime', '/monsters/ooze']),
+            [ZONE_B]: zone('Zone B', ['/monsters/imp']),
         },
         combatMonsterDetailMap: {
             '/monsters/slime': { name: 'Slime' },
@@ -186,5 +192,61 @@ describe('computeAllZoneProgress', () => {
 
         expect(await computeAllZoneProgress()).toBe(null);
         expect(h.runSimulation).not.toHaveBeenCalled();
+    });
+
+    test('a monster shared between zones counts toward each zone, and the rows are flagged', async () => {
+        h.gameData.actionDetailMap[ZONE_B] = zone('Zone B', ['/monsters/imp', '/monsters/slime']);
+        h.quests = [quest('/monsters/slime', 100), quest('/monsters/imp', 20)];
+        h.runSimulation.mockImplementation(async ({ zoneHrid }) =>
+            zoneHrid === ZONE_A
+                ? { deaths: { '/monsters/slime': 100 }, encounters: 100 }
+                : { deaths: { '/monsters/slime': 50, '/monsters/imp': 50 }, encounters: 100 }
+        );
+
+        const rows = await computeAllZoneProgress();
+
+        expect(rows).toHaveLength(2);
+        const a = rows.find((r) => r.zoneHrid === ZONE_A);
+        const b = rows.find((r) => r.zoneHrid === ZONE_B);
+        expect(a).toMatchObject({ bottleneckHrid: '/monsters/slime', hoursNeeded: 1, shared: true });
+        // slime 100 / 50 per hour = 2h in zone B, imp 20 / 50 = 0.4h
+        expect(b).toMatchObject({ bottleneckHrid: '/monsters/slime', hoursNeeded: 2, shared: true });
+    });
+
+    test('a boss-only spawn counts as the zone hosting the monster', async () => {
+        h.gameData.actionDetailMap[ZONE_B] = zone('Zone B', ['/monsters/imp'], ['/monsters/ooze']);
+        h.quests = [quest('/monsters/ooze', 10)];
+        h.runSimulation.mockResolvedValue({ deaths: { '/monsters/ooze': 10 }, encounters: 10 });
+        const rows = await computeAllZoneProgress();
+        expect(rows.map((r) => r.zoneHrid).sort()).toEqual([ZONE_A, ZONE_B]);
+    });
+
+    test('unshared zones are not flagged', async () => {
+        h.quests = [quest('/monsters/slime', 10), quest('/monsters/imp', 10)];
+        h.runSimulation.mockResolvedValue({ deaths: { '/monsters/slime': 10, '/monsters/imp': 10 }, encounters: 10 });
+        const rows = await computeAllZoneProgress();
+        expect(rows.every((r) => r.shared === false)).toBe(true);
+    });
+
+    test('zones whose tasks are all complete are skipped, and no sim runs for them', async () => {
+        h.quests = [quest('/monsters/slime', 100, 100), quest('/monsters/imp', 20, 5)];
+        h.runSimulation.mockResolvedValue({ deaths: { '/monsters/imp': 10 }, encounters: 10 });
+
+        const rows = await computeAllZoneProgress();
+
+        expect(rows.map((r) => r.zoneHrid)).toEqual([ZONE_B]);
+        expect(h.runSimulation).toHaveBeenCalledTimes(1);
+    });
+
+    test('with every task complete there is nothing to compute', async () => {
+        h.quests = [quest('/monsters/slime', 100, 100)];
+        expect(await computeAllZoneProgress()).toEqual([]);
+        expect(h.runSimulation).not.toHaveBeenCalled();
+    });
+
+    test('dungeon zones are never rows', async () => {
+        h.gameData.actionDetailMap[ZONE_B].combatZoneInfo.isDungeon = true;
+        h.quests = [quest('/monsters/imp', 10)];
+        expect(await computeAllZoneProgress()).toEqual([]);
     });
 });
