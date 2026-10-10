@@ -9,8 +9,9 @@
  * market tax. Each step is the calculator's own decompose result, pinned to
  * conservative pricing, so a step with no market data leaves the chain partly
  * unpriced and the item without a figure. A bonus crate is the exception: its
- * contents are priced like the tooltip prices them (Coin, tokens, Cowbells, shop
- * conversions), and a crate with some contents still unpriced counts at its priced
+ * contents are priced like the tooltip prices them (Coin, tokens, Cowbells, nested
+ * crates), but every non-Coin figure rests on a real order-book bid (tokens and Cowbells through their
+ * conversion's bids), and a crate with some contents still unpriced counts at its priced
  * part, flagged `partial` on the result, instead of sinking the chain.
  *
  * The mode ranks by gold per hour of the whole chain, (Σ net) / (Σ seconds), so a
@@ -28,8 +29,12 @@ import alchemyProfitCalculator from '../features/market/alchemy-profit-calculato
 import expectedValueCalculator from '../features/market/expected-value-calculator.js';
 import { withProfitPricingMode, getItemPriceInfo, isPriceEstimated } from './market-data.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
-import { getAlchemyOutputShopValue } from './alchemy-shop-value.js';
-import { DUNGEON_TOKEN_HRIDS, calculateDungeonTokenValue } from './token-valuation.js';
+import {
+    DUNGEON_TOKEN_HRIDS,
+    calculateDungeonTokenValue,
+    calculateLabyrinthTokenValueDetail,
+} from './token-valuation.js';
+import { COWBELL_BAG_TAX } from './profit-constants.js';
 import {
     CHAIN_MAX_DEPTH,
     bestSelfUseCandidate,
@@ -156,8 +161,12 @@ export function maximizeChainRatio(rootHrid, { termsOf, rootCost, maxIterations 
     return best;
 }
 
-/** Sell-side resolver sources that are not a market price: Coin, Cowbells, dungeon tokens, nested crates */
-const NON_MARKET_SOURCES = new Set(['coin', 'cowbell', 'dungeonToken', 'expectedValue']);
+/** Sell-side resolver sources that are not a market price: Coin, dungeon tokens, nested crates */
+const NON_MARKET_SOURCES = new Set(['coin', 'dungeonToken', 'expectedValue']);
+
+const COWBELL_HRID = '/items/cowbell';
+const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
+const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
 
 /**
  * The whole decompose chain of an item, ask in and taxed bid out.
@@ -190,7 +199,22 @@ export function decomposeChain(itemHrid) {
                     const tokenValue = calculateDungeonTokenValue(hrid, 'profitCalc_pricingMode', false);
                     return tokenValue === null ? null : calculatePriceAfterTax(tokenValue);
                 }
+                if (hrid === LABYRINTH_TOKEN_HRID) {
+                    // Its worth is the best shop reward sold at the bid; a custom or estimated
+                    // reward price is no bid, so the token is then unpriced
+                    const value = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', false)?.value;
+                    return value > 0 ? calculatePriceAfterTax(value) : null;
+                }
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
+                if (hrid === COWBELL_HRID) {
+                    // The resolver's zero is the "count Cowbells" setting being off: keep it. Otherwise the
+                    // Cowbell Bag must have a real order-book bid; the resolver's figure may be a custom or estimate
+                    if (!resolved) return null;
+                    if (resolved.value === 0) return 0;
+                    const bag = getItemPriceInfo(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' });
+                    if (bag.source !== 'book' || !(bag.price > 0) || bag.estimated) return null;
+                    return calculatePriceAfterTax(bag.price, COWBELL_BAG_TAX) / 10;
+                }
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
                 // market, custom or value-map figure needs a real order-book bid below
                 if (resolved && NON_MARKET_SOURCES.has(resolved.source) && Number.isFinite(resolved.value)) {
@@ -201,8 +225,7 @@ export function decomposeChain(itemHrid) {
                 if (info.source === 'book' && info.price > 0 && !info.estimated) {
                     return calculatePriceAfterTax(info.price);
                 }
-                const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
-                return shop ? calculatePriceAfterTax(shop.valuePerUnit) : null;
+                return null;
             };
             const containerValue = (hrid) =>
                 untaxedContainerValue(hrid, {
