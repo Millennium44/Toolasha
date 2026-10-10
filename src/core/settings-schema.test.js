@@ -299,11 +299,11 @@ describe('net worth token settings', () => {
 });
 
 describe('selfUse_markMeaning setting', () => {
-    test('is a select defaulting to keep, so existing marks keep their meaning', async () => {
+    test('is a select defaulting to sell: a K mark names the few outputs sold', async () => {
         const { getSettingDefinition } = await import('./settings-schema.js');
         const entry = getSettingDefinition('selfUse_markMeaning');
         expect(entry?.type).toBe('select');
-        expect(entry.default).toBe('keep');
-        expect(entry.options.map((o) => o.value)).toEqual(['keep', 'sell']);
+        expect(entry.default).toBe('sell');
+        expect(entry.options.map((o) => o.value)).toEqual(['sell', 'keep']);
     });
 });

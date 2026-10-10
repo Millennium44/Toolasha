@@ -12,7 +12,13 @@ const gear = (i) => `/items/gear_${i}`;
 
 const world = vi.hoisted(() => ({ prices: {}, calls: [] }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
+// These tests value marked outputs as kept, so they run in keep mode
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: () => 0,
+        getSettingValue: (id, fallback) => (id === 'selfUse_markMeaning' ? 'keep' : fallback),
+    },
+}));
 vi.mock('../../core/data-manager.js', () => {
     const itemDetailMap = { '/items/alchemy_essence': { name: 'Alchemy Essence' }, '/items/shard': { name: 'Shard' } };
     for (let i = 0; i < 30; i++) {

@@ -20,7 +20,13 @@ const world = vi.hoisted(() => ({
     alchemyLevel: 50,
 }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
+// These tests value marked outputs as kept, so they run in keep mode
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: () => 0,
+        getSettingValue: (id, fallback) => (id === 'selfUse_markMeaning' ? 'keep' : fallback),
+    },
+}));
 vi.mock('../../core/data-manager.js', () => {
     const itemDetailMap = { '/items/philosophers_stone': { name: "Philosopher's Stone" } };
     for (let i = 0; i < 120; i++) {

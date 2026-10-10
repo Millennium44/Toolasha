@@ -2162,11 +2162,13 @@ describe('resetting says what goes for every character', () => {
 });
 
 describe('the self-use keep list review', () => {
+    /** The stored shape of a marks list: the stamped record */
+    const rec = (items) => ({ v: 2, items });
     const rows = () => [...document.querySelectorAll('.toolasha-selfuse-keep-row')].map((row) => row.dataset.itemHrid);
 
     test("lists the current character's marked items, and Remove takes one off for good", async () => {
-        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy', '/items/puncture']);
-        mocks.store.set('selfUseWanted_char-2', ['/items/fierce_aura']);
+        mocks.store.set('selfUseWanted_char-1', rec(['/items/frenzy', '/items/puncture']));
+        mocks.store.set('selfUseWanted_char-2', rec(['/items/fierce_aura']));
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
         selfUseWanted._reset();
 
@@ -2176,29 +2178,29 @@ describe('the self-use keep list review', () => {
         document.querySelector('[data-item-hrid="/items/frenzy"] .toolasha-selfuse-keep-remove').click();
         await settle();
         expect(rows()).toEqual(['/items/puncture']);
-        expect(mocks.store.get('selfUseWanted_char-1')).toEqual(['/items/puncture']);
+        expect(mocks.store.get('selfUseWanted_char-1')).toEqual(rec(['/items/puncture']));
         // Another character's list is not this panel's
-        expect(mocks.store.get('selfUseWanted_char-2')).toEqual(['/items/fierce_aura']);
+        expect(mocks.store.get('selfUseWanted_char-2')).toEqual(rec(['/items/fierce_aura']));
     });
 
     test('the title and explanation follow the mark meaning', async () => {
-        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        mocks.store.set('selfUseWanted_char-1', rec(['/items/frenzy']));
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
         selfUseWanted._reset();
 
         await settingsUI.openSelfUseKeepList();
-        expect(document.querySelector('.toolasha-selfuse-keep-overlay h3').textContent).toBe('Kept for self-use (1)');
+        const sellOverlay = document.querySelector('.toolasha-selfuse-keep-overlay');
+        expect(sellOverlay.querySelector('h3').textContent).toBe('Marked to sell, not kept (1)');
+        expect(sellOverlay.textContent).toContain('sell these outputs after tax');
         settingsUI.cleanupDOM();
 
-        mocks.settingsMap.selfUse_markMeaning = { value: 'sell' };
+        mocks.settingsMap.selfUse_markMeaning = { value: 'keep' };
         await settingsUI.openSelfUseKeepList();
-        const overlay = document.querySelector('.toolasha-selfuse-keep-overlay');
-        expect(overlay.querySelector('h3').textContent).toBe('Marked to sell, not kept (1)');
-        expect(overlay.textContent).toContain('sell these outputs after tax');
+        expect(document.querySelector('.toolasha-selfuse-keep-overlay h3').textContent).toBe('Kept for self-use (1)');
     });
 
     test('two quick presses draw one list, and cleanup leaves none', async () => {
-        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        mocks.store.set('selfUseWanted_char-1', rec(['/items/frenzy']));
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
         selfUseWanted._reset();
 
@@ -2210,7 +2212,7 @@ describe('the self-use keep list review', () => {
     });
 
     test('a character switch closes the list and stops it listening', async () => {
-        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        mocks.store.set('selfUseWanted_char-1', rec(['/items/frenzy']));
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
         selfUseWanted._reset();
         let renders = 0;
@@ -2232,8 +2234,8 @@ describe('the self-use keep list review', () => {
     });
 
     test("a Remove pressed after a switch does not touch the newcomer's list", async () => {
-        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
-        mocks.store.set('selfUseWanted_char-2', ['/items/frenzy']);
+        mocks.store.set('selfUseWanted_char-1', rec(['/items/frenzy']));
+        mocks.store.set('selfUseWanted_char-2', rec(['/items/frenzy']));
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
         selfUseWanted._reset();
         await settingsUI.openSelfUseKeepList();
@@ -2244,20 +2246,20 @@ describe('the self-use keep list review', () => {
         remove.click();
         await settle();
 
-        expect(mocks.store.get('selfUseWanted_char-2')).toEqual(['/items/frenzy']);
-        expect(mocks.store.get('selfUseWanted_char-1')).toEqual(['/items/frenzy']);
+        expect(mocks.store.get('selfUseWanted_char-2')).toEqual(rec(['/items/frenzy']));
+        expect(mocks.store.get('selfUseWanted_char-1')).toEqual(rec(['/items/frenzy']));
         expect(document.querySelector('.toolasha-selfuse-keep-overlay')).toBe(null);
     });
 
-    test('Clear all empties the list and says nothing is kept', async () => {
-        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+    test('Clear all empties the list and says nothing is marked', async () => {
+        mocks.store.set('selfUseWanted_char-1', rec(['/items/frenzy']));
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
         selfUseWanted._reset();
 
         await settingsUI.openSelfUseKeepList();
         document.querySelector('.toolasha-selfuse-keep-clear').click();
         await settle();
-        expect(mocks.store.get('selfUseWanted_char-1')).toEqual([]);
+        expect(mocks.store.get('selfUseWanted_char-1')).toEqual(rec([]));
         expect(document.querySelector('.toolasha-selfuse-keep-empty')).not.toBe(null);
     });
 });

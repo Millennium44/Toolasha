@@ -93,6 +93,12 @@ const DEFAULT_REWRITES = [
     { batch: 'v3', id: 'market_listingAge', field: 'value', from: 'off', to: 'both' },
     { batch: 'v3', id: 'market_listingAge', field: 'value', from: 'myListings', to: 'both' },
     { batch: 'v3', id: 'market_listingAge', field: 'value', from: 'orderBook', to: 'both' },
+    // Batch v4. A K mark now means "sell" by default (the maintainer asked for it, 2026-10-10), and
+    // existing characters move too, including ones already stored as 'keep'. The marks themselves
+    // are retired separately (features/market/self-use-wanted.js stamps its record), since marks
+    // made under "keep these" would invert silently. A character that re-picks 'keep' afterwards
+    // stays on it, as the flag is set.
+    { batch: 'v4', id: 'selfUse_markMeaning', field: 'value', from: 'keep', to: 'sell' },
 ];
 
 /** The batch an entry belongs to when it does not name one */

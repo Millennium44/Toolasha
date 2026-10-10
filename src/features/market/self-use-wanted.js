@@ -13,13 +13,18 @@
  * tooltip vanishes the moment the pointer leaves the item, so the key is what
  * makes it usable there. The same pattern as the enhancement source chip (P).
  *
- * What a mark means is the `selfUse_markMeaning` setting's: `keep` (default) marks items to
- * keep and sells the rest; `sell` marks items to sell and keeps the rest. Every reader goes
+ * What a mark means is the `selfUse_markMeaning` setting's: `sell` (default) marks items to
+ * sell and keeps the rest; `keep` marks items to keep and sells the rest. Every reader goes
  * through {@link isKeptForSelfUse}; the stored marks do not change with the mode.
  *
- * Stored per character in the settings store as `selfUseWanted_<characterId>`
- * (an array of item hrids), which the gist sync carries
- * (`features/sync/sync-ownership.js`). The settings panel's review list (ui
+ * Stored per character in the settings store as `selfUseWanted_<characterId>`, a stamped
+ * record `{ v: 2, items: [item hrids] }`, which the gist sync carries
+ * (`features/sync/sync-ownership.js`). The stamp is what makes the default flip to `sell`
+ * safe: marks written before it (a bare array, or JSON text of one) were made under the old
+ * "keep these" meaning and would invert silently, so an unstamped record reads as no marks,
+ * and the sync merge ({@link mergeMarkRecords}) never lets one replace a stamped record. An
+ * older build reads the object as no list at all (it accepts only an array), so it neither
+ * crashes nor sees the new marks under its old meaning. The settings panel's review list (ui
  * bundle) reaches this same instance through `Toolasha.Market.selfUseWanted`
  * (rollup externals), so its edits land in the cache the tooltip reads.
  */
@@ -27,11 +32,12 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Storage key base; the key is `${STORAGE_KEY_PREFIX}_${characterId}` */
 export const STORAGE_KEY_PREFIX = 'selfUseWanted';
 
-/** The setting that says what a K mark means: `keep` (default) or `sell` */
+/** The setting that says what a K mark means: `sell` (default) or `keep` */
 export const MARK_MEANING_SETTING = 'selfUse_markMeaning';
 
 /** The chip on an item tooltip */
@@ -91,6 +97,66 @@ function sanitize(value) {
     return [...new Set(value.filter((hrid) => typeof hrid === 'string' && hrid.startsWith('/items/')))];
 }
 
+/** The stamp a record written under the `sell` meaning carries */
+export const RECORD_VERSION = 2;
+
+/**
+ * A stored value as a JSON-decoded object: JSON text from an older write is parsed.
+ * @param {*} raw
+ * @returns {*}
+ */
+function decode(raw) {
+    if (typeof raw !== 'string') return raw;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether a stored value is a stamped record. Anything else (a bare array, JSON text,
+ * nothing) is pre-update data made under the old "keep these" meaning.
+ * @param {*} raw
+ * @returns {boolean}
+ */
+export function isStampedRecord(raw) {
+    const value = decode(raw);
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && value.v >= RECORD_VERSION;
+}
+
+/**
+ * A list as the record that is stored.
+ * @param {Array<string>} list
+ * @returns {{v: number, items: Array<string>}}
+ */
+function toRecord(list) {
+    return { v: RECORD_VERSION, items: sanitize(list) };
+}
+
+/**
+ * The sync fold for the marks of one character: a stamped record beats an unstamped one in
+ * either order, so a device still on an older build (or a gist it last wrote) cannot bring
+ * back marks made under the old meaning, and a new mark is never lost to one. Two stamped
+ * records, or two unstamped ones (both read as empty), settle on the incoming one, as a
+ * whole-key write did before.
+ * @param {*} local - This device's stored value
+ * @param {*} incoming - The downloaded (or uploading) value
+ * @returns {*} One of the two, as given
+ */
+export function mergeMarkRecords(local, incoming) {
+    if (isStampedRecord(incoming)) return incoming;
+    if (isStampedRecord(local)) return local;
+    return incoming;
+}
+
+registerSyncMerge({
+    store: 'settings',
+    base: STORAGE_KEY_PREFIX,
+    merge: mergeMarkRecords,
+    label: 'Self-use marks',
+});
+
 /**
  * Load the current character's list, reloading whenever the character changed
  * since the cache was filled.
@@ -101,7 +167,7 @@ async function load() {
     const charId = currentCharId();
     if (cache === null || cacheCharId !== charId) {
         const generation = cacheGeneration;
-        const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
+        const stored = parseStored(await storage.getJSON(keyFor(charId), 'settings', null));
         // A switch that landed during the read must not file this list under the newcomer
         if (charId !== currentCharId()) return stored;
         // A change adopted while this read was out is newer than what it read
@@ -111,6 +177,7 @@ async function load() {
         // without caching it; the next load() re-subscribes and reads afresh.
         if (generation !== cacheGeneration) return stored;
         adopt(charId, stored);
+        retireOldMarks(charId);
     }
     return cache;
 }
@@ -189,7 +256,7 @@ async function reloadFromStorage() {
     reloadSeq += 1;
     const seq = reloadSeq;
     try {
-        const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
+        const stored = parseStored(await storage.getJSON(keyFor(charId), 'settings', null));
         if (charId !== currentCharId() || charId !== cacheCharId) return;
         // A re-read that started later read a list at least this new, and already won
         if (seq < adoptedReloadSeq) return;
@@ -225,19 +292,38 @@ function notify() {
 }
 
 /**
- * A stored value as a list: an array as written, or JSON text from an older write.
+ * A stored value as a list. Only a stamped record has marks: an array or JSON text of one
+ * is pre-update data made under the old "keep these" meaning, and reads as none.
  * @param {*} raw
  * @returns {Array<string>}
  */
 function parseStored(raw) {
-    if (typeof raw === 'string') {
-        try {
-            return sanitize(JSON.parse(raw));
-        } catch {
-            return [];
-        }
+    const value = decode(raw);
+    return isStampedRecord(value) ? sanitize(value.items) : [];
+}
+
+/**
+ * Rewrite an unstamped record (marks from before the meaning flipped to `sell`) as an empty
+ * stamped one, once, so it stops standing in for marks and the stamped record beats an
+ * older device's copy in the sync fold. Leaves a record another tab stamped meanwhile, and
+ * a character that has nothing stored, alone. Fire and forget: reads already treat the old
+ * record as empty, so nothing waits on this.
+ * @param {string} charId
+ */
+async function retireOldMarks(charId) {
+    try {
+        await storage.update(
+            keyFor(charId),
+            (current) => {
+                if (charId !== currentCharId()) return undefined;
+                if (current === undefined || current === null || isStampedRecord(current)) return undefined;
+                return toRecord([]);
+            },
+            'settings'
+        );
+    } catch (error) {
+        console.error('[SelfUseWanted] Clearing pre-update marks failed:', error);
     }
-    return sanitize(raw);
 }
 
 /**
@@ -264,7 +350,7 @@ async function update(change) {
                 switched = true;
                 return undefined;
             }
-            return sanitize(change(parseStored(current)));
+            return toRecord(change(parseStored(current)));
         },
         'settings'
     );
@@ -397,15 +483,15 @@ const selfUseWanted = {
 };
 
 /**
- * What a K mark means right now: `keep` (a marked output is kept, the rest sold; the
- * default) or `sell` (a marked output is sold, the rest kept).
- * @returns {'keep'|'sell'}
+ * What a K mark means right now: `sell` (a marked output is sold, the rest kept; the
+ * default) or `keep` (a marked output is kept, the rest sold).
+ * @returns {'sell'|'keep'}
  */
 export function getMarkMeaning() {
     try {
-        return config.getSettingValue?.(MARK_MEANING_SETTING, 'keep') === 'sell' ? 'sell' : 'keep';
+        return config.getSettingValue?.(MARK_MEANING_SETTING, 'sell') === 'keep' ? 'keep' : 'sell';
     } catch {
-        return 'keep';
+        return 'sell';
     }
 }
 

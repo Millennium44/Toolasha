@@ -67,6 +67,7 @@ const {
     default: selfUseWanted,
     STORAGE_KEY_PREFIX,
     getMarkMeaning,
+    mergeMarkRecords,
     isKeptForSelfUse,
     keptSignature,
     keepChipLabel,
@@ -88,6 +89,9 @@ beforeEach(() => {
     state.meaning = undefined;
 });
 
+/** The stored shape of a list: the stamped record */
+const rec = (items) => ({ v: 2, items });
+
 /** Another tab committed `value` under `key` and announced it */
 const otherTabWrites = (key, value, storeName = 'settings') => {
     state.stored[key] = value;
@@ -101,8 +105,8 @@ describe('another tab', () => {
     test('two writes heard before either re-read answers: the later read wins whatever order they land', async () => {
         await selfUseWanted.load();
         state.holdReads = true;
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy', '/items/puncture']);
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']));
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy', '/items/puncture']));
         const [older, newer] = state.heldReads;
 
         older();
@@ -115,8 +119,8 @@ describe('another tab', () => {
     test('a later read that lands first is not overwritten by the earlier one', async () => {
         await selfUseWanted.load();
         state.holdReads = true;
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy', '/items/puncture']);
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']));
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy', '/items/puncture']));
         const [older, newer] = state.heldReads;
 
         newer();
@@ -129,7 +133,7 @@ describe('another tab', () => {
     test("this tab's own change beats a re-read that started before it, and a fresh read follows", async () => {
         await selfUseWanted.load();
         state.holdReads = true;
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']));
         const [stale] = state.heldReads;
 
         await selfUseWanted.setKept('/items/puncture', true);
@@ -149,7 +153,7 @@ describe('another tab', () => {
         const heard = vi.fn();
         selfUseWanted.onChange(heard);
 
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']));
         await settle();
 
         expect(selfUseWanted.isMarked('/items/frenzy')).toBe(true);
@@ -163,9 +167,9 @@ describe('another tab', () => {
         chip.setAttribute('data-item-hrid', '/items/frenzy');
         document.body.appendChild(chip);
 
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']));
         await settle();
-        expect(chip.textContent).toBe('☑ Kept (K)');
+        expect(chip.textContent).toBe('☑ Sell (not kept) (K)');
         chip.remove();
     });
 
@@ -174,9 +178,9 @@ describe('another tab', () => {
         const heard = vi.fn();
         selfUseWanted.onChange(heard);
 
-        otherTabWrites('selfUseWanted_alt', ['/items/frenzy']);
-        otherTabWrites('selfUseWanted_main', ['/items/frenzy'], 'networthHistory');
-        state.stored.selfUseWanted_main = ['/items/puncture'];
+        otherTabWrites('selfUseWanted_alt', rec(['/items/frenzy']));
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']), 'networthHistory');
+        state.stored.selfUseWanted_main = rec(['/items/puncture']);
         for (const listener of state.writeListeners) {
             listener({ storeName: 'settings', keys: ['selfUseWanted_main'], origin: 'commit' });
         }
@@ -190,7 +194,7 @@ describe('another tab', () => {
         await selfUseWanted.load();
         selfUseWanted.stopWatching();
         // Committed while this tab was not listening, so never announced to it
-        state.stored.selfUseWanted_main = ['/items/frenzy'];
+        state.stored.selfUseWanted_main = rec(['/items/frenzy']);
 
         expect(await selfUseWanted.load()).toEqual(['/items/frenzy']);
         expect(selfUseWanted.isMarked('/items/frenzy')).toBe(true);
@@ -198,7 +202,7 @@ describe('another tab', () => {
     });
 
     test('a stop during the first read leaves no adopted cache without a subscription', async () => {
-        state.stored.selfUseWanted_main = ['/items/frenzy'];
+        state.stored.selfUseWanted_main = rec(['/items/frenzy']);
         state.holdReads = true;
         const pending = selfUseWanted.load();
         await settle();
@@ -229,12 +233,12 @@ describe('marking items', () => {
 
     test('toggle adds an hrid for the current character, persists it, and removes it again', async () => {
         expect(await selfUseWanted.toggle('/items/frenzy')).toBe(true);
-        expect(state.stored.selfUseWanted_main).toEqual(['/items/frenzy']);
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/frenzy']));
         expect(state.writes.at(-1)).toEqual({ key: 'selfUseWanted_main', store: 'settings' });
         expect(selfUseWanted.isMarked('/items/frenzy')).toBe(true);
 
         expect(await selfUseWanted.toggle('/items/frenzy')).toBe(false);
-        expect(state.stored.selfUseWanted_main).toEqual([]);
+        expect(state.stored.selfUseWanted_main).toEqual(rec([]));
         expect(selfUseWanted.isMarked('/items/frenzy')).toBe(false);
     });
 
@@ -248,7 +252,7 @@ describe('marking items', () => {
         await selfUseWanted.setKept('/items/frenzy', true);
         await selfUseWanted.setKept('/items/puncture', true);
         expect(await selfUseWanted.clear()).toBe(true);
-        expect(state.stored.selfUseWanted_main).toEqual([]);
+        expect(state.stored.selfUseWanted_main).toEqual(rec([]));
     });
 
     test('a listener hears every change', async () => {
@@ -262,7 +266,7 @@ describe('marking items', () => {
     });
 
     test('a stored list is read defensively: junk and duplicates dropped', async () => {
-        state.stored.selfUseWanted_main = ['/items/frenzy', '/items/frenzy', 42, null, 'frenzy'];
+        state.stored.selfUseWanted_main = rec(['/items/frenzy', '/items/frenzy', 42, null, 'frenzy']);
         expect([...(await selfUseWanted.getSet())]).toEqual(['/items/frenzy']);
     });
 });
@@ -271,32 +275,32 @@ describe('changes land on what is stored', () => {
     test('a mark made in another tab is kept when this tab marks another item', async () => {
         await selfUseWanted.load();
         // Committed by another tab, not yet heard here
-        state.stored.selfUseWanted_main = ['/items/puncture'];
+        state.stored.selfUseWanted_main = rec(['/items/puncture']);
 
         await selfUseWanted.setKept('/items/frenzy', true);
 
-        expect(state.stored.selfUseWanted_main).toEqual(['/items/puncture', '/items/frenzy']);
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/puncture', '/items/frenzy']));
         expect(selfUseWanted.getCached()).toEqual(['/items/puncture', '/items/frenzy']);
     });
 
     test('a removal made in another tab is not undone by a later change here', async () => {
-        state.stored.selfUseWanted_main = ['/items/frenzy', '/items/puncture'];
+        state.stored.selfUseWanted_main = rec(['/items/frenzy', '/items/puncture']);
         await selfUseWanted.load();
-        state.stored.selfUseWanted_main = ['/items/puncture'];
+        state.stored.selfUseWanted_main = rec(['/items/puncture']);
 
         await selfUseWanted.setKept('/items/puncture', false);
 
-        expect(state.stored.selfUseWanted_main).toEqual([]);
+        expect(state.stored.selfUseWanted_main).toEqual(rec([]));
     });
 
     test('two quick removals both land', async () => {
-        state.stored.selfUseWanted_main = ['/items/frenzy', '/items/puncture', '/items/fierce_aura'];
+        state.stored.selfUseWanted_main = rec(['/items/frenzy', '/items/puncture', '/items/fierce_aura']);
         await selfUseWanted.load();
         await Promise.all([
             selfUseWanted.setKept('/items/frenzy', false),
             selfUseWanted.setKept('/items/puncture', false),
         ]);
-        expect(state.stored.selfUseWanted_main).toEqual(['/items/fierce_aura']);
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/fierce_aura']));
         expect(selfUseWanted.getCached()).toEqual(['/items/fierce_aura']);
     });
 });
@@ -308,20 +312,20 @@ describe('per character', () => {
         expect((await selfUseWanted.getSet()).has('/items/frenzy')).toBe(false);
         expect(selfUseWanted.isMarked('/items/frenzy')).toBe(false);
         await selfUseWanted.setKept('/items/puncture', true);
-        expect(state.stored.selfUseWanted_alt).toEqual(['/items/puncture']);
-        expect(state.stored.selfUseWanted_main).toEqual(['/items/frenzy']);
+        expect(state.stored.selfUseWanted_alt).toEqual(rec(['/items/puncture']));
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/frenzy']));
 
         state.charId = 'main';
         expect([...(await selfUseWanted.getSet())]).toEqual(['/items/frenzy']);
     });
 
     test("a switch landing inside a cold read writes nothing over the newcomer's list", async () => {
-        state.stored.selfUseWanted_alt = ['/items/puncture'];
+        state.stored.selfUseWanted_alt = rec(['/items/puncture']);
         state.onRead = () => {
             state.charId = 'alt';
         };
         expect(await selfUseWanted.toggle('/items/frenzy')).toBeNull();
-        expect(state.stored.selfUseWanted_alt).toEqual(['/items/puncture']);
+        expect(state.stored.selfUseWanted_alt).toEqual(rec(['/items/puncture']));
         expect(state.stored.selfUseWanted_main).toBeUndefined();
     });
 });
@@ -352,55 +356,145 @@ describe('which tooltips get the chip', () => {
 describe('what a K mark means', () => {
     const marked = new Set(['/items/frenzy']);
 
-    test('the default is keep', () => {
-        expect(getMarkMeaning()).toBe('keep');
+    test('the default is sell', () => {
+        expect(getMarkMeaning()).toBe('sell');
         state.meaning = 'nonsense';
-        expect(getMarkMeaning()).toBe('keep');
-    });
-
-    test('keep mode keeps the marked outputs', () => {
-        expect(isKeptForSelfUse('/items/frenzy', marked)).toBe(true);
-        expect(isKeptForSelfUse('/items/puncture', marked)).toBe(false);
+        expect(getMarkMeaning()).toBe('sell');
     });
 
     test('sell mode keeps everything but the marked outputs', () => {
-        state.meaning = 'sell';
-        expect(getMarkMeaning()).toBe('sell');
         expect(isKeptForSelfUse('/items/frenzy', marked)).toBe(false);
         expect(isKeptForSelfUse('/items/puncture', marked)).toBe(true);
     });
 
+    test('keep mode keeps the marked outputs', () => {
+        state.meaning = 'keep';
+        expect(getMarkMeaning()).toBe('keep');
+        expect(isKeptForSelfUse('/items/frenzy', marked)).toBe(true);
+        expect(isKeptForSelfUse('/items/puncture', marked)).toBe(false);
+    });
+
     test('without a list in hand the cached marks are read, in either mode', async () => {
         await selfUseWanted.setKept('/items/frenzy', true);
-        expect(isKeptForSelfUse('/items/frenzy')).toBe(true);
-        state.meaning = 'sell';
         expect(isKeptForSelfUse('/items/frenzy')).toBe(false);
         expect(isKeptForSelfUse('/items/puncture')).toBe(true);
+        state.meaning = 'keep';
+        expect(isKeptForSelfUse('/items/frenzy')).toBe(true);
         // The stored marks themselves did not change
-        expect(state.stored.selfUseWanted_main).toEqual(['/items/frenzy']);
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/frenzy']));
     });
 
     test('a cache keyed on the signature changes with the mode and with the marks', () => {
-        const keep = keptSignature(marked);
-        state.meaning = 'sell';
         const sell = keptSignature(marked);
+        state.meaning = 'keep';
+        const keep = keptSignature(marked);
         expect(sell).not.toBe(keep);
-        expect(keptSignature(new Set(['/items/puncture']))).not.toBe(sell);
+        expect(keptSignature(new Set(['/items/puncture']))).not.toBe(keep);
         expect(keptSignature(new Set(['/items/b', '/items/a']))).toBe(keptSignature(new Set(['/items/a', '/items/b'])));
     });
 
     test('the chip and footnote follow the mode', () => {
-        expect(keepChipLabel(false)).toBe('☐ Keep (K)');
-        expect(keepChipLabel(true)).toBe('☑ Kept (K)');
-        expect(selfUseFootnote()).toBe(
-            'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.'
-        );
-        state.meaning = 'sell';
         expect(keepChipLabel(false)).toBe('☐ Sell (K)');
         expect(keepChipLabel(true)).toBe('☑ Sell (not kept) (K)');
         expect(buildKeepChipHTML('/items/frenzy', false)).toContain('Sell (K)');
         expect(selfUseFootnote()).toBe(
             'Self-use: marked outputs sold after tax, the rest kept at what you would pay. K on a tooltip marks it sold.'
         );
+        state.meaning = 'keep';
+        expect(keepChipLabel(false)).toBe('☐ Keep (K)');
+        expect(keepChipLabel(true)).toBe('☑ Kept (K)');
+        expect(selfUseFootnote()).toBe(
+            'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.'
+        );
+    });
+});
+
+describe('marks from before the default flipped to sell', () => {
+    const OLD = ['/items/frenzy', '/items/puncture'];
+
+    test('a bare array reads as no marks, whatever the mode', async () => {
+        state.stored.selfUseWanted_main = OLD;
+        expect(await selfUseWanted.load()).toEqual([]);
+        state.meaning = 'keep';
+        expect(isKeptForSelfUse('/items/frenzy')).toBe(false);
+    });
+
+    test('JSON text of an old array reads as no marks too', async () => {
+        state.stored.selfUseWanted_main = JSON.stringify(OLD);
+        expect(await selfUseWanted.load()).toEqual([]);
+    });
+
+    test('the first load rewrites the old record as an empty stamped one', async () => {
+        state.stored.selfUseWanted_main = OLD;
+        await selfUseWanted.load();
+        await settle();
+        expect(state.stored.selfUseWanted_main).toEqual(rec([]));
+    });
+
+    test('a character with nothing stored is not given a record', async () => {
+        await selfUseWanted.load();
+        await settle();
+        expect(state.stored.selfUseWanted_main).toBeUndefined();
+        expect(state.writes).toEqual([]);
+    });
+
+    test('a new mark over an old record starts a fresh list, not the old marks', async () => {
+        state.stored.selfUseWanted_main = OLD;
+        await selfUseWanted.setKept('/items/fierce_aura', true);
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/fierce_aura']));
+    });
+
+    test('new marks survive a second startup', async () => {
+        state.stored.selfUseWanted_main = OLD;
+        await selfUseWanted.setKept('/items/fierce_aura', true);
+        selfUseWanted._reset();
+        expect(await selfUseWanted.load()).toEqual(['/items/fierce_aura']);
+        await settle();
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/fierce_aura']));
+    });
+
+    test('a record another tab stamped while the old one was being retired is left alone', async () => {
+        state.stored.selfUseWanted_main = OLD;
+        let reads = 0;
+        state.onRead = () => {
+            reads += 1;
+            // Lands after the load read the old record, before the retiring transaction reads it
+            if (reads === 1) state.stored.selfUseWanted_main = rec(['/items/fierce_aura']);
+        };
+        await selfUseWanted.load();
+        await settle();
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/fierce_aura']));
+    });
+});
+
+describe('the sync fold of the marks', () => {
+    const OLD = ['/items/frenzy'];
+    const NEW = rec(['/items/puncture']);
+
+    test('a stamped record beats an unstamped one, in either order', () => {
+        expect(mergeMarkRecords(NEW, OLD)).toBe(NEW);
+        expect(mergeMarkRecords(OLD, NEW)).toBe(NEW);
+        expect(mergeMarkRecords(NEW, JSON.stringify(OLD))).toBe(NEW);
+    });
+
+    test('two stamped records settle on the incoming one; two old ones too', () => {
+        const other = rec(['/items/fierce_aura']);
+        expect(mergeMarkRecords(NEW, other)).toBe(other);
+        expect(mergeMarkRecords(OLD, ['/items/b'])).toEqual(['/items/b']);
+    });
+
+    test('it is registered for every character key and only the marks', async () => {
+        const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+        expect(mergeForKey('settings', 'selfUseWanted_123')?.merge).toBe(mergeMarkRecords);
+        expect(mergeForKey('settings', 'somethingElse_123')?.label).not.toBe('Self-use marks');
+    });
+
+    test('an old-shape record from the gist does not resurrect after a clear', async () => {
+        // This device updated and holds a stamped (here: empty) record
+        state.stored.selfUseWanted_main = rec([]);
+        const folded = mergeMarkRecords(state.stored.selfUseWanted_main, OLD);
+        expect(folded).toEqual(rec([]));
+        state.stored.selfUseWanted_main = folded;
+        expect(await selfUseWanted.load()).toEqual([]);
     });
 });

@@ -215,14 +215,14 @@ vi.mock('../../utils/profit-helpers.js', () => ({
 // The keep list's storage: one character's list, read and written whole
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async () => [...keepState.kept],
+        getJSON: async () => ({ v: 2, items: [...keepState.kept] }),
         setJSON: async (_key, value) => {
-            keepState.kept = new Set(value);
+            keepState.kept = new Set(value.items);
         },
         update: async (_key, mutate) => {
-            const next = mutate([...keepState.kept], true);
-            if (next !== undefined) keepState.kept = new Set(next);
-            return { written: next !== undefined, value: [...keepState.kept] };
+            const next = mutate({ v: 2, items: [...keepState.kept] }, true);
+            if (next !== undefined) keepState.kept = new Set(next.items);
+            return { written: next !== undefined, value: { v: 2, items: [...keepState.kept] } };
         },
     },
 }));
