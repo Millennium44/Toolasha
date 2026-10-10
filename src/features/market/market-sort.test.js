@@ -535,6 +535,22 @@ describe('decompose chain mode', () => {
         expect(container.querySelector('.toolasha-profit-indicator').title).toContain('decompose chain');
     });
 
+    test('a chain that is a lower bound (partly unpriced bonus crate) shows its badge with ≥', async () => {
+        twoLevel();
+        const container = buildGrid(['item_a']);
+        const original = marketSort.decomposeChain;
+        marketSort.decomposeChain = () => ({ netPerHour: 1_704_000, partial: true });
+        try {
+            marketSort.sortMode = 'decomposeChainPerHour';
+            await marketSort.sortByProfitability();
+        } finally {
+            marketSort.decomposeChain = original;
+        }
+
+        expect(badges(container)[0]).toBe('≥1.7M');
+        expect(container.querySelector('.toolasha-profit-indicator').title).toContain('lower bound');
+    });
+
     test('an item with no decompose has no value and sinks, bare', async () => {
         twoLevel();
         engine.itemDetails['/items/item_e'] = { alchemyDetail: null };
