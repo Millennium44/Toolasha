@@ -597,8 +597,8 @@ class ChunkedHistory {
      * longer holds. Written back raw, the key is split and deleted on the next
      * read, and the gist hands it back on the next pull.
      *
-     * Pure, like the merges. Entries `_migrate` would not file (no chunk) are
-     * left out the same way it leaves them out.
+     * Pure, like the merges. A value holding an entry with no chunk is not
+     * split at all.
      * @param {string} legacyBase - The legacy key's stem
      * @param {string} key - A legacy key, `${legacyBase}_${charId}`
      * @param {*} value - Its value
@@ -609,8 +609,14 @@ class ChunkedHistory {
         if (!Array.isArray(value) || typeof key !== 'string' || !key.startsWith(`${legacyBase}_`)) return null;
         const charId = key.slice(legacyBase.length + 1);
         if (!charId || this.legacyKey(charId) !== key) return null;
+        const grouped = this._group(value);
+        let filed = 0;
+        for (const bucket of grouped.values()) filed += bucket.length;
+        // An entry with no chunk is one `_migrate` cannot file either; it keeps
+        // the legacy key for it, so sync carries the key whole
+        if (filed !== value.filter((entry) => entry != null).length) return null;
         const records = {};
-        for (const [chunkId, bucket] of this._group(value)) records[this.keyFor(charId, chunkId)] = bucket;
+        for (const [chunkId, bucket] of grouped) records[this.keyFor(charId, chunkId)] = bucket;
         return records;
     }
 

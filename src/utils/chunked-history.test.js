@@ -729,7 +729,7 @@ describe('the sync merge every chunked history registers', () => {
             storeName: 'testStore',
             prefix: 'splitRec',
             legacyKey: (charId) => `splitLegacy_${charId}`,
-            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            groupOf: (point) => (Number.isFinite(point?.t) ? timeChunkId(point.t, 'month') : null),
             compare: (a, b) => a.t - b.t,
             label: 'SplitTest',
         });
@@ -741,6 +741,8 @@ describe('the sync merge every chunked history registers', () => {
         expect(mergeForKey('testStore', 'splitRec_c1_2026-06')).toBeTruthy();
         expect(split('splitLegacy_c1', [])).toEqual({});
         expect(split('splitLegacy_c1', { not: 'a list' })).toBeNull();
+        // An entry no chunk can file keeps the key whole, as the migration keeps it
+        expect(split('splitLegacy_c1', [at(2026, 6, 1), { v: 'no time' }])).toBeNull();
     });
 
     test('the legacy single key is claimed too, so a stalled split is not a hole in the cover', async () => {
