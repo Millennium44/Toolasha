@@ -874,6 +874,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'market_enhanceProfitPerHour',
+            name: 'Enhance-to-sell Profit/h Column',
+            category: 'Market',
+            module: Market.enhanceProfitColumn,
+            async: false,
+        },
+        {
             key: 'marketVolumeStats',
             name: 'Market Volume Stats',
             category: 'Market',

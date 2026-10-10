@@ -51,6 +51,7 @@ export const IRON_COW_SETTINGS = new Set([
     'market_showHistoryViewer',
     'market_showPhiloCalculator',
     'market_showQueueLength',
+    'market_enhanceProfitPerHour',
     'market_volumeStats',
     // Buttons whose only action is opening the Marketplace
     'enhanceSim_protectionMarketplaceButton',
