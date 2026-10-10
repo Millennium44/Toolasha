@@ -1171,8 +1171,9 @@ describe('a copy touched since the deletion keeps the entry', () => {
         pull(device, [['rec_c1_1970-01', [live(1, 10), live(2, 99), live(3, 30)]]]);
 
         expect(await readBack(device)).toEqual(['s1', 's2', 's3']);
-        // And the tombstone is cleared, so it cannot fire again later
-        expect(storageMock.store.has('recTomb_c1')).toBe(false);
+        // And the tombstone is cleared, so it cannot fire again later. Cleared to `{}`, not deleted: see
+        // the 'cleared record' test below
+        expect(storageMock.store.get('recTomb_c1')).toEqual({});
     });
 
     test('an unchanged peer copy is still deleted', async () => {
@@ -1198,7 +1199,27 @@ describe('the deletion record is bounded', () => {
 
         // Degrades to the old behaviour for that entry — never to losing one
         expect(await readBack(device)).toEqual(['2026-6-1', '2026-6-2', '2026-6-3']);
-        expect(storageMock.store.has('recTomb_c1')).toBe(false);
+        expect(storageMock.store.get('recTomb_c1')).toEqual({});
+    });
+
+    test('a cleared record stays cleared when the gist still holds the expired map', async () => {
+        const device = build();
+        await device.save('c1', [at(2026, 6, 1), at(2026, 6, 2), at(2026, 6, 3)]);
+        await device.save('c1', [at(2026, 6, 1), at(2026, 6, 3)]);
+        const gistCopy = JSON.parse(JSON.stringify(storageMock.store.get('recTomb_c1')));
+        for (const stone of Object.values(gistCopy)) stone.at = Date.now() - TOMBSTONE_MAX_AGE_MS - 1;
+        storageMock.store.set('recTomb_c1', JSON.parse(JSON.stringify(gistCopy)));
+
+        // The stones expire on a load: the record is emptied, and the empty record is written (not deleted)
+        await readBack(build());
+        expect(storageMock.store.get('recTomb_c1')).toEqual({});
+
+        // The gist never learned of the clear and sends the expired map back down. Sync carries whole
+        // keys, so a deleted key would take it as is, to be emptied and deleted again on the next load
+        pull(device, [['recTomb_c1', gistCopy]]);
+        expect(storageMock.store.get('recTomb_c1')).toEqual({});
+        await readBack(build());
+        expect(storageMock.store.get('recTomb_c1')).toEqual({});
     });
 
     test('the map is held to MAX_TOMBSTONES, newest kept', () => {

@@ -923,7 +923,7 @@ class ChunkedHistory {
     }
 
     /**
-     * Persist a tombstone map, or delete the key when nothing is left in it.
+     * Persist a tombstone map (an empty one as `{}`, so the clear syncs).
      *
      * Fire and forget: nothing downstream waits on it, and a write that does
      * not land leaves the map exactly as it was on disk — which is the same
@@ -935,10 +935,10 @@ class ChunkedHistory {
      */
     _writeTombs(charId, stones) {
         const key = this.tombKey(charId);
-        const write =
-            Object.keys(stones).length === 0
-                ? storage.delete(key, this.storeName)
-                : storage.set(key, stones, this.storeName, this.immediate);
+        // An empty map is written as `{}`, never deleted: sync carries whole keys, so a deleted key is still in the
+        // gist, comes back on the next pull with its expired stones, is emptied again by the next load, and loops.
+        // `{}` is a newer value the merge folds the old copy into (`mergeTombstones` ages the stones away).
+        const write = storage.set(key, stones, this.storeName, this.immediate);
         return Promise.resolve(write).catch((error) => {
             console.error(`[${this.label}] Writing the deletion record failed:`, error);
         });
