@@ -397,7 +397,11 @@ describe('a bonus crate', () => {
             '/items/item_a': gear([['/items/term_c', 2]]),
             '/items/term_c': { alchemyDetail: null },
         };
-        engine.bids = { '/items/term_c': 1000 };
+        engine.bids = {
+            '/items/term_c': 1000,
+            '/items/gem': 400,
+            ...(junkPriced ? { '/items/junk': 100 } : {}),
+        };
         const drops = (dropsPerHour) => [{ itemHrid: CRATE, isRare: true, dropsPerHour }];
         engine.candidates = { '/items/item_a': [setup(500, 3600, { dropRevenues: drops(36) })] };
         engine.crates = {
@@ -407,10 +411,11 @@ describe('a bonus crate', () => {
                 { itemHrid: '/items/junk', dropRate: 0.5, minCount: 1, maxCount: 1 },
             ],
         };
+        // Coin is a non-market source; the gem is an ordinary market item, priced at its real bid
         engine.sellResolved = {
-            '/items/coin': { value: 1, needsTax: false },
-            '/items/gem': { value: 400, needsTax: true },
-            ...(junkPriced ? { '/items/junk': { value: 100, needsTax: true } } : {}),
+            '/items/coin': { value: 1, source: 'coin', needsTax: false },
+            '/items/gem': { value: 400, source: 'market', needsTax: true },
+            ...(junkPriced ? { '/items/junk': { value: 100, source: 'market', needsTax: true } } : {}),
         };
     }
 
@@ -431,9 +436,21 @@ describe('a bonus crate', () => {
         expect(full.netPerHour).toBeGreaterThan(chain.netPerHour);
     });
 
+    test('a content with only a custom or estimated figure and no real bid still marks the crate partial', () => {
+        crateFixture({ junkPriced: false });
+        engine.sellResolved['/items/junk'] = { value: 100, source: 'custom', needsTax: true };
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual([CRATE]);
+        // Junk adds nothing: the figure is the same lower bound as with junk unpriced
+        const perAction = 0.01 * (100 + 0.5 * 384);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + perAction) * 3600);
+    });
+
     test('a crate with nothing priced still leaves the chain without a figure', () => {
         crateFixture({ junkPriced: false });
         engine.sellResolved = {};
+        delete engine.bids['/items/gem'];
         const chain = decomposeChain('/items/item_a');
         expect(chain.netPerHour).toBeNull();
         expect(chain.unpriced).toContain(CRATE);

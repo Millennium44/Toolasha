@@ -1246,10 +1246,12 @@ describe('the Decompose chain/hr sort', () => {
                 ],
             },
         };
+        // Coin is a non-market source; the gem is an ordinary item sold at its real bid
         market.sellResolved = {
-            '/items/coin': { value: 1, needsTax: false },
-            '/items/gem': { value: 400, needsTax: true },
+            '/items/coin': { value: 1, source: 'coin', needsTax: false },
+            '/items/gem': { value: 400, source: 'market', needsTax: true },
         };
+        market.bids['/items/gem'] = 400;
     }
 
     test('a bonus crate with some contents unpriced leaves a lower-bound figure, not a dash', () => {

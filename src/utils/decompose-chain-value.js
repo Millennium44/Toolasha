@@ -155,6 +155,9 @@ export function maximizeChainRatio(rootHrid, { termsOf, rootCost, maxIterations 
     return best;
 }
 
+/** Sell-side resolver sources that are not a market price: Coin, Cowbells, dungeon tokens, nested crates */
+const NON_MARKET_SOURCES = new Set(['coin', 'cowbell', 'dungeonToken', 'expectedValue']);
+
 /**
  * The whole decompose chain of an item, ask in and taxed bid out.
  *
@@ -180,7 +183,9 @@ export function decomposeChain(itemHrid) {
             // item's ask and the base outputs stay on the strict real-price rule.
             const contentPriceOf = (hrid) => {
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
-                if (resolved && Number.isFinite(resolved.value)) {
+                // Only the resolver's non-market sources pass as they are; an ordinary item's
+                // market, custom or value-map figure goes through the real-bid check below
+                if (resolved && NON_MARKET_SOURCES.has(resolved.source) && Number.isFinite(resolved.value)) {
                     return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
                 }
                 const real = priceOf(hrid);
