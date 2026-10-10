@@ -172,9 +172,8 @@ class EnhancementTracker {
             newTargetLevel,
             session.protectFrom
         );
-        if (predictions) {
-            session.predictions = predictions;
-        }
+        // extendSession banked the old leg's prediction; a failed calculation leaves the new one empty
+        session.predictions = predictions || null;
 
         await saveSessions(this.sessions);
         await saveCurrentSessionId(sessionId);

@@ -10,6 +10,7 @@ import {
     getSessionDuration,
     getCurrentLegCounters,
     summedLegPredictions,
+    hasPredictionLegs,
     getProtectionBreakdown,
     mergeSessions,
 } from './enhancement-session.js';
@@ -1156,8 +1157,8 @@ class EnhancementUI {
     /**
      * Expected figures for a session that ran in several legs: the sum of each leg's own
      * prediction against all of the session's attempts and protections. No percentile — a sum of
-     * different distributions has no single spread to read the outcome against — and no cost
-     * comparison, which needs one prediction.
+     * different distributions has no single spread to read the outcome against. The cost
+     * comparison uses the summed expectation.
      * @param {Object} session - Session object
      * @param {{expectedAttempts: number, expectedProtections: number}} summed - From summedLegPredictions
      * @returns {string} HTML
@@ -1170,6 +1171,20 @@ class EnhancementUI {
             return (val < 0.01 ? val.toFixed(3) : val.toFixed(2)) + 'x';
         };
         const color = STYLE.colors.textSecondary;
+        // Cost against the summed expectation, at this session's own unit prices
+        const cost = costVsExpected(session, null, summed);
+        let costHTML = '';
+        if (cost) {
+            const good = cost.diff >= 0;
+            costHTML = `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${color};">
+                <div><span>Expected Cost:</span><span> ${this.formatNumber(cost.expectedCost)}</span></div>
+                <div><span>Cost Factor:</span><strong> ${cost.factor.toFixed(2)}x</strong></div>
+            </div>
+            <div style="font-size: 12px; margin-top: 2px; color: ${good ? STYLE.colors.success : STYLE.colors.danger};">
+                💰 ${this.formatNumber(Math.abs(cost.diff))} ${good ? 'below' : 'above'} expected cost
+            </div>`;
+        }
         return `
             <div class="enh-summed-predictions" title="Summed from each run's own prediction, made on the stats you had at the time">
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px;">
@@ -1180,6 +1195,7 @@ class EnhancementUI {
                 <div><span>Attempt Factor:</span><strong> ${factor(session.totalAttempts || 0, expAtt)}</strong></div>
                 <div><span>Prot Factor:</span><strong> ${factor(session.protectionCount || 0, expProt)}</strong></div>
             </div>
+            ${costHTML}
             </div>`;
     }
 
@@ -1249,8 +1265,16 @@ class EnhancementUI {
         const summed = summedLegPredictions(session);
 
         // Predictions (if available)
-        if (summed) {
-            html += this.generateSummedPredictionHTML(session, summed);
+        if (hasPredictionLegs(session)) {
+            // Legs whose sum cannot be read honestly (one has no prediction, or the record is
+            // from before every leg was kept) show a dash rather than a wrong figure
+            html += summed
+                ? this.generateSummedPredictionHTML(session, summed)
+                : `
+            <div class="enh-merged-runs" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+                <span>Expected Attempts:</span>
+                <span title="This session's runs have no complete set of predictions to sum">—</span>
+            </div>`;
         } else if (session.predictions) {
             const predictions = session.predictions;
             const expAtt = predictions.expectedAttempts || 0;

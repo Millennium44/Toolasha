@@ -439,6 +439,36 @@ function startNewSegment(session, now) {
 }
 
 /**
+ * The leg a session is in, as `legPredictions` keeps it: where it began, where it was headed, its
+ * own prediction, and how many attempts it made (so the legs can be checked to cover every
+ * attempt the session made).
+ * @param {Object} session - Session object
+ * @returns {Object}
+ */
+function currentLegRecord(session) {
+    return {
+        sessionId: session.id,
+        startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
+        targetLevel: session.targetLevel,
+        protectFrom: session.protectFrom || 0,
+        predictions: session.predictions || null,
+        attempts: Math.max(0, (session.totalAttempts || 0) - (session.extensionBaseline?.totalAttempts || 0)),
+    };
+}
+
+/**
+ * Bank the session's current prediction as a finished leg (resume, extend), when it has one.
+ * @param {Object} session - Session object (mutated)
+ */
+function bankCurrentLeg(session) {
+    if (!session.predictions) return;
+    session.legPredictions = [
+        ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
+        currentLegRecord(session),
+    ];
+}
+
+/**
  * Whether two predictions describe the same forecast: the same expectation and spread, so the
  * stats they were made from did not change between them.
  * @param {Object|null} a - Prediction
@@ -485,18 +515,7 @@ export function resumeSession(session, now = Date.now(), options = {}) {
     const legStartLevel = Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel;
     const sameLeg = session.currentLevel === legStartLevel && samePrediction(session.predictions, newPredictions);
     if (!sameLeg) {
-        if (session.predictions) {
-            session.legPredictions = [
-                ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
-                {
-                    sessionId: session.id,
-                    startLevel: legStartLevel,
-                    targetLevel: session.targetLevel,
-                    protectFrom: session.protectFrom || 0,
-                    predictions: session.predictions,
-                },
-            ];
-        }
+        bankCurrentLeg(session);
         session.predictions = null;
         session.extensionBaseline = {
             totalAttempts: session.totalAttempts || 0,
@@ -622,18 +641,10 @@ export function foldSessions(ordered) {
     // A run merged before already carries its legs.
     const legPredictions = ordered.flatMap((session) => {
         const banked = Array.isArray(session.legPredictions) ? session.legPredictions : [];
-        // A run that is itself in a later leg (resumed) still holds that leg's prediction
+        // A resumed run still holds its current leg's prediction. With banked legs and none
+        // current, that leg's attempts are not covered by any record (see summedLegPredictions)
         if (banked.length > 0 && !session.predictions) return banked;
-        return [
-            ...banked,
-            {
-                sessionId: session.id,
-                startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
-                targetLevel: session.targetLevel,
-                protectFrom: session.protectFrom || 0,
-                predictions: session.predictions || null,
-            },
-        ];
+        return [...banked, currentLegRecord(session)];
     });
 
     const spans = [];
@@ -732,28 +743,56 @@ export function foldSessions(ordered) {
 }
 
 /**
- * The expected attempts and protections of a session that ran in several legs (merged, or
- * auto-resumed under changed stats): the sum of each leg's own prediction, every one made on the
- * stats the player had for that leg. The matching actual figure is the session's total attempts.
- *
- * A leg that ended short of the next leg's start level is still predicted to the target, so a
- * chain that climbed in stages reads a little high on expected; the factor is a rough one.
+ * Whether a session ran in several predicted legs (merged, resumed under changed stats, or
+ * extended), so its expected figures are a sum of legs rather than one prediction.
  * @param {Object} session - Session object
- * @returns {{legs: number, expectedAttempts: number, expectedProtections: number}|null} Null for
- *   a one-leg session, or when any leg has no prediction
+ * @returns {boolean}
+ */
+export function hasPredictionLegs(session) {
+    return Array.isArray(session?.legPredictions) && session.legPredictions.length > 0;
+}
+
+/**
+ * The expected attempts and protections of a session that ran in several legs: each leg's own
+ * prediction (made on the stats the player had for it), counted only over the stretch that leg
+ * actually covered. A leg's prediction runs from its start level to its target, but the next leg
+ * begins wherever the item stood when the previous one stopped; the leg is counted from its start
+ * to that level using the per-level expectations stored with the prediction (`levelExpectations`),
+ * or in full when it reached its own target. The last leg runs to the level the item stands at.
+ * A leg that stopped no higher than it began counts nothing (its attempts are all in the actual
+ * figure, so the factor reads a little high). The matching actual figure is the session's total
+ * attempts.
+ *
+ * Null (shown as a dash) for a one-leg session, and whenever the sum could not be honest: a leg
+ * with no prediction, a leg that needs a per-level expectation its prediction lacks, or legs whose
+ * attempts do not add up to the session's (a session stored before legs were banked on every
+ * path, so one is missing).
+ * @param {Object} session - Session object
+ * @returns {{legs: number, expectedAttempts: number, expectedProtections: number}|null}
  */
 export function summedLegPredictions(session) {
-    const banked = Array.isArray(session?.legPredictions) ? session.legPredictions : [];
-    if (banked.length === 0) return null;
-    const legs = banked.map((leg) => leg?.predictions || null);
-    if (session.predictions) legs.push(session.predictions);
-    if (legs.some((prediction) => !prediction)) return null;
-    const attempts = legs.reduce(
-        (sum, p) =>
-            sum + (Number.isFinite(p.expectedAttemptsExact) ? p.expectedAttemptsExact : p.expectedAttempts || 0),
-        0
-    );
-    const protections = legs.reduce((sum, p) => sum + (p.expectedProtections || 0), 0);
+    if (!hasPredictionLegs(session)) return null;
+    const legs = session.legPredictions.map((leg) => ({ ...leg }));
+    if (session.predictions) legs.push(currentLegRecord(session));
+    if (legs.some((leg) => !leg.predictions || !Number.isFinite(leg.attempts))) return null;
+    if (legs.reduce((sum, leg) => sum + leg.attempts, 0) !== (session.totalAttempts || 0)) return null;
+
+    let attempts = 0;
+    let protections = 0;
+    for (let i = 0; i < legs.length; i++) {
+        const { predictions: p, startLevel, targetLevel } = legs[i];
+        const end = i + 1 < legs.length ? legs[i + 1].startLevel : session.currentLevel;
+        if (!Number.isFinite(end) || !Number.isFinite(startLevel)) return null;
+        if (end >= targetLevel) {
+            attempts += Number.isFinite(p.expectedAttemptsExact) ? p.expectedAttemptsExact : p.expectedAttempts || 0;
+            protections += p.expectedProtections || 0;
+        } else if (end > startLevel) {
+            const part = p.levelExpectations?.[end];
+            if (!Array.isArray(part)) return null;
+            attempts += part[0] || 0;
+            protections += part[1] || 0;
+        }
+    }
     return { legs: legs.length, expectedAttempts: Math.round(attempts), expectedProtections: Math.round(protections) };
 }
 
@@ -914,6 +953,10 @@ export function canExtendSession(session, itemHrid, currentLevel, action = null)
  * @param {number} [now] - Epoch ms
  */
 export function extendSession(session, newTargetLevel, now = Date.now()) {
+    // The target changes, so the old prediction describes a finished leg; the caller computes the
+    // extension's own
+    bankCurrentLeg(session);
+    session.predictions = null;
     // A new run on this session: its stretch starts now, not at the session's start
     startNewSegment(session, now);
     session.state = SessionState.TRACKING;
@@ -1041,9 +1084,12 @@ export function mergeSessions(sessions) {
             agg.materialCosts[hrid].totalCost += material.totalCost || 0;
         }
 
-        if (session.predictions) {
-            agg.expectedAttempts += session.predictions.expectedAttempts || 0;
-            agg.expectedProtections += session.predictions.expectedProtections || 0;
+        // The same figure the session's panel shows: a multi-leg session's legs summed (and
+        // left out when that cannot be read), else its one prediction
+        const expected = hasPredictionLegs(session) ? summedLegPredictions(session) : session.predictions;
+        if (expected) {
+            agg.expectedAttempts += expected.expectedAttempts || 0;
+            agg.expectedProtections += expected.expectedProtections || 0;
         }
     }
 

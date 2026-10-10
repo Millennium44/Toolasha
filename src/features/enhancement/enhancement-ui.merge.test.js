@@ -242,8 +242,20 @@ describe('runs protected by different items', () => {
 
 describe('a merged session', () => {
     const legs = [
-        { sessionId: 'session_7', startLevel: 0, predictions: { expectedAttempts: 400, expectedProtections: 10 } },
-        { sessionId: 'session_8', startLevel: 3, predictions: { expectedAttempts: 100, expectedProtections: 2 } },
+        {
+            sessionId: 'session_7',
+            startLevel: 0,
+            targetLevel: 3,
+            predictions: { expectedAttempts: 400, expectedProtections: 10 },
+            attempts: 400,
+        },
+        {
+            sessionId: 'session_8',
+            startLevel: 3,
+            targetLevel: 8,
+            predictions: { expectedAttempts: 100, expectedProtections: 2 },
+            attempts: 225,
+        },
     ];
 
     test('the confirmation says the figures are summed and not calibrated', async () => {
@@ -281,6 +293,46 @@ describe('a merged session', () => {
         expect(text).not.toContain('of runs take that many');
         expect(box.querySelector('.enh-merged-runs')).toBeNull();
         expect(text).not.toContain('(merged runs differ)');
+    });
+
+    test('a session stored before every leg was kept shows a dash, not a wrong sum', () => {
+        const { eight } = spatulaRuns();
+        // Legs cover 400 of its 625 attempts: one leg was never banked
+        const old = {
+            ...eight,
+            predictions: null,
+            mergedFrom: ['session_7'],
+            legPredictions: [legs[0]],
+            totalAttempts: 625,
+        };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(old);
+        expect(box.querySelector('.enh-merged-runs').textContent).toContain('—');
+        expect(box.textContent).not.toContain('Attempt Factor');
+    });
+
+    test('a resumed, non-merged multi-leg session shows its summed figures and cost comparison', () => {
+        const { eight } = spatulaRuns();
+        const resumed = {
+            ...eight,
+            state: SessionState.COMPLETED,
+            currentLevel: 8,
+            targetLevel: 8,
+            predictions: legs[1].predictions,
+            legPredictions: [legs[0]],
+            segmentStartLevel: 3,
+            extensionBaseline: { totalAttempts: 400 },
+            totalAttempts: 625,
+            totalCost: 1000,
+            materialCosts: { '/items/x': { count: 625, totalCost: 1000 } },
+        };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(resumed);
+        const text = box.textContent.replace(/\s+/g, ' ');
+        expect(text).toContain('Expected Attempts: 500');
+        expect(text).toContain('Attempt Factor: 1.25x');
+        expect(text).toContain('Expected Cost:');
+        expect(text).not.toContain('of runs take that many');
     });
 
     test('a leg with no prediction leaves nothing honest to sum', () => {
