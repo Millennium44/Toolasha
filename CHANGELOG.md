@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync stops bringing back what you or a cap removed
+
+- Meter sessions dropped from the saved list, loot-log hours past the 2,000 cap, old guild-ledger weeks, expired deletion markers, a migrated loot-log key and one-off records like the Restore snapshot no longer come back from the sync gist, and Clear in combat-session history and labyrinth room logs now sticks across devices; the in-progress dungeon run no longer syncs.
+
 ### Smaller Keep chip with its own switch
 
 - The Keep for self-use chip on tooltips is now a small one-line tag behind its own setting (off by default); marks you already made still count and stay in the keep list in Settings.
