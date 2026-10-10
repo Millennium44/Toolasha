@@ -145,7 +145,7 @@ describe('computeAllZoneProgress', () => {
         expect(rows[1].fightsNeeded).toBe(Infinity);
     });
 
-    test('a failed zone sim is skipped, the rest still show', async () => {
+    test('a failed zone sim is marked failed, the rest still show', async () => {
         h.quests = [quest('/monsters/slime'), quest('/monsters/imp', 10)];
         vi.spyOn(console, 'error').mockImplementation(() => {});
         h.runSimulation.mockImplementation(async ({ zoneHrid }) => {
@@ -153,7 +153,17 @@ describe('computeAllZoneProgress', () => {
             return { deaths: { '/monsters/imp': 10 }, encounters: 10 };
         });
         const rows = await computeAllZoneProgress();
-        expect(rows.map((r) => r.zoneHrid)).toEqual([ZONE_B]);
+        expect(rows.map((r) => r.zoneHrid)).toEqual([ZONE_B, ZONE_A]);
+        expect(rows[1]).toMatchObject({ zoneName: 'Zone A', failed: true, interrupted: false });
+    });
+
+    test('a sim cancelled by an ordinary sim is marked interrupted, and an all-failed run is not empty', async () => {
+        h.quests = [quest('/monsters/slime')];
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        h.runSimulation.mockRejectedValue(new Error('Cancelled'));
+        const rows = await computeAllZoneProgress();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ zoneHrid: ZONE_A, failed: true, interrupted: true });
     });
 
     test('cancelling mid-compute stops before the next zone and returns null', async () => {

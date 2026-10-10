@@ -724,7 +724,12 @@ class TaskStatistics {
             return;
         }
 
-        for (const zone of zones) {
+        // A zone whose sim failed has no figures; say so instead of dropping it, so a run where every
+        // sim failed never reads as "no combat tasks"
+        const failedZones = zones.filter((z) => z.failed);
+        const okZones = zones.filter((z) => !z.failed);
+
+        for (const zone of okZones) {
             const finite = Number.isFinite(zone.hoursNeeded) && Number.isFinite(zone.fightsNeeded);
             const bottleneck = zone.taskCount > 1 ? `${zone.bottleneckName} ×${zone.taskCount}` : zone.bottleneckName;
             const value = finite
@@ -743,12 +748,26 @@ class TaskStatistics {
             };
             section.appendChild(row);
         }
-        if (zones.some((z) => z.shared)) {
+        if (okZones.some((z) => z.shared)) {
             section.appendChild(
                 this.createRow(
                     'Note',
                     'A monster found in several zones counts toward each of those zones',
                     config.COLOR_TEXT_SECONDARY
+                )
+            );
+        }
+        if (failedZones.length > 0) {
+            const interrupted = failedZones.every((z) => z.interrupted);
+            const count = failedZones.length;
+            const noun = count === 1 ? 'zone' : 'zones';
+            section.appendChild(
+                this.createRow(
+                    'Status',
+                    interrupted
+                        ? `${count} ${noun} not simulated (another simulation interrupted this one, try again)`
+                        : `${count} ${noun} could not be simulated (try again)`,
+                    config.COLOR_LOSS
                 )
             );
         }
