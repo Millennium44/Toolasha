@@ -64,6 +64,8 @@
  * @property {string} label - For logging and for the apply summary
  * @property {boolean} capsLocally - This device keeps the history shorter by its own setting, so a push
  *   that replaces the gist can cut entries the gist holds. Only such a registration can report a trim
+ * @property {((key: string, value: *) => Record<string, *>|null)|null} split - For a retired key whose
+ *   owner moves its entries into other keys on first read: the keys and values it would move them into
  */
 
 /** @type {Array<SyncMergeRegistration>} */
@@ -108,6 +110,10 @@ export function scopedKeyMatcher(base) {
  * @param {string} [options.label] - Name for logs and the apply summary
  * @param {boolean} [options.capsLocally] - The fold caps the history by a setting of this device (and keeps
  *   everything for `forUpload`). Opt-in: only a flagged registration can make a pressed Push warn about a trim
+ * @param {(key: string, value: *) => Record<string, *>|null} [options.split] - A retired key its owner migrates
+ *   into other keys and then deletes: given the key and a value, the keys (each owned by a registered merge) and
+ *   values the migration would write, or null when it cannot say. Sync then carries those instead of the retired
+ *   key wherever this device does not hold it, so a pull does not write back a key the next read deletes again
  * @returns {() => void} Unregister, mostly for tests
  */
 export function registerSyncMerge({
@@ -121,6 +127,7 @@ export function registerSyncMerge({
     pull,
     label,
     capsLocally = false,
+    split,
 }) {
     if (!store) throw new Error('[SyncMergeRegistry] registerSyncMerge needs a store');
     if (typeof merge !== 'function') throw new Error('[SyncMergeRegistry] registerSyncMerge needs a merge()');
@@ -159,6 +166,7 @@ export function registerSyncMerge({
                   : merge,
         label: label || key || base || prefix || store,
         capsLocally: capsLocally === true,
+        split: typeof split === 'function' ? split : null,
         claim,
     };
 

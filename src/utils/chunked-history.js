@@ -586,8 +586,32 @@ class ChunkedHistory {
                 label: `${this.label} legacy key`,
                 merge,
                 pull,
+                split: (key, value) => this._splitLegacy(legacyBase, key, value),
             });
         }
+    }
+
+    /**
+     * The record keys a legacy key's entries would be split into, as `_migrate`
+     * groups them, for sync to carry in place of a legacy key this device no
+     * longer holds. Written back raw, the key is split and deleted on the next
+     * read, and the gist hands it back on the next pull.
+     *
+     * Pure, like the merges. Entries `_migrate` would not file (no chunk) are
+     * left out the same way it leaves them out.
+     * @param {string} legacyBase - The legacy key's stem
+     * @param {string} key - A legacy key, `${legacyBase}_${charId}`
+     * @param {*} value - Its value
+     * @returns {Record<string, Array<Object>>|null} Record key → entries; null for a key or value it cannot split
+     * @private
+     */
+    _splitLegacy(legacyBase, key, value) {
+        if (!Array.isArray(value) || typeof key !== 'string' || !key.startsWith(`${legacyBase}_`)) return null;
+        const charId = key.slice(legacyBase.length + 1);
+        if (!charId || this.legacyKey(charId) !== key) return null;
+        const records = {};
+        for (const [chunkId, bucket] of this._group(value)) records[this.keyFor(charId, chunkId)] = bucket;
+        return records;
     }
 
     /**

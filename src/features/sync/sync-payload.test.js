@@ -2736,3 +2736,88 @@ describe('device-only records added to the local-only prefixes', () => {
         expect(Object.hasOwn(built.stores.settings, 'settings_shared_scope_conflicts')).toBe(false);
     });
 });
+
+describe('a legacy chunked key this device has already split is not written back', () => {
+    const STORE = 'rerollSpending';
+    const LEGACY = 'taskCompletions_c1';
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-09T00:00:00.000Z', syncScope: 'everything', stores });
+    const NOW = Date.UTC(2026, 9, 7, 12);
+    const a = { taskId: 'a', questId: 'a', completedAt: NOW - 60 * 60 * 1000 };
+    const b = { taskId: 'b', questId: 'b', completedAt: NOW - 2 * 60 * 60 * 1000 };
+    const recordKey = () => `taskCompletionRec_c1_${weekChunkId(a.completedAt)}`;
+    const ids = (list) => (list || []).map((entry) => entry.taskId).sort();
+
+    const withClock = async (run) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(NOW);
+            await run();
+        } finally {
+            vi.useRealTimers();
+        }
+    };
+
+    test('a pull lands its entries in the records instead of the legacy key', () =>
+        withClock(async () => {
+            expect(weekChunkId(a.completedAt)).toBe(weekChunkId(b.completedAt));
+            storeState.stores[STORE] = { [recordKey()]: [a] };
+
+            await applyPayload(payloadOf({ [STORE]: { [LEGACY]: [a, b] } }), { mode: 'merge', baseline: {} });
+
+            const landed = importedPayloads[0].stores[STORE];
+            expect(Object.hasOwn(landed, LEGACY)).toBe(false);
+            // The entry only the legacy key held is not lost
+            expect(ids(landed[recordKey()])).toEqual(['a', 'b']);
+        }));
+
+    test('a legacy key whose entries the records already hold changes nothing', () =>
+        withClock(async () => {
+            storeState.stores[STORE] = { [recordKey()]: [b, a] };
+
+            const result = await applyPayload(payloadOf({ [STORE]: { [LEGACY]: [a, b] } }), {
+                mode: 'merge',
+                baseline: {},
+            });
+
+            expect(importedPayloads[0].stores[STORE]).toEqual({});
+            expect(result.unchanged[STORE]).toBe(1);
+        }));
+
+    test('a device that still holds its legacy key folds it as before', () =>
+        withClock(async () => {
+            storeState.stores[STORE] = { [LEGACY]: [a] };
+
+            await applyPayload(payloadOf({ [STORE]: { [LEGACY]: [a, b] } }), { mode: 'merge', baseline: {} });
+
+            expect(ids(importedPayloads[0].stores[STORE][LEGACY])).toEqual(['a', 'b']);
+        }));
+
+    test('an upload takes the legacy key out of the gist and keeps its entries in the records', () =>
+        withClock(async () => {
+            const local = { [recordKey()]: [a] };
+            const gist = { [LEGACY]: [a, b] };
+
+            const { text, dropsFromRemote } = mergeForUpload(
+                payloadOf({ [STORE]: local }),
+                payloadOf({ [STORE]: gist }),
+                null
+            );
+
+            const uploaded = JSON.parse(text).stores[STORE];
+            expect(Object.hasOwn(uploaded, LEGACY)).toBe(false);
+            expect(ids(uploaded[recordKey()])).toEqual(['a', 'b']);
+            expect(dropsFromRemote).toBe(true);
+        }));
+
+    test('an empty legacy key leaves the gist too', () =>
+        withClock(async () => {
+            const { text, dropsFromRemote } = mergeForUpload(
+                payloadOf({ [STORE]: { [recordKey()]: [a] } }),
+                payloadOf({ [STORE]: { [LEGACY]: [] } }),
+                null
+            );
+            expect(Object.hasOwn(JSON.parse(text).stores[STORE], LEGACY)).toBe(false);
+            expect(dropsFromRemote).toBe(true);
+        }));
+});

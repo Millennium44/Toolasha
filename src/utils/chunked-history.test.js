@@ -722,6 +722,27 @@ describe('the sync merge every chunked history registers', () => {
         expect(merge([at(2026, 6)], [at(2026, 6), at(2026, 7)]).map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1']);
     });
 
+    test('the legacy key says which records its entries split into, as the migration files them', async () => {
+        const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
+        clearSyncMerges();
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'splitRec',
+            legacyKey: (charId) => `splitLegacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            label: 'SplitTest',
+        });
+
+        const { split } = mergeForKey('testStore', 'splitLegacy_c1');
+        const pieces = split('splitLegacy_c1', [at(2026, 6, 1), at(2026, 7, 1), at(2026, 6, 2)]);
+        expect(Object.keys(pieces).sort()).toEqual(['splitRec_c1_2026-06', 'splitRec_c1_2026-07']);
+        expect(pieces['splitRec_c1_2026-06'].map((p) => p.v)).toEqual(['2026-6-1', '2026-6-2']);
+        expect(mergeForKey('testStore', 'splitRec_c1_2026-06')).toBeTruthy();
+        expect(split('splitLegacy_c1', [])).toEqual({});
+        expect(split('splitLegacy_c1', { not: 'a list' })).toBeNull();
+    });
+
     test('the legacy single key is claimed too, so a stalled split is not a hole in the cover', async () => {
         const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
         clearSyncMerges();
