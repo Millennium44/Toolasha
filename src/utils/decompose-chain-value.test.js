@@ -465,6 +465,16 @@ describe('a bonus crate', () => {
         }
     });
 
+    test('a dungeon token in the crate is sold after tax, at its shop conversion bid', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/chimerical_token', dropRate: 1, minCount: 1, maxCount: 1 }];
+        // No shop line priced: the token is worth its essence's bid
+        engine.bids['/items/chimerical_essence'] = 1000;
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.partial).toBe(false);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * 960) * 3600);
+    });
+
     test('a crate with nothing priced still leaves the chain without a figure', () => {
         crateFixture({ junkPriced: false });
         engine.sellResolved = {};

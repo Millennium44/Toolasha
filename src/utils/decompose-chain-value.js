@@ -186,7 +186,9 @@ export function decomposeChain(itemHrid) {
                 // A token's shop conversion follows the user's pricing setting, which the conservative
                 // override above does not reach; this chain sells instantly, so pin it to the bid
                 if (DUNGEON_TOKEN_HRIDS.has(hrid)) {
-                    return calculateDungeonTokenValue(hrid, 'profitCalc_pricingMode', false);
+                    // Its worth is the shop reward sold at the bid, so the sale pays market tax
+                    const tokenValue = calculateDungeonTokenValue(hrid, 'profitCalc_pricingMode', false);
+                    return tokenValue === null ? null : calculatePriceAfterTax(tokenValue);
                 }
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
