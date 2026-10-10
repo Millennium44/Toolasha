@@ -52,7 +52,8 @@ export async function setAdoptionTargetId(id) {
 export async function resetAdoptionDecision() {
     cachedDecision = null;
     promptPromise = null;
-    await storage.delete(DECISION_KEY, 'settings');
+    // null, not a delete: a deleted decision is still in the gist and a pull would write it back
+    await storage.set(DECISION_KEY, null, 'settings', true);
 }
 
 /**

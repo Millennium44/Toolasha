@@ -79,6 +79,7 @@ import storage from '../../core/storage.js';
 import { TRIAL_ACTIVE_MS, trialFromHrid, trialWeekStart } from './guild-trials-math.js';
 import { isUnnamedRowName } from './guild-trial-units.js';
 import { isTestServer } from '../../utils/game-server.js';
+import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 /** Object store the ledger lives in — shared with the rest of the guild history */
 export const LEDGER_STORE = 'guildHistory';
@@ -97,6 +98,27 @@ const CYCLE_SEPARATOR = '__';
  * records rather than an unbounded pile.
  */
 export const MAX_LEDGER_CYCLES = 26;
+
+/**
+ * A ledger cycle key's scope and week start, or null for anything else.
+ * @param {string} key - Storage key
+ * @returns {{group: string, order: number}|null} The scope's window and the week start
+ */
+function parseLedgerKey(key) {
+    const match = /^guildTrialLedger_(.+)__(\d+)$/.exec(key);
+    return match ? { group: match[1], order: Number(match[2]) } : null;
+}
+
+/*
+ * The cap, told to sync. A week pruned past the cap stayed in the gist (the upload merge keeps every key only
+ * the gist holds), came back on every pull and was pruned again by the next record.
+ */
+registerSyncRetention({
+    store: 'guildHistory',
+    prefix: 'guildTrialLedger_',
+    parse: parseLedgerKey,
+    keep: MAX_LEDGER_CYCLES,
+});
 
 /**
  * How far apart two readings of one trial's start can lie.

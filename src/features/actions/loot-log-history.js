@@ -5,7 +5,8 @@
 
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
-import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
+import { createChunkedHistory, timeChunkId, recordKeysFor } from '../../utils/chunked-history.js';
+import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
 import { lootEntryIdentity, isMoreCompleteEntry } from './loot-log-analytics.js';
 
 const STORE_NAME = 'lootLogHistory';
@@ -44,6 +45,69 @@ export const MAX_ENTRIES = 2000;
  * which would leave the amplification roughly where it started.
  */
 const RECORD_PREFIX = 'lootLogRec';
+
+/**
+ * Per-character cap floor, `lootLogRecFloor_<charId>_<YYYY-MM-DDTHH>`: the oldest hour chunk the cap still keeps,
+ * in the key's name, so sync can drop every older chunk (see the retention rule below). Spelled so neither the
+ * record prefix (`lootLogRec_`) nor the deletions key (`lootLogRecTomb_`) matches it.
+ */
+const FLOOR_PREFIX = 'lootLogRecFloor';
+
+/**
+ * @param {string} charId - Whose loot log
+ * @param {string} chunkId - The oldest hour chunk the cap keeps
+ * @returns {string} The key recording that floor
+ */
+export function floorKey(charId, chunkId) {
+    return `${FLOOR_PREFIX}_${charId}_${chunkId}`;
+}
+
+/**
+ * Hours since the epoch of a `YYYY-MM-DDTHH` chunk id.
+ * @param {string} chunkId - Hour chunk id
+ * @returns {number} Whole hours, or NaN for something else
+ */
+function hourNumber(chunkId) {
+    const time = Date.parse(`${chunkId}:00:00.000Z`);
+    return Number.isFinite(time) ? Math.round(time / 3600000) : NaN;
+}
+
+const HOUR_RECORD_RE = new RegExp(`^${RECORD_PREFIX}_([^_]+)_(\\d{4}-\\d{2}-\\d{2}T\\d{2})$`);
+const FLOOR_RE = new RegExp(`^${FLOOR_PREFIX}_([^_]+)_(\\d{4}-\\d{2}-\\d{2}T\\d{2})$`);
+
+/**
+ * A loot log key as the sync retention rule reads it: an hour record's character and hour, or a floor marker's
+ * character and floor hour. Null for everything else under the prefix (the deletions key, the legacy key).
+ * @param {string} key - Storage key
+ * @returns {{group: string, order: number}|{group: string, floor: number}|null} The rule's reading
+ */
+export function parseLootLogRetentionKey(key) {
+    const record = HOUR_RECORD_RE.exec(key);
+    if (record) {
+        const order = hourNumber(record[2]);
+        return Number.isFinite(order) ? { group: record[1], order } : null;
+    }
+    const floor = FLOOR_RE.exec(key);
+    if (floor) {
+        const at = hourNumber(floor[2]);
+        return Number.isFinite(at) ? { group: floor[1], floor: at } : null;
+    }
+    return null;
+}
+
+/*
+ * The cap, told to sync. The cap keeps the newest MAX_ENTRIES entries across every hour chunk and evicts the
+ * chunks wholly older than the oldest entry it keeps: a count over values, which no rule over key names can work
+ * out. So the store writes the cut down as a floor marker, and the rule drops every chunk of that character older
+ * than the highest floor either side holds, exactly the chunks `_capped` lets go of. Without it the gist kept
+ * every evicted chunk, each pull wrote them back, and every merged push reported news.
+ */
+registerSyncRetention({
+    store: STORE_NAME,
+    prefix: RECORD_PREFIX,
+    parse: parseLootLogRetentionKey,
+    floorMarkers: true,
+});
 
 /**
  * Which chunk a loot entry belongs to. Named so a merge can name the hours it moved
@@ -144,6 +208,69 @@ class LootLogHistory {
          * for the same reason.
          */
         this._chain = Promise.resolve();
+
+        /**
+         * The highest cap floor this tab has recorded for a character (`charId -> chunk id`), so a
+         * merge that cuts at the same hour again does not rewrite the marker.
+         * @type {Map<string, string>}
+         */
+        this._floors = new Map();
+    }
+
+    /**
+     * Apply the cap: the newest MAX_ENTRIES entries, rounded up to whole hour chunks.
+     *
+     * The floor chunk is kept whole on disk, so both sides' copies of it agree and sync never sees a
+     * partly-evicted chunk. The floor marker is written before anything is evicted: an eviction sync cannot
+     * see is one the gist hands back on the next pull. A marker that does not land evicts nothing; the
+     * entries stay until a later capped merge records the floor.
+     * @param {Array} merged - Every entry, newest first
+     * @param {string} charId - Whose log
+     * @returns {Promise<Array>} The entries to keep
+     * @private
+     */
+    async _capped(merged, charId) {
+        if (merged.length <= MAX_ENTRIES) return merged;
+        const floorChunk = entryChunkId(merged[MAX_ENTRIES - 1]);
+        let cut = merged.length;
+        for (let i = MAX_ENTRIES; i < merged.length; i += 1) {
+            if (entryChunkId(merged[i]) < floorChunk) {
+                cut = i;
+                break;
+            }
+        }
+        if (cut >= merged.length) return merged;
+
+        const recorded = this._floors.get(charId);
+        if (recorded === undefined || recorded < floorChunk) {
+            try {
+                const written = await storage.set(
+                    floorKey(charId, floorChunk),
+                    { floor: floorChunk },
+                    STORE_NAME,
+                    true
+                );
+                if (written === false) {
+                    console.warn('[LootLogHistory] The cap floor could not be recorded for sync; evicting nothing');
+                    return merged;
+                }
+            } catch (error) {
+                console.error('[LootLogHistory] Recording the cap floor failed; evicting nothing:', error);
+                return merged;
+            }
+            this._floors.set(charId, floorChunk);
+            // Superseded floors: sync reads only the highest
+            try {
+                const keys = await storage.tryGetAllKeys(STORE_NAME);
+                const prefix = `${FLOOR_PREFIX}_${charId}_`;
+                for (const key of recordKeysFor(keys || [], FLOOR_PREFIX, charId)) {
+                    if (key.slice(prefix.length) < floorChunk) await storage.delete(key, STORE_NAME);
+                }
+            } catch (error) {
+                console.error('[LootLogHistory] Removing superseded cap floors failed:', error);
+            }
+        }
+        return merged.slice(0, cut);
     }
 
     /** @returns {string|null} Whose loot log, or null before login */
@@ -289,7 +416,10 @@ class LootLogHistory {
 
         // Entries past the cap fall out of the array here; the chunks they were
         // the last of are deleted by the save that notices they have gone
-        this._save(merged.slice(0, MAX_ENTRIES), touchedChunks, charId);
+        const capped = await this._capped(merged, charId);
+        // See the check after the read: the floor write is an await too
+        if (this._charId() !== charId) return;
+        this._save(capped, touchedChunks, charId);
     }
 
     /**
@@ -362,6 +492,7 @@ class LootLogHistory {
     async clearHistory() {
         const charId = this._charId();
         if (!charId) return false;
+        this._floors.delete(charId);
         return this._store.clear(charId);
     }
 }
@@ -371,4 +502,7 @@ export default lootLogHistory;
 
 // A character switch must not serve the departing character's entries to the
 // arriving one, nor write them back under the arriving one's keys
-dataManager.on?.('character_switching', () => lootLogHistory._store.forget());
+dataManager.on?.('character_switching', () => {
+    lootLogHistory._store.forget();
+    lootLogHistory._floors.clear();
+});

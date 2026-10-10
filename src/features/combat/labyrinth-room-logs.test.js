@@ -89,6 +89,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS, sessionIdentity } =
     await import('./labyrinth-room-logs.js');
 const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
+const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 const { FINGERPRINT_VERSION } = await import('./labyrinth-fingerprint.js');
 
 const room = (over = {}) => ({
@@ -1778,6 +1779,30 @@ describe('the sync merge keeps this device’s log size out of the upload', () =
         expect(registration.merge(local, gist, { forUpload: true }).sessions).toHaveLength(500);
     });
 
+    test('a Clear reaches a gist holding more than 500 pre-clear rooms', async () => {
+        await import('./labyrinth-room-logs.js');
+        const { mergeForUpload } = await import('../sync/sync-payload.js');
+        const payloadOf = (log) =>
+            JSON.stringify({
+                formatVersion: 1,
+                exportedAt: 'x',
+                syncScope: 'everything',
+                stores: { settings: { labyrinthRoomLogs_c1: log } },
+            });
+        // Two devices' unions left the gist past any one log's size
+        const gist = { sessions: sessions(1000, 700) };
+        const cleared = { sessions: [], clearedAt: 1_000_000 };
+        // This device moved since the exchange; the gist did not
+        const { wholeKeyHashes } = await import('../sync/sync-payload.js');
+        const baseline = wholeKeyHashes(payloadOf(gist));
+
+        const { text } = mergeForUpload(payloadOf(cleared), payloadOf(gist), baseline);
+
+        const uploaded = JSON.parse(text).stores.settings.labyrinthRoomLogs_c1;
+        expect(uploaded.sessions).toEqual([]);
+        expect(uploaded.clearedAt).toBe(1_000_000);
+    });
+
     test('a push over this device’s cap reports the log, and one with nothing extra on the gist does not', async () => {
         await import('./labyrinth-room-logs.js');
         const { trimmedRegisteredKeys } = await import('../sync/sync-payload.js');
@@ -1796,5 +1821,80 @@ describe('the sync merge keeps this device’s log size out of the upload', () =
         // Both sides hold the same 500 sessions: a push keeps them all, whatever the cap says
         const same = payloadOf({ sessions: sessions(1000, 500) });
         expect(trimmedRegisteredKeys(same, same)).toEqual([]);
+    });
+});
+
+describe('Clear survives a sync pull', () => {
+    const LOG_KEY = 'labyrinthRoomLogs_char1';
+    const rm = (startedAt, endedAt = startedAt + 1000) => ({ runKey: 'r', startedAt, endedAt });
+    const pull = (local, incoming) => mergeForKey('settings', LOG_KEY).merge(local, incoming);
+    const starts = (record) => (record?.sessions || []).map((r) => r.startedAt);
+
+    beforeEach(() => {
+        storageMock.reset();
+        labyrinthRoomLogs.record.reset();
+        labyrinthRoomLogs.sessions = [];
+    });
+
+    afterEach(() => {
+        labyrinthRoomLogs.record.reset();
+        labyrinthRoomLogs.sessions = [];
+        storageMock.reset();
+    });
+
+    test('a pull of the pre-clear gist copy does not bring the rooms back', async () => {
+        labyrinthRoomLogs.sessions = [rm(1000), rm(2000)];
+        await labyrinthRoomLogs.persist();
+        const gist = structuredClone(storageMock.storeFor('settings').get(LOG_KEY));
+        expect(starts(gist).sort()).toEqual([1000, 2000]);
+
+        labyrinthRoomLogs.clearLogs();
+        await labyrinthRoomLogs.record.flushed();
+        const local = storageMock.storeFor('settings').get(LOG_KEY);
+        expect(local.sessions).toEqual([]);
+        expect(local.clearedAt).toBeGreaterThan(0);
+
+        const merged = pull(local, gist);
+        expect(merged.sessions).toEqual([]);
+        expect(merged.clearedAt).toBe(local.clearedAt);
+        // The device that never cleared takes the clear too
+        expect(pull(gist, local).sessions).toEqual([]);
+    });
+
+    test('a persist after the clear keeps the epoch and the next room is stored', async () => {
+        labyrinthRoomLogs.sessions = [rm(1000)];
+        await labyrinthRoomLogs.persist();
+        labyrinthRoomLogs.clearLogs();
+        await labyrinthRoomLogs.record.flushed();
+        const clearedAt = storageMock.storeFor('settings').get(LOG_KEY).clearedAt;
+
+        labyrinthRoomLogs.sessions = [rm(clearedAt + 5000)];
+        await labyrinthRoomLogs.persist();
+
+        const stored = storageMock.storeFor('settings').get(LOG_KEY);
+        expect(stored.clearedAt).toBe(clearedAt);
+        expect(starts(stored)).toEqual([clearedAt + 5000]);
+    });
+
+    test('a room finished after the clear syncs both ways', () => {
+        const CLEAR = 5000;
+        const cleared = { sessions: [], clearedAt: CLEAR };
+        const peer = { sessions: [rm(1000), rm(6000)] };
+
+        expect(starts(pull(cleared, peer))).toEqual([6000]);
+        expect(starts(pull(peer, cleared))).toEqual([6000]);
+        expect(starts(pull(peer, { sessions: [rm(7000)], clearedAt: CLEAR }))).toEqual([7000, 6000]);
+        // A room begun before the clear but finished after it is a post-clear room
+        expect(starts(pull(cleared, { sessions: [rm(4000, 5500)] }))).toEqual([4000]);
+        // The upload fold (uncapped) carries the clear too
+        const forUpload = mergeForKey('settings', LOG_KEY).merge(cleared, peer, { forUpload: true });
+        expect(starts(forUpload)).toEqual([6000]);
+        expect(forUpload.clearedAt).toBe(CLEAR);
+    });
+
+    test('an older-build record without the cleared marker merges as before', () => {
+        const merged = pull({ sessions: [rm(1000)] }, { sessions: [rm(2000)] });
+        expect(starts(merged)).toEqual([2000, 1000]);
+        expect(merged.clearedAt).toBeUndefined();
     });
 });

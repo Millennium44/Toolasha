@@ -117,8 +117,12 @@ await import('../guild/guild-trials-store.js');
 await import('../skills/xp-tracker.js');
 // The detail snapshots' retention window, registered the way the page does
 await import('../networth/networth-history.js');
+// The guild trial ledger's 26-week cap, registered the way the page does
+const { ledgerCycleKey, MAX_LEDGER_CYCLES } = await import('../guild/guild-trial-ledger.js');
 // Task completions: a chunked history whose pull prunes the incoming side
 const { weekChunkId, WINDOW_WEEKS } = await import('../tasks/task-completion-tracker.js');
+// Saved meter sessions: bodies kept exactly while their index lists them
+await import('../combat/meter-history.js');
 
 const {
     payloadCarriesKey,
@@ -1437,6 +1441,68 @@ describe('addsToRemote, the automatic merge loop guard', () => {
     });
 });
 
+describe('a one-off key that was cleared stays cleared', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+    const OLD = { itemTooltip_selfUseAlchemy: { type: 'checkbox', value: true } };
+    const CASES = [
+        ['settings', 'toolasha_ironCowSnapshot_603281'],
+        ['settings', 'toolasha_allOffSnapshot_603281'],
+        ['settings', 'adoptionTargetCharacterId'],
+        ['combatExport', 'combatSimUpgradeResults_603281'],
+    ];
+
+    // The clear is a stored null, which the whole-key rule carries; a delete leaves the gist's copy to be
+    // written back by the next pull. Both halves, so the null is shown to be what matters.
+    test.each(CASES)('%s/%s: a pull of the old gist copy does not re-apply it', async (store, key) => {
+        const baseline = wholeKeyHashes(payloadOf({ [store]: { [key]: OLD } }));
+        storeState.stores[store] = { ...(storeState.stores[store] || {}), [key]: null };
+
+        await applyPayload(payloadOf({ [store]: { [key]: OLD } }), { mode: 'merge', baseline });
+
+        expect(Object.hasOwn(importedPayloads.at(-1).stores[store] || {}, key)).toBe(false);
+    });
+
+    test.each(CASES)('%s/%s: a deleted key is the case that came back', async (store, key) => {
+        const baseline = wholeKeyHashes(payloadOf({ [store]: { [key]: OLD } }));
+        storeState.stores[store] = { ...(storeState.stores[store] || {}) };
+        delete storeState.stores[store][key];
+
+        await applyPayload(payloadOf({ [store]: { [key]: OLD } }), { mode: 'merge', baseline });
+
+        expect(importedPayloads.at(-1).stores[store][key]).toEqual(OLD);
+    });
+
+    test.each(CASES)('%s/%s: the next push carries the clear up to the gist', (store, key) => {
+        const baseline = wholeKeyHashes(payloadOf({ [store]: { [key]: OLD } }));
+        const merged = JSON.parse(
+            mergeForUpload(payloadOf({ [store]: { [key]: null } }), payloadOf({ [store]: { [key]: OLD } }), baseline)
+                .text
+        );
+        expect(merged.stores[store][key]).toBeNull();
+    });
+});
+
+describe('the guild trial ledger cap reaches sync', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+    test('a week past the cap that the gist still holds is not written back', async () => {
+        const weeks = Array.from({ length: MAX_LEDGER_CYCLES + 1 }, (_, i) => 1_700_000_000_000 + i * WEEK);
+        const record = (weekStart) => ({ weekStart, scope: 'g', trials: [], members: {}, participation: {} });
+        // This device pruned its oldest week; the gist (never told) still has all 27
+        storeState.stores.guildHistory = Object.fromEntries(
+            weeks.slice(1).map((week) => [ledgerCycleKey('g', week), record(week)])
+        );
+        const gist = Object.fromEntries(weeks.map((week) => [ledgerCycleKey('g', week), record(week)]));
+
+        await applyPayload(payloadOf({ guildHistory: gist }), { mode: 'merge', baseline: null });
+
+        const landed = importedPayloads.at(-1).stores.guildHistory || {};
+        expect(Object.hasOwn(landed, ledgerCycleKey('g', weeks[0]))).toBe(false);
+        expect(Object.keys(landed).length).toBeLessThanOrEqual(MAX_LEDGER_CYCLES);
+    });
+});
+
 describe('the whole-value baseline', () => {
     const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
 
@@ -2529,4 +2595,313 @@ describe('a chunked history keeps its pull orientation under the direction rules
             vi.useRealTimers();
         }
     });
+});
+
+describe('saved meter sessions travel only while their index lists them', () => {
+    const STORE = 'combatExport';
+    const INDEX = 'meterHistoryIndex_32030_combat';
+    const body = (id) => `meterHistory_32030_combat_${id}`;
+    // The fields `summaryOf` always writes, so a fold that fills them in compares equal
+    const summary = (id, extra = {}) => ({
+        id,
+        type: 'combat',
+        endedAt: Number(id.split('_')[1]),
+        basis: 'stream',
+        favourite: false,
+        name: null,
+        ...extra,
+    });
+    const session = (id) => ({ id, type: 'combat', dealt: { players: [] } });
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-09T00:00:00.000Z', syncScope: 'everything', stores });
+
+    test('a pull does not write back a body the index in force no longer lists', async () => {
+        storeState.stores[STORE] = {};
+        // The gist still holds combat_1, which its owner's index dropped; combat_0 is an old starred one
+        const gist = {
+            [INDEX]: [summary('combat_3'), summary('combat_0', { favourite: true })],
+            [body('combat_0')]: session('combat_0'),
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_3')]: session('combat_3'),
+        };
+
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(Object.keys(importedPayloads[0].stores[STORE]).sort()).toEqual(
+            [INDEX, body('combat_0'), body('combat_3')].sort()
+        );
+    });
+
+    test("when this device's index wins the baseline, the gist's bodies it does not list stay out", async () => {
+        const gistIndex = [summary('combat_1'), summary('combat_2')];
+        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { [INDEX]: gistIndex } }));
+        // Moved here since the exchange: combat_2 deleted, combat_4 saved
+        storeState.stores[STORE] = {
+            [INDEX]: [summary('combat_4'), summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_4')]: session('combat_4'),
+        };
+        const gist = {
+            [INDEX]: gistIndex,
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_2')]: session('combat_2'),
+        };
+
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline });
+
+        const landed = importedPayloads[0].stores[STORE];
+        expect(Object.hasOwn(landed, INDEX)).toBe(false);
+        expect(Object.hasOwn(landed, body('combat_2'))).toBe(false);
+        expect(storeState.stores[STORE][body('combat_4')]).toBeDefined();
+    });
+
+    test('a local body another tab has not listed yet is never deleted by a pull', async () => {
+        // Another tab wrote combat_5's body and has not yet written its index
+        storeState.stores[STORE] = {
+            [INDEX]: [summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_5')]: session('combat_5'),
+        };
+        storeState.deleteCalls = [];
+        const gist = {
+            [INDEX]: [summary('combat_3'), summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_3')]: session('combat_3'),
+        };
+
+        const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(storeState.stores[STORE][body('combat_5')]).toBeDefined();
+        expect(storeState.deleteCalls.filter((call) => call.name === STORE)).toEqual([]);
+        expect(result.complete).toBe(true);
+    });
+
+    test('a body with no index on either side is left alone', async () => {
+        storeState.stores[STORE] = {};
+        await applyPayload(payloadOf({ [STORE]: { [body('combat_1')]: session('combat_1') } }), {
+            mode: 'merge',
+            baseline: {},
+        });
+        expect(Object.hasOwn(importedPayloads[0].stores[STORE], body('combat_1'))).toBe(true);
+    });
+
+    test("an upload sheds the gist's orphans and keeps an old starred body", () => {
+        const index = [summary('combat_3'), summary('combat_0', { favourite: true })];
+        const local = {
+            [INDEX]: index,
+            [body('combat_0')]: session('combat_0'),
+            [body('combat_3')]: session('combat_3'),
+        };
+        const gist = { ...local, [body('combat_1')]: session('combat_1'), [body('combat_2')]: session('combat_2') };
+
+        const { text, dropsFromRemote, remoteAdds } = mergeForUpload(
+            payloadOf({ [STORE]: local }),
+            payloadOf({ [STORE]: gist }),
+            null
+        );
+
+        expect(Object.keys(JSON.parse(text).stores[STORE]).sort()).toEqual(Object.keys(local).sort());
+        expect(dropsFromRemote).toBe(true);
+        expect(remoteAdds).toBe(false);
+    });
+
+    test('two devices that each saved a session between exchanges both keep both', async () => {
+        const s1 = summary('combat_1');
+        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { [INDEX]: [s1] } }));
+        const deviceA = {
+            [INDEX]: [summary('combat_2'), s1],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_2')]: session('combat_2'),
+        };
+        const deviceB = {
+            [INDEX]: [summary('combat_3'), s1],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_3')]: session('combat_3'),
+        };
+        const listed = (index) => index.map((entry) => entry.id).sort();
+
+        // A pulls B's push
+        storeState.stores[STORE] = structuredClone(deviceA);
+        await applyPayload(payloadOf({ [STORE]: structuredClone(deviceB) }), { mode: 'merge', baseline });
+        const landedOnA = importedPayloads.at(-1).stores[STORE];
+        expect(listed(landedOnA[INDEX])).toEqual(['combat_1', 'combat_2', 'combat_3']);
+        expect(Object.hasOwn(landedOnA, body('combat_3'))).toBe(true);
+        expect(storeState.stores[STORE][body('combat_2')]).toBeDefined();
+
+        // A's upload over B's push carries both
+        const { text } = mergeForUpload(payloadOf({ [STORE]: deviceA }), payloadOf({ [STORE]: deviceB }), baseline);
+        const gist = JSON.parse(text).stores[STORE];
+        expect(listed(gist[INDEX])).toEqual(['combat_1', 'combat_2', 'combat_3']);
+        expect(
+            Object.keys(gist)
+                .filter((key) => key !== INDEX)
+                .sort()
+        ).toEqual([body('combat_1'), body('combat_2'), body('combat_3')].sort());
+
+        // B pulls that
+        storeState.stores[STORE] = structuredClone(deviceB);
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline });
+        const landedOnB = importedPayloads.at(-1).stores[STORE];
+        expect(listed(landedOnB[INDEX])).toEqual(['combat_1', 'combat_2', 'combat_3']);
+        expect(Object.hasOwn(landedOnB, body('combat_2'))).toBe(true);
+    });
+
+    test('a session deleted here stays deleted after a pull of the old gist, and leaves the gist', async () => {
+        const gist = {
+            [INDEX]: [summary('combat_2'), summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_2')]: session('combat_2'),
+        };
+        // `deleteEntry` dropped combat_1 here and marked it
+        const at = Date.now();
+        const local = {
+            [INDEX]: [summary('combat_2'), { deleted: { combat_1: at } }],
+            [body('combat_2')]: session('combat_2'),
+        };
+        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { [INDEX]: gist[INDEX] } }));
+
+        storeState.stores[STORE] = structuredClone(local);
+        await applyPayload(payloadOf({ [STORE]: structuredClone(gist) }), { mode: 'merge', baseline: {} });
+        const landed = importedPayloads.at(-1).stores[STORE];
+        expect(Object.hasOwn(landed, body('combat_1'))).toBe(false);
+        if (Object.hasOwn(landed, INDEX)) {
+            expect(landed[INDEX].map((entry) => entry.id).filter(Boolean)).toEqual(['combat_2']);
+        }
+
+        const { text, dropsFromRemote } = mergeForUpload(
+            payloadOf({ [STORE]: local }),
+            payloadOf({ [STORE]: gist }),
+            baseline
+        );
+        const uploaded = JSON.parse(text).stores[STORE];
+        expect(Object.hasOwn(uploaded, body('combat_1'))).toBe(false);
+        expect(uploaded[INDEX].map((entry) => entry.id).filter(Boolean)).toEqual(['combat_2']);
+        expect(uploaded[INDEX].at(-1)).toEqual({ deleted: { combat_1: at } });
+        expect(dropsFromRemote).toBe(true);
+    });
+
+    test('a gist-only body outside the index is not news to this device', () => {
+        const local = { [INDEX]: [summary('combat_3')], [body('combat_3')]: session('combat_3') };
+        const gist = { ...local, [body('combat_1')]: session('combat_1') };
+
+        expect(addsToRemote(payloadOf({ [STORE]: gist }), payloadOf({ [STORE]: local }))).toBe(false);
+        // Listed, the same body is news
+        const listed = { ...gist, [INDEX]: [summary('combat_3'), summary('combat_1')] };
+        expect(addsToRemote(payloadOf({ [STORE]: listed }), payloadOf({ [STORE]: local }))).toBe(true);
+    });
+});
+
+describe('device-only records added to the local-only prefixes', () => {
+    const KEYS = [
+        'dungeonTracker_inProgressRun_32030',
+        'dungeonTracker_inProgressRun',
+        'settings_shared_scope_conflicts',
+    ];
+
+    test.each(KEYS)('%s never reaches a payload', (key) => {
+        expect(payloadCarriesKey('settings', key)).toBe(false);
+        expect(Object.hasOwn(redactSettingsStore({ [key]: { at: 1 } }), key)).toBe(false);
+    });
+
+    test('a payload carrying them does not write them here', async () => {
+        const incoming = Object.fromEntries(KEYS.map((key) => [key, { at: 1 }]));
+        await applyPayload(
+            JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { ...incoming, other_key: 1 } } })
+        );
+        const landed = importedPayloads.at(-1).stores.settings;
+        for (const key of KEYS) expect(Object.hasOwn(landed, key)).toBe(false);
+    });
+
+    test('a built payload leaves them out', async () => {
+        storeState.stores.settings.dungeonTracker_inProgressRun_32030 = { wave: 3 };
+        storeState.stores.settings.settings_shared_scope_conflicts = { at: 1, conflicts: [{ id: 'x' }] };
+        const built = JSON.parse(await buildPayloadJSON('settings'));
+        expect(Object.hasOwn(built.stores.settings, 'dungeonTracker_inProgressRun_32030')).toBe(false);
+        expect(Object.hasOwn(built.stores.settings, 'settings_shared_scope_conflicts')).toBe(false);
+    });
+});
+
+describe('a legacy chunked key this device has already split is not written back', () => {
+    const STORE = 'rerollSpending';
+    const LEGACY = 'taskCompletions_c1';
+    const payloadOf = (stores) =>
+        JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-09T00:00:00.000Z', syncScope: 'everything', stores });
+    const NOW = Date.UTC(2026, 9, 7, 12);
+    const a = { taskId: 'a', questId: 'a', completedAt: NOW - 60 * 60 * 1000 };
+    const b = { taskId: 'b', questId: 'b', completedAt: NOW - 2 * 60 * 60 * 1000 };
+    const recordKey = () => `taskCompletionRec_c1_${weekChunkId(a.completedAt)}`;
+    const ids = (list) => (list || []).map((entry) => entry.taskId).sort();
+
+    const withClock = async (run) => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(NOW);
+            await run();
+        } finally {
+            vi.useRealTimers();
+        }
+    };
+
+    test('a pull lands its entries in the records instead of the legacy key', () =>
+        withClock(async () => {
+            expect(weekChunkId(a.completedAt)).toBe(weekChunkId(b.completedAt));
+            storeState.stores[STORE] = { [recordKey()]: [a] };
+
+            await applyPayload(payloadOf({ [STORE]: { [LEGACY]: [a, b] } }), { mode: 'merge', baseline: {} });
+
+            const landed = importedPayloads[0].stores[STORE];
+            expect(Object.hasOwn(landed, LEGACY)).toBe(false);
+            // The entry only the legacy key held is not lost
+            expect(ids(landed[recordKey()])).toEqual(['a', 'b']);
+        }));
+
+    test('a legacy key whose entries the records already hold changes nothing', () =>
+        withClock(async () => {
+            storeState.stores[STORE] = { [recordKey()]: [b, a] };
+
+            const result = await applyPayload(payloadOf({ [STORE]: { [LEGACY]: [a, b] } }), {
+                mode: 'merge',
+                baseline: {},
+            });
+
+            expect(importedPayloads[0].stores[STORE]).toEqual({});
+            expect(result.unchanged[STORE]).toBe(1);
+        }));
+
+    test('a device that still holds its legacy key folds it as before', () =>
+        withClock(async () => {
+            storeState.stores[STORE] = { [LEGACY]: [a] };
+
+            await applyPayload(payloadOf({ [STORE]: { [LEGACY]: [a, b] } }), { mode: 'merge', baseline: {} });
+
+            expect(ids(importedPayloads[0].stores[STORE][LEGACY])).toEqual(['a', 'b']);
+        }));
+
+    test('an upload takes the legacy key out of the gist and keeps its entries in the records', () =>
+        withClock(async () => {
+            const local = { [recordKey()]: [a] };
+            const gist = { [LEGACY]: [a, b] };
+
+            const { text, dropsFromRemote } = mergeForUpload(
+                payloadOf({ [STORE]: local }),
+                payloadOf({ [STORE]: gist }),
+                null
+            );
+
+            const uploaded = JSON.parse(text).stores[STORE];
+            expect(Object.hasOwn(uploaded, LEGACY)).toBe(false);
+            expect(ids(uploaded[recordKey()])).toEqual(['a', 'b']);
+            expect(dropsFromRemote).toBe(true);
+        }));
+
+    test('an empty legacy key leaves the gist too', () =>
+        withClock(async () => {
+            const { text, dropsFromRemote } = mergeForUpload(
+                payloadOf({ [STORE]: { [recordKey()]: [a] } }),
+                payloadOf({ [STORE]: { [LEGACY]: [] } }),
+                null
+            );
+            expect(Object.hasOwn(JSON.parse(text).stores[STORE], LEGACY)).toBe(false);
+            expect(dropsFromRemote).toBe(true);
+        }));
 });

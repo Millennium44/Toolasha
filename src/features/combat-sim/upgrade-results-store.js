@@ -76,7 +76,8 @@ export async function loadUpgradeResults(key) {
  */
 export async function clearUpgradeResults(key) {
     try {
-        await storage.delete(characterKey(key), STORE);
+        // null, not a delete: a deleted key is still in the gist and a pull would write the old run back
+        await storage.set(characterKey(key), null, STORE, true);
     } catch (error) {
         console.error('[UpgradeResultsStore] Clearing upgrade results failed:', error);
     }

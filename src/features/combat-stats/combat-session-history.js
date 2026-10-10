@@ -34,6 +34,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
+import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /**
@@ -264,11 +265,49 @@ export function mergeSessions(base, fresh) {
     return [...byId.values()].sort((a, b) => startedAt(b) - startedAt(a)).slice(0, MAX_SESSIONS);
 }
 
+/**
+ * The fold as stored and synced: {@link mergeSessions} with Clear's epoch
+ * applied. A union cannot say "the user threw these away", so a peer's
+ * still-full copy brought every cleared run back on the next pull. The epoch is
+ * compared against each run's own last-seen instant, so a run archived after
+ * the Clear survives it. See utils/cleared-record.js. A list stored before the
+ * epoch existed is a bare array and reads as never cleared.
+ *
+ * Stored as a bare array until a Clear has happened, as every earlier build
+ * stored it: a build that predates the epoch folds anything else as an empty
+ * list, so its next save or upload would drop every run. Only a record that
+ * has been cleared carries `{clearedAt, entries}` (see {@link storedShape}).
+ */
+const foldClearable = mergeClearable(mergeSessions, (session) => lastSeenAt(session) || startedAt(session), {
+    label: 'combat session',
+});
+
+/**
+ * The value written for a list: the bare array older builds read, or, once a
+ * Clear has happened, the record that carries its epoch.
+ * @param {Array<Object>} entries - The runs
+ * @param {number} clearedAt - The clear epoch, 0 for none
+ * @returns {Array<Object>|{clearedAt: number, entries: Array<Object>}}
+ */
+function storedShape(entries, clearedAt) {
+    return clearedAt > 0 ? clearedRecord(entries, clearedAt) : entries;
+}
+
+/**
+ * @param {*} base - This device's copy, in either shape
+ * @param {*} fresh - The other copy, in either shape
+ * @returns {Array<Object>|{clearedAt: number, entries: Array<Object>}} The fold, in {@link storedShape}
+ */
+export function mergeSessionHistory(base, fresh) {
+    const folded = foldClearable(base, fresh);
+    return storedShape(folded.entries, folded.clearedAt);
+}
+
 const sessionRecord = createPersistedRecord({
     base: STORE_KEY,
     store: STORE_NAME,
     empty: () => [],
-    merge: mergeSessions,
+    merge: mergeSessionHistory,
     label: 'CombatSessionHistory',
 });
 
@@ -278,7 +317,7 @@ const sessionRecord = createPersistedRecord({
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE_NAME, base: STORE_KEY, merge: mergeSessions, label: 'Combat sessions' });
+registerSyncMerge({ store: STORE_NAME, base: STORE_KEY, merge: mergeSessionHistory, label: 'Combat sessions' });
 
 /** Whose sessions the record in memory holds — a change means forget them first */
 let recordOwner = null;
@@ -339,7 +378,7 @@ export async function loadSessions() {
     try {
         const sessions = record();
         await sessions.load();
-        return sessions.get().slice();
+        return entriesOf(sessions.get()).slice();
     } catch (error) {
         console.error('[CombatSessionHistory] Reading the session list failed:', error);
         return [];
@@ -359,8 +398,10 @@ export async function archiveSession(snapshot) {
         // folds in what another tab archived meanwhile
         const sessions = record();
         await sessions.load();
-        await sessions.update((history) => withSession(history, snapshot));
-        return sessions.get().slice();
+        await sessions.update((history) =>
+            storedShape(withSession(entriesOf(history), snapshot), clearedAtOf(history))
+        );
+        return entriesOf(sessions.get()).slice();
     } catch (error) {
         console.error('[CombatSessionHistory] Archiving a session failed:', error);
         return [];
@@ -370,7 +411,8 @@ export async function archiveSession(snapshot) {
 /** Forget every archived run — the one write meant to lose entries. @returns {Promise<void>} */
 export async function clearSessions() {
     try {
-        await record().clear();
+        // Stamped with the moment, so the Clear outlives a pull of the old copy
+        await clearRecord(record(), Date.now());
     } catch (error) {
         console.error('[CombatSessionHistory] Clearing the session list failed:', error);
     }

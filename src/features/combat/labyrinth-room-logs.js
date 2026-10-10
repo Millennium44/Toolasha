@@ -45,6 +45,7 @@ import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { clearRecord, clearedAtOf, mergeClearable } from '../../utils/cleared-record.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
@@ -120,6 +121,10 @@ export function sessionIdentity(session) {
 const newestFirst = (a, b) => (Number(b?.startedAt) || 0) - (Number(a?.startedAt) || 0);
 /** Used when the setting is unreadable; the setting itself is the real bound */
 const DEFAULT_SESSIONS = 120;
+
+/** The largest log the setting allows, which is also the most an upload carries */
+const MAX_LOG_SESSIONS = 500;
+
 /** However large the log is set, one room cannot fill it */
 const MAX_ACTIONS = 60;
 /** A room retried this many times has made its point */
@@ -254,7 +259,7 @@ class LabyrinthRoomLogs {
             base: STORAGE_KEY,
             store: 'settings',
             empty: () => ({ sessions: [] }),
-            merge: (stored, memory) => mergeRoomLogs(stored, memory, this.logSize()),
+            merge: (stored, memory) => mergeRoomLogsCleared(stored, memory, this.logSize()),
             label: 'LabyrinthRoomLogs',
         });
         this.activeSession = null;
@@ -302,7 +307,7 @@ class LabyrinthRoomLogs {
     /** How many rooms of history to keep */
     logSize() {
         const raw = Number(config.getSettingValue('labyrinthRoomLogSize', DEFAULT_SESSIONS));
-        return Math.min(500, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
+        return Math.min(MAX_LOG_SESSIONS, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
     }
 
     /**
@@ -1552,7 +1557,7 @@ class LabyrinthRoomLogs {
             delete copy.lastSnapshot;
             return copy;
         });
-        this.record.set({ sessions });
+        this.record.set(roomRecord(sessions, clearedAtOf(this.record.get())));
         try {
             const landed = await this.record.save();
             this.adoptMerged();
@@ -1580,7 +1585,10 @@ class LabyrinthRoomLogs {
         this.sessions = [];
         this.activeSession = null;
         this.fight = null;
-        this.record.clear().catch((error) => console.error('[LabyrinthRoomLogs] Failed to clear logs:', error));
+        // Stamped with the moment, so the Clear outlives a pull of the old copy
+        clearRecord(this.record, Date.now(), (entries, at) => roomRecord(entries, at)).catch((error) =>
+            console.error('[LabyrinthRoomLogs] Failed to clear logs:', error)
+        );
         this.renderIfOpen({ fightRecord: true });
     }
 
@@ -3966,6 +3974,42 @@ function mergeAttempts(a, b) {
     return [...byStart.values()].sort((x, y) => x.startedAt - y.startedAt).slice(-MAX_SKILLING_ATTEMPTS);
 }
 
+/**
+ * A stored room-log record; `clearedAt` is written only once a Clear has
+ * happened, so a never-cleared record keeps the shape older builds wrote.
+ * @param {Array<Object>} sessions - The rooms
+ * @param {number} [clearedAt] - The Clear epoch to carry
+ * @returns {{sessions: Array<Object>, clearedAt?: number}}
+ */
+function roomRecord(sessions, clearedAt = 0) {
+    return clearedAt > 0 ? { sessions, clearedAt } : { sessions };
+}
+
+/** When a room was last known to be happening, for comparison with a Clear */
+const roomTime = (session) => Number(session?.endedAt) || Number(session?.startedAt) || 0;
+
+/**
+ * {@link mergeRoomLogs} with Clear's epoch applied: a union cannot say "the
+ * user threw these away", so a peer's still-full copy brought every cleared
+ * room back on the next pull. Rooms finished after the Clear survive it. See
+ * utils/cleared-record.js. The refusal limit is the largest log a player can
+ * configure: a Clear of a log is the whole point of the button, and a smaller
+ * limit would let it silently not stick on exactly the big logs.
+ * @param {Object} base - Record, typically as stored (this device's on a pull)
+ * @param {Object} fresh - Record, typically in memory (the remote's on a pull)
+ * @param {number} size - How many sessions to keep
+ * @returns {{sessions: Array<Object>, clearedAt?: number}}
+ */
+function mergeRoomLogsCleared(base, fresh, size) {
+    const asEntries = (value) => ({ clearedAt: clearedAtOf(value), entries: value?.sessions });
+    const fold = mergeClearable((a, b) => mergeRoomLogs({ sessions: a }, { sessions: b }, size).sessions, roomTime, {
+        limit: MAX_LOG_SESSIONS,
+        label: 'labyrinth room',
+    });
+    const folded = fold(asEntries(base), asEntries(fresh));
+    return roomRecord(folded.entries, folded.clearedAt);
+}
+
 const labyrinthRoomLogs = new LabyrinthRoomLogs();
 
 /*
@@ -3977,10 +4021,12 @@ const labyrinthRoomLogs = new LabyrinthRoomLogs();
 registerSyncMerge({
     store: 'settings',
     base: STORAGE_KEY,
-    // The cap is this device's own setting: it trims local storage on a pull,
-    // never an upload, where it would delete sessions the other device keeps
+    // The cap is this device's own setting: it trims local storage on a pull.
+    // An upload keeps the largest log any device can be set to, so it deletes
+    // nothing another device keeps — and stays within the Clear's refusal
+    // limit, which an uncapped gist outgrew, so a Clear never reached it
     merge: (local, incoming, context) =>
-        mergeRoomLogs(local, incoming, context?.forUpload ? Infinity : labyrinthRoomLogs.logSize()),
+        mergeRoomLogsCleared(local, incoming, context?.forUpload ? MAX_LOG_SESSIONS : labyrinthRoomLogs.logSize()),
     label: 'Labyrinth room logs',
     capsLocally: true,
 });

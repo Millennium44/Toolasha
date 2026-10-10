@@ -36,6 +36,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { BOARD_COLORS, boardNoteHTML, escapeText } from '../../utils/damage-board.js';
 import { formatDateTime, formatKMB } from '../../utils/formatters.js';
+import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 /** The setting that turns saving and the History views on */
 export const HISTORY_SETTING = 'combatMeterHistory';
@@ -93,6 +94,44 @@ export function historyEntryKey(characterId, type, id) {
 }
 
 /**
+ * A body key's character, type and id.
+ *
+ * Character ids are numeric (or `default`), so the first `_combat_` or
+ * `_trial_` is the type's; the id after it is the summary's own.
+ *
+ * @param {string} key - A storage key
+ * @returns {{characterId: string, type: string, id: string}|null} Null for a key that is not a body's
+ */
+export function parseHistoryEntryKey(key) {
+    const match = /^meterHistory_(.+?)_(combat|trial)_(.+)$/.exec(String(key));
+    return match ? { characterId: match[1], type: match[2], id: match[3] } : null;
+}
+
+/**
+ * The ids an index names.
+ * @param {*} value - A stored index
+ * @returns {Array<string>|null} Null when the value is not an index
+ */
+export function indexIds(value) {
+    return Array.isArray(value) ? value.map((summary) => summary?.id).filter(Boolean) : null;
+}
+
+// A body is kept exactly while its index lists it, so sync neither uploads one
+// the index has dropped nor writes one back from the gist (`registerSyncRetention`)
+registerSyncRetention({
+    store: HISTORY_STORE,
+    prefix: 'meterHistory_',
+    parse: (key) => {
+        const parsed = parseHistoryEntryKey(key);
+        return parsed ? { group: `${parsed.characterId}_${parsed.type}`, id: parsed.id } : null;
+    },
+    index: {
+        key: (group) => `meterHistoryIndex_${group}`,
+        ids: indexIds,
+    },
+});
+
+/**
  * Which summaries survive, newest first.
  *
  * Pure. Starred and unstarred sessions are counted separately, so ten new
@@ -120,6 +159,115 @@ export function trimIndex(index) {
     }
     return { kept, dropped };
 }
+
+/** How long a deleted session's marker is kept, for a device that has not synced since to learn of it */
+export const DELETION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * A stored index split into its summaries and its deletion markers.
+ *
+ * The index stays a bare array of summaries, the shape every build reads.
+ * Deletions ride in it as one element with no `id` — `{deleted: {id: at}}` —
+ * which an older build's read (`filter(summary => summary?.id)`) drops, so it
+ * reads the summaries exactly as before.
+ *
+ * @param {*} value - A stored index
+ * @returns {{summaries: Array<Object>, deleted: Record<string, number>}|null} Null when the value is not an index
+ */
+export function splitIndex(value) {
+    if (!Array.isArray(value)) return null;
+    const summaries = [];
+    const deleted = {};
+    for (const element of value) {
+        if (element?.id) {
+            summaries.push(element);
+            continue;
+        }
+        if (!element?.deleted || typeof element.deleted !== 'object') continue;
+        for (const [id, at] of Object.entries(element.deleted)) {
+            const when = Number(at);
+            if (Number.isFinite(when)) deleted[id] = Math.max(deleted[id] ?? 0, when);
+        }
+    }
+    return { summaries, deleted };
+}
+
+/**
+ * Deletion markers younger than {@link DELETION_TTL_MS}.
+ * @param {Record<string, number>} deleted - id → when it was deleted
+ * @param {number} [now] - Epoch ms
+ * @returns {Record<string, number>}
+ */
+function freshDeletions(deleted, now = Date.now()) {
+    const out = {};
+    for (const [id, at] of Object.entries(deleted || {})) if (at >= now - DELETION_TTL_MS) out[id] = at;
+    return out;
+}
+
+/**
+ * An index as stored: its summaries, and its markers when it has any.
+ * @param {Array<Object>} summaries - Summaries
+ * @param {Record<string, number>} deleted - Markers
+ * @returns {Array<Object>}
+ */
+function joinIndex(summaries, deleted) {
+    return Object.keys(deleted || {}).length > 0 ? [...summaries, { deleted }] : summaries;
+}
+
+/**
+ * Fold two devices' indexes of one character and type.
+ *
+ * The index is the list sync keeps bodies by (see the retention rule above),
+ * so taking one side whole would drop the other device's sessions and then
+ * their bodies with them. Instead: the union by id; one session on both sides
+ * keeps a game-totals reading over a stream one (as a save does), and is
+ * starred if either side starred it; a session either side deleted, and has
+ * not seen again since, is left out; then the owner's own cap ({@link trimIndex}).
+ *
+ * @param {*} local - One side's index
+ * @param {*} incoming - The other's; it wins what the fold cannot combine
+ * @param {number} [now] - Epoch ms, for ageing markers
+ * @returns {*} The folded index
+ */
+export function mergeHistoryIndex(local, incoming, now = Date.now()) {
+    const mine = splitIndex(local);
+    const theirs = splitIndex(incoming);
+    if (!mine) return incoming;
+    if (!theirs) return local;
+
+    const deleted = { ...mine.deleted };
+    for (const [id, at] of Object.entries(theirs.deleted)) deleted[id] = Math.max(deleted[id] ?? 0, at);
+    const markers = freshDeletions(deleted, now);
+
+    const byId = new Map();
+    for (const summary of mine.summaries) byId.set(summary.id, summary);
+    for (const summary of theirs.summaries) {
+        const held = byId.get(summary.id);
+        if (!held) {
+            byId.set(summary.id, summary);
+            continue;
+        }
+        const winner = held.basis === 'game' && summary.basis !== 'game' ? held : summary;
+        byId.set(summary.id, {
+            ...winner,
+            favourite: Boolean(held.favourite || summary.favourite),
+            name: summary.name ?? held.name ?? null,
+        });
+    }
+    const listed = [...byId.values()]
+        .filter((summary) => !(summary.id in markers) || (Number(summary.endedAt) || 0) > markers[summary.id])
+        .sort(
+            (a, b) => (Number(b.endedAt) || 0) - (Number(a.endedAt) || 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+        );
+    return joinIndex(trimIndex(listed).kept, markers);
+}
+
+registerSyncMerge({
+    store: HISTORY_STORE,
+    prefix: 'meterHistoryIndex_',
+    merge: (local, incoming) => mergeHistoryIndex(local, incoming),
+    label: 'Saved meter sessions',
+});
 
 /**
  * Evenly thin an array to at most `limit` items, keeping the last.
@@ -245,6 +393,8 @@ function summaryOf(entry) {
 
 /** `characterId:type` → summaries, newest first */
 const indexCache = new Map();
+/** `characterId:type` → deletion markers carried with the index */
+const deletionCache = new Map();
 /** Cache keys with a read in flight */
 const loading = new Set();
 /** Index key → the write chain it is on */
@@ -252,6 +402,10 @@ const queues = new Map();
 /** The last few bodies read, by entry key */
 const bodyCache = new Map();
 const BODY_CACHE_SIZE = 4;
+/** `characterId:type` → body keys found without an index entry at the first read; swept at a later save */
+const orphanCandidates = new Map();
+/** Cache keys whose first read has looked for orphans */
+const orphanChecked = new Set();
 
 /**
  * Run a task after every earlier task on the same key, so a save and a rename
@@ -285,11 +439,80 @@ async function runQueued(key, task) {
 async function readIndex(characterId, type) {
     const cacheKey = `${characterId}:${type}`;
     if (indexCache.has(cacheKey)) return indexCache.get(cacheKey);
-    const stored = await storage.get(historyIndexKey(characterId, type), HISTORY_STORE, []);
-    const index = Array.isArray(stored) ? stored.filter((summary) => summary?.id) : [];
+    const stored = splitIndex(await storage.get(historyIndexKey(characterId, type), HISTORY_STORE, []));
+    const index = stored ? stored.summaries : [];
     // A write queued behind this read may already have filled the cache
-    if (!indexCache.has(cacheKey)) indexCache.set(cacheKey, index);
+    if (!indexCache.has(cacheKey)) {
+        indexCache.set(cacheKey, index);
+        deletionCache.set(cacheKey, stored ? stored.deleted : {});
+    }
+    await findOrphans(characterId, type, index);
     return indexCache.get(cacheKey);
+}
+
+/**
+ * The first half of the orphan sweep: note the bodies stored under a
+ * character and type that its index does not list.
+ *
+ * Only noted. Another tab can have written a body and not yet its index, so a
+ * body missing from the index now is not yet an orphan; a later save looks
+ * again at the index as stored ({@link sweepOrphans}) and deletes what is
+ * still missing. Bodies left behind this way came from sync writing back
+ * bodies the index had dropped, and from deletes that never landed.
+ *
+ * @param {string} characterId - Whose
+ * @param {string} type - Which
+ * @param {Array<Object>} index - The index just read
+ */
+async function findOrphans(characterId, type, index) {
+    const cacheKey = `${characterId}:${type}`;
+    if (orphanChecked.has(cacheKey)) return;
+    orphanChecked.add(cacheKey);
+    try {
+        const keys = await storage.tryGetAllKeys(HISTORY_STORE);
+        if (!Array.isArray(keys)) return;
+        const listed = new Set(indexIds(index));
+        const prefix = historyEntryKey(characterId, type, '');
+        const found = keys.filter((key) => {
+            if (typeof key !== 'string' || !key.startsWith(prefix)) return false;
+            const parsed = parseHistoryEntryKey(key);
+            return parsed?.characterId === characterId && parsed.type === type && !listed.has(parsed.id);
+        });
+        if (found.length > 0) orphanCandidates.set(cacheKey, found);
+    } catch (error) {
+        console.warn('[MeterHistory] Looking for orphaned sessions failed:', error);
+    }
+}
+
+/**
+ * The second half: delete the noted bodies the stored index still does not
+ * list. Run inside the index's write queue, reading storage rather than the
+ * cache, so another tab's index write counts.
+ *
+ * @param {string} characterId - Whose
+ * @param {string} type - Which
+ * @param {Array<string>} candidates - Body keys noted by an earlier read
+ */
+async function sweepOrphans(characterId, type, candidates) {
+    const cacheKey = `${characterId}:${type}`;
+    try {
+        const read = await storage.tryGet(historyIndexKey(characterId, type), HISTORY_STORE);
+        // A read that failed says nothing about what is listed, and neither does an index never
+        // written: its bodies came from somewhere (a pull) that will hand them back
+        if (!read?.found) return;
+        const ids = indexIds(read.value);
+        if (!ids) return;
+        const listed = new Set(ids);
+        for (const key of candidates) {
+            const parsed = parseHistoryEntryKey(key);
+            if (!parsed || listed.has(parsed.id)) continue;
+            bodyCache.delete(key);
+            await storage.delete(key, HISTORY_STORE);
+        }
+        if (orphanCandidates.get(cacheKey) === candidates) orphanCandidates.delete(cacheKey);
+    } catch (error) {
+        console.warn('[MeterHistory] Deleting orphaned sessions failed:', error);
+    }
 }
 
 /**
@@ -299,8 +522,11 @@ async function readIndex(characterId, type) {
  * @param {Array<Object>} index - Summaries
  */
 async function writeIndex(characterId, type, index) {
-    indexCache.set(`${characterId}:${type}`, index);
-    await storage.set(historyIndexKey(characterId, type), index, HISTORY_STORE, true);
+    const cacheKey = `${characterId}:${type}`;
+    indexCache.set(cacheKey, index);
+    const deleted = freshDeletions(deletionCache.get(cacheKey));
+    deletionCache.set(cacheKey, deleted);
+    await storage.set(historyIndexKey(characterId, type), joinIndex(index, deleted), HISTORY_STORE, true);
 }
 
 /**
@@ -373,6 +599,12 @@ export async function saveHistoryEntry(entry, characterId) {
 
     try {
         return await runQueued(historyIndexKey(owner, type), async () => {
+            // Noted by an earlier read, never by this save's own: the gap
+            // between the two is what lets another tab finish listing a body
+            const orphans = orphanCandidates.get(`${owner}:${type}`) || null;
+            // Before this save writes its index: what is read back is the
+            // stored index as every tab has left it
+            if (orphans) await sweepOrphans(owner, type, orphans);
             const index = await readIndex(owner, type);
             const existing = index.find((summary) => summary.id === fitted.id);
             if (existing?.basis === 'game' && fitted.basis !== 'game') return null;
@@ -523,6 +755,9 @@ export async function deleteEntry(type, id, characterId = currentCharacterId()) 
         return await runQueued(historyIndexKey(owner, type), async () => {
             const index = await readIndex(owner, type);
             if (!index.some((summary) => summary.id === id)) return false;
+            // Marked, so a sync pull of a copy that still lists it does not bring it back
+            const cacheKey = `${owner}:${type}`;
+            deletionCache.set(cacheKey, { ...(deletionCache.get(cacheKey) || {}), [id]: Date.now() });
             await writeIndex(
                 owner,
                 type,
@@ -854,6 +1089,9 @@ export function _resetMeterHistory() {
     loading.clear();
     queues.clear();
     bodyCache.clear();
+    deletionCache.clear();
+    orphanCandidates.clear();
+    orphanChecked.clear();
     for (const state of Object.values(uiState)) {
         state.renaming = null;
         state.confirming = null;

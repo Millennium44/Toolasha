@@ -149,6 +149,13 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // Periods this machine timed off its own network, on the same reasoning:
     // another device's arrival times are not this one's
     'tickPeriodTally',
+    // A dungeon run in progress, rewritten every battle. Another device's
+    // mid-run record is not a run this one is in; resuming a run across
+    // devices is given up so it neither travels nor wakes a push each battle
+    'dungeonTracker_inProgressRun',
+    // What this device's settings carry-over could not decide, waiting to be
+    // shown once here. Another device's notice is not this one's to show
+    'settings_shared_scope_conflicts',
 ];
 
 /**
@@ -798,6 +805,18 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
                 ? new Set(heldKeys.map((entry) => baselineId(entry?.store, entry?.key)))
                 : null;
         const foldBaseline = mode === 'merge' && (!retryHeld || heldIds) ? baseline : null;
+        // A retired key this device no longer holds lands in the keys it was split into
+        // (see `splitRetiredKey`); one this device still holds is folded as before
+        let splitRetired = false;
+        for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
+            if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
+            for (const key of Object.keys(entries)) {
+                if (!mergeForKey(storeName, key)?.split) continue;
+                const probed = await storage.tryGet(key, storeName);
+                if (!probed || (probed.found && probed.value != null)) continue;
+                if (splitRetiredKey(storeName, entries, key)) splitRetired = true;
+            }
+        }
         const histories = await mergeLocalHistories(payload, foldBaseline, heldIds);
         const mergeHeld = histories.held;
         // One store read at a time, each let go before the next: what this
@@ -822,6 +841,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             mergeHeld.length > 0 ||
             droppedUnowned ||
             retentionDropped ||
+            splitRetired ||
             Boolean(settingsStore);
         const applied = rewrote ? JSON.stringify(payload) : json;
 
@@ -1104,6 +1124,55 @@ function foldSettingsMap(localValue, incomingValue, localStamps, incomingStamps,
 const UPLOAD_CONTEXT = Object.freeze({ forUpload: true });
 
 /**
+ * Carry a retired key's entries in the keys its owner would move them into
+ * (a registration's `split`), and drop the retired key itself.
+ *
+ * A chunked history's legacy single-array key is split into records and
+ * deleted on its first read. A device that has done so no longer holds it, so
+ * a pull wrote the gist's copy back whole, the next read split and deleted it
+ * again, and the upload — which keeps every key only the gist holds — never
+ * took it out of the gist: the same key landed on every pull. Folded into the
+ * record keys here, every entry it holds still arrives, by the same union the
+ * records always take.
+ *
+ * Nothing changes unless every target key has a registered merge: a split that
+ * cannot be carried faithfully leaves the key to land as it did before.
+ *
+ * @param {string} storeName - Object store
+ * @param {Object} entries - That store's entries; mutated in place
+ * @param {string} key - The retired key
+ * @returns {boolean} Whether the key was split
+ */
+function splitRetiredKey(storeName, entries, key) {
+    const registration = mergeForKey(storeName, key);
+    if (!registration?.split) return false;
+    let pieces;
+    try {
+        pieces = registration.split(key, entries[key]);
+    } catch (error) {
+        console.error(`[Sync] Splitting ${storeName}/${key} failed; carrying it whole:`, error);
+        return false;
+    }
+    if (!pieces || typeof pieces !== 'object') return false;
+    const folded = {};
+    try {
+        for (const [target, piece] of Object.entries(pieces)) {
+            const owner = mergeForKey(storeName, target);
+            if (!owner || owner === registration || !Array.isArray(piece)) return false;
+            folded[target] = Object.hasOwn(entries, target)
+                ? owner.merge(entries[target], piece, UPLOAD_CONTEXT)
+                : piece;
+        }
+    } catch (error) {
+        console.error(`[Sync] Folding ${storeName}/${key} into its records failed; carrying it whole:`, error);
+        return false;
+    }
+    Object.assign(entries, folded);
+    delete entries[key];
+    return true;
+}
+
+/**
  * Whether a key is written whole by sync — neither a settings map (merged per
  * setting), nor a settings map's stamps, nor a key with a registered merge.
  * @param {string} storeName - Object store
@@ -1368,6 +1437,9 @@ export function restampRestoredSettings(payload, now = Date.now()) {
  * download's keys and this device's together, are dropped from the download
  * (see `registerSyncRetention`): a snapshot this device pruned is not written
  * back, and neither is an older one the window no longer has room for.
+ * After the baseline rule, an index rule drops each download key the index in
+ * force does not name — the download's index when it is still in the write,
+ * else this device's — without ever deleting a local key for it.
  *
  * Then each remaining key this device already holds with the same value is
  * noted (compared with object keys sorted, as `addsToRemote` compares), for
@@ -1407,6 +1479,19 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
             retentionDropped = true;
         }
     };
+    // Index rules, once the baseline rule has decided which index lands: the
+    // download's when it is still in the write, else this device's. A body
+    // that index does not name is not written. Never a delete here (never
+    // `displaced`): a local body the gist's index leaves out may be one
+    // another tab has written and not yet listed, and its owner sweeps its
+    // own orphans
+    const dropOutsideIndex = (storeName, entries, localValues) => {
+        const valueOf = (key) => (Object.hasOwn(entries, key) ? entries[key] : localValues[key]);
+        for (const key of retentionDrops(storeName, Object.keys(entries), valueOf, { indexOnly: true })) {
+            delete entries[key];
+            retentionDropped = true;
+        }
+    };
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
         // Before the baseline rule removes any: a companion it kept as this
@@ -1421,6 +1506,7 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
             console.warn(`[Sync] Could not read ${storeName} to compare; writing all of it:`, error);
             if (!Array.isArray(entries)) {
                 dropOutsideRetention(storeName, entries, []);
+                dropOutsideIndex(storeName, entries, {});
                 // A record with tombstones beside it lands with them, as below; nothing here can weigh the pair
                 const folded = Object.keys(entries).filter(
                     (key) => foldsSame.has(baselineId(storeName, key)) && !tombstoneCompanionKey(storeName, key)
@@ -1446,6 +1532,10 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
                     delete entries[key];
                 }
             }
+        }
+        if (!Array.isArray(entries)) {
+            const localValues = local && typeof local === 'object' && !Array.isArray(local) ? local : {};
+            dropOutsideIndex(storeName, entries, localValues);
         }
         if (!local || typeof local !== 'object' || Array.isArray(entries)) continue;
         const same = new Set(
@@ -1659,6 +1749,12 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
     for (const storeName of storeNames) {
         const mine = local?.stores?.[storeName] || {};
         const theirs = remote.stores[storeName] || {};
+        // A retired key only the gist still holds leaves it, its entries carried
+        // in the keys its owner split it into (see `splitRetiredKey`)
+        for (const key of Object.keys(theirs)) {
+            if (Object.hasOwn(mine, key) || !mergeForKey(storeName, key)?.split) continue;
+            if (splitRetiredKey(storeName, theirs, key)) dropsFromRemote = true;
+        }
         const out = { ...theirs };
         for (const [key, value] of Object.entries(mine)) {
             if (!Object.hasOwn(theirs, key)) {
@@ -1725,7 +1821,9 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
         }
         // Stamps for a map only this device has came across with it above;
         // stamps the gist holds for a map it alone has stay with that map
-        for (const key of retentionDrops(storeName, Object.keys(out))) {
+        // An index rule reads the index the upload carries: a body it does not
+        // name leaves the gist with the rest
+        for (const key of retentionDrops(storeName, Object.keys(out), (name) => out[name])) {
             if (Object.hasOwn(theirs, key)) dropsFromRemote = true;
             delete out[key];
         }
@@ -1795,7 +1893,9 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
         const theirs = remote[storeName] && typeof remote[storeName] === 'object' ? remote[storeName] : {};
         // A key outside its owner's retention window, over both sides' keys, is
         // one neither side keeps: not news, whichever side still holds it
-        const outside = retentionDrops(storeName, [...Object.keys(entries || {}), ...Object.keys(theirs)]);
+        const outside = retentionDrops(storeName, [...Object.keys(entries || {}), ...Object.keys(theirs)], (key) =>
+            Object.hasOwn(entries || {}, key) ? entries[key] : theirs[key]
+        );
         for (const [key, value] of Object.entries(entries || {})) {
             if (outside.has(key)) continue;
             if (!Object.hasOwn(theirs, key)) return true;

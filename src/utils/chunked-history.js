@@ -586,8 +586,38 @@ class ChunkedHistory {
                 label: `${this.label} legacy key`,
                 merge,
                 pull,
+                split: (key, value) => this._splitLegacy(legacyBase, key, value),
             });
         }
+    }
+
+    /**
+     * The record keys a legacy key's entries would be split into, as `_migrate`
+     * groups them, for sync to carry in place of a legacy key this device no
+     * longer holds. Written back raw, the key is split and deleted on the next
+     * read, and the gist hands it back on the next pull.
+     *
+     * Pure, like the merges. A value holding an entry with no chunk is not
+     * split at all.
+     * @param {string} legacyBase - The legacy key's stem
+     * @param {string} key - A legacy key, `${legacyBase}_${charId}`
+     * @param {*} value - Its value
+     * @returns {Record<string, Array<Object>>|null} Record key → entries; null for a key or value it cannot split
+     * @private
+     */
+    _splitLegacy(legacyBase, key, value) {
+        if (!Array.isArray(value) || typeof key !== 'string' || !key.startsWith(`${legacyBase}_`)) return null;
+        const charId = key.slice(legacyBase.length + 1);
+        if (!charId || this.legacyKey(charId) !== key) return null;
+        const grouped = this._group(value);
+        let filed = 0;
+        for (const bucket of grouped.values()) filed += bucket.length;
+        // An entry with no chunk is one `_migrate` cannot file either; it keeps
+        // the legacy key for it, so sync carries the key whole
+        if (filed !== value.filter((entry) => entry != null).length) return null;
+        const records = {};
+        for (const [chunkId, bucket] of grouped) records[this.keyFor(charId, chunkId)] = bucket;
+        return records;
     }
 
     /**
@@ -923,7 +953,7 @@ class ChunkedHistory {
     }
 
     /**
-     * Persist a tombstone map, or delete the key when nothing is left in it.
+     * Persist a tombstone map (an empty one as `{}`, so the clear syncs).
      *
      * Fire and forget: nothing downstream waits on it, and a write that does
      * not land leaves the map exactly as it was on disk — which is the same
@@ -935,10 +965,10 @@ class ChunkedHistory {
      */
     _writeTombs(charId, stones) {
         const key = this.tombKey(charId);
-        const write =
-            Object.keys(stones).length === 0
-                ? storage.delete(key, this.storeName)
-                : storage.set(key, stones, this.storeName, this.immediate);
+        // An empty map is written as `{}`, never deleted: sync carries whole keys, so a deleted key is still in the
+        // gist, comes back on the next pull with its expired stones, is emptied again by the next load, and loops.
+        // `{}` is a newer value the merge folds the old copy into (`mergeTombstones` ages the stones away).
+        const write = storage.set(key, stones, this.storeName, this.immediate);
         return Promise.resolve(write).catch((error) => {
             console.error(`[${this.label}] Writing the deletion record failed:`, error);
         });

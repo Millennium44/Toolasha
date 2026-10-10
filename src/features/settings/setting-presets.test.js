@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     settingsMap: {},
     written: [],
     storageWrites: [],
+    stored: new Map(),
     characterId: 'char-1',
 }));
 
@@ -39,7 +40,10 @@ vi.mock('../../core/storage.js', () => ({
         setJSON: async (key, value) => {
             mocks.storageWrites.push([key, value]);
         },
-        getJSON: async () => null,
+        getJSON: async (key) => mocks.stored.get(key) ?? null,
+        set: async (key, value) => {
+            mocks.stored.set(key, value);
+        },
         delete: async () => {},
     },
 }));
@@ -58,6 +62,8 @@ const {
     applyPreset,
     writeCheckboxValues,
     bulkSnapshotKey,
+    loadBulkSnapshot,
+    clearBulkSnapshot,
 } = await import('./setting-presets.js');
 
 const BOOLEAN_TYPES = new Set(['checkbox', 'checkboxWithButton']);
@@ -331,6 +337,16 @@ describe('applying a preset', () => {
         expect(await applyPreset('nope')).toBe(null);
         expect(mocks.written).toEqual([]);
         expect(mocks.storageWrites).toEqual([]);
+    });
+
+    test('Restore clears the snapshot to null, not a delete, so a pull of the gist copy cannot bring Restore back', async () => {
+        mocks.stored.set(bulkSnapshotKey(), { combatSim: false });
+        expect(await loadBulkSnapshot()).toEqual({ combatSim: false });
+
+        await clearBulkSnapshot();
+
+        expect(mocks.stored.get(bulkSnapshotKey())).toBeNull();
+        expect(await loadBulkSnapshot()).toBeNull();
     });
 
     test('the snapshot key is per character, because settings are', () => {

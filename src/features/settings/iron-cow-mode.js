@@ -263,8 +263,11 @@ class IronCowMode {
                     config.setSettingValue(id, entry.value);
                 }
             }
+            // null, not a delete: sync carries whole keys, so a deleted snapshot is still in the gist and a
+            // sibling tab's pull would write it back. A null is a newer value the whole-key rule carries, and
+            // every reader (`reconcile`, this method) treats it as absent. Only when there was one to clear.
+            await storage.set(key, null, 'settings', true);
         }
-        await storage.delete(key, 'settings');
     }
 }
 
