@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market API backs off after a refusal; Safe start
+
+- After the price API refuses or fails a request, Toolasha now waits (honoring the server's Retry-After) even across reloads instead of asking again at once, and the Tampermonkey menu gains "Safe start" (load with every feature off) and "Reload with startup log" (a downloadable log of load timings and errors, no game data) — ideas from MWITools.
+
 ### From upstream: Max buy button, chat date separator
 
 - A Max button in the Shop, Task Shop, Labyrinth Shop and Cowbell Store buy dialogs fills in the most you can afford, respecting purchase limits (it never buys; on by default), and chat timestamps now separate the date with "-" like the Market.
