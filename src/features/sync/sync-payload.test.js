@@ -2601,7 +2601,16 @@ describe('saved meter sessions travel only while their index lists them', () => 
     const STORE = 'combatExport';
     const INDEX = 'meterHistoryIndex_32030_combat';
     const body = (id) => `meterHistory_32030_combat_${id}`;
-    const summary = (id, extra = {}) => ({ id, type: 'combat', endedAt: Number(id.split('_')[1]), ...extra });
+    // The fields `summaryOf` always writes, so a fold that fills them in compares equal
+    const summary = (id, extra = {}) => ({
+        id,
+        type: 'combat',
+        endedAt: Number(id.split('_')[1]),
+        basis: 'stream',
+        favourite: false,
+        name: null,
+        ...extra,
+    });
     const session = (id) => ({ id, type: 'combat', dealt: { players: [] } });
     const payloadOf = (stores) =>
         JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-09T00:00:00.000Z', syncScope: 'everything', stores });
@@ -2694,6 +2703,81 @@ describe('saved meter sessions travel only while their index lists them', () => 
         expect(Object.keys(JSON.parse(text).stores[STORE]).sort()).toEqual(Object.keys(local).sort());
         expect(dropsFromRemote).toBe(true);
         expect(remoteAdds).toBe(false);
+    });
+
+    test('two devices that each saved a session between exchanges both keep both', async () => {
+        const s1 = summary('combat_1');
+        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { [INDEX]: [s1] } }));
+        const deviceA = {
+            [INDEX]: [summary('combat_2'), s1],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_2')]: session('combat_2'),
+        };
+        const deviceB = {
+            [INDEX]: [summary('combat_3'), s1],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_3')]: session('combat_3'),
+        };
+        const listed = (index) => index.map((entry) => entry.id).sort();
+
+        // A pulls B's push
+        storeState.stores[STORE] = structuredClone(deviceA);
+        await applyPayload(payloadOf({ [STORE]: structuredClone(deviceB) }), { mode: 'merge', baseline });
+        const landedOnA = importedPayloads.at(-1).stores[STORE];
+        expect(listed(landedOnA[INDEX])).toEqual(['combat_1', 'combat_2', 'combat_3']);
+        expect(Object.hasOwn(landedOnA, body('combat_3'))).toBe(true);
+        expect(storeState.stores[STORE][body('combat_2')]).toBeDefined();
+
+        // A's upload over B's push carries both
+        const { text } = mergeForUpload(payloadOf({ [STORE]: deviceA }), payloadOf({ [STORE]: deviceB }), baseline);
+        const gist = JSON.parse(text).stores[STORE];
+        expect(listed(gist[INDEX])).toEqual(['combat_1', 'combat_2', 'combat_3']);
+        expect(
+            Object.keys(gist)
+                .filter((key) => key !== INDEX)
+                .sort()
+        ).toEqual([body('combat_1'), body('combat_2'), body('combat_3')].sort());
+
+        // B pulls that
+        storeState.stores[STORE] = structuredClone(deviceB);
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline });
+        const landedOnB = importedPayloads.at(-1).stores[STORE];
+        expect(listed(landedOnB[INDEX])).toEqual(['combat_1', 'combat_2', 'combat_3']);
+        expect(Object.hasOwn(landedOnB, body('combat_2'))).toBe(true);
+    });
+
+    test('a session deleted here stays deleted after a pull of the old gist, and leaves the gist', async () => {
+        const gist = {
+            [INDEX]: [summary('combat_2'), summary('combat_1')],
+            [body('combat_1')]: session('combat_1'),
+            [body('combat_2')]: session('combat_2'),
+        };
+        // `deleteEntry` dropped combat_1 here and marked it
+        const at = Date.now();
+        const local = {
+            [INDEX]: [summary('combat_2'), { deleted: { combat_1: at } }],
+            [body('combat_2')]: session('combat_2'),
+        };
+        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { [INDEX]: gist[INDEX] } }));
+
+        storeState.stores[STORE] = structuredClone(local);
+        await applyPayload(payloadOf({ [STORE]: structuredClone(gist) }), { mode: 'merge', baseline: {} });
+        const landed = importedPayloads.at(-1).stores[STORE];
+        expect(Object.hasOwn(landed, body('combat_1'))).toBe(false);
+        if (Object.hasOwn(landed, INDEX)) {
+            expect(landed[INDEX].map((entry) => entry.id).filter(Boolean)).toEqual(['combat_2']);
+        }
+
+        const { text, dropsFromRemote } = mergeForUpload(
+            payloadOf({ [STORE]: local }),
+            payloadOf({ [STORE]: gist }),
+            baseline
+        );
+        const uploaded = JSON.parse(text).stores[STORE];
+        expect(Object.hasOwn(uploaded, body('combat_1'))).toBe(false);
+        expect(uploaded[INDEX].map((entry) => entry.id).filter(Boolean)).toEqual(['combat_2']);
+        expect(uploaded[INDEX].at(-1)).toEqual({ deleted: { combat_1: at } });
+        expect(dropsFromRemote).toBe(true);
     });
 
     test('a gist-only body outside the index is not news to this device', () => {

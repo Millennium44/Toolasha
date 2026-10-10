@@ -36,7 +36,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { BOARD_COLORS, boardNoteHTML, escapeText } from '../../utils/damage-board.js';
 import { formatDateTime, formatKMB } from '../../utils/formatters.js';
-import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
+import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 /** The setting that turns saving and the History views on */
 export const HISTORY_SETTING = 'combatMeterHistory';
@@ -159,6 +159,115 @@ export function trimIndex(index) {
     }
     return { kept, dropped };
 }
+
+/** How long a deleted session's marker is kept, for a device that has not synced since to learn of it */
+export const DELETION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * A stored index split into its summaries and its deletion markers.
+ *
+ * The index stays a bare array of summaries, the shape every build reads.
+ * Deletions ride in it as one element with no `id` — `{deleted: {id: at}}` —
+ * which an older build's read (`filter(summary => summary?.id)`) drops, so it
+ * reads the summaries exactly as before.
+ *
+ * @param {*} value - A stored index
+ * @returns {{summaries: Array<Object>, deleted: Record<string, number>}|null} Null when the value is not an index
+ */
+export function splitIndex(value) {
+    if (!Array.isArray(value)) return null;
+    const summaries = [];
+    const deleted = {};
+    for (const element of value) {
+        if (element?.id) {
+            summaries.push(element);
+            continue;
+        }
+        if (!element?.deleted || typeof element.deleted !== 'object') continue;
+        for (const [id, at] of Object.entries(element.deleted)) {
+            const when = Number(at);
+            if (Number.isFinite(when)) deleted[id] = Math.max(deleted[id] ?? 0, when);
+        }
+    }
+    return { summaries, deleted };
+}
+
+/**
+ * Deletion markers younger than {@link DELETION_TTL_MS}.
+ * @param {Record<string, number>} deleted - id → when it was deleted
+ * @param {number} [now] - Epoch ms
+ * @returns {Record<string, number>}
+ */
+function freshDeletions(deleted, now = Date.now()) {
+    const out = {};
+    for (const [id, at] of Object.entries(deleted || {})) if (at >= now - DELETION_TTL_MS) out[id] = at;
+    return out;
+}
+
+/**
+ * An index as stored: its summaries, and its markers when it has any.
+ * @param {Array<Object>} summaries - Summaries
+ * @param {Record<string, number>} deleted - Markers
+ * @returns {Array<Object>}
+ */
+function joinIndex(summaries, deleted) {
+    return Object.keys(deleted || {}).length > 0 ? [...summaries, { deleted }] : summaries;
+}
+
+/**
+ * Fold two devices' indexes of one character and type.
+ *
+ * The index is the list sync keeps bodies by (see the retention rule above),
+ * so taking one side whole would drop the other device's sessions and then
+ * their bodies with them. Instead: the union by id; one session on both sides
+ * keeps a game-totals reading over a stream one (as a save does), and is
+ * starred if either side starred it; a session either side deleted, and has
+ * not seen again since, is left out; then the owner's own cap ({@link trimIndex}).
+ *
+ * @param {*} local - One side's index
+ * @param {*} incoming - The other's; it wins what the fold cannot combine
+ * @param {number} [now] - Epoch ms, for ageing markers
+ * @returns {*} The folded index
+ */
+export function mergeHistoryIndex(local, incoming, now = Date.now()) {
+    const mine = splitIndex(local);
+    const theirs = splitIndex(incoming);
+    if (!mine) return incoming;
+    if (!theirs) return local;
+
+    const deleted = { ...mine.deleted };
+    for (const [id, at] of Object.entries(theirs.deleted)) deleted[id] = Math.max(deleted[id] ?? 0, at);
+    const markers = freshDeletions(deleted, now);
+
+    const byId = new Map();
+    for (const summary of mine.summaries) byId.set(summary.id, summary);
+    for (const summary of theirs.summaries) {
+        const held = byId.get(summary.id);
+        if (!held) {
+            byId.set(summary.id, summary);
+            continue;
+        }
+        const winner = held.basis === 'game' && summary.basis !== 'game' ? held : summary;
+        byId.set(summary.id, {
+            ...winner,
+            favourite: Boolean(held.favourite || summary.favourite),
+            name: summary.name ?? held.name ?? null,
+        });
+    }
+    const listed = [...byId.values()]
+        .filter((summary) => !(summary.id in markers) || (Number(summary.endedAt) || 0) > markers[summary.id])
+        .sort(
+            (a, b) => (Number(b.endedAt) || 0) - (Number(a.endedAt) || 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+        );
+    return joinIndex(trimIndex(listed).kept, markers);
+}
+
+registerSyncMerge({
+    store: HISTORY_STORE,
+    prefix: 'meterHistoryIndex_',
+    merge: (local, incoming) => mergeHistoryIndex(local, incoming),
+    label: 'Saved meter sessions',
+});
 
 /**
  * Evenly thin an array to at most `limit` items, keeping the last.
@@ -284,6 +393,8 @@ function summaryOf(entry) {
 
 /** `characterId:type` → summaries, newest first */
 const indexCache = new Map();
+/** `characterId:type` → deletion markers carried with the index */
+const deletionCache = new Map();
 /** Cache keys with a read in flight */
 const loading = new Set();
 /** Index key → the write chain it is on */
@@ -328,10 +439,13 @@ async function runQueued(key, task) {
 async function readIndex(characterId, type) {
     const cacheKey = `${characterId}:${type}`;
     if (indexCache.has(cacheKey)) return indexCache.get(cacheKey);
-    const stored = await storage.get(historyIndexKey(characterId, type), HISTORY_STORE, []);
-    const index = Array.isArray(stored) ? stored.filter((summary) => summary?.id) : [];
+    const stored = splitIndex(await storage.get(historyIndexKey(characterId, type), HISTORY_STORE, []));
+    const index = stored ? stored.summaries : [];
     // A write queued behind this read may already have filled the cache
-    if (!indexCache.has(cacheKey)) indexCache.set(cacheKey, index);
+    if (!indexCache.has(cacheKey)) {
+        indexCache.set(cacheKey, index);
+        deletionCache.set(cacheKey, stored ? stored.deleted : {});
+    }
     await findOrphans(characterId, type, index);
     return indexCache.get(cacheKey);
 }
@@ -383,9 +497,10 @@ async function sweepOrphans(characterId, type, candidates) {
     const cacheKey = `${characterId}:${type}`;
     try {
         const read = await storage.tryGet(historyIndexKey(characterId, type), HISTORY_STORE);
-        // A read that failed says nothing about what is listed; an index never written lists nothing
-        if (!read) return;
-        const ids = read.found ? indexIds(read.value) : [];
+        // A read that failed says nothing about what is listed, and neither does an index never
+        // written: its bodies came from somewhere (a pull) that will hand them back
+        if (!read?.found) return;
+        const ids = indexIds(read.value);
         if (!ids) return;
         const listed = new Set(ids);
         for (const key of candidates) {
@@ -407,8 +522,11 @@ async function sweepOrphans(characterId, type, candidates) {
  * @param {Array<Object>} index - Summaries
  */
 async function writeIndex(characterId, type, index) {
-    indexCache.set(`${characterId}:${type}`, index);
-    await storage.set(historyIndexKey(characterId, type), index, HISTORY_STORE, true);
+    const cacheKey = `${characterId}:${type}`;
+    indexCache.set(cacheKey, index);
+    const deleted = freshDeletions(deletionCache.get(cacheKey));
+    deletionCache.set(cacheKey, deleted);
+    await storage.set(historyIndexKey(characterId, type), joinIndex(index, deleted), HISTORY_STORE, true);
 }
 
 /**
@@ -637,6 +755,9 @@ export async function deleteEntry(type, id, characterId = currentCharacterId()) 
         return await runQueued(historyIndexKey(owner, type), async () => {
             const index = await readIndex(owner, type);
             if (!index.some((summary) => summary.id === id)) return false;
+            // Marked, so a sync pull of a copy that still lists it does not bring it back
+            const cacheKey = `${owner}:${type}`;
+            deletionCache.set(cacheKey, { ...(deletionCache.get(cacheKey) || {}), [id]: Date.now() });
             await writeIndex(
                 owner,
                 type,
@@ -968,6 +1089,7 @@ export function _resetMeterHistory() {
     loading.clear();
     queues.clear();
     bodyCache.clear();
+    deletionCache.clear();
     orphanCandidates.clear();
     orphanChecked.clear();
     for (const state of Object.values(uiState)) {
