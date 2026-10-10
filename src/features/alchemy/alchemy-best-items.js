@@ -56,7 +56,9 @@ export const SORT_MODES = [
         title:
             'Insta-buy the item at its real ask, decompose it and everything it yields (each step on the ' +
             'catalyst/tea setup best for the chain per hour), insta-sell what is left at bid after market tax. ' +
-            'Items with an unpriced step show no value and sort last.',
+            'Items with an unpriced step show no value and sort last. Always uses instant buy/sell prices ' +
+            '(ask in, taxed bid out), whatever the Buy/Sell price dropdowns say, so it can differ from the ' +
+            'item tooltip. A leading ≥ marks a bonus crate with some contents unpriced.',
     },
 ];
 
@@ -122,6 +124,8 @@ class AlchemyBestItems {
         // Whole-chain figures by item hrid for the current rankings (null = unpriced)
         this.chainValues = new Map();
         this.chainTops = new Map();
+        // Why a chain is partial or unpriced, by item hrid: {partial: string[], unpriced: string[]}
+        this.chainNotes = new Map();
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -157,6 +161,7 @@ class AlchemyBestItems {
         try {
             this.chainValues.clear();
             this.chainTops.clear();
+            this.chainNotes.clear();
             clearDecomposeChainCaches();
             if (
                 this.modal &&
@@ -458,6 +463,7 @@ class AlchemyBestItems {
         // Tea, gear and prices may have moved since the chains were last worked out
         this.chainValues.clear();
         this.chainTops.clear();
+        this.chainNotes.clear();
         clearDecomposeChainCaches();
         const raw = this.calculateRankings(alchemyType);
         const pending = raw.map((entry) => ({ ...entry, capPending: true }));
@@ -517,6 +523,7 @@ class AlchemyBestItems {
         this.cachedRankings = {};
         this.chainValues.clear();
         this.chainTops.clear();
+        this.chainNotes.clear();
         clearDecomposeChainCaches();
     }
 
@@ -567,10 +574,20 @@ class AlchemyBestItems {
         if (this.chainValues.has(itemHrid)) return this.chainValues.get(itemHrid);
         const chain = decomposeChain(itemHrid);
         this.chainTops.set(itemHrid, chain?.topStep ?? null);
+        this.chainNotes.set(itemHrid, { partial: chain?.partialItems ?? [], unpriced: chain?.unpriced ?? [] });
         const value = chain?.netPerHour;
         const figure = Number.isFinite(value) ? value : null;
         this.chainValues.set(itemHrid, figure);
         return figure;
+    }
+
+    /**
+     * Display names for a chain note's item list.
+     * @param {string[]|undefined} hrids
+     * @returns {string} Comma-joined names, empty when there are none
+     */
+    chainItemNames(hrids) {
+        return (hrids ?? []).map((hrid) => dataManager.getItemDetails(hrid)?.name || hrid).join(', ');
     }
 
     createModal() {
@@ -994,10 +1011,17 @@ class AlchemyBestItems {
                 chainTd.setAttribute('data-mwi-chain', 'true');
                 if (chainValue === null) {
                     chainTd.textContent = '\u2014';
-                    chainTd.title = 'Part of this chain has no real ask or bid, so it has no figure';
+                    const unpricedNames = this.chainItemNames(this.chainNotes.get(item.itemHrid)?.unpriced);
+                    chainTd.title = unpricedNames
+                        ? `No figure: no real ask or bid for ${unpricedNames}`
+                        : 'Part of this chain has no real ask or bid, so it has no figure';
                     chainTd.style.cssText = 'padding: 4px 8px; text-align: right; color: #555;';
                 } else {
-                    chainTd.textContent = formatKMB(Math.round(chainValue));
+                    const partialNames = this.chainItemNames(this.chainNotes.get(item.itemHrid)?.partial);
+                    chainTd.textContent = `${partialNames ? '≥' : ''}${formatKMB(Math.round(chainValue))}`;
+                    if (partialNames) {
+                        chainTd.title = `A lower bound: no price for some contents of ${partialNames}, counted at zero`;
+                    }
                     chainTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${chainValue >= 0 ? '#4ade80' : '#f87171'};`;
                 }
                 row.appendChild(chainTd);

@@ -8,7 +8,10 @@
  * item costs its real ask, every terminal output is worth its real bid after
  * market tax. Each step is the calculator's own decompose result, pinned to
  * conservative pricing, so a step with no market data leaves the chain partly
- * unpriced and the item without a figure.
+ * unpriced and the item without a figure. A bonus crate is the exception: its
+ * contents are priced like the tooltip prices them (Coin, tokens, Cowbells, shop
+ * conversions), and a crate with some contents still unpriced counts at its priced
+ * part, flagged `partial` on the result, instead of sinking the chain.
  *
  * The mode ranks by gold per hour of the whole chain, (Σ net) / (Σ seconds), so a
  * step's best setup depends on the chain around it: a setup that is best per hour on
@@ -22,8 +25,10 @@
 
 import dataManager from '../core/data-manager.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
+import expectedValueCalculator from '../features/market/expected-value-calculator.js';
 import { withProfitPricingMode, getItemPriceInfo, isPriceEstimated } from './market-data.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
+import { getAlchemyOutputShopValue } from './alchemy-shop-value.js';
 import {
     CHAIN_MAX_DEPTH,
     bestSelfUseCandidate,
@@ -168,10 +173,25 @@ export function decomposeChain(itemHrid) {
                 if (info.price === null || info.price === undefined || info.estimated) return null;
                 return calculatePriceAfterTax(info.price);
             };
+            // A crate's contents are sold the way the item tooltip sells them: Coin at face
+            // value, Cowbells, dungeon tokens and nested crates through the sell-side resolver
+            // (taxed where it says so), a shop-only content as its conversion after tax, and
+            // anything else at its real bid. Only the crate's contents get this latitude; the top
+            // item's ask and the base outputs stay on the strict real-price rule.
+            const contentPriceOf = (hrid) => {
+                const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
+                if (resolved && Number.isFinite(resolved.value)) {
+                    return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
+                }
+                const real = priceOf(hrid);
+                if (real !== null) return real;
+                const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
+                return shop ? calculatePriceAfterTax(shop.valuePerUnit) : null;
+            };
             const containerValue = (hrid) =>
                 untaxedContainerValue(hrid, {
                     containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
-                    priceOf,
+                    priceOf: contentPriceOf,
                 });
             const chainDeps = {
                 getItemDetails: (hrid) => dataManager.getItemDetails(hrid),

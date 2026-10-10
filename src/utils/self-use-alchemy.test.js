@@ -262,7 +262,7 @@ describe('decompose once, self-use', () => {
         expect(step.partlyUnpriced).toBe(true);
     });
 
-    test('a partial bonus container makes the full decompose chain net unstated', () => {
+    test('a partial bonus container leaves the full decompose chain net a flagged lower bound', () => {
         const bonus = [{ itemHrid: '/items/small_artisans_crate', isRare: true, dropsPerHour: 1, price: 1 }];
         const chain = selfUseDecomposeChain('/items/cheese_sword', {
             getDecompose: (hrid) => result({ itemHrid: hrid, actionsPerHour: 100, successRate: 1, bonus }),
@@ -273,7 +273,10 @@ describe('decompose once, self-use', () => {
             containerValue: () => ({ value: 200, partlyUnpriced: true }),
         });
         expect(chain.terminalValue).toBeCloseTo(18 * 10 + 2, 6);
-        expect(chain.net).toBeNull();
+        expect(chain.net).toBeCloseTo(18 * 10 + 2, 6);
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual(['/items/small_artisans_crate']);
+        expect(chain.unpriced).toEqual([]);
         expect(chain.partlyUnpriced).toBe(true);
     });
 

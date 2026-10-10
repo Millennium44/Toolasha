@@ -2062,8 +2062,8 @@ class TooltipPrices {
                     const time = timeReadable(chain.seconds);
                     if (chain.net !== null) {
                         lines.push({
-                            text: `Full decompose chain (${keepTag(chain.kept)}): ${formatKMB(chain.net)}/item`,
-                            detail: `(${time}, ${formatKMB(chain.netPerHour)}/hr)`,
+                            text: `Full decompose chain (${keepTag(chain.kept)}): ${chain.partial ? '≥' : ''}${formatKMB(chain.net)}/item`,
+                            detail: `(${time}, ${chain.partial ? '≥' : ''}${formatKMB(chain.netPerHour)}/hr${chain.partial ? ', a bonus crate partly unpriced' : ''})`,
                             note: `collects ${names}`,
                             color: lineColor(chain.net),
                         });
