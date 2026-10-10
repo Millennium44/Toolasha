@@ -268,7 +268,7 @@ export function buyCost(units, { ask, listings = null, weekly = Infinity, alread
 /**
  * One route's option for one item's next rung.
  *
- * Craft: units = needed; gold = units × unitCost − the bonus drops it rolls, sold (`route.kept`, per item
+ * Craft: units = ⌈needed / (1 + the target's own bonus copies per unit)⌉ (whole actions); gold = units × unitCost − the bonus drops it rolls, sold (`route.kept`, per item
  * made, bounded by `sellable` like a source route's); time = units × unitSeconds.
  *
  * Source routes, with y_X the expected units of the target per unit of the route:
@@ -301,13 +301,17 @@ export function evaluateOption(itemHrid, counts, route, { sellable, buyQuote } =
     const base = { itemHrid, route: route.route, from: step.count, to: step.threshold, gain: step.gain };
 
     if (route.route === 'craft') {
-        // Whole actions only, and every unit an action makes is collected
+        // Whole actions only, and every unit an action makes is collected. A bonus drop that is the target
+        // itself (a crate that yields the item being made) adds copies to each unit made, as a source
+        // route's yield of the target does
         const batch = Math.max(1, Number(route.batch) || 1);
-        const units = Math.ceil(step.needed / batch - 1e-9) * batch;
+        const bonusCopies = Math.max(0, Number(route.yields?.get(itemHrid)) || 0);
+        const perUnit = 1 + bonusCopies;
+        const units = Math.ceil(step.needed / perUnit / batch - 1e-9) * batch;
         const before = counts.get(itemHrid) || 0;
-        const gain = pointsFromCount(before + units) - pointsFromCount(before);
+        const gain = pointsFromCount(before + units * perUnit) - pointsFromCount(before);
         const seconds = units * (Number(route.unitSeconds) || 0);
-        const credits = new Map([[itemHrid, units]]);
+        const credits = new Map([[itemHrid, units * perUnit]]);
         // The bonus drops each completion rolls (a skill's essence, an Artisan's Crate): credited toward
         // their own collections, and sold as far as the market takes them
         let collateral = 0;

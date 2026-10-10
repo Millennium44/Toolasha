@@ -176,6 +176,25 @@ describe('route options', () => {
         expect(option.credits.get('/items/crushed_amber')).toBe(18);
     });
 
+    test('a craft whose bonus drop is the target itself credits the copies, so fewer units are made', () => {
+        // Each item made rolls 1 more copy of itself on average: 0 → 1 needs one unit made for 2 copies,
+        // 0 → 10 needs 5 units for 10 copies, and the cost is for the 5 units
+        const route = {
+            route: 'craft',
+            itemHrid: '/items/crushed_amber',
+            unitCost: 2,
+            unitSeconds: 1,
+            yields: new Map([['/items/crushed_amber', 1]]),
+        };
+        const option = evaluateOption('/items/crushed_amber', new Map([['/items/crushed_amber', 1]]), route);
+        expect(option.to).toBe(10);
+        expect(option.units).toBe(5);
+        expect(option.gold).toBe(10);
+        expect(option.credits.get('/items/crushed_amber')).toBe(10);
+        expect(option.gain).toBe(pointsFromCount(11) - pointsFromCount(1));
+        expect(option.sold.has('/items/crushed_amber')).toBe(false);
+    });
+
     test('a route with an unpriced kept output is left out of the ranking', () => {
         const counts = collectionCounts(ROWS);
         const index = indexRoutes({ craft: [], sources: [{ ...cheeseSword(), partlyUnpriced: true }] });
