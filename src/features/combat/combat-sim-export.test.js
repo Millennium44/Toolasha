@@ -845,3 +845,46 @@ describe('own abilities export in slot order', () => {
         ]);
     });
 });
+
+describe('constructPartyPlayer drink classification', () => {
+    const clientObj = {
+        itemDetailMap: {
+            // Neither name matches the '/drinks/' or 'coffee' heuristics; only the live-data category says drink
+            '/items/wisdom_tea': { categoryHrid: '/item_categories/drink' },
+            '/items/donut': { categoryHrid: '/item_categories/food' },
+        },
+    };
+    const profile = (extra = {}) => ({
+        characterID: 'char-a',
+        characterName: 'A',
+        profile: { characterSkills: [], wearableItemMap: {}, ...extra },
+    });
+
+    test('a party member consumable is a drink by its item category, not by its name', async () => {
+        const { constructPartyPlayer } = await import('./combat-sim-export.js');
+        const battle = {
+            players: [
+                {
+                    character: { id: 'char-a' },
+                    combatConsumables: [{ itemHrid: '/items/wisdom_tea' }, { itemHrid: '/items/donut' }],
+                },
+            ],
+        };
+        const player = constructPartyPlayer(profile(), clientObj, battle);
+
+        expect(player.drinks['/action_types/combat'][0]).toEqual({ itemHrid: '/items/wisdom_tea' });
+        expect(player.food['/action_types/combat'][0]).toEqual({ itemHrid: '/items/donut' });
+    });
+
+    test('the trigger-map fallback classifies by category too', async () => {
+        const { constructPartyPlayer } = await import('./combat-sim-export.js');
+        const player = constructPartyPlayer(
+            profile({ consumableCombatTriggersMap: { '/items/wisdom_tea': [], '/items/donut': [] } }),
+            clientObj,
+            null
+        );
+
+        expect(player.drinks['/action_types/combat'][0]).toEqual({ itemHrid: '/items/wisdom_tea' });
+        expect(player.food['/action_types/combat'][0]).toEqual({ itemHrid: '/items/donut' });
+    });
+});

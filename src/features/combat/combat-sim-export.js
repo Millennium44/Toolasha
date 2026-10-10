@@ -657,7 +657,7 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
             const isDrink =
                 itemHrid.includes('/drinks/') ||
                 itemHrid.includes('coffee') ||
-                clientObj?.itemDetailMap?.[itemHrid]?.type === 'drink';
+                clientObj?.itemDetailMap?.[itemHrid]?.categoryHrid === '/item_categories/drink';
 
             if (isDrink && drinkIndex < 3) {
                 playerObj.drinks['/action_types/combat'][drinkIndex++] = { itemHrid: itemHrid };
@@ -679,7 +679,7 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
                 const isDrink =
                     itemHrid.includes('/drinks/') ||
                     itemHrid.includes('coffee') ||
-                    clientObj?.itemDetailMap?.[itemHrid]?.type === 'drink';
+                    clientObj?.itemDetailMap?.[itemHrid]?.categoryHrid === '/item_categories/drink';
 
                 if (isDrink && drinkIndex < 3) {
                     playerObj.drinks['/action_types/combat'][drinkIndex++] = { itemHrid: itemHrid };
