@@ -80,6 +80,25 @@ function lastSeenAt(session) {
     return Number.isFinite(ms) ? ms : 0;
 }
 
+/**
+ * When this device archived a run — stamped by {@link archiveSession}, absent
+ * from runs another device or an older build archived.
+ */
+function archivedAtOf(session) {
+    const ms = Number(session?.archivedAt);
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * The instant Clear's epoch is compared against: the later of the run's last
+ * snapshot and the moment it was archived. A run that was live when Clear was
+ * pressed has a last snapshot from before it; it is archived, and so kept,
+ * after. Pre-clear history from elsewhere has neither instant past the epoch.
+ */
+function recordedAt(session) {
+    return Math.max(lastSeenAt(session), archivedAtOf(session)) || startedAt(session);
+}
+
 /** The larger of two counters; a side that is not a number defers to the other */
 function larger(a, b) {
     if (typeof a !== 'number') return b;
@@ -181,6 +200,7 @@ function mergePlayer(early, late, durationSeconds) {
  * | --- | --- |
  * | `combatStartTime` | the earlier of the two — a run begins once |
  * | `timestamp` (last seen) | the later of the two |
+ * | `archivedAt` | the later of the two |
  * | `durationSeconds` | start to last-seen, never shorter than either observation |
  * | `players[].loot[slot].count` | counter — the larger |
  * | `players[].experience[skill]` | counter — the larger |
@@ -238,6 +258,8 @@ export function mergeSessionRecords(a, b) {
     const merged = { ...early, ...late, durationSeconds, players };
     if (combatStartTime !== undefined) merged.combatStartTime = combatStartTime;
     if (timestamp) merged.timestamp = timestamp;
+    const archivedAt = Math.max(archivedAtOf(a), archivedAtOf(b));
+    if (archivedAt) merged.archivedAt = archivedAt;
     return merged;
 }
 
@@ -269,8 +291,8 @@ export function mergeSessions(base, fresh) {
  * The fold as stored and synced: {@link mergeSessions} with Clear's epoch
  * applied. A union cannot say "the user threw these away", so a peer's
  * still-full copy brought every cleared run back on the next pull. The epoch is
- * compared against each run's own last-seen instant, so a run archived after
- * the Clear survives it. See utils/cleared-record.js. A list stored before the
+ * compared against each run's later of last-seen and archived instants
+ * ({@link recordedAt}), so a run archived after the Clear survives it. See utils/cleared-record.js. A list stored before the
  * epoch existed is a bare array and reads as never cleared.
  *
  * Stored as a bare array until a Clear has happened, as every earlier build
@@ -278,7 +300,7 @@ export function mergeSessions(base, fresh) {
  * list, so its next save or upload would drop every run. Only a record that
  * has been cleared carries `{clearedAt, entries}` (see {@link storedShape}).
  */
-const foldClearable = mergeClearable(mergeSessions, (session) => lastSeenAt(session) || startedAt(session), {
+const foldClearable = mergeClearable(mergeSessions, recordedAt, {
     label: 'combat session',
 });
 
@@ -398,8 +420,11 @@ export async function archiveSession(snapshot) {
         // folds in what another tab archived meanwhile
         const sessions = record();
         await sessions.load();
+        // Stamped here, not taken from the snapshot: a run live at a Clear
+        // last snapshotted before it, and is archived after
+        const archivedAt = Date.now();
         await sessions.update((history) =>
-            storedShape(withSession(entriesOf(history), snapshot), clearedAtOf(history))
+            storedShape(withSession(entriesOf(history), { ...snapshot, archivedAt }), clearedAtOf(history))
         );
         return entriesOf(sessions.get()).slice();
     } catch (error) {
