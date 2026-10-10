@@ -2877,8 +2877,11 @@ class SettingsUI {
                     button.disabled = false;
                 }, 2000);
             } else {
-                // Failed - show error state
-                button.textContent = '❌ Failed';
+                // Failed - show error state; a 403/429 cooldown says when a retry is allowed
+                const retryAt = (await marketAPI.getRateLimitRetryAt?.()) || 0;
+                button.textContent = retryAt
+                    ? `⏳ Rate-limited, retry after ${new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                    : '❌ Failed';
                 button.style.backgroundColor = '#ff0000';
 
                 // Reset button after 3 seconds

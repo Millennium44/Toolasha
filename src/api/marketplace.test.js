@@ -974,3 +974,204 @@ describe('MarketAPI endpoint origin', () => {
         expect(marketAPI.API_URL).toBe('https://www.milkywayidle.com/game_data/marketplace.json');
     });
 });
+
+describe('MarketAPI persisted retry deferral', () => {
+    const RETRY_KEY = 'Toolasha_marketAPI_retry';
+    const NOW = 10_000_000;
+    let store;
+
+    /** An in-memory storage shared by every module instance, so a "reload" sees the same data. */
+    const installMocks = (isConnected = true) => {
+        vi.doMock('../core/connection-state.js', () => ({ default: { isConnected: () => isConnected } }));
+        vi.doMock('../core/storage.js', () => ({
+            default: {
+                get: vi.fn(async (key) => store.get(key) ?? null),
+                getJSON: vi.fn(async (key, _s, fallback) => (store.has(key) ? store.get(key) : fallback)),
+                set: vi.fn(async (key, value) => void store.set(key, value)),
+                setJSON: vi.fn(async (key, value) => void store.set(key, value)),
+                delete: vi.fn(async (key) => void store.delete(key)),
+            },
+        }));
+        vi.doMock('../features/market/network-alert.js', () => ({ default: { hide: vi.fn(), show: vi.fn() } }));
+    };
+
+    const staleCache = () => {
+        store.set('Toolasha_marketAPI_json', {
+            marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } },
+            timestamp: 1,
+        });
+        // Older than the 15-minute cache duration
+        store.set('Toolasha_marketAPI_timestamp', NOW - 60 * 60_000);
+    };
+
+    const refusal = (status, retryAfter) => ({
+        ok: false,
+        status,
+        statusText: 'refused',
+        headers: { get: (name) => (name === 'Retry-After' ? retryAfter : null) },
+    });
+
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        store = new Map();
+        vi.stubGlobal('fetch', vi.fn());
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        installMocks();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+        vi.doUnmock('../core/storage.js');
+    });
+
+    test('a 429 with Retry-After: 600 defers 600 s', async () => {
+        staleCache();
+        fetch.mockResolvedValue(refusal(429, '600'));
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.fetch();
+
+        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 600_000, rateLimited: true });
+    });
+
+    test('an HTTP-date Retry-After is honored when larger than the base', async () => {
+        staleCache();
+        fetch.mockResolvedValue(refusal(429, new Date(NOW + 900_000).toUTCString()));
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.fetch();
+
+        expect(store.get(RETRY_KEY).until).toBe(NOW + 900_000);
+    });
+
+    test('a 403 without the header defers 5 minutes', async () => {
+        staleCache();
+        fetch.mockResolvedValue(refusal(403));
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.fetch();
+
+        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 300_000, rateLimited: true });
+    });
+
+    test('a Retry-After shorter than the base does not shorten it', async () => {
+        staleCache();
+        fetch.mockResolvedValue(refusal(429, '5'));
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.fetch();
+
+        expect(store.get(RETRY_KEY).until).toBe(NOW + 300_000);
+    });
+
+    test('a plain failure defers 60 s', async () => {
+        staleCache();
+        fetch.mockRejectedValue(new Error('network down'));
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.fetch();
+
+        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 60_000, rateLimited: false });
+    });
+
+    test('within the deferral no request is made and the cache is served', async () => {
+        staleCache();
+        store.set(RETRY_KEY, { until: NOW + 30_000, rateLimited: false });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        const result = await marketAPI.fetch();
+        const forced = await marketAPI.fetch(true);
+
+        expect(fetch).not.toHaveBeenCalled();
+        expect(result).toEqual({ '/items/cheese': { 0: { a: 20, b: 19 } } });
+        expect(forced).toEqual(result);
+    });
+
+    test('within the deferral and without a cache the data is unavailable', async () => {
+        store.set(RETRY_KEY, { until: NOW + 30_000, rateLimited: true });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        expect(await marketAPI.fetch()).toBeNull();
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test('a deferral persisted by one instance is honored by a reloaded one', async () => {
+        staleCache();
+        fetch.mockResolvedValue(refusal(403));
+        const first = (await import('./marketplace.js')).default;
+        await first.fetch();
+        expect(fetch).toHaveBeenCalledTimes(1);
+
+        vi.resetModules();
+        installMocks();
+        vi.advanceTimersByTime(60_000);
+        const reloaded = (await import('./marketplace.js')).default;
+        expect(reloaded).not.toBe(first);
+
+        const result = await reloaded.fetch();
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ '/items/cheese': { 0: { a: 20, b: 19 } } });
+    });
+
+    test('the request resumes once the deferral has passed', async () => {
+        staleCache();
+        store.set(RETRY_KEY, { until: NOW + 60_000, rateLimited: false });
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ marketData: { x: {} }, timestamp: 5 }) });
+        const { default: marketAPI } = await import('./marketplace.js');
+        vi.advanceTimersByTime(60_001);
+
+        await marketAPI.fetch();
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    test('a successful fetch clears the deferral', async () => {
+        staleCache();
+        store.set(RETRY_KEY, { until: NOW + 1, rateLimited: true });
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ marketData: { x: {} }, timestamp: 5 }) });
+        const { default: marketAPI } = await import('./marketplace.js');
+        vi.advanceTimersByTime(2);
+
+        await marketAPI.fetch();
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(store.has(RETRY_KEY)).toBe(false);
+    });
+
+    test('a deferral further out than any we write (clock stepped back) is ignored', async () => {
+        staleCache();
+        store.set(RETRY_KEY, { until: NOW + 24 * 3_600_000, rateLimited: true });
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ marketData: { x: {} }, timestamp: 5 }) });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        await marketAPI.fetch();
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    test('Fetch Latest Prices may skip a 60 s failure deferral but not a 403/429 one', async () => {
+        staleCache();
+        store.set(RETRY_KEY, { until: NOW + 30_000, rateLimited: false });
+        fetch.mockResolvedValue({ ok: true, json: async () => ({ marketData: { x: {} }, timestamp: 5 }) });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        expect(await marketAPI.clearCacheAndRefetch()).toEqual({ x: {} });
+        expect(fetch).toHaveBeenCalledTimes(1);
+
+        store.set(RETRY_KEY, { until: NOW + 120_000, rateLimited: true });
+        store.set('Toolasha_marketAPI_json', { marketData: { y: {} }, timestamp: 1 });
+        fetch.mockClear();
+
+        expect(await marketAPI.clearCacheAndRefetch()).toBeNull();
+        expect(fetch).not.toHaveBeenCalled();
+        expect(await marketAPI.getRateLimitRetryAt()).toBe(NOW + 120_000);
+        // The cache was left alone, so it still serves
+        expect(store.has('Toolasha_marketAPI_json')).toBe(true);
+    });
+});
