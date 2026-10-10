@@ -439,37 +439,74 @@ function startNewSegment(session, now) {
 }
 
 /**
+ * Whether two predictions describe the same forecast: the same expectation and spread, so the
+ * stats they were made from did not change between them.
+ * @param {Object|null} a - Prediction
+ * @param {Object|null} b - Prediction
+ * @returns {boolean}
+ */
+function samePrediction(a, b) {
+    if (!a || !b) return false;
+    const close = (x, y) =>
+        Number.isFinite(x) && Number.isFinite(y) && Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(x));
+    if (Number.isFinite(a.expectedAttemptsExact) || Number.isFinite(b.expectedAttemptsExact)) {
+        return (
+            close(a.expectedAttemptsExact, b.expectedAttemptsExact) &&
+            (a.expectedProtections || 0) === (b.expectedProtections || 0)
+        );
+    }
+    return a.expectedAttempts === b.expectedAttempts && (a.expectedProtections || 0) === (b.expectedProtections || 0);
+}
+
+/**
  * Reopen an ended session so a new run's attempts are recorded against it. The time it spent
- * ended is not counted: its duration so far is banked and the clock restarts now.
+ * ended is not counted: its duration so far is banked and the clock restarts at `startedAt`
+ * (when the new run's first attempt began, when known) or now.
  *
- * The resumed run is its own predicted leg, the way an extension is: the player may have changed
- * level, gear, teas or buffs before restarting, so the old prediction describes none of the new
- * run's attempts. The old leg's prediction is banked in `legPredictions` (as a merge banks its
- * runs'), the counters are snapshotted as the leg's baseline, and the prediction is cleared for
- * the caller to compute afresh from current stats. The panel and calibration then read only the
- * resumed leg against its own prediction.
+ * The resumed run is normally its own predicted leg, the way an extension is: the player may
+ * have changed level, gear, teas or buffs before restarting, so the old prediction describes
+ * none of the new run's attempts. The old leg's prediction is banked in `legPredictions` (as a
+ * merge banks its runs'), the counters are snapshotted as the leg's baseline, and the prediction
+ * is cleared for the caller to compute afresh from current stats.
+ *
+ * The exception is a run that picks up at the very level its leg began at with a prediction
+ * identical to the leg's own (`newPredictions`): nothing about the forecast changed, so it is one
+ * unfinished run being worked in pieces (a queue of single attempts), not a new leg. The leg,
+ * its prediction and its baseline are kept, so the panel and calibration compare the whole run's
+ * attempts against it rather than only the last piece.
  * @param {Object} session - Session to reopen (mutated)
  * @param {number} [now] - Epoch ms
+ * @param {Object} [options]
+ * @param {Object|null} [options.newPredictions] - Prediction computed for the resumed run now
+ * @param {number|null} [options.startedAt] - When the run's first attempt began, when known
  */
-export function resumeSession(session, now = Date.now()) {
-    if (session.predictions) {
-        session.legPredictions = [
-            ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
-            {
-                sessionId: session.id,
-                startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
-                targetLevel: session.targetLevel,
-                protectFrom: session.protectFrom || 0,
-                predictions: session.predictions,
-            },
-        ];
+export function resumeSession(session, now = Date.now(), options = {}) {
+    const { newPredictions = null, startedAt = null } = options || {};
+    const legStartLevel = Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel;
+    const sameLeg = session.currentLevel === legStartLevel && samePrediction(session.predictions, newPredictions);
+    if (!sameLeg) {
+        if (session.predictions) {
+            session.legPredictions = [
+                ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
+                {
+                    sessionId: session.id,
+                    startLevel: legStartLevel,
+                    targetLevel: session.targetLevel,
+                    protectFrom: session.protectFrom || 0,
+                    predictions: session.predictions,
+                },
+            ];
+        }
+        session.predictions = null;
+        session.extensionBaseline = {
+            totalAttempts: session.totalAttempts || 0,
+            protectionCount: session.protectionCount || 0,
+        };
     }
-    session.predictions = null;
-    session.extensionBaseline = {
-        totalAttempts: session.totalAttempts || 0,
-        protectionCount: session.protectionCount || 0,
-    };
-    startNewSegment(session, now);
+    // The run began no earlier than the last one ended and no later than now
+    const floor = Math.max(session.endTime || 0, session.lastUpdateTime || 0);
+    const begin = Number.isFinite(startedAt) ? Math.min(now, Math.max(startedAt, floor)) : now;
+    startNewSegment(session, begin);
     session.state = SessionState.TRACKING;
     session.endTime = null;
     session.lastUpdateTime = now;

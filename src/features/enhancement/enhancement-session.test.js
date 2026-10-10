@@ -528,6 +528,50 @@ describe('canResumeSession and resumeSession', () => {
     });
 });
 
+describe('resumeSession keeps one leg when nothing about the forecast changed', () => {
+    const prediction = { expectedAttempts: 2, expectedAttemptsExact: 1.88, expectedProtections: 0 };
+    const ended = (over = {}) => ({
+        id: 's1',
+        state: SessionState.COMPLETED,
+        startLevel: 0,
+        currentLevel: 0,
+        targetLevel: 1,
+        startTime: 1000,
+        lastUpdateTime: 2000,
+        endTime: 3000,
+        totalAttempts: 1,
+        predictions: prediction,
+        ...over,
+    });
+
+    test('same level and same prediction: prediction and baseline stay, the clock restarts at the run start', () => {
+        const session = ended();
+        resumeSession(session, 9000, { newPredictions: { ...prediction }, startedAt: 6000 });
+        expect(session.predictions).toEqual(prediction);
+        expect(session.legPredictions).toBeUndefined();
+        expect(session.extensionBaseline).toBeUndefined();
+        expect(session.segmentStartTime).toBe(6000);
+    });
+
+    test('a different prediction or level starts a new leg', () => {
+        const changed = ended();
+        resumeSession(changed, 9000, { newPredictions: { ...prediction, expectedAttemptsExact: 2.4 } });
+        expect(changed.predictions).toBeNull();
+        expect(changed.legPredictions).toHaveLength(1);
+        expect(changed.extensionBaseline.totalAttempts).toBe(1);
+
+        const moved = ended({ currentLevel: 1 });
+        resumeSession(moved, 9000, { newPredictions: { ...prediction } });
+        expect(moved.legPredictions).toHaveLength(1);
+    });
+
+    test('a start earlier than the last run ended is clamped to it', () => {
+        const session = ended();
+        resumeSession(session, 9000, { newPredictions: { ...prediction }, startedAt: 100 });
+        expect(session.segmentStartTime).toBe(3000);
+    });
+});
+
 describe('mergeSessions view marks where the item stands', () => {
     test('the live session sets the current level, so its row is highlighted', () => {
         const { seven, eight } = spatulaRuns();
