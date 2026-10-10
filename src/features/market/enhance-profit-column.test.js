@@ -67,7 +67,14 @@ function pathFixture() {
  * The marketplace order book as the game draws it: the current item (sprite + level badge) and
  * a container holding the sell table first, then the buy table.
  */
-function buildMarket({ item = 'iron_sword', level = 5, askRows = 3, separatorAt = -1 } = {}) {
+function buildMarket({
+    item = 'iron_sword',
+    level = 5,
+    askRows = 3,
+    buyRows = askRows,
+    separatorAt = -1,
+    ageHeader = false,
+} = {}) {
     const current = document.createElement('div');
     current.className = 'MarketplacePanel_currentItem__x1';
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -90,8 +97,15 @@ function buildMarket({ item = 'iron_sword', level = 5, askRows = 3, separatorAt 
         tableContainer.className = 'MarketplacePanel_orderBookTableContainer__q4';
         const table = document.createElement('table');
         table.innerHTML = '<thead><tr><th>Quantity</th><th>Price</th><th></th></tr></thead><tbody></tbody>';
+        if (ageHeader) {
+            const age = document.createElement('th');
+            age.className = 'mwi-estimated-age-header';
+            age.textContent = '~Age';
+            table.querySelector('thead tr').appendChild(age);
+        }
         const tbody = table.querySelector('tbody');
-        for (let r = 0; r < askRows; r++) {
+        const rowCount = t === 0 ? askRows : buyRows;
+        for (let r = 0; r < rowCount; r++) {
             if (r === separatorAt) {
                 const sep = document.createElement('tr');
                 sep.className = 'MarketplacePanel_outsideRangeSeparator__s';
@@ -187,6 +201,7 @@ describe('the order-book column', () => {
         expect(cells[0].style.color).toBeTruthy();
         expect(cells[0].title).toMatch(/Revenue after tax/);
         expect(cells[0].title).toMatch(/Expected protections: 15/);
+        expect(cells[0].title).toMatch(/Expected time: 3h 00m 00s/);
         expect(buyTable.querySelector('.mwi-enh-profit-header, .mwi-enh-profit-cell')).toBeNull();
     });
 
@@ -275,5 +290,36 @@ describe('the order-book column', () => {
         feedBook('/items/iron_sword', 5, [25_000_000, 26_000_000, 27_000_000]);
         column.processContainer(container);
         expect(sellTable.querySelector('.mwi-enh-profit-header')).toBeNull();
+    });
+
+    test('a fast enhance reads its time in seconds, not 0.00 h', () => {
+        world.path = {
+            pricesPartial: false,
+            optimalStrategy: { totalCost: 50_000, totalTime: 42, expectedAttempts: 3, protectionCount: 0 },
+        };
+        const { container, sellTable } = buildMarket({ level: 1, askRows: 1 });
+        feedBook('/items/iron_sword', 1, [100_000]);
+        column.processContainer(container);
+        const cell = sellTable.querySelector('.mwi-enh-profit-cell');
+        expect(cell.title).toMatch(/Expected time: 42s/);
+        expect(cell.title).not.toMatch(/0\.00 h/);
+    });
+
+    test('an empty sell table still puts the header after the price, not after ~Age', () => {
+        const { container, sellTable } = buildMarket({ askRows: 0, buyRows: 2, ageHeader: true });
+        feedBook('/items/iron_sword', 5, []);
+        column.processContainer(container);
+        const headers = [...sellTable.querySelectorAll('thead th')].map((th) => th.textContent);
+        expect(headers).toEqual(['Quantity', 'Price', 'Profit/h', '', '~Age']);
+    });
+
+    test('with both tables empty the header still lands before the columns other features appended', () => {
+        const { container, sellTable } = buildMarket({ askRows: 0, buyRows: 0, ageHeader: true });
+        column.lastPriceIndex = -1;
+        feedBook('/items/iron_sword', 5, []);
+        column.processContainer(container);
+        const headers = [...sellTable.querySelectorAll('thead th')].map((th) => th.textContent);
+        expect(headers.indexOf('Profit/h')).toBeLessThan(headers.indexOf('~Age'));
+        expect(headers.at(-1)).toBe('~Age');
     });
 });

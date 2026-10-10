@@ -28,7 +28,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
-import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 
 export const ENHANCE_PROFIT_SETTING = 'market_enhanceProfitPerHour';
@@ -115,7 +115,7 @@ function describeRow(quote, result) {
         `Revenue after tax: ${formatWithSeparator(Math.round(result.revenue))}`,
         `Expected cost from +0: ${formatWithSeparator(Math.round(quote.cost))}`,
         `Profit per item: ${formatWithSeparator(Math.round(result.profit))}`,
-        `Expected time: ${quote.hours.toFixed(2)} h`,
+        `Expected time: ${timeReadable(quote.hours * 3600)}`,
         `Expected attempts: ${formatWithSeparator(Math.round(quote.attempts))}`,
         `Expected protections: ${formatWithSeparator(Math.round(quote.protections))}`,
     ];
@@ -135,6 +135,8 @@ class EnhanceProfitColumn {
         this._repaintTimer = null;
         this._containerObserver = null;
         this._observedContainer = null;
+        /** Price column index seen last time a table had rows */
+        this.lastPriceIndex = -1;
     }
 
     /** Whether the column should be shown at all for this character. */
@@ -353,9 +355,7 @@ class EnhanceProfitColumn {
         table.setAttribute(STAMP_ATTR, stamp);
 
         // Column position: right after the price column, as the game draws it
-        const firstDataRow = rows.find((row) => !this.isSeparator(row) && row.children.length > 1);
-        const priceCell = firstDataRow?.querySelector('[class*="price"]')?.closest('td');
-        const priceIndex = priceCell ? Array.prototype.indexOf.call(firstDataRow.children, priceCell) : -1;
+        const priceIndex = this.findPriceColumnIndex(table, theadRow);
 
         const header = document.createElement('th');
         header.className = HEADER_CLASS;
@@ -383,6 +383,60 @@ class EnhanceProfitColumn {
             if (ask) this.fillCell(cell, quote, ask.price);
             insertAt(row, cell, priceIndex >= 0 ? priceIndex + 1 : -1);
         }
+    }
+
+    /**
+     * The price column's index in a table's rows, or -1 when the table has no data row.
+     * @param {Element} table - An order book table
+     * @returns {number} Index of the cell holding the price
+     */
+    priceIndexFromRows(table) {
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const firstDataRow = rows.find((row) => !this.isSeparator(row) && row.children.length > 1);
+        const priceCell = firstDataRow?.querySelector('[class*="price"]')?.closest('td');
+        return priceCell ? Array.prototype.indexOf.call(firstDataRow.children, priceCell) : -1;
+    }
+
+    /**
+     * Where the price column is, found the same way whether or not the table has rows: from a
+     * row's price cell, else from the other order-book table (same layout), else from the last
+     * table that had rows, else just before the first column another feature appended. An empty
+     * book used to append the header after those columns (after "~Age").
+     * @param {Element} table - The sell table
+     * @param {Element} theadRow - Its header row
+     * @returns {number} Price column index, -1 when it cannot be placed
+     */
+    findPriceColumnIndex(table, theadRow) {
+        const headerCount = theadRow.children.length;
+        const usable = (index) => index >= 0 && index < headerCount;
+
+        const own = this.priceIndexFromRows(table);
+        if (usable(own)) {
+            this.lastPriceIndex = own;
+            return own;
+        }
+
+        const pricedHeader = Array.from(theadRow.children).findIndex(
+            (th) => th.matches('[class*="price"]') || th.querySelector('[class*="price"]')
+        );
+        if (usable(pricedHeader)) return pricedHeader;
+
+        const container = table.closest(GAME.MARKETPLACE_ORDER_BOOKS);
+        for (const other of container?.querySelectorAll('table') || []) {
+            if (other === table) continue;
+            const index = this.priceIndexFromRows(other);
+            if (usable(index)) {
+                this.lastPriceIndex = index;
+                return index;
+            }
+        }
+
+        if (usable(this.lastPriceIndex)) return this.lastPriceIndex;
+
+        const firstInjected = Array.from(theadRow.children).findIndex((th) =>
+            Array.from(th.classList).some((name) => name.startsWith('mwi-'))
+        );
+        return firstInjected > 0 ? firstInjected - 1 : -1;
     }
 
     /**
