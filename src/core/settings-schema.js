@@ -946,6 +946,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            shop_maxBuyButton: {
+                id: 'shop_maxBuyButton',
+                label: "Shop: Add 'Max' buy buttons",
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Max button to the Shop, Task Shop, Labyrinth Shop, and Cowbell Store buy dialogs that fills in the most you can afford. It only types the quantity; you press Buy',
+            },
             dungeonShopPlanner: {
                 id: 'dungeonShopPlanner',
                 label: 'Dungeon shop: Plan token spend (volume-capped)',

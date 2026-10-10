@@ -1997,6 +1997,14 @@ function registerFeatures() {
             liveStop: true,
         },
         {
+            key: 'shop_maxBuyButton',
+            name: 'Shop Max Buy Button',
+            category: 'Shop',
+            module: UI.shopMaxBuyButton,
+            async: false,
+            liveStop: true,
+        },
+        {
             key: 'chatHistoryExtender',
             name: 'Chat History Extender',
             category: 'Chat',
