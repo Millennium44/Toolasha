@@ -121,6 +121,18 @@ const mocks = vi.hoisted(() => ({
     loadoutFood: null,
     /** Callbacks registered via the loadoutSnapshot() mock's onUpdate, so a test can fire one */
     loadoutUpdateListeners: [],
+    /** What `runTriggerOptimization` resolves with, and every call it was made with */
+    triggerResult: null,
+    triggerRuns: [],
+    /** Every list of changes handed to the editor's `applyTriggerValueChanges` */
+    triggerApplied: [],
+}));
+
+vi.mock('./trigger-optimizer.js', () => ({
+    runTriggerOptimization: async (params) => {
+        mocks.triggerRuns.push(params);
+        return mocks.triggerResult;
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -537,6 +549,10 @@ vi.mock('./sim-editor.js', () => ({
         getMissingMembers() {
             return [];
         }
+        applyTriggerValueChanges(changes) {
+            mocks.triggerApplied.push(changes);
+            return { applied: changes.length, skipped: [] };
+        }
         isInitialized() {
             return true;
         }
@@ -577,6 +593,7 @@ const {
     columnMenuLabel,
     upgradeRowKey,
     UPGRADE_PLAN_METRICS,
+    visibleUpgradeModes,
     gearFingerprint,
     buildAllZonesSnapshot,
     saveAllZonesSnapshot,
@@ -9411,5 +9428,137 @@ describe('self-enhanced upgrade rows (capes, quivers)', () => {
 
         expect(enhanced).toEqual([]);
         expect(wentToAction).toEqual(['/actions/enhancing/enhance']);
+    });
+});
+
+describe('the Triggers option', () => {
+    const TARGET = '/combat_trigger_dependencies/targeted_enemy';
+    const HP = '/combat_trigger_conditions/current_hp';
+    const GTE = '/combat_trigger_comparators/greater_than_equal';
+
+    const fireballChange = {
+        playerHrid: 'player1',
+        playerName: 'player1',
+        slotType: 'abilities',
+        slotIndex: 1,
+        itemHrid: '/abilities/fireball',
+        itemName: 'Fireball',
+        rowIndex: 0,
+        dependencyHrid: TARGET,
+        conditionHrid: HP,
+        comparatorHrid: GTE,
+        from: 1,
+        to: 600,
+        deltaScore: 7.2,
+        se: 1.1,
+        deltaXp: 900,
+        deltaProfit: 12000,
+        deltaDeaths: 0,
+    };
+
+    function enableSetting() {
+        return import('../../core/config.js').then(({ default: config }) => {
+            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+                key === 'combatSim_triggerOptimizer' ? true : fallback
+            );
+        });
+    }
+
+    /** Every candidate set off except Triggers (a few are on by default) */
+    function onlyTriggers() {
+        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+            box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
+        });
+    }
+
+    beforeEach(() => {
+        mocks.triggerRuns = [];
+        mocks.triggerApplied = [];
+        mocks.triggerResult = null;
+        mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        vi.restoreAllMocks();
+    });
+
+    test('is not offered while its setting is off', () => {
+        ui.buildPanel();
+        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
+        expect(visibleUpgradeModes().some((mode) => mode.key === 'triggers')).toBe(false);
+    });
+
+    test('is offered, unchecked, once its setting is on', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        const box = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
+        expect(box).not.toBeNull();
+        expect(box.checked).toBe(false);
+        expect(ui.panel.querySelector('#mwi-csim-trigger-scope')).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-precision').value).toBe('standard');
+    });
+
+    test('the gating helper follows the predicate it is given', () => {
+        expect(visibleUpgradeModes(() => true).some((mode) => mode.key === 'triggers')).toBe(true);
+        expect(visibleUpgradeModes(() => false).some((mode) => mode.key === 'triggers')).toBe(false);
+        // every other set is unconditional
+        expect(visibleUpgradeModes(() => false).length).toBe(visibleUpgradeModes(() => true).length - 1);
+    });
+
+    test('alone, it runs the optimizer and never the candidate ranking', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        ui.panel.querySelector('#mwi-csim-trigger-scope').value = 'party';
+        ui.panel.querySelector('#mwi-csim-trigger-precision').value = 'quick';
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        const before = mocks.upgradeRuns;
+
+        await ui._onUpgradeAnalyze();
+
+        expect(mocks.upgradeRuns).toBe(before);
+        expect(mocks.triggerRuns).toHaveLength(1);
+        expect(mocks.triggerRuns[0].scope).toBe('party');
+        expect(mocks.triggerRuns[0].precision).toBe('quick');
+        expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+    });
+
+    test('Apply writes the changes into the sim editor and nothing else', async () => {
+        await enableSetting();
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+
+        ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+        expect(mocks.triggerApplied).toHaveLength(1);
+        expect(mocks.triggerApplied[0]).toEqual([
+            expect.objectContaining({ playerHrid: 'player1', itemHrid: '/abilities/fireball', rowIndex: 0, to: 600 }),
+        ]);
+        expect(ui.panel.querySelector('#mwi-csim-trigger-apply').disabled).toBe(true);
+    });
+
+    test('Copy puts one line per change on the clipboard', async () => {
+        await enableSetting();
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+
+        ui.panel.querySelector('#mwi-csim-trigger-copy').click();
+        await Promise.resolve();
+
+        expect(writeText).toHaveBeenCalledTimes(1);
+        expect(writeText.mock.calls[0][0]).toContain('Fireball (ability)');
+        expect(writeText.mock.calls[0][0]).toContain('≥ 600 (was 1)');
+        delete navigator.clipboard;
     });
 });

@@ -123,6 +123,9 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
+import { runTriggerOptimization } from './trigger-optimizer.js';
+import { buildEditorChanges, formatChangesText, TRIGGER_OPTIMIZER_SETTING } from './trigger-tuning.js';
+import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
 import storage from '../../core/storage.js';
 import {
     createPricingQuickSettings,
@@ -2497,6 +2500,7 @@ const MODE_OPTIONS = {
                 title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
+    triggers: triggerChipOptionsHtml(),
     guild_shrine: `
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
@@ -2610,7 +2614,29 @@ const UPGRADE_MODES = [
         defaultOn: false,
         title: 'Search for the cheapest food that still avoids deaths and running out of mana',
     },
+    {
+        key: 'triggers',
+        label: 'Triggers',
+        defaultOn: false,
+        setting: TRIGGER_OPTIMIZER_SETTING,
+        title:
+            'Tune the numbers in your trigger rows: how much enemy HP an ability waits for, and how low your own ' +
+            'HP or MP gets before a food fires. Only the numbers change, never what a trigger watches.\n\n' +
+            'It simulates each candidate value on matched seeds and keeps a change only when it clearly beats ' +
+            'the current one. Results are shown here; nothing is changed in the game. Apply writes them into ' +
+            "this simulator's trigger editor, or copy them to enter by hand.",
+    },
 ];
+
+/**
+ * The candidate sets the Upgrade tab offers right now. A set with a `setting` is
+ * only offered while that setting is on.
+ * @param {Function} [isEnabled] - `(settingKey) => boolean`; defaults to the live settings
+ * @returns {Array<Object>}
+ */
+export function visibleUpgradeModes(isEnabled = (key) => config.getSetting(key) === true) {
+    return UPGRADE_MODES.filter((mode) => !mode.setting || isEnabled(mode.setting));
+}
 
 /**
  * Marker the Results tab reserves for its summary block.
@@ -3145,8 +3171,9 @@ class CombatSimUI {
             <label style="color:#888; font-size:12px;">Player</label>
             <select class="toolasha-select" id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
-            ${UPGRADE_MODES.map(
-                (mode) => `
+            ${visibleUpgradeModes()
+                .map(
+                    (mode) => `
             <span data-mode-chip="${mode.key}" style="display:inline-flex; align-items:center; gap:6px;
                 padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
                 <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
@@ -3157,7 +3184,8 @@ class CombatSimUI {
                 </label>
                 ${MODE_OPTIONS[mode.key] || ''}
             </span>`
-            ).join('')}
+                )
+                .join('')}
             <button id="mwi-csim-upgrade-run" style="
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
@@ -9763,7 +9791,10 @@ class CombatSimUI {
             )
         );
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
-        const upgradeModes = this._getUpgradeModes();
+        const allModes = this._getUpgradeModes();
+        // Trigger tuning is its own run; it does not feed the candidate ranking
+        const wantsTriggers = allModes.includes('triggers');
+        const upgradeModes = allModes.filter((mode) => mode !== 'triggers');
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
         let abilityTargetLevel = Math.min(
             200,
@@ -9780,6 +9811,10 @@ class CombatSimUI {
         }
 
         if (!upgradeModes.length) {
+            if (wantsTriggers) {
+                await this._onTriggerAnalyze();
+                return;
+            }
             this._setStatus('Check at least one upgrade type to include.');
             return;
         }
@@ -9974,6 +10009,155 @@ class CombatSimUI {
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
         }
+
+        if (wantsTriggers && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
+            await this._onTriggerAnalyze({ append: true });
+        }
+    }
+
+    /**
+     * Run the trigger optimizer from the Upgrade tab. Show-only: the result is
+     * drawn in a box, and the buttons under it either write into this panel's
+     * own sim editor or copy text. Nothing here touches the game.
+     * @param {Object} [options]
+     * @param {boolean} [options.append] - Add the box under results already drawn instead of replacing them
+     * @private
+     */
+    async _onTriggerAnalyze({ append = false } = {}) {
+        if (this._isBusy()) return;
+
+        const ownerId = dataManager.getCurrentCharacterId();
+        const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
+        const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const scope = this.panel.querySelector('#mwi-csim-trigger-scope')?.value === 'party' ? 'party' : 'me';
+        const precision = this.panel.querySelector('#mwi-csim-trigger-precision')?.value || 'standard';
+        if (!zoneHrid) {
+            this._setStatus('Select a zone in Configure tab first.');
+            return;
+        }
+        const gameData = buildGameDataPayload();
+        if (!gameData) {
+            this._setStatus('No game data available.');
+            return;
+        }
+
+        this._upgradeRunning = true;
+        let playerDTOs;
+        try {
+            const editedDTOs = this._editor?.getEditedDTOs();
+            playerDTOs = editedDTOs ? Object.values(editedDTOs) : (await buildAllPlayerDTOs()).players;
+        } catch (error) {
+            this._upgradeRunning = false;
+            console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
+            this._setStatus('Trigger tuning failed: ' + error.message);
+            return;
+        }
+        if (!this._stillSameCharacter(ownerId)) {
+            this._upgradeRunning = false;
+            return;
+        }
+        if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
+            this._upgradeRunning = false;
+            this._setStatus('No player data available. Configure a simulation first.');
+            return;
+        }
+
+        const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
+        const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
+        const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
+        progressEl.style.display = 'block';
+        if (!append) resultsEl.innerHTML = '';
+        resultsEl.querySelector('#mwi-csim-trigger-results')?.remove();
+        runBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        this._upgradeAborted = false;
+        const eta = createEtaTracker();
+
+        try {
+            const playerNames = {};
+            for (const info of this._editor?.getPlayerInfo?.() || []) playerNames[info.hrid] = info.name;
+            const result = await runTriggerOptimization(
+                {
+                    gameData,
+                    playerDTOs,
+                    playerIndex,
+                    zoneHrid,
+                    difficultyTier,
+                    communityBuffs: getCommunityBuffs(),
+                    scope,
+                    precision,
+                    playerNames,
+                },
+                ({ current, total, description }) => {
+                    if (this._upgradeAborted) return;
+                    const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
+                    const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
+                    const fraction = total > 0 ? Math.min(1, (current || 0) / total) : 0;
+                    const { text: remaining } = eta.update(fraction);
+                    if (fill) fill.style.width = Math.round(fraction * 100) + '%';
+                    if (text) text.textContent = `${current || 0} / ${total}` + (remaining ? ` · ${remaining}` : '');
+                    if (description) this._setStatus(description);
+                },
+                { abortSignal: () => this._upgradeAborted }
+            );
+            if (!this._stillSameCharacter(ownerId)) return;
+
+            this._lastTriggerResult = result;
+            resultsEl.insertAdjacentHTML(
+                'beforeend',
+                renderTriggerResultsHtml(result, gameData, { canApply: Boolean(this._editor?.getEditedDTOs()) })
+            );
+            this._wireTriggerResultButtons(result, gameData);
+            this._setStatus(
+                result?.changes?.length
+                    ? `Trigger tuning ${this._upgradeAborted ? 'stopped' : 'complete'}: ${result.changes.length} change(s) found.`
+                    : this._upgradeAborted
+                      ? 'Trigger tuning stopped.'
+                      : 'Trigger tuning complete: nothing clearly better found.'
+            );
+        } catch (error) {
+            console.error('[CombatSimUI] Trigger tuning failed:', error);
+            this._setStatus('Trigger tuning failed: ' + error.message);
+        } finally {
+            this._upgradeRunning = false;
+            progressEl.style.display = 'none';
+            runBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+        }
+    }
+
+    /**
+     * Wire the Apply and Copy buttons of the trigger results box.
+     * @param {Object} result - The optimizer result
+     * @param {Object} gameData - Game data payload
+     * @private
+     */
+    _wireTriggerResultButtons(result, gameData) {
+        const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
+        applyBtn?.addEventListener('click', () => {
+            if (!this._editor?.getEditedDTOs()) {
+                this._setStatus('Open the sim editor first (Configure tab) so there is a setup to write into.');
+                return;
+            }
+            const { applied, skipped } = this._editor.applyTriggerValueChanges(buildEditorChanges(result));
+            applyBtn.disabled = true;
+            this._setStatus(
+                `Applied ${applied} trigger value${applied === 1 ? '' : 's'} to the sim editor` +
+                    (skipped.length ? ` (${skipped.length} skipped: ${skipped[0].reason})` : '') +
+                    '. Run Simulate to use them.'
+            );
+        });
+        this.panel.querySelector('#mwi-csim-trigger-copy')?.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(formatChangesText(result, gameData));
+                this._setStatus('Copied the trigger changes.');
+            } catch (error) {
+                console.error('[CombatSimUI] Copy of the trigger changes failed:', error);
+                this._setStatus('Could not copy to the clipboard.');
+            }
+        });
     }
 
     /**
