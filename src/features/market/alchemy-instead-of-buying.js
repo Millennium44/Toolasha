@@ -33,6 +33,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
+import { isKeptForSelfUse, keptSignature } from './self-use-wanted.js';
 import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
@@ -908,7 +909,8 @@ function lookupSources(targetHrid) {
  */
 function resultKey(targetHrid, wanted) {
     const goldPerHour = Math.max(0, Number(config.getSetting(GOLD_RATE_SETTING)) || 0);
-    const keepKey = [...(wanted || [])].sort().join(',');
+    // The mark meaning is part of the key: the same marks keep and sell opposite outputs
+    const keepKey = keptSignature(wanted);
     return { key: `${targetHrid}|${goldPerHour}|${keepKey}`, goldPerHour };
 }
 
@@ -970,7 +972,7 @@ function computeAlternatives(targetHrid, wanted) {
             askOf,
             sellOf,
             candidatesOf: liveCandidates,
-            isWanted: (hrid) => Boolean(wanted?.has(hrid)),
+            isWanted: (hrid) => isKeptForSelfUse(hrid, wanted ?? new Set()),
             containerValue,
             sellContainerValue,
             goldPerHour,

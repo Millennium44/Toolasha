@@ -14,6 +14,7 @@ const settings = vi.hoisted(() => ({
     loadoutMarksEnabled: true,
     selfUseAlchemy: false,
     keepChip: true,
+    markMeaning: 'keep',
     insteadOfBuying: false,
     patientTickBuy: false,
     patientTickSell: false,
@@ -43,6 +44,7 @@ vi.mock('../../core/config.js', () => ({
         getSettingValue: (id, fallback) => {
             if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
             if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
+            if (id === 'selfUse_markMeaning') return settings.markMeaning;
             return fallback;
         },
         onSettingChange: (id, cb) => {
@@ -288,6 +290,7 @@ beforeEach(async () => {
     settings.loadoutMarksEnabled = true;
     settings.selfUseAlchemy = false;
     settings.keepChip = true;
+    settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
     alchemyState.profits = {};
     alchemyState.candidates = {};
@@ -1209,6 +1212,42 @@ describe('self-use alchemy lines', () => {
         expect(await transmuteText()).toContain('Transmute held item (self-use, keep Frenzy): 8.4K/hr');
     });
 
+    test('in sell mode a marked book is sold and every other output is kept', async () => {
+        settings.selfUseAlchemy = true;
+        settings.markMeaning = 'sell';
+        bookPrices();
+        keepState.kept = new Set(['/items/frenzy']);
+        const text = await transmuteText();
+        // Frenzy is the marked one, so it is sold; Puncture is kept (and named), Frenzy is not
+        expect(text).toContain('self-use, keep Puncture');
+        expect(text).not.toContain('keep Frenzy');
+        // 30 Frenzy x 810 (sold) + 30 Puncture x 500 (kept at the ask) + 40 x 540 (self-return) - 54,000
+        expect(text).toContain('Transmute held item (self-use, keep Puncture): 6.9K/hr');
+    });
+
+    test('in sell mode with nothing marked every output is kept', async () => {
+        settings.selfUseAlchemy = true;
+        settings.markMeaning = 'sell';
+        bookPrices();
+        const text = await transmuteText();
+        expect(text).not.toContain('sell outputs');
+        expect(text).toContain('self-use, keep');
+    });
+
+    test('the footnote says which way the mark cuts', async () => {
+        settings.selfUseAlchemy = true;
+        alchemyState.profits = { decompose: cheeseSwordDecompose() };
+        let block = await blockFor('/items/cheese_sword');
+        expect(block.textContent).toContain(
+            'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.'
+        );
+        settings.markMeaning = 'sell';
+        block = await blockFor('/items/cheese_sword');
+        expect(block.textContent).toContain(
+            'Self-use: marked outputs sold after tax, the rest kept at what you would pay. K on a tooltip marks it sold.'
+        );
+    });
+
     test('a kept item that is not among the outputs leaves the line selling', async () => {
         settings.selfUseAlchemy = true;
         bookPrices();
@@ -1279,6 +1318,20 @@ describe('keep for self-use chip', () => {
         await settleLong();
         expect(keepState.kept.has('/items/frenzy')).toBe(false);
         expect(chip.textContent).toBe('☐ Keep (K)');
+    });
+
+    test('the chip reads "Sell" in sell mode and flips with the same K key', async () => {
+        settings.selfUseAlchemy = true;
+        settings.markMeaning = 'sell';
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        const chip = el.querySelector('.toolasha-selfuse-keep-chip');
+        expect(chip?.textContent).toBe('☐ Sell (K)');
+        press('k');
+        await settleLong();
+        expect(keepState.kept.has('/items/frenzy')).toBe(true);
+        expect(chip.textContent).toBe('☑ Sell (not kept) (K)');
     });
 
     test('no chip with the keep-chip setting off, even with the self-use lines on', async () => {

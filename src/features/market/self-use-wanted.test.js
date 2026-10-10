@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
     itemDetailMap: {},
     /** `storage.onWrite` listeners, to announce another tab's write through */
     writeListeners: new Set(),
+    /** The `selfUse_markMeaning` setting; absent means the default */
+    meaning: undefined,
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -49,6 +51,11 @@ vi.mock('../../core/storage.js', () => ({
         },
     },
 }));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSettingValue: (id, fallback) => (id === 'selfUse_markMeaning' && state.meaning ? state.meaning : fallback),
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => state.charId,
@@ -56,7 +63,16 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-const { default: selfUseWanted, STORAGE_KEY_PREFIX } = await import('./self-use-wanted.js');
+const {
+    default: selfUseWanted,
+    STORAGE_KEY_PREFIX,
+    getMarkMeaning,
+    isKeptForSelfUse,
+    keptSignature,
+    keepChipLabel,
+    selfUseFootnote,
+    buildKeepChipHTML,
+} = await import('./self-use-wanted.js');
 const { ownsKey } = await import('../sync/sync-ownership.js');
 
 beforeEach(() => {
@@ -69,6 +85,7 @@ beforeEach(() => {
     state.writeListeners = new Set();
     state.holdReads = false;
     state.heldReads = [];
+    state.meaning = undefined;
 });
 
 /** Another tab committed `value` under `key` and announced it */
@@ -135,7 +152,7 @@ describe('another tab', () => {
         otherTabWrites('selfUseWanted_main', ['/items/frenzy']);
         await settle();
 
-        expect(selfUseWanted.isKept('/items/frenzy')).toBe(true);
+        expect(selfUseWanted.isMarked('/items/frenzy')).toBe(true);
         expect(heard).toHaveBeenCalledTimes(1);
     });
 
@@ -166,7 +183,7 @@ describe('another tab', () => {
         await settle();
 
         expect(heard).not.toHaveBeenCalled();
-        expect(selfUseWanted.isKept('/items/frenzy')).toBe(false);
+        expect(selfUseWanted.isMarked('/items/frenzy')).toBe(false);
     });
 
     test('a change made in another tab while nobody listened is read when listening resumes', async () => {
@@ -176,7 +193,7 @@ describe('another tab', () => {
         state.stored.selfUseWanted_main = ['/items/frenzy'];
 
         expect(await selfUseWanted.load()).toEqual(['/items/frenzy']);
-        expect(selfUseWanted.isKept('/items/frenzy')).toBe(true);
+        expect(selfUseWanted.isMarked('/items/frenzy')).toBe(true);
         expect(state.writeListeners.size).toBe(1);
     });
 
@@ -214,11 +231,11 @@ describe('marking items', () => {
         expect(await selfUseWanted.toggle('/items/frenzy')).toBe(true);
         expect(state.stored.selfUseWanted_main).toEqual(['/items/frenzy']);
         expect(state.writes.at(-1)).toEqual({ key: 'selfUseWanted_main', store: 'settings' });
-        expect(selfUseWanted.isKept('/items/frenzy')).toBe(true);
+        expect(selfUseWanted.isMarked('/items/frenzy')).toBe(true);
 
         expect(await selfUseWanted.toggle('/items/frenzy')).toBe(false);
         expect(state.stored.selfUseWanted_main).toEqual([]);
-        expect(selfUseWanted.isKept('/items/frenzy')).toBe(false);
+        expect(selfUseWanted.isMarked('/items/frenzy')).toBe(false);
     });
 
     test('a mark survives a reload: a fresh cache reads it back', async () => {
@@ -289,7 +306,7 @@ describe('per character', () => {
         await selfUseWanted.setKept('/items/frenzy', true);
         state.charId = 'alt';
         expect((await selfUseWanted.getSet()).has('/items/frenzy')).toBe(false);
-        expect(selfUseWanted.isKept('/items/frenzy')).toBe(false);
+        expect(selfUseWanted.isMarked('/items/frenzy')).toBe(false);
         await selfUseWanted.setKept('/items/puncture', true);
         expect(state.stored.selfUseWanted_alt).toEqual(['/items/puncture']);
         expect(state.stored.selfUseWanted_main).toEqual(['/items/frenzy']);
@@ -329,5 +346,61 @@ describe('which tooltips get the chip', () => {
         expect(selfUseWanted.isAlchemyOutput('/items/frenzy')).toBe(true);
         expect(selfUseWanted.isAlchemyOutput('/items/small_artisans_crate')).toBe(true);
         expect(selfUseWanted.isAlchemyOutput('/items/apple')).toBe(false);
+    });
+});
+
+describe('what a K mark means', () => {
+    const marked = new Set(['/items/frenzy']);
+
+    test('the default is keep', () => {
+        expect(getMarkMeaning()).toBe('keep');
+        state.meaning = 'nonsense';
+        expect(getMarkMeaning()).toBe('keep');
+    });
+
+    test('keep mode keeps the marked outputs', () => {
+        expect(isKeptForSelfUse('/items/frenzy', marked)).toBe(true);
+        expect(isKeptForSelfUse('/items/puncture', marked)).toBe(false);
+    });
+
+    test('sell mode keeps everything but the marked outputs', () => {
+        state.meaning = 'sell';
+        expect(getMarkMeaning()).toBe('sell');
+        expect(isKeptForSelfUse('/items/frenzy', marked)).toBe(false);
+        expect(isKeptForSelfUse('/items/puncture', marked)).toBe(true);
+    });
+
+    test('without a list in hand the cached marks are read, in either mode', async () => {
+        await selfUseWanted.setKept('/items/frenzy', true);
+        expect(isKeptForSelfUse('/items/frenzy')).toBe(true);
+        state.meaning = 'sell';
+        expect(isKeptForSelfUse('/items/frenzy')).toBe(false);
+        expect(isKeptForSelfUse('/items/puncture')).toBe(true);
+        // The stored marks themselves did not change
+        expect(state.stored.selfUseWanted_main).toEqual(['/items/frenzy']);
+    });
+
+    test('a cache keyed on the signature changes with the mode and with the marks', () => {
+        const keep = keptSignature(marked);
+        state.meaning = 'sell';
+        const sell = keptSignature(marked);
+        expect(sell).not.toBe(keep);
+        expect(keptSignature(new Set(['/items/puncture']))).not.toBe(sell);
+        expect(keptSignature(new Set(['/items/b', '/items/a']))).toBe(keptSignature(new Set(['/items/a', '/items/b'])));
+    });
+
+    test('the chip and footnote follow the mode', () => {
+        expect(keepChipLabel(false)).toBe('☐ Keep (K)');
+        expect(keepChipLabel(true)).toBe('☑ Kept (K)');
+        expect(selfUseFootnote()).toBe(
+            'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.'
+        );
+        state.meaning = 'sell';
+        expect(keepChipLabel(false)).toBe('☐ Sell (K)');
+        expect(keepChipLabel(true)).toBe('☑ Sell (not kept) (K)');
+        expect(buildKeepChipHTML('/items/frenzy', false)).toContain('Sell (K)');
+        expect(selfUseFootnote()).toBe(
+            'Self-use: marked outputs sold after tax, the rest kept at what you would pay. K on a tooltip marks it sold.'
+        );
     });
 });

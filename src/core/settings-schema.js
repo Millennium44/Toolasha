@@ -869,6 +869,17 @@ export const settingsGroups = {
                 default: false,
                 help: 'A small "Keep (K)" tag on the tooltip of an alchemy output, clickable or toggled with the K key, for marking it kept. Needs the self-use lines or the cheaper-routes setting to be on. Marks made earlier still count with this off, and the keep list below can still review and remove them.',
             },
+            selfUse_markMeaning: {
+                id: 'selfUse_markMeaning',
+                label: 'What a K mark means',
+                type: 'select',
+                default: 'keep',
+                options: [
+                    { value: 'keep', label: 'K marks items to keep (sell the rest)' },
+                    { value: 'sell', label: 'K marks items to sell (keep the rest)' },
+                ],
+                help: 'Which way the self-use marks (K on a tooltip) cut. "Keep" values a marked output at what you would pay for it and sells every other output after tax. "Sell" flips that: a marked output is sold after tax and every other output is kept, which suits the full decompose chain when you keep most intermediates for the collection log and crafting and sell only a few items. Your stored marks do not change, only what they mean.',
+            },
             itemTooltip_selfUseKeepList: {
                 id: 'itemTooltip_selfUseKeepList',
                 label: 'Self-use keep list (this character)',

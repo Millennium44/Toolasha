@@ -13,6 +13,10 @@
  * tooltip vanishes the moment the pointer leaves the item, so the key is what
  * makes it usable there. The same pattern as the enhancement source chip (P).
  *
+ * What a mark means is the `selfUse_markMeaning` setting's: `keep` (default) marks items to
+ * keep and sells the rest; `sell` marks items to sell and keeps the rest. Every reader goes
+ * through {@link isKeptForSelfUse}; the stored marks do not change with the mode.
+ *
  * Stored per character in the settings store as `selfUseWanted_<characterId>`
  * (an array of item hrids), which the gist sync carries
  * (`features/sync/sync-ownership.js`). The settings panel's review list (ui
@@ -20,11 +24,15 @@
  * (rollup externals), so its edits land in the cache the tooltip reads.
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 
 /** Storage key base; the key is `${STORAGE_KEY_PREFIX}_${characterId}` */
 export const STORAGE_KEY_PREFIX = 'selfUseWanted';
+
+/** The setting that says what a K mark means: `keep` (default) or `sell` */
+export const MARK_MEANING_SETTING = 'selfUse_markMeaning';
 
 /** The chip on an item tooltip */
 export const KEEP_CHIP_CLASS = 'toolasha-selfuse-keep-chip';
@@ -315,11 +323,12 @@ const selfUseWanted = {
     },
 
     /**
-     * Whether an item is marked, from the cache.
+     * Whether an item carries a K mark, from the cache. What the mark means is the
+     * `selfUse_markMeaning` setting's: valuations ask {@link isKeptForSelfUse} instead.
      * @param {string} itemHrid
      * @returns {boolean}
      */
-    isKept(itemHrid) {
+    isMarked(itemHrid) {
         return cache !== null && cacheCharId === currentCharId() && cache.includes(itemHrid);
     },
 
@@ -327,7 +336,7 @@ const selfUseWanted = {
      * Mark or unmark one item.
      * @param {string} itemHrid
      * @param {boolean} keep
-     * @returns {Promise<boolean|null>} Whether it is now kept, null when nothing was saved
+     * @returns {Promise<boolean|null>} Whether it is now marked, null when nothing was saved
      */
     async setKept(itemHrid, keep) {
         const saved = await update((list) => (keep ? [...list, itemHrid] : list.filter((h) => h !== itemHrid)));
@@ -337,7 +346,7 @@ const selfUseWanted = {
     /**
      * Flip one item's mark.
      * @param {string} itemHrid
-     * @returns {Promise<boolean|null>} Whether it is now kept, null when nothing was saved
+     * @returns {Promise<boolean|null>} Whether it is now marked, null when nothing was saved
      */
     async toggle(itemHrid) {
         const saved = await update((list) =>
@@ -366,6 +375,10 @@ const selfUseWanted = {
 
     isAlchemyOutput,
 
+    /** For the settings bundle, which reaches this module only through the cross-bundle global */
+    MARK_MEANING_SETTING,
+    getMarkMeaning,
+
     stopWatching,
 
     /** Forget the cache (tests) */
@@ -384,26 +397,106 @@ const selfUseWanted = {
 };
 
 /**
- * The chip's text for an item.
- * @param {boolean} kept
+ * What a K mark means right now: `keep` (a marked output is kept, the rest sold; the
+ * default) or `sell` (a marked output is sold, the rest kept).
+ * @returns {'keep'|'sell'}
+ */
+export function getMarkMeaning() {
+    try {
+        return config.getSettingValue?.(MARK_MEANING_SETTING, 'keep') === 'sell' ? 'sell' : 'keep';
+    } catch {
+        return 'keep';
+    }
+}
+
+/**
+ * The one answer to "does self-use keep this output?" for every valuation, tooltip
+ * line and "instead of buying" lookup. A mark means keep in `keep` mode and sell in
+ * `sell` mode, so this is `marked` or `!marked`.
+ * @param {string} itemHrid
+ * @param {Set<string>|Array<string>} [marked] - A marked list already in hand (a snapshot a
+ *   valuation was started with); the cached list when omitted
+ * @returns {boolean}
+ */
+export function isKeptForSelfUse(itemHrid, marked) {
+    const isMarked = marked
+        ? Array.isArray(marked)
+            ? marked.includes(itemHrid)
+            : marked.has(itemHrid)
+        : selfUseWanted.isMarked(itemHrid);
+    return getMarkMeaning() === 'sell' ? !isMarked : isMarked;
+}
+
+/**
+ * A key for everything a self-use valuation reads from the marks: the mode and the
+ * marked list. A cache keyed on it is dropped by either changing.
+ * @param {Set<string>|Array<string>} [marked]
  * @returns {string}
  */
-export function keepChipLabel(kept) {
-    return kept ? '☑ Kept (K)' : '☐ Keep (K)';
+export function keptSignature(marked) {
+    return `${getMarkMeaning()}|${[...(marked || [])].sort().join(',')}`;
+}
+
+/**
+ * The chip's text for an item.
+ * @param {boolean} marked - Whether the item carries a K mark
+ * @returns {string}
+ */
+export function keepChipLabel(marked) {
+    if (getMarkMeaning() === 'sell') return marked ? '☑ Sell (not kept) (K)' : '☐ Sell (K)';
+    return marked ? '☑ Kept (K)' : '☐ Keep (K)';
+}
+
+/**
+ * The hover text of the chip.
+ * @returns {string}
+ */
+export function keepChipTitle() {
+    if (getMarkMeaning() === 'sell') {
+        return (
+            'Sell (not kept): self-use alchemy lines value a marked output as sold after tax; every other ' +
+            'output is kept, valued at what you would pay for it. Click, or press K.'
+        );
+    }
+    return (
+        'Keep for self-use: self-use alchemy lines value a kept output at what you would pay for it; ' +
+        'every other output is valued as sold after tax. Click, or press K.'
+    );
+}
+
+/**
+ * The self-use footnote under the tooltip lines.
+ * @returns {string}
+ */
+export function selfUseFootnote() {
+    if (getMarkMeaning() === 'sell') {
+        return 'Self-use: marked outputs sold after tax, the rest kept at what you would pay. K on a tooltip marks it sold.';
+    }
+    return 'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.';
 }
 
 /**
  * The tooltip section for one item: the compact chip, which the K key also flips.
  * @param {string} itemHrid
- * @param {boolean} kept
+ * @param {boolean} marked
  * @returns {string} HTML
  */
-export function buildKeepChipHTML(itemHrid, kept) {
+export function buildKeepChipHTML(itemHrid, marked) {
     return (
         `<span class="${KEEP_CHIP_CLASS}" data-item-hrid="${itemHrid}" style="cursor: pointer;" ` +
-        `title="Keep for self-use: self-use alchemy lines value a kept output at what you would pay for it; ` +
-        `every other output is valued as sold after tax. Click, or press K.">${keepChipLabel(kept)}</span>`
+        `title="${keepChipTitle()}">${keepChipLabel(marked)}</span>`
     );
+}
+
+/** Relabel every chip on screen (the mark meaning changed) */
+export function relabelKeepChips() {
+    if (typeof document === 'undefined') return;
+    for (const chip of document.querySelectorAll(`.${KEEP_CHIP_CLASS}`)) {
+        const hrid = chip.getAttribute('data-item-hrid');
+        if (!hrid) continue;
+        chip.textContent = keepChipLabel(cache !== null && cacheCharId === currentCharId() && cache.includes(hrid));
+        chip.setAttribute('title', keepChipTitle());
+    }
 }
 
 let toggleHandlers = null;

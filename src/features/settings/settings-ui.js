@@ -3545,6 +3545,7 @@ class SettingsUI {
 
             const close = () => {
                 unsubscribe();
+                unwatchMeaning?.();
                 overlay.remove();
                 if (this.closeSelfUseKeepList === close) this.closeSelfUseKeepList = null;
             };
@@ -3573,7 +3574,10 @@ class SettingsUI {
                     'display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;';
                 const title = document.createElement('h3');
                 title.style.margin = '0';
-                title.textContent = `Kept for self-use (${list.length})`;
+                title.textContent =
+                    selfUseWanted.getMarkMeaning() === 'sell'
+                        ? `Marked to sell, not kept (${list.length})`
+                        : `Kept for self-use (${list.length})`;
                 const closeBtn = document.createElement('button');
                 closeBtn.type = 'button';
                 closeBtn.className = 'toolasha-selfuse-keep-close';
@@ -3587,15 +3591,21 @@ class SettingsUI {
                 const help = document.createElement('div');
                 help.style.cssText = 'color:#888; font-size:12px; margin-bottom:10px;';
                 help.textContent =
-                    'Self-use alchemy lines value these outputs at what you would pay for them, and sell ' +
-                    'everything else after tax. Mark an item with K on its tooltip.';
+                    selfUseWanted.getMarkMeaning() === 'sell'
+                        ? 'Self-use alchemy lines sell these outputs after tax, and keep everything else at ' +
+                          'what you would pay for it. Mark an item with K on its tooltip.'
+                        : 'Self-use alchemy lines value these outputs at what you would pay for them, and sell ' +
+                          'everything else after tax. Mark an item with K on its tooltip.';
                 modal.appendChild(help);
 
                 if (list.length === 0) {
                     const empty = document.createElement('div');
                     empty.className = 'toolasha-selfuse-keep-empty';
                     empty.style.cssText = 'color:#aaa; font-style:italic;';
-                    empty.textContent = 'Nothing marked: every output is valued as sold.';
+                    empty.textContent =
+                        selfUseWanted.getMarkMeaning() === 'sell'
+                            ? 'Nothing marked: every output is valued as kept.'
+                            : 'Nothing marked: every output is valued as sold.';
                     modal.appendChild(empty);
                     return;
                 }
@@ -3634,6 +3644,11 @@ class SettingsUI {
                 modal.appendChild(clear);
             };
             const unsubscribe = selfUseWanted.onChange(render);
+            // The mark meaning changed with the list open: its title and explanation follow
+            const unwatchMeaning =
+                typeof config.onSettingChange === 'function'
+                    ? config.onSettingChange(selfUseWanted.MARK_MEANING_SETTING, render)
+                    : null;
             overlay.addEventListener('click', (event) => {
                 if (event.target === overlay) close();
             });

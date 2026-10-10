@@ -2181,6 +2181,22 @@ describe('the self-use keep list review', () => {
         expect(mocks.store.get('selfUseWanted_char-2')).toEqual(['/items/fierce_aura']);
     });
 
+    test('the title and explanation follow the mark meaning', async () => {
+        mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
+        const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
+        selfUseWanted._reset();
+
+        await settingsUI.openSelfUseKeepList();
+        expect(document.querySelector('.toolasha-selfuse-keep-overlay h3').textContent).toBe('Kept for self-use (1)');
+        settingsUI.cleanupDOM();
+
+        mocks.settingsMap.selfUse_markMeaning = { value: 'sell' };
+        await settingsUI.openSelfUseKeepList();
+        const overlay = document.querySelector('.toolasha-selfuse-keep-overlay');
+        expect(overlay.querySelector('h3').textContent).toBe('Marked to sell, not kept (1)');
+        expect(overlay.textContent).toContain('sell these outputs after tax');
+    });
+
     test('two quick presses draw one list, and cleanup leaves none', async () => {
         mocks.store.set('selfUseWanted_char-1', ['/items/frenzy']);
         const { default: selfUseWanted } = await import('../market/self-use-wanted.js');
