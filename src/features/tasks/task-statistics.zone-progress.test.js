@@ -150,6 +150,24 @@ describe('Zone Task Progress section', () => {
         expect(popupText()).toContain('No active combat tasks');
     });
 
+    test('failed zones are reported, and an all-failed run never reads as no combat tasks', async () => {
+        h.compute.mockResolvedValue([
+            { zoneHrid: '/actions/combat/zone_a', zoneName: 'Zone A', tier: 0, failed: true, interrupted: false },
+            { zoneHrid: '/actions/combat/zone_b', zoneName: 'Zone B', tier: 0, failed: true, interrupted: false },
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        expect(popupText()).toContain('2 zones could not be simulated (try again)');
+        expect(popupText()).not.toContain('No active combat tasks');
+
+        taskStatistics.closePopup();
+        h.compute.mockResolvedValue([row(), { zoneHrid: 'z', zoneName: 'Z', failed: true, interrupted: true }]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        expect(popupText()).toContain('Zone A');
+        expect(popupText()).toContain('1 zone not simulated (another simulation interrupted this one');
+    });
+
     test('a zone that can never be cleared reads ???', async () => {
         h.compute.mockResolvedValue([row({ hoursNeeded: Infinity, fightsNeeded: Infinity })]);
         taskStatistics.createPopup(statsData);
@@ -166,7 +184,20 @@ describe('Zone Task Progress section', () => {
         zoneRow.onclick();
 
         expect(taskStatistics.overlay).toBe(null);
-        expect(h.openZone).toHaveBeenCalledWith('/actions/combat/zone_a', 2, { count: 120 });
+        expect(h.openZone).toHaveBeenCalledWith('/actions/combat/zone_a', 2, { count: 126 }); // 120 plus the default 5% flat buffer (no kill rate on this row)
+    });
+
+    test('clicking a stochastic zone pads the fight count with the Go flow settings', async () => {
+        h.compute.mockResolvedValue([
+            row({ fightsNeeded: 200, killsNeeded: 100, killsPerFight: 0.5, slotsPerFight: 3 }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+
+        const { count } = h.openZone.mock.calls[0][2];
+        expect(count).toBeGreaterThan(200);
     });
 
     test('closing the popup mid-compute cancels the run and draws nothing afterwards', async () => {

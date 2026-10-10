@@ -215,13 +215,34 @@ function joinIndex(summaries, deleted) {
 }
 
 /**
+ * One user-editable field of a session on both sides of a fold. Each edit
+ * stamps its field (`favouriteAt`, `nameAt`), so an explicit unstar or cleared
+ * name beats a stale copy: the later stamp wins. Only when neither side has a
+ * stamp (data from before stamps) does `legacy` decide, as the fold always did.
+ * A tie on one stamp goes to the incoming side.
+ *
+ * @param {Object} held - This device's summary
+ * @param {Object} incoming - The other device's
+ * @param {string} field - The field
+ * @param {string} stampField - Its change stamp
+ * @param {Function} legacy - `(heldValue, incomingValue) => value` for two unstamped sides
+ * @returns {{value: *, at: number}}
+ */
+function foldStamped(held, incoming, field, stampField, legacy) {
+    const heldAt = Number(held[stampField]) || 0;
+    const incomingAt = Number(incoming[stampField]) || 0;
+    if (!heldAt && !incomingAt) return { value: legacy(held[field], incoming[field]), at: 0 };
+    return heldAt > incomingAt ? { value: held[field], at: heldAt } : { value: incoming[field], at: incomingAt };
+}
+
+/**
  * Fold two devices' indexes of one character and type.
  *
  * The index is the list sync keeps bodies by (see the retention rule above),
  * so taking one side whole would drop the other device's sessions and then
  * their bodies with them. Instead: the union by id; one session on both sides
- * keeps a game-totals reading over a stream one (as a save does), and is
- * starred if either side starred it; a session either side deleted, and has
+ * keeps a game-totals reading over a stream one (as a save does), and takes its
+ * star and name from the side that changed them last ({@link foldStamped}); a session either side deleted, and has
  * not seen again since, is left out; then the owner's own cap ({@link trimIndex}).
  *
  * @param {*} local - One side's index
@@ -248,10 +269,14 @@ export function mergeHistoryIndex(local, incoming, now = Date.now()) {
             continue;
         }
         const winner = held.basis === 'game' && summary.basis !== 'game' ? held : summary;
+        const star = foldStamped(held, summary, 'favourite', 'favouriteAt', (a, b) => Boolean(a || b));
+        const label = foldStamped(held, summary, 'name', 'nameAt', (a, b) => b ?? a ?? null);
         byId.set(summary.id, {
             ...winner,
-            favourite: Boolean(held.favourite || summary.favourite),
-            name: summary.name ?? held.name ?? null,
+            favourite: Boolean(star.value),
+            name: label.value,
+            ...(star.at ? { favouriteAt: star.at } : {}),
+            ...(label.at ? { nameAt: label.at } : {}),
         });
     }
     const listed = [...byId.values()]
@@ -613,6 +638,8 @@ export async function saveHistoryEntry(entry, characterId) {
                 ...summaryOf(fitted),
                 favourite: Boolean(existing?.favourite),
                 name: existing?.name ?? null,
+                ...(existing?.favouriteAt ? { favouriteAt: existing.favouriteAt } : {}),
+                ...(existing?.nameAt ? { nameAt: existing.nameAt } : {}),
             };
             const { kept, dropped } = trimIndex([summary, ...index.filter((held) => held.id !== summary.id)]);
             if (!kept.includes(summary)) return null;
@@ -719,6 +746,7 @@ export async function setFavourite(type, id, on, characterId = currentCharacterI
             return { ok: false, reason: 'full' };
         }
         summary.favourite = Boolean(on);
+        summary.favouriteAt = Date.now();
         return undefined;
     });
 }
@@ -738,6 +766,7 @@ export async function renameEntry(type, id, name, characterId = currentCharacter
         .slice(0, MAX_NAME_LENGTH);
     return updateSummary(type, id, characterId, (summary) => {
         summary.name = clean || null;
+        summary.nameAt = Date.now();
         return undefined;
     });
 }

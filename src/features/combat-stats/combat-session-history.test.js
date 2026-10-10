@@ -457,6 +457,37 @@ describe('Clear survives a sync pull', () => {
         ]);
     });
 
+    test('a run live at Clear and archived after it is kept', async () => {
+        // Last snapshotted before the Clear, archived (its run ended) after it
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-08-03T03:00:00Z'));
+        await clearSessions();
+        vi.setSystemTime(new Date('2026-08-03T04:00:00Z'));
+        const live = stamped('2026-08-03T01:00:00Z', OLD);
+        await archiveSession(live);
+        vi.useRealTimers();
+        const stored = storageMock.storeFor('combatStats').get(KEY);
+        expect(starts(stored)).toEqual(['2026-08-03T01:00:00Z']);
+        expect(stored.entries[0].archivedAt).toBeGreaterThan(stored.clearedAt);
+        // And it survives a pull of the pre-clear gist copy
+        const gist = { clearedAt: 0, entries: [stamped('2026-08-03T00:00:00Z', OLD)] };
+        expect(starts(pull(stored, gist))).toEqual(['2026-08-03T01:00:00Z']);
+    });
+
+    test('a pre-clear run from the gist is still dropped, archived stamp or not', async () => {
+        await clearSessions();
+        const local = storageMock.storeFor('combatStats').get(KEY);
+        const before = local.clearedAt - 1000;
+        const gist = {
+            clearedAt: 0,
+            entries: [
+                stamped('2026-08-03T00:00:00Z', OLD),
+                { ...stamped('2026-08-03T00:10:00Z', OLD), archivedAt: before },
+            ],
+        };
+        expect(entriesOf(pull(local, gist))).toEqual([]);
+    });
+
     test('a record without the cleared marker merges as before', () => {
         const a = stamped('2026-08-03T01:00:00Z', OLD);
         const b = stamped('2026-08-03T02:00:00Z', OLD);

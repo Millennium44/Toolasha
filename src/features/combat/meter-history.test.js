@@ -356,6 +356,47 @@ describe('two devices’ indexes fold together', () => {
         expect(one[0].favourite).toBe(true);
     });
 
+    describe('an explicit edit beats a stale copy', () => {
+        test('an unstar beats a stale star, either way round', () => {
+            const unstarred = summary('x', 1, { favourite: false, favouriteAt: 200 });
+            const stale = summary('x', 1, { favourite: true, favouriteAt: 100 });
+            expect(mergeHistoryIndex([unstarred], [stale], NOW)[0].favourite).toBe(false);
+            expect(mergeHistoryIndex([stale], [unstarred], NOW)[0].favourite).toBe(false);
+        });
+
+        test('a cleared name beats a stale name, either way round', () => {
+            const cleared = summary('x', 1, { name: null, nameAt: 200 });
+            const stale = summary('x', 1, { name: 'Old', nameAt: 100 });
+            expect(mergeHistoryIndex([cleared], [stale], NOW)[0].name).toBeNull();
+            expect(mergeHistoryIndex([stale], [cleared], NOW)[0].name).toBeNull();
+        });
+
+        test('a newer star beats an older unstar, and the stamp survives the fold', () => {
+            const starred = summary('x', 1, { favourite: true, favouriteAt: 300 });
+            const older = summary('x', 1, { favourite: false, favouriteAt: 100 });
+            const merged = mergeHistoryIndex([older], [starred], NOW)[0];
+            expect(merged.favourite).toBe(true);
+            expect(merged.favouriteAt).toBe(300);
+        });
+
+        test('a stamped edit beats an unstamped copy', () => {
+            const unstarred = summary('x', 1, { favourite: false, favouriteAt: 5 });
+            expect(mergeHistoryIndex([unstarred], [summary('x', 1, { favourite: true })], NOW)[0].favourite).toBe(
+                false
+            );
+        });
+
+        test('entries with no stamps fold as before', () => {
+            const merged = mergeHistoryIndex(
+                [summary('x', 1, { favourite: true, name: 'A' })],
+                [summary('x', 1, { favourite: false, name: null })],
+                NOW
+            )[0];
+            expect(merged.favourite).toBe(true);
+            expect(merged.name).toBe('A');
+        });
+    });
+
     test('the unstarred cap holds over both sides', () => {
         const side = (from) => Array.from({ length: 8 }, (_, i) => summary(`s${from + i}`, from + i));
         expect(ids(mergeHistoryIndex(side(0), side(100), NOW))).toHaveLength(MAX_RECENT);

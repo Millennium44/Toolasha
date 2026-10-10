@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fixes from Codex's late reviews
+
+- An unstar or cleared name on a saved meter session now wins over another device's old copy, a fight still running when you press Clear is kept when it ends, Task Statistics zone rows pad the pre-filled fight count like Go and say when a zone could not be simulated, and the trigger optimizer runs on a snapshot of your build and really charges 10 points per extra death per hour.
+
 ### Leftovers: alchemy source ranking and small sync fixes
 
 - Instead-of-buying's essence source ranking now counts tea cost, so a tea route can no longer push a cheaper route off the top-10 list; a deletion that failed to sync is retried instead of being settled over, restoring a legacy enhancing backup no longer keeps restored sessions hidden, and the collection optimizer credits bonus copies of the item being crafted.

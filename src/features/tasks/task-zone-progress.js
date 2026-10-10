@@ -69,6 +69,9 @@ export function groupCombatTasksByZone(actionDetailMap) {
  */
 function sortRows(rows) {
     return [...rows].sort((a, b) => {
+        // Failed zones carry no figures; they trail the rows that do
+        if (Boolean(a.failed) !== Boolean(b.failed)) return a.failed ? 1 : -1;
+        if (a.failed) return 0;
         if (a.hoursNeeded === b.hoursNeeded) return 0;
         return a.hoursNeeded < b.hoursNeeded ? -1 : 1;
     });
@@ -82,7 +85,9 @@ function sortRows(rows) {
  * @returns {Promise<Array<{zoneHrid: string, zoneName: string, tier: number, hoursNeeded: number,
  *   fightsNeeded: number, bottleneckHrid: string, bottleneckName: string, taskCount: number,
  *   shared: boolean}>|null>}
- *   Sorted ascending by hoursNeeded; empty when there are no combat tasks (no sim runs). Null when
+ *   Sorted ascending by hoursNeeded, followed by a `{zoneHrid, zoneName, tier, failed: true,
+ *   interrupted}` marker for each zone whose sim failed (`interrupted` when an ordinary sim
+ *   cancelled it rather than the worker failing); empty when there are no combat tasks (no sim runs). Null when
  *   cancelled or the character changed mid-run: nothing in it belongs to anyone on screen.
  */
 export async function computeAllZoneProgress({ isCancelled = () => false, onProgress } = {}) {
@@ -130,6 +135,15 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
         } catch (error) {
             if (stale()) return null;
             console.error('[TaskZoneProgress] Zone sim failed:', zoneHrid, error);
+            // An ordinary sim preempts this one through cancelActiveSimulations, which rejects "Cancelled"
+            rows.push({
+                zoneHrid,
+                zoneName: gameData.actionDetailMap?.[zoneHrid]?.name || zoneHrid.split('/').pop(),
+                tier,
+                failed: true,
+                interrupted: /cancel/i.test(String(error?.message || '')),
+            });
+            onProgress?.(sortRows(rows));
             continue;
         }
         if (stale()) return null;
@@ -146,6 +160,14 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
                 tier,
                 hoursNeeded: bottleneck.hoursNeeded,
                 fightsNeeded: bottleneck.fightsNeeded,
+                // For padding the fight count on a click, the way the task Go flow does
+                killsNeeded: bottleneck.bottleneckRemaining,
+                killsPerFight: bottleneck.killsPerFight,
+                slotsPerFight:
+                    Number(
+                        gameData.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount
+                    ) || null,
+                deterministic: Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid)),
                 bottleneckHrid: bottleneck.bottleneckHrid,
                 bottleneckName: bottleneck.bottleneckName,
                 taskCount: bottleneck.bottleneckTaskCount,

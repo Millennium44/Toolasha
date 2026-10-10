@@ -6,6 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { getSettingDefinition } from '../../core/settings-schema.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -24,6 +25,7 @@ import { countActiveTasks, forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { computeAllZoneProgress } from './task-zone-progress.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
+import { padFightCount } from '../../utils/fight-confidence.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { TOOLASHA } from '../../utils/selectors.js';
@@ -722,7 +724,12 @@ class TaskStatistics {
             return;
         }
 
-        for (const zone of zones) {
+        // A zone whose sim failed has no figures; say so instead of dropping it, so a run where every
+        // sim failed never reads as "no combat tasks"
+        const failedZones = zones.filter((z) => z.failed);
+        const okZones = zones.filter((z) => !z.failed);
+
+        for (const zone of okZones) {
             const finite = Number.isFinite(zone.hoursNeeded) && Number.isFinite(zone.fightsNeeded);
             const bottleneck = zone.taskCount > 1 ? `${zone.bottleneckName} ×${zone.taskCount}` : zone.bottleneckName;
             const value = finite
@@ -734,13 +741,14 @@ class TaskStatistics {
             row.title = 'Open this zone';
             row.onclick = () => {
                 this.closePopup();
-                openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, finite ? { count: zone.fightsNeeded } : {}).catch(
-                    (error) => console.error('[TaskStatistics] Could not open zone:', error)
+                const count = finite ? this.paddedZoneFightCount(zone) : null;
+                openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, count === null ? {} : { count }).catch((error) =>
+                    console.error('[TaskStatistics] Could not open zone:', error)
                 );
             };
             section.appendChild(row);
         }
-        if (zones.some((z) => z.shared)) {
+        if (okZones.some((z) => z.shared)) {
             section.appendChild(
                 this.createRow(
                     'Note',
@@ -749,7 +757,50 @@ class TaskStatistics {
                 )
             );
         }
+        if (failedZones.length > 0) {
+            const interrupted = failedZones.every((z) => z.interrupted);
+            const count = failedZones.length;
+            const noun = count === 1 ? 'zone' : 'zones';
+            section.appendChild(
+                this.createRow(
+                    'Status',
+                    interrupted
+                        ? `${count} ${noun} not simulated (another simulation interrupted this one, try again)`
+                        : `${count} ${noun} could not be simulated (try again)`,
+                    config.COLOR_LOSS
+                )
+            );
+        }
         if (stillComputing) section.appendChild(this.createRow('Status', 'Computing…', config.COLOR_TEXT_SECONDARY));
+    }
+
+    /**
+     * The fight count to pre-fill for a zone row: the expected count padded for kill-count variance
+     * with the same `taskCombatGoBuffer` / `combatFightConfidence` settings the task Go flow uses.
+     * @param {Object} zone - Row from computeAllZoneProgress
+     * @returns {number} Fights to enter
+     */
+    paddedZoneFightCount(zone) {
+        const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
+        const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
+        const confidenceDefault = getSettingDefinition('combatFightConfidence')?.default ?? 90;
+        const confidencePercent = config.getSettingValue('combatFightConfidence', confidenceDefault);
+        const { fights } = padFightCount({
+            unpaddedFights: zone.fightsNeeded,
+            thresholds: Number.isFinite(zone.killsPerFight)
+                ? [
+                      {
+                          killsNeeded: zone.killsNeeded,
+                          killsPerFight: zone.killsPerFight,
+                          slotsPerFight: zone.slotsPerFight ?? null,
+                          deterministic: Boolean(zone.deterministic),
+                      },
+                  ]
+                : [],
+            confidencePercent,
+            floorPercent: zone.deterministic ? 0 : bufferPercent,
+        });
+        return fights;
     }
 
     /**
