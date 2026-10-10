@@ -523,6 +523,24 @@ describe('inventory with its own tab strip', () => {
         expect(getComputedStyle(fixture.indicator).display).toBe('none');
     });
 
+    test('the layout flattens the native tabs component but leaves a foreign sibling in normal flow', async () => {
+        document.head.appendChild(Object.assign(document.createElement('style'), { textContent: PANEL_CSS }));
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        const foreign = document.createElement('div');
+        foreign.className = 'some-other-script-panel';
+        fixture.inv.appendChild(foreign);
+        ui = await startUI();
+        fixture.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+
+        expect(fixture.inv.classList.contains('toolasha-ct-active')).toBe(true);
+        expect(getComputedStyle(fixture.tabsContainer.closest('[class*="TabsComponent_tabsComponent"]')).display).toBe(
+            'contents'
+        );
+        expect(getComputedStyle(foreign).display).not.toBe('contents');
+    });
+
     test('a native tab click leaves the view; the player choice wins over the saved one', async () => {
         const { inventoryPanel } = buildCharacterPanel();
         const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
