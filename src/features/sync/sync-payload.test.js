@@ -117,6 +117,8 @@ await import('../guild/guild-trials-store.js');
 await import('../skills/xp-tracker.js');
 // The detail snapshots' retention window, registered the way the page does
 await import('../networth/networth-history.js');
+// The guild trial ledger's 26-week cap, registered the way the page does
+const { ledgerCycleKey, MAX_LEDGER_CYCLES } = await import('../guild/guild-trial-ledger.js');
 // Task completions: a chunked history whose pull prunes the incoming side
 const { weekChunkId, WINDOW_WEEKS } = await import('../tasks/task-completion-tracker.js');
 // Saved meter sessions: bodies kept exactly while their index lists them
@@ -1436,6 +1438,27 @@ describe('addsToRemote, the automatic merge loop guard', () => {
                 payloadOf({ settings: { [stamps]: { a: { at: 9 } }, m: { a: 1 } } })
             )
         ).toBe(false);
+    });
+});
+
+describe('the guild trial ledger cap reaches sync', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+    const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+    test('a week past the cap that the gist still holds is not written back', async () => {
+        const weeks = Array.from({ length: MAX_LEDGER_CYCLES + 1 }, (_, i) => 1_700_000_000_000 + i * WEEK);
+        const record = (weekStart) => ({ weekStart, scope: 'g', trials: [], members: {}, participation: {} });
+        // This device pruned its oldest week; the gist (never told) still has all 27
+        storeState.stores.guildHistory = Object.fromEntries(
+            weeks.slice(1).map((week) => [ledgerCycleKey('g', week), record(week)])
+        );
+        const gist = Object.fromEntries(weeks.map((week) => [ledgerCycleKey('g', week), record(week)]));
+
+        await applyPayload(payloadOf({ guildHistory: gist }), { mode: 'merge', baseline: null });
+
+        const landed = importedPayloads.at(-1).stores.guildHistory || {};
+        expect(Object.hasOwn(landed, ledgerCycleKey('g', weeks[0]))).toBe(false);
+        expect(Object.keys(landed).length).toBeLessThanOrEqual(MAX_LEDGER_CYCLES);
     });
 });
 
