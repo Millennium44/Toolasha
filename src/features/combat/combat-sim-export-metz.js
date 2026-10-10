@@ -18,6 +18,7 @@ import { gmGetValue } from '../../utils/gm-traffic.js';
 
 const ENHANCING_TOOL_LOCATION = '/item_locations/enhancing_tool';
 const ALCHEMY_TOOL_LOCATION = '/item_locations/alchemy_tool';
+const TOOL_LOCATION_PATTERN = /_tool$/;
 const INVENTORY_LOCATION = '/item_locations/inventory';
 const SPEED_GEAR_STATS = ['enhancingSpeed', 'skillingSpeed'];
 const COMBAT_CHARM_HRID = /_(attack|defense|intelligence|stamina|magic|ranged|melee)_charm$/;
@@ -56,6 +57,9 @@ function extractToolsFromEquipment(equipment) {
             enhancingTool = { itemHrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 };
         } else if (item.itemLocationHrid === ALCHEMY_TOOL_LOCATION) {
             alchemyTool = { itemHrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 };
+        } else if (TOOL_LOCATION_PATTERN.test(item.itemLocationHrid || '')) {
+            // Every other skilling tool carries no combat stats and has no home in player.equipment.
+            continue;
         } else {
             rest.push(item);
         }
