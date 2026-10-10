@@ -9,8 +9,9 @@
  * market tax. Each step is the calculator's own decompose result, pinned to
  * conservative pricing, so a step with no market data leaves the chain partly
  * unpriced and the item without a figure. A bonus crate is the exception: its
- * contents are priced like the tooltip prices them (Coin, tokens, Cowbells, shop
- * conversions), and a crate with some contents still unpriced counts at its priced
+ * contents are priced like the tooltip prices them (Coin, tokens, Cowbells, nested
+ * crates), but every non-Coin figure rests on a real order-book bid (tokens and Cowbells through their
+ * conversion's bids), and a crate with some contents still unpriced counts at its priced
  * part, flagged `partial` on the result, instead of sinking the chain.
  *
  * The mode ranks by gold per hour of the whole chain, (Σ net) / (Σ seconds), so a
@@ -23,13 +24,18 @@
  * setup moved calls {@link clearDecomposeChainCaches}.
  */
 
+import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import expectedValueCalculator from '../features/market/expected-value-calculator.js';
-import { withProfitPricingMode, getItemPriceInfo, isPriceEstimated } from './market-data.js';
+import { withProfitPricingMode, getItemPriceInfo, getItemPrices, isPriceEstimated } from './market-data.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
-import { getAlchemyOutputShopValue } from './alchemy-shop-value.js';
-import { DUNGEON_TOKEN_HRIDS, calculateDungeonTokenValue } from './token-valuation.js';
+import {
+    DUNGEON_TOKEN_HRIDS,
+    calculateDungeonTokenValue,
+    calculateLabyrinthTokenValueDetail,
+} from './token-valuation.js';
+import { COWBELL_BAG_TAX } from './profit-constants.js';
 import {
     CHAIN_MAX_DEPTH,
     bestSelfUseCandidate,
@@ -156,8 +162,23 @@ export function maximizeChainRatio(rootHrid, { termsOf, rootCost, maxIterations 
     return best;
 }
 
-/** Sell-side resolver sources that are not a market price: Coin, Cowbells, dungeon tokens, nested crates */
-const NON_MARKET_SOURCES = new Set(['coin', 'cowbell', 'dungeonToken', 'expectedValue']);
+/**
+ * The raw order-book bid for an item: no custom override, no value-map estimate, no Iron Cow figure.
+ * @param {string} hrid - Item HRID
+ * @returns {number|null}
+ */
+function bookBidOf(hrid) {
+    const prices = getItemPrices(hrid);
+    if (!prices || prices.source || prices.bidEstimated || !(prices.bid > 0)) return null;
+    return prices.bid;
+}
+
+/** Sell-side resolver sources that are not a market price: Coin, dungeon tokens, nested crates */
+const NON_MARKET_SOURCES = new Set(['coin', 'dungeonToken', 'expectedValue']);
+
+const COWBELL_HRID = '/items/cowbell';
+const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
+const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
 
 /**
  * The whole decompose chain of an item, ask in and taxed bid out.
@@ -190,19 +211,29 @@ export function decomposeChain(itemHrid) {
                     const tokenValue = calculateDungeonTokenValue(hrid, 'profitCalc_pricingMode', false);
                     return tokenValue === null ? null : calculatePriceAfterTax(tokenValue);
                 }
+                if (hrid === LABYRINTH_TOKEN_HRID) {
+                    // Its worth is the best shop reward sold at the bid; a custom or estimated
+                    // reward price is no bid, so the token is then unpriced
+                    const value = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', false)?.value;
+                    return value > 0 ? calculatePriceAfterTax(value) : null;
+                }
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
+                if (hrid === COWBELL_HRID) {
+                    // Not counting Cowbells values them at zero. Otherwise the Cowbell Bag's raw order-book bid
+                    // decides, whatever the resolver made of a custom price or estimate
+                    if (!config.getSetting('expectedValue_includeCowbells')) return 0;
+                    const bagBid = bookBidOf(COWBELL_BAG_HRID);
+                    return bagBid === null ? null : calculatePriceAfterTax(bagBid, COWBELL_BAG_TAX) / 10;
+                }
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
                 // market, custom or value-map figure needs a real order-book bid below
                 if (resolved && NON_MARKET_SOURCES.has(resolved.source) && Number.isFinite(resolved.value)) {
                     return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
                 }
-                // An order-book bid only: a custom sell price is no bid anyone can sell into
-                const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
-                if (info.source === 'book' && info.price > 0 && !info.estimated) {
-                    return calculatePriceAfterTax(info.price);
-                }
-                const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
-                return shop ? calculatePriceAfterTax(shop.valuePerUnit) : null;
+                // The raw order-book bid: a custom sell price is no bid anyone can sell into, and
+                // must not hide one that is there either
+                const bid = bookBidOf(hrid);
+                return bid === null ? null : calculatePriceAfterTax(bid);
             };
             const containerValue = (hrid) =>
                 untaxedContainerValue(hrid, {

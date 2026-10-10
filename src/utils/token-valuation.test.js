@@ -191,9 +191,12 @@ describe('calculateDungeonTokenValue', () => {
         expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(90);
     });
 
-    test('the instant-sale pin takes order-book bids only, not a custom price', () => {
+    test('the instant-sale pin reads the raw book: a custom override neither counts nor hides the bid', () => {
         game.sources['/items/cape'] = 'custom';
-        // The cape line is no bid anyone can sell into; the essence (a book bid) is the fallback
+        // The override is ignored and the cape's real bid (900 / 10) still prices the token
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(90);
+        // With no book bid on the cape, the essence's bid is the fallback
+        game.prices['/items/cape'] = { ask: 1000, bid: null };
         expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(180);
     });
 

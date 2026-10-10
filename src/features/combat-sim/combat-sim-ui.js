@@ -129,6 +129,7 @@ import {
     formatChangesText,
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
+    PRECISIONS,
     TRIGGER_OPTIMIZER_SETTING,
 } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
@@ -149,6 +150,13 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+/** Storage key for the Triggers chip's party mode, precision and min gain choices */
+const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
+const TRIGGER_CHOICE_IDS = {
+    scope: 'mwi-csim-trigger-scope',
+    precision: 'mwi-csim-trigger-precision',
+    minGain: 'mwi-csim-trigger-mingain',
+};
 /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
 const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
 
@@ -3419,7 +3427,12 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
             this._saveSwapAuraOnly();
         });
+        // Delegated, because the chip's selects are rebuilt when its setting is toggled
+        this.panel.addEventListener('change', (event) => {
+            if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) this._saveTriggerChoices();
+        });
         this._restoreUpgradeModes();
+        this._restoreTriggerChoices();
         this._restoreSwapAuraOnly();
         this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
@@ -9497,6 +9510,7 @@ class CombatSimUI {
         if (wanted && !chip) {
             this.panel.querySelector('#mwi-csim-upgrade-run')?.insertAdjacentHTML('beforebegin', modeChipHtml(mode));
             this._wireModeBox(this.panel.querySelector('[data-upgrade-mode="triggers"]'));
+            this._restoreTriggerChoices();
         } else if (!wanted && chip) {
             chip.remove();
         }
@@ -9793,6 +9807,51 @@ class CombatSimUI {
             console.error('[CombatSimUI] Failed to restore upgrade modes:', error);
         }
         this._onUpgradeModesChanged();
+    }
+
+    /**
+     * Persist the Triggers chip's party mode, precision and min gain.
+     * @private
+     */
+    async _saveTriggerChoices() {
+        try {
+            const read = (id) => this.panel?.querySelector(`#${id}`)?.value;
+            const scope = read(TRIGGER_CHOICE_IDS.scope);
+            const precision = read(TRIGGER_CHOICE_IDS.precision);
+            const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
+            // A select that is not on the panel (setting off) keeps its remembered value untouched
+            const saved = (await readScoped(TRIGGER_CHOICES_KEY, 'settings', null)) || {};
+            await writeScoped(TRIGGER_CHOICES_KEY, {
+                ...saved,
+                ...(scope !== undefined ? { scope } : {}),
+                ...(precision !== undefined ? { precision } : {}),
+                ...(Number.isFinite(minGain) ? { minGain } : {}),
+            });
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save trigger choices:', error);
+        }
+    }
+
+    /**
+     * Restore the remembered Triggers chip choices. A missing or invalid value leaves the default.
+     * @private
+     */
+    async _restoreTriggerChoices() {
+        try {
+            const saved = await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
+            if (!saved || typeof saved !== 'object') return;
+            const apply = (id, value, valid) => {
+                const select = this.panel?.querySelector(`#${id}`);
+                if (select && valid(value)) select.value = String(value);
+            };
+            apply(TRIGGER_CHOICE_IDS.scope, saved.scope, (v) => v === 'me' || v === 'party');
+            apply(TRIGGER_CHOICE_IDS.precision, saved.precision, (v) =>
+                Object.values(PRECISIONS).some((p) => p.key === v)
+            );
+            apply(TRIGGER_CHOICE_IDS.minGain, saved.minGain, (v) => MIN_GAIN_OPTIONS.includes(v));
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore trigger choices:', error);
+        }
     }
 
     /**

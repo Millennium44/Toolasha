@@ -130,6 +130,7 @@ vi.mock('../../utils/experience-parser.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? null,
+    getItemPrices: (hrid) => (market.bids[hrid] != null ? { ask: null, bid: market.bids[hrid] } : null),
     getItemPriceInfo: (hrid) => ({
         price: market.bids[hrid] ?? null,
         source: market.customs?.has(hrid) ? 'custom' : market.bids[hrid] != null ? 'book' : null,

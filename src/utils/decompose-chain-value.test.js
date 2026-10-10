@@ -21,17 +21,22 @@ const engine = vi.hoisted(() => ({
     crates: {},
     /** hrid -> what the sell-side resolver answers ({value, needsTax}); absent = null */
     sellResolved: {},
+    shop: {},
 }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ openableLootDropMap: engine.crates }),
+        getInitClientData: () => ({ openableLootDropMap: engine.crates, labyrinthShopItemDetailMap: engine.shop }),
         getItemDetails: (hrid) => engine.itemDetails[hrid] ?? null,
         getCurrentCharacterGameMode: () => 'standard',
     },
 }));
 vi.mock('../core/config.js', () => ({
-    default: { getSettingValue: (key, fallback) => fallback, getSetting: () => null },
+    default: {
+        getSettingValue: (key, fallback) => fallback,
+        // Cowbells count unless a test turns them off
+        getSetting: (key) => engine.settings?.[key] ?? (key === 'expectedValue_includeCowbells' ? true : null),
+    },
 }));
 vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
     default: {
@@ -45,9 +50,14 @@ vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
 vi.mock('../features/market/expected-value-calculator.js', () => ({
     default: { resolveSellSideValue: (hrid) => engine.sellResolved[hrid] ?? null },
 }));
-vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
+vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate) }));
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
+    // The raw book: a custom override (engine.customs) hides nothing, so only engine.rawBids shows through it
+    getItemPrices: (hrid) => {
+        const bid = engine.rawBids?.[hrid] ?? (engine.customs?.has(hrid) ? null : (engine.bids[hrid] ?? null));
+        return bid === null ? null : { ask: null, bid, bidEstimated: engine.estimated.has(hrid) };
+    },
     getItemPriceInfo: (hrid) => ({
         price: engine.bids[hrid] ?? null,
         source: engine.customs?.has(hrid) ? 'custom' : engine.bids[hrid] != null ? 'book' : null,
@@ -130,6 +140,7 @@ beforeEach(() => {
     engine.calculatorCalls = 0;
     engine.crates = {};
     engine.sellResolved = {};
+    engine.shop = {};
     clearDecomposeChainCaches();
 });
 
@@ -473,6 +484,107 @@ describe('a bonus crate', () => {
         const chain = decomposeChain('/items/item_a');
         expect(chain.partial).toBe(false);
         expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * 960) * 3600);
+    });
+
+    test('a Labyrinth Token whose shop rewards have only a custom price leaves the crate partial', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [
+            { itemHrid: '/items/coin', dropRate: 1, minCount: 100, maxCount: 100 },
+            { itemHrid: '/items/labyrinth_token', dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        engine.shop = { a: { itemHrid: '/items/shard', cost: { itemHrid: '/items/labyrinth_token', count: 10 } } };
+        engine.bids['/items/shard'] = 500;
+        engine.customs = new Set(['/items/shard']);
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(true);
+            expect(chain.partialItems).toEqual([CRATE]);
+        } finally {
+            engine.customs = undefined;
+        }
+    });
+
+    test('a Labyrinth Token with a book bid on its shop reward is sold after tax', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/labyrinth_token', dropRate: 1, minCount: 1, maxCount: 1 }];
+        engine.shop = { a: { itemHrid: '/items/shard', cost: { itemHrid: '/items/labyrinth_token', count: 10 } } };
+        engine.bids['/items/shard'] = 500;
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.partial).toBe(false);
+        // 500 gold per 10 tokens = 50 per token, taxed once
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * 50 * 0.96) * 3600);
+    });
+
+    test('Cowbells with the bag on only a custom price leave the crate partial', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [
+            { itemHrid: '/items/coin', dropRate: 1, minCount: 100, maxCount: 100 },
+            { itemHrid: '/items/cowbell', dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        engine.sellResolved['/items/cowbell'] = { value: 90, source: 'cowbell', needsTax: false };
+        engine.bids['/items/bag_of_10_cowbells'] = 1000;
+        engine.customs = new Set(['/items/bag_of_10_cowbells']);
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(true);
+            expect(chain.partialItems).toEqual([CRATE]);
+        } finally {
+            engine.customs = undefined;
+        }
+    });
+
+    test('a custom sell price does not hide a real order-book bid on a crate content', () => {
+        crateFixture({ junkPriced: true });
+        engine.customs = new Set(['/items/junk']);
+        engine.rawBids = { '/items/junk': 100 };
+        delete engine.sellResolved['/items/junk'];
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(false);
+        } finally {
+            engine.customs = undefined;
+            engine.rawBids = undefined;
+        }
+    });
+
+    test('a custom override on the bag does not hide its book bid, even when the resolver gives up', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/cowbell', dropRate: 1, minCount: 1, maxCount: 1 }];
+        // A custom 0 on the bag: the resolver answers null, but the book still has a bid
+        delete engine.sellResolved['/items/cowbell'];
+        engine.customs = new Set(['/items/bag_of_10_cowbells']);
+        engine.rawBids = { '/items/bag_of_10_cowbells': 1000 };
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(false);
+            expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * ((1000 * 0.82) / 10)) * 3600);
+        } finally {
+            engine.customs = undefined;
+            engine.rawBids = undefined;
+        }
+    });
+
+    test('with Cowbells not counted, they are worth zero and the crate is not partial', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/cowbell', dropRate: 1, minCount: 1, maxCount: 1 }];
+        engine.settings = { expectedValue_includeCowbells: false };
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(false);
+            expect(chain.netPerHour).toBeCloseTo((1920 - 500) * 3600);
+        } finally {
+            engine.settings = undefined;
+        }
+    });
+
+    test('Cowbells with a book bid on the bag are the bag bid after its tax, over ten', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/cowbell', dropRate: 1, minCount: 1, maxCount: 1 }];
+        engine.sellResolved['/items/cowbell'] = { value: 12345, source: 'cowbell', needsTax: false };
+        engine.bids['/items/bag_of_10_cowbells'] = 1000;
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.partial).toBe(false);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * ((1000 * 0.82) / 10)) * 3600);
     });
 
     test('a crate with nothing priced still leaves the chain without a figure', () => {

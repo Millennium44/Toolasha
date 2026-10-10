@@ -100,6 +100,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
+    getItemPrices: (hrid) => (engine.bids[hrid] != null ? { ask: null, bid: engine.bids[hrid] } : null),
     getItemPriceInfo: (hrid) => ({
         price: engine.bids[hrid] ?? null,
         source: engine.bids[hrid] != null ? 'book' : null,
