@@ -54,7 +54,12 @@ export function computeZoneBottleneck(monsterEntries, simResult, simHours = ZONE
         ? Math.round(fightsPerHour(simResult, simHours) * bottleneckHours)
         : Infinity;
 
+    const fph = fightsPerHour(simResult, simHours);
+    const bottleneckKillsPerHour = (simResult?.deaths?.[bottleneck.hrid] ?? 0) / simHours;
     return {
+        // What the fight count rests on, so a caller can pad it for kill-count variance
+        bottleneckRemaining: bottleneck.remaining,
+        killsPerFight: fph > 0 && bottleneckKillsPerHour > 0 ? bottleneckKillsPerHour / fph : null,
         hoursNeeded: bottleneckHours,
         fightsNeeded,
         bottleneckHrid: bottleneck.hrid,

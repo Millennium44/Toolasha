@@ -146,6 +146,14 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
                 tier,
                 hoursNeeded: bottleneck.hoursNeeded,
                 fightsNeeded: bottleneck.fightsNeeded,
+                // For padding the fight count on a click, the way the task Go flow does
+                killsNeeded: bottleneck.bottleneckRemaining,
+                killsPerFight: bottleneck.killsPerFight,
+                slotsPerFight:
+                    Number(
+                        gameData.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount
+                    ) || null,
+                deterministic: Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid)),
                 bottleneckHrid: bottleneck.bottleneckHrid,
                 bottleneckName: bottleneck.bottleneckName,
                 taskCount: bottleneck.bottleneckTaskCount,

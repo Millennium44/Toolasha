@@ -6,6 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { getSettingDefinition } from '../../core/settings-schema.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -24,6 +25,7 @@ import { countActiveTasks, forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { computeAllZoneProgress } from './task-zone-progress.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
+import { padFightCount } from '../../utils/fight-confidence.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { TOOLASHA } from '../../utils/selectors.js';
@@ -734,8 +736,9 @@ class TaskStatistics {
             row.title = 'Open this zone';
             row.onclick = () => {
                 this.closePopup();
-                openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, finite ? { count: zone.fightsNeeded } : {}).catch(
-                    (error) => console.error('[TaskStatistics] Could not open zone:', error)
+                const count = finite ? this.paddedZoneFightCount(zone) : null;
+                openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, count === null ? {} : { count }).catch((error) =>
+                    console.error('[TaskStatistics] Could not open zone:', error)
                 );
             };
             section.appendChild(row);
@@ -750,6 +753,35 @@ class TaskStatistics {
             );
         }
         if (stillComputing) section.appendChild(this.createRow('Status', 'Computing…', config.COLOR_TEXT_SECONDARY));
+    }
+
+    /**
+     * The fight count to pre-fill for a zone row: the expected count padded for kill-count variance
+     * with the same `taskCombatGoBuffer` / `combatFightConfidence` settings the task Go flow uses.
+     * @param {Object} zone - Row from computeAllZoneProgress
+     * @returns {number} Fights to enter
+     */
+    paddedZoneFightCount(zone) {
+        const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
+        const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
+        const confidenceDefault = getSettingDefinition('combatFightConfidence')?.default ?? 90;
+        const confidencePercent = config.getSettingValue('combatFightConfidence', confidenceDefault);
+        const { fights } = padFightCount({
+            unpaddedFights: zone.fightsNeeded,
+            thresholds: Number.isFinite(zone.killsPerFight)
+                ? [
+                      {
+                          killsNeeded: zone.killsNeeded,
+                          killsPerFight: zone.killsPerFight,
+                          slotsPerFight: zone.slotsPerFight ?? null,
+                          deterministic: Boolean(zone.deterministic),
+                      },
+                  ]
+                : [],
+            confidencePercent,
+            floorPercent: zone.deterministic ? 0 : bufferPercent,
+        });
+        return fights;
     }
 
     /**
