@@ -2728,7 +2728,36 @@ function registerFeatures() {
     featureRegistry.replaceFeatures(features);
 }
 
+/**
+ * Menu commands and the on-page notice for a one-shot startup mode (safe start / startup log).
+ * Never throws: a failure here must not stop the script from starting.
+ * @param {'safe'|'debug'|null} mode - The mode this load was started in
+ */
+function setupStartupModeUi(mode) {
+    const startupMode = Core.startupMode;
+    if (!startupMode) return;
+    try {
+        const onDownload = () =>
+            startupMode.downloadStartupLog(
+                startupMode.buildStartupLog({
+                    mode,
+                    performanceMonitor,
+                    errorLog,
+                    version: Utils.scriptVersion?.scriptVersion?.() || null,
+                })
+            );
+        startupMode.registerMenuCommands({ mode, onDownload });
+        if (mode) startupMode.showModeNotice({ mode, onDownload });
+    } catch (error) {
+        console.error('[Toolasha] Startup mode setup failed:', error);
+    }
+}
+
 const combatSimulatorSite = isCombatSimulatorPage();
+
+// One-shot: read here, and cleared by reading, so the next plain reload is a plain start.
+// Not consumed on simulator pages, which have no features to skip.
+const startupModeRequest = combatSimulatorSite ? null : Core.startupMode?.consumeMode?.() || null;
 
 if (combatSimulatorSite === 'metz') {
     Combat.combatSimIntegrationMetz.initialize();
@@ -2739,7 +2768,18 @@ if (combatSimulatorSite === 'metz') {
     Combat.combatSimIntegration.initialize();
 
     // Skip all other initialization
+} else if (startupModeRequest === 'safe') {
+    // Safe start: no feature runs. Deliberately no websocket hook, no DOM observer, no storage or
+    // config initialization and no registry - the game gets a page with nothing of ours attached
+    // (the websocket hook patches the socket the game opens, which is the most invasive thing we
+    // do, and the whole point of this mode is to rule us out). Only the menu command and the
+    // notice, which need nothing from the game. Settings and data are never read or written.
+    setupStartupModeUi('safe');
 } else {
+    setupStartupModeUi(startupModeRequest);
+    // A debug start also keeps the stall ledger running from the first moment
+    if (startupModeRequest === 'debug') performanceMonitor.startStallWatch?.();
+
     // CRITICAL: Install WebSocket hook FIRST, before game connects
     webSocketHook.install();
 
@@ -3004,6 +3044,7 @@ if (combatSimulatorSite === 'metz') {
                 await settingsUIReady;
 
                 const initFailures = await featureRegistry.initializeFeatures();
+                if (startupModeRequest === 'debug') Core.startupMode?.recordInitFailures?.(initFailures);
                 performanceMonitor.mark('startup:complete');
 
                 // Offer a full backup before the What's New popup can change any
