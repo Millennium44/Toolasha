@@ -140,6 +140,10 @@ describe('adoption consent', () => {
         await setAdoptionTargetId('market123');
         await resetAdoptionDecision();
         expect(await getAdoptionTargetId()).toBeNull();
+        // Cleared to null, not deleted: a deleted key is still in the gist and a pull would write it back
+        expect(mockStorage.store.get('adoptionTargetCharacterId')).toBeNull();
+        _resetConsentCache();
+        expect(await getAdoptionTargetId()).toBeNull();
         const pending = requestAdoptionConsent({});
         await vi.waitFor(() => expect(dialog()).toBeTruthy());
         document.querySelector('#mwi-adopt-later').click();

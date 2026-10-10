@@ -15,11 +15,16 @@ vi.mock('../../utils/character-key.js', () => ({
         store.data[key] = value;
         return true;
     }),
-    readScoped: vi.fn(async (key, _store, def = null) => (key in store.data ? store.data[key] : def)),
+    // The scoped key first, then the bare one, a stored null counting as absent: the real readScoped's order
+    readScoped: vi.fn(async (key, _store, def = null) => store.data[`${key}_char1`] ?? store.data[key] ?? def),
 }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
+        set: vi.fn(async (key, value) => {
+            store.data[key] = value;
+            return true;
+        }),
         delete: vi.fn(async (key) => {
             delete store.data[key];
             return true;
@@ -111,10 +116,14 @@ describe('upgrade-results-store', () => {
         expect(rememberUpgradeResultsEnabled()).toBe(false);
     });
 
-    test("clearUpgradeResults deletes this character's scoped key", async () => {
-        store.data[`${KEY}_char1`] = { data: sampleResults(), savedAt: 1 };
+    test("clearUpgradeResults clears this character's scoped key to null, which loads as nothing", async () => {
+        settings.enabled = true;
+        store.data[`${KEY}_char1`] = { data: sampleResults(), savedAt: 1, scriptVersion: '9.9.9' };
+        expect(await loadUpgradeResults(KEY)).not.toBeNull();
         await clearUpgradeResults(KEY);
-        expect(store.data[`${KEY}_char1`]).toBeUndefined();
+        // Null, not a delete: a deleted key is still in the gist and a pull would write the old run back
+        expect(store.data[`${KEY}_char1`]).toBeNull();
+        expect(await loadUpgradeResults(KEY)).toBeNull();
     });
 
     test("clearUpgradeResults leaves the other sim's key untouched", async () => {
@@ -126,7 +135,7 @@ describe('upgrade-results-store', () => {
 
     test('clearUpgradeResults swallows a storage failure rather than throwing', async () => {
         const storageModule = await import('../../core/storage.js');
-        storageModule.default.delete.mockRejectedValueOnce(new Error('boom'));
+        storageModule.default.set.mockRejectedValueOnce(new Error('boom'));
         await expect(clearUpgradeResults(KEY)).resolves.toBeUndefined();
     });
 });

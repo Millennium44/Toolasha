@@ -1441,6 +1441,47 @@ describe('addsToRemote, the automatic merge loop guard', () => {
     });
 });
 
+describe('a one-off key that was cleared stays cleared', () => {
+    const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
+    const OLD = { itemTooltip_selfUseAlchemy: { type: 'checkbox', value: true } };
+    const CASES = [
+        ['settings', 'toolasha_ironCowSnapshot_603281'],
+        ['settings', 'toolasha_allOffSnapshot_603281'],
+        ['settings', 'adoptionTargetCharacterId'],
+        ['combatExport', 'combatSimUpgradeResults_603281'],
+    ];
+
+    // The clear is a stored null, which the whole-key rule carries; a delete leaves the gist's copy to be
+    // written back by the next pull. Both halves, so the null is shown to be what matters.
+    test.each(CASES)('%s/%s: a pull of the old gist copy does not re-apply it', async (store, key) => {
+        const baseline = wholeKeyHashes(payloadOf({ [store]: { [key]: OLD } }));
+        storeState.stores[store] = { ...(storeState.stores[store] || {}), [key]: null };
+
+        await applyPayload(payloadOf({ [store]: { [key]: OLD } }), { mode: 'merge', baseline });
+
+        expect(Object.hasOwn(importedPayloads.at(-1).stores[store] || {}, key)).toBe(false);
+    });
+
+    test.each(CASES)('%s/%s: a deleted key is the case that came back', async (store, key) => {
+        const baseline = wholeKeyHashes(payloadOf({ [store]: { [key]: OLD } }));
+        storeState.stores[store] = { ...(storeState.stores[store] || {}) };
+        delete storeState.stores[store][key];
+
+        await applyPayload(payloadOf({ [store]: { [key]: OLD } }), { mode: 'merge', baseline });
+
+        expect(importedPayloads.at(-1).stores[store][key]).toEqual(OLD);
+    });
+
+    test.each(CASES)('%s/%s: the next push carries the clear up to the gist', (store, key) => {
+        const baseline = wholeKeyHashes(payloadOf({ [store]: { [key]: OLD } }));
+        const merged = JSON.parse(
+            mergeForUpload(payloadOf({ [store]: { [key]: null } }), payloadOf({ [store]: { [key]: OLD } }), baseline)
+                .text
+        );
+        expect(merged.stores[store][key]).toBeNull();
+    });
+});
+
 describe('the guild trial ledger cap reaches sync', () => {
     const payloadOf = (stores) => JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores });
     const WEEK = 7 * 24 * 60 * 60 * 1000;

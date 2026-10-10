@@ -41,6 +41,7 @@ vi.mock('../../core/storage.js', () => ({
         parseJSON: (raw, key, fallback = null) => (raw == null ? fallback : raw),
         getJSON: vi.fn(async (key, store = 'settings', fallback = null) => {
             const k = `${store}::${key}`;
+            if (world.store.get(k) === null) return fallback;
             // The read is where the switch lands: the player clicked the toggle
             // and the character pointer moved while IndexedDB was answering.
             const value = world.store.has(k) ? world.store.get(k) : fallback;
@@ -51,6 +52,12 @@ vi.mock('../../core/storage.js', () => ({
             if (world.writeFails) return false;
             world.store.set(`${store}::${key}`, value);
             if (world.switchOnWrite) world.characterId = 'char2';
+            return true;
+        }),
+        // A clear is a stored null (sync carries whole keys); reads see it as absent
+        set: vi.fn(async (key, value, store = 'settings') => {
+            if (value === null) world.deleted.push(key);
+            world.store.set(`${store}::${key}`, value);
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -101,6 +108,8 @@ describe('iron cow mode — the snapshot key survives a mid-teardown character s
         // The snapshot that was consumed is the one that is removed
         expect(world.restored).toEqual([['invWorth', true]]);
         expect(world.deleted).toEqual(['toolasha_ironCowSnapshot_char1']);
+        // Cleared to null rather than deleted, so a pull of the gist's copy cannot bring it back
+        expect(world.store.get('settings::toolasha_ironCowSnapshot_char1')).toBeNull();
         // ...and the character who just arrived still has theirs
         expect(world.store.has('settings::toolasha_ironCowSnapshot_char2')).toBe(true);
     });
@@ -208,6 +217,15 @@ describe('iron cow mode hides the self-use alchemy tooltip lines', () => {
         await ironCowMode.disable();
 
         expect(world.restored).toEqual([['itemTooltip_selfUseAlchemy', true]]);
+    });
+
+    test('a snapshot that was cleared reads as absent: disabling again restores nothing and writes nothing', async () => {
+        world.store.set('settings::toolasha_ironCowSnapshot_char1', null);
+
+        await ironCowMode.disable();
+
+        expect(world.restored).toEqual([]);
+        expect(world.deleted).toEqual([]);
     });
 
     test('a character who never enabled the mode has nothing written to it', async () => {

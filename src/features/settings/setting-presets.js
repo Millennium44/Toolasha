@@ -445,7 +445,9 @@ export async function loadBulkSnapshot() {
  * @returns {Promise<void>}
  */
 export async function clearBulkSnapshot() {
-    await storage.delete(bulkSnapshotKey(), 'settings');
+    // null, not a delete: sync carries whole keys, so a deleted snapshot comes back from the gist on the next pull
+    // and the Restore button with it. A null is a newer value the whole-key rule carries; readers treat it as absent.
+    await storage.set(bulkSnapshotKey(), null, 'settings', true);
 }
 
 /**
