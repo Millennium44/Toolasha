@@ -1451,10 +1451,15 @@ class SyncManager {
         // over nothing. Settled the way an upload merge that adds nothing
         // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
         // Held-back records and a replaced push keep their own paths.
-        if (!retryHeld && !replaced && this._sameContent(payload, localText, localHash)) {
+        let standDown = !retryHeld && !replaced && this._sameContent(payload, localText, localHash);
+        if (standDown) {
             // `addsToRemote` ignores a stale out-of-window key, so this shortcut would otherwise settle
-            // over a displaced delete that is still owed
-            await retryPendingDisplacedDeletes();
+            // over a displaced delete that is still owed. One that still fails is not settled over: the
+            // pull takes the normal path, whose apply retries it, and no hash is recorded as seen
+            const stillOwed = await retryPendingDisplacedDeletes();
+            if (stillOwed > 0) standDown = false;
+        }
+        if (standDown) {
             // The flush and the build above can outlast a takeover, whose own
             // record this one would roll back
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
