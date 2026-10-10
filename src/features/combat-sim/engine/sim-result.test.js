@@ -103,3 +103,11 @@ describe('per-wave first hit', () => {
         expect(posted.waveFirstHit).toEqual([{ name: '#1', total: 1_000, count: 1 }]);
     });
 });
+
+describe('player pools', () => {
+    test("record each player's HP and MP pools for the trigger optimizer", () => {
+        const result = new SimResult({ hrid: '/zones/x', difficultyTier: 0 }, 1);
+        result.setPlayerPools({ hrid: 'player1', combatDetails: { maxHitpoints: 1500, maxManapoints: 800 } });
+        expect(result.playerPools).toEqual({ player1: { maxHitpoints: 1500, maxManapoints: 800 } });
+    });
+});

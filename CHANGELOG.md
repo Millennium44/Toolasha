@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim trigger optimizer
+
+- An optional Triggers option (off by default) in the combat sim's Upgrade tab tunes the HP/MP thresholds on your ability and food triggers, confirms each change on fresh runs, and offers only real score gains (minimum gain selectable) to apply in the sim or copy and enter by hand.
+
 ### Sync stops bringing back what you or a cap removed
 
 - Meter sessions dropped from the saved list, loot-log hours past the 2,000 cap, old guild-ledger weeks, expired deletion markers, a migrated loot-log key and one-off records like the Restore snapshot no longer come back from the sync gist, and Clear in combat-session history and labyrinth room logs now sticks across devices; the in-progress dungeon run no longer syncs.
