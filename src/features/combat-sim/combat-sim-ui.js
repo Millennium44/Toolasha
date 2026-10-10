@@ -273,6 +273,39 @@ const MIN_PANEL_HEIGHT = 300;
  */
 const DEFAULT_HIDDEN_COLUMNS = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph', 'roi'];
 
+/** JSON with object keys sorted, so equal values always print the same */
+function stableStringify(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value)
+            .sort()
+            .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+            .join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * A stable fingerprint of the parts of a player DTO that decide a sim's outcome: equipment,
+ * every skill level, abilities, consumables and house rooms. The trigger analysis records it at
+ * the start so Apply can tell that the build was edited in place while the run was going.
+ * @param {Object|null|undefined} dto - Player DTO
+ * @returns {string} Stable JSON
+ */
+export function buildDtoSignature(dto) {
+    if (!dto) return '';
+    const levels = {};
+    for (const key of Object.keys(dto)) if (/Level$/.test(key)) levels[key] = dto[key];
+    return stableStringify({
+        equipment: dto.equipment ?? null,
+        levels,
+        abilities: dto.abilities ?? null,
+        food: dto.food ?? null,
+        drinks: dto.drinks ?? null,
+        houseRooms: dto.houseRooms ?? null,
+    });
+}
+
 /**
  * How deep into each metric's ladder the Score pays points.
  *
@@ -10122,6 +10155,12 @@ class CombatSimUI {
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
+        // The editor's DTOs are live: editing the Configure loadout mid-run would change the build
+        // under later candidate sims. Run on private copies, keep the live objects for Apply, and
+        // fingerprint each build so Apply can tell it was edited in place.
+        const liveDTOs = playerDTOs;
+        const signatures = new Map(liveDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+        playerDTOs = structuredClone(liveDTOs);
 
         const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
         const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
@@ -10175,7 +10214,7 @@ class CombatSimUI {
             triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
             });
-            this._wireTriggerResultButtons(result, gameData, playerDTOs);
+            this._wireTriggerResultButtons(result, gameData, liveDTOs, signatures);
             this._setStatus(
                 result?.changes?.length
                     ? `Trigger tuning ${this._upgradeAborted ? 'stopped' : 'complete'}: ${result.changes.length} change(s) found.`
@@ -10201,10 +10240,12 @@ class CombatSimUI {
      * Wire the Apply and Copy buttons of the trigger results box.
      * @param {Object} result - The optimizer result
      * @param {Object} gameData - Game data payload
-     * @param {Array<Object>} playerDTOs - The DTO objects the analysis read; Apply refuses a player replaced since
+     * @param {Array<Object>} playerDTOs - The live DTO objects the analysis copied; Apply refuses a player replaced since
+     * @param {Map<string, string>} [signatures] - hrid -> {@link buildDtoSignature} taken when the analysis began;
+     *   Apply skips a player whose build no longer matches
      * @private
      */
-    _wireTriggerResultButtons(result, gameData, playerDTOs) {
+    _wireTriggerResultButtons(result, gameData, playerDTOs, signatures = new Map()) {
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
         applyBtn?.addEventListener('click', () => {
             if (!this._editor?.getEditedDTOs()) {
@@ -10212,8 +10253,24 @@ class CombatSimUI {
                 return;
             }
             const byHrid = new Map((playerDTOs || []).map((dto) => [dto.hrid, dto]));
-            const changes = buildEditorChanges(result).map((c) => ({ ...c, dtoRef: byHrid.get(c.playerHrid) }));
-            const { applied, skipped } = this._editor.applyTriggerValueChanges(changes);
+            const edited = this._editor.getEditedDTOs();
+            const unchanged = [];
+            const changedBuild = [];
+            for (const c of buildEditorChanges(result)) {
+                const change = { ...c, dtoRef: byHrid.get(c.playerHrid) };
+                const recorded = signatures.get(c.playerHrid);
+                const stale =
+                    recorded !== undefined && buildDtoSignature(edited[c.playerHrid] ?? change.dtoRef) !== recorded;
+                (stale ? changedBuild : unchanged).push(change);
+            }
+            const outcome = unchanged.length
+                ? this._editor.applyTriggerValueChanges(unchanged)
+                : { applied: 0, skipped: [] };
+            const applied = outcome.applied;
+            const skipped = [
+                ...outcome.skipped,
+                ...changedBuild.map((change) => ({ change, reason: 'changed since analysis' })),
+            ];
             if (applied > 0) applyBtn.disabled = true;
             this._setStatus(
                 (applied > 0
