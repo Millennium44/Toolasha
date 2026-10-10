@@ -48,7 +48,11 @@ vi.mock('../features/market/expected-value-calculator.js', () => ({
 vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
-    getItemPriceInfo: (hrid) => ({ price: engine.bids[hrid] ?? null, estimated: engine.estimated.has(hrid) }),
+    getItemPriceInfo: (hrid) => ({
+        price: engine.bids[hrid] ?? null,
+        source: engine.customs?.has(hrid) ? 'custom' : engine.bids[hrid] != null ? 'book' : null,
+        estimated: engine.estimated.has(hrid),
+    }),
     isPriceEstimated: (hrid) => engine.estimated.has(hrid),
     getPricingMode: () => 'conservative',
     withProfitPricingMode: (mode, fn) => fn(),
@@ -445,6 +449,20 @@ describe('a bonus crate', () => {
         // Junk adds nothing: the figure is the same lower bound as with junk unpriced
         const perAction = 0.01 * (100 + 0.5 * 384);
         expect(chain.netPerHour).toBeCloseTo((1920 - 500 + perAction) * 3600);
+    });
+
+    test('a content with only a custom sell price and no order-book bid still marks the crate partial', () => {
+        crateFixture({ junkPriced: true });
+        engine.customs = new Set(['/items/junk']);
+        delete engine.sellResolved['/items/junk'];
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(true);
+            const perAction = 0.01 * (100 + 0.5 * 384);
+            expect(chain.netPerHour).toBeCloseTo((1920 - 500 + perAction) * 3600);
+        } finally {
+            engine.customs = undefined;
+        }
     });
 
     test('a crate with nothing priced still leaves the chain without a figure', () => {

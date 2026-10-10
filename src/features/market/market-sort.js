@@ -194,6 +194,9 @@ class MarketSort {
         const onMarketPriceUpdate = () => this.clearCaches();
         marketAPI.on(onMarketPriceUpdate);
         this.unregisterHandlers.push(() => marketAPI.off(onMarketPriceUpdate));
+        // Cowbells inside a decompose chain's bonus crates are valued by this setting
+        const unsubscribeCowbells = config.onSettingChange?.('expectedValue_includeCowbells', onMarketPriceUpdate);
+        if (typeof unsubscribeCowbells === 'function') this.unregisterHandlers.push(unsubscribeCowbells);
 
         // Register DOM observers for marketplace panel
         this.registerDOMObservers();

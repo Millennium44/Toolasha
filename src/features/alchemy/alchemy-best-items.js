@@ -189,6 +189,8 @@ class AlchemyBestItems {
         this.pricingUnsubscribers = [
             ...PRICING_SIDE_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
+            // Cowbells inside a chain's bonus crates are valued by this setting
+            config.onSettingChange('expectedValue_includeCowbells', () => this.handleMarketUpdate()),
             // The auto-fill settings move only the dropdowns' tooltips: no re-rank
             ...PRICING_SIDE_TOOLTIP_SETTING_KEYS.map((key) =>
                 config.onSettingChange(key, () => this.updatePricingSelects())

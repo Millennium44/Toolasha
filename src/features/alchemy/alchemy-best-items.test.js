@@ -130,7 +130,11 @@ vi.mock('../../utils/experience-parser.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? null,
-    getItemPriceInfo: (hrid) => ({ price: market.bids[hrid] ?? null, estimated: market.estimated.has(hrid) }),
+    getItemPriceInfo: (hrid) => ({
+        price: market.bids[hrid] ?? null,
+        source: market.customs?.has(hrid) ? 'custom' : market.bids[hrid] != null ? 'book' : null,
+        estimated: market.estimated.has(hrid),
+    }),
     isPriceEstimated: (hrid) => market.estimated.has(hrid),
     withProfitPricingMode: (mode, fn) => fn(),
 }));
@@ -1266,6 +1270,19 @@ describe('the Decompose chain/hr sort', () => {
         expect(bestItems.chainPerHour('/items/item_a')).toBeGreaterThan(bestItems.chainPerHour('/items/item_d'));
         const titles = Array.from(bestItems.modal.querySelectorAll('[data-mwi-chain]')).map((td) => td.title);
         expect(titles[0]).toContain('lower bound');
+    });
+
+    test('changing the Cowbell valuation setting drops the memoised chains', async () => {
+        crateFixture();
+        bestItems.subscribePricingChanges();
+        try {
+            bestItems.chainValues.set('/items/item_a', 'stale');
+            const { default: config } = await import('../../core/config.js');
+            config.setSettingValue('expectedValue_includeCowbells', false);
+            expect(bestItems.chainValues.has('/items/item_a')).toBe(false);
+        } finally {
+            bestItems.unsubscribePricingChanges();
+        }
     });
 
     test('a chain that cannot be valued names the unpriced items in its title', () => {

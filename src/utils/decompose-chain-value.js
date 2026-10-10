@@ -190,12 +190,15 @@ export function decomposeChain(itemHrid) {
                 }
                 const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
-                // market, custom or value-map figure goes through the real-bid check below
+                // market, custom or value-map figure needs a real order-book bid below
                 if (resolved && NON_MARKET_SOURCES.has(resolved.source) && Number.isFinite(resolved.value)) {
                     return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
                 }
-                const real = priceOf(hrid);
-                if (real !== null) return real;
+                // An order-book bid only: a custom sell price is no bid anyone can sell into
+                const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
+                if (info.source === 'book' && info.price > 0 && !info.estimated) {
+                    return calculatePriceAfterTax(info.price);
+                }
                 const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
                 return shop ? calculatePriceAfterTax(shop.valuePerUnit) : null;
             };

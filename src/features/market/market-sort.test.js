@@ -102,6 +102,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
     getItemPriceInfo: (hrid) => ({
         price: engine.bids[hrid] ?? null,
+        source: engine.bids[hrid] != null ? 'book' : null,
         estimated: engine.estimated.has(hrid),
     }),
     isPriceEstimated: (hrid) => engine.estimated.has(hrid),
