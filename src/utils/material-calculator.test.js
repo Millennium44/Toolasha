@@ -456,6 +456,46 @@ describe('calculateEnhancementMaterialRequirements', () => {
         expect(result.find((m) => m.itemHrid === '/items/nail').required).toBe(20);
     });
 
+    test('copies multiply the totals and protection, and what is held counts once', () => {
+        state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
+        state.gameData.itemDetailMap['/items/nail'] = { name: 'Nail', isTradable: true };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        const held = (itemHrid, count) => ({
+            itemLocationHrid: '/item_locations/inventory',
+            itemHrid,
+            enhancementLevel: 0,
+            count,
+        });
+        state.inventory = [held('/items/nail', 5), held('/items/protection_scroll', 2)];
+
+        const one = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/protection_scroll', 2);
+        const three = calculateEnhancementMaterialRequirements(
+            '/items/sword',
+            0,
+            5,
+            '/items/protection_scroll',
+            2,
+            4,
+            null,
+            3
+        );
+        const pick = (list, hrid) => list.find((m) => m.itemHrid === hrid);
+        expect(pick(one, '/items/nail')).toMatchObject({ required: 20 }); // default: one copy, 10 attempts
+        // Attempts stay per copy: 2 nails * 4 attempts * 3 copies = 24, with the 5 held counted once
+        expect(pick(three, '/items/nail')).toMatchObject({ required: 24, have: 5, missing: 19 });
+        // Protection is ceil(2.5) = 3 per copy, 9 in all, with the 2 held counted once
+        expect(pick(three, '/items/protection_scroll')).toMatchObject({ required: 9, missing: 7 });
+        state.inventory = [];
+    });
+
+    test('an attempts override changes the quantities; one copy reproduces the default', () => {
+        const base = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, null);
+        const explicit = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, null, null, 1);
+        expect(explicit).toEqual(base);
+        const override = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, 25);
+        expect(override.find((m) => m.itemHrid === '/items/nail').required).toBe(50);
+    });
+
     test('adds a protection item entry when protectionCount > 0', () => {
         state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
         state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };

@@ -40,6 +40,7 @@ vi.mock('../../utils/material-calculator.js', () => ({
         state.startLevels.push(startLevel);
         return [];
     },
+    calculateEnhancementWholeAttempts: () => 3,
     unclaimedBoughtCount: () => 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({

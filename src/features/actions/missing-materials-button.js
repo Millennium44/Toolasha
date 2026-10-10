@@ -18,6 +18,7 @@ import {
 import {
     calculateMaterialRequirements,
     calculateEnhancementMaterialRequirements,
+    calculateEnhancementWholeAttempts,
     unclaimedBoughtCount,
 } from '../../utils/material-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
@@ -96,6 +97,15 @@ let inventoryUpdateHandler = null;
 let storedActionHrid = null;
 let storedNumActions = 0;
 let storedEnhancementContext = null;
+/**
+ * Per-panel Missing Mats adjustments for Enhancing: the attempts to buy for (null = the computed
+ * value) and the copies to enhance. In memory only; reset when the item, target, protection or
+ * repeat count changes.
+ * @type {WeakMap<HTMLElement, {key: string, attempts: number|null, copies: number}>}
+ */
+const enhancementAdjustments = new WeakMap();
+const CONTROLS_ID = 'mwi-missing-mats-controls';
+const ADJUST_MAX = 9999;
 /** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
 let storedMaterialList = null;
 /** The level the open bill's upgrade item is wanted at, kept so live updates do not lose it */
@@ -403,7 +413,9 @@ function processEnhancingPanel(panel) {
             // Ignore mutations caused by our own button insertion/removal
             const isOwnButton = mutations.every((m) => {
                 const nodes = [...m.addedNodes, ...m.removedNodes];
-                return nodes.length > 0 && nodes.every((n) => n.id === 'mwi-missing-mats-button');
+                return (
+                    nodes.length > 0 && nodes.every((n) => n.id === 'mwi-missing-mats-button' || n.id === CONTROLS_ID)
+                );
             });
             if (isOwnButton) return;
 
@@ -467,19 +479,18 @@ function getTargetLevelFromUI(panel) {
  * @param {HTMLElement} panel - Enhancing panel element
  */
 function updateEnhancementButton(panel) {
-    // Remove existing button
-    const existingButton = panel.querySelector('#mwi-missing-mats-button');
-    if (existingButton) {
-        existingButton.remove();
-    }
+    // Remove the existing button; the adjust controls stay while they describe the same setup
+    panel.querySelector('#mwi-missing-mats-button')?.remove();
 
     if (!config.getSetting('actions_missingMaterialsButton')) {
+        panel.querySelector(`#${CONTROLS_ID}`)?.remove();
         return;
     }
 
     // Get item HRID (set by panel-observer.js)
     const itemHrid = panel.dataset.mwiItemHrid;
     if (!itemHrid) {
+        panel.querySelector(`#${CONTROLS_ID}`)?.remove();
         return;
     }
 
@@ -488,6 +499,7 @@ function updateEnhancementButton(panel) {
     const startLevel = getCurrentEnhancementLevel(panel, itemHrid) ?? 0;
     const targetLevel = getTargetLevelFromUI(panel);
     if (targetLevel === null || targetLevel <= startLevel) {
+        panel.querySelector(`#${CONTROLS_ID}`)?.remove();
         return;
     }
 
@@ -510,47 +522,172 @@ function updateEnhancementButton(panel) {
         }
     }
 
-    // Calculate missing materials
-    const missingMaterials = calculateEnhancementMaterialRequirements(
-        itemHrid,
-        startLevel,
-        targetLevel,
-        resolvedProtectionItem,
-        resolvedProtectFrom,
-        repeatCount,
-        RESERVATION_OWNER
-    );
+    // The whole attempts the bill covers untouched: the repeat count, else the expected attempts rounded up
+    const computedAttempts =
+        repeatCount ?? calculateEnhancementWholeAttempts(itemHrid, startLevel, targetLevel, resolvedProtectFrom);
 
-    const disabled = missingMaterials.length === 0;
+    // Any change to the setup the numbers describe resets the player's adjustments
+    const key = [itemHrid, startLevel, targetLevel, resolvedProtectionItem, resolvedProtectFrom, repeatCount].join('|');
+    let adjust = enhancementAdjustments.get(panel);
+    if (!adjust || adjust.key !== key) {
+        adjust = { key, attempts: null, copies: 1 };
+        enhancementAdjustments.set(panel, adjust);
+        panel.querySelector(`#${CONTROLS_ID}`)?.remove();
+    }
 
-    // Create button
     const strategyInfo = autoProtection
         ? { protectFrom: resolvedProtectFrom, protectionItemHrid: resolvedProtectionItem }
         : null;
-    const button = createEnhancementMissingMaterialsButton(
-        missingMaterials,
-        itemHrid,
-        startLevel,
-        targetLevel,
-        resolvedProtectionItem,
-        resolvedProtectFrom,
-        repeatCount,
-        disabled,
-        strategyInfo
-    );
 
-    // Find insertion point
-    const itemRequirements = panel.querySelector('.SkillActionDetail_itemRequirements__3SPnA');
-    if (itemRequirements) {
-        itemRequirements.parentNode.insertBefore(button, itemRequirements.nextSibling);
-    } else {
-        const enhancementStats = panel.querySelector('#mwi-enhancement-stats');
-        if (enhancementStats) {
-            enhancementStats.parentNode.insertBefore(button, enhancementStats);
+    const placeNode = (node) => {
+        const itemRequirements = panel.querySelector('.SkillActionDetail_itemRequirements__3SPnA');
+        if (itemRequirements) {
+            itemRequirements.parentNode.insertBefore(node, itemRequirements.nextSibling);
         } else {
-            panel.appendChild(button);
+            const enhancementStats = panel.querySelector('#mwi-enhancement-stats');
+            if (enhancementStats) {
+                enhancementStats.parentNode.insertBefore(node, enhancementStats);
+            } else {
+                panel.appendChild(node);
+            }
+        }
+    };
+
+    // Build (or rebuild, after an adjustment) just the button from the current adjustments
+    const renderButton = () => {
+        panel.querySelector('#mwi-missing-mats-button')?.remove();
+        const attempts = adjust.attempts ?? repeatCount;
+        const missingMaterials = calculateEnhancementMaterialRequirements(
+            itemHrid,
+            startLevel,
+            targetLevel,
+            resolvedProtectionItem,
+            resolvedProtectFrom,
+            attempts,
+            RESERVATION_OWNER,
+            adjust.copies
+        );
+        const button = createEnhancementMissingMaterialsButton(
+            missingMaterials,
+            itemHrid,
+            startLevel,
+            targetLevel,
+            resolvedProtectionItem,
+            resolvedProtectFrom,
+            attempts,
+            missingMaterials.length === 0,
+            strategyInfo,
+            { copies: adjust.copies, adjustedAttempts: adjust.attempts !== null, computedAttempts }
+        );
+        const controls = panel.querySelector(`#${CONTROLS_ID}`);
+        if (controls) {
+            controls.parentNode.insertBefore(button, controls.nextSibling);
+        } else {
+            placeNode(button);
+        }
+    };
+
+    const controls = panel.querySelector(`#${CONTROLS_ID}`);
+    if (!controls) {
+        placeNode(createAdjustControls(adjust, computedAttempts, renderButton));
+    } else {
+        // Keep what the player is typing; refresh the prefill only when it is not theirs
+        const attemptsInput = controls.querySelector('[data-mwi-adjust="attempts"]');
+        if (attemptsInput && adjust.attempts === null && computedAttempts !== null) {
+            attemptsInput.value = String(computedAttempts);
         }
     }
+    renderButton();
+}
+
+/**
+ * Clamp a typed adjustment to 1-9999
+ * @param {string} raw - Input text
+ * @returns {number|null} Whole number in range, or null when empty/unparseable
+ */
+function clampAdjustment(raw) {
+    if (raw === '' || raw === null || raw === undefined) return null;
+    const value = Math.floor(Number(raw));
+    if (!Number.isFinite(value)) return null;
+    return Math.max(1, Math.min(ADJUST_MAX, value));
+}
+
+/**
+ * Build the attempts / copies row that sits above the Missing Mats button on an Enhancing panel
+ * @param {{attempts: number|null, copies: number}} adjust - Per-panel adjustment state (mutated)
+ * @param {number|null} computedAttempts - Whole attempts the bill covers untouched
+ * @param {Function} onChange - Re-renders the button after an adjustment
+ * @returns {HTMLElement} Controls row
+ */
+function createAdjustControls(adjust, computedAttempts, onChange) {
+    const row = document.createElement('div');
+    row.id = CONTROLS_ID;
+    row.style.cssText = 'display: flex; align-items: center; gap: 8px; margin: 8px 0 0 0; flex-wrap: wrap;';
+
+    const makeField = (field, labelText, title, initial) => {
+        const label = document.createElement('label');
+        label.style.cssText =
+            'display: flex; align-items: center; gap: 4px; font-size: 11px; color: rgba(232, 236, 245, 0.6);';
+        label.title = title;
+        const text = document.createElement('span');
+        text.textContent = labelText;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '1';
+        input.max = String(ADJUST_MAX);
+        input.step = '1';
+        input.dataset.mwiAdjust = field;
+        input.value = initial === null || initial === undefined ? '' : String(initial);
+        Object.assign(input.style, {
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            fontSize: '11px',
+            padding: '2px 4px',
+            width: '60px',
+        });
+        // Typing must not reach the game's hotkeys
+        for (const type of ['keydown', 'keyup', 'keypress']) {
+            input.addEventListener(type, (event) => event.stopPropagation());
+        }
+        label.append(text, input);
+        return { label, input };
+    };
+
+    const attempts = makeField(
+        'attempts',
+        'Attempts',
+        'Attempts to buy materials for, per copy. Resets when the item, target, protection or repeat changes.',
+        adjust.attempts ?? computedAttempts
+    );
+    const copies = makeField(
+        'copies',
+        'Copies',
+        'How many copies of the item to take to the target. Materials held count once against the total.',
+        adjust.copies
+    );
+
+    attempts.input.addEventListener('input', () => {
+        const value = clampAdjustment(attempts.input.value);
+        // An empty box falls back to the computed attempts rather than buying for nothing
+        adjust.attempts = value === computedAttempts ? null : value;
+        onChange();
+    });
+    copies.input.addEventListener('input', () => {
+        adjust.copies = clampAdjustment(copies.input.value) ?? 1;
+        onChange();
+    });
+    // On blur show the clamped value the bill is actually using
+    attempts.input.addEventListener('change', () => {
+        attempts.input.value = String(adjust.attempts ?? computedAttempts ?? '');
+    });
+    copies.input.addEventListener('change', () => {
+        copies.input.value = String(adjust.copies);
+    });
+
+    row.append(attempts.label, copies.label);
+    return row;
 }
 
 /**
@@ -573,16 +710,27 @@ function createEnhancementMissingMaterialsButton(
     protectFromLevel,
     repeatCount,
     disabled,
-    strategyInfo
+    strategyInfo,
+    adjustment = {}
 ) {
+    const { copies = 1, adjustedAttempts = false, computedAttempts = null } = adjustment;
     const button = document.createElement('button');
     button.id = 'mwi-missing-mats-button';
-    const summary = describeMissingMaterials(missingMaterials, {
-        note:
-            repeatCount === null
-                ? 'Repeat is ∞: quantities cover the expected attempts to reach the target, rounded up to whole attempts.'
-                : '',
-    });
+    const notes = [];
+    if (repeatCount === null) {
+        notes.push(
+            'Repeat is ∞: quantities cover the expected attempts to reach the target, rounded up to whole attempts.'
+        );
+    }
+    if (copies > 1) {
+        const perCopy = repeatCount ?? computedAttempts;
+        notes.push(
+            `Quantities are for ${perCopy ?? '?'} attempts × ${copies} copies (attempts are per copy); what you hold counts once.`
+        );
+    } else if (adjustedAttempts) {
+        notes.push(`Quantities are for ${repeatCount} attempts, as set in the Attempts box.`);
+    }
+    const summary = describeMissingMaterials(missingMaterials, { note: notes.join('\n') });
     button.textContent = summary.label;
     button.title = summary.title;
     button.disabled = disabled;
@@ -627,7 +775,8 @@ function createEnhancementMissingMaterialsButton(
                 protectionItemHrid,
                 protectFromLevel,
                 repeatCount,
-                strategyInfo
+                strategyInfo,
+                copies
             );
         });
     }
@@ -651,7 +800,8 @@ async function handleEnhancementMissingMaterialsClick(
     protectionItemHrid,
     protectFromLevel,
     repeatCount,
-    strategyInfo
+    strategyInfo,
+    copies = 1
 ) {
     // Store context for live updates (already resolved values)
     storedEnhancementContext = {
@@ -662,6 +812,7 @@ async function handleEnhancementMissingMaterialsClick(
         protectFromLevel,
         repeatCount,
         strategyInfo,
+        copies,
     };
     storedActionHrid = null;
     storedNumActions = 0;
@@ -675,7 +826,8 @@ async function handleEnhancementMissingMaterialsClick(
         protectionItemHrid,
         protectFromLevel,
         repeatCount,
-        RESERVATION_OWNER
+        RESERVATION_OWNER,
+        copies
     );
 
     // Open the marketplace, or the Tester shop, with a tab per material
@@ -1538,7 +1690,8 @@ function updateTabsOnInventoryChange() {
             ctx.protectionItemHrid,
             ctx.protectFromLevel,
             ctx.repeatCount,
-            RESERVATION_OWNER
+            RESERVATION_OWNER,
+            ctx.copies
         );
     } else if (storedActionHrid && storedNumActions > 0) {
         // Production mode
