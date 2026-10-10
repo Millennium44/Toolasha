@@ -131,10 +131,11 @@ function tokenPriceOf(pricingModeSetting, respectModeSetting) {
     // An instant-sale caller (`false`) gets order-book bids only: a custom price or value-map
     // estimate is no bid anyone can sell into
     if (respectModeSetting === false) {
+        // The raw book, so a custom override neither counts nor hides a real bid
         return (hrid) => {
             if (!hrid) return null;
-            const { price, source, estimated } = getItemPriceInfo(hrid, { mode: 'bid' });
-            return source === 'book' && !estimated && price > 0 ? price : null;
+            const prices = getItemPrices(hrid);
+            return prices && !prices.source && !prices.bidEstimated && prices.bid > 0 ? prices.bid : null;
         };
     }
     const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);

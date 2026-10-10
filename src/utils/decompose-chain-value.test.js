@@ -49,6 +49,11 @@ vi.mock('../features/market/expected-value-calculator.js', () => ({
 vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate) }));
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
+    // The raw book: a custom override (engine.customs) hides nothing, so only engine.rawBids shows through it
+    getItemPrices: (hrid) => {
+        const bid = engine.rawBids?.[hrid] ?? (engine.customs?.has(hrid) ? null : (engine.bids[hrid] ?? null));
+        return bid === null ? null : { ask: null, bid, bidEstimated: engine.estimated.has(hrid) };
+    },
     getItemPriceInfo: (hrid) => ({
         price: engine.bids[hrid] ?? null,
         source: engine.customs?.has(hrid) ? 'custom' : engine.bids[hrid] != null ? 'book' : null,
@@ -521,6 +526,20 @@ describe('a bonus crate', () => {
             expect(chain.partialItems).toEqual([CRATE]);
         } finally {
             engine.customs = undefined;
+        }
+    });
+
+    test('a custom sell price does not hide a real order-book bid on a crate content', () => {
+        crateFixture({ junkPriced: true });
+        engine.customs = new Set(['/items/junk']);
+        engine.rawBids = { '/items/junk': 100 };
+        delete engine.sellResolved['/items/junk'];
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(false);
+        } finally {
+            engine.customs = undefined;
+            engine.rawBids = undefined;
         }
     });
 

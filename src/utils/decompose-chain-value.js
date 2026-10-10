@@ -27,7 +27,7 @@
 import dataManager from '../core/data-manager.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import expectedValueCalculator from '../features/market/expected-value-calculator.js';
-import { withProfitPricingMode, getItemPriceInfo, isPriceEstimated } from './market-data.js';
+import { withProfitPricingMode, getItemPriceInfo, getItemPrices, isPriceEstimated } from './market-data.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 import {
     DUNGEON_TOKEN_HRIDS,
@@ -161,6 +161,17 @@ export function maximizeChainRatio(rootHrid, { termsOf, rootCost, maxIterations 
     return best;
 }
 
+/**
+ * The raw order-book bid for an item: no custom override, no value-map estimate, no Iron Cow figure.
+ * @param {string} hrid - Item HRID
+ * @returns {number|null}
+ */
+function bookBidOf(hrid) {
+    const prices = getItemPrices(hrid);
+    if (!prices || prices.source || prices.bidEstimated || !(prices.bid > 0)) return null;
+    return prices.bid;
+}
+
 /** Sell-side resolver sources that are not a market price: Coin, dungeon tokens, nested crates */
 const NON_MARKET_SOURCES = new Set(['coin', 'dungeonToken', 'expectedValue']);
 
@@ -211,21 +222,18 @@ export function decomposeChain(itemHrid) {
                     // Cowbell Bag must have a real order-book bid; the resolver's figure may be a custom or estimate
                     if (!resolved) return null;
                     if (resolved.value === 0) return 0;
-                    const bag = getItemPriceInfo(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' });
-                    if (bag.source !== 'book' || !(bag.price > 0) || bag.estimated) return null;
-                    return calculatePriceAfterTax(bag.price, COWBELL_BAG_TAX) / 10;
+                    const bagBid = bookBidOf(COWBELL_BAG_HRID);
+                    return bagBid === null ? null : calculatePriceAfterTax(bagBid, COWBELL_BAG_TAX) / 10;
                 }
                 // Only the resolver's non-market sources pass as they are; an ordinary item's
                 // market, custom or value-map figure needs a real order-book bid below
                 if (resolved && NON_MARKET_SOURCES.has(resolved.source) && Number.isFinite(resolved.value)) {
                     return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
                 }
-                // An order-book bid only: a custom sell price is no bid anyone can sell into
-                const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
-                if (info.source === 'book' && info.price > 0 && !info.estimated) {
-                    return calculatePriceAfterTax(info.price);
-                }
-                return null;
+                // The raw order-book bid: a custom sell price is no bid anyone can sell into, and
+                // must not hide one that is there either
+                const bid = bookBidOf(hrid);
+                return bid === null ? null : calculatePriceAfterTax(bid);
             };
             const containerValue = (hrid) =>
                 untaxedContainerValue(hrid, {
