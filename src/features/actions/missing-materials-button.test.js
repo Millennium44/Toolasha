@@ -348,6 +348,57 @@ describe('enhancement missing-material reservation handoff', () => {
         expect(tab.getAttribute('data-missing-quantity')).toBe('0');
         expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
     });
+
+    describe('the Return tab', () => {
+        function installGame(game) {
+            const root = document.createElement('div');
+            root.id = 'root';
+            root._reactRootContainer = { current: { stateNode: game } };
+            document.body.appendChild(root);
+        }
+
+        async function openAndReturn() {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            document
+                .querySelector('#mwi-missing-mats-button')
+                .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(200);
+            await Promise.resolve();
+            const tab = Array.from(document.querySelectorAll('[data-mwi-custom-tab]')).find((el) =>
+                el.textContent.includes('Return')
+            );
+            expect(tab).toBeTruthy();
+            tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(200);
+        }
+
+        test('returns to Enhancing with the starting stack selected', async () => {
+            const game = { handleEnhanceItem: vi.fn(), handleGoToAction: vi.fn() };
+            installGame(game);
+            state.inventory = [
+                {
+                    itemLocationHrid: '/item_locations/inventory',
+                    itemHrid: '/items/sword',
+                    enhancementLevel: 0,
+                    count: 1,
+                    hash: '1::/item_locations/inventory::/items/sword::0',
+                },
+            ];
+            await openAndReturn();
+            expect(game.handleEnhanceItem).toHaveBeenCalledWith('1::/item_locations/inventory::/items/sword::0');
+            expect(game.handleGoToAction).not.toHaveBeenCalled();
+        });
+
+        test('with no such stack it opens the Enhancing action instead', async () => {
+            const game = { handleEnhanceItem: vi.fn(), handleGoToAction: vi.fn() };
+            installGame(game);
+            state.inventory = [];
+            await openAndReturn();
+            expect(game.handleEnhanceItem).not.toHaveBeenCalled();
+            expect(game.handleGoToAction).toHaveBeenCalledWith('/actions/enhancing/enhance');
+        });
+    });
 });
 
 describe('the button says what it will buy', () => {

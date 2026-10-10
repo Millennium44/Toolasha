@@ -437,6 +437,11 @@ export function calculateEnhancementMaterialRequirements(
     const inventory = dataManager.getInventory() || [];
     const materials = [];
 
+    // Attempts are whole actions: round the expected count up before multiplying, so the
+    // totals are always a multiple of the per-attempt cost. The epsilon keeps a count that
+    // is a whole number plus float noise from buying a spare attempt.
+    const wholeAttempts = Math.ceil((repeatCount ?? calc.attempts) - 1e-9);
+
     // Process enhancement cost materials
     for (const cost of enhancementCosts) {
         // Skip coins — not tradeable, auto-deducted by the game
@@ -449,7 +454,7 @@ export function calculateEnhancementMaterialRequirements(
             continue;
         }
 
-        const totalQuantity = Math.ceil(cost.count * (repeatCount ?? calc.attempts));
+        const totalQuantity = Math.ceil(cost.count * wholeAttempts);
         const have = unclaimedBoughtCount(cost.itemHrid) + heldInBag(inventory, cost.itemHrid);
         const available = ownerId ? effectiveInventory(cost.itemHrid, 0, { excludeOwner: ownerId, held: have }) : have;
         const missing = Math.max(0, totalQuantity - available);

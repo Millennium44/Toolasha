@@ -413,6 +413,49 @@ describe('calculateEnhancementMaterialRequirements', () => {
         expect(nail.required).toBe(6); // 2 * 3
     });
 
+    test('infinite repeat buys whole attempts: a level-80 quiver +0 to +1 at 53.06% success', () => {
+        // Maintainer's live case: 1 / 0.5306 = 1.885 expected attempts. Costs scale from whole
+        // attempts (2 of them), never from the fractional 1.885.
+        state.gameData.itemDetailMap['/items/chimerical_quiver'] = {
+            name: 'Chimerical Quiver',
+            itemLevel: 80,
+            enhancementCosts: [
+                { itemHrid: '/items/coin', count: 5000 },
+                { itemHrid: '/items/chimerical_essence', count: 8 },
+                { itemHrid: '/items/aqua_essence', count: 2000 },
+                { itemHrid: '/items/eyessence', count: 2000 },
+            ],
+        };
+        for (const hrid of ['chimerical_essence', 'aqua_essence', 'eyessence']) {
+            state.gameData.itemDetailMap[`/items/${hrid}`] = { name: hrid, isTradable: true };
+        }
+        state.enhancementResult = { attempts: 1 / 0.5306, protectionCount: 0 };
+        const held = (itemHrid, count) => ({
+            itemLocationHrid: '/item_locations/inventory',
+            itemHrid,
+            enhancementLevel: 0,
+            count,
+        });
+        state.inventory = [
+            held('/items/chimerical_essence', 8),
+            held('/items/aqua_essence', 1770),
+            held('/items/eyessence', 2267),
+        ];
+
+        const result = calculateEnhancementMaterialRequirements('/items/chimerical_quiver', 0, 1, null, 0, null);
+        const byHrid = Object.fromEntries(result.map((m) => [m.itemHrid, m]));
+        expect(byHrid['/items/chimerical_essence']).toMatchObject({ required: 16, missing: 8 });
+        expect(byHrid['/items/aqua_essence']).toMatchObject({ required: 4000, missing: 2230 });
+        expect(byHrid['/items/eyessence']).toMatchObject({ required: 4000, missing: 1733 });
+        state.inventory = [];
+    });
+
+    test('a whole expected attempt count is not bumped by float noise', () => {
+        state.enhancementResult = { attempts: 10 + 1e-12, protectionCount: 0 };
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0);
+        expect(result.find((m) => m.itemHrid === '/items/nail').required).toBe(20);
+    });
+
     test('adds a protection item entry when protectionCount > 0', () => {
         state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
         state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };

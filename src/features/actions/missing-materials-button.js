@@ -43,6 +43,7 @@ import {
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { buildItemHash } from '../../utils/item-hash.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
@@ -119,6 +120,8 @@ const PRODUCTION_TYPES = [
 ];
 
 /** Label every Missing Mats button carries */
+const ENHANCE_ACTION_HRID = '/actions/enhancing/enhance';
+const ENHANCE_INVENTORY_LOCATION = '/item_locations/inventory';
 const BUTTON_LABEL = 'Missing Mats Marketplace';
 
 /**
@@ -575,7 +578,10 @@ function createEnhancementMissingMaterialsButton(
     const button = document.createElement('button');
     button.id = 'mwi-missing-mats-button';
     const summary = describeMissingMaterials(missingMaterials, {
-        note: repeatCount === null ? 'Repeat is ∞: quantities are for the expected attempts to reach the target.' : '',
+        note:
+            repeatCount === null
+                ? 'Repeat is ∞: quantities cover the expected attempts to reach the target, rounded up to whole attempts.'
+                : '',
     });
     button.textContent = summary.label;
     button.title = summary.title;
@@ -1336,6 +1342,45 @@ function createReturnTab(referenceTab) {
 }
 
 /**
+ * Open the Enhancing panel with the stack being enhanced preselected.
+ *
+ * Enhancing is the single action `/actions/enhancing/enhance`, so it is reached
+ * through `handleGoToAction` like any other (there is no `handleChangeNavTarget`
+ * on the game component). When the inventory still holds a stack at the starting
+ * level, the game's own `handleEnhanceItem` preselects it; otherwise the panel
+ * opens with nothing selected.
+ *
+ * @param {Object} game - Game component instance
+ * @param {{itemHrid: string, startLevel: number}} ctx - Stored enhancement context
+ */
+function openEnhancingPanel(game, ctx) {
+    const inventory = dataManager.getInventory?.() || [];
+    const stack = inventory.find(
+        (item) =>
+            item &&
+            item.itemHrid === ctx.itemHrid &&
+            (item.itemLocationHrid || ENHANCE_INVENTORY_LOCATION) === ENHANCE_INVENTORY_LOCATION &&
+            (Number(item.enhancementLevel) || 0) === (Number(ctx.startLevel) || 0) &&
+            (item.count == null || item.count > 0)
+    );
+    const hash = stack
+        ? stack.hash ||
+          buildItemHash(
+              dataManager.getCurrentCharacterId?.(),
+              ENHANCE_INVENTORY_LOCATION,
+              ctx.itemHrid,
+              Number(ctx.startLevel) || 0
+          )
+        : null;
+
+    if (hash && typeof game.handleEnhanceItem === 'function') {
+        game.handleEnhanceItem(hash);
+    } else if (typeof game.handleGoToAction === 'function') {
+        game.handleGoToAction(ENHANCE_ACTION_HRID);
+    }
+}
+
+/**
  * Navigate back to the stored action and restore input values
  */
 async function handleReturnToAction() {
@@ -1345,7 +1390,7 @@ async function handleReturnToAction() {
     if (storedActionHrid) {
         game.handleGoToAction(storedActionHrid);
     } else if (storedEnhancementContext) {
-        game.handleChangeNavTarget('enhancing');
+        openEnhancingPanel(game, storedEnhancementContext);
     } else {
         return;
     }
