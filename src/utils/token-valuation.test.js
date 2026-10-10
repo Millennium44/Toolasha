@@ -184,6 +184,19 @@ describe('calculateDungeonTokenValue', () => {
         expect(calculateDungeonTokenValue(TOKEN)).toBe(90); // back to the bid
     });
 
+    test('false in place of the respect key pins the bid whatever the settings say', () => {
+        game.settings.profitCalc_pricingMode = 'optimistic';
+        game.settings.expectedValue_respectPricingMode = true;
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(100); // the setting would take the ask
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(90);
+    });
+
+    test('the instant-sale pin takes order-book bids only, not a custom price', () => {
+        game.sources['/items/cape'] = 'custom';
+        // The cape line is no bid anyone can sell into; the essence (a book bid) is the fallback
+        expect(calculateDungeonTokenValue(TOKEN, 'profitCalc_pricingMode', false)).toBe(180);
+    });
+
     describe('patient +1 tick', () => {
         test('following the global mode, a sale at the ask steps one tick down', () => {
             game.settings.profitCalc_pricingMode = 'hybrid';

@@ -1237,6 +1237,58 @@ describe('every existing character is moved to listing age "both", once', () => 
     });
 });
 
+describe('every existing character is moved to "K marks items to sell", once', () => {
+    // A K mark now means sell by default. Existing characters move across too,
+    // including ones whose map stores 'keep', because the marks were retired
+    // with it (features/market/self-use-wanted.js).
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_default_rewrites_v4_${KEY}`;
+    const meaning = (value) => ({ selfUse_markMeaning: { id: 'selfUse_markMeaning', type: 'select', value } });
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('the schema default is sell', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.selfUse_markMeaning.value).toBe('sell');
+    });
+
+    test('a stored keep becomes sell, and is saved', async () => {
+        stored.set(`json:${KEY}`, meaning('keep'));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.selfUse_markMeaning.value).toBe('sell');
+        expect(stored.get(`json:${KEY}`).selfUse_markMeaning.value).toBe('sell');
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('runs once: a keep picked again afterwards is left alone', async () => {
+        stored.set(`json:${KEY}`, meaning('keep'));
+        await settingsStorage.loadSettings();
+
+        const map = stored.get(`json:${KEY}`);
+        map.selfUse_markMeaning = meaning('keep').selfUse_markMeaning;
+        stored.set(`json:${KEY}`, map);
+
+        const settings = await settingsStorage.loadSettings();
+        expect(settings.selfUse_markMeaning.value).toBe('keep');
+        const again = await settingsStorage.loadSettings();
+        expect(again.selfUse_markMeaning.value).toBe('keep');
+    });
+
+    test('a fresh install writes nothing and the flag is set', async () => {
+        await settingsStorage.loadSettings();
+
+        expect(stored.get(`json:${KEY}`)?.selfUse_markMeaning).toBeUndefined();
+        expect(stored.get(FLAG)).toBe(true);
+    });
+});
+
 describe('SettingsStorage copy-from-character', () => {
     beforeEach(() => {
         stored.clear();

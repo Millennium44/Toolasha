@@ -40,6 +40,8 @@ const market = vi.hoisted(() => ({
     estimated: new Set(),
     /** itemHrid → decompose results, one per catalyst/tea candidate */
     candidates: {},
+    /** hrid -> the sell-side resolver's {value, needsTax}, for crate contents (absent = null) */
+    sellResolved: {},
 }));
 
 const experience = vi.hoisted(() => ({ totalMultiplier: 1 }));
@@ -116,6 +118,10 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
     },
 }));
 
+vi.mock('../market/expected-value-calculator.js', () => ({
+    default: { resolveSellSideValue: (hrid) => market.sellResolved[hrid] ?? null },
+}));
+
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
 
 vi.mock('../../utils/experience-parser.js', () => ({
@@ -124,7 +130,11 @@ vi.mock('../../utils/experience-parser.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? null,
-    getItemPriceInfo: (hrid) => ({ price: market.bids[hrid] ?? null, estimated: market.estimated.has(hrid) }),
+    getItemPriceInfo: (hrid) => ({
+        price: market.bids[hrid] ?? null,
+        source: market.customs?.has(hrid) ? 'custom' : market.bids[hrid] != null ? 'book' : null,
+        estimated: market.estimated.has(hrid),
+    }),
     isPriceEstimated: (hrid) => market.estimated.has(hrid),
     withProfitPricingMode: (mode, fn) => fn(),
 }));
@@ -230,6 +240,7 @@ function profit(overrides = {}) {
 
 beforeEach(() => {
     game.initClientData = null;
+    market.sellResolved = {};
     game.items = {};
     game.skills = [];
     market.prices = {};
@@ -1218,6 +1229,80 @@ describe('the Decompose chain/hr sort', () => {
 
         expect(names()).toEqual(['item_d', 'item_u']);
         expect(chainCells()[1]).toBe('\u2014');
+    });
+
+    /** item_a and item_d each roll a bonus crate holding Coin, a priced gem and a bid-less item */
+    function crateFixture() {
+        fixture();
+        const crate = '/items/artisans_crate';
+        const withCrate = (ask, actionsPerHour) => ({
+            ...step(ask, actionsPerHour),
+            dropRevenues: [{ itemHrid: crate, isRare: true, dropsPerHour: actionsPerHour / 100 }],
+        });
+        market.candidates['/items/item_a'] = [withCrate(500, 3600)];
+        market.candidates['/items/item_d'] = [withCrate(500, 360)];
+        game.initClientData = {
+            openableLootDropMap: {
+                [crate]: [
+                    { itemHrid: '/items/coin', dropRate: 1, minCount: 100, maxCount: 100 },
+                    { itemHrid: '/items/gem', dropRate: 0.5, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/junk', dropRate: 0.5, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+        // Coin is a non-market source; the gem is an ordinary item sold at its real bid
+        market.sellResolved = {
+            '/items/coin': { value: 1, source: 'coin', needsTax: false },
+            '/items/gem': { value: 400, source: 'market', needsTax: true },
+        };
+        market.bids['/items/gem'] = 400;
+    }
+
+    test('a bonus crate with some contents unpriced leaves a lower-bound figure, not a dash', () => {
+        crateFixture();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        // Profit/hr order is the reverse of the chain order on purpose
+        open([row('item_d', 900), row('item_a', 1)]);
+
+        expect(chainCells().every((text) => text !== '—')).toBe(true);
+        expect(chainCells().every((text) => text.startsWith('≥'))).toBe(true);
+        expect(names()).toEqual(['item_a', 'item_d']);
+        expect(bestItems.chainPerHour('/items/item_a')).toBeGreaterThan(bestItems.chainPerHour('/items/item_d'));
+        const titles = Array.from(bestItems.modal.querySelectorAll('[data-mwi-chain]')).map((td) => td.title);
+        expect(titles[0]).toContain('lower bound');
+    });
+
+    test('changing the Cowbell valuation setting drops the memoised chains', async () => {
+        crateFixture();
+        bestItems.subscribePricingChanges();
+        try {
+            bestItems.chainValues.set('/items/item_a', 'stale');
+            const { default: config } = await import('../../core/config.js');
+            config.setSettingValue('expectedValue_includeCowbells', false);
+            expect(bestItems.chainValues.has('/items/item_a')).toBe(false);
+        } finally {
+            bestItems.unsubscribePricingChanges();
+        }
+    });
+
+    test('a chain that cannot be valued names the unpriced items in its title', () => {
+        fixture();
+        // The terminal has no bid at all, so the chain has nothing to sell
+        market.bids = {};
+        bestItems.sortMode = 'decomposeChainPerHour';
+        game.items['/items/term_c'] = { name: 'Term C', alchemyDetail: null };
+        open([row('item_d', 1)]);
+        const cell = bestItems.modal.querySelector('[data-mwi-chain]');
+        expect(cell.textContent).toBe('—');
+        expect(cell.title).toContain('Term C');
+    });
+
+    test('the column header says it uses instant prices regardless of the dropdowns', () => {
+        fixture();
+        bestItems.sortMode = 'decomposeChainPerHour';
+        open([row('item_d', 1)]);
+        const header = Array.from(bestItems.modal.querySelectorAll('th')).find((th) => th.textContent === 'Chain/hr');
+        expect(header.title).toContain('instant buy/sell prices');
     });
 
     test('an estimated terminal bid leaves the whole chain unpriced', () => {

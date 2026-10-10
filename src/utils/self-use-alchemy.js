@@ -99,9 +99,9 @@ export function alchemyRunBasis(result) {
  * @param {(result: Object) => Object|null} evaluate - The self-use valuation of one result
  * @param {string} objective - The evaluation field to maximize (e.g. `netPerHour`)
  * @param {Object} [options]
- * @param {boolean} [options.rankPartial=false] - Rank partly unpriced candidates by score, against each
- *   other and against complete ones, instead of using the first partial only as a fallback. Only right
- *   where a missing price can only lower the score (a cost that is an upper bound).
+ * @param {boolean} [options.rankPartial=false] - Let a partly unpriced candidate beat a complete one on
+ *   score, instead of serving only as a fallback. Only right where a missing price can only lower the
+ *   score (a cost that is an upper bound). Partial candidates are always ranked against each other.
  * @returns {{result: Object, evaluation: Object}|null} The best candidate, null when none evaluates
  */
 export function bestSelfUseCandidate(candidates, evaluate, objective, options = {}) {
@@ -114,7 +114,9 @@ export function bestSelfUseCandidate(candidates, evaluate, objective, options = 
         const evaluation = evaluate(result);
         if (evaluation?.partlyUnpriced) {
             const partial = Number(evaluation?.[objective]);
-            if (!firstPartial || (options.rankPartial && Number.isFinite(partial) && partial > partialScore)) {
+            // Among partial candidates the one with the best finite figure is the fallback, so a chain
+            // whose bonus crate is only partly priced shows its best lower bound, not an arbitrary setup
+            if (!firstPartial || (Number.isFinite(partial) && partial > partialScore)) {
                 firstPartial = { result, evaluation, optimized: false };
                 partialScore = Number.isFinite(partial) ? partial : -Infinity;
             }
@@ -330,6 +332,9 @@ export function selfUseDecompose(result, itemDetails, opts) {
  * A step whose calculator result is missing (no market data for that gear) is
  * not walked: the gear is still listed as collected, and the result is marked
  * partly unpriced with `net` null rather than a figure missing a branch.
+ * A bonus crate with only SOME contents unpriced is different: it is valued at its
+ * priced part (a lower bound), listed in `partialItems`, and `net` stays a figure
+ * with `partial` true.
  *
  * @param {string} topHrid
  * @param {Object} deps
@@ -346,7 +351,7 @@ export function selfUseDecompose(result, itemDetails, opts) {
  * @param {number} [deps.maxDepth=CHAIN_MAX_DEPTH]
  * @returns {Object|null} `{net, netPerHour, terminalValue, cost, ownUseCost, overheadCost, seconds,
  *   collected: [{itemHrid, expected}], terminals: [{itemHrid, expected, value}], steps, unpriced,
- *   partlyUnpriced, truncated, kept}`, or null
+ *   partial, partialItems, partlyUnpriced, truncated, kept}`, or null
  *   when the top item cannot be decomposed at all
  */
 export function selfUseDecomposeChain(topHrid, deps) {
@@ -361,6 +366,7 @@ export function selfUseDecomposeChain(topHrid, deps) {
     let seconds = 0;
     let truncated = false;
     const unpriced = new Set();
+    const partialItems = new Set();
     const kept = new Set();
     const collected = new Map();
     const steps = [];
@@ -425,7 +431,8 @@ export function selfUseDecomposeChain(topHrid, deps) {
             const expected = (reach * units) / unitsPerHour;
             if (unit.value === null) unpriced.add(drop.itemHrid);
             else terminalValue += expected * unit.value;
-            if (unit.partlyUnpriced) unpriced.add(drop.itemHrid);
+            // A crate with some contents unpriced is worth at least what is priced: a lower bound
+            if (unit.value !== null && unit.partlyUnpriced) partialItems.add(drop.itemHrid);
             keepTerminal(drop.itemHrid, expected, unit.value === null ? null : expected * unit.value);
         }
     };
@@ -434,9 +441,12 @@ export function selfUseDecomposeChain(topHrid, deps) {
 
     const ownUse = usablePrice(ownUseCost);
     if (ownUse === null) unpriced.add(topHrid);
-    const partlyUnpriced = unpriced.size > 0;
+    const partial = partialItems.size > 0;
+    // `partlyUnpriced` stays "this figure is a lower bound or missing"; only a bonus or
+    // output with no price at all (`unpriced`) withholds the net
+    const partlyUnpriced = unpriced.size > 0 || partial;
     const cost = (ownUse ?? 0) + overheadCost;
-    const net = partlyUnpriced ? null : terminalValue - cost;
+    const net = unpriced.size > 0 ? null : terminalValue - cost;
     return {
         net,
         netPerHour: net !== null && seconds > 0 ? (net * SECONDS_PER_HOUR) / seconds : null,
@@ -449,6 +459,8 @@ export function selfUseDecomposeChain(topHrid, deps) {
         terminals: [...terminals.values()],
         steps,
         unpriced: [...unpriced],
+        partial,
+        partialItems: [...partialItems],
         partlyUnpriced,
         truncated,
         kept: [...kept],
@@ -465,9 +477,11 @@ export function selfUseDecomposeChain(topHrid, deps) {
  * @param {Array|null} outputs - The decomposed gear's `alchemyDetail.decomposeItems`
  * @param {Object} deps - As {@link selfUseDecomposeChain}: `isChainable`, `priceOf`,
  *   `containerValue`, and the optional keep-list fields
- * @returns {{net: number, seconds: number, children: Array<{hrid: string, multiplier: number}>}|null}
+ * @returns {{net: number, seconds: number, children: Array<{hrid: string, multiplier: number}>,
+ *   partial: boolean, partialItems: string[]}|null}
  *   `net` is terminal value less the step's coin/catalyst/tea spend; null when the step cannot
- *   run or any terminal or bonus drop of its own is (partly) unpriced
+ *   run or any terminal or bonus drop of its own has no price at all. A bonus crate with only some
+ *   contents unpriced counts at its priced part and sets `partial` (a lower bound)
  */
 export function decomposeStepTerms(result, outputs, deps) {
     const basis = alchemyRunBasis(result);
@@ -475,6 +489,7 @@ export function decomposeStepTerms(result, outputs, deps) {
     const unitsPerHour = basis.actionsPerHour * basis.bulk;
     let net = -basis.overheadPerHour / unitsPerHour;
     const children = [];
+    const partialItems = [];
     for (const output of outputs) {
         const expected = output.count * basis.successRate;
         if (!(expected > 0)) continue;
@@ -491,10 +506,12 @@ export function decomposeStepTerms(result, outputs, deps) {
         if (units <= 0) continue;
         const pricing = outputPricing(drop.itemHrid, deps);
         const unit = bonusUnitPrice(drop, pricing.priceOf, pricing.containerValue);
-        if (unit.value === null || unit.partlyUnpriced) return null;
+        if (unit.value === null) return null;
+        // Some contents unpriced: a lower bound, kept rather than dropping the whole step
+        if (unit.partlyUnpriced) partialItems.push(drop.itemHrid);
         net += (units / unitsPerHour) * unit.value;
     }
-    return { net, seconds: SECONDS_PER_HOUR / unitsPerHour, children };
+    return { net, seconds: SECONDS_PER_HOUR / unitsPerHour, children, partial: partialItems.length > 0, partialItems };
 }
 
 /**

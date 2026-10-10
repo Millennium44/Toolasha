@@ -17,11 +17,15 @@ const engine = vi.hoisted(() => ({
     estimated: new Set(),
     candidates: {},
     calculatorCalls: 0,
+    /** crate hrid -> openableLootDropMap table */
+    crates: {},
+    /** hrid -> what the sell-side resolver answers ({value, needsTax}); absent = null */
+    sellResolved: {},
 }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ openableLootDropMap: {} }),
+        getInitClientData: () => ({ openableLootDropMap: engine.crates }),
         getItemDetails: (hrid) => engine.itemDetails[hrid] ?? null,
         getCurrentCharacterGameMode: () => 'standard',
     },
@@ -38,10 +42,17 @@ vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
         calculateDecomposeProfit: (hrid) => engine.candidates[hrid]?.[0] ?? null,
     },
 }));
+vi.mock('../features/market/expected-value-calculator.js', () => ({
+    default: { resolveSellSideValue: (hrid) => engine.sellResolved[hrid] ?? null },
+}));
 vi.mock('./profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => engine.bids[hrid] ?? null,
-    getItemPriceInfo: (hrid) => ({ price: engine.bids[hrid] ?? null, estimated: engine.estimated.has(hrid) }),
+    getItemPriceInfo: (hrid) => ({
+        price: engine.bids[hrid] ?? null,
+        source: engine.customs?.has(hrid) ? 'custom' : engine.bids[hrid] != null ? 'book' : null,
+        estimated: engine.estimated.has(hrid),
+    }),
     isPriceEstimated: (hrid) => engine.estimated.has(hrid),
     getPricingMode: () => 'conservative',
     withProfitPricingMode: (mode, fn) => fn(),
@@ -117,6 +128,8 @@ beforeEach(() => {
     engine.estimated = new Set();
     engine.candidates = {};
     engine.calculatorCalls = 0;
+    engine.crates = {};
+    engine.sellResolved = {};
     clearDecomposeChainCaches();
 });
 
@@ -377,5 +390,97 @@ describe('maximizeChainRatio', () => {
             '/items/b': [],
         };
         expect(maximizeChainRatio('/items/a', { termsOf: (h) => terms[h], rootCost: 0 })).toBeNull();
+    });
+});
+
+describe('a bonus crate', () => {
+    const CRATE = '/items/artisans_crate';
+    /** item_a -> 2x term_c, plus a rare crate rolling on 1% of actions (36/hr at 3600 actions) */
+    function crateFixture({ junkPriced }) {
+        engine.itemDetails = {
+            '/items/item_a': gear([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.bids = {
+            '/items/term_c': 1000,
+            '/items/gem': 400,
+            ...(junkPriced ? { '/items/junk': 100 } : {}),
+        };
+        const drops = (dropsPerHour) => [{ itemHrid: CRATE, isRare: true, dropsPerHour }];
+        engine.candidates = { '/items/item_a': [setup(500, 3600, { dropRevenues: drops(36) })] };
+        engine.crates = {
+            [CRATE]: [
+                { itemHrid: '/items/coin', dropRate: 1, minCount: 100, maxCount: 100 },
+                { itemHrid: '/items/gem', dropRate: 0.5, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/junk', dropRate: 0.5, minCount: 1, maxCount: 1 },
+            ],
+        };
+        // Coin is a non-market source; the gem is an ordinary market item, priced at its real bid
+        engine.sellResolved = {
+            '/items/coin': { value: 1, source: 'coin', needsTax: false },
+            '/items/gem': { value: 400, source: 'market', needsTax: true },
+            ...(junkPriced ? { '/items/junk': { value: 100, source: 'market', needsTax: true } } : {}),
+        };
+    }
+
+    test('prices its contents like the tooltip and counts a partly priced crate as a lower bound', () => {
+        crateFixture({ junkPriced: false });
+        const chain = decomposeChain('/items/item_a');
+        // Coin at face value (100) + gem sold after tax (0.5 x 384); junk has no bid
+        const perAction = 0.01 * (100 + 0.5 * 384);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + perAction) * 3600);
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual([CRATE]);
+        expect(chain.unpriced).toEqual([]);
+
+        clearDecomposeChainCaches();
+        crateFixture({ junkPriced: true });
+        const full = decomposeChain('/items/item_a');
+        expect(full.partial).toBe(false);
+        expect(full.netPerHour).toBeGreaterThan(chain.netPerHour);
+    });
+
+    test('a content with only a custom or estimated figure and no real bid still marks the crate partial', () => {
+        crateFixture({ junkPriced: false });
+        engine.sellResolved['/items/junk'] = { value: 100, source: 'custom', needsTax: true };
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual([CRATE]);
+        // Junk adds nothing: the figure is the same lower bound as with junk unpriced
+        const perAction = 0.01 * (100 + 0.5 * 384);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + perAction) * 3600);
+    });
+
+    test('a content with only a custom sell price and no order-book bid still marks the crate partial', () => {
+        crateFixture({ junkPriced: true });
+        engine.customs = new Set(['/items/junk']);
+        delete engine.sellResolved['/items/junk'];
+        try {
+            const chain = decomposeChain('/items/item_a');
+            expect(chain.partial).toBe(true);
+            const perAction = 0.01 * (100 + 0.5 * 384);
+            expect(chain.netPerHour).toBeCloseTo((1920 - 500 + perAction) * 3600);
+        } finally {
+            engine.customs = undefined;
+        }
+    });
+
+    test('a dungeon token in the crate is sold after tax, at its shop conversion bid', () => {
+        crateFixture({ junkPriced: true });
+        engine.crates[CRATE] = [{ itemHrid: '/items/chimerical_token', dropRate: 1, minCount: 1, maxCount: 1 }];
+        // No shop line priced: the token is worth its essence's bid
+        engine.bids['/items/chimerical_essence'] = 1000;
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.partial).toBe(false);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * 960) * 3600);
+    });
+
+    test('a crate with nothing priced still leaves the chain without a figure', () => {
+        crateFixture({ junkPriced: false });
+        engine.sellResolved = {};
+        delete engine.bids['/items/gem'];
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.netPerHour).toBeNull();
+        expect(chain.unpriced).toContain(CRATE);
     });
 });

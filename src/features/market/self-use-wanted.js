@@ -13,18 +13,32 @@
  * tooltip vanishes the moment the pointer leaves the item, so the key is what
  * makes it usable there. The same pattern as the enhancement source chip (P).
  *
- * Stored per character in the settings store as `selfUseWanted_<characterId>`
- * (an array of item hrids), which the gist sync carries
- * (`features/sync/sync-ownership.js`). The settings panel's review list (ui
+ * What a mark means is the `selfUse_markMeaning` setting's: `sell` (default) marks items to
+ * sell and keeps the rest; `keep` marks items to keep and sells the rest. Every reader goes
+ * through {@link isKeptForSelfUse}; the stored marks do not change with the mode.
+ *
+ * Stored per character in the settings store as `selfUseWanted_<characterId>`, a stamped
+ * record `{ v: 2, items: [item hrids] }`, which the gist sync carries
+ * (`features/sync/sync-ownership.js`). The stamp is what makes the default flip to `sell`
+ * safe: marks written before it (a bare array, or JSON text of one) were made under the old
+ * "keep these" meaning and would invert silently, so an unstamped record reads as no marks,
+ * and the sync merge ({@link mergeMarkRecords}) never lets one replace a stamped record. An
+ * older build reads the object as no list at all (it accepts only an array), so it neither
+ * crashes nor sees the new marks under its old meaning. The settings panel's review list (ui
  * bundle) reaches this same instance through `Toolasha.Market.selfUseWanted`
  * (rollup externals), so its edits land in the cache the tooltip reads.
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Storage key base; the key is `${STORAGE_KEY_PREFIX}_${characterId}` */
 export const STORAGE_KEY_PREFIX = 'selfUseWanted';
+
+/** The setting that says what a K mark means: `sell` (default) or `keep` */
+export const MARK_MEANING_SETTING = 'selfUse_markMeaning';
 
 /** The chip on an item tooltip */
 export const KEEP_CHIP_CLASS = 'toolasha-selfuse-keep-chip';
@@ -83,6 +97,66 @@ function sanitize(value) {
     return [...new Set(value.filter((hrid) => typeof hrid === 'string' && hrid.startsWith('/items/')))];
 }
 
+/** The stamp a record written under the `sell` meaning carries */
+export const RECORD_VERSION = 2;
+
+/**
+ * A stored value as a JSON-decoded object: JSON text from an older write is parsed.
+ * @param {*} raw
+ * @returns {*}
+ */
+function decode(raw) {
+    if (typeof raw !== 'string') return raw;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether a stored value is a stamped record. Anything else (a bare array, JSON text,
+ * nothing) is pre-update data made under the old "keep these" meaning.
+ * @param {*} raw
+ * @returns {boolean}
+ */
+export function isStampedRecord(raw) {
+    const value = decode(raw);
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && value.v >= RECORD_VERSION;
+}
+
+/**
+ * A list as the record that is stored.
+ * @param {Array<string>} list
+ * @returns {{v: number, items: Array<string>}}
+ */
+function toRecord(list) {
+    return { v: RECORD_VERSION, items: sanitize(list) };
+}
+
+/**
+ * The sync fold for the marks of one character: a stamped record beats an unstamped one in
+ * either order, so a device still on an older build (or a gist it last wrote) cannot bring
+ * back marks made under the old meaning, and a new mark is never lost to one. Two stamped
+ * records, or two unstamped ones (both read as empty), settle on the incoming one, as a
+ * whole-key write did before.
+ * @param {*} local - This device's stored value
+ * @param {*} incoming - The downloaded (or uploading) value
+ * @returns {*} One of the two, as given
+ */
+export function mergeMarkRecords(local, incoming) {
+    if (isStampedRecord(incoming)) return incoming;
+    if (isStampedRecord(local)) return local;
+    return incoming;
+}
+
+registerSyncMerge({
+    store: 'settings',
+    base: STORAGE_KEY_PREFIX,
+    merge: mergeMarkRecords,
+    label: 'Self-use marks',
+});
+
 /**
  * Load the current character's list, reloading whenever the character changed
  * since the cache was filled.
@@ -93,7 +167,7 @@ async function load() {
     const charId = currentCharId();
     if (cache === null || cacheCharId !== charId) {
         const generation = cacheGeneration;
-        const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
+        const stored = parseStored(await storage.getJSON(keyFor(charId), 'settings', null));
         // A switch that landed during the read must not file this list under the newcomer
         if (charId !== currentCharId()) return stored;
         // A change adopted while this read was out is newer than what it read
@@ -103,6 +177,7 @@ async function load() {
         // without caching it; the next load() re-subscribes and reads afresh.
         if (generation !== cacheGeneration) return stored;
         adopt(charId, stored);
+        retireOldMarks(charId);
     }
     return cache;
 }
@@ -181,7 +256,7 @@ async function reloadFromStorage() {
     reloadSeq += 1;
     const seq = reloadSeq;
     try {
-        const stored = sanitize(await storage.getJSON(keyFor(charId), 'settings', []));
+        const stored = parseStored(await storage.getJSON(keyFor(charId), 'settings', null));
         if (charId !== currentCharId() || charId !== cacheCharId) return;
         // A re-read that started later read a list at least this new, and already won
         if (seq < adoptedReloadSeq) return;
@@ -217,19 +292,38 @@ function notify() {
 }
 
 /**
- * A stored value as a list: an array as written, or JSON text from an older write.
+ * A stored value as a list. Only a stamped record has marks: an array or JSON text of one
+ * is pre-update data made under the old "keep these" meaning, and reads as none.
  * @param {*} raw
  * @returns {Array<string>}
  */
 function parseStored(raw) {
-    if (typeof raw === 'string') {
-        try {
-            return sanitize(JSON.parse(raw));
-        } catch {
-            return [];
-        }
+    const value = decode(raw);
+    return isStampedRecord(value) ? sanitize(value.items) : [];
+}
+
+/**
+ * Rewrite an unstamped record (marks from before the meaning flipped to `sell`) as an empty
+ * stamped one, once, so it stops standing in for marks and the stamped record beats an
+ * older device's copy in the sync fold. Leaves a record another tab stamped meanwhile, and
+ * a character that has nothing stored, alone. Fire and forget: reads already treat the old
+ * record as empty, so nothing waits on this.
+ * @param {string} charId
+ */
+async function retireOldMarks(charId) {
+    try {
+        await storage.update(
+            keyFor(charId),
+            (current) => {
+                if (charId !== currentCharId()) return undefined;
+                if (current === undefined || current === null || isStampedRecord(current)) return undefined;
+                return toRecord([]);
+            },
+            'settings'
+        );
+    } catch (error) {
+        console.error('[SelfUseWanted] Clearing pre-update marks failed:', error);
     }
-    return sanitize(raw);
 }
 
 /**
@@ -256,7 +350,7 @@ async function update(change) {
                 switched = true;
                 return undefined;
             }
-            return sanitize(change(parseStored(current)));
+            return toRecord(change(parseStored(current)));
         },
         'settings'
     );
@@ -315,11 +409,12 @@ const selfUseWanted = {
     },
 
     /**
-     * Whether an item is marked, from the cache.
+     * Whether an item carries a K mark, from the cache. What the mark means is the
+     * `selfUse_markMeaning` setting's: valuations ask {@link isKeptForSelfUse} instead.
      * @param {string} itemHrid
      * @returns {boolean}
      */
-    isKept(itemHrid) {
+    isMarked(itemHrid) {
         return cache !== null && cacheCharId === currentCharId() && cache.includes(itemHrid);
     },
 
@@ -327,7 +422,7 @@ const selfUseWanted = {
      * Mark or unmark one item.
      * @param {string} itemHrid
      * @param {boolean} keep
-     * @returns {Promise<boolean|null>} Whether it is now kept, null when nothing was saved
+     * @returns {Promise<boolean|null>} Whether it is now marked, null when nothing was saved
      */
     async setKept(itemHrid, keep) {
         const saved = await update((list) => (keep ? [...list, itemHrid] : list.filter((h) => h !== itemHrid)));
@@ -337,7 +432,7 @@ const selfUseWanted = {
     /**
      * Flip one item's mark.
      * @param {string} itemHrid
-     * @returns {Promise<boolean|null>} Whether it is now kept, null when nothing was saved
+     * @returns {Promise<boolean|null>} Whether it is now marked, null when nothing was saved
      */
     async toggle(itemHrid) {
         const saved = await update((list) =>
@@ -366,6 +461,10 @@ const selfUseWanted = {
 
     isAlchemyOutput,
 
+    /** For the settings bundle, which reaches this module only through the cross-bundle global */
+    MARK_MEANING_SETTING,
+    getMarkMeaning,
+
     stopWatching,
 
     /** Forget the cache (tests) */
@@ -384,26 +483,106 @@ const selfUseWanted = {
 };
 
 /**
- * The chip's text for an item.
- * @param {boolean} kept
+ * What a K mark means right now: `sell` (a marked output is sold, the rest kept; the
+ * default) or `keep` (a marked output is kept, the rest sold).
+ * @returns {'sell'|'keep'}
+ */
+export function getMarkMeaning() {
+    try {
+        return config.getSettingValue?.(MARK_MEANING_SETTING, 'sell') === 'keep' ? 'keep' : 'sell';
+    } catch {
+        return 'sell';
+    }
+}
+
+/**
+ * The one answer to "does self-use keep this output?" for every valuation, tooltip
+ * line and "instead of buying" lookup. A mark means keep in `keep` mode and sell in
+ * `sell` mode, so this is `marked` or `!marked`.
+ * @param {string} itemHrid
+ * @param {Set<string>|Array<string>} [marked] - A marked list already in hand (a snapshot a
+ *   valuation was started with); the cached list when omitted
+ * @returns {boolean}
+ */
+export function isKeptForSelfUse(itemHrid, marked) {
+    const isMarked = marked
+        ? Array.isArray(marked)
+            ? marked.includes(itemHrid)
+            : marked.has(itemHrid)
+        : selfUseWanted.isMarked(itemHrid);
+    return getMarkMeaning() === 'sell' ? !isMarked : isMarked;
+}
+
+/**
+ * A key for everything a self-use valuation reads from the marks: the mode and the
+ * marked list. A cache keyed on it is dropped by either changing.
+ * @param {Set<string>|Array<string>} [marked]
  * @returns {string}
  */
-export function keepChipLabel(kept) {
-    return kept ? '☑ Kept (K)' : '☐ Keep (K)';
+export function keptSignature(marked) {
+    return `${getMarkMeaning()}|${[...(marked || [])].sort().join(',')}`;
+}
+
+/**
+ * The chip's text for an item.
+ * @param {boolean} marked - Whether the item carries a K mark
+ * @returns {string}
+ */
+export function keepChipLabel(marked) {
+    if (getMarkMeaning() === 'sell') return marked ? '☑ Sell (not kept) (K)' : '☐ Sell (K)';
+    return marked ? '☑ Kept (K)' : '☐ Keep (K)';
+}
+
+/**
+ * The hover text of the chip.
+ * @returns {string}
+ */
+export function keepChipTitle() {
+    if (getMarkMeaning() === 'sell') {
+        return (
+            'Sell (not kept): self-use alchemy lines value a marked output as sold after tax; every other ' +
+            'output is kept, valued at what you would pay for it. Click, or press K.'
+        );
+    }
+    return (
+        'Keep for self-use: self-use alchemy lines value a kept output at what you would pay for it; ' +
+        'every other output is valued as sold after tax. Click, or press K.'
+    );
+}
+
+/**
+ * The self-use footnote under the tooltip lines.
+ * @returns {string}
+ */
+export function selfUseFootnote() {
+    if (getMarkMeaning() === 'sell') {
+        return 'Self-use: marked outputs sold after tax, the rest kept at what you would pay. K on a tooltip marks it sold.';
+    }
+    return 'Self-use: kept outputs at what you would pay, the rest sold after tax. K on a tooltip marks it kept.';
 }
 
 /**
  * The tooltip section for one item: the compact chip, which the K key also flips.
  * @param {string} itemHrid
- * @param {boolean} kept
+ * @param {boolean} marked
  * @returns {string} HTML
  */
-export function buildKeepChipHTML(itemHrid, kept) {
+export function buildKeepChipHTML(itemHrid, marked) {
     return (
         `<span class="${KEEP_CHIP_CLASS}" data-item-hrid="${itemHrid}" style="cursor: pointer;" ` +
-        `title="Keep for self-use: self-use alchemy lines value a kept output at what you would pay for it; ` +
-        `every other output is valued as sold after tax. Click, or press K.">${keepChipLabel(kept)}</span>`
+        `title="${keepChipTitle()}">${keepChipLabel(marked)}</span>`
     );
+}
+
+/** Relabel every chip on screen (the mark meaning changed) */
+export function relabelKeepChips() {
+    if (typeof document === 'undefined') return;
+    for (const chip of document.querySelectorAll(`.${KEEP_CHIP_CLASS}`)) {
+        const hrid = chip.getAttribute('data-item-hrid');
+        if (!hrid) continue;
+        chip.textContent = keepChipLabel(cache !== null && cacheCharId === currentCharId() && cache.includes(hrid));
+        chip.setAttribute('title', keepChipTitle());
+    }
 }
 
 let toggleHandlers = null;

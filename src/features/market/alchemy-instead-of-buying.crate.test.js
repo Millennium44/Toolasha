@@ -32,7 +32,13 @@ const DECOMPOSE = vi.hoisted(() => [
     { itemHrid: '/items/unpriced', count: 1 },
 ]);
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
+// These tests value marked outputs as kept, so they run in keep mode
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: () => 0,
+        getSettingValue: (id, fallback) => (id === 'selfUse_markMeaning' ? 'keep' : fallback),
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         currentCharacterId: 'c1',

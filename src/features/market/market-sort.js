@@ -194,6 +194,9 @@ class MarketSort {
         const onMarketPriceUpdate = () => this.clearCaches();
         marketAPI.on(onMarketPriceUpdate);
         this.unregisterHandlers.push(() => marketAPI.off(onMarketPriceUpdate));
+        // Cowbells inside a decompose chain's bonus crates are valued by this setting
+        const unsubscribeCowbells = config.onSettingChange?.('expectedValue_includeCowbells', onMarketPriceUpdate);
+        if (typeof unsubscribeCowbells === 'function') this.unregisterHandlers.push(unsubscribeCowbells);
 
         // Register DOM observers for marketplace panel
         this.registerDOMObservers();
@@ -528,7 +531,7 @@ class MarketSort {
             marketItemsContainer.appendChild(item.element);
 
             // Add profit indicator
-            this.addProfitIndicator(item.element, item.profit, item.detail);
+            this.addProfitIndicator(item.element, item.profit, item.detail, item.partial === true);
         }
     }
 
@@ -536,7 +539,8 @@ class MarketSort {
      * Calculate the figure the current mode ranks by.
      * @param {string} itemHrid - Item HRID
      * @param {Object} gameData - Game data
-     * @returns {Promise<{profit: number|null, detail: string|null}>} The figure and what it describes
+     * @returns {Promise<{profit: number|null, detail: string|null, partial?: boolean}>} The figure, what it
+     *   describes, and whether it is a lower bound (a decompose chain with a partly unpriced bonus crate)
      */
     async calculateItemProfit(itemHrid, gameData) {
         const mode = getSortMode(this.sortMode);
@@ -544,7 +548,7 @@ class MarketSort {
         if (mode.chain) {
             const chain = this.decomposeChain(itemHrid);
             if (!chain || chain.netPerHour === null) return { profit: null, detail: null };
-            return { profit: chain.netPerHour, detail: 'decompose chain' };
+            return { profit: chain.netPerHour, detail: 'decompose chain', partial: chain.partial === true };
         }
 
         if (mode.metric) {
@@ -704,8 +708,9 @@ class MarketSort {
      * @param {HTMLElement} itemDiv - Item container element
      * @param {number|null} profit - The current mode's figure, or null when it does not apply
      * @param {string|null} [detail=null] - The winning alchemy action, for the badge's tooltip
+     * @param {boolean} [partial=false] - The figure is a lower bound: shown with "≥" and explained in the title
      */
-    addProfitIndicator(itemDiv, profit, detail = null) {
+    addProfitIndicator(itemDiv, profit, detail = null, partial = false) {
         // Remove existing indicator
         const existing = itemDiv.querySelector('.toolasha-profit-indicator');
         if (existing) {
@@ -734,15 +739,16 @@ class MarketSort {
             displayText = '—';
             color = 'rgba(150, 150, 150, 0.8)';
         } else if (profit >= 0) {
-            displayText = `+${format(profit)}`;
+            displayText = `${partial ? '≥' : '+'}${format(profit)}`;
             color = profit > 100000 ? '#4CAF50' : profit > 0 ? '#8BC34A' : 'rgba(150, 150, 150, 0.8)';
         } else {
-            displayText = format(profit);
+            displayText = partial ? `≥${format(profit)}` : format(profit);
             color = '#F44336';
         }
 
         if (alchemyMode && detail) {
             indicator.title = `${detail} — ${modeTooltipText(this.sortMode)}`;
+            if (partial) indicator.title += ' (lower bound: a bonus crate has contents with no price)';
         }
 
         indicator.textContent = displayText;

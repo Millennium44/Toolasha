@@ -52,7 +52,12 @@ import {
 } from '../../utils/self-use-alchemy.js';
 import selfUseWanted, {
     KEEP_SECTION_CLASS,
+    MARK_MEANING_SETTING,
+    getMarkMeaning,
     buildKeepChipHTML,
+    isKeptForSelfUse,
+    relabelKeepChips,
+    selfUseFootnote,
     installKeepToggle,
     uninstallKeepToggle,
 } from './self-use-wanted.js';
@@ -99,14 +104,18 @@ const TOOLTIP_FEATURE_SETTINGS = [
 const KEEP_CHIP_SETTING = 'itemTooltip_selfUseKeepChip';
 
 /** Hover text on every self-use alchemy line. */
-const SELF_USE_TITLE =
-    'Self-use: an output marked "Keep for self-use" is valued at what you would pay to buy it under your ' +
-    'pricing mode, with no sales tax; every other output at what selling it would bring after tax. ' +
-    'Decompose costs the item at the cheaper of making or buying it; a held item being transmuted costs ' +
-    'what selling it would bring after tax.';
-
-/** Footnote under the self-use lines. */
-const SELF_USE_FOOTNOTE = 'Self-use: kept outputs at what you would pay, the rest sold after tax.';
+function selfUseTitle() {
+    const marksSell = getMarkMeaning() === 'sell';
+    return (
+        (marksSell
+            ? 'Self-use: an output marked as sold is valued at what selling it would bring after tax; every other ' +
+              'output at what you would pay to buy it under your pricing mode, with no sales tax. '
+            : 'Self-use: an output marked "Keep for self-use" is valued at what you would pay to buy it under your ' +
+              'pricing mode, with no sales tax; every other output at what selling it would bring after tax. ') +
+        'Decompose costs the item at the cheaper of making or buying it; a held item being transmuted costs ' +
+        'what selling it would bring after tax.'
+    );
+}
 
 /** The "Instead of buying" section's class */
 const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
@@ -439,6 +448,13 @@ class TooltipPrices {
                           for (const chip of document.querySelectorAll(`.${KEEP_SECTION_CLASS}`)) chip.remove();
                       }
                   })
+                : null;
+        // The mark meaning flips what a chip says; the valuations read it live on every hover
+        // (their caches are keyed on it), so only the chips already on screen need relabeling
+        this.unwatchMarkMeaning?.();
+        this.unwatchMarkMeaning =
+            typeof config.onSettingChange === 'function'
+                ? config.onSettingChange(MARK_MEANING_SETTING, () => relabelKeepChips())
                 : null;
 
         // Register with centralized DOM observer
@@ -1853,7 +1869,7 @@ class TooltipPrices {
                 html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${line.text}</div>`;
                 continue;
             }
-            html += `<div style="color: ${line.color};" title="${SELF_USE_TITLE}">• ${line.text}`;
+            html += `<div style="color: ${line.color};" title="${selfUseTitle()}">• ${line.text}`;
             if (line.detail) {
                 html += ` <span style="opacity: 0.7;">${line.detail}</span>`;
             }
@@ -1863,7 +1879,7 @@ class TooltipPrices {
             }
         }
         if (selfUseLines.length > 0) {
-            html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${SELF_USE_FOOTNOTE}</div>`;
+            html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${selfUseFootnote()}</div>`;
         }
 
         html += '</div>';
@@ -1953,7 +1969,7 @@ class TooltipPrices {
             const pricing = {
                 priceOf,
                 containerValue,
-                isWanted: (hrid) => wanted.has(hrid),
+                isWanted: (hrid) => isKeptForSelfUse(hrid, wanted),
                 sellOf,
                 sellContainerValue,
             };
@@ -2062,8 +2078,8 @@ class TooltipPrices {
                     const time = timeReadable(chain.seconds);
                     if (chain.net !== null) {
                         lines.push({
-                            text: `Full decompose chain (${keepTag(chain.kept)}): ${formatKMB(chain.net)}/item`,
-                            detail: `(${time}, ${formatKMB(chain.netPerHour)}/hr)`,
+                            text: `Full decompose chain (${keepTag(chain.kept)}): ${chain.partial ? '≥' : ''}${formatKMB(chain.net)}/item`,
+                            detail: `(${time}, ${chain.partial ? '≥' : ''}${formatKMB(chain.netPerHour)}/hr${chain.partial ? ', a bonus crate partly unpriced' : ''})`,
                             note: `collects ${names}`,
                             color: lineColor(chain.net),
                         });
@@ -2485,6 +2501,8 @@ class TooltipPrices {
             uninstallKeepToggle();
             this.unwatchKeepChipSetting?.();
             this.unwatchKeepChipSetting = null;
+            this.unwatchMarkMeaning?.();
+            this.unwatchMarkMeaning = null;
             selfUseWanted.stopWatching();
             stopInsteadListeners();
 
