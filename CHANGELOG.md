@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Decompose chain values return; K can mark items to sell
+### Decompose chain values return; K marks items to sell
 
-- Best Items and the Market's Decompose chain/hr no longer show "—" on every item: bonus Artisan's Crate contents are priced like the tooltip prices them, a partly priced crate gives a "≥" lower bound, and a chain that really can't be priced names what's missing; a new setting lets K mark items to sell (keep the rest) instead of to keep.
+- Best Items and the Market's Decompose chain/hr no longer show "—" on every item: bonus Artisan's Crate contents are priced like the tooltip prices them, a partly priced crate gives a "≥" lower bound, and a chain that really can't be priced names what's missing; K now marks items to sell and keeps the rest, so a chain needs only the one item you sell marked (a setting switches back to marking what you keep); marks made under the old meaning are cleared once by this update.
 
 ### Fixes from Codex's late reviews
 
