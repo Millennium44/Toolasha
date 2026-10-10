@@ -69,7 +69,10 @@ const {
     loadSessions,
     archiveSession,
     clearSessions,
+    mergeSessionHistory,
 } = await import('./combat-session-history.js');
+const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+const { entriesOf } = await import('../../utils/cleared-record.js');
 
 const session = (start, names = ['Millennium44'], loot = {}, experience = {}) => ({
     combatStartTime: start,
@@ -230,13 +233,18 @@ describe('describing one in a picker', () => {
 
 describe('the list survives a failed read and a second tab', () => {
     const KEY = 'combatSessionHistory_char1';
-    const stored = () => storageMock.storeFor('combatStats').get(KEY);
+    const stored = () => entriesOf(storageMock.storeFor('combatStats').get(KEY));
+    const storedRaw = () => storageMock.storeFor('combatStats').get(KEY);
     const starts = (list) => list.map((s) => s.combatStartTime);
 
     beforeEach(async () => {
         storageMock.reset();
         game.characterId = 'char1';
+        // Cleared "before" the fixtures' dates, which stand for runs that happen after it
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-08-01T00:00:00Z'));
         await clearSessions();
+        vi.useRealTimers();
         storageMock.reset();
     });
 
@@ -283,7 +291,7 @@ describe('the list survives a failed read and a second tab', () => {
         storageMock.unavailable = true;
         await archiveSession(session('2026-08-03T01:00:00Z'));
         await archiveSession(session('2026-08-03T02:00:00Z'));
-        expect(stored()).toBeUndefined();
+        expect(storedRaw()).toBeUndefined();
 
         storageMock.unavailable = false;
         await archiveSession(session('2026-08-03T03:00:00Z'));
@@ -297,7 +305,7 @@ describe('the list survives a failed read and a second tab', () => {
 
         await archiveSession(session('2026-08-03T09:00:00Z'));
 
-        expect(starts(storageMock.storeFor('combatStats').get('combatSessionHistory_char2'))).toEqual([
+        expect(starts(entriesOf(storageMock.storeFor('combatStats').get('combatSessionHistory_char2')))).toEqual([
             '2026-08-03T09:00:00Z',
         ]);
         expect(starts(stored())).toEqual(['2026-08-03T01:00:00Z']);
@@ -401,4 +409,66 @@ describe('two observers of one run', () => {
 
         expect(merged.players.map((player) => player.name).sort()).toEqual(['Guest', 'Millennium44']);
     });
+});
+
+describe('Clear survives a sync pull', () => {
+    const KEY = 'combatSessionHistory_char1';
+    const stamped = (start, seen) => ({ ...session(start), timestamp: seen, key: sessionKey(session(start)) });
+    const pull = (local, incoming) => mergeForKey('combatStats', KEY).merge(local, incoming);
+    const OLD = Date.parse('2026-08-03T01:30:00Z');
+    const NEW = Date.parse('2026-08-03T05:30:00Z');
+    const CLEAR = Date.parse('2026-08-03T03:00:00Z');
+
+    beforeEach(() => {
+        storageMock.reset();
+        game.characterId = 'char1';
+    });
+
+    test('a pull of the pre-clear gist copy does not bring the runs back', async () => {
+        await archiveSession(stamped('2026-08-03T01:00:00Z', OLD));
+        const gist = structuredClone(storageMock.storeFor('combatStats').get(KEY));
+
+        await clearSessions();
+        const local = storageMock.storeFor('combatStats').get(KEY);
+        expect(entriesOf(local)).toEqual([]);
+
+        const merged = pull(local, gist);
+        expect(entriesOf(merged)).toEqual([]);
+        expect(merged.clearedAt).toBe(local.clearedAt);
+    });
+
+    test('a run archived after the clear syncs both ways', () => {
+        const cleared = { clearedAt: CLEAR, entries: [] };
+        const peer = {
+            clearedAt: 0,
+            entries: [stamped('2026-08-03T01:00:00Z', OLD), stamped('2026-08-03T05:00:00Z', NEW)],
+        };
+
+        // This device cleared; the peer's old run is dropped, its later one arrives
+        expect(starts(pull(cleared, peer))).toEqual(['2026-08-03T05:00:00Z']);
+
+        // The peer pulling this device's clear drops the old run and keeps its own later one
+        expect(starts(pull(peer, cleared))).toEqual(['2026-08-03T05:00:00Z']);
+
+        // A run archived here after the clear is sent to the peer
+        const after = { clearedAt: CLEAR, entries: [stamped('2026-08-03T05:00:00Z', NEW)] };
+        expect(starts(pull({ clearedAt: 0, entries: [stamped('2026-08-03T01:00:00Z', OLD)] }, after))).toEqual([
+            '2026-08-03T05:00:00Z',
+        ]);
+    });
+
+    test('a record without the cleared marker merges as before', () => {
+        const a = stamped('2026-08-03T01:00:00Z', OLD);
+        const b = stamped('2026-08-03T02:00:00Z', OLD);
+
+        // An older build stored and uploaded a bare array
+        const merged = pull([a], [b]);
+        expect(starts(merged)).toEqual(['2026-08-03T02:00:00Z', '2026-08-03T01:00:00Z']);
+        expect(merged.clearedAt).toBe(0);
+        expect(mergeSessionHistory([a], [b]).entries).toEqual(mergeSessions([a], [b]));
+    });
+
+    function starts(record) {
+        return entriesOf(record).map((s) => s.combatStartTime);
+    }
 });
