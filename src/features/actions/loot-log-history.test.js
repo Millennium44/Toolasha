@@ -83,6 +83,7 @@ beforeEach(() => {
     // the legacy key and re-ran on the next read.
     for (const fn of Object.values(storageMock)) fn.mockReset?.();
     lootLogHistory._store.forget();
+    lootLogHistory._floors?.clear();
 });
 
 describe('writes', () => {
@@ -288,6 +289,71 @@ describe('pruning past the cap', () => {
 
         expect(storageMock.store.has('lootLogRec_char-1_2026-01-01T00')).toBe(true);
         expect(await lootLogHistory._load()).toHaveLength(MAX_ENTRIES);
+    });
+});
+
+describe('the cap floor, for sync', () => {
+    const hourly = (count, firstId = 1) =>
+        Array.from({ length: count }, (_, i) =>
+            entry(firstId + i, new Date(Date.UTC(2026, 0, 1) + i * 3_600_000).toISOString())
+        );
+    const floors = () => [...storageMock.store.keys()].filter((key) => key.startsWith('lootLogRecFloor_'));
+
+    test('evicting records the oldest hour kept, before anything is deleted', async () => {
+        await lootLogHistory.mergeAndSave(hourly(MAX_ENTRIES + 1));
+
+        // Hour 0 is cut; the entry at the cap (hour 1) is the floor
+        expect(floors()).toEqual(['lootLogRecFloor_char-1_2026-01-01T01']);
+        const setIndex = storageMock.set.mock.calls.findIndex(([key]) => key === floors()[0]);
+        expect(setIndex).toBeGreaterThanOrEqual(0);
+        expect(storageMock.set.mock.calls[setIndex][3]).toBe(true);
+        expect(storageMock.store.has('lootLogRec_char-1_2026-01-01T00')).toBe(false);
+    });
+
+    test('the floor hour is kept whole, so a chunk is never partly evicted', async () => {
+        // The cap lands in the middle of the 2026-01-01T00 hour: 5 entries there, 2 of them past the cap
+        const before = entry(800, '2025-12-31T23:00:00Z');
+        const old = Array.from({ length: 5 }, (_, i) => entry(900 + i, `2026-01-01T00:0${i}:00Z`));
+        const newer = Array.from({ length: MAX_ENTRIES - 4 }, (_, i) =>
+            entry(1 + i, new Date(Date.UTC(2026, 0, 2) + i * 3_600_000).toISOString())
+        );
+        await lootLogHistory.mergeAndSave([before, ...old, ...newer]);
+
+        expect(floors()).toEqual(['lootLogRecFloor_char-1_2026-01-01T00']);
+        expect(storageMock.store.get('lootLogRec_char-1_2026-01-01T00')).toHaveLength(5);
+        expect(storageMock.store.has('lootLogRec_char-1_2025-12-31T23')).toBe(false);
+        expect(await lootLogHistory._load()).toHaveLength(MAX_ENTRIES + 1);
+    });
+
+    test('a superseded floor is deleted once the next one is recorded', async () => {
+        await lootLogHistory.mergeAndSave(hourly(MAX_ENTRIES + 1));
+        await lootLogHistory.mergeAndSave([entry(9999, '2027-01-01T00:00:00Z')]);
+
+        expect(floors()).toEqual(['lootLogRecFloor_char-1_2026-01-01T02']);
+    });
+
+    test('a history within the cap records no floor', async () => {
+        await lootLogHistory.mergeAndSave(hourly(MAX_ENTRIES));
+        expect(floors()).toEqual([]);
+    });
+
+    test('a floor that does not land evicts nothing', async () => {
+        const plainSet = storageMock.set.getMockImplementation();
+        storageMock.set.mockImplementation(async (key, ...rest) =>
+            key.startsWith('lootLogRecFloor_') ? false : plainSet(key, ...rest)
+        );
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await lootLogHistory.mergeAndSave(hourly(MAX_ENTRIES + 1));
+            await lootLogHistory.mergeAndSave([entry(9999, '2027-01-01T00:00:00Z')]);
+        } finally {
+            storageMock.set.mockImplementation(plainSet);
+        }
+
+        expect(floors()).toEqual([]);
+        expect(storageMock.store.has('lootLogRec_char-1_2026-01-01T00')).toBe(true);
+        expect(storageMock.delete).not.toHaveBeenCalled();
+        expect(await lootLogHistory._load()).toHaveLength(MAX_ENTRIES + 2);
     });
 });
 
