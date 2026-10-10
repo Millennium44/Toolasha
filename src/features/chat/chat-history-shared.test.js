@@ -163,8 +163,10 @@ describe('which record a tab lives in', () => {
         const scope = (channel) => module.tabScope(`tab2:ch:/chat_channel_types/${channel}`);
 
         for (const channel of [
-            'global',
             'general',
+            'english',
+            'vietnamese',
+            'global',
             'trade',
             'beginner',
             'recruit',
@@ -182,7 +184,7 @@ describe('which record a tab lives in', () => {
             expect(scope(channel)).toBe('public');
         }
         expect(scope('guild')).toBe('guild');
-        for (const channel of ['party', 'whisper', 'local', 'mod', 'nonexistent']) {
+        for (const channel of ['party', 'whisper', 'local', 'mod', 'moderator', 'nonexistent']) {
             expect(scope(channel)).toBe('character');
         }
 

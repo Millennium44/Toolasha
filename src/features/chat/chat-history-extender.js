@@ -84,7 +84,7 @@ function ownLabel(button, buttons) {
  * The label part of a tab's key, namespaced by where it was read from.
  *
  * The two sources disagree about what a label looks like: channel tabs carry
- * `data-mention-channel` (`/chat_channel_types/global`), while the rest —
+ * `data-mention-channel` (`/chat_channel_types/general`), while the rest —
  * language rooms, Help, whispers — have none and are named by their button
  * text (`English`, `Help`, a player name). Namespacing rather than mixing them
  * into one flat label keeps a whisper named like a tagged channel out of that

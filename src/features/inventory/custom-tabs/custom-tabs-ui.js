@@ -89,7 +89,7 @@ let cancelDetachedNativeRestore = null;
 export const PANEL_CSS = `
 /* ---------- Toolasha-active mode on Inventory_items ---------- */
 /* When our tab is active, Inventory_items becomes a flex container.
-   Category wrappers and grids get display:contents so tiles become
+   The game's tabs component and the item grids get display:contents so tiles become
    direct flex children and can be reordered with CSS order. */
 .toolasha-ct-active {
     display: flex !important;
@@ -98,9 +98,14 @@ export const PANEL_CSS = `
     gap: 0;
     padding-top: 0 !important;
 }
-/* Flatten game category wrappers so tiles become direct flex children.
-   Exclude our own injected elements (they have class starting with toolasha-). */
-.toolasha-ct-active > *:not([class*="toolasha-"]) {
+/* Flatten the game's own tabs component so its tiles become direct flex children.
+   Scoped to that wrapper class, not a catch-all for every non-Toolasha child: an element
+   another userscript injects into this container stays in normal flow instead of being
+   flattened into the layout. */
+.toolasha-ct-active > [class*="TabsComponent_tabsComponent"],
+/* Pre-patch DOM: classless category wrappers directly under the container, identified by
+   the item grid they hold so a foreign classless element is not caught. */
+.toolasha-ct-active > div:not([class]):has([class*="Inventory_itemGrid"]) {
     display: contents;
 }
 .toolasha-ct-active [class*="Inventory_itemGrid"] {

@@ -1903,6 +1903,17 @@ export const settingsGroups = {
                 default: true,
                 help: "Shows how many actions worth of the currently-viewed item the order book can profitably absorb, based on the last Risk of Ruin calculation. Ignores the marketplace's tradable range floor, which isn't exposed in game data.",
             },
+            market_enhanceProfitPerHour: {
+                id: 'market_enhanceProfitPerHour',
+                label: 'Market: Show enhance-to-sell Profit/h on enhanced order books',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'On the order book of an enhanced (+1 and up) item, adds a Profit/h column to the sell listings: ' +
+                    "the profit per hour of enhancing the base item to that level yourself and selling it at that row's " +
+                    'ask after tax. Cost and time come from the enhancement calculator with your own enhancing stats ' +
+                    'and the cheapest protection strategy. Hover a value for the breakdown.',
+            },
         },
     },
 
@@ -3355,6 +3366,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Statistics button to the Tasks panel showing overflow time, expected rewards, and completion estimates',
+            },
+            taskStatistics_zoneProgress: {
+                id: 'taskStatistics_zoneProgress',
+                label: 'Show per-zone combat task progress in task statistics',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a Zone Task Progress section to the Task Statistics popup: for each zone with active combat tasks, the fights and time needed to clear them and the slowest monster. Runs one combat simulation per zone each time the popup opens; click a zone to open it with the fight count filled in.',
             },
             taskClaimCollector: {
                 id: 'taskClaimCollector',

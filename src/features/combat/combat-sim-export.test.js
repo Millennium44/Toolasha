@@ -31,8 +31,14 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { checkBridgeStamp, getLastBridgeIssue, getCharacterData, getBattleData, constructExportObject } =
-    await import('./combat-sim-export.js');
+const {
+    checkBridgeStamp,
+    getLastBridgeIssue,
+    getCharacterData,
+    getBattleData,
+    constructExportObject,
+    constructSelfPlayer,
+} = await import('./combat-sim-export.js');
 
 function metaFor(characterId, { characterName = 'Hero', writtenAt = Date.now() } = {}) {
     return JSON.stringify({ characterId, characterName, writtenAt });
@@ -777,5 +783,108 @@ describe('party members whose cached profile cannot be trusted', () => {
                 expect.arrayContaining([expect.objectContaining({ name: 'Ghost' })])
             );
         });
+    });
+});
+
+describe('own abilities export in slot order', () => {
+    // combatUnit.combatAbilities carries no slot numbers; characterAbilities does (1-5 on the live
+    // test server, 0 once unequipped). The kit below arrives in neither slot order nor reverse.
+    const character = {
+        character: { id: 'char-mine', name: 'Me' },
+        characterSkills: [],
+        combatUnit: {
+            combatAbilities: [
+                { abilityHrid: '/abilities/fireball', level: 30 },
+                { abilityHrid: '/abilities/heal', level: 20 },
+                { abilityHrid: '/abilities/invincible', level: 10 },
+                { abilityHrid: '/abilities/ice_spear', level: 25 },
+                { abilityHrid: '/abilities/poke', level: 5 },
+            ],
+        },
+        characterAbilities: [
+            { abilityHrid: '/abilities/invincible', slotNumber: 1 },
+            { abilityHrid: '/abilities/poke', slotNumber: 2 },
+            { abilityHrid: '/abilities/ice_spear', slotNumber: 3 },
+            { abilityHrid: '/abilities/fireball', slotNumber: 4 },
+            { abilityHrid: '/abilities/heal', slotNumber: 5 },
+            { abilityHrid: '/abilities/scratch', slotNumber: 0 },
+        ],
+    };
+
+    test('on the game page, special first and normals by slot', () => {
+        const clientObj = { abilityDetailMap: { '/abilities/invincible': { isSpecialAbility: true } } };
+        const player = constructSelfPlayer(character, clientObj);
+        expect(player.abilities.map((a) => a.abilityHrid)).toEqual([
+            '/abilities/invincible',
+            '/abilities/poke',
+            '/abilities/ice_spear',
+            '/abilities/fireball',
+            '/abilities/heal',
+        ]);
+    });
+
+    test('cross-domain, the slot-1 ability is the one taken as special', () => {
+        const player = constructSelfPlayer(character, null);
+        expect(player.abilities.map((a) => a.abilityHrid)).toEqual([
+            '/abilities/invincible',
+            '/abilities/poke',
+            '/abilities/ice_spear',
+            '/abilities/fireball',
+            '/abilities/heal',
+        ]);
+    });
+
+    test('without slot numbers the kit keeps the order it arrived in', () => {
+        const player = constructSelfPlayer({ ...character, characterAbilities: [] }, null);
+        expect(player.abilities.map((a) => a.abilityHrid)).toEqual([
+            '/abilities/fireball',
+            '/abilities/heal',
+            '/abilities/invincible',
+            '/abilities/ice_spear',
+            '/abilities/poke',
+        ]);
+    });
+});
+
+describe('constructPartyPlayer drink classification', () => {
+    const clientObj = {
+        itemDetailMap: {
+            // Neither name matches the '/drinks/' or 'coffee' heuristics; only the live-data category says drink
+            '/items/wisdom_tea': { categoryHrid: '/item_categories/drink' },
+            '/items/donut': { categoryHrid: '/item_categories/food' },
+        },
+    };
+    const profile = (extra = {}) => ({
+        characterID: 'char-a',
+        characterName: 'A',
+        profile: { characterSkills: [], wearableItemMap: {}, ...extra },
+    });
+
+    test('a party member consumable is a drink by its item category, not by its name', async () => {
+        const { constructPartyPlayer } = await import('./combat-sim-export.js');
+        const battle = {
+            players: [
+                {
+                    character: { id: 'char-a' },
+                    combatConsumables: [{ itemHrid: '/items/wisdom_tea' }, { itemHrid: '/items/donut' }],
+                },
+            ],
+        };
+        const player = constructPartyPlayer(profile(), clientObj, battle);
+
+        expect(player.drinks['/action_types/combat'][0]).toEqual({ itemHrid: '/items/wisdom_tea' });
+        expect(player.food['/action_types/combat'][0]).toEqual({ itemHrid: '/items/donut' });
+    });
+
+    test('the trigger-map fallback classifies by category too', async () => {
+        const { constructPartyPlayer } = await import('./combat-sim-export.js');
+        const player = constructPartyPlayer(
+            profile({ consumableCombatTriggersMap: { '/items/wisdom_tea': [], '/items/donut': [] } }),
+            clientObj,
+            null
+        );
+
+        expect(player.drinks['/action_types/combat'][0]).toEqual({ itemHrid: '/items/wisdom_tea' });
+        expect(player.food['/action_types/combat'][0]).toEqual({ itemHrid: '/items/donut' });
     });
 });

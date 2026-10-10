@@ -9,6 +9,8 @@ import {
     SessionState,
     getSessionDuration,
     getCurrentLegCounters,
+    summedLegPredictions,
+    hasPredictionLegs,
     getProtectionBreakdown,
     mergeSessions,
 } from './enhancement-session.js';
@@ -1153,6 +1155,51 @@ class EnhancementUI {
     }
 
     /**
+     * Expected figures for a session that ran in several legs: the sum of each leg's own
+     * prediction against all of the session's attempts and protections. No percentile — a sum of
+     * different distributions has no single spread to read the outcome against. The cost
+     * comparison uses the summed expectation.
+     * @param {Object} session - Session object
+     * @param {{expectedAttempts: number, expectedProtections: number}} summed - From summedLegPredictions
+     * @returns {string} HTML
+     */
+    generateSummedPredictionHTML(session, summed) {
+        const { expectedAttempts: expAtt, expectedProtections: expProt } = summed;
+        const factor = (actual, expected) => {
+            if (!(expected > 0)) return '—';
+            const val = actual / expected;
+            return (val < 0.01 ? val.toFixed(3) : val.toFixed(2)) + 'x';
+        };
+        const color = STYLE.colors.textSecondary;
+        // Cost against the summed expectation, at this session's own unit prices
+        const cost = costVsExpected(session, null, summed);
+        let costHTML = '';
+        if (cost) {
+            const good = cost.diff >= 0;
+            costHTML = `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${color};">
+                <div><span>Expected Cost:</span><span> ${this.formatNumber(cost.expectedCost)}</span></div>
+                <div><span>Cost Factor:</span><strong> ${cost.factor.toFixed(2)}x</strong></div>
+            </div>
+            <div style="font-size: 12px; margin-top: 2px; color: ${good ? STYLE.colors.success : STYLE.colors.danger};">
+                💰 ${this.formatNumber(Math.abs(cost.diff))} ${good ? 'below' : 'above'} expected cost
+            </div>`;
+        }
+        return `
+            <div class="enh-summed-predictions" title="Summed from each run's own prediction, made on the stats you had at the time">
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px;">
+                <div style="color: ${color};"><span>Expected Attempts:</span><span> ${expAtt}</span></div>
+                <div style="color: ${color};"><span>Expected Prots:</span><span> ${expProt}</span></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${color};">
+                <div><span>Attempt Factor:</span><strong> ${factor(session.totalAttempts || 0, expAtt)}</strong></div>
+                <div><span>Prot Factor:</span><strong> ${factor(session.protectionCount || 0, expProt)}</strong></div>
+            </div>
+            ${costHTML}
+            </div>`;
+    }
+
+    /**
      * Generate HTML for session display
      */
     generateSessionHTML(session) {
@@ -1213,8 +1260,22 @@ class EnhancementUI {
                 </div>
             </div>`;
 
+        // A session that ran in several legs (merged, or resumed under changed stats) is read
+        // against the sum of its legs' own predictions, and against all of its attempts
+        const summed = summedLegPredictions(session);
+
         // Predictions (if available)
-        if (session.predictions) {
+        if (hasPredictionLegs(session)) {
+            // Legs whose sum cannot be read honestly (one has no prediction, or the record is
+            // from before every leg was kept) show a dash rather than a wrong figure
+            html += summed
+                ? this.generateSummedPredictionHTML(session, summed)
+                : `
+            <div class="enh-merged-runs" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+                <span>Expected Attempts:</span>
+                <span title="This session's runs have no complete set of predictions to sum">—</span>
+            </div>`;
+        } else if (session.predictions) {
             const predictions = session.predictions;
             const expAtt = predictions.expectedAttempts || 0;
             const expProt = predictions.expectedProtections || 0;
@@ -1314,12 +1375,11 @@ class EnhancementUI {
             </div>`;
             }
         } else if (session.mergedFrom?.length > 0) {
-            // Merged from several runs, each made on the stats the player had then: no one
-            // prediction covers them, so no expected figures and no factors
+            // Merged from runs of which at least one has no prediction: nothing honest to sum
             html += `
             <div class="enh-merged-runs" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
                 <span>Expected Attempts:</span>
-                <span title="Merged from several runs, made on the stats you had at the time, so no one prediction covers them">— (merged runs)</span>
+                <span title="A run in this session has no prediction to sum">— (a run had no prediction)</span>
             </div>`;
         }
 
@@ -1411,9 +1471,8 @@ class EnhancementUI {
             message += `\n\nThey do not share one target and protection setup; the merged session keeps the most recent one's (+${newest.targetLevel}, ${protect}).`;
         }
         message +=
-            '\n\nThe merged session shows no expected attempts, protections or factors, and is not used ' +
-            'for prediction calibration: its runs were made on the stats you had at the time, which no ' +
-            'one prediction covers.';
+            "\n\nThe merged session's expected attempts and protections are summed from each run's own " +
+            'prediction, made on the stats you had at the time, and are not used for prediction calibration.';
         if (plan.protectionItemsDiffer) {
             message +=
                 '\n\nThey used different protection items. The merged session lists the protection used ' +

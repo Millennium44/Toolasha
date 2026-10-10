@@ -161,6 +161,23 @@ describe('Metz combat export', () => {
         });
     });
 
+    test('every other skilling-tool slot is dropped from player.equipment', async () => {
+        mocks.characterData = baseCharacter();
+        mocks.selfEquipment = [
+            { itemLocationHrid: '/item_locations/body', itemHrid: '/items/plate_body', enhancementLevel: 5 },
+            {
+                itemLocationHrid: '/item_locations/tailoring_tool',
+                itemHrid: '/items/holy_needle',
+                enhancementLevel: 10,
+            },
+            { itemLocationHrid: '/item_locations/foraging_tool', itemHrid: '/items/holy_shears', enhancementLevel: 0 },
+        ];
+
+        const character = await constructMetzCharacterExport();
+
+        expect(character.player.equipment).toEqual([mocks.selfEquipment[0]]);
+    });
+
     test('uses the real inventory shape for speed gear, spare wearables and unequipped abilities', async () => {
         mocks.characterData = baseCharacter({
             mooPassBuffs: [],

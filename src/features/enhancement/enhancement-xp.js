@@ -329,8 +329,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         // later work off one time base instead of two that can disagree.
         const perActionTime = getEnhancingActionTime(itemHrid);
 
-        // Calculate predictions (Markov chain for attempts, protections, success rates)
-        const result = calculateEnhancement({
+        const calculation = {
             enhancingLevel: params.enhancingLevel,
             houseLevel: params.houseLevel,
             toolBonus: params.toolBonus,
@@ -343,10 +342,30 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             guzzlingBonus: params.guzzlingBonus,
             blessedTeaBonus: params.blessedTeaBonus,
             perActionTimeOverride: perActionTime,
-        });
+        };
+
+        // Calculate predictions (Markov chain for attempts, protections, success rates)
+        const result = calculateEnhancement(calculation);
 
         if (!result) {
             return null;
+        }
+
+        // What it takes to reach each level short of the target, on these stats: a session that
+        // runs in several legs counts a leg only up to where the next one began
+        // ({ level: [attempts, protections] }). Best effort; a prediction without it is still valid.
+        const levelExpectations = {};
+        try {
+            for (let level = startLevel + 1; level < targetLevel; level++) {
+                const part = calculateEnhancement({
+                    ...calculation,
+                    targetLevel: level,
+                    protectFrom: protectFrom <= level ? protectFrom : 0,
+                });
+                if (part) levelExpectations[level] = [part.attempts, part.protectionCount];
+            }
+        } catch {
+            // leave the breakdown partial; readers treat a missing level as unknown
         }
 
         return {
@@ -358,6 +377,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             // it was not played with. Additive: older sessions simply lack them,
             // and every reader treats that as "no distribution recorded".
             expectedAttemptsExact: result.attempts,
+            levelExpectations,
             attemptsVariance: result.attemptsVariance,
             minAttempts: result.minAttempts,
             expectedTime: result.totalTime,

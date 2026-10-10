@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
     handlers: {},
     actions: [],
     settings: { enhancementTracker: true, enhancementTracker_autoResume: true },
+    prediction: null,
 }));
 
 vi.mock('../../core/websocket.js', () => ({
@@ -62,14 +63,14 @@ vi.mock('./enhancement-xp.js', () => ({
     calculateSuccessXP: () => 10,
     calculateFailureXP: () => 1,
     calculateAdjustedAttemptCount: () => 1,
-    calculateEnhancementPredictions: () => null,
+    calculateEnhancementPredictions: () => state.prediction,
 }));
 vi.mock('./tooltip-enhancement.js', () => ({ getEnhancementMaterialPrice: () => 0 }));
 vi.mock('./enhancement-ui.js', () => ({ default: { switchToSession: () => {}, scheduleUpdate: () => {} } }));
 
 const { setupEnhancementHandlers, cleanupEnhancementHandlers } = await import('./enhancement-handlers.js');
 const { default: tracker } = await import('./enhancement-tracker.js');
-const { getSessionDuration, SessionState } = await import('./enhancement-session.js');
+const { getSessionDuration, getCurrentLegCounters, SessionState } = await import('./enhancement-session.js');
 
 const SPATULA = '/items/holy_spatula';
 const hash = (level) => `30404::/item_locations/inventory::${SPATULA}::${level}`;
@@ -119,6 +120,7 @@ beforeEach(async () => {
     vi.setSystemTime(now);
     state.handlers = {};
     state.actions = [];
+    state.prediction = null;
     state.settings = { enhancementTracker: true, enhancementTracker_autoResume: true };
     tracker.isInitialized = false;
     tracker.sessions = {};
@@ -180,11 +182,12 @@ describe('auto-resume', () => {
         expect(resumed.attemptsPerLevel[3].success).toBe(2);
         expect(resumed.attemptsPerLevel[4].fail).toBe(1);
         expect(resumed.currentLevel).toBe(4);
-        // The ten minutes away are not enhancing time
-        expect(getSessionDuration(resumed)).toBe(activeBefore);
+        // The ten minutes away are not enhancing time; the first resumed attempt's own ten seconds,
+        // from the queue row to the result, are
+        expect(getSessionDuration(resumed)).toBe(activeBefore + 10);
         advance(10_000);
         await attempt(a2, 5, 2);
-        expect(getSessionDuration(resumed)).toBe(activeBefore + 10);
+        expect(getSessionDuration(resumed)).toBe(activeBefore + 20);
     });
 
     test('a new run first seen several attempts in is not resumed, even at the ended level', async () => {
@@ -258,5 +261,69 @@ describe('auto-resume', () => {
         advance(10_000);
         await attempt(a2, 4, 1);
         expect(Object.keys(tracker.sessions)).toHaveLength(2);
+    });
+
+    test('single-attempt runs resumed back to back stay one predicted leg, with all their time', async () => {
+        // The prediction for +0 → +8, the same each time the stats are read
+        const prediction = { expectedAttempts: 2, expectedAttemptsExact: 1.88, expectedProtections: 0 };
+        state.prediction = prediction;
+
+        // Run 1: one attempt, a failure at +0
+        const a1 = row('a1', 0, 0, { enhancingMaxLevel: 1 });
+        await queueRun(a1);
+        advance(3_000);
+        await attempt(a1, 0, 1);
+        advance(1_000);
+        await stopRun(a1);
+        const [session] = Object.values(tracker.sessions);
+        expect(session.predictions).toEqual(prediction);
+
+        // Runs 2 and 3 pick it up at +0: a failure, then the success
+        for (const [id, level] of [
+            ['a2', 0],
+            ['a3', 1],
+        ]) {
+            advance(60_000);
+            const next = row(id, 0, 0, { enhancingMaxLevel: 1 });
+            await queueRun(next);
+            advance(3_000);
+            await attempt(next, level, 1);
+            if (level === 0) {
+                advance(1_000);
+                await stopRun(next);
+            }
+        }
+
+        expect(Object.keys(tracker.sessions)).toHaveLength(1);
+        expect(session.totalAttempts).toBe(3);
+        // One leg: the prediction is kept and none is banked, so the whole run is read against it
+        expect(session.predictions).toEqual(prediction);
+        expect(session.legPredictions).toBeUndefined();
+        expect(getCurrentLegCounters(session).attempts).toBe(3);
+        // 1 s (run 1 ended a second after its attempt) + 3 s + 1 s (run 2) + 3 s (run 3, still
+        // running); the minutes between runs are not counted
+        expect(getSessionDuration(session)).toBe(8);
+    });
+
+    test('a resumed run under changed stats is a new leg with its own prediction', async () => {
+        state.prediction = { expectedAttempts: 2, expectedAttemptsExact: 1.88, expectedProtections: 0 };
+        const a1 = row('a1', 0, 0, { enhancingMaxLevel: 1 });
+        await queueRun(a1);
+        advance(3_000);
+        await attempt(a1, 0, 1);
+        advance(1_000);
+        await stopRun(a1);
+        const [session] = Object.values(tracker.sessions);
+
+        state.prediction = { expectedAttempts: 3, expectedAttemptsExact: 2.5, expectedProtections: 0 };
+        advance(60_000);
+        const a2 = row('a2', 0, 0, { enhancingMaxLevel: 1 });
+        await queueRun(a2);
+        advance(3_000);
+        await attempt(a2, 0, 1);
+
+        expect(session.legPredictions).toHaveLength(1);
+        expect(session.predictions.expectedAttempts).toBe(3);
+        expect(getCurrentLegCounters(session).attempts).toBe(1);
     });
 });

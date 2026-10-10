@@ -1780,6 +1780,69 @@ class DataManager {
             this.emit('skills_updated', data);
         });
 
+        // Combat triggers: all_combat_triggers_updated replaces both maps whole (a loadout
+        // switch), combat_triggers_updated edits one ability's or consumable's list. Neither was
+        // applied before, so characterData's trigger maps stayed at their login values and an
+        // edited trigger did not reach the sim exports or the networth "equipped" set until a
+        // reload. Synchronous with no await, so the socket guard is the whole character check:
+        // a character swap replaces characterData and rebinds the socket before any of the
+        // arriving character's messages are dispatched.
+        this.webSocketHook.on('all_combat_triggers_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
+            if (this.characterData) {
+                if (data.abilityCombatTriggersMap !== undefined) {
+                    this.characterData.abilityCombatTriggersMap = data.abilityCombatTriggersMap;
+                }
+                if (data.consumableCombatTriggersMap !== undefined) {
+                    this.characterData.consumableCombatTriggersMap = data.consumableCombatTriggersMap;
+                }
+            }
+
+            this.emit('all_combat_triggers_updated', data);
+        });
+
+        this.webSocketHook.on('combat_triggers_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
+            if (this.characterData) {
+                const isAbility = data.combatTriggerTypeHrid === '/combat_trigger_types/ability';
+                if (isAbility && data.abilityHrid) {
+                    this.characterData.abilityCombatTriggersMap = {
+                        ...(this.characterData.abilityCombatTriggersMap || {}),
+                        [data.abilityHrid]: data.combatTriggers,
+                    };
+                } else if (!isAbility && data.itemHrid) {
+                    this.characterData.consumableCombatTriggersMap = {
+                        ...(this.characterData.consumableCombatTriggersMap || {}),
+                        [data.itemHrid]: data.combatTriggers,
+                    };
+                }
+            }
+
+            this.emit('combat_triggers_updated', data);
+        });
+
+        // Achievements completed or progressed mid-session. An incremental set, merged by
+        // achievementHrid; without it characterData.characterAchievements (achievement combat
+        // buffs in the sim exports and the Sim Editor) only reflected achievements as of login.
+        this.webSocketHook.on('achievements_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
+            if (this.characterData && Array.isArray(data.achievements) && data.achievements.length > 0) {
+                const achievements = [...(this.characterData.characterAchievements || [])];
+                for (const updated of data.achievements) {
+                    if (!updated?.achievementHrid) continue;
+                    const index = achievements.findIndex((a) => a?.achievementHrid === updated.achievementHrid);
+                    if (index !== -1) achievements[index] = updated;
+                    else achievements.push(updated);
+                }
+                this.characterData.characterAchievements = achievements;
+            }
+
+            this.emit('achievements_updated', data);
+        });
+
         // Handle new_battle (combat start - for Combat Sim export on Steam)
         this.webSocketHook.on('new_battle', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;

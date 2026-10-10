@@ -174,7 +174,8 @@ class MentionTracker {
             '/chat_channel_types/guild': 'Guild',
             '/chat_channel_types/local': 'Local',
             '/chat_channel_types/whisper': 'Whisper',
-            '/chat_channel_types/global': 'Global',
+            '/chat_channel_types/general': 'General',
+            '/chat_channel_types/moderator': 'Moderator',
         };
         return channelMap[channel] || channel;
     }
@@ -229,13 +230,26 @@ class MentionTracker {
             Guild: '/chat_channel_types/guild',
             Local: '/chat_channel_types/local',
             Whisper: '/chat_channel_types/whisper',
-            Global: '/chat_channel_types/global',
+            Global: '/chat_channel_types/general',
             General: '/chat_channel_types/general',
             Trade: '/chat_channel_types/trade',
             Beginner: '/chat_channel_types/beginner',
             Recruit: '/chat_channel_types/recruit',
             Ironcow: '/chat_channel_types/ironcow',
-            Mod: '/chat_channel_types/mod',
+            Mod: '/chat_channel_types/moderator',
+            Moderator: '/chat_channel_types/moderator',
+            // Language rooms are labeled in their own language
+            English: '/chat_channel_types/english',
+            Русский: '/chat_channel_types/russian',
+            中文: '/chat_channel_types/chinese',
+            한국어: '/chat_channel_types/korean',
+            日本語: '/chat_channel_types/japanese',
+            Português: '/chat_channel_types/portuguese',
+            Español: '/chat_channel_types/spanish',
+            Français: '/chat_channel_types/french',
+            Deutsch: '/chat_channel_types/german',
+            'Tiếng Việt': '/chat_channel_types/vietnamese',
+            Vietnamese: '/chat_channel_types/vietnamese',
         };
         return nameMap[cleanName] || null;
     }

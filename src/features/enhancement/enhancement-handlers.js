@@ -32,6 +32,8 @@ const PHILOSOPHERS_MIRROR_HRID = '/items/philosophers_mirror';
 // Blessed jump from +4, and +0 is a failure from anywhere. The queue row seen before the
 // attempt says exactly where it started.
 let pendingBaseline = null;
+// When the row behind the baseline last handed out was seen (see takeBaseline), else null
+let lastBaselineSeenAt = null;
 
 /**
  * The baseline a queue row gives the attempt that follows it.
@@ -46,6 +48,8 @@ function baselineFrom(action) {
         itemHrid,
         level,
         currentCount: Number.isFinite(action.currentCount) ? action.currentCount : null,
+        // When the row was seen: the attempt that follows it began then
+        seenAt: Date.now(),
     };
 }
 
@@ -59,6 +63,7 @@ function baselineFrom(action) {
 function takeBaseline(action, itemHrid) {
     const baseline = pendingBaseline;
     pendingBaseline = null;
+    lastBaselineSeenAt = null;
     if (!baseline || baseline.itemHrid !== itemHrid) return null;
     if (baseline.actionId != null && action.id != null && baseline.actionId !== action.id) return null;
     if (
@@ -68,6 +73,7 @@ function takeBaseline(action, itemHrid) {
     ) {
         return null;
     }
+    lastBaselineSeenAt = baseline.seenAt ?? null;
     return baseline.level;
 }
 
@@ -569,9 +575,10 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
  * @param {string} itemHrid - Item being enhanced
  * @param {number} newLevel - Level the attempt ended at
  * @param {number|null} baselineLevel - Level it started at, when known
+ * @param {number|null} [baselineSeenAt] - When the queue row behind that level was seen
  * @returns {Promise<Object|null>} The new session
  */
-async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
+async function startSessionFor(action, itemHrid, newLevel, baselineLevel, baselineSeenAt = null) {
     const protectFrom = action.enhancingProtectionMinLevel || 0;
     let startLevel = baselineLevel;
     if (startLevel == null) {
@@ -601,7 +608,10 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
         protectFrom,
         protectionItemHrid: configuredProtectionItem(action),
     });
-    if (resumableId && (await enhancementTracker.resumeSessionById(resumableId))) {
+    if (
+        resumableId &&
+        (await enhancementTracker.resumeSessionById(resumableId, firstAttempt ? baselineSeenAt : null))
+    ) {
         enhancementUI.switchToSession(resumableId);
         enhancementUI.scheduleUpdate();
         return enhancementTracker.getCurrentSession();
@@ -629,6 +639,7 @@ async function handleEnhancementResult(action, _data) {
 
         // Taken first and synchronously, before anything below can yield to another attempt
         const baselineLevel = takeBaseline(action, itemHrid);
+        const baselineSeenAt = lastBaselineSeenAt;
 
         let currentSession = enhancementTracker.getCurrentSession();
         let isNewSession = false;
@@ -636,7 +647,7 @@ async function handleEnhancementResult(action, _data) {
         // A session for a different item ends here; this attempt starts the next one
         if (currentSession && currentSession.itemHrid !== itemHrid) {
             await enhancementTracker.finalizeCurrentSession();
-            currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel);
+            currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel, baselineSeenAt);
             if (!currentSession) return;
             isNewSession = true;
         }
@@ -645,7 +656,7 @@ async function handleEnhancementResult(action, _data) {
         // start a session if none is active yet.
         if (!currentSession && (rawCount === 1 || enhancementTracker.pendingSessionStart)) {
             enhancementTracker.pendingSessionStart = false;
-            currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel);
+            currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel, baselineSeenAt);
             if (!currentSession) return;
             isNewSession = true;
         }
@@ -668,7 +679,7 @@ async function handleEnhancementResult(action, _data) {
                 // Mid-run pickup: the script came up after the queue started (a page load
                 // during a run) with nothing flagging a pending start.
                 enhancementTracker.pendingSessionStart = false;
-                currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel);
+                currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel, baselineSeenAt);
                 if (!currentSession) return;
                 isNewSession = true;
             }

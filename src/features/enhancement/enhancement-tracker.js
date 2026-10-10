@@ -172,9 +172,8 @@ class EnhancementTracker {
             newTargetLevel,
             session.protectFrom
         );
-        if (predictions) {
-            session.predictions = predictions;
-        }
+        // extendSession banked the old leg's prediction; a failed calculation leaves the new one empty
+        session.predictions = predictions || null;
 
         await saveSessions(this.sessions);
         await saveCurrentSessionId(sessionId);
@@ -211,16 +210,18 @@ class EnhancementTracker {
     /**
      * Reopen an ended session as the current one, counting only active time from here on.
      * @param {string} sessionId - Session ID
+     * @param {number|null} [startedAt] - When the new run's first attempt began, when known
      * @returns {Promise<boolean>} True when resumed
      */
-    async resumeSessionById(sessionId) {
+    async resumeSessionById(sessionId, startedAt = null) {
         const session = this.sessions[sessionId];
         if (!session || session.state !== SessionState.COMPLETED) return false;
-        resumeSession(session);
         // The resumed run is its own leg, predicted from the stats the player has now; when that
-        // cannot be computed it has none rather than the old run's
+        // cannot be computed it has none rather than the old run's. A run that picks up at the
+        // level its leg began at under unchanged stats stays that leg (see resumeSession).
+        let predictions = null;
         try {
-            session.predictions =
+            predictions =
                 calculateEnhancementPredictions(
                     session.itemHrid,
                     session.currentLevel,
@@ -229,8 +230,9 @@ class EnhancementTracker {
                 ) || null;
         } catch (error) {
             console.error('[EnhancementTracker] Predicting the resumed leg failed:', error);
-            session.predictions = null;
         }
+        resumeSession(session, Date.now(), { newPredictions: predictions, startedAt });
+        if (!session.predictions) session.predictions = predictions;
         this.currentSessionId = sessionId;
         await saveSessions(this.sessions);
         await saveCurrentSessionId(sessionId);

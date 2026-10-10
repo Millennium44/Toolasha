@@ -8,6 +8,7 @@ import {
     canExtendSession,
     addProtectionCost,
     calibrationObservation,
+    summedLegPredictions,
     canResumeSession,
     getActiveSpans,
     getProtectionBreakdown,
@@ -528,6 +529,210 @@ describe('canResumeSession and resumeSession', () => {
     });
 });
 
+describe('resumeSession keeps one leg when nothing about the forecast changed', () => {
+    const prediction = { expectedAttempts: 2, expectedAttemptsExact: 1.88, expectedProtections: 0 };
+    const ended = (over = {}) => ({
+        id: 's1',
+        state: SessionState.COMPLETED,
+        startLevel: 0,
+        currentLevel: 0,
+        targetLevel: 1,
+        startTime: 1000,
+        lastUpdateTime: 2000,
+        endTime: 3000,
+        totalAttempts: 1,
+        predictions: prediction,
+        ...over,
+    });
+
+    test('same level and same prediction: prediction and baseline stay, the clock restarts at the run start', () => {
+        const session = ended();
+        resumeSession(session, 9000, { newPredictions: { ...prediction }, startedAt: 6000 });
+        expect(session.predictions).toEqual(prediction);
+        expect(session.legPredictions).toBeUndefined();
+        expect(session.extensionBaseline).toBeUndefined();
+        expect(session.segmentStartTime).toBe(6000);
+    });
+
+    test('a different prediction or level starts a new leg', () => {
+        const changed = ended();
+        resumeSession(changed, 9000, { newPredictions: { ...prediction, expectedAttemptsExact: 2.4 } });
+        expect(changed.predictions).toBeNull();
+        expect(changed.legPredictions).toHaveLength(1);
+        expect(changed.extensionBaseline.totalAttempts).toBe(1);
+
+        const moved = ended({ currentLevel: 1 });
+        resumeSession(moved, 9000, { newPredictions: { ...prediction } });
+        expect(moved.legPredictions).toHaveLength(1);
+    });
+
+    test('a start earlier than the last run ended is clamped to it', () => {
+        const session = ended();
+        resumeSession(session, 9000, { newPredictions: { ...prediction }, startedAt: 100 });
+        expect(session.segmentStartTime).toBe(3000);
+    });
+});
+
+describe('summedLegPredictions', () => {
+    // A prediction from `start` to `target`: reaching each level costs two attempts per level
+    // climbed, no protection
+    const prediction = (start, target = 10) => ({
+        expectedAttempts: 2 * (target - start),
+        expectedAttemptsExact: 2 * (target - start),
+        expectedProtections: 0,
+        levelExpectations: Object.fromEntries(
+            Array.from({ length: Math.max(0, target - start - 1) }, (_, i) => [start + 1 + i, [2 * (i + 1), 0]])
+        ),
+    });
+    const chain = () => ({
+        // +5 to +10 as single-attempt runs where every attempt succeeds: legs 5-10, 6-10 ... 9-10
+        id: 'c',
+        startLevel: 5,
+        currentLevel: 10,
+        targetLevel: 10,
+        totalAttempts: 5,
+        predictions: prediction(9),
+        segmentStartLevel: 9,
+        extensionBaseline: { totalAttempts: 4 },
+        legPredictions: [5, 6, 7, 8].map((start) => ({
+            startLevel: start,
+            targetLevel: 10,
+            predictions: prediction(start),
+            attempts: 1,
+        })),
+    });
+
+    test('is null for a one-leg session', () => {
+        expect(summedLegPredictions({ predictions: { expectedAttempts: 5 } })).toBeNull();
+    });
+
+    test('a +5 to +10 climb in single-attempt runs counts each leg only to the next one', () => {
+        // Each leg covers one level at 2 attempts; the last covers its whole climb. Summing the
+        // full legs instead would claim 10 + 8 + 6 + 4 + 2 = 30.
+        expect(summedLegPredictions(chain())).toEqual({ legs: 5, expectedAttempts: 10, expectedProtections: 0 });
+    });
+
+    test('a leg that needs a per-level figure its prediction lacks makes the sum unavailable', () => {
+        const session = chain();
+        delete session.legPredictions[1].predictions.levelExpectations;
+        expect(summedLegPredictions(session)).toBeNull();
+    });
+
+    test('legs whose attempts do not add up to the session (an old-shape record) show no sum', () => {
+        const session = chain();
+        session.legPredictions.pop(); // one leg's record is missing
+        expect(summedLegPredictions(session)).toBeNull();
+        const noAttempts = chain();
+        delete noAttempts.legPredictions[0].attempts;
+        expect(summedLegPredictions(noAttempts)).toBeNull();
+    });
+
+    test('extend then resume sums every leg', () => {
+        const session = {
+            id: 'e',
+            state: SessionState.COMPLETED,
+            startLevel: 0,
+            currentLevel: 5,
+            targetLevel: 5,
+            startTime: 1000,
+            lastUpdateTime: 2000,
+            endTime: 2000,
+            totalAttempts: 11,
+            predictions: prediction(0, 5),
+        };
+        extendSession(session, 10, 3000);
+        expect(session.legPredictions).toHaveLength(1);
+        expect(session.legPredictions[0]).toMatchObject({ startLevel: 0, targetLevel: 5, attempts: 11 });
+        session.predictions = prediction(5, 10);
+        session.totalAttempts += 4;
+        session.currentLevel = 7;
+        session.state = SessionState.COMPLETED;
+        session.endTime = 4000;
+        // Resumed at +7 under changed stats: a third leg
+        resumeSession(session, 5000, { newPredictions: prediction(7, 10), startedAt: 5000 });
+        session.predictions = prediction(7, 10);
+        session.totalAttempts += 3;
+        session.currentLevel = 10;
+        // 0-5 in full (10) + 5-7 (4) + 7-10 (6)
+        expect(summedLegPredictions(session)).toEqual({ legs: 3, expectedAttempts: 20, expectedProtections: 0 });
+    });
+
+    test('a merged session folds in the survivor own current leg and stays out of calibration', () => {
+        const a = {
+            id: 'a',
+            state: SessionState.COMPLETED,
+            startLevel: 0,
+            currentLevel: 3,
+            targetLevel: 8,
+            startTime: 1000,
+            lastUpdateTime: 2000,
+            endTime: 2000,
+            totalAttempts: 100,
+            predictions: prediction(0, 8),
+        };
+        const b = {
+            id: 'b',
+            state: SessionState.COMPLETED,
+            startLevel: 3,
+            currentLevel: 8,
+            targetLevel: 8,
+            startTime: 3000,
+            lastUpdateTime: 4000,
+            endTime: 4000,
+            totalAttempts: 80,
+            segmentStartLevel: 5,
+            extensionBaseline: { totalAttempts: 50 },
+            legPredictions: [
+                { sessionId: 'b', startLevel: 3, targetLevel: 8, predictions: prediction(3, 8), attempts: 50 },
+            ],
+            predictions: prediction(5, 8),
+        };
+        const merged = foldSessions([a, b]);
+        expect(merged.legPredictions).toHaveLength(3);
+        // a: 0-3 of its 0-8 climb (6), b's first leg 3-5 (4), b's last leg 5-8 in full (6)
+        expect(summedLegPredictions(merged)).toEqual({ legs: 3, expectedAttempts: 16, expectedProtections: 0 });
+        expect(merged.totalAttempts).toBe(180);
+        expect(calibrationObservation(merged)).toBeNull();
+    });
+});
+
+describe('aggregateSessions agrees with the panel on expected attempts', () => {
+    test('uses the summed figure and leaves out a session whose sum is unavailable', () => {
+        const prediction = { expectedAttempts: 10, expectedAttemptsExact: 10, expectedProtections: 1 };
+        const multi = {
+            id: 'm',
+            itemHrid: '/items/x',
+            currentLevel: 5,
+            targetLevel: 5,
+            startLevel: 0,
+            totalAttempts: 15,
+            attemptsPerLevel: {},
+            materialCosts: {},
+            predictions: { ...prediction, expectedAttempts: 6, expectedAttemptsExact: 6, expectedProtections: 0 },
+            legPredictions: [{ startLevel: 0, targetLevel: 5, predictions: prediction, attempts: 9 }],
+            extensionBaseline: { totalAttempts: 9 },
+            segmentStartLevel: 5,
+        };
+        const broken = {
+            ...multi,
+            id: 'b',
+            legPredictions: [{ startLevel: 0, targetLevel: 5, predictions: prediction }],
+        };
+        const plain = {
+            ...multi,
+            id: 'p',
+            legPredictions: undefined,
+            extensionBaseline: null,
+            predictions: prediction,
+        };
+        const summed = summedLegPredictions(multi);
+        expect(summed.expectedAttempts).toBe(16);
+        expect(mergeSessions([multi]).expectedAttempts).toBe(summed.expectedAttempts);
+        expect(summedLegPredictions(broken)).toBeNull();
+        expect(mergeSessions([multi, broken, plain]).expectedAttempts).toBe(26);
+    });
+});
+
 describe('mergeSessions view marks where the item stands', () => {
     test('the live session sets the current level, so its row is highlighted', () => {
         const { seven, eight } = spatulaRuns();
@@ -802,6 +1007,7 @@ describe('a merged session carries no combined prediction', () => {
                 targetLevel: 8,
                 protectFrom: 5,
                 predictions: { expectedAttempts: 400 },
+                attempts: expect.any(Number),
             },
             {
                 sessionId: 'session_8',
@@ -809,6 +1015,7 @@ describe('a merged session carries no combined prediction', () => {
                 targetLevel: 8,
                 protectFrom: 5,
                 predictions: { expectedAttempts: 30 },
+                attempts: expect.any(Number),
             },
         ]);
     });
@@ -927,6 +1134,7 @@ describe('resuming starts a separately predicted leg', () => {
                 targetLevel: 8,
                 protectFrom: 5,
                 predictions: { expectedAttempts: 400 },
+                attempts: expect.any(Number),
             },
         ]);
         expect(getCurrentLegCounters(seven)).toEqual({ attempts: 0, protections: 0 });

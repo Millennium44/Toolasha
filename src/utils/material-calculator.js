@@ -381,47 +381,17 @@ export function isArtisanTeaOutOfStock(actionHrid) {
 }
 
 /**
- * Calculate material requirements for enhancement actions
- * Uses Markov chain statistics to determine expected materials needed
- * @param {string} itemHrid - Item HRID being enhanced
- * @param {number} startLevel - Current enhancement level (0-19)
- * @param {number} targetLevel - Target enhancement level (1-20)
- * @param {string|null} protectionItemHrid - Protection item HRID or null
+ * One Markov-chain run for the enhancement range, shared by the material bill and the attempts readout.
+ * @param {Object} itemDetails - Game item details
+ * @param {number} startLevel - Current enhancement level
+ * @param {number} targetLevel - Target enhancement level
  * @param {number} protectFromLevel - Level at which protection begins (0 = never)
- * @param {number} [repeatCount] - Optional explicit repeat count
- * @param {string|null} [ownerId] - Reservation owner whose claims should not reduce availability
- * @returns {Array<Object>} Array of material requirement objects (same format as calculateMaterialRequirements)
+ * @returns {Object} calculateEnhancement result
  */
-export function calculateEnhancementMaterialRequirements(
-    itemHrid,
-    startLevel,
-    targetLevel,
-    protectionItemHrid,
-    protectFromLevel,
-    repeatCount,
-    ownerId = null
-) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData) {
-        return [];
-    }
-
-    const itemDetails = gameData.itemDetailMap[itemHrid];
-    if (!itemDetails) {
-        return [];
-    }
-
-    const enhancementCosts = itemDetails.enhancementCosts || [];
-    if (enhancementCosts.length === 0) {
-        return [];
-    }
-
-    // Get enhancing parameters (level, tool bonus, teas, etc.)
+function runEnhancementCalc(itemDetails, startLevel, targetLevel, protectFromLevel) {
     const params = getEnhancingParams();
     const effectiveProtect = protectFromLevel >= 2 && protectFromLevel <= targetLevel ? protectFromLevel : 0;
-
-    // Single Markov chain call for the full level range
-    const calc = calculateEnhancement({
+    return calculateEnhancement({
         enhancingLevel: params.enhancingLevel,
         houseLevel: params.houseLevel,
         toolBonus: params.toolBonus,
@@ -433,9 +403,73 @@ export function calculateEnhancementMaterialRequirements(
         blessedTea: params.teas.blessed,
         guzzlingBonus: params.guzzlingBonus,
     });
+}
+
+/**
+ * Whole attempts the enhancement bill covers when Repeat is infinite: the expected attempts, rounded up.
+ * @param {string} itemHrid - Item HRID being enhanced
+ * @param {number} startLevel - Current enhancement level
+ * @param {number} targetLevel - Target enhancement level
+ * @param {number} protectFromLevel - Level at which protection begins (0 = never)
+ * @returns {number|null} Whole attempts, or null when the item cannot be computed
+ */
+export function calculateEnhancementWholeAttempts(itemHrid, startLevel, targetLevel, protectFromLevel) {
+    const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+    if (!itemDetails) return null;
+    const calc = runEnhancementCalc(itemDetails, startLevel, targetLevel, protectFromLevel);
+    return Math.ceil(calc.attempts - 1e-9);
+}
+
+/**
+ * Calculate material requirements for enhancement actions
+ * Uses Markov chain statistics to determine expected materials needed
+ * @param {string} itemHrid - Item HRID being enhanced
+ * @param {number} startLevel - Current enhancement level (0-19)
+ * @param {number} targetLevel - Target enhancement level (1-20)
+ * @param {string|null} protectionItemHrid - Protection item HRID or null
+ * @param {number} protectFromLevel - Level at which protection begins (0 = never)
+ * @param {number} [repeatCount] - Optional explicit repeat count
+ * @param {string|null} [ownerId] - Reservation owner whose claims should not reduce availability
+ * @param {number} [copies] - Copies of the item taken to the target (default 1). Per-material totals and
+ *   protection scale by this; what is held counts once against the combined total.
+ * @returns {Array<Object>} Array of material requirement objects (same format as calculateMaterialRequirements)
+ */
+export function calculateEnhancementMaterialRequirements(
+    itemHrid,
+    startLevel,
+    targetLevel,
+    protectionItemHrid,
+    protectFromLevel,
+    repeatCount,
+    ownerId = null,
+    copies = 1
+) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData) {
+        return [];
+    }
+
+    const itemDetails = gameData.itemDetailMap[itemHrid];
+    if (!itemDetails) {
+        return [];
+    }
+
+    const copyCount = Math.max(1, Math.floor(Number(copies)) || 1);
+
+    const enhancementCosts = itemDetails.enhancementCosts || [];
+    if (enhancementCosts.length === 0) {
+        return [];
+    }
+
+    const calc = runEnhancementCalc(itemDetails, startLevel, targetLevel, protectFromLevel);
 
     const inventory = dataManager.getInventory() || [];
     const materials = [];
+
+    // Attempts are whole actions: round the expected count up before multiplying, so the
+    // totals are always a multiple of the per-attempt cost. The epsilon keeps a count that
+    // is a whole number plus float noise from buying a spare attempt.
+    const wholeAttempts = Math.ceil((repeatCount ?? calc.attempts) - 1e-9);
 
     // Process enhancement cost materials
     for (const cost of enhancementCosts) {
@@ -449,7 +483,7 @@ export function calculateEnhancementMaterialRequirements(
             continue;
         }
 
-        const totalQuantity = Math.ceil(cost.count * (repeatCount ?? calc.attempts));
+        const totalQuantity = Math.ceil(cost.count * wholeAttempts) * copyCount;
         const have = unclaimedBoughtCount(cost.itemHrid) + heldInBag(inventory, cost.itemHrid);
         const available = ownerId ? effectiveInventory(cost.itemHrid, 0, { excludeOwner: ownerId, held: have }) : have;
         const missing = Math.max(0, totalQuantity - available);
@@ -477,7 +511,13 @@ export function calculateEnhancementMaterialRequirements(
     // Add protection item if applicable
     // Skip Philosopher's Mirror — special mechanic, not consumed as standard protection
     if (calc.protectionCount > 0 && protectionItemHrid && protectionItemHrid !== '/items/philosophers_mirror') {
-        const totalProtection = Math.ceil(calc.protectionCount);
+        // Protections scale with the attempts bought for, as the materials do: expected protections
+        // per expected attempt, times the attempts shown (no change when the attempts are the expected ones)
+        const protectionPerCopy =
+            repeatCount != null && calc.attempts > 0
+                ? (calc.protectionCount * wholeAttempts) / calc.attempts
+                : calc.protectionCount;
+        const totalProtection = Math.ceil(protectionPerCopy - 1e-9) * copyCount;
         const protDetails = gameData.itemDetailMap[protectionItemHrid];
 
         if (protDetails) {

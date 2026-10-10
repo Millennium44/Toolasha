@@ -413,6 +413,109 @@ describe('calculateEnhancementMaterialRequirements', () => {
         expect(nail.required).toBe(6); // 2 * 3
     });
 
+    test('infinite repeat buys whole attempts: a level-80 quiver +0 to +1 at 53.06% success', () => {
+        // Maintainer's live case: 1 / 0.5306 = 1.885 expected attempts. Costs scale from whole
+        // attempts (2 of them), never from the fractional 1.885.
+        state.gameData.itemDetailMap['/items/chimerical_quiver'] = {
+            name: 'Chimerical Quiver',
+            itemLevel: 80,
+            enhancementCosts: [
+                { itemHrid: '/items/coin', count: 5000 },
+                { itemHrid: '/items/chimerical_essence', count: 8 },
+                { itemHrid: '/items/aqua_essence', count: 2000 },
+                { itemHrid: '/items/eyessence', count: 2000 },
+            ],
+        };
+        for (const hrid of ['chimerical_essence', 'aqua_essence', 'eyessence']) {
+            state.gameData.itemDetailMap[`/items/${hrid}`] = { name: hrid, isTradable: true };
+        }
+        state.enhancementResult = { attempts: 1 / 0.5306, protectionCount: 0 };
+        const held = (itemHrid, count) => ({
+            itemLocationHrid: '/item_locations/inventory',
+            itemHrid,
+            enhancementLevel: 0,
+            count,
+        });
+        state.inventory = [
+            held('/items/chimerical_essence', 8),
+            held('/items/aqua_essence', 1770),
+            held('/items/eyessence', 2267),
+        ];
+
+        const result = calculateEnhancementMaterialRequirements('/items/chimerical_quiver', 0, 1, null, 0, null);
+        const byHrid = Object.fromEntries(result.map((m) => [m.itemHrid, m]));
+        expect(byHrid['/items/chimerical_essence']).toMatchObject({ required: 16, missing: 8 });
+        expect(byHrid['/items/aqua_essence']).toMatchObject({ required: 4000, missing: 2230 });
+        expect(byHrid['/items/eyessence']).toMatchObject({ required: 4000, missing: 1733 });
+        state.inventory = [];
+    });
+
+    test('a whole expected attempt count is not bumped by float noise', () => {
+        state.enhancementResult = { attempts: 10 + 1e-12, protectionCount: 0 };
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0);
+        expect(result.find((m) => m.itemHrid === '/items/nail').required).toBe(20);
+    });
+
+    test('copies multiply the totals and protection, and what is held counts once', () => {
+        state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
+        state.gameData.itemDetailMap['/items/nail'] = { name: 'Nail', isTradable: true };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        const held = (itemHrid, count) => ({
+            itemLocationHrid: '/item_locations/inventory',
+            itemHrid,
+            enhancementLevel: 0,
+            count,
+        });
+        state.inventory = [held('/items/nail', 5), held('/items/protection_scroll', 2)];
+
+        const one = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/protection_scroll', 2);
+        const three = calculateEnhancementMaterialRequirements(
+            '/items/sword',
+            0,
+            5,
+            '/items/protection_scroll',
+            2,
+            4,
+            null,
+            3
+        );
+        const pick = (list, hrid) => list.find((m) => m.itemHrid === hrid);
+        expect(pick(one, '/items/nail')).toMatchObject({ required: 20 }); // default: one copy, 10 attempts
+        // Attempts stay per copy: 2 nails * 4 attempts * 3 copies = 24, with the 5 held counted once
+        expect(pick(three, '/items/nail')).toMatchObject({ required: 24, have: 5, missing: 19 });
+        // 2.5 expected protections over 10 attempts is 1 at 4 attempts: 3 in all, with the 2 held counted once
+        expect(pick(three, '/items/protection_scroll')).toMatchObject({ required: 3, missing: 1 });
+        state.inventory = [];
+    });
+
+    test('protection scales with the attempts bought for, and not at all when they are the expected ones', () => {
+        state.enhancementResult = { attempts: 100, protectionCount: 4 };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        const prot = (repeat, copies = 1) =>
+            calculateEnhancementMaterialRequirements(
+                '/items/sword',
+                0,
+                5,
+                '/items/protection_scroll',
+                2,
+                repeat,
+                null,
+                copies
+            ).find((m) => m.itemHrid === '/items/protection_scroll').required;
+        expect(prot(null)).toBe(4);
+        expect(prot(100)).toBe(4); // expected attempts: float noise must not buy a spare
+        expect(prot(500)).toBe(20);
+        expect(prot(50, 2)).toBe(4); // 2 per copy, two copies
+    });
+
+    test('an attempts override changes the quantities; one copy reproduces the default', () => {
+        const base = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, null);
+        const explicit = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, null, null, 1);
+        expect(explicit).toEqual(base);
+        const override = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, 25);
+        expect(override.find((m) => m.itemHrid === '/items/nail').required).toBe(50);
+    });
+
     test('adds a protection item entry when protectionCount > 0', () => {
         state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
         state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };

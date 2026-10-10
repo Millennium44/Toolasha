@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
     unclaimed: {},
     enhancementMaterials: [],
     enhancementCalls: [],
+    wholeAttempts: 7,
     settingsEnabled: false,
     // What `calculateMaterialRequirements` hands back to the click handlers —
     // a test sets this before driving `openMissingMaterials`.
@@ -67,6 +68,7 @@ vi.mock('../../utils/material-calculator.js', () => ({
         state.enhancementCalls.push(args);
         return state.enhancementMaterials;
     },
+    calculateEnhancementWholeAttempts: () => state.wholeAttempts,
     unclaimedBoughtCount: (itemHrid) => state.unclaimed?.[itemHrid] || 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
@@ -315,7 +317,8 @@ describe('enhancement missing-material reservation handoff', () => {
         const button = document.querySelector('#mwi-missing-mats-button');
         expect(button).not.toBeNull();
         expect(button.disabled).toBe(false);
-        expect(state.enhancementCalls.at(-1)).toHaveLength(7);
+        expect(state.enhancementCalls.at(-1)).toHaveLength(8);
+        expect(state.enhancementCalls.at(-1)[7]).toBe(1);
         expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
 
         button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -347,6 +350,161 @@ describe('enhancement missing-material reservation handoff', () => {
         expect(ledger.claims.missingMats['/items/protection_scroll|0']).toBe(1);
         expect(tab.getAttribute('data-missing-quantity')).toBe('0');
         expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
+    });
+
+    describe('the attempts and copies adjustments', () => {
+        const field = (name) => document.querySelector(`#mwi-missing-mats-controls [data-mwi-adjust="${name}"]`);
+        const type = async (input, value) => {
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            await vi.advanceTimersByTimeAsync(10);
+        };
+
+        test('untouched, the fields are prefilled and the bill is the one the button always built', async () => {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+
+            expect(field('attempts').value).toBe('1');
+            expect(field('copies').value).toBe('1');
+            // Repeat reads 1 with no Repeat control on the panel: the game's count, one copy
+            const call = state.enhancementCalls.at(-1);
+            expect(call[5]).toBe(1);
+            expect(call[7]).toBe(1);
+        });
+
+        test('typing attempts and copies recomputes the bill and the click buys for it', async () => {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+
+            await type(field('attempts'), '12');
+            await type(field('copies'), '3');
+            const call = state.enhancementCalls.at(-1);
+            expect(call[5]).toBe(12);
+            expect(call[7]).toBe(3);
+            const button = document.querySelector('#mwi-missing-mats-button');
+            expect(button.title).toContain('12 attempts × 3 copies');
+
+            state.enhancementCalls = [];
+            button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(200);
+            await Promise.resolve();
+            expect(state.enhancementCalls.at(-1)[5]).toBe(12);
+            expect(state.enhancementCalls.at(-1)[7]).toBe(3);
+        });
+
+        test('values are clamped to 1-9999 and key events stay out of the game', async () => {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+
+            await type(field('attempts'), '99999');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(9999);
+            await type(field('copies'), '0');
+            expect(state.enhancementCalls.at(-1)[7]).toBe(1);
+
+            const seen = vi.fn();
+            document.body.addEventListener('keydown', seen);
+            field('attempts').dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+            expect(seen).not.toHaveBeenCalled();
+        });
+
+        test('a computed value that moves without a key change is still not treated as manual', async () => {
+            const panel = document.querySelector('.SkillActionDetail_enhancingComponent__17bOx');
+            panel.insertAdjacentHTML('afterbegin', '<div><span>Repeat</span><input type="text" value="∞"></div>');
+            state.wholeAttempts = 7;
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            expect(field('attempts').value).toBe('7');
+
+            // Gear or tea changes the expectation; the panel redraws with the same key
+            state.wholeAttempts = 9;
+            missingMaterials.cleanup();
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            expect(field('attempts').value).toBe('9');
+
+            await type(field('attempts'), '9');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(null); // still automatic
+            field('attempts').dispatchEvent(new Event('change', { bubbles: true }));
+            expect(field('attempts').value).toBe('9');
+
+            // An automatic figure past 9999 is not shrunk by an edit
+            await type(field('attempts'), '20000');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(9999);
+            state.wholeAttempts = 20000;
+            missingMaterials.cleanup();
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            await type(field('attempts'), '20000');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(null);
+        });
+
+        test('a different item resets both fields', async () => {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            await type(field('attempts'), '12');
+            await type(field('copies'), '3');
+
+            document.querySelector('.SkillActionDetail_enhancingComponent__17bOx').dataset.mwiItemHrid = '/items/axe';
+            missingMaterials.cleanup();
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+
+            expect(field('attempts').value).toBe('1');
+            expect(field('copies').value).toBe('1');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(1);
+            expect(state.enhancementCalls.at(-1)[7]).toBe(1);
+        });
+    });
+
+    describe('the Return tab', () => {
+        function installGame(game) {
+            const root = document.createElement('div');
+            root.id = 'root';
+            root._reactRootContainer = { current: { stateNode: game } };
+            document.body.appendChild(root);
+        }
+
+        async function openAndReturn() {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            document
+                .querySelector('#mwi-missing-mats-button')
+                .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(200);
+            await Promise.resolve();
+            const tab = Array.from(document.querySelectorAll('[data-mwi-custom-tab]')).find((el) =>
+                el.textContent.includes('Return')
+            );
+            expect(tab).toBeTruthy();
+            tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(200);
+        }
+
+        test('returns to Enhancing with the starting stack selected', async () => {
+            const game = { handleEnhanceItem: vi.fn(), handleGoToAction: vi.fn() };
+            installGame(game);
+            state.inventory = [
+                {
+                    itemLocationHrid: '/item_locations/inventory',
+                    itemHrid: '/items/sword',
+                    enhancementLevel: 0,
+                    count: 1,
+                    hash: '1::/item_locations/inventory::/items/sword::0',
+                },
+            ];
+            await openAndReturn();
+            expect(game.handleEnhanceItem).toHaveBeenCalledWith('1::/item_locations/inventory::/items/sword::0');
+            expect(game.handleGoToAction).not.toHaveBeenCalled();
+        });
+
+        test('with no such stack it opens the Enhancing action instead', async () => {
+            const game = { handleEnhanceItem: vi.fn(), handleGoToAction: vi.fn() };
+            installGame(game);
+            state.inventory = [];
+            await openAndReturn();
+            expect(game.handleEnhanceItem).not.toHaveBeenCalled();
+            expect(game.handleGoToAction).toHaveBeenCalledWith('/actions/enhancing/enhance');
+        });
     });
 });
 

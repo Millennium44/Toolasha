@@ -196,6 +196,49 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(2);
     });
 
+    test.each(['combat_triggers_updated', 'all_combat_triggers_updated'])(
+        '%s survives the hash, so a second trigger edit is not dropped',
+        (type) => {
+            // Two edits to one ability's triggers open with the same type, trigger type and
+            // ability hrid; the changed condition sits past the 100-character prefix
+            const handler = vi.fn();
+            webSocketHook.on(type, handler);
+            const base = {
+                combatTriggerTypeHrid: '/combat_trigger_types/ability',
+                abilityHrid: '/abilities/frost_surge',
+                itemHrid: '',
+            };
+            const trigger = (value) => [
+                {
+                    dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+                    conditionHrid: '/combat_trigger_conditions/current_hp',
+                    comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                    value,
+                },
+            ];
+
+            webSocketHook.processMessage(msg(type, { ...base, combatTriggers: trigger(100) }));
+            webSocketHook.processMessage(msg(type, { ...base, combatTriggers: trigger(5000) }));
+
+            expect(handler).toHaveBeenCalledTimes(2);
+        }
+    );
+
+    test('achievements_updated survives the hash when only a later achievement changes', () => {
+        const handler = vi.fn();
+        webSocketHook.on('achievements_updated', handler);
+        const first = { achievementHrid: '/achievements/defeat_100_fly', isCompleted: true };
+
+        webSocketHook.processMessage(msg('achievements_updated', { achievements: [first] }));
+        webSocketHook.processMessage(
+            msg('achievements_updated', {
+                achievements: [first, { achievementHrid: '/achievements/defeat_100_jerry', isCompleted: true }],
+            })
+        );
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
     test('chat_message_updated survives the hash, so an undelete is not dropped', () => {
         // Delete and undelete of one message agree until isDeleted, past the dedup prefix
         const handler = vi.fn();

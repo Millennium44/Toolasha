@@ -22,6 +22,8 @@ import taskCompletionTracker from './task-completion-tracker.js';
 import taskRerollTracker from './task-reroll-tracker.js';
 import { countActiveTasks, forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
+import { computeAllZoneProgress } from './task-zone-progress.js';
+import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { TOOLASHA } from '../../utils/selectors.js';
@@ -57,6 +59,7 @@ class TaskStatistics {
     constructor() {
         this.isInitialized = false;
         this.overlay = null;
+        this.zoneRun = null;
         this.unregisterHandlers = [];
     }
 
@@ -624,6 +627,10 @@ class TaskStatistics {
         }
         popup.appendChild(this.createActionProfitSection(statsData.rewards));
         popup.appendChild(this.createCompletionTimeSection(statsData.rewards, textColor));
+        const zoneSection = config.getSetting('taskStatistics_zoneProgress')
+            ? this.createZoneProgressSection(textColor)
+            : null;
+        if (zoneSection) popup.appendChild(zoneSection);
 
         // Close on overlay click
         overlay.onclick = (e) => {
@@ -636,6 +643,113 @@ class TaskStatistics {
         markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
         this.overlay = overlay;
+
+        if (zoneSection) this.startZoneProgress(zoneSection, textColor);
+    }
+
+    /**
+     * Create the Zone Task Progress section in its "computing" state; {@link startZoneProgress}
+     * fills it in. Opt-in (`taskStatistics_zoneProgress`) because it runs a combat sim per zone.
+     * @param {string} textColor - Text color
+     * @returns {HTMLElement} Section element
+     */
+    createZoneProgressSection(textColor) {
+        const section = this.createSection('Zone Task Progress');
+        this.renderZoneProgressRows(section, null, textColor);
+        return section;
+    }
+
+    /**
+     * Run the per-zone sims for the open popup and draw each zone as it finishes. The run is
+     * cancelled when the popup closes, and anything it produces after that is dropped.
+     * @param {HTMLElement} section - Section from {@link createZoneProgressSection}
+     * @param {string} textColor - Text color
+     */
+    async startZoneProgress(section, textColor) {
+        this.cancelZoneProgress();
+        const run = { cancelled: false };
+        this.zoneRun = run;
+
+        try {
+            const rows = await computeAllZoneProgress({
+                isCancelled: () => run.cancelled,
+                onProgress: (partial) => {
+                    if (!run.cancelled) this.renderZoneProgressRows(section, partial, textColor, true);
+                },
+            });
+            if (run.cancelled || rows === null) return;
+            this.renderZoneProgressRows(section, rows, textColor);
+        } catch (error) {
+            console.error('[TaskStatistics] Zone progress failed:', error);
+            if (!run.cancelled) this.renderZoneProgressRows(section, [], textColor, false, true);
+        } finally {
+            if (this.zoneRun === run) this.zoneRun = null;
+        }
+    }
+
+    /**
+     * Stop an in-flight zone progress run; its remaining zones are never started.
+     */
+    cancelZoneProgress() {
+        if (this.zoneRun) {
+            this.zoneRun.cancelled = true;
+            this.zoneRun = null;
+        }
+    }
+
+    /**
+     * Draw the zone rows. Clicking a row opens that zone at the tier it was simulated at, with
+     * the fight count filled in.
+     * @param {HTMLElement} section - Section element (its title stays)
+     * @param {Array<Object>|null} zones - Rows from computeAllZoneProgress, or null while computing
+     * @param {string} textColor - Text color
+     * @param {boolean} [stillComputing] - More zones are still coming
+     * @param {boolean} [failed] - The run threw
+     */
+    renderZoneProgressRows(section, zones, textColor, stillComputing = false, failed = false) {
+        while (section.children.length > 1) section.removeChild(section.lastChild);
+
+        if (failed) {
+            section.appendChild(this.createRow('Status', 'Could not compute', config.COLOR_LOSS));
+            return;
+        }
+        if (zones === null || (stillComputing && zones.length === 0)) {
+            section.appendChild(this.createRow('Status', 'Computing…', config.COLOR_TEXT_SECONDARY));
+            return;
+        }
+        if (zones.length === 0) {
+            section.appendChild(this.createRow('Status', 'No active combat tasks', config.COLOR_TEXT_SECONDARY));
+            return;
+        }
+
+        for (const zone of zones) {
+            const finite = Number.isFinite(zone.hoursNeeded) && Number.isFinite(zone.fightsNeeded);
+            const bottleneck = zone.taskCount > 1 ? `${zone.bottleneckName} ×${zone.taskCount}` : zone.bottleneckName;
+            const value = finite
+                ? `~${formatKMB(zone.fightsNeeded)} fights | ${timeReadable(Math.round(zone.hoursNeeded * 3600))} (bottleneck: ${bottleneck})`
+                : `??? (no kills for ${bottleneck} in sim)`;
+
+            const row = this.createRow(zone.zoneName, value, textColor);
+            row.style.cursor = 'pointer';
+            row.title = 'Open this zone';
+            row.onclick = () => {
+                this.closePopup();
+                openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, finite ? { count: zone.fightsNeeded } : {}).catch(
+                    (error) => console.error('[TaskStatistics] Could not open zone:', error)
+                );
+            };
+            section.appendChild(row);
+        }
+        if (zones.some((z) => z.shared)) {
+            section.appendChild(
+                this.createRow(
+                    'Note',
+                    'A monster found in several zones counts toward each of those zones',
+                    config.COLOR_TEXT_SECONDARY
+                )
+            );
+        }
+        if (stillComputing) section.appendChild(this.createRow('Status', 'Computing…', config.COLOR_TEXT_SECONDARY));
     }
 
     /**
@@ -1184,6 +1298,7 @@ class TaskStatistics {
      * Close the statistics popup
      */
     closePopup() {
+        this.cancelZoneProgress();
         if (this.overlay) {
             this.overlay.remove();
             this.overlay = null;

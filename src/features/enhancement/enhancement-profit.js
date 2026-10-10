@@ -39,17 +39,19 @@ export function hasUnpricedInput(session) {
  *
  * @param {Object} session - Live enhancement session
  * @param {{attempts: number, protections: number}} [leg] - current-leg counters
+ * @param {{expectedAttempts: number, expectedProtections: number}|null} [summed] - expectation
+ *   summed over a multi-leg session's legs (see summedLegPredictions); it covers the whole session
  * @returns {{actualCost:number, expectedCost:number, diff:number, factor:number,
  *   materialActual:number, materialExpected:number, protActual:number,
  *   protExpected:number, hasProt:boolean}|null}
  */
-export function costVsExpected(session, leg = null) {
-    const predictions = session?.predictions;
+export function costVsExpected(session, leg = null, summed = null) {
+    const predictions = summed || session?.predictions;
     const totalAttempts = session?.totalAttempts || 0;
     if (!predictions || totalAttempts <= 0) return null;
     // Cost is tracked per session, not per leg — only compare when the whole
     // session is a single leg, or the expected (one leg) undercounts the actual.
-    if (leg && leg.attempts !== totalAttempts) return null;
+    if (!summed && leg && leg.attempts !== totalAttempts) return null;
 
     const expAtt = predictions.expectedAttempts || 0;
     const expProt = predictions.expectedProtections || 0;

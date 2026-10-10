@@ -2167,3 +2167,110 @@ describe('collections_updated', () => {
         dataManager.lastCharacterSwitchTime = 0;
     });
 });
+
+/**
+ * Trigger and achievement updates mirrored into characterData, where the sim exports
+ * (combat-sim-export, combat-sim-adapter, milkonomy-export) and getCombinedData read them.
+ */
+describe('combat triggers and achievements stay live', () => {
+    const socketA = { id: 'socket-a' };
+    const socketB = { id: 'socket-b' };
+    const fire = (type, data, context = { socket: socketA }) => webSocketHandlers.get(type)(data, context);
+
+    async function login() {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+        await webSocketHandlers.get('init_character_data')(
+            initPayload({
+                abilityCombatTriggersMap: { '/abilities/poke': [{ value: 1 }] },
+                consumableCombatTriggersMap: { '/items/stamina_coffee': [{ value: 2 }] },
+                characterAchievements: [{ achievementHrid: '/achievements/a', isCompleted: false }],
+            }),
+            { socket: socketA }
+        );
+        dataManager.lastCharacterSwitchTime = 0;
+        return dataManager;
+    }
+
+    test('all_combat_triggers_updated replaces both maps', async () => {
+        const dataManager = await login();
+        fire('all_combat_triggers_updated', {
+            abilityCombatTriggersMap: { '/abilities/fireball': [{ value: 3 }] },
+            consumableCombatTriggersMap: { '/items/mana_coffee': [{ value: 4 }] },
+        });
+        expect(dataManager.characterData.abilityCombatTriggersMap).toEqual({ '/abilities/fireball': [{ value: 3 }] });
+        expect(dataManager.characterData.consumableCombatTriggersMap).toEqual({
+            '/items/mana_coffee': [{ value: 4 }],
+        });
+    });
+
+    test('combat_triggers_updated edits one ability or one consumable', async () => {
+        const dataManager = await login();
+        fire('combat_triggers_updated', {
+            combatTriggerTypeHrid: '/combat_trigger_types/ability',
+            abilityHrid: '/abilities/poke',
+            itemHrid: '',
+            combatTriggers: [{ value: 9 }],
+        });
+        fire('combat_triggers_updated', {
+            combatTriggerTypeHrid: '/combat_trigger_types/consumable',
+            abilityHrid: '',
+            itemHrid: '/items/stamina_coffee',
+            combatTriggers: [],
+        });
+        expect(dataManager.characterData.abilityCombatTriggersMap).toEqual({ '/abilities/poke': [{ value: 9 }] });
+        expect(dataManager.characterData.consumableCombatTriggersMap).toEqual({ '/items/stamina_coffee': [] });
+    });
+
+    test('achievements_updated merges by hrid', async () => {
+        const dataManager = await login();
+        fire('achievements_updated', {
+            achievements: [
+                { achievementHrid: '/achievements/a', isCompleted: true },
+                { achievementHrid: '/achievements/b', isCompleted: true },
+            ],
+        });
+        expect(dataManager.characterData.characterAchievements).toEqual([
+            { achievementHrid: '/achievements/a', isCompleted: true },
+            { achievementHrid: '/achievements/b', isCompleted: true },
+        ]);
+    });
+
+    test('updates from the departed character socket are ignored after a switch', async () => {
+        const dataManager = await login();
+        await webSocketHandlers.get('init_character_data')(
+            initPayload({
+                character: { id: 'char-2', name: 'Two' },
+                abilityCombatTriggersMap: { '/abilities/heal': [] },
+                consumableCombatTriggersMap: {},
+                characterAchievements: [],
+            }),
+            { socket: socketB }
+        );
+        dataManager.lastCharacterSwitchTime = 0;
+        expect(dataManager.getCurrentCharacterId()).toBe('char-2');
+
+        fire('all_combat_triggers_updated', { abilityCombatTriggersMap: { '/abilities/poke': [] } });
+        fire('combat_triggers_updated', {
+            combatTriggerTypeHrid: '/combat_trigger_types/consumable',
+            itemHrid: '/items/stamina_coffee',
+            combatTriggers: [{ value: 1 }],
+        });
+        fire('achievements_updated', { achievements: [{ achievementHrid: '/achievements/a', isCompleted: true }] });
+
+        expect(dataManager.characterData.abilityCombatTriggersMap).toEqual({ '/abilities/heal': [] });
+        expect(dataManager.characterData.consumableCombatTriggersMap).toEqual({});
+        expect(dataManager.characterData.characterAchievements).toEqual([]);
+
+        // The arriving character's own socket is applied
+        fire(
+            'achievements_updated',
+            { achievements: [{ achievementHrid: '/achievements/c', isCompleted: true }] },
+            { socket: socketB }
+        );
+        expect(dataManager.characterData.characterAchievements).toEqual([
+            { achievementHrid: '/achievements/c', isCompleted: true },
+        ]);
+    });
+});

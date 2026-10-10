@@ -644,6 +644,18 @@ describe('pre-patch inventory DOM', () => {
         expect(getComputedStyle(inv.querySelector('[class*="Inventory_itemGrid"]')).display).toBe('contents');
     });
 
+    test('a foreign classless sibling is not flattened into the layout', () => {
+        document.head.appendChild(Object.assign(document.createElement('style'), { textContent: PANEL_CSS }));
+        const { inventoryPanel } = buildCharacterPanel();
+        const { inv } = buildOldInventory(inventoryPanel);
+        const foreign = el('div');
+        foreign.appendChild(el('span'));
+        inv.appendChild(foreign);
+        newUI()._applyLayoutSync(inv);
+
+        expect(getComputedStyle(foreign).display).not.toBe('contents');
+    });
+
     test('leaving the view makes no native-tab restore attempt', async () => {
         const { inventoryPanel } = buildCharacterPanel();
         const { inv } = buildOldInventory(inventoryPanel);
