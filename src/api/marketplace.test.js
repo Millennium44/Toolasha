@@ -1042,7 +1042,7 @@ describe('MarketAPI persisted retry deferral', () => {
 
         await marketAPI.recordDeferral(false);
 
-        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 5 * 60_000, rateLimited: true });
+        expect(store.get(RETRY_KEY)).toMatchObject({ until: NOW + 5 * 60_000, rateLimited: true });
     });
 
     test('a recorded deferral moves the pending auto-refresh check to the retry time', async () => {
@@ -1067,7 +1067,22 @@ describe('MarketAPI persisted retry deferral', () => {
         const data = await marketAPI.clearCacheAndRefetch();
 
         expect(store.has('Toolasha_marketAPI_json')).toBe(true);
-        expect(data).toEqual({ '/items/cheese': { 0: { a: 20, b: 19 } } });
+        // The press reports the failure; the snapshot still serves every other reader
+        expect(data).toBeNull();
+        expect(marketAPI.marketData).toEqual({ '/items/cheese': { 0: { a: 20, b: 19 } } });
+    });
+
+    test('a success does not erase a deferral another tab recorded while the request was in flight', async () => {
+        staleCache();
+        const { default: marketAPI } = await import('./marketplace.js');
+        // The other tab's refusal lands after this request was sent
+        store.set(RETRY_KEY, { until: NOW + 5 * 60_000, rateLimited: true, at: NOW + 5 });
+
+        await marketAPI.clearDeferral(NOW);
+
+        expect(store.get(RETRY_KEY)).toMatchObject({ rateLimited: true });
+        await marketAPI.clearDeferral(NOW + 10);
+        expect(store.get(RETRY_KEY) ?? null).toBeNull();
     });
 
     test('a 429 with Retry-After: 600 defers 600 s', async () => {
@@ -1077,7 +1092,7 @@ describe('MarketAPI persisted retry deferral', () => {
 
         await marketAPI.fetch();
 
-        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 600_000, rateLimited: true });
+        expect(store.get(RETRY_KEY)).toMatchObject({ until: NOW + 600_000, rateLimited: true });
     });
 
     test('an HTTP-date Retry-After is honored when larger than the base', async () => {
@@ -1097,7 +1112,7 @@ describe('MarketAPI persisted retry deferral', () => {
 
         await marketAPI.fetch();
 
-        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 300_000, rateLimited: true });
+        expect(store.get(RETRY_KEY)).toMatchObject({ until: NOW + 300_000, rateLimited: true });
     });
 
     test('a Retry-After shorter than the base does not shorten it', async () => {
@@ -1117,7 +1132,7 @@ describe('MarketAPI persisted retry deferral', () => {
 
         await marketAPI.fetch();
 
-        expect(store.get(RETRY_KEY)).toEqual({ until: NOW + 60_000, rateLimited: false });
+        expect(store.get(RETRY_KEY)).toMatchObject({ until: NOW + 60_000, rateLimited: false });
     });
 
     test('within the deferral no request is made and the cache is served', async () => {
@@ -1182,7 +1197,7 @@ describe('MarketAPI persisted retry deferral', () => {
         await marketAPI.fetch();
 
         expect(fetch).toHaveBeenCalledTimes(1);
-        expect(store.has(RETRY_KEY)).toBe(false);
+        expect(store.get(RETRY_KEY) ?? null).toBeNull();
     });
 
     test('a deferral further out than any we write (clock stepped back) is ignored', async () => {

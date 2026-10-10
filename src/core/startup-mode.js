@@ -30,6 +30,23 @@ export const MENU_LABELS = Object.freeze({
 
 const NOTICE_ID = 'toolasha-startup-mode-notice';
 const MAX_ERROR_MESSAGE = 300;
+
+/**
+ * Error text with every dynamic value taken out, so a log a player shares carries no game or
+ * player data: quoted strings, hrids and paths, numbers, and anything after the first colon of
+ * a "label: value" message are replaced. What is left is the fixed wording of the message.
+ * @param {*} text - Raw message
+ * @returns {string}
+ */
+export function redactMessage(text) {
+    return String(text ?? '')
+        .slice(0, MAX_ERROR_MESSAGE)
+        .replace(/(["'`]).*?\1/g, '"…"')
+        .replace(/\/[\w/.-]+/g, '/…')
+        .replace(/\{.*\}|\[.*\]/g, '…')
+        .replace(/\d+(\.\d+)?/g, '#')
+        .replace(/:\s.*$/, ': …');
+}
 const MAX_ENTRIES = 200;
 
 /** Failures reported by the feature registry for this load: { key, reason } only */
@@ -108,7 +125,7 @@ export function recordInitFailures(failures) {
     if (!Array.isArray(failures)) return;
     initFailures = failures.slice(0, MAX_ENTRIES).map((f) => ({
         key: String(f?.key ?? ''),
-        reason: String(f?.reason ?? '').slice(0, MAX_ERROR_MESSAGE),
+        reason: redactMessage(f?.reason),
     }));
 }
 
@@ -169,7 +186,7 @@ export function buildStartupLog({ mode, performanceMonitor, errorLog, version })
         time: e.ts ?? null,
         kind: e.kind ?? null,
         module: e.module ?? null,
-        message: String(e.message ?? '').slice(0, MAX_ERROR_MESSAGE),
+        message: redactMessage(e.message),
         count: e.count ?? 1,
     }));
 
@@ -268,7 +285,7 @@ export function showModeNotice({ mode, onDownload, env }) {
     text.textContent =
         mode === MODES.SAFE
             ? 'Toolasha is in safe mode: all features are off. Your settings and data are untouched.'
-            : 'Toolasha is recording a startup log (phases, timings, errors). No game data is recorded.';
+            : 'Toolasha is recording a startup log (phases, timings, errors with their details removed). No game data is recorded.';
     el.appendChild(text);
 
     const button = (label, handler) => {

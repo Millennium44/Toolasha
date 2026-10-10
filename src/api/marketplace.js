@@ -64,6 +64,8 @@ class MarketAPI {
         this.RATE_LIMIT_DEFER_MS = 5 * 60 * 1000;
         /** No deferral is honored past this, so a bad Retry-After or a clock step cannot park the feed */
         this.MAX_DEFER_MS = 60 * 60 * 1000;
+        // Bumped by every fetch that actually landed fresh data, so a caller can tell it from a fallback
+        this._freshFetches = 0;
 
         // Current market data
         this.marketData = null;
@@ -298,6 +300,7 @@ class MarketAPI {
         // Try to fetch fresh data
         try {
             if (deferral) throw new DeferredFetch();
+            const requestStartedAt = Date.now();
             const response = await this.fetchFromAPI();
 
             if (response) {
@@ -314,7 +317,8 @@ class MarketAPI {
                 this.notifyListeners();
                 // Settled before returning, so a tab waiting on the refresh lock reads this copy
                 await cacheWritten;
-                await this.clearDeferral();
+                await this.clearDeferral(requestStartedAt);
+                this._freshFetches += 1;
                 return this.marketData;
             }
         } catch (error) {
@@ -397,7 +401,7 @@ class MarketAPI {
         const base = rateLimited ? this.RATE_LIMIT_DEFER_MS : this.FAILURE_DEFER_MS;
         const wait = Math.min(Math.max(base, Number.isFinite(retryAfterMs) ? retryAfterMs : 0), this.MAX_DEFER_MS);
         const now = Date.now();
-        let record = { until: now + wait, rateLimited };
+        let record = { until: now + wait, rateLimited, at: now };
         try {
             // Merge with what another tab may have written: keep the later deadline, and never
             // downgrade an active rate-limit to a plain failure
@@ -411,6 +415,7 @@ class MarketAPI {
                     return {
                         until: Math.max(currentUntil, record.until),
                         rateLimited: Boolean(current.rateLimited) || rateLimited,
+                        at: Math.max(Number(current.at) || 0, now),
                     };
                 },
                 'settings'
@@ -424,10 +429,22 @@ class MarketAPI {
         this._alignAutoRefresh();
     }
 
-    /** Forget the deferral after a successful fetch. */
-    async clearDeferral() {
+    /**
+     * Forget the deferral after a successful fetch, unless another tab recorded a newer one while
+     * this request was in flight: that refusal is later news than this success.
+     * @param {number} [requestStartedAt] - When the successful request was sent
+     * @returns {Promise<void>}
+     */
+    async clearDeferral(requestStartedAt = Infinity) {
         try {
-            await storage.delete(this.CACHE_KEY_RETRY, 'settings');
+            await storage.update(
+                this.CACHE_KEY_RETRY,
+                (current) => {
+                    if (current == null) return undefined;
+                    return Number(current.at) > requestStartedAt ? undefined : null;
+                },
+                'settings'
+            );
         } catch (error) {
             this.logError('Clearing the retry deferral failed', error);
         }
@@ -884,7 +901,10 @@ class MarketAPI {
 
         // Force a fresh fetch. The old snapshot stays until the new one lands: a refused or failed
         // request falls back to it rather than leaving every price reader empty for the cooldown.
-        return await this.fetch(true, { ignoreFailureDeferral: true });
+        // The press itself reports only fresh data, so a fallback reads as the failed refresh it is.
+        const freshBefore = this._freshFetches;
+        const data = await this.fetch(true, { ignoreFailureDeferral: true });
+        return this._freshFetches > freshBefore ? data : null;
     }
 
     /**

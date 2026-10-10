@@ -152,9 +152,29 @@ describe('startup log', () => {
         expect(log.features).toEqual([{ key: 'networth', totalMs: 12.3, startedAtMs: 40, ownMs: 2 }]);
         expect(log.timings[0].name).toBe('startup:complete');
         expect(log.errors[0].module).toBe('Foo');
-        expect(log.errors[0].message.length).toBe(300);
+        expect(log.errors[0].message.length).toBeLessThanOrEqual(300);
         expect(log.initFailures).toEqual([{ key: 'networth', reason: 'boom' }]);
         expect(log.stalls[0].durationMs).toBe(120);
+    });
+
+    test('error text has its dynamic values taken out', () => {
+        const log = buildStartupLog({
+            mode: 'debug',
+            performanceMonitor: monitor,
+            errorLog: {
+                getEntries: () => [
+                    { module: 'A', message: 'Failed to load character 32030' },
+                    { module: 'B', message: 'Snapshot "My Main Build" failed' },
+                    { module: 'C', message: 'Unknown item /items/radiant_gloves in loadout' },
+                    { module: 'D', message: 'Bad payload: {"characterId":32030,"name":"Bob"}' },
+                ],
+            },
+        });
+        const text = JSON.stringify(log.errors);
+        for (const leak of ['32030', 'My Main Build', 'radiant_gloves', 'Bob', 'characterId']) {
+            expect(text).not.toContain(leak);
+        }
+        expect(log.errors[0].message).toBe('Failed to load character #');
     });
 
     test('carries no payload fields', () => {
