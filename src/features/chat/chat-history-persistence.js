@@ -1220,19 +1220,22 @@ export function guildRecordKey(guildId) {
 const GUILD_CHANNEL = '/chat_channel_types/guild';
 
 /**
- * Channels every character sees the same lines in. Party, Whisper, Local and Mod
- * are not here: Party and Whisper are the character's own, and Local and Mod are
- * not known well enough to share — kept per character until they are.
+ * Channels every character sees the same lines in. Party, Whisper and Moderator
+ * are not here: Party and Whisper are the character's own, and Moderator is not
+ * known well enough to share — kept per character until it is. `global` is not a
+ * channel the game has (the shared room is `general`); it stays only so a record
+ * already keyed by it is still read as public, never migrated or deleted.
  */
 const PUBLIC_CHANNELS = new Set(
     [
-        'global',
         'general',
+        'global',
         'trade',
         'beginner',
         'recruit',
         'help',
         'ironcow',
+        'english',
         'chinese',
         'russian',
         'korean',
@@ -1241,6 +1244,7 @@ const PUBLIC_CHANNELS = new Set(
         'spanish',
         'french',
         'german',
+        'vietnamese',
     ].map((name) => `/chat_channel_types/${name}`)
 );
 

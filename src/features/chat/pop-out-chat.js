@@ -34,8 +34,6 @@ const MAX_SIZE_SCREEN_MULTIPLIER = 2;
 const CHANNELS = [
     { hrid: '/chat_channel_types/general', name: 'General' },
     { hrid: '/chat_channel_types/trade', name: 'Trade' },
-    { hrid: '/chat_channel_types/global', name: 'Global' },
-    { hrid: '/chat_channel_types/local', name: 'Local' },
     { hrid: '/chat_channel_types/help', name: 'Help' },
     { hrid: '/chat_channel_types/party', name: 'Party' },
     { hrid: '/chat_channel_types/guild', name: 'Guild' },
@@ -43,6 +41,7 @@ const CHANNELS = [
     { hrid: '/chat_channel_types/beginner', name: 'Beginner' },
     { hrid: '/chat_channel_types/recruit', name: 'Recruit' },
     { hrid: '/chat_channel_types/ironcow', name: 'Ironcow' },
+    { hrid: '/chat_channel_types/english', name: 'English' },
     { hrid: '/chat_channel_types/russian', name: 'Русский' },
     { hrid: '/chat_channel_types/chinese', name: '中文' },
     { hrid: '/chat_channel_types/korean', name: '한국어' },
@@ -51,6 +50,7 @@ const CHANNELS = [
     { hrid: '/chat_channel_types/spanish', name: 'Español' },
     { hrid: '/chat_channel_types/french', name: 'Français' },
     { hrid: '/chat_channel_types/german', name: 'Deutsch' },
+    { hrid: '/chat_channel_types/vietnamese', name: 'Tiếng Việt' },
 ];
 
 const CHANNEL_NAME_MAP = Object.fromEntries(CHANNELS.map((c) => [c.hrid, c.name]));
