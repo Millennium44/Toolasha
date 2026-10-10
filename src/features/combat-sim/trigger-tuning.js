@@ -449,10 +449,12 @@ const pct = (value, base) => {
 };
 
 /**
- * The balanced objective: the average of five terms, each a change against the
- * untouched setup — EXP/h, profit/h, DPS and encounters/h as a percentage, and
- * deaths as `DEATH_POINTS_PER_PER_HOUR` points per extra death per hour. It
- * reads as "roughly, the average percent better", and zero is the baseline.
+ * The balanced objective: the average of four percentage changes against the
+ * untouched setup — EXP/h, profit/h, DPS and encounters/h — less
+ * `DEATH_POINTS_PER_PER_HOUR` points per extra death per hour. The deaths term
+ * sits outside the average so it costs the full stated points, not a fifth of
+ * them. It reads as "roughly, the average percent better", and zero is the
+ * baseline.
  *
  * It mirrors the five axes the Upgrade tab's Score (balanced) blends, but not
  * its arithmetic: that score ranks candidates against each other by gold spent
@@ -473,9 +475,8 @@ export function balancedScore(metrics, base) {
         pct(metrics.profit, base.profit),
         pct(metrics.dps, base.dps),
         pct(metrics.encounters, base.encounters),
-        deathsTerm,
     ];
-    return terms.reduce((sum, t) => sum + t, 0) / terms.length;
+    return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm;
 }
 
 // ─── Statistics ─────────────────────────────────────────────────────────────

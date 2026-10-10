@@ -316,9 +316,15 @@ describe('balancedScore', () => {
 
     test('is the average of four percent changes and the death penalty', () => {
         const better = { xp: 1100, profit: 2200, deaths: 1, dps: 110, encounters: 11 };
-        expect(balancedScore(better, base)).toBeCloseTo((10 + 10 + 10 + 10) / 5, 6);
+        expect(balancedScore(better, base)).toBeCloseTo((10 + 10 + 10 + 10) / 4, 6);
         const worse = { ...base, deaths: 3 };
-        expect(balancedScore(worse, base)).toBeCloseTo(-20 / 5, 6);
+        expect(balancedScore(worse, base)).toBeCloseTo(-20, 6);
+    });
+
+    test('costs exactly 10 points per extra death per hour, on top of the average', () => {
+        expect(balancedScore({ ...base, deaths: 2 }, base)).toBeCloseTo(-10, 6);
+        const mixed = { xp: 1100, profit: 2200, deaths: 1.5, dps: 110, encounters: 11 };
+        expect(balancedScore(mixed, base)).toBeCloseTo(10 - 5, 6);
     });
 
     test('a zero baseline term reads as no signal rather than infinity', () => {
