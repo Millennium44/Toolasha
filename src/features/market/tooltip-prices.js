@@ -120,12 +120,21 @@ function selfUseTitle() {
 /** The "Instead of buying" section's class */
 const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
 
-/** Hover text on every "Instead of buying" line. */
-const INSTEAD_TITLE =
-    'Instead of buying: the source bought at its ask and decomposed or transmuted, the catalyst and tea at ' +
-    'their asks, every other output sold at its bid after tax (or valued at its ask when marked "Keep for ' +
-    'self-use"), divided by the expected units of this item per action. Estimated prices are left out. With ' +
-    'a gold rate set, the alchemy time is charged at that rate.';
+/**
+ * Hover text on every "Instead of buying" line, following what a K mark means.
+ * @returns {string}
+ */
+function insteadTitle() {
+    const outputs =
+        getMarkMeaning() === 'sell'
+            ? 'every other output kept and valued at its ask (or sold at its bid after tax when marked with K)'
+            : 'every other output sold at its bid after tax (or valued at its ask when marked "Keep for self-use")';
+    return (
+        'Instead of buying: the source bought at its ask and decomposed or transmuted, the catalyst and tea at ' +
+        `their asks, ${outputs}, divided by the expected units of this item per action. Estimated prices are ` +
+        'left out. With a gold rate set, the alchemy time is charged at that rate.'
+    );
+}
 
 /** Most kept outputs a self-use label names before summarizing the rest */
 const SELF_USE_KEEP_NAMES = 2;
@@ -920,7 +929,7 @@ class TooltipPrices {
                         ? ` (+${formatKMB(alt.savingPerHour)}/hr over your gold rate)`
                         : ` (${formatKMB(alt.savingPerHour)}/hr of alchemy)`;
             }
-            html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${INSTEAD_TITLE}">`;
+            html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
             html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
             html += '</div>';
             const parts = [`${formatKMB(alt.costPerUnit)}/unit vs ${formatKMB(targetAsk)} ask`];

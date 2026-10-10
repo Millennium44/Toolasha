@@ -1443,6 +1443,20 @@ describe('instead of buying', () => {
         expect(section.textContent).toContain('5.8K/hr of alchemy');
     });
 
+    test('the hover text describes outputs the way the K marks mean them', async () => {
+        settings.insteadOfBuying = true;
+        settings.markMeaning = 'sell';
+        const sellTitle = (await hoverCheese()).querySelector(
+            '.mwi-alchemy-instead [title^="Instead of buying"]'
+        ).title;
+        expect(sellTitle).toContain('every other output kept and valued at its ask');
+        settings.markMeaning = 'keep';
+        const keepTitle = (await hoverCheese()).querySelector(
+            '.mwi-alchemy-instead [title^="Instead of buying"]'
+        ).title;
+        expect(keepTitle).toContain('every other output sold at its bid after tax');
+    });
+
     describe('an item with many sources', () => {
         const knife = (i) => `/items/curd_knife_${i}`;
         const knifeDecompose = (i) => ({ ...swordDecompose(), itemHrid: knife(i), successRate: 1 });
