@@ -1169,7 +1169,7 @@ export const settingsGroups = {
                 id: 'enhanceSim_protectionMarketplaceButton',
                 label: 'Protection item picker: Show "Buy Cheapest" marketplace button',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Adds a button to the Protection item selector popup in the Enhancing panel that opens the Marketplace on the cheapest available protection option',
             },
             enhancementItemPins: {
@@ -1925,7 +1925,7 @@ export const settingsGroups = {
                 id: 'market_enhanceProfitPerHour',
                 label: 'Market: Show enhance-to-sell Profit/h on enhanced order books',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help:
                     'On the order book of an enhanced (+1 and up) item, adds a Profit/h column to the sell listings: ' +
                     "the profit per hour of enhancing the base item to that level yourself and selling it at that row's " +
@@ -2544,7 +2544,7 @@ export const settingsGroups = {
                 id: 'combatProfileButton',
                 label: 'Combat: Profile button on party members',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: "Adds a 'Profile' button to the battle-unit popup when you click another player in group/party/dungeon combat, opening their profile directly (falls back to the /profile chat command if needed).",
             },
             abilitiesTriggers: {
@@ -2661,7 +2661,7 @@ export const settingsGroups = {
                 id: 'labyrinthMissingSuppliesButton',
                 label: 'Labyrinth: Show "Buy missing supplies" button',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
             },
             labyrinthMonsterStatCheck: {
@@ -2758,7 +2758,7 @@ export const settingsGroups = {
                 id: 'labyrinthRoomDistribution',
                 label: 'Labyrinth: Show clear chance distribution button',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Adds a Spread button to the floor map controls that opens a panel charting how the floor’s calculated rooms are spread across clear chance, with rooms not yet calculated counted apart. Takes effect the next time the floor map controls are drawn.',
             },
             labyrinthDistributionBinWidth: {
@@ -3401,7 +3401,7 @@ export const settingsGroups = {
                 id: 'taskStatistics_zoneProgress',
                 label: 'Show per-zone combat task progress in task statistics',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Adds a Zone Task Progress section to the Task Statistics popup: for each zone with active combat tasks, the fights and time needed to clear them and the slowest monster. Runs one combat simulation per zone each time the popup opens; click a zone to open it with the fight count filled in.',
             },
             taskClaimCollector: {
@@ -3415,7 +3415,7 @@ export const settingsGroups = {
                 id: 'taskClaimToast',
                 label: 'Show a toast summary when a task is claimed',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Pops a brief toast naming the coins, tokens, and items a claimed task paid out — the reward the claimed card no longer shows once it is gone.',
             },
             taskRerollSpendBadge: {
@@ -4064,7 +4064,7 @@ export const settingsGroups = {
                 id: 'guildMembersShowGameMode',
                 label: 'Guild Members: Show Game Mode column',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Shows the MC/IC/LC game mode column (Status tab).',
             },
             guildMembersShowJoined: {
