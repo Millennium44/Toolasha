@@ -7,7 +7,6 @@
 
 import { describe, test, expect } from 'vitest';
 import {
-    TRIGGER_OPTIMIZER_SETTING,
     MAX_TRIGGERS,
     PRECISIONS,
     KIND_ENEMY_HP,
@@ -744,9 +743,5 @@ describe('write-back and text', () => {
         expect(party.split('\n')[0].startsWith('Milkman: ')).toBe(true);
         expect(party.split('\n')[1].startsWith('Cheesy: ')).toBe(true);
         expect(party.split('\n')[1]).toContain('Donut (food)');
-    });
-
-    test('the setting key is the one the schema declares', () => {
-        expect(TRIGGER_OPTIMIZER_SETTING).toBe('combatSim_triggerOptimizer');
     });
 });

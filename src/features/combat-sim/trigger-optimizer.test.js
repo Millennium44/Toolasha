@@ -22,7 +22,6 @@ vi.mock('./combat-sim-adapter.js', () => ({
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 
 const { runTriggerOptimization, sampleFromResult } = await import('./trigger-optimizer.js');
-const { TRIGGER_OPTIMIZER_SETTING } = await import('./trigger-tuning.js');
 
 const HOUR_NS = 3600 * 1e9;
 const FIREBALL = '/abilities/fireball';
@@ -203,9 +202,5 @@ describe('runTriggerOptimization', () => {
         );
         // the baseline batch is the first to run; nothing past it is started once one has failed
         expect(started).toBeLessThanOrEqual(4);
-    });
-
-    test('the setting key matches', () => {
-        expect(TRIGGER_OPTIMIZER_SETTING).toBe('combatSim_triggerOptimizer');
     });
 });

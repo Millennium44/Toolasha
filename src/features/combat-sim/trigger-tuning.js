@@ -17,9 +17,6 @@
  * show-only, plus values written into the sim's own editor and text to copy.
  */
 
-/** Setting that gates the "Triggers" chip on the Upgrade tab */
-export const TRIGGER_OPTIMIZER_SETTING = 'combatSim_triggerOptimizer';
-
 /** Most rows the sim editor lets a trigger list hold */
 export const MAX_TRIGGERS = 4;
 

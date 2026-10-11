@@ -124,14 +124,7 @@ import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { runTriggerOptimization } from './trigger-optimizer.js';
-import {
-    buildEditorChanges,
-    formatChangesText,
-    MIN_GAIN,
-    MIN_GAIN_OPTIONS,
-    PRECISIONS,
-    TRIGGER_OPTIMIZER_SETTING,
-} from './trigger-tuning.js';
+import { buildEditorChanges, formatChangesText, MIN_GAIN, MIN_GAIN_OPTIONS, PRECISIONS } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
 import storage from '../../core/storage.js';
 import {
@@ -2657,7 +2650,6 @@ const UPGRADE_MODES = [
         key: 'triggers',
         label: 'Triggers',
         defaultOn: false,
-        setting: TRIGGER_OPTIMIZER_SETTING,
         title:
             'Tune the numbers in your trigger rows: how much enemy HP an ability waits for, and how low your own ' +
             'HP or MP gets before a food fires. Only the numbers change, never what a trigger watches.\n\n' +
@@ -2684,16 +2676,6 @@ function modeChipHtml(mode) {
                 </label>
                 ${MODE_OPTIONS[mode.key] || ''}
             </span>`;
-}
-
-/**
- * The candidate sets the Upgrade tab offers right now. A set with a `setting` is
- * only offered while that setting is on.
- * @param {Function} [isEnabled] - `(settingKey) => boolean`; defaults to the live settings
- * @returns {Array<Object>}
- */
-export function visibleUpgradeModes(isEnabled = (key) => config.getSetting(key) === true) {
-    return UPGRADE_MODES.filter((mode) => !mode.setting || isEnabled(mode.setting));
 }
 
 /**
@@ -3229,7 +3211,7 @@ class CombatSimUI {
             <label style="color:#888; font-size:12px;">Player</label>
             <select class="toolasha-select" id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
-            ${visibleUpgradeModes().map(modeChipHtml).join('')}
+            ${UPGRADE_MODES.map(modeChipHtml).join('')}
             <button id="mwi-csim-upgrade-run" style="
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
@@ -3422,12 +3404,10 @@ class CombatSimUI {
             cancelActiveSimulations();
         });
         this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => this._wireModeBox(box));
-        this._unsubscribeTriggerChip?.();
-        this._unsubscribeTriggerChip = config.onSettingChange(TRIGGER_OPTIMIZER_SETTING, () => this._syncTriggerChip());
         this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
             this._saveSwapAuraOnly();
         });
-        // Delegated, because the chip's selects are rebuilt when its setting is toggled
+        // Delegated, so one listener covers the chip's selects
         this.panel.addEventListener('change', (event) => {
             if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) this._saveTriggerChoices();
         });
@@ -9193,8 +9173,6 @@ class CombatSimUI {
         this._detachDrag = null;
         this._unsubscribeSkipSkillingRooms?.();
         this._unsubscribeSkipSkillingRooms = null;
-        this._unsubscribeTriggerChip?.();
-        this._unsubscribeTriggerChip = null;
         this._unsubscribeSoloMode?.();
         this._unsubscribeSoloMode = null;
         if (this._loadoutUpdateHandler) {
@@ -9499,25 +9477,6 @@ class CombatSimUI {
     }
 
     /**
-     * Show or remove the Triggers chip to match its setting, without rebuilding the panel.
-     * @private
-     */
-    _syncTriggerChip() {
-        if (!this.panel) return;
-        const mode = UPGRADE_MODES.find((m) => m.key === 'triggers');
-        const chip = this.panel.querySelector('[data-mode-chip="triggers"]');
-        const wanted = config.getSetting(TRIGGER_OPTIMIZER_SETTING) === true;
-        if (wanted && !chip) {
-            this.panel.querySelector('#mwi-csim-upgrade-run')?.insertAdjacentHTML('beforebegin', modeChipHtml(mode));
-            this._wireModeBox(this.panel.querySelector('[data-upgrade-mode="triggers"]'));
-            this._restoreTriggerChoices();
-        } else if (!wanted && chip) {
-            chip.remove();
-        }
-        this._onUpgradeModesChanged();
-    }
-
-    /**
      * Candidate sets currently checked on the Upgrade tab.
      * @returns {string[]}
      * @private
@@ -9795,8 +9754,8 @@ class CombatSimUI {
                     box.getAttribute('data-upgrade-mode')
                 )
             );
-            // A remembered set that names only options this panel no longer offers (Triggers, with its
-            // setting off) would leave every box unchecked; keep the defaults instead
+            // A remembered set that names only options this panel no longer offers would leave every box
+            // unchecked; keep the defaults instead
             if (Array.isArray(saved) && saved.some((key) => present.has(key))) {
                 const wanted = new Set(saved);
                 this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
@@ -9819,7 +9778,7 @@ class CombatSimUI {
             const scope = read(TRIGGER_CHOICE_IDS.scope);
             const precision = read(TRIGGER_CHOICE_IDS.precision);
             const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
-            // A select that is not on the panel (setting off) keeps its remembered value untouched
+            // A select that is not on the panel keeps its remembered value untouched
             const saved = (await readScoped(TRIGGER_CHOICES_KEY, 'settings', null)) || {};
             await writeScoped(TRIGGER_CHOICES_KEY, {
                 ...saved,
