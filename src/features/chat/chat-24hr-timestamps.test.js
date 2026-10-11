@@ -44,6 +44,7 @@ function makeTimestampSpan(text) {
 describe('Chat 24hr Timestamps', () => {
     let feature;
     let config;
+    let localeOrder;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -57,6 +58,32 @@ describe('Chat 24hr Timestamps', () => {
         });
         config = (await import('../../core/config.js')).default;
         feature = (await import('./chat-24hr-timestamps.js')).default;
+        localeOrder = await import('../../utils/locale-date-order.js');
+        localeOrder._resetDateFieldOrder(false);
+    });
+
+    test('a day-first locale reads D/M: 9 Oct renders as October in both output orders', () => {
+        localeOrder._resetDateFieldOrder(true);
+        const span = makeTimestampSpan('[09/10 9:31:23 PM] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[10-09 21:31:23] ');
+
+        settingValues.market_listingDateFormat = 'DD-MM';
+        settingChangeCallbacks['market_listingDateFormat'].forEach((cb) => cb());
+        expect(span.textContent).toBe('[09-10 21:31:23] ');
+    });
+
+    test('a month-first locale keeps reading M/D', () => {
+        const span = makeTimestampSpan('[09/10 9:31:23 PM] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[09-10 21:31:23] ');
+    });
+
+    test('a field over 12 is the day whatever the locale says', () => {
+        localeOrder._resetDateFieldOrder(true);
+        const span = makeTimestampSpan('[5/22 9:31:23 PM] ');
+        feature.initialize();
+        expect(span.textContent).toBe('[05-22 21:31:23] ');
     });
 
     // The live client builds the span's own text as `"[" + time + "] "` (see

@@ -11,6 +11,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { isTwelveHourClock } from '../../utils/formatters.js';
+import { isDayFirstLocale } from '../../utils/locale-date-order.js';
 
 // Matches the native client's "[M/D H:MM:SS AM/PM]" or "[H:MM:SS AM/PM]" timestamp text (the
 // day period is absent when the browser locale is already 24-hour, and comes first, in AM/PM or
@@ -67,7 +68,10 @@ function processTimestampNode(span) {
 
     let newText = `[${timeText}]`;
     if (datePart) {
-        const [month, day] = datePart.split('/');
+        // The native stamp is M/D or D/M by the browser locale; a field over 12 is a day whatever the locale says
+        const [first, second] = datePart.split('/');
+        const dayFirst = Number(first) > 12 ? true : Number(second) > 12 ? false : isDayFirstLocale();
+        const [month, day] = dayFirst ? [second, first] : [first, second];
         const paddedMonth = month.padStart(2, '0');
         const paddedDay = day.padStart(2, '0');
         const dateText = dateFormat === 'DD-MM' ? `${paddedDay}-${paddedMonth}` : `${paddedMonth}-${paddedDay}`;
