@@ -106,7 +106,8 @@ export function monsterMaxHpReader(gameData) {
  * @param {Object} gameData - Game data payload
  * @param {Array<string>} hrids - Every player in the sim
  * @param {number} fallbackHours - Hours asked for, when the result carries no clock
- * @returns {{perPlayer: Object, encounters: number, pools: Object}}
+ * @returns {{perPlayer: Object, encounters: number, pools: Object}} perPlayer: hrid →
+ *   `{ xp, profit, revenue, cost, deaths, dps }`, all per hour (dps per second)
  */
 export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || fallbackHours;
@@ -115,14 +116,22 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
     for (const hrid of hrids) {
         const xp = Object.values(simResult.experienceGained?.[hrid] || {}).reduce((s, v) => s + v, 0);
         let profit = 0;
+        let revenue = 0;
+        let cost = 0;
         try {
-            profit = calculateSimRevenue(simResult, gameData, hrid, simHours)?.netPerHour || 0;
+            const value = calculateSimRevenue(simResult, gameData, hrid, simHours);
+            profit = value?.netPerHour || 0;
+            // Gross loot value and spend set the scale a profit change is judged against (profitScale)
+            revenue = value?.revenuePerHour || 0;
+            cost = value?.costPerHour || 0;
         } catch (error) {
             console.error('[TriggerOptimizer] Profit read failed:', error);
         }
         perPlayer[hrid] = {
             xp: xp / simHours,
             profit,
+            revenue,
+            cost,
             deaths: (simResult.deaths?.[hrid] || 0) / simHours,
             dps: (simResult.totalDamageDealt?.[hrid] || 0) / (simHours * 3600),
         };

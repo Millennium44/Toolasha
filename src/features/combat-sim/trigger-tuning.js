@@ -579,21 +579,65 @@ export function zoneEnemyHp(gameData, zoneHrid, tier, monsterMaxHp) {
  * @returns {{xp: number, profit: number, deaths: number, dps: number, encounters: number}}
  */
 export function scopeMetrics(sample, hrids) {
-    const out = { xp: 0, profit: 0, deaths: 0, dps: 0, encounters: sample?.encounters || 0 };
+    const out = { xp: 0, profit: 0, revenue: 0, cost: 0, deaths: 0, dps: 0, encounters: sample?.encounters || 0 };
     for (const hrid of hrids) {
         const p = sample?.perPlayer?.[hrid];
         if (!p) continue;
         out.xp += p.xp || 0;
         out.profit += p.profit || 0;
+        out.revenue += p.revenue || 0;
+        out.cost += p.cost || 0;
         out.deaths += p.deaths || 0;
         out.dps += p.dps || 0;
     }
     return out;
 }
 
-const pct = (value, base) => {
-    if (!(Math.abs(base) > 0)) return 0;
-    return Math.max(-100, Math.min(100, ((value - base) / Math.abs(base)) * 100));
+/**
+ * Smallest scale each percentage term is taken against, so a baseline of zero
+ * (or next to it) still registers a change in either direction instead of
+ * reading as no signal (zero) or as an enormous swing. Each is about the
+ * smallest rate that means anything in a fight:
+ * - XP: 100 EXP/h
+ * - DPS: 1 damage per second
+ * - Encounters: 1 per hour
+ * - Profit: 1 gold/h, but see `profitScale`, which is what actually sets it
+ */
+export const SCORE_FLOORS = { xp: 100, dps: 1, encounters: 1, profit: 1 };
+
+/**
+ * What a profit change is a percentage of: the larger of the baseline's gross
+ * loot value per hour and its consumable (and key) cost per hour, and never less
+ * than the baseline profit itself or `SCORE_FLOORS.profit`.
+ *
+ * Profit is a small difference of two large numbers, so taking a change as a
+ * percentage of the profit alone made the term meaningless near break-even: a
+ * baseline of exactly 0 scored every gain and loss as 0, and a baseline of
+ * +0.10 gold/h scored a few gold as +100. Against the gold actually moving
+ * through the fight, a 45k gold/h loss on a 5k gold/h fight is the full -100.
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @returns {number} Always positive
+ */
+export function profitScale(base) {
+    return Math.max(Math.abs(base.profit || 0), base.revenue || 0, base.cost || 0, SCORE_FLOORS.profit);
+}
+
+/**
+ * Percent change against a scale, clamped to ±100 so no one term can dominate.
+ * @param {number} value - The candidate's rate
+ * @param {number} base - The baseline's rate
+ * @param {number} scale - What 100% is: `max(|base|, floor)`
+ * @returns {number}
+ */
+const pct = (value, base, scale) => {
+    if (!(scale > 0)) return 0;
+    return Math.max(-100, Math.min(100, (((value || 0) - (base || 0)) / scale) * 100));
+};
+
+/** The percent-change term of one metric, against its floored scale */
+const term = (metrics, base, key) => {
+    const scale = key === 'profit' ? profitScale(base) : Math.max(Math.abs(base[key] || 0), SCORE_FLOORS[key]);
+    return pct(metrics[key], base[key], scale);
 };
 
 /**
@@ -607,18 +651,19 @@ const pct = (value, base) => {
  * It mirrors the five axes the Upgrade tab's Score (balanced) blends, but not
  * its arithmetic: that score ranks candidates against each other by gold spent
  * per 0.01% gained, and a trigger change costs nothing, so there is nothing to
- * divide by. Each term is clamped to ±100 so a near-zero baseline cannot
- * dominate.
+ * divide by. Each term is taken against `max(|baseline|, floor)` (see
+ * `SCORE_FLOORS` and `profitScale`), so a zero baseline still counts a change
+ * either way, and clamped to ±100 so no one term can dominate.
  * @param {Object} metrics - From `scopeMetrics`
  * @param {Object} base - The baseline's `scopeMetrics`
  * @returns {number} Score points
  */
 export function balancedScore(metrics, base) {
     const terms = [
-        pct(metrics.xp, base.xp),
-        pct(metrics.profit, base.profit),
-        pct(metrics.dps, base.dps),
-        pct(metrics.encounters, base.encounters),
+        term(metrics, base, 'xp'),
+        term(metrics, base, 'profit'),
+        term(metrics, base, 'dps'),
+        term(metrics, base, 'encounters'),
     ];
     return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm(metrics, base);
 }
@@ -652,8 +697,8 @@ export const DEFAULT_OBJECTIVE = 'balanced';
  * @returns {number} Score points
  */
 export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE) {
-    if (objective === 'xp') return pct(metrics.xp, base.xp) + deathsTerm(metrics, base);
-    if (objective === 'profit') return pct(metrics.profit, base.profit) + deathsTerm(metrics, base);
+    if (objective === 'xp') return term(metrics, base, 'xp') + deathsTerm(metrics, base);
+    if (objective === 'profit') return term(metrics, base, 'profit') + deathsTerm(metrics, base);
     return balancedScore(metrics, base);
 }
 
@@ -1040,6 +1085,8 @@ export async function runTriggerSearch({
         return {
             xp: mean(ms.map((m) => m.xp)),
             profit: mean(ms.map((m) => m.profit)),
+            revenue: mean(ms.map((m) => m.revenue)),
+            cost: mean(ms.map((m) => m.cost)),
             deaths: mean(ms.map((m) => m.deaths)),
             dps: mean(ms.map((m) => m.dps)),
             encounters: mean(ms.map((m) => m.encounters)),

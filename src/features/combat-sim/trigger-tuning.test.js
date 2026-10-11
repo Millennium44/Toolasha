@@ -25,6 +25,8 @@ import {
     objectiveScore,
     OBJECTIVES,
     scopeMetrics,
+    profitScale,
+    SCORE_FLOORS,
     pairedDiff,
     accepts,
     tCritical,
@@ -427,8 +429,41 @@ describe('balancedScore', () => {
         expect(balancedScore(mixed, base)).toBeCloseTo(10 - 5, 6);
     });
 
-    test('a zero baseline term reads as no signal rather than infinity', () => {
-        expect(balancedScore({ ...base, profit: 999 }, { ...base, profit: 0 })).toBe(0);
+    test('a loss from a zero-profit baseline counts, against the gold moving through the fight', () => {
+        // The review reproduction: break-even at 5,000 gold/h of loot and 5,000 of food; the change eats
+        // 50,000 of food for 1% more of everything else. Profit 0 -> -44,950 used to score 0 and pass.
+        const zero = { xp: 1000, profit: 0, revenue: 5000, cost: 5000, deaths: 0, dps: 100, encounters: 500 };
+        const tuned = { xp: 1010, profit: -44950, revenue: 5050, cost: 50000, deaths: 0, dps: 101, encounters: 505 };
+        expect(profitScale(zero)).toBe(5000);
+        expect(balancedScore(tuned, zero)).toBeCloseTo((1 - 100 + 1 + 1) / 4, 6);
+        expect(objectiveScore(tuned, zero, 'profit')).toBe(-100);
+    });
+
+    test('a gain from a zero-profit baseline counts too', () => {
+        const zero = { xp: 1000, profit: 0, revenue: 5000, cost: 5000, deaths: 0, dps: 100, encounters: 500 };
+        const better = { ...zero, profit: 500, revenue: 5500 };
+        expect(balancedScore(better, zero)).toBeCloseTo(10 / 4, 6);
+        expect(objectiveScore(better, zero, 'profit')).toBeCloseTo(10, 6);
+    });
+
+    test('a zero baseline with no revenue or cost recorded still scores against the 1 gold/h floor', () => {
+        expect(objectiveScore({ ...base, profit: -10 }, { ...base, profit: 0 }, 'profit')).toBe(-100);
+        expect(objectiveScore({ ...base, profit: 0.5 }, { ...base, profit: 0 }, 'profit')).toBeCloseTo(50, 6);
+    });
+
+    test('a tiny nonzero profit baseline no longer swings the score', () => {
+        // +0.10 gold/h used to be the whole scale: +10 gold/h read as +100 points
+        const tiny = { xp: 1000, profit: 0.1, revenue: 5000, cost: 4999.9, deaths: 0, dps: 100, encounters: 500 };
+        const plusTen = { ...tiny, profit: 10.1, revenue: 5010 };
+        expect(objectiveScore(plusTen, tiny, 'profit')).toBeCloseTo(0.2, 6);
+        expect(balancedScore(plusTen, tiny)).toBeCloseTo(0.05, 6);
+    });
+
+    test('XP, DPS and encounters rising from zero are credited, against their floors', () => {
+        const zero = { xp: 0, profit: 2000, deaths: 0, dps: 0, encounters: 0 };
+        expect(objectiveScore({ ...zero, xp: 50 }, zero, 'xp')).toBeCloseTo((50 / SCORE_FLOORS.xp) * 100, 6);
+        expect(objectiveScore({ ...zero, xp: 5000 }, zero, 'xp')).toBe(100);
+        expect(balancedScore({ ...zero, dps: 0.5, encounters: 0.25 }, zero)).toBeCloseTo((50 + 25) / 4, 6);
     });
 
     test('scope metrics sum the judged players and carry encounters through', () => {
@@ -436,8 +471,26 @@ describe('balancedScore', () => {
             encounters: 7,
             perPlayer: { a: { xp: 1, profit: 2, deaths: 3, dps: 4 }, b: { xp: 10, profit: 20, deaths: 30, dps: 40 } },
         };
-        expect(scopeMetrics(sample, ['a'])).toEqual({ xp: 1, profit: 2, deaths: 3, dps: 4, encounters: 7 });
-        expect(scopeMetrics(sample, ['a', 'b'])).toEqual({ xp: 11, profit: 22, deaths: 33, dps: 44, encounters: 7 });
+        expect(scopeMetrics(sample, ['a'])).toEqual({
+            xp: 1,
+            profit: 2,
+            revenue: 0,
+            cost: 0,
+            deaths: 3,
+            dps: 4,
+            encounters: 7,
+        });
+        sample.perPlayer.a.revenue = 5;
+        sample.perPlayer.b.cost = 6;
+        expect(scopeMetrics(sample, ['a', 'b'])).toEqual({
+            xp: 11,
+            profit: 22,
+            revenue: 5,
+            cost: 6,
+            deaths: 33,
+            dps: 44,
+            encounters: 7,
+        });
     });
 });
 

@@ -83,7 +83,7 @@ describe('sampleFromResult', () => {
             ['player1'],
             2
         );
-        expect(sample.perPlayer.player1).toEqual({ xp: 300, profit: 50, deaths: 2, dps: 100 });
+        expect(sample.perPlayer.player1).toEqual({ xp: 300, profit: 50, revenue: 0, cost: 0, deaths: 2, dps: 100 });
         expect(sample.encounters).toBe(10);
         expect(sample.pools.player1).toEqual({ hp: 900, mp: 300 });
     });

@@ -103,8 +103,12 @@ function deltaCells(c) {
 export function objectiveFooterText(objective) {
     const deaths = 'less 10 points per extra death per hour';
     if (objective === 'xp') return `Optimizing for XP/h: score is the percent change in EXP/h, ${deaths}.`;
-    if (objective === 'profit') return `Optimizing for profit/h: score is the percent change in profit/h, ${deaths}.`;
-    return `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, ${deaths}.`;
+    const profitScale =
+        "profit/h is taken as a percent of the fight's loot value or consumable spend, whichever is larger";
+    if (objective === 'profit') {
+        return `Optimizing for profit/h: score is the percent change in profit/h, ${deaths}; ${profitScale}.`;
+    }
+    return `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, ${deaths}; ${profitScale}.`;
 }
 
 /**
