@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Decompose chain ranking lists gear again
+
+- The best decompose chain sort and Best Items no longer drop an item when one output somewhere in its tree has no real buy order; that output counts as zero and the figure is marked ≥ with the item named, so equipment with long chains ranks again instead of only raw materials.
+
 ### Inventory and chat widths survive a reload
 
 - The inventory column and chat panel now come back at exactly the width you dragged them to; the game saves the width with decimals but reloads it rounded down to a whole percent, so both panels (and the docked overlay) used to shrink slightly after a reload.
