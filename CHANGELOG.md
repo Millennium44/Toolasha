@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Guild members and leaderboard rows that carry a leaderboard rank badge now show their XP/h and XP/day again; the badge number was being read as part of the name, so those players were not found.
 
+### No more "Reload now" from your own skill checkpoints
+
+- A sync pull no longer reports the skill and ability checkpoint records as combined when the gist only holds an older copy of this browser's own data; they were stored in the game's skill order and the merge sorts them, so an unchanged record looked different and asked for a reload.
+
 ### Inventory and chat widths survive a reload
 
 - The inventory column and chat panel now come back at exactly the width you dragged them to; the game saves the width with decimals but reloads it rounded down to a whole percent, so both panels (and the docked overlay) used to shrink slightly after a reload.

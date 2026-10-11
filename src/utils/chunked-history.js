@@ -546,14 +546,25 @@ class ChunkedHistory {
                 }
             }
             const united = this._union(local, offered);
-            if (!this.pruneEntries) return united;
-            try {
-                const pruned = this.pruneEntries(united);
-                return Array.isArray(pruned) ? pruned : united;
-            } catch (error) {
-                console.error(`[${this.label}] Pruning a folded chunk failed; keeping the union:`, error);
-                return united;
+            let result = united;
+            if (this.pruneEntries) {
+                try {
+                    const pruned = this.pruneEntries(united);
+                    if (Array.isArray(pruned)) result = pruned;
+                } catch (error) {
+                    console.error(`[${this.label}] Pruning a folded chunk failed; keeping the union:`, error);
+                }
             }
+            // The union is always sorted; a copy written in append order is the same
+            // content in another order. Folding in nothing new is not a change, so
+            // hand back the copy held rather than a reordering of it (a pull of what
+            // this device already has would otherwise write and say "combined")
+            try {
+                if (JSON.stringify(result) === JSON.stringify(this._sorted(local))) return local;
+            } catch {
+                // Unserializable entries: fall through to the fold
+            }
+            return result;
         };
 
         // The fold is orientation-sensitive: this device's copy is the base (it

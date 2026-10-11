@@ -64,8 +64,8 @@ describe('capturing a day', () => {
         await skillCheckpoints._capture();
 
         expect(state.saved.charId).toBe('char-1');
-        expect(state.saved.entries.map((entry) => entry.k)).toEqual(['/skills/milking', '/skills/cooking']);
-        expect(state.saved.entries[0]).toMatchObject({ xp: 1000, level: 10 });
+        expect(state.saved.entries.map((entry) => entry.k)).toEqual(['/skills/cooking', '/skills/milking']);
+        expect(state.saved.entries[1]).toMatchObject({ xp: 1000, level: 10 });
     });
 
     test('a second capture the same day writes nothing, however many events fire', async () => {
