@@ -447,6 +447,40 @@ describe('guildXPDisplay decoupled from guildIdleDisplay and the member columns'
         expect(table.querySelector('thead').textContent).toContain('Last XP/h');
         expect(table.querySelector('thead').textContent).toContain('Last day XP/h');
     });
+
+    test('a leaderboard rank chip after the name does not hide the member XP columns', () => {
+        game.settings = { guildXPDisplay: true, guildMembersShowLastXPH: true, guildMembersShowLastDayXPH: true };
+        game.members = [
+            { characterID: 'orvel', name: 'Orvel' },
+            { characterID: 'ada', name: 'Ada' },
+        ];
+        game.meta.orvel = { name: 'Orvel' };
+        game.meta.ada = { name: 'Ada' };
+        game.memberStats.orvel = { lastXPH: 777, lastDayXPH: 555 };
+        game.memberStats.ada = { lastXPH: 500, lastDayXPH: 400 };
+
+        document.body.innerHTML = '';
+        const table = document.createElement('table');
+        table.className = 'GuildPanel_membersTable__t';
+        // Shape assumed: the chip is a sibling span right after the name element, inside the name cell
+        table.innerHTML =
+            '<thead><tr><th>Name</th><th>Role</th><th>Guild Exp</th></tr></thead>' +
+            '<tbody><tr><td><div class="CharacterName_name__x" data-name="Orvel">Orvel</div>' +
+            '<span data-toolasha-rank-badge="gold"><svg><use href="#trophy"></use></svg>20</span></td>' +
+            '<td>Member</td><td>1,000</td></tr>' +
+            '<tr><td><span>Ada</span><span data-toolasha-rank-badge="gold">37</span></td><td>Member</td><td>900</td></tr>' +
+            '</tbody>';
+        document.body.appendChild(table);
+
+        guildXPDisplay.initialize();
+        game.observers['GuildPanel_membersTable'](table);
+
+        const rows = table.querySelectorAll('tbody tr');
+        expect(rows[0].textContent).toContain('777');
+        expect(rows[0].textContent).toContain('555');
+        expect(rows[1].textContent).toContain('500');
+        expect(rows[1].textContent).toContain('400');
+    });
 });
 
 describe('_parseWeeklyXP — locale-grouped figures', () => {
