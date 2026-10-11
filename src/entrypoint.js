@@ -1868,6 +1868,17 @@ function registerFeatures() {
             customCheck: () => true,
         },
         {
+            // Puts back the exact dragged inventory/chat width the game
+            // truncates on reload (see drag-size-restore.js) — a fix, not a
+            // togglable feature, so always on.
+            key: 'dragSizeRestore',
+            name: 'Drag Size Restore',
+            category: 'UI',
+            module: UI.dragSizeRestore,
+            async: false,
+            customCheck: () => true,
+        },
+        {
             key: 'panelSizeMemory',
             name: 'Panel Size Memory',
             category: 'UI',
