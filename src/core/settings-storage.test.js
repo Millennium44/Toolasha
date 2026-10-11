@@ -1289,6 +1289,93 @@ describe('every existing character is moved to "K marks items to sell", once', (
     });
 });
 
+describe('flipped checkbox defaults reach new players only', () => {
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_pinned_defaults_p1_${KEY}`;
+    const IDS = [
+        'market_enhanceProfitPerHour',
+        'labyrinthMissingSuppliesButton',
+        'labyrinthRoomDistribution',
+        'enhanceSim_protectionMarketplaceButton',
+        'combatProfileButton',
+        'guildMembersShowGameMode',
+    ];
+    const box = (id, isTrue) => ({ id, type: 'checkbox', isTrue });
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('a fresh install takes the new default and pins nothing', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        for (const id of IDS) expect(settings[id].isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`)?.[IDS[0]]).toBeUndefined();
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('an existing player missing the keys gets false, and it is saved', async () => {
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const id of IDS) {
+            expect(settings[id].isTrue).toBe(false);
+            expect(stored.get(`json:${KEY}`)[id].isTrue).toBe(false);
+        }
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('a player who saved true keeps true, and one who saved false keeps false', async () => {
+        stored.set(`json:${KEY}`, {
+            combatProfileButton: box('combatProfileButton', true),
+            labyrinthRoomDistribution: box('labyrinthRoomDistribution', false),
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.combatProfileButton.isTrue).toBe(true);
+        expect(settings.labyrinthRoomDistribution.isTrue).toBe(false);
+        expect(settings.guildMembersShowGameMode.isTrue).toBe(false);
+    });
+
+    test('the hold-back cohort (ids known, false never stored) gets false', async () => {
+        // whatsNew_newDefaultsOff on, ids already in knownIds: conservativeOverrides
+        // never stores a false for them, so the map simply lacks the keys
+        stored.set(`json:${KEY}`, { whatsNew_newDefaultsOff: box('whatsNew_newDefaultsOff', true) });
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const id of IDS) expect(settings[id].isTrue).toBe(false);
+    });
+
+    test('a second load changes nothing, and a later choice of true sticks', async () => {
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+        await settingsStorage.loadSettings();
+
+        const map = stored.get(`json:${KEY}`);
+        map.combatProfileButton = box('combatProfileButton', true);
+        stored.set(`json:${KEY}`, map);
+        const before = JSON.stringify(map);
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.combatProfileButton.isTrue).toBe(true);
+        expect(JSON.stringify(stored.get(`json:${KEY}`))).toBe(before);
+    });
+
+    test('a fresh install that later saves something is not pinned afterwards', async () => {
+        await settingsStorage.loadSettings();
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.combatProfileButton.isTrue).toBe(true);
+    });
+});
+
 describe('SettingsStorage copy-from-character', () => {
     beforeEach(() => {
         stored.clear();
@@ -1469,7 +1556,9 @@ describe('a settings store that cannot be read', () => {
         await settingsStorage.setSetting('whatsNew_newDefaultsOff', true);
 
         expect(stored.has('json:script_settingsMap_carol')).toBe(false);
-        expect(stored.get(`json:${KEY}`)).toEqual(saved());
+        // Alice's own load pinned the flipped defaults into her map; nothing else changed
+        expect(stored.get(`json:${KEY}`)).toMatchObject(saved());
+        expect(stored.get(`json:${KEY}`).whatsNew_newDefaultsOff).toEqual(saved().whatsNew_newDefaultsOff);
         settingsStorage.setCharacterId('alice', 'Alice');
     });
 

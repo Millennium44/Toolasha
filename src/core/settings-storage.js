@@ -101,6 +101,37 @@ const DEFAULT_REWRITES = [
     { batch: 'v4', id: 'selfUse_markMeaning', field: 'value', from: 'keep', to: 'sell' },
 ];
 
+/**
+ * Checkbox defaults that flipped false -> true for NEW players only.
+ *
+ * Add the id here in the same change that flips a schema default, with
+ * `previous` set to the value existing players were running on. A player who
+ * already has a saved settings map and no stored entry for the id (they never
+ * touched it) is written `previous` once, so the flip never reaches them. A
+ * fresh install has no saved map and takes the schema default; a stored value,
+ * either way, is left alone.
+ *
+ * Needed because loadSettings builds from schema defaults and overlays only the
+ * stored keys, and because nothing else stores an untouched switch: the
+ * what's-new hold-back (`whatsNew_newDefaultsOff`) only persists switches that
+ * arrive enabled, so a player on it still has no stored false for an id that
+ * was already in their known list. Not a DEFAULT_REWRITES case — nothing stored
+ * is rewritten, only absent ids are filled in.
+ *
+ * Each batch runs once per character, under its own flag; a later flip gets a
+ * new batch name so the earlier flag cannot hide it.
+ */
+const PINNED_PREVIOUS_DEFAULTS = [
+    { batch: 'p1', id: 'market_enhanceProfitPerHour', previous: false },
+    { batch: 'p1', id: 'labyrinthMissingSuppliesButton', previous: false },
+    { batch: 'p1', id: 'labyrinthRoomDistribution', previous: false },
+    { batch: 'p1', id: 'enhanceSim_protectionMarketplaceButton', previous: false },
+    { batch: 'p1', id: 'combatProfileButton', previous: false },
+    { batch: 'p1', id: 'guildMembersShowGameMode', previous: false },
+];
+
+const PINNED_DEFAULTS_FLAG_KEY = 'settings_pinned_defaults';
+
 /** The batch an entry belongs to when it does not name one */
 const DEFAULT_REWRITE_BATCH = 'v2';
 
@@ -651,6 +682,7 @@ class SettingsStorage {
             // Migrations first: a rewrite entry may name an id a migration derives
             saved = await this.applyKeyMigrations(saved, characterKey);
             saved = await this.applyDefaultRewrites(saved, characterKey);
+            saved = await this.applyPinnedPreviousDefaults(saved, characterKey);
             await this.migrateSharedSettings(characterKey);
         } else {
             console.warn(`[SettingsStorage] ${characterKey} could not be read; answering with schema defaults`);
@@ -999,6 +1031,60 @@ class SettingsStorage {
             console.error('[SettingsStorage] Default rewrite failed:', error);
             return saved;
         }
+    }
+
+    /**
+     * Keep existing players on the old default of a flipped checkbox, once.
+     *
+     * See {@link PINNED_PREVIOUS_DEFAULTS}. A null map (fresh install) pins
+     * nothing but still records the batch, so a later load that finds a map
+     * written by the new defaults is not mistaken for an old player.
+     *
+     * @param {Object|null} saved - The stored settings map, or null when none
+     * @param {string} characterKey - Storage key the map was loaded from
+     * @returns {Promise<Object|null>} The map to merge, absent ids pinned
+     */
+    async applyPinnedPreviousDefaults(saved, characterKey) {
+        let current = saved;
+        for (const batch of new Set(PINNED_PREVIOUS_DEFAULTS.map((entry) => entry.batch))) {
+            const flagKey = `${PINNED_DEFAULTS_FLAG_KEY}_${batch}_${characterKey}`;
+            try {
+                if (await storage.get(flagKey, this.storageArea, false)) continue;
+
+                let next = current;
+                if (current) {
+                    for (const entry of PINNED_PREVIOUS_DEFAULTS) {
+                        if (entry.batch !== batch || current[entry.id]) continue;
+                        next = next === current ? { ...current } : next;
+                        next[entry.id] = { id: entry.id, type: 'checkbox', isTrue: entry.previous };
+                    }
+                }
+
+                if (next !== current) {
+                    // Pins go onto what is on disk, not onto `current`: an
+                    // earlier step's refused write leaves `current` holding
+                    // changes that must stay unsaved until their own retry.
+                    // A refused write here leaves the flag unset, so the next
+                    // load retries.
+                    const onDisk = (await storage.getJSON(characterKey, this.storageArea, null)) ?? {};
+                    const persisted = { ...onDisk };
+                    for (const id of Object.keys(next)) {
+                        if (!current[id] && !persisted[id]) persisted[id] = next[id];
+                    }
+                    const written = await storage.setJSON(characterKey, persisted, this.storageArea, true);
+                    if (written === false) {
+                        current = next;
+                        continue;
+                    }
+                    await this._stampDiff(characterKey, onDisk, persisted, { system: true });
+                }
+                await storage.set(flagKey, true, this.storageArea, true);
+                current = next;
+            } catch (error) {
+                console.error('[SettingsStorage] Pinning previous defaults failed:', error);
+            }
+        }
+        return current;
     }
 
     /**
