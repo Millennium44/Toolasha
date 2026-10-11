@@ -570,6 +570,34 @@ describe('keeping a simulation worker warm', () => {
         expect(merged.triggerChecks.player1).toEqual({ '/abilities/fireball': 10, '/items/donut': 0 });
     });
 
+    test('kill-time loot histograms from every chunk sum key by key, whatever each chunk ended on', async () => {
+        // Each chunk ends in a different buff state; the merged result must not
+        // value every chunk at chunk 0's end state
+        const { built } = stubWorkerPool({ deferred: true });
+        const pending = runSimulation({
+            gameData: gameDataPayload(),
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 100,
+        });
+        await new Promise((resolve) => setTimeout(resolve));
+        built.forEach((worker, i) =>
+            worker.respond({
+                ...EMPTY_SIM_RESULT,
+                dropRateMultiplier: { player1: i % 2 === 0 ? 1 : 1.15 },
+                lootStates: {
+                    player1: {
+                        '/monsters/fly': i % 2 === 0 ? { '0|0|0': 10 + i, '0.15|0|0': 5 } : { '0.15|0|0': 7 },
+                    },
+                },
+                dungeonQtyStates: { player1: i === 3 ? { 0.1: 2 } : { 0: 1, 0.1: 1 } },
+            })
+        );
+        const merged = await pending;
+        expect(merged.lootStates.player1['/monsters/fly']).toEqual({ '0|0|0': 10 + 12, '0.15|0|0': 5 + 7 + 5 + 7 });
+        expect(merged.dungeonQtyStates.player1).toEqual({ 0: 3, 0.1: 5 });
+    });
+
     test('and the next run borrows one of the four back', async () => {
         const { built } = stubWorkerPool();
 

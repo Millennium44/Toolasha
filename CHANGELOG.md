@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trigger optimizer and combat sim loot fixes
+
+- The trigger optimizer no longer recommends money-losing changes from a break-even baseline, values a whole search at one set of prices, never counts an unpriced item as free (and won't tune a food or drink with no price), simulates the same party as Simulate (Solo included), and refuses to Apply after the zone, tier or party changed; combat sim loot is now valued at the drink buffs active at each kill instead of whatever was active when the run ended.
+
 ### Recent panels start on for new players
 
 - The enhance-to-sell Profit/h column, the labyrinth missing-supplies button and room distribution, the protection marketplace button, the party profile button and the guild members game-mode tag now start on for new players; existing players keep them off unless they turn them on.

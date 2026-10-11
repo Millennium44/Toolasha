@@ -88,11 +88,32 @@ const fmtRate = (v) => sign(v, formatKMB(Math.round(v)));
 const fmtDeaths = (v) => sign(v, v.toFixed(3));
 const fmtSe = (v) => (Number.isFinite(v) ? v.toFixed(1) : '?');
 
-function deltaCells(c) {
-    return (
-        `ΔEXP/h ${esc(fmtRate(c.deltaXp))} · Δprofit/h ${esc(fmtRate(c.deltaProfit))} · ` +
-        `Δdeaths/h ${esc(fmtDeaths(c.deltaDeaths))}`
-    );
+function deltaCells(c, profitKnown = true) {
+    // A profit figure with an unpriced item or a failed valuation in it is not shown as if it were one
+    const profit = profitKnown ? fmtRate(c.deltaProfit) : '? (not valued)';
+    const xp = esc(fmtRate(c.deltaXp));
+    return `ΔEXP/h ${xp} · Δprofit/h ${esc(profit)} · Δdeaths/h ${esc(fmtDeaths(c.deltaDeaths))}`;
+}
+
+/**
+ * Why profit could not be valued: the unpriced items by name, and/or a valuation that failed.
+ * @param {Object} result - From `runTriggerOptimization`
+ * @param {Object} gameData - Game data payload (display names)
+ * @returns {string} Plain text, without a trailing period
+ */
+export function profitUnvaluedReason(result, gameData) {
+    const names = [
+        ...new Set((result?.unpriced || []).map((hrid) => gameData?.itemDetailMap?.[hrid]?.name || humanizeHrid(hrid))),
+    ];
+    const parts = [];
+    if (names.length > 0) parts.push(`${names.join(', ')} ${names.length === 1 ? 'has' : 'have'} no price`);
+    if (result?.valuationFailed) parts.push('the valuation failed');
+    return parts.length > 0 ? `profit can't be valued: ${parts.join('; ')}` : "profit can't be valued";
+}
+
+function humanizeHrid(hrid) {
+    const tail = String(hrid).split('/').pop() || String(hrid);
+    return tail.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
 /**
@@ -103,8 +124,12 @@ function deltaCells(c) {
 export function objectiveFooterText(objective) {
     const deaths = 'less 10 points per extra death per hour';
     if (objective === 'xp') return `Optimizing for XP/h: score is the percent change in EXP/h, ${deaths}.`;
-    if (objective === 'profit') return `Optimizing for profit/h: score is the percent change in profit/h, ${deaths}.`;
-    return `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, ${deaths}.`;
+    const profitScale =
+        "profit/h is taken as a percent of the fight's loot value or consumable spend, whichever is larger";
+    if (objective === 'profit') {
+        return `Optimizing for profit/h: score is the percent change in profit/h, ${deaths}; ${profitScale}.`;
+    }
+    return `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, ${deaths}; ${profitScale}.`;
 }
 
 /**
@@ -150,8 +175,15 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
     const unused = result.unused || [];
     const allUnused = unused.length > 0 && (result.unchanged || []).length === 0 && changes.length === 0;
 
+    const profitKnown = !result.profitLeftOut;
+    const profitReason = profitKnown ? '' : profitUnvaluedReason(result, gameData);
     let body = '';
-    if (result.reliable === false) {
+    if (!profitKnown && result.objective === 'profit') {
+        body +=
+            `<div style="color:#ff9800; font-size:12px; font-weight:600;">Nothing recommended: ${esc(profitReason)}.</div>` +
+            '<div style="color:#aaa; font-size:12px; margin-top:2px;">Profit/h counts an unpriced item at zero, ' +
+            'so any change would be a guess. Set a custom price for it, or optimize for Balanced or XP/h.</div>';
+    } else if (result.reliable === false) {
         body +=
             '<div style="color:#ff9800; font-size:12px; font-weight:600;">No reliable improvement found.</div>' +
             '<div style="color:#aaa; font-size:12px; margin-top:2px;">Some values looked better in single runs, ' +
@@ -175,7 +207,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
                 `<span style="color:#e0e0e0;">${esc(c.itemName)}</span> — ${esc(row)} ` +
                 `<span style="color:#888;">(was ${esc(c.from)})</span><br>` +
                 `<span style="color:#4caf50;">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span>` +
-                ` <span style="color:#888;">· ${deltaCells(c)}</span></div>`;
+                ` <span style="color:#888;">· ${deltaCells(c, profitKnown)}</span></div>`;
         }
     }
 
@@ -186,11 +218,24 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             `<div style="font-size:12px; margin-top:8px; padding-top:6px; border-top:1px solid #2a2a4a;">` +
             `<b>All changes together</b> (fresh seeds, ${c.seeds} runs): ` +
             `<span style="color:${good ? '#4caf50' : '#ff9800'};">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span>` +
-            ` <span style="color:#888;">· ${deltaCells(c)}</span></div>`;
+            ` <span style="color:#888;">· ${deltaCells(c, profitKnown)}</span></div>`;
     } else if (changes.length > 0) {
         body +=
             '<div style="font-size:11px; color:#ff9800; margin-top:8px;">Stopped before the all-together check ' +
             'ran; each figure above is from the step that accepted it.</div>';
+    }
+
+    if (!profitKnown && result.objective !== 'profit') {
+        body +=
+            `<div style="font-size:11px; color:#ff9800; margin-top:6px;">Profit/h left out of the score ` +
+            `where it could not be counted: ${esc(profitReason)}.</div>`;
+    }
+
+    const notPriced = [...new Set((result.notPriced || []).map((t) => t.itemName))];
+    if (notPriced.length > 0) {
+        body +=
+            `<div style="font-size:11px; color:#ff9800; margin-top:6px;">Not tuned: ${esc(notPriced.join(', '))} ` +
+            `${notPriced.length === 1 ? 'has' : 'have'} no price, so the gold effect can't be checked.</div>`;
     }
 
     const unchanged = result.unchanged || [];

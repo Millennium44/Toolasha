@@ -48,6 +48,9 @@ const RESULT_FIELDS = [
     'tunableCount',
     'reliable',
     'stopped',
+    'profitLeftOut',
+    'unpriced',
+    'valuationFailed',
 ];
 
 function pick(source, fields) {
@@ -137,6 +140,7 @@ export function compactTriggerResult(result) {
         [...new Set((list || []).map((t) => t?.itemName).filter(Boolean))].map((itemName) => ({ itemName }));
     out.unchanged = names(result?.unchanged);
     out.unused = names(result?.unused);
+    out.notPriced = names(result?.notPriced);
     return out;
 }
 

@@ -10192,13 +10192,59 @@ class CombatSimUI {
     }
 
     /**
-     * The player DTOs a trigger run simulates: the sim editor's when it is open, else freshly built.
-     * @returns {Promise<Array<Object>>} The live objects (not copies)
+     * The party a trigger run simulates, resolved the way an ordinary Simulate resolves it: with the sim
+     * editor open that honors Configure's Solo box and the open player (and Solo's cleared level-gap penalty);
+     * with no editor the freshly built players are used as they are, as Simulate does.
+     * @param {number} playerIndex - The Upgrade tab's selected player, as an index into the loaded roster
+     * @returns {Promise<{simDTOs: Array<Object>, liveDTOs: Array<Object>, playerIndex: number, soloApplied: boolean}>}
+     *   `simDTOs` are what is simulated (Solo's are penalty-cleared copies); `liveDTOs` are the editor's own
+     *   objects for the same members, for Apply; `playerIndex` indexes both
      * @private
      */
-    async _loadTriggerDTOs() {
+    async _loadTriggerParty(playerIndex) {
         const editedDTOs = this._editor?.getEditedDTOs();
-        return editedDTOs ? Object.values(editedDTOs) : (await buildAllPlayerDTOs()).players;
+        if (!editedDTOs) {
+            const players = (await buildAllPlayerDTOs()).players;
+            return { simDTOs: players, liveDTOs: players, playerIndex, soloApplied: false };
+        }
+        return this._resolveEditorTriggerParty(editedDTOs, playerIndex);
+    }
+
+    /**
+     * {@link _loadTriggerParty} for the sim editor's DTOs; synchronous, so Apply can re-resolve it.
+     * @param {Object<string, Object>} editedDTOs - hrid -> live DTO
+     * @param {number} playerIndex - Index into the loaded roster
+     * @returns {{simDTOs: Array<Object>, liveDTOs: Array<Object>, playerIndex: number, soloApplied: boolean}}
+     * @private
+     */
+    _resolveEditorTriggerParty(editedDTOs, playerIndex) {
+        const selectedHrid = Object.values(editedDTOs)[playerIndex]?.hrid;
+        const resolved = resolveSimParty(this._editor, editedDTOs);
+        const simDTOs = resolved.playerDTOs;
+        const liveDTOs = simDTOs.map((dto) => editedDTOs[dto.hrid] || dto);
+        let index = simDTOs.findIndex((dto) => dto.hrid === selectedHrid);
+        // Solo simulates one player whatever the selector says; otherwise an unknown player stays unknown
+        if (index < 0) index = resolved.soloApplied ? 0 : playerIndex;
+        return { simDTOs, liveDTOs, playerIndex: index, soloApplied: resolved.soloApplied };
+    }
+
+    /**
+     * Everything a trigger result was found for that Apply must find unchanged: zone, tier, the simulated
+     * player, Solo, the simulated roster and each member's build fingerprint.
+     * @param {Object} choices - From {@link _readTriggerChoices}
+     * @param {{simDTOs: Array<Object>, playerIndex: number, soloApplied: boolean}} party
+     * @returns {{zoneHrid: string, difficultyTier: number, playerHrid: string|null, soloApplied: boolean,
+     *   signatures: Map<string, string>}}
+     * @private
+     */
+    _triggerRunContext(choices, party) {
+        return {
+            zoneHrid: choices.zoneHrid,
+            difficultyTier: choices.difficultyTier,
+            playerHrid: party.simDTOs[party.playerIndex]?.hrid ?? null,
+            soloApplied: party.soloApplied,
+            signatures: new Map(party.simDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)])),
+        };
     }
 
     /**
@@ -10225,11 +10271,12 @@ class CombatSimUI {
                 return;
             }
             const ownerId = dataManager.getCurrentCharacterId();
-            const liveDTOs = await this._loadTriggerDTOs();
-            const signatures = new Map((liveDTOs || []).map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+            const party = await this._loadTriggerParty(choices.playerIndex);
+            const runContext = this._triggerRunContext(choices, party);
             const signature = triggerRunSignature({
                 ...choices,
-                dtoSignatures: signatures,
+                playerIndex: party.playerIndex,
+                dtoSignatures: runContext.signatures,
                 communityBuffs: getCommunityBuffs(),
                 pricing: triggerPricingStamp(),
             });
@@ -10247,7 +10294,7 @@ class CombatSimUI {
                 cached: true,
             });
             box.dataset.cached = '1';
-            this._wireTriggerResultButtons(cached, gameData, liveDTOs, signatures);
+            this._wireTriggerResultButtons(cached, gameData, party.liveDTOs, runContext);
             box.querySelector('#mwi-csim-trigger-rerun')?.addEventListener('click', () => this._onTriggerAnalyze());
         } catch (error) {
             console.error('[CombatSimUI] Failed to show the remembered trigger result:', error);
@@ -10267,7 +10314,7 @@ class CombatSimUI {
 
         const ownerId = dataManager.getCurrentCharacterId();
         const choices = this._readTriggerChoices();
-        const { zoneHrid, difficultyTier, playerIndex, scope, include, precision, minGain, objective } = choices;
+        const { zoneHrid, difficultyTier, scope, include, precision, minGain, objective } = choices;
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
             return;
@@ -10279,9 +10326,9 @@ class CombatSimUI {
         }
 
         this._upgradeRunning = true;
-        let playerDTOs;
+        let party;
         try {
-            playerDTOs = await this._loadTriggerDTOs();
+            party = await this._loadTriggerParty(choices.playerIndex);
         } catch (error) {
             this._upgradeRunning = false;
             console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
@@ -10292,7 +10339,8 @@ class CombatSimUI {
             this._upgradeRunning = false;
             return;
         }
-        if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
+        const playerIndex = party.playerIndex;
+        if (!party.simDTOs?.length || !party.simDTOs[playerIndex]) {
             this._upgradeRunning = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
@@ -10300,16 +10348,17 @@ class CombatSimUI {
         // The editor's DTOs are live: editing the Configure loadout mid-run would change the build
         // under later candidate sims. Run on private copies, keep the live objects for Apply, and
         // fingerprint each build so Apply can tell it was edited in place.
-        const liveDTOs = playerDTOs;
-        const signatures = new Map(liveDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+        const liveDTOs = party.liveDTOs;
+        const runContext = this._triggerRunContext(choices, party);
         const communityBuffs = getCommunityBuffs();
         const runSignature = triggerRunSignature({
             ...choices,
-            dtoSignatures: signatures,
+            playerIndex,
+            dtoSignatures: runContext.signatures,
             communityBuffs,
             pricing: triggerPricingStamp(),
         });
-        playerDTOs = structuredClone(liveDTOs);
+        const playerDTOs = structuredClone(party.simDTOs);
 
         const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
         const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
@@ -10366,7 +10415,7 @@ class CombatSimUI {
             triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
             });
-            this._wireTriggerResultButtons(result, gameData, liveDTOs, signatures);
+            this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext);
             if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
             this._setStatus(
                 result?.changes?.length
@@ -10394,11 +10443,12 @@ class CombatSimUI {
      * @param {Object} result - The optimizer result
      * @param {Object} gameData - Game data payload
      * @param {Array<Object>} playerDTOs - The live DTO objects the analysis copied; Apply refuses a player replaced since
-     * @param {Map<string, string>} [signatures] - hrid -> {@link buildDtoSignature} for every simulated member,
-     *   taken when the analysis began; Apply writes nothing if any member or the roster changed since
+     * @param {Object} [runContext] - {@link _triggerRunContext} taken when the analysis began; Apply writes
+     *   nothing if the zone, tier, simulated player, Solo or roster differ now, and skips any member whose
+     *   build fingerprint changed
      * @private
      */
-    _wireTriggerResultButtons(result, gameData, playerDTOs, signatures = new Map()) {
+    _wireTriggerResultButtons(result, gameData, playerDTOs, runContext = null) {
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
         applyBtn?.addEventListener('click', () => {
             if (!this._editor?.getEditedDTOs()) {
@@ -10406,15 +10456,26 @@ class CombatSimUI {
                 return;
             }
             const byHrid = new Map((playerDTOs || []).map((dto) => [dto.hrid, dto]));
-            const edited = this._editor.getEditedDTOs();
-            // Every simulated member shapes the measured result (encounter rate, the party objective,
-            // the all-together check), so an edit to any of them, or a changed roster, voids it all
-            const liveHrids = Object.keys(edited || {}).sort();
-            const recordedHrids = [...signatures.keys()].sort();
+            const signatures = runContext?.signatures || new Map();
+            // Resolve the party exactly as the analysis did: every simulated member shapes the measured
+            // result (encounter rate, the party objective, the all-together check), so a different zone,
+            // tier, player, Solo state or roster voids all of it, and an edit to any member voids theirs
+            const nowChoices = this._readTriggerChoices();
+            const nowParty = this._resolveEditorTriggerParty(this._editor.getEditedDTOs(), nowChoices.playerIndex);
+            const nowContext = this._triggerRunContext(nowChoices, nowParty);
+            if (
+                runContext &&
+                (nowContext.zoneHrid !== runContext.zoneHrid ||
+                    nowContext.difficultyTier !== runContext.difficultyTier ||
+                    nowContext.playerHrid !== runContext.playerHrid ||
+                    nowContext.soloApplied !== runContext.soloApplied ||
+                    [...nowContext.signatures.keys()].sort().join('|') !== [...signatures.keys()].sort().join('|'))
+            ) {
+                this._setStatus('Setup changed since analysis (zone/tier/party). Nothing applied.');
+                return;
+            }
             const setupChanged =
-                signatures.size > 0 &&
-                (liveHrids.join('|') !== recordedHrids.join('|') ||
-                    recordedHrids.some((hrid) => buildDtoSignature(edited[hrid]) !== signatures.get(hrid)));
+                signatures.size > 0 && [...signatures].some(([hrid, sig]) => nowContext.signatures.get(hrid) !== sig);
             const unchanged = [];
             const changedBuild = [];
             for (const c of buildEditorChanges(result)) {

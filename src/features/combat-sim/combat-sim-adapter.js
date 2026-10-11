@@ -1685,8 +1685,39 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
 }
 
 /**
+ * The kill-time loot buckets a result recorded for one player and monster:
+ * `[{ kills, dropRateMultiplier, rareFindMultiplier, combatDropQuantity }]`,
+ * or null when the result has none (a result from before they were recorded,
+ * or a synthetic one) and the end-of-run multipliers are all there is.
+ * @param {Object|undefined} buckets - `lootStates[player][monster]`
+ * @returns {Array<Object>|null} The buckets
+ */
+function lootBuckets(buckets) {
+    if (!buckets || typeof buckets !== 'object') return null;
+    const out = [];
+    for (const [key, kills] of Object.entries(buckets)) {
+        if (!(kills > 0)) continue;
+        const [dr, rf, qty] = key.split('|').map(Number);
+        out.push({
+            kills,
+            dropRateMultiplier: 1 + (dr || 0) || 1,
+            rareFindMultiplier: 1 + (rf || 0) || 1,
+            combatDropQuantity: qty || 0,
+        });
+    }
+    return out.length > 0 ? out : null;
+}
+
+/**
  * Calculate expected drops from simulation results for a specific player.
  * Uses deterministic expected-value math (no RNG rolls).
+ *
+ * Each kill is valued at the drop rate, rare find and drop quantity the
+ * player held when it landed (`simResult.lootStates`), and each dungeon
+ * completion at the drop quantity held then (`simResult.dungeonQtyStates`):
+ * consumable buffs come and go mid-run, and the end-of-run state misprices
+ * every kill a lapsed buff covered. A result without those histograms is
+ * valued at its end-of-run multipliers, as before.
  * @param {Object} simResult - SimResult from the engine
  * @param {Object} gameData - Game data maps
  * @param {string} [playerHrid='player1'] - Which player's drop multipliers to use
@@ -1728,11 +1759,26 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 // in one place, and the chest-luck panel's observed-versus-
                 // modelled rate is the thing that would show it up. See
                 // `docs/sim-claim-verification.md` claim 4.
-                const perCompletion = chestsPerCompletion({
-                    partySize: numberOfPlayers,
-                    dropQuantity: combatDropQuantity,
-                    levelGap: debuffOnLevelGap,
-                });
+                // Completions by the drop quantity held at each one; the
+                // end-of-run quantity for a result that did not record them
+                const qtyBuckets = Object.entries(simResult.dungeonQtyStates?.[playerHrid] || {})
+                    .filter(([, count]) => count > 0)
+                    .map(([qty, count]) => ({ count, qty: Number(qty) || 0 }));
+                const completionBuckets =
+                    qtyBuckets.length > 0
+                        ? qtyBuckets
+                        : [{ count: simResult.dungeonsCompleted, qty: combatDropQuantity }];
+                // Guaranteed chests across every completion, each at its own quantity
+                let guaranteedChests = 0;
+                for (const bucket of completionBuckets) {
+                    guaranteedChests +=
+                        bucket.count *
+                        chestsPerCompletion({
+                            partySize: numberOfPlayers,
+                            dropQuantity: bucket.qty,
+                            levelGap: debuffOnLevelGap,
+                        });
+                }
 
                 for (const drop of rewardDropTable) {
                     // Same tier scaling the client applies to `rewardDropTable`
@@ -1744,7 +1790,7 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
                     let expected;
                     if (adjustedRate >= 1.0) {
-                        expected = simResult.dungeonsCompleted * perCompletion * avgCount;
+                        expected = guaranteedChests * avgCount;
                     } else {
                         expected = simResult.dungeonsCompleted * adjustedRate * avgCount;
                     }
@@ -1762,6 +1808,11 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
             if (!monsterData) continue;
 
             const killCount = simResult.deaths[monsterHrid];
+            // Kills by the loot stats held when each landed; one bucket at the
+            // end-of-run multipliers for a result that did not record them
+            const buckets = lootBuckets(simResult.lootStates?.[playerHrid]?.[monsterHrid]) || [
+                { kills: killCount, dropRateMultiplier, rareFindMultiplier, combatDropQuantity },
+            ];
 
             // Regular drops
             if (monsterData.dropTable) {
@@ -1769,15 +1820,22 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     if (drop.minDifficultyTier > difficultyTier) continue;
 
                     const tieredRate = scaledDropRate(drop.dropRate, drop.dropRatePerDifficultyTier, difficultyTier);
-                    const adjustedRate = Math.min(1.0, tieredRate * dropRateMultiplier);
-                    if (adjustedRate <= 0) continue;
-
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
-                    const expected =
-                        (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
-                        numberOfPlayers;
+                    // Capped per bucket: a buffed stretch past certainty pays
+                    // certainty, not the excess spread over the unbuffed kills
+                    for (const bucket of buckets) {
+                        const adjustedRate = Math.min(1.0, tieredRate * bucket.dropRateMultiplier);
+                        if (adjustedRate <= 0) continue;
+                        const expected =
+                            (bucket.kills *
+                                adjustedRate *
+                                avgCount *
+                                (1 + debuffOnLevelGap) *
+                                (1 + bucket.combatDropQuantity)) /
+                            numberOfPlayers;
 
-                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                        totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                    }
                 }
             }
 
@@ -1809,14 +1867,20 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     // already in force on both of the other two paths, and it
                     // is the one reading that holds whichever way the guide is
                     // meant: a probability cannot exceed certainty either way.
-                    const adjustedRate = Math.min(1.0, (drop.dropRate || 0) * rareFindMultiplier);
-                    if (adjustedRate <= 0) continue;
                     const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
-                    const expected =
-                        (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
-                        numberOfPlayers;
+                    for (const bucket of buckets) {
+                        const adjustedRate = Math.min(1.0, (drop.dropRate || 0) * bucket.rareFindMultiplier);
+                        if (adjustedRate <= 0) continue;
+                        const expected =
+                            (bucket.kills *
+                                adjustedRate *
+                                avgCount *
+                                (1 + debuffOnLevelGap) *
+                                (1 + bucket.combatDropQuantity)) /
+                            numberOfPlayers;
 
-                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                        totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                    }
                 }
             }
         }
@@ -1902,19 +1966,6 @@ function getBuyPrice(itemHrid) {
 }
 
 /**
- * The unit cost of a dungeon key under `profitCalc_keyPricingMode`, coalesced
- * to 0 rather than `getKeyUnitCost`'s `null` — this sim already treats an
- * unpriceable consumable or drop as free (see {@link getBuyPrice}/
- * {@link getSellPrice}), so a key follows the same convention rather than
- * turning a whole dungeon's cost into `NaN`.
- * @param {string} itemHrid - Key item HRID
- * @returns {number}
- */
-function getKeyPrice(itemHrid) {
-    return getKeyUnitCost(itemHrid) ?? 0;
-}
-
-/**
  * A drop's market sell value net of the sale tax.
  *
  * The sim reports what drops are worth, and selling on the market is taxed — so
@@ -1936,6 +1987,27 @@ export function taxedDropValue(itemHrid, grossValue) {
 }
 
 /**
+ * What one unit of a drop is worth to the sim: its sell price net of the sale
+ * tax, or the expected value of opening it when it has no price.
+ * @param {string} itemHrid - The dropped item
+ * @returns {{priced: boolean, unitValue: number}} `priced` is false only when
+ *   nothing priced it; a price of 0 (e.g. a custom override) is a price
+ */
+function dropUnitValue(itemHrid) {
+    if (itemHrid === '/items/coin') return { priced: true, unitValue: 1 };
+    const priced = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
+    let unitValue = taxedDropValue(itemHrid, getSellPrice(itemHrid));
+    if (unitValue === 0) {
+        // The EV fallback already nets the sale tax (see expected-value-calculator),
+        // so it is taken as-is.
+        const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+        if (ev !== null && ev > 0) unitValue = ev;
+    }
+    return { priced, unitValue };
+}
+
+/**
  * Calculate revenue and costs from a sim result.
  * Respects the user's profitCalc_pricingMode setting. `costPerHour` covers consumables and, in a
  * dungeon, the entry and chest keys the runs consume.
@@ -1943,13 +2015,26 @@ export function taxedDropValue(itemHrid, grossValue) {
  * @param {Object} gameData - Game data payload from buildGameDataPayload()
  * @param {string} playerHrid - Player HRID to read drop multipliers and consumables for
  * @param {number} hours - Number of hours simulated
+ * @param {Object} [options]
+ * @param {Map} [options.priceCache] - Holds every price this reads, the first time it is read, and
+ *   answers later reads from it. A caller that values many results against each other passes one
+ *   Map for all of them, so a market update, a custom-price edit or a pricing-setting change partway
+ *   through cannot read as a difference between them (the trigger optimizer does).
  * @returns {{ revenuePerHour: number, costPerHour: number, keyCostPerHour: number, netPerHour: number,
  *             dropEntries: Array, consumableEntries: Array, unpricedDrops: string[],
- *             unpricedConsumables: string[] }} `unpricedDrops` and `unpricedConsumables` name the
- *             items nothing could price — they are counted at zero in the totals, so a drop total
- *             that has any is a floor and a cost total that has any is a lower bound on the cost
+ *             unpricedConsumables: string[], unpricedKeys: string[] }} `unpricedDrops`,
+ *             `unpricedConsumables` and `unpricedKeys` (dungeon keys) name the items nothing could
+ *             price — they are counted at zero in the totals, so a drop total that has any is a
+ *             floor and a cost total that has any is a lower bound on the cost
  */
-export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
+export function calculateSimRevenue(simResult, gameData, playerHrid, hours, options = {}) {
+    const cache = options.priceCache instanceof Map ? options.priceCache : null;
+    const held = (key, read) => {
+        if (!cache) return read();
+        if (!cache.has(key)) cache.set(key, read());
+        return cache.get(key);
+    };
+
     let revenuePerHour = 0;
     const dropEntries = [];
     const unpricedDrops = [];
@@ -1957,17 +2042,8 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
     for (const [itemHrid, total] of dropMap.entries()) {
         if (total <= 0) continue;
-        // A price of 0 (e.g. a custom override) is a price; only a missing one makes the total a floor
-        const priced =
-            itemHrid === '/items/coin' || getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
-        let unitValue = itemHrid === '/items/coin' ? 1 : taxedDropValue(itemHrid, getSellPrice(itemHrid));
-        if (unitValue === 0) {
-            // The EV fallback already nets the sale tax (see expected-value-calculator),
-            // so it is taken as-is.
-            const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-            const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
-            if (ev !== null && ev > 0) unitValue = ev;
-        }
+        // The finished per-unit value is what is held, so the sale tax is held with the price
+        const { priced, unitValue } = held(`drop|${itemHrid}`, () => dropUnitValue(itemHrid));
         const perHour = (total / hours) * unitValue;
         revenuePerHour += perHour;
         if (unitValue > 0 || priced) {
@@ -1986,11 +2062,13 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const unpricedConsumables = [];
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
-        const unitCost = getBuyPrice(itemHrid);
+        const { unitCost, priced } = held(`buy|${itemHrid}`, () => ({
+            unitCost: getBuyPrice(itemHrid),
+            // A custom price of 0 is a price, not a missing one
+            priced: getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null,
+        }));
         const perHour = (count / hours) * unitCost;
         costPerHour += perHour;
-        // A custom price of 0 is a price, not a missing one
-        const priced = getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null;
         if (unitCost > 0 || priced) {
             const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
             consumableEntries.push({ name: itemName, countPerHour: count / hours, unitCost, totalCost: perHour });
@@ -2007,8 +2085,17 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     // only place that ever added them, and it computes its own figure from the
     // same helper rather than reading this one, so nothing double-counts.
     let keyCostPerHour = 0;
+    const unpricedKeys = [];
     if (simResult.isDungeon) {
-        for (const key of calculateDungeonKeyCosts(dropMap, getKeyPrice)) {
+        // A key's unit cost under `profitCalc_keyPricingMode`. One nothing can price counts as 0, the
+        // same as an unpriced consumable or drop, rather than turning the dungeon's cost into NaN, and is
+        // named in `unpricedKeys`
+        const keyPrice = (keyHrid) => {
+            const unitCost = held(`key|${keyHrid}`, () => getKeyUnitCost(keyHrid));
+            if (unitCost == null) unpricedKeys.push(keyHrid);
+            return unitCost ?? 0;
+        };
+        for (const key of calculateDungeonKeyCosts(dropMap, keyPrice)) {
             keyCostPerHour += key.totalCost / hours;
         }
         costPerHour += keyCostPerHour;
@@ -2023,6 +2110,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         consumableEntries,
         unpricedDrops,
         unpricedConsumables,
+        unpricedKeys,
     };
 }
 

@@ -81,6 +81,66 @@ describe('renderTriggerResultsHtml', () => {
         expect(render('profit')).toContain('Optimizing for profit/h: score is the percent change in profit/h');
     });
 
+    test('Profit/h that could not value profit recommends nothing and names the unpriced items', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                objective: 'profit',
+                changes: [],
+                unchanged: [],
+                reliable: false,
+                profitLeftOut: true,
+                unpriced: ['/items/donut', '/items/chimerical_chest_key'],
+                simCount: 4,
+            },
+            { ...gameData, itemDetailMap: { '/items/donut': { name: 'Donut' } } }
+        );
+        expect(html).toContain(
+            "Nothing recommended: profit can't be valued: Donut, Chimerical Chest Key have no price."
+        );
+        expect(html).not.toContain('No reliable improvement found');
+        expect(html).not.toContain('mwi-csim-trigger-apply');
+    });
+
+    test('a food left untuned for want of a price is named', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                changes: [],
+                unchanged: [],
+                notPriced: [{ itemName: 'Donut' }, { itemName: 'Donut' }],
+                profitLeftOut: true,
+                unpriced: ['/items/donut'],
+                simCount: 4,
+            },
+            gameData
+        );
+        expect(html).toContain("Not tuned: Donut has no price, so the gold effect can't be checked.");
+    });
+
+    test('Balanced says profit was left out, and does not print a profit delta it could not value', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                changes: [change()],
+                unchanged: [],
+                combined: { deltaScore: 2, se: 0.5, deltaXp: 10, deltaProfit: 50, deltaDeaths: 0, seeds: 8 },
+                reliable: true,
+                profitLeftOut: true,
+                unpriced: ['/items/donut'],
+                valuationFailed: true,
+                simCount: 4,
+            },
+            gameData
+        );
+        expect(html).toContain('Profit/h left out of the score where it could not be counted');
+        expect(html).toContain('Donut has no price; the valuation failed.');
+        expect(html).toContain('Δprofit/h ? (not valued)');
+        expect(html).not.toContain('Not tuned');
+        expect(html).not.toContain('Δprofit/h +50');
+        expect(html).not.toContain('Δprofit/h -2.0K');
+    });
+
     test('a remembered result is labelled and offers Run again; a fresh one does not', () => {
         const result = { scope: 'me', changes: [change()], unchanged: [], simCount: 1 };
         const cached = renderTriggerResultsHtml(result, gameData, { cached: true });

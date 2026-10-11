@@ -579,21 +579,65 @@ export function zoneEnemyHp(gameData, zoneHrid, tier, monsterMaxHp) {
  * @returns {{xp: number, profit: number, deaths: number, dps: number, encounters: number}}
  */
 export function scopeMetrics(sample, hrids) {
-    const out = { xp: 0, profit: 0, deaths: 0, dps: 0, encounters: sample?.encounters || 0 };
+    const out = { xp: 0, profit: 0, revenue: 0, cost: 0, deaths: 0, dps: 0, encounters: sample?.encounters || 0 };
     for (const hrid of hrids) {
         const p = sample?.perPlayer?.[hrid];
         if (!p) continue;
         out.xp += p.xp || 0;
         out.profit += p.profit || 0;
+        out.revenue += p.revenue || 0;
+        out.cost += p.cost || 0;
         out.deaths += p.deaths || 0;
         out.dps += p.dps || 0;
     }
     return out;
 }
 
-const pct = (value, base) => {
-    if (!(Math.abs(base) > 0)) return 0;
-    return Math.max(-100, Math.min(100, ((value - base) / Math.abs(base)) * 100));
+/**
+ * Smallest scale each percentage term is taken against, so a baseline of zero
+ * (or next to it) still registers a change in either direction instead of
+ * reading as no signal (zero) or as an enormous swing. Each is about the
+ * smallest rate that means anything in a fight:
+ * - XP: 100 EXP/h
+ * - DPS: 1 damage per second
+ * - Encounters: 1 per hour
+ * - Profit: 1 gold/h, but see `profitScale`, which is what actually sets it
+ */
+export const SCORE_FLOORS = { xp: 100, dps: 1, encounters: 1, profit: 1 };
+
+/**
+ * What a profit change is a percentage of: the larger of the baseline's gross
+ * loot value per hour and its consumable (and key) cost per hour, and never less
+ * than the baseline profit itself or `SCORE_FLOORS.profit`.
+ *
+ * Profit is a small difference of two large numbers, so taking a change as a
+ * percentage of the profit alone made the term meaningless near break-even: a
+ * baseline of exactly 0 scored every gain and loss as 0, and a baseline of
+ * +0.10 gold/h scored a few gold as +100. Against the gold actually moving
+ * through the fight, a 45k gold/h loss on a 5k gold/h fight is the full -100.
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @returns {number} Always positive
+ */
+export function profitScale(base) {
+    return Math.max(Math.abs(base.profit || 0), base.revenue || 0, base.cost || 0, SCORE_FLOORS.profit);
+}
+
+/**
+ * Percent change against a scale, clamped to ±100 so no one term can dominate.
+ * @param {number} value - The candidate's rate
+ * @param {number} base - The baseline's rate
+ * @param {number} scale - What 100% is: `max(|base|, floor)`
+ * @returns {number}
+ */
+const pct = (value, base, scale) => {
+    if (!(scale > 0)) return 0;
+    return Math.max(-100, Math.min(100, (((value || 0) - (base || 0)) / scale) * 100));
+};
+
+/** The percent-change term of one metric, against its floored scale */
+const term = (metrics, base, key) => {
+    const scale = key === 'profit' ? profitScale(base) : Math.max(Math.abs(base[key] || 0), SCORE_FLOORS[key]);
+    return pct(metrics[key], base[key], scale);
 };
 
 /**
@@ -607,18 +651,24 @@ const pct = (value, base) => {
  * It mirrors the five axes the Upgrade tab's Score (balanced) blends, but not
  * its arithmetic: that score ranks candidates against each other by gold spent
  * per 0.01% gained, and a trigger change costs nothing, so there is nothing to
- * divide by. Each term is clamped to ±100 so a near-zero baseline cannot
- * dominate.
+ * divide by. Each term is taken against `max(|baseline|, floor)` (see
+ * `SCORE_FLOORS` and `profitScale`), so a zero baseline still counts a change
+ * either way, and clamped to ±100 so no one term can dominate.
+ *
+ * When profit cannot be valued (`withProfit: false`, see `profitValuation`) it
+ * is the average of the other three.
  * @param {Object} metrics - From `scopeMetrics`
  * @param {Object} base - The baseline's `scopeMetrics`
+ * @param {Object} [options]
+ * @param {boolean} [options.withProfit] - False leaves the profit term out
  * @returns {number} Score points
  */
-export function balancedScore(metrics, base) {
+export function balancedScore(metrics, base, { withProfit = true } = {}) {
     const terms = [
-        pct(metrics.xp, base.xp),
-        pct(metrics.profit, base.profit),
-        pct(metrics.dps, base.dps),
-        pct(metrics.encounters, base.encounters),
+        term(metrics, base, 'xp'),
+        ...(withProfit ? [term(metrics, base, 'profit')] : []),
+        term(metrics, base, 'dps'),
+        term(metrics, base, 'encounters'),
     ];
     return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm(metrics, base);
 }
@@ -649,12 +699,41 @@ export const DEFAULT_OBJECTIVE = 'balanced';
  * @param {Object} metrics - From `scopeMetrics`
  * @param {Object} base - The baseline's `scopeMetrics`
  * @param {string} [objective] - An OBJECTIVES key; anything else is balanced
+ * @param {Object} [options]
+ * @param {boolean} [options.withProfit] - False when profit cannot be valued: Balanced leaves the
+ *   term out, and Profit/h scores 0 (no signal), so nothing can be recommended on it
  * @returns {number} Score points
  */
-export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE) {
-    if (objective === 'xp') return pct(metrics.xp, base.xp) + deathsTerm(metrics, base);
-    if (objective === 'profit') return pct(metrics.profit, base.profit) + deathsTerm(metrics, base);
-    return balancedScore(metrics, base);
+export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE, { withProfit = true } = {}) {
+    if (objective === 'xp') return term(metrics, base, 'xp') + deathsTerm(metrics, base);
+    if (objective === 'profit') return withProfit ? term(metrics, base, 'profit') + deathsTerm(metrics, base) : 0;
+    return balancedScore(metrics, base, { withProfit });
+}
+
+/**
+ * Whether the profit figures of some samples can be trusted: every judged
+ * player's valuation ran, and priced every drop, consumable and dungeon key.
+ * An unpriced item is counted at zero, so a profit built on one is a guess — an
+ * unpriced food makes eating more of it look free.
+ * @param {Array<Array<Object>>} sampleSets - Samples, as `measure` returns them
+ * @param {Array<string>} hrids - Whose figures count
+ * @returns {{complete: boolean, unpriced: Array<string>, failed: boolean}} `unpriced` names the
+ *   items nothing priced; `failed` is a valuation that threw
+ */
+export function profitValuation(sampleSets, hrids) {
+    const unpriced = new Set();
+    let failed = false;
+    for (const samples of sampleSets) {
+        for (const sample of samples || []) {
+            for (const hrid of hrids) {
+                const p = sample?.perPlayer?.[hrid];
+                if (!p) continue;
+                if (p.profitFailed) failed = true;
+                for (const item of p.unpriced || []) unpriced.add(item);
+            }
+        }
+    }
+    return { complete: !failed && unpriced.size === 0, unpriced: [...unpriced].sort(), failed };
 }
 
 // ─── Statistics ─────────────────────────────────────────────────────────────
@@ -889,10 +968,12 @@ export function sequentialVerdict(diff, look, lookCount, minGain = MIN_GAIN) {
  * @param {number} params.hours - Hours per seed in the first round
  * @param {Function} params.measure - `(value, hours) => Promise<Array<Sample>|null>`; null means stopped
  * @param {Function} params.score - `(sample) => number`
+ * @param {Function} [params.scoreSets] - `(sampleSets) => Array<Array<number>>`, used instead of `score`
+ *   when given: scores every candidate of a round together, so one rule covers the whole comparison
  * @param {Function} [params.aborted] - `() => boolean`
  * @returns {Promise<Object|null>} `{ winner, diff, rounds, means, winnerSamples, referenceSamples }`, or null when the run was stopped before a first round finished
  */
-export async function successiveHalving({ values, reference, hours, measure, score, aborted }) {
+export async function successiveHalving({ values, reference, hours, measure, score, scoreSets, aborted }) {
     let alive = [...values];
     let roundHours = hours;
     let rounds = 0;
@@ -908,12 +989,10 @@ export async function successiveHalving({ values, reference, hours, measure, sco
 
         const scores = new Map();
         const samples = new Map();
+        const roundScores = scoreSets ? scoreSets(measured) : measured.map((m) => m.map((s) => score(s)));
         entries.forEach((v, i) => {
             samples.set(v, measured[i]);
-            scores.set(
-                v,
-                measured[i].map((s) => score(s))
-            );
+            scores.set(v, roundScores[i]);
         });
         rounds++;
         if (!firstMeans) firstMeans = new Map([...scores].map(([v, s]) => [v, mean(s)]));
@@ -1007,7 +1086,11 @@ function metricsMean(samples, hrids) {
  * @param {string} [params.objective] - What the score is: 'balanced' (default), 'xp' or 'profit' (`objectiveScore`)
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
- * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline
+ * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline.
+ *   `profitLeftOut` is true when some comparison could not value profit (an unpriced drop, consumable
+ *   or dungeon key, named in `unpriced`, or a valuation that threw, `valuationFailed`): Balanced
+ *   judged that comparison on its other three terms, and Profit/h recommends nothing. `notPriced`
+ *   lists the food and drink rows left untuned because their own item has no price
  */
 export async function runTriggerSearch({
     tunables,
@@ -1040,12 +1123,34 @@ export async function runTriggerSearch({
         return {
             xp: mean(ms.map((m) => m.xp)),
             profit: mean(ms.map((m) => m.profit)),
+            revenue: mean(ms.map((m) => m.revenue)),
+            cost: mean(ms.map((m) => m.cost)),
             deaths: mean(ms.map((m) => m.deaths)),
             dps: mean(ms.map((m) => m.dps)),
             encounters: mean(ms.map((m) => m.encounters)),
         };
     })();
-    const score = (sample) => objectiveScore(scopeMetrics(sample, scopeHrids), baseScope, objective);
+    // Profit counts in a comparison only when every sample in it, and the baseline, valued completely.
+    // Deciding per comparison, not per sample, keeps both sides of a paired difference on one rule.
+    const baseValuation = profitValuation([baselineSamples], scopeHrids);
+    const unpricedSeen = new Set(baseValuation.unpriced);
+    let valuationFailed = baseValuation.failed;
+    let profitLeftOut = !baseValuation.complete;
+    const scoreSets = (sets) => {
+        const v = profitValuation(sets, scopeHrids);
+        for (const item of v.unpriced) unpricedSeen.add(item);
+        valuationFailed = valuationFailed || v.failed;
+        const withProfit = baseValuation.complete && v.complete;
+        if (!withProfit) profitLeftOut = true;
+        return sets.map((set) =>
+            set.map((s) => objectiveScore(scopeMetrics(s, scopeHrids), baseScope, objective, { withProfit }))
+        );
+    };
+    const profitNotes = () => ({
+        profitLeftOut,
+        unpriced: [...unpricedSeen].sort(),
+        valuationFailed,
+    });
 
     const partyDps = mean(
         baselineSamples.map((s) => Object.values(s.perPlayer || {}).reduce((sum, p) => sum + (p.dps || 0), 0))
@@ -1057,7 +1162,34 @@ export async function runTriggerSearch({
     // 1b. Drop rows the baseline shows cannot matter (never read); they are reported, not tuned
     const unused = unusedTunables(tunables, baselineSamples);
     const unusedKeys = new Set(unused.map((t) => t.key));
-    const live = tunables.filter((t) => !unusedKeys.has(t.key));
+    // A food or drink with no price is not tuned: its own trigger decides how much of it is eaten, and
+    // that cost cannot be counted, so any change to it would be judged blind on gold. Its key lands here
+    // when the baseline, or a later comparison of it, shows it unpriced.
+    const notPricedKeys = new Set();
+    const ownItemUnpriced = (t, sampleSets) => profitValuation(sampleSets, scopeHrids).unpriced.includes(t.itemHrid);
+    for (const t of tunables) {
+        if (!unusedKeys.has(t.key) && baseValuation.unpriced.includes(t.itemHrid)) notPricedKeys.add(t.key);
+    }
+    const live = tunables.filter((t) => !unusedKeys.has(t.key) && !notPricedKeys.has(t.key));
+
+    // Profit/h with a baseline that cannot be valued has nothing to optimize: say so, and spend no sims
+    if (objective === 'profit' && !baseValuation.complete) {
+        return {
+            stopped: false,
+            objective,
+            baseline: baseScope,
+            partyDps,
+            screened: [],
+            changes: [],
+            rejected: [],
+            unchanged: tunables.filter((t) => !unusedKeys.has(t.key)),
+            notPriced: [],
+            unused,
+            combined: null,
+            reliable: null,
+            ...profitNotes(),
+        };
+    }
 
     const state = new Map(tunables.map((t) => [t.key, { tunable: t, current: t.original }]));
     const currentOf = (t) => state.get(t.key).current;
@@ -1074,7 +1206,11 @@ export async function runTriggerSearch({
             entries.map((v) => measureWith({ [t.key]: v }, hoursPerSeed, `screen:${t.key}`))
         );
         if (stopped() || measured.some((m) => !m)) break;
-        const scores = entries.map((_, i) => measured[i].map((s) => score(s)));
+        if (ownItemUnpriced(t, measured)) {
+            notPricedKeys.add(t.key);
+            continue;
+        }
+        const scores = scoreSets(measured);
         const means = scores.map(mean);
         let bestIndex = 1;
         for (let i = 2; i < entries.length; i++) if (means[i] > means[bestIndex]) bestIndex = i;
@@ -1102,6 +1238,7 @@ export async function runTriggerSearch({
         changeLog.set(t.key, entry);
     };
     const tune = async (t, values, label) => {
+        if (notPricedKeys.has(t.key)) return false;
         const candidates = values.filter((v) => v !== currentOf(t));
         if (candidates.length === 0) return false;
         for (const v of candidates) tried.get(t.key).add(v);
@@ -1114,7 +1251,7 @@ export async function runTriggerSearch({
             reference: before,
             hours: hoursPerSeed,
             measure: (value, hours) => measureWith({ [t.key]: value }, hours, `select:${step}`),
-            score,
+            scoreSets,
             aborted,
         });
         if (!selection || stopped()) return false;
@@ -1140,13 +1277,16 @@ export async function runTriggerSearch({
             if (!moreReference || !moreWinner || stopped()) return false;
             referenceSamples = referenceSamples.concat(moreReference);
             winnerSamples = winnerSamples.concat(moreWinner);
-            diff = pairedDiff(
-                winnerSamples.map((s) => score(s)),
-                referenceSamples.map((s) => score(s))
-            );
+            const [winnerScores, referenceScores] = scoreSets([winnerSamples, referenceSamples]);
+            diff = pairedDiff(winnerScores, referenceScores);
             verdict = sequentialVerdict(diff, look, looks.length, minGain);
         }
         if (verdict !== 'accept') return false;
+        // Accepted on three terms with its own item unpriced: the gold it costs was never seen
+        if (ownItemUnpriced(t, [winnerSamples, referenceSamples])) {
+            notPricedKeys.add(t.key);
+            return false;
+        }
 
         state.get(t.key).current = selection.winner;
         overrides[t.key] = selection.winner;
@@ -1200,10 +1340,8 @@ export async function runTriggerSearch({
             measure({ ...overrides }, confirmHours, 'final', confirmSeeds),
         ]);
         if (orig && tuned && !stopped()) {
-            const diff = pairedDiff(
-                tuned.map((s) => score(s)),
-                orig.map((s) => score(s))
-            );
+            const [tunedScores, origScores] = scoreSets([tuned, orig]);
+            const diff = pairedDiff(tunedScores, origScores);
             const a = metricsMean(tuned, scopeHrids);
             const b = metricsMean(orig, scopeHrids);
             combined = {
@@ -1222,6 +1360,13 @@ export async function runTriggerSearch({
         }
     }
 
+    // Profit/h never recommends a change any comparison of which could not value profit
+    if (objective === 'profit' && profitLeftOut && changes.length > 0) {
+        rejected = rejected.concat(changes);
+        changes = [];
+        reliable = false;
+    }
+
     const kept = new Set(changes.map((c) => c.key));
     return {
         stopped: stopped(),
@@ -1231,10 +1376,12 @@ export async function runTriggerSearch({
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),
         changes,
         rejected,
-        unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key)),
+        unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key) && !notPricedKeys.has(t.key)),
         unused,
+        notPriced: tunables.filter((t) => notPricedKeys.has(t.key) && !kept.has(t.key)),
         combined,
         reliable,
+        ...profitNotes(),
     };
 }
 

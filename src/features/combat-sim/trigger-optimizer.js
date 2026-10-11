@@ -106,23 +106,48 @@ export function monsterMaxHpReader(gameData) {
  * @param {Object} gameData - Game data payload
  * @param {Array<string>} hrids - Every player in the sim
  * @param {number} fallbackHours - Hours asked for, when the result carries no clock
- * @returns {{perPlayer: Object, encounters: number, pools: Object}}
+ * @param {Object} [options]
+ * @param {Map} [options.priceCache] - The run's held prices (see `calculateSimRevenue`)
+ * @returns {{perPlayer: Object, encounters: number, pools: Object}} perPlayer: hrid →
+ *   `{ xp, profit, revenue, cost, unpriced, profitFailed, deaths, dps }`, rates per hour (dps per
+ *   second); `unpriced` names the drops, consumables and keys nothing priced, `profitFailed` a
+ *   valuation that threw
  */
-export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
+export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { priceCache } = {}) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || fallbackHours;
     const perPlayer = {};
     const pools = {};
     for (const hrid of hrids) {
         const xp = Object.values(simResult.experienceGained?.[hrid] || {}).reduce((s, v) => s + v, 0);
         let profit = 0;
+        let revenue = 0;
+        let cost = 0;
+        let unpriced = [];
+        // A valuation that threw is unknown, not zero: the search leaves profit out of any comparison it is in
+        let profitFailed = false;
         try {
-            profit = calculateSimRevenue(simResult, gameData, hrid, simHours)?.netPerHour || 0;
+            const value = calculateSimRevenue(simResult, gameData, hrid, simHours, { priceCache });
+            profit = value?.netPerHour || 0;
+            // Gross loot value and spend set the scale a profit change is judged against (profitScale)
+            revenue = value?.revenuePerHour || 0;
+            cost = value?.costPerHour || 0;
+            // Counted at zero in the totals, so a profit built on any of them is a guess
+            unpriced = [
+                ...(value?.unpricedDrops || []),
+                ...(value?.unpricedConsumables || []),
+                ...(value?.unpricedKeys || []),
+            ];
         } catch (error) {
             console.error('[TriggerOptimizer] Profit read failed:', error);
+            profitFailed = true;
         }
         perPlayer[hrid] = {
             xp: xp / simHours,
             profit,
+            revenue,
+            cost,
+            unpriced,
+            profitFailed,
             deaths: (simResult.deaths?.[hrid] || 0) / simHours,
             dps: (simResult.totalDamageDealt?.[hrid] || 0) / (simHours * 3600),
         };
@@ -211,6 +236,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const total = estimateTriggerSims(tunables.length, precision.key);
     let simCount = 0;
     const cache = new Map();
+    // Every price is read once and held for the whole run. Sims finish over minutes, and valuing each
+    // against whatever the market said when it finished made a price update look like a trigger effect.
+    const priceCache = new Map();
     // A sim that failed stops the rest: the queue would otherwise keep starting sims for a run already lost
     let failed = false;
     const stopped = () => failed || Boolean(abortSignal?.());
@@ -265,7 +293,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                     );
                     simCount++;
                     onProgress?.({ current: Math.min(simCount, total), total });
-                    return sampleFromResult(simResult, gameData, allHrids, hours);
+                    return sampleFromResult(simResult, gameData, allHrids, hours, { priceCache });
                 } catch (error) {
                     // A stopped run cancels the sims in flight; that is not a failure
                     if (stopped()) return null;

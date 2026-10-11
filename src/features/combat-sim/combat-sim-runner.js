@@ -396,6 +396,33 @@ function mergeSimResults(results) {
             merged.deaths[hrid] = (merged.deaths[hrid] || 0) + count;
         }
 
+        // Kill-time loot stats (per player → per monster → per stat tuple) and
+        // dungeon completions by drop quantity (per player → per quantity):
+        // counts, so the run's histogram is the chunks' summed key by key. The
+        // end-of-run multipliers stay chunk 0's; they are only read for a
+        // result that lacks these histograms.
+        if (r.lootStates) {
+            if (!merged.lootStates) merged.lootStates = {};
+            for (const [playerHrid, monsters] of Object.entries(r.lootStates)) {
+                const intoPlayer = (merged.lootStates[playerHrid] ??= {});
+                for (const [monsterHrid, buckets] of Object.entries(monsters)) {
+                    const intoMonster = (intoPlayer[monsterHrid] ??= {});
+                    for (const [key, kills] of Object.entries(buckets)) {
+                        intoMonster[key] = (intoMonster[key] || 0) + kills;
+                    }
+                }
+            }
+        }
+        if (r.dungeonQtyStates) {
+            if (!merged.dungeonQtyStates) merged.dungeonQtyStates = {};
+            for (const [playerHrid, buckets] of Object.entries(r.dungeonQtyStates)) {
+                const intoPlayer = (merged.dungeonQtyStates[playerHrid] ??= {});
+                for (const [key, count] of Object.entries(buckets)) {
+                    intoPlayer[key] = (intoPlayer[key] || 0) + count;
+                }
+            }
+        }
+
         // Task-credited kills (per task monster). The chunks were each given a
         // slice of the remaining count, so summing them gives the run's totals.
         if (r.taskDamageKills) {

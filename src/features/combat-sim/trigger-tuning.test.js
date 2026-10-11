@@ -25,6 +25,9 @@ import {
     objectiveScore,
     OBJECTIVES,
     scopeMetrics,
+    profitScale,
+    profitValuation,
+    SCORE_FLOORS,
     pairedDiff,
     accepts,
     tCritical,
@@ -427,8 +430,41 @@ describe('balancedScore', () => {
         expect(balancedScore(mixed, base)).toBeCloseTo(10 - 5, 6);
     });
 
-    test('a zero baseline term reads as no signal rather than infinity', () => {
-        expect(balancedScore({ ...base, profit: 999 }, { ...base, profit: 0 })).toBe(0);
+    test('a loss from a zero-profit baseline counts, against the gold moving through the fight', () => {
+        // The review reproduction: break-even at 5,000 gold/h of loot and 5,000 of food; the change eats
+        // 50,000 of food for 1% more of everything else. Profit 0 -> -44,950 used to score 0 and pass.
+        const zero = { xp: 1000, profit: 0, revenue: 5000, cost: 5000, deaths: 0, dps: 100, encounters: 500 };
+        const tuned = { xp: 1010, profit: -44950, revenue: 5050, cost: 50000, deaths: 0, dps: 101, encounters: 505 };
+        expect(profitScale(zero)).toBe(5000);
+        expect(balancedScore(tuned, zero)).toBeCloseTo((1 - 100 + 1 + 1) / 4, 6);
+        expect(objectiveScore(tuned, zero, 'profit')).toBe(-100);
+    });
+
+    test('a gain from a zero-profit baseline counts too', () => {
+        const zero = { xp: 1000, profit: 0, revenue: 5000, cost: 5000, deaths: 0, dps: 100, encounters: 500 };
+        const better = { ...zero, profit: 500, revenue: 5500 };
+        expect(balancedScore(better, zero)).toBeCloseTo(10 / 4, 6);
+        expect(objectiveScore(better, zero, 'profit')).toBeCloseTo(10, 6);
+    });
+
+    test('a zero baseline with no revenue or cost recorded still scores against the 1 gold/h floor', () => {
+        expect(objectiveScore({ ...base, profit: -10 }, { ...base, profit: 0 }, 'profit')).toBe(-100);
+        expect(objectiveScore({ ...base, profit: 0.5 }, { ...base, profit: 0 }, 'profit')).toBeCloseTo(50, 6);
+    });
+
+    test('a tiny nonzero profit baseline no longer swings the score', () => {
+        // +0.10 gold/h used to be the whole scale: +10 gold/h read as +100 points
+        const tiny = { xp: 1000, profit: 0.1, revenue: 5000, cost: 4999.9, deaths: 0, dps: 100, encounters: 500 };
+        const plusTen = { ...tiny, profit: 10.1, revenue: 5010 };
+        expect(objectiveScore(plusTen, tiny, 'profit')).toBeCloseTo(0.2, 6);
+        expect(balancedScore(plusTen, tiny)).toBeCloseTo(0.05, 6);
+    });
+
+    test('XP, DPS and encounters rising from zero are credited, against their floors', () => {
+        const zero = { xp: 0, profit: 2000, deaths: 0, dps: 0, encounters: 0 };
+        expect(objectiveScore({ ...zero, xp: 50 }, zero, 'xp')).toBeCloseTo((50 / SCORE_FLOORS.xp) * 100, 6);
+        expect(objectiveScore({ ...zero, xp: 5000 }, zero, 'xp')).toBe(100);
+        expect(balancedScore({ ...zero, dps: 0.5, encounters: 0.25 }, zero)).toBeCloseTo((50 + 25) / 4, 6);
     });
 
     test('scope metrics sum the judged players and carry encounters through', () => {
@@ -436,8 +472,57 @@ describe('balancedScore', () => {
             encounters: 7,
             perPlayer: { a: { xp: 1, profit: 2, deaths: 3, dps: 4 }, b: { xp: 10, profit: 20, deaths: 30, dps: 40 } },
         };
-        expect(scopeMetrics(sample, ['a'])).toEqual({ xp: 1, profit: 2, deaths: 3, dps: 4, encounters: 7 });
-        expect(scopeMetrics(sample, ['a', 'b'])).toEqual({ xp: 11, profit: 22, deaths: 33, dps: 44, encounters: 7 });
+        expect(scopeMetrics(sample, ['a'])).toEqual({
+            xp: 1,
+            profit: 2,
+            revenue: 0,
+            cost: 0,
+            deaths: 3,
+            dps: 4,
+            encounters: 7,
+        });
+        sample.perPlayer.a.revenue = 5;
+        sample.perPlayer.b.cost = 6;
+        expect(scopeMetrics(sample, ['a', 'b'])).toEqual({
+            xp: 11,
+            profit: 22,
+            revenue: 5,
+            cost: 6,
+            deaths: 33,
+            dps: 44,
+            encounters: 7,
+        });
+    });
+});
+
+describe('profitValuation', () => {
+    const sample = (p) => ({ perPlayer: { a: { profit: 1, ...p }, b: { profit: 1 } } });
+
+    test('complete when every judged player valued every item', () => {
+        expect(profitValuation([[sample({})], [sample({ unpriced: [] })]], ['a', 'b'])).toEqual({
+            complete: true,
+            unpriced: [],
+            failed: false,
+        });
+    });
+
+    test('names unpriced items and a failed valuation, for judged players only', () => {
+        const sets = [[sample({ unpriced: ['/items/z', '/items/y'] })], [sample({ profitFailed: true })]];
+        expect(profitValuation(sets, ['a'])).toEqual({
+            complete: false,
+            unpriced: ['/items/y', '/items/z'],
+            failed: true,
+        });
+        expect(profitValuation(sets, ['b']).complete).toBe(true);
+    });
+
+    test('without profit, Balanced averages the other three and Profit/h has no signal', () => {
+        const base = { xp: 1000, profit: 2000, deaths: 0, dps: 100, encounters: 10 };
+        const m = { xp: 1100, profit: 9000, deaths: 0, dps: 110, encounters: 11 };
+        expect(balancedScore(m, base, { withProfit: false })).toBeCloseTo(10, 6);
+        expect(objectiveScore(m, base, 'balanced', { withProfit: false })).toBeCloseTo(10, 6);
+        expect(objectiveScore(m, base, 'profit', { withProfit: false })).toBe(0);
+        expect(objectiveScore(m, base, 'xp', { withProfit: false })).toBeCloseTo(10, 6);
     });
 });
 
@@ -774,6 +859,84 @@ describe('runTriggerSearch with deterministic fakes', () => {
     const tunables = () => collectTunables({ playerDTOs: [playerDTO()], playerIndices: [0], gameData: gameData() });
     const run = (measure, extra = {}) =>
         runTriggerSearch({ tunables: tunables(), scopeHrids: ['player1'], measure, precision, ...extra });
+
+    /**
+     * Profit peaks at Fireball 300; every other figure is flat. `flag` is merged into the
+     * sample of every setup that moved Fireball (or, with `everywhere`, of every setup).
+     */
+    function profitWorld(flag, { everywhere = false } = {}) {
+        const calls = [];
+        const measure = async (overrides, hours, stream, count) => {
+            calls.push({ stream });
+            const fireball = overrides[FIRE_KEY] ?? 1;
+            const extra = everywhere || fireball !== 1 ? flag : {};
+            return Array.from({ length: count }, () => ({
+                perPlayer: {
+                    player1: {
+                        xp: 1000,
+                        profit: 1000 - Math.abs(fireball - 300),
+                        revenue: 2000,
+                        cost: 1000,
+                        deaths: 0,
+                        dps: 100,
+                        ...extra,
+                    },
+                },
+                encounters: 10,
+                pools: { player1: { hp: 1000, mp: 500 } },
+            }));
+        };
+        return { measure, calls };
+    }
+
+    test('Balanced does not tune a food whose own item has no price, and still tunes the rest', async () => {
+        // Every sample reports the Donut unpriced, and XP peaks at Fireball 300
+        const { measure } = world();
+        const unpricedDonut = async (...args) =>
+            (await measure(...args)).map((s) => ({
+                ...s,
+                perPlayer: { player1: { ...s.perPlayer.player1, unpriced: [DONUT] } },
+            }));
+        const result = await run(unpricedDonut);
+        expect(result.notPriced.map((t) => t.itemName)).toEqual(['Donut']);
+        expect(result.screened.map((s) => s.key)).not.toContain(`player1|food|${DONUT}|0`);
+        expect(result.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+        expect(result.unchanged.map((t) => t.itemName)).toEqual([]);
+    });
+
+    test('profit that values completely is found under Profit/h (the control)', async () => {
+        const result = await run(profitWorld({}).measure, { objective: 'profit' });
+        expect(result.changes).toHaveLength(1);
+        expect(result.reliable).toBe(true);
+        expect(result.profitLeftOut).toBe(false);
+        expect(result.unpriced).toEqual([]);
+    });
+
+    test('a thrown valuation is not profit 0: Profit/h recommends nothing and says why', async () => {
+        const result = await run(profitWorld({ profitFailed: true }).measure, { objective: 'profit' });
+        expect(result.changes).toHaveLength(0);
+        expect(result.reliable).not.toBe(true);
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.valuationFailed).toBe(true);
+    });
+
+    test('an unpriced item leaves profit out of Balanced and is named', async () => {
+        const result = await run(profitWorld({ unpriced: ['/items/donut'] }).measure);
+        // Nothing but the unvalued profit moved, so nothing is offered
+        expect(result.changes).toHaveLength(0);
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toEqual(['/items/donut']);
+        expect(result.valuationFailed).toBe(false);
+    });
+
+    test('Profit/h with a baseline that cannot be valued stops after the baseline', async () => {
+        const { measure, calls } = profitWorld({ unpriced: ['/items/donut'] }, { everywhere: true });
+        const result = await run(measure, { objective: 'profit' });
+        expect(calls.map((c) => c.stream)).toEqual(['baseline']);
+        expect(result.changes).toHaveLength(0);
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toEqual(['/items/donut']);
+    });
 
     test('finds the optimum, leaves the inert trigger alone and confirms the combination', async () => {
         const { measure, calls } = world();

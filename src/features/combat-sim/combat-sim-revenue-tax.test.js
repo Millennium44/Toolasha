@@ -330,3 +330,40 @@ describe('calculateSimRevenue dungeon key cost', () => {
         expect(costPerHour).toBe(0);
     });
 });
+
+describe('calculateSimRevenue price cache', () => {
+    test('drop, consumable and key prices are read once and held for every later result', () => {
+        const { simResult, gameData } = simClearingDungeon(10, 5000, 1000);
+        simResult.consumablesUsed = { player1: { '/items/wisdom_tea': 5 } };
+        mocks.prices['/items/wisdom_tea'] = { ask: 200, bid: 200 };
+        const priceCache = new Map();
+        const first = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { priceCache });
+
+        for (const hrid of Object.keys(mocks.prices)) mocks.prices[hrid] = { ask: 9999, bid: 9999 };
+        mocks.pricingMode = 'conservative';
+        const held = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { priceCache });
+        expect(held).toEqual(first);
+
+        const live = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+        expect(live.revenuePerHour).not.toBe(first.revenuePerHour);
+        expect(live.costPerHour).not.toBe(first.costPerHour);
+        expect(live.keyCostPerHour).not.toBe(first.keyCostPerHour);
+    });
+});
+
+describe('calculateSimRevenue unpriced dungeon keys', () => {
+    test('a key nothing can price is named, and counted at zero', () => {
+        const { simResult, gameData } = simClearingDungeon(10, 5000, 1000);
+        delete mocks.prices['/items/chimerical_chest_key'];
+        const { unpricedKeys, keyCostPerHour } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+        expect(unpricedKeys).toEqual(['/items/chimerical_chest_key']);
+        expect(keyCostPerHour).toBeCloseTo(0.2 * 1000, 6);
+    });
+
+    test('priced keys are not listed, and a zone run lists none', () => {
+        const dungeon = simClearingDungeon(10, 5000, 1000);
+        expect(calculateSimRevenue(dungeon.simResult, dungeon.gameData, 'player1', HOURS).unpricedKeys).toEqual([]);
+        const zone = simDropping('/items/cheese', KILLS, 1000);
+        expect(calculateSimRevenue(zone.simResult, zone.gameData, 'player1', HOURS).unpricedKeys).toEqual([]);
+    });
+});

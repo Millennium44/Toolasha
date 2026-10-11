@@ -1511,6 +1511,42 @@ describe('a buff does not outlive its duration when a downed player is put back 
         expect(victim.combatBuffs[TEST_BUFF.uniqueHrid]).toBeUndefined();
     });
 
+    test('a quantity buff that lapses between the boss kill and the respawn still pays the clear', () => {
+        const { sim, zone, players } = buffedParty(1);
+        const player = players[0];
+        player.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/test_quantity',
+                typeHrid: '/buff_types/combat_drop_quantity',
+                ratioBoost: 0,
+                ratioBoostLevelBonus: 0,
+                flatBoost: 0.2,
+                flatBoostLevelBonus: 0,
+                duration: 10 * ONE_SECOND,
+            },
+            sim.simulationTime
+        );
+
+        // Fight the last wave and kill the boss while the buff is up
+        zone.getNextWave();
+        sim.enemies = zone.getNextWave();
+        sim.enemies.forEach((enemy) => enemy.reset(sim.simulationTime));
+        sim.simResult.updateTimeSpentAlive('#' + (zone.encountersKilled - 1).toString(), true, sim.simulationTime);
+        sim.simulationTime += 5 * ONE_SECOND;
+        sim.enemies.forEach((enemy) => (enemy.combatDetails.currentHitpoints = 0));
+        sim.checkEncounterEnd();
+
+        // The buff lapses in the gap before the respawn fires
+        sim.simulationTime += 8 * ONE_SECOND;
+        player.removeExpiredBuffs(sim.simulationTime);
+        expect(player.combatDetails.combatStats.combatDropQuantity).toBe(0);
+        sim.startNewEncounter();
+
+        expect(zone.dungeonsCompleted).toBe(1);
+        // One record for the one completion, at the quantity held at the kill
+        expect(sim.simResult.dungeonQtyStates.player1).toEqual({ 0.2: 1 });
+    });
+
     test('a wipe restart re-arms the checks the wipe itself threw away', () => {
         const { sim, players } = buffedParty(1);
         const expiry = sim.simulationTime + TEST_BUFF.duration;
@@ -2385,5 +2421,59 @@ describe('casts refused for mana', () => {
         expect(Math.abs(fourChunks - oneChunk) / oneChunk).toBeLessThan(0.02);
         // and density-independent
         expect(refusalsOver(1, 0.5)).toBe(refusalsOver(1, 1.5));
+    });
+});
+
+describe('loot is recorded at the buffs a downed player still has', () => {
+    const COFFEE = {
+        uniqueHrid: '/buff_uniques/test_lucky',
+        typeHrid: '/buff_types/combat_drop_rate',
+        ratioBoost: 0,
+        ratioBoostLevelBonus: 0,
+        flatBoost: 0.15,
+        flatBoostLevelBonus: 0,
+        duration: 100 * ONE_SECOND,
+    };
+
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('a coffee that lapses while its drinker is down no longer lifts teammates kills', () => {
+        installGameData();
+        const zone = new Zone(ZONE_HRID, 0);
+        const down = fixturePlayer();
+        const up = fixturePlayer();
+        down.hrid = 'player1';
+        up.hrid = 'player2';
+        for (const p of [down, up]) {
+            p.zoneBuffs = zone.buffs;
+            p.extraBuffs = [];
+        }
+        const sim = new CombatSimulator([down, up], zone);
+        sim.reset();
+        down.reset(0);
+        up.reset(0);
+        down.addBuff(COFFEE, 0);
+        up.addBuff(COFFEE, 0);
+
+        // A kill while the coffee is up credits it to both
+        sim.simulationTime = 50 * ONE_SECOND;
+        sim.recordDeath({ hrid: RAT_HRID, isPlayer: false });
+
+        // The drinker goes down; death sweeps their expiry checks, so the
+        // lapsed coffee stays folded into their stats
+        down.combatDetails.currentHitpoints = 0;
+        sim.eventQueue.clearEventsForUnit(down);
+        sim.simulationTime = 150 * ONE_SECOND;
+        up.removeExpiredBuffs(sim.simulationTime);
+        sim.recordDeath({ hrid: RAT_HRID, isPlayer: false });
+
+        const states = sim.simResult.lootStates;
+        expect(states.player1[RAT_HRID]).toEqual({ '0.15|0|0': 1, '0|0|0': 1 });
+        expect(states.player2[RAT_HRID]).toEqual({ '0.15|0|0': 1, '0|0|0': 1 });
+        // Read without pruning anything: the downed unit's own state is untouched
+        expect(down.combatBuffs[COFFEE.uniqueHrid]).toBeDefined();
     });
 });

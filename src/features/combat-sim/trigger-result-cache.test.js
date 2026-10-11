@@ -45,6 +45,9 @@ const result = () => ({
     tunableCount: 2,
     reliable: true,
     stopped: false,
+    profitLeftOut: true,
+    unpriced: ['/items/donut'],
+    valuationFailed: false,
     baseline: { xp: 1 },
     screened: [{ key: 'k', range: 3 }],
     rejected: [{ key: 'r' }],
@@ -133,6 +136,10 @@ describe('compactTriggerResult', () => {
         expect(compact.unchanged).toEqual([{ itemName: 'Donut' }]);
         expect(compact.unused).toEqual([{ itemName: 'Ice Spear' }]);
         expect(compact.objective).toBe('xp');
+        expect(compact.profitLeftOut).toBe(true);
+        expect(compact.notPriced).toEqual([]);
+        expect(compact.unpriced).toEqual(['/items/donut']);
+        expect(compact.valuationFailed).toBe(false);
         expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(result()).length);
     });
 });
