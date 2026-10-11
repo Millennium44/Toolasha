@@ -255,11 +255,15 @@ export function decomposeChain(itemHrid) {
                 const bid = bookBidOf(hrid);
                 return bid === null ? null : calculatePriceAfterTax(bid);
             };
-            const containerValue = (hrid) =>
-                untaxedContainerValue(hrid, {
+            // A crate none of whose contents has a real bid is worth zero, partly unpriced, like any
+            // other output with no bid: the chain keeps its figure as a lower bound
+            const containerValue = (hrid) => {
+                const opened = untaxedContainerValue(hrid, {
                     containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
                     priceOf: contentPriceOf,
                 });
+                return opened && opened.value === null ? { value: 0, partlyUnpriced: true } : opened;
+            };
             // Terminals counted at zero for want of a real bid make the figure a lower bound
             const markZeroed = (result) => {
                 const zeroed = (result.terminals ?? []).filter((t) => t.expected > 0 && noRealBid(t.itemHrid));

@@ -647,12 +647,14 @@ describe('a bonus crate', () => {
         expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * ((1000 * 0.82) / 10)) * 3600);
     });
 
-    test('a crate with nothing priced still leaves the chain without a figure', () => {
+    test('a crate with nothing priced counts at zero and keeps the chain as a lower bound', () => {
         crateFixture({ junkPriced: false });
         engine.sellResolved = {};
         delete engine.bids['/items/gem'];
         const chain = decomposeChain('/items/item_a');
-        expect(chain.netPerHour).toBeNull();
-        expect(chain.unpriced).toContain(CRATE);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500) * 3600);
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual([CRATE]);
+        expect(chain.unpriced).toEqual([]);
     });
 });
