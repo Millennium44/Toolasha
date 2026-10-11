@@ -17,7 +17,10 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
-    calculateSimRevenue: (result, gameData, hrid) => ({ netPerHour: result.profit?.[hrid] || 0 }),
+    calculateSimRevenue: (result, gameData, hrid) => {
+        if (result.valuationThrows) throw new Error('no price data');
+        return { netPerHour: result.profit?.[hrid] || 0, unpricedConsumables: result.unpriced?.[hrid] || [] };
+    },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 
@@ -83,9 +86,44 @@ describe('sampleFromResult', () => {
             ['player1'],
             2
         );
-        expect(sample.perPlayer.player1).toEqual({ xp: 300, profit: 50, revenue: 0, cost: 0, deaths: 2, dps: 100 });
+        expect(sample.perPlayer.player1).toEqual({
+            xp: 300,
+            profit: 50,
+            revenue: 0,
+            cost: 0,
+            unpriced: [],
+            profitFailed: false,
+            deaths: 2,
+            dps: 100,
+        });
         expect(sample.encounters).toBe(10);
         expect(sample.pools.player1).toEqual({ hp: 900, mp: 300 });
+    });
+
+    test('a valuation that throws is marked failed, not read as profit 0 alone', () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const sample = sampleFromResult(
+                { simulatedTime: HOUR_NS, valuationThrows: true, experienceGained: {} },
+                {},
+                ['player1'],
+                1
+            );
+            expect(sample.perPlayer.player1.profitFailed).toBe(true);
+        } finally {
+            error.mockRestore();
+        }
+    });
+
+    test('unpriced items ride along with the profit', () => {
+        const sample = sampleFromResult(
+            { simulatedTime: HOUR_NS, unpriced: { player1: ['/items/donut'] }, experienceGained: {} },
+            {},
+            ['player1'],
+            1
+        );
+        expect(sample.perPlayer.player1.unpriced).toEqual(['/items/donut']);
+        expect(sample.perPlayer.player1.profitFailed).toBe(false);
     });
 
     test('a result with no clock falls back to the hours asked for', () => {

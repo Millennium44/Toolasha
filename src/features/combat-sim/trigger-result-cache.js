@@ -48,6 +48,9 @@ const RESULT_FIELDS = [
     'tunableCount',
     'reliable',
     'stopped',
+    'profitLeftOut',
+    'unpriced',
+    'valuationFailed',
 ];
 
 function pick(source, fields) {

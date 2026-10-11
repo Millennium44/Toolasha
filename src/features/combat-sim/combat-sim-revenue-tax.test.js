@@ -350,3 +350,20 @@ describe('calculateSimRevenue price cache', () => {
         expect(live.keyCostPerHour).not.toBe(first.keyCostPerHour);
     });
 });
+
+describe('calculateSimRevenue unpriced dungeon keys', () => {
+    test('a key nothing can price is named, and counted at zero', () => {
+        const { simResult, gameData } = simClearingDungeon(10, 5000, 1000);
+        delete mocks.prices['/items/chimerical_chest_key'];
+        const { unpricedKeys, keyCostPerHour } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+        expect(unpricedKeys).toEqual(['/items/chimerical_chest_key']);
+        expect(keyCostPerHour).toBeCloseTo(0.2 * 1000, 6);
+    });
+
+    test('priced keys are not listed, and a zone run lists none', () => {
+        const dungeon = simClearingDungeon(10, 5000, 1000);
+        expect(calculateSimRevenue(dungeon.simResult, dungeon.gameData, 'player1', HOURS).unpricedKeys).toEqual([]);
+        const zone = simDropping('/items/cheese', KILLS, 1000);
+        expect(calculateSimRevenue(zone.simResult, zone.gameData, 'player1', HOURS).unpricedKeys).toEqual([]);
+    });
+});

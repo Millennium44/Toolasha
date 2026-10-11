@@ -193,3 +193,29 @@ describe('prices that move during a run', () => {
         expect(live.perPlayer.player1.profit).toBeGreaterThan(first.perPlayer.player1.profit);
     });
 });
+
+describe('an unpriced food', () => {
+    // The review reproduction: a lower threshold eats 100 donuts/h instead of 10 for 1% more of
+    // everything else. With donuts unpriced, eating them looked free: a reliable +50 gold/h.
+    // Priced at 100, the baseline is 4,000 gold/h and the change -4,950 gold/h.
+    const counters = (threshold) => {
+        const gain = Math.max(-500, 100 - threshold) * 0.1;
+        return { kills: 500 + gain / 2, xp: 1000 + gain, dps: 100 + gain / 10, food: threshold < 100 ? 100 : 10 };
+    };
+
+    test('Balanced leaves profit out, names the food and offers no profit gain', async () => {
+        const result = await runTriggerOptimization(scenario({ counters }));
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toEqual(['/items/donut']);
+        // Whatever is offered is offered on EXP, DPS and encounters alone
+        for (const c of result.changes) expect(c.deltaScore).toBeLessThanOrEqual(1 + 1e-9);
+    });
+
+    test('Profit/h refuses to recommend', async () => {
+        const result = await runTriggerOptimization(scenario({ counters, objective: 'profit' }));
+        expect(result.changes).toHaveLength(0);
+        expect(result.reliable).not.toBe(true);
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toEqual(['/items/donut']);
+    });
+});

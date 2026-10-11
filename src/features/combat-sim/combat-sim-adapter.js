@@ -1902,19 +1902,6 @@ function getBuyPrice(itemHrid) {
 }
 
 /**
- * The unit cost of a dungeon key under `profitCalc_keyPricingMode`, coalesced
- * to 0 rather than `getKeyUnitCost`'s `null` — this sim already treats an
- * unpriceable consumable or drop as free (see {@link getBuyPrice}/
- * {@link getSellPrice}), so a key follows the same convention rather than
- * turning a whole dungeon's cost into `NaN`.
- * @param {string} itemHrid - Key item HRID
- * @returns {number}
- */
-function getKeyPrice(itemHrid) {
-    return getKeyUnitCost(itemHrid) ?? 0;
-}
-
-/**
  * A drop's market sell value net of the sale tax.
  *
  * The sim reports what drops are worth, and selling on the market is taxed — so
@@ -1971,9 +1958,10 @@ function dropUnitValue(itemHrid) {
  *   through cannot read as a difference between them (the trigger optimizer does).
  * @returns {{ revenuePerHour: number, costPerHour: number, keyCostPerHour: number, netPerHour: number,
  *             dropEntries: Array, consumableEntries: Array, unpricedDrops: string[],
- *             unpricedConsumables: string[] }} `unpricedDrops` and `unpricedConsumables` name the
- *             items nothing could price — they are counted at zero in the totals, so a drop total
- *             that has any is a floor and a cost total that has any is a lower bound on the cost
+ *             unpricedConsumables: string[], unpricedKeys: string[] }} `unpricedDrops`,
+ *             `unpricedConsumables` and `unpricedKeys` (dungeon keys) name the items nothing could
+ *             price — they are counted at zero in the totals, so a drop total that has any is a
+ *             floor and a cost total that has any is a lower bound on the cost
  */
 export function calculateSimRevenue(simResult, gameData, playerHrid, hours, options = {}) {
     const cache = options.priceCache instanceof Map ? options.priceCache : null;
@@ -2033,8 +2021,16 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
     // only place that ever added them, and it computes its own figure from the
     // same helper rather than reading this one, so nothing double-counts.
     let keyCostPerHour = 0;
+    const unpricedKeys = [];
     if (simResult.isDungeon) {
-        const keyPrice = (keyHrid) => held(`key|${keyHrid}`, () => getKeyPrice(keyHrid));
+        // A key's unit cost under `profitCalc_keyPricingMode`. One nothing can price counts as 0, the
+        // same as an unpriced consumable or drop, rather than turning the dungeon's cost into NaN, and is
+        // named in `unpricedKeys`
+        const keyPrice = (keyHrid) => {
+            const unitCost = held(`key|${keyHrid}`, () => getKeyUnitCost(keyHrid));
+            if (unitCost == null) unpricedKeys.push(keyHrid);
+            return unitCost ?? 0;
+        };
         for (const key of calculateDungeonKeyCosts(dropMap, keyPrice)) {
             keyCostPerHour += key.totalCost / hours;
         }
@@ -2050,6 +2046,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
         consumableEntries,
         unpricedDrops,
         unpricedConsumables,
+        unpricedKeys,
     };
 }
 

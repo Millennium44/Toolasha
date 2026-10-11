@@ -109,7 +109,9 @@ export function monsterMaxHpReader(gameData) {
  * @param {Object} [options]
  * @param {Map} [options.priceCache] - The run's held prices (see `calculateSimRevenue`)
  * @returns {{perPlayer: Object, encounters: number, pools: Object}} perPlayer: hrid →
- *   `{ xp, profit, revenue, cost, deaths, dps }`, all per hour (dps per second)
+ *   `{ xp, profit, revenue, cost, unpriced, profitFailed, deaths, dps }`, rates per hour (dps per
+ *   second); `unpriced` names the drops, consumables and keys nothing priced, `profitFailed` a
+ *   valuation that threw
  */
 export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { priceCache } = {}) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || fallbackHours;
@@ -120,20 +122,32 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { pr
         let profit = 0;
         let revenue = 0;
         let cost = 0;
+        let unpriced = [];
+        // A valuation that threw is unknown, not zero: the search leaves profit out of any comparison it is in
+        let profitFailed = false;
         try {
             const value = calculateSimRevenue(simResult, gameData, hrid, simHours, { priceCache });
             profit = value?.netPerHour || 0;
             // Gross loot value and spend set the scale a profit change is judged against (profitScale)
             revenue = value?.revenuePerHour || 0;
             cost = value?.costPerHour || 0;
+            // Counted at zero in the totals, so a profit built on any of them is a guess
+            unpriced = [
+                ...(value?.unpricedDrops || []),
+                ...(value?.unpricedConsumables || []),
+                ...(value?.unpricedKeys || []),
+            ];
         } catch (error) {
             console.error('[TriggerOptimizer] Profit read failed:', error);
+            profitFailed = true;
         }
         perPlayer[hrid] = {
             xp: xp / simHours,
             profit,
             revenue,
             cost,
+            unpriced,
+            profitFailed,
             deaths: (simResult.deaths?.[hrid] || 0) / simHours,
             dps: (simResult.totalDamageDealt?.[hrid] || 0) / (simHours * 3600),
         };
