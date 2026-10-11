@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Recent panels start on for new players
 
-- The enhance-to-sell Profit/h column, the labyrinth missing-supplies button and room distribution, the protection marketplace button, the party profile button and the guild members game-mode tag now start on for new players (existing choices are kept).
+- The enhance-to-sell Profit/h column, the labyrinth missing-supplies button and room distribution, the protection marketplace button, the party profile button and the guild members game-mode tag now start on for new players; existing players keep them off unless they turn them on.
 
 ### Trigger optimizer: a standard option, faster and more flexible
 
