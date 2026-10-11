@@ -77,7 +77,10 @@ export const CONFIRM_SEEDS_MIN = 8;
  */
 export const SCREEN_Z = 2;
 
-/** Enemy-HP thresholds are tried from 0 up to this many seconds of party damage */
+/**
+ * Enemy-HP thresholds are tried from 0 up to this many seconds of party damage, when the zone's
+ * monsters' HP cannot be read (see `zoneEnemyHp`, which is the normal source)
+ */
 export const ENEMY_HP_DPS_SPAN = 6;
 
 /** Points in the coarse grid of an absolute threshold */
@@ -339,19 +342,27 @@ function uniqueSorted(values) {
 
 /**
  * The largest threshold worth trying for a kind.
+ *
+ * An enemy-HP threshold's range is the HP the zone's monsters actually have: a
+ * `targeted_enemy` current/missing HP row reads one monster, so it runs up to the
+ * largest single monster's max HP; an `all_enemies` row reads the sum over every
+ * living enemy, so it runs up to the largest group that can be up at once
+ * (`zoneEnemyHp`). Without monster data it falls back to about six seconds of
+ * party damage, times the zone's largest spawn for `all_enemies`.
  * @param {Object} tunable - A tunable
- * @param {Object} ctx - { partyDps, pools: { [playerHrid]: { hp, mp } } }
+ * @param {Object} ctx - { partyDps, pools: { [playerHrid]: { hp, mp } }, maxEnemies, enemyHp: { single, total } }
  * @returns {number}
  */
 export function gridMaximum(tunable, ctx) {
     const fallback = Math.max(1000, tunable.original * 2);
     if (tunable.kind === KIND_ENEMY_PCT) return 100;
     if (tunable.kind === KIND_ENEMY_HP) {
+        const allEnemies = tunable.dependencyHrid === DEP_ALL_ENEMIES;
+        const fromMonsters = Number(allEnemies ? ctx?.enemyHp?.total : ctx?.enemyHp?.single);
+        if (fromMonsters > 0) return Math.round(fromMonsters);
         const dps = Number(ctx?.partyDps);
-        // `all_enemies` current/missing HP is the sum over every living enemy, so the range scales with
-        // how many can be up at once (the zone's largest spawn). A targeted-enemy row reads one enemy.
-        // Limit: the count is the zone's maximum, not the average, so the top of the grid can overshoot.
-        const count = tunable.dependencyHrid === DEP_ALL_ENEMIES ? Math.max(1, Number(ctx?.maxEnemies) || 1) : 1;
+        // Fallback. The count is the zone's maximum spawn, not the average, so the top can overshoot.
+        const count = allEnemies ? Math.max(1, Number(ctx?.maxEnemies) || 1) : 1;
         return dps > 0 ? Math.round(dps * ENEMY_HP_DPS_SPAN * count) : fallback;
     }
     const pool = ctx?.pools?.[tunable.playerHrid]?.[tunable.kind === KIND_HP_POOL ? 'hp' : 'mp'];
@@ -375,9 +386,10 @@ export function coarseStep(tunable, ctx) {
  * The coarse candidate values for a tunable, always including the current value
  * so the grid can be read against it.
  *
- * Enemy-HP thresholds run from 0 ("no gate") up to about six seconds of party
- * damage in twelve even steps; percentages run 0–100 in tens; food thresholds
- * run in 10% steps of the relevant pool. Everything is an integer and clamped.
+ * Enemy-HP thresholds run from 0 ("no gate") up to the zone's largest monster
+ * HP (or largest group, for `all_enemies`) in twelve even steps; percentages run
+ * 0–100 in tens; food thresholds run in 10% steps of the relevant pool.
+ * Everything is an integer and clamped.
  * @param {Object} tunable - A tunable
  * @param {Object} ctx - { partyDps, pools }
  * @returns {Array<number>} Ascending, unique
@@ -476,6 +488,85 @@ export function unusedTunables(tunables, samples) {
         tunedSlots.get(t.playerHrid).push(t.slotIndex);
     }
     return tunables.filter((t) => skip.has(t.key));
+}
+
+/** Above this many spawn entries or picks, the largest random group is bounded rather than searched */
+const MAX_GROUP_SEARCH = { spawns: 12, picks: 10 };
+
+/**
+ * The largest total max HP one random spawn table can put up at once: up to
+ * `maxSpawnCount` draws (repeats allowed) whose summed strength stays within
+ * `maxTotalStrength`, the same limits `Zone.getRandomEncounter` applies.
+ * @param {Object} info - A randomSpawnInfo: { spawns, maxSpawnCount, maxTotalStrength }
+ * @param {Function} hpOf - (spawn) => max HP, 0 when unknown
+ * @returns {number}
+ */
+function largestRandomGroup(info, hpOf) {
+    const spawns = (info?.spawns || [])
+        .map((spawn) => ({ hp: hpOf(spawn), strength: Number(spawn.strength) || 0 }))
+        .filter((spawn) => spawn.hp > 0);
+    const picks = Math.max(0, Number(info?.maxSpawnCount) || 0);
+    if (spawns.length === 0 || picks === 0) return 0;
+    const cap = Number(info?.maxTotalStrength);
+    const capped = Number.isFinite(cap) && cap > 0;
+    if (!capped || spawns.length > MAX_GROUP_SEARCH.spawns || picks > MAX_GROUP_SEARCH.picks) {
+        return picks * Math.max(...spawns.map((spawn) => spawn.hp));
+    }
+    let best = 0;
+    const search = (from, left, strength, hp) => {
+        best = Math.max(best, hp);
+        if (left === 0) return;
+        for (let i = from; i < spawns.length; i++) {
+            const next = strength + spawns[i].strength;
+            if (next <= cap) search(i, left - 1, next, hp + spawns[i].hp);
+        }
+    };
+    search(0, picks, 0, 0);
+    return best;
+}
+
+/**
+ * The HP an enemy-HP trigger can read in a zone at a tier, from its spawn tables:
+ * the largest single monster's max HP, and the largest total max HP that can be
+ * up at once (one random draw, a boss wave, a dungeon's random tables or fixed
+ * waves). Monsters a fight adds later (summons, promotions) are not counted.
+ * @param {Object} gameData - Game data payload
+ * @param {string} zoneHrid - Zone action hrid
+ * @param {number} tier - The zone's difficulty tier
+ * @param {Function} monsterMaxHp - (monsterHrid, tier) => max HP; the sim's own monster stats
+ * @returns {{single: number, total: number}|null} null when no monster's HP could be read
+ */
+export function zoneEnemyHp(gameData, zoneHrid, tier, monsterMaxHp) {
+    const info = gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+    if (!info || typeof monsterMaxHp !== 'function') return null;
+    const memo = new Map();
+    const hpOf = (spawn) => {
+        const hrid = spawn?.combatMonsterHrid;
+        if (!hrid) return 0;
+        const at = (Number(spawn.difficultyTier) || 0) + (Number(tier) || 0);
+        const id = `${hrid}|${at}`;
+        if (!memo.has(id)) {
+            let hp = 0;
+            try {
+                hp = Number(monsterMaxHp(hrid, at)) || 0;
+            } catch (error) {
+                console.error('[TriggerTuning] Monster HP read failed:', error);
+            }
+            memo.set(id, hp > 0 ? hp : 0);
+        }
+        return memo.get(id);
+    };
+    const groupSum = (wave) => (wave || []).reduce((sum, spawn) => sum + hpOf(spawn), 0);
+
+    const totals = [largestRandomGroup(info.fightInfo?.randomSpawnInfo, hpOf), groupSum(info.fightInfo?.bossSpawns)];
+    for (const table of Object.values(info.dungeonInfo?.randomSpawnInfoMap || {})) {
+        totals.push(largestRandomGroup(table, hpOf));
+    }
+    for (const wave of Object.values(info.dungeonInfo?.fixedSpawnsMap || {})) totals.push(groupSum(wave));
+
+    const single = Math.max(0, ...memo.values());
+    const total = Math.max(0, ...totals);
+    return single > 0 ? { single, total: Math.max(total, single) } : null;
 }
 
 // ─── Objective ──────────────────────────────────────────────────────────────
@@ -880,7 +971,8 @@ function metricsMean(samples, hrids) {
  *   many seeds, `offset` (default 0) the index of the first, so a sequential look can add seeds 4..5
  *   to seeds 0..3 already run. Samples are `{ perPlayer, encounters, pools, triggerUse? }`; null means stopped.
  * @param {Object} params.precision - An entry of PRECISIONS
- * @param {number} [params.maxEnemies] - Most enemies up at once in the zone
+ * @param {number} [params.maxEnemies] - Most enemies up at once in the zone (the fallback enemy-HP range)
+ * @param {{single: number, total: number}|null} [params.enemyHp] - From `zoneEnemyHp`: the enemy-HP range
  * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
@@ -892,6 +984,7 @@ export async function runTriggerSearch({
     measure,
     precision,
     maxEnemies = 1,
+    enemyHp = null,
     minGain = MIN_GAIN,
     onProgress,
     aborted,
@@ -927,7 +1020,7 @@ export async function runTriggerSearch({
     );
     const pools = {};
     for (const [hrid, p] of Object.entries(baselineSamples[0]?.pools || {})) pools[hrid] = p;
-    const ctx = { partyDps, pools, maxEnemies };
+    const ctx = { partyDps, pools, maxEnemies, enemyHp };
 
     // 1b. Drop rows the baseline shows cannot matter (never read); they are reported, not tuned
     const unused = unusedTunables(tunables, baselineSamples);

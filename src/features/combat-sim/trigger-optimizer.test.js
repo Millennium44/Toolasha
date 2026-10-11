@@ -21,7 +21,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 
-const { runTriggerOptimization, sampleFromResult } = await import('./trigger-optimizer.js');
+const { runTriggerOptimization, sampleFromResult, monsterMaxHpReader } = await import('./trigger-optimizer.js');
+const { getGameData, setGameData } = await import('./engine/game-data.js');
 
 const HOUR_NS = 3600 * 1e9;
 const FIREBALL = '/abilities/fireball';
@@ -116,6 +117,60 @@ describe('sampleFromResult', () => {
     });
 });
 
+const SLIME = '/monsters/slime';
+const SWAMP = '/actions/combat/swamp';
+/** Game data with one zone of one monster, enough for the engine to build it at a tier */
+function withMonsters(data) {
+    return {
+        ...data,
+        actionDetailMap: {
+            [SWAMP]: {
+                combatZoneInfo: {
+                    fightInfo: {
+                        randomSpawnInfo: {
+                            maxSpawnCount: 3,
+                            maxTotalStrength: 3,
+                            spawns: [{ combatMonsterHrid: SLIME, difficultyTier: 0, rate: 1, strength: 1 }],
+                        },
+                    },
+                },
+            },
+        },
+        combatMonsterDetailMap: {
+            [SLIME]: {
+                experience: 10,
+                enrageTime: 300 * 1e9,
+                abilities: [],
+                combatDetails: {
+                    staminaLevel: 10,
+                    intelligenceLevel: 1,
+                    attackLevel: 1,
+                    meleeLevel: 1,
+                    defenseLevel: 1,
+                    rangedLevel: 1,
+                    magicLevel: 1,
+                    attackInterval: 3e9,
+                    combatStats: { combatStyleHrids: ['/combat_styles/smash'], attackInterval: 0 },
+                },
+            },
+        },
+    };
+}
+
+describe('monsterMaxHpReader', () => {
+    test('reads max HP the way the sim builds the monster, at the tier asked, and leaves the engine as it was', () => {
+        const marker = { marker: true };
+        setGameData(marker);
+        const read = monsterMaxHpReader(withMonsters(gameData));
+        // 10 x (10 + stamina): stamina 10 at tier 0; (1 + 0.25) x (10 + 20) = 37.5 at tier 1
+        expect(read(SLIME, 0)).toBe(200);
+        expect(read(SLIME, 1)).toBe(475);
+        expect(read('/monsters/unknown', 0)).toBe(0);
+        expect(getGameData()).toBe(marker);
+        setGameData(null);
+    });
+});
+
 describe('runTriggerOptimization', () => {
     const base = {
         gameData,
@@ -194,6 +249,20 @@ describe('runTriggerOptimization', () => {
             expect(seen.has(id), id).toBe(false);
             seen.add(id);
         }
+    });
+
+    test("an enemy-HP gate is tried up to the zone's largest monster HP at the chosen tier", async () => {
+        await runTriggerOptimization({
+            ...base,
+            gameData: withMonsters(gameData),
+            zoneHrid: SWAMP,
+            difficultyTier: 1,
+            playerDTOs: [dto('player1')],
+            playerIndex: 0,
+        });
+        const values = sims.calls.map((c) => c.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1);
+        // a targeted-enemy row reads one slime: 475 HP at tier 1, not six seconds of the party's 100 DPS
+        expect(Math.max(...values)).toBe(475);
     });
 
     test('whole-party scope tunes every member and judges the party total', async () => {

@@ -133,6 +133,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./trigger-optimizer.js', () => ({
+    monsterMaxHpReader: () => () => 0,
     runTriggerOptimization: async (params) => {
         mocks.triggerRuns.push(params);
         if (mocks.triggerFail) throw mocks.triggerFail;

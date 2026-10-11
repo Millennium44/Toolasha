@@ -16,6 +16,8 @@
 import config from '../../core/config.js';
 import { calculateSimRevenue } from './combat-sim-adapter.js';
 import { runSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { getGameData, setGameData } from './engine/game-data.js';
+import Monster from './engine/monster.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import {
@@ -26,6 +28,7 @@ import {
     estimateTriggerSims,
     runTriggerSearch,
     zoneMaxEnemies,
+    zoneEnemyHp,
     MIN_GAIN,
 } from './trigger-tuning.js';
 
@@ -65,6 +68,32 @@ function createLimiter(limit) {
             return await task();
         } finally {
             release();
+        }
+    };
+}
+
+/**
+ * A reader of monster max HP at a tier, computed the way the sim builds its
+ * monsters (`Monster.updateCombatDetails`, the engine's tier scaling). The engine
+ * reads game data from a module singleton; it is pointed at this payload only
+ * for the duration of each read and put back after.
+ * @param {Object} gameData - Game data payload
+ * @returns {Function} (monsterHrid, tier) => max HP, 0 when it cannot be built
+ */
+export function monsterMaxHpReader(gameData) {
+    return (hrid, tier) => {
+        if (!gameData?.combatMonsterDetailMap?.[hrid]) return 0;
+        const previous = getGameData();
+        setGameData(gameData);
+        try {
+            const monster = new Monster(hrid, tier);
+            monster.updateCombatDetails();
+            return monster.combatDetails.maxHitpoints || 0;
+        } catch (error) {
+            console.error('[TriggerOptimizer] Monster HP read failed:', error);
+            return 0;
+        } finally {
+            setGameData(previous);
         }
     };
 }
@@ -254,6 +283,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         measure,
         precision,
         maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
+        enemyHp: zoneEnemyHp(gameData, zoneHrid, difficultyTier, monsterMaxHpReader(gameData)),
         minGain,
         onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
         aborted: stopped,

@@ -35,6 +35,8 @@ import {
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
     zoneMaxEnemies,
+    zoneEnemyHp,
+    gridMaximum,
     unusedTunables,
     successiveHalving,
     runTriggerSearch,
@@ -320,6 +322,86 @@ describe('grids', () => {
         expect(hp.length).toBe(4);
         expect(hp.every((v) => Math.abs(v - 300) <= 28 && v !== 300)).toBe(true);
         expect(fineGrid(enemy, ctx, 0).every((v) => v >= 0)).toBe(true);
+    });
+});
+
+describe("enemy-HP range from the zone's monsters", () => {
+    const ZONE = '/actions/combat/swamp';
+    const HP = { '/monsters/frog': 100, '/monsters/croc': 500, '/monsters/boss': 5000 };
+    const hpOf = (hrid, tier) => HP[hrid] * (1 + tier);
+    const zone = (combatZoneInfo) => ({ actionDetailMap: { [ZONE]: { combatZoneInfo } } });
+    const spawn = (hrid, strength, difficultyTier = 0) => ({
+        combatMonsterHrid: hrid,
+        strength,
+        rate: 1,
+        difficultyTier,
+    });
+
+    test('the largest random group respects the spawn count and the strength cap', () => {
+        const data = zone({
+            fightInfo: {
+                randomSpawnInfo: {
+                    maxSpawnCount: 3,
+                    maxTotalStrength: 4,
+                    spawns: [spawn('/monsters/frog', 1), spawn('/monsters/croc', 2)],
+                },
+            },
+        });
+        // croc + croc (strength 4) beats croc + frog + frog (700) and three frogs (300)
+        expect(zoneEnemyHp(data, ZONE, 0, hpOf)).toEqual({ single: 500, total: 1000 });
+        // the zone's tier and each spawn's own tier offset both reach the monster
+        expect(zoneEnemyHp(data, ZONE, 1, hpOf)).toEqual({ single: 1000, total: 2000 });
+    });
+
+    test("a boss wave and a dungeon's fixed waves count as whole groups", () => {
+        const data = zone({
+            fightInfo: {
+                randomSpawnInfo: { maxSpawnCount: 1, maxTotalStrength: 9, spawns: [spawn('/monsters/frog', 1)] },
+                bossSpawns: [spawn('/monsters/boss', 0), spawn('/monsters/frog', 0)],
+            },
+            dungeonInfo: {
+                randomSpawnInfoMap: {
+                    0: { maxSpawnCount: 2, maxTotalStrength: 9, spawns: [spawn('/monsters/croc', 1, 1)] },
+                },
+                fixedSpawnsMap: { 5: [spawn('/monsters/boss', 0), spawn('/monsters/boss', 0)] },
+            },
+        });
+        expect(zoneEnemyHp(data, ZONE, 0, hpOf)).toEqual({ single: 5000, total: 10000 });
+    });
+
+    test('no readable monster means no range, so the grid falls back to party damage', () => {
+        const data = zone({ fightInfo: { randomSpawnInfo: { maxSpawnCount: 2, spawns: [spawn('/monsters/x', 1)] } } });
+        expect(zoneEnemyHp(data, ZONE, 0, () => 0)).toBeNull();
+        expect(
+            zoneEnemyHp(data, ZONE, 0, () => {
+                throw new Error('no data');
+            })
+        ).toBeNull();
+        expect(zoneEnemyHp({}, ZONE, 0, hpOf)).toBeNull();
+    });
+
+    test('the grid tops out at the largest monster for a targeted row and the largest group for all enemies', () => {
+        const ctx = { partyDps: 100, pools: {}, maxEnemies: 3, enemyHp: { single: 5000, total: 12000 } };
+        const targeted = { kind: KIND_ENEMY_HP, original: 1, dependencyHrid: TARGET, playerHrid: 'player1' };
+        const all = { kind: KIND_ENEMY_HP, original: 1, dependencyHrid: ENEMIES, playerHrid: 'player1' };
+        expect(gridMaximum(targeted, ctx)).toBe(5000);
+        expect(gridMaximum(all, ctx)).toBe(12000);
+        const grid = coarseGrid(targeted, ctx);
+        expect(grid[0]).toBe(0);
+        expect(grid[grid.length - 1]).toBe(5000);
+        expect(grid.filter((v) => v !== 1)).toHaveLength(12);
+        expect(coarseGrid(all, ctx).at(-1)).toBe(12000);
+        // percentages and pools are untouched by monster HP
+        expect(gridMaximum({ kind: KIND_ENEMY_PCT, original: 50 }, ctx)).toBe(100);
+        expect(
+            gridMaximum({ kind: KIND_HP_POOL, original: 5, playerHrid: 'p' }, { ...ctx, pools: { p: { hp: 900 } } })
+        ).toBe(900);
+    });
+
+    test('without monster HP the old party-damage range applies, times the largest spawn for all enemies', () => {
+        const ctx = { partyDps: 100, pools: {}, maxEnemies: 3, enemyHp: null };
+        expect(gridMaximum({ kind: KIND_ENEMY_HP, original: 1, dependencyHrid: TARGET }, ctx)).toBe(600);
+        expect(gridMaximum({ kind: KIND_ENEMY_HP, original: 1, dependencyHrid: ENEMIES }, ctx)).toBe(1800);
     });
 });
 
