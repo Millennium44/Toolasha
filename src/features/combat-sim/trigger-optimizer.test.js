@@ -177,6 +177,25 @@ describe('runTriggerOptimization', () => {
         expect(sims.calls.every((c) => Number.isInteger(c.seed))).toBe(true);
     });
 
+    test('a confirmation that looks more than once adds new seeds rather than re-running old ones', async () => {
+        // per-run luck, so confirmations do not all settle at their first look
+        sims.respond = (params) => {
+            const result = resultFor(params);
+            const value = params.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
+            const luck = 60 * Math.sin(params.seed * 0.001 + value) * params.hours;
+            result.experienceGained.player1.magic += luck;
+            return result;
+        };
+        await runTriggerOptimization({ ...base, playerDTOs: [dto('player1')], playerIndex: 0 });
+        const seen = new Set();
+        for (const c of sims.calls) {
+            const value = c.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
+            const id = `${c.seed}|${value}|${c.hours}`;
+            expect(seen.has(id), id).toBe(false);
+            seen.add(id);
+        }
+    });
+
     test('whole-party scope tunes every member and judges the party total', async () => {
         const result = await runTriggerOptimization({
             ...base,

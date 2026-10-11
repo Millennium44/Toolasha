@@ -26,6 +26,12 @@ import {
     pairedDiff,
     accepts,
     tCritical,
+    tCdf,
+    tQuantile,
+    confirmLooks,
+    sequentialVerdict,
+    CONFIRM_ALPHA,
+    INTERIM_ALPHA,
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
     zoneMaxEnemies,
@@ -394,6 +400,91 @@ describe('paired statistics and the acceptance rule', () => {
     });
 });
 
+describe('sequential confirmation', () => {
+    test('t quantiles match the two-sided 95% table and the tails are symmetric', () => {
+        for (let df = 1; df <= 30; df++) expect(tQuantile(0.975, df)).toBeCloseTo(tCritical(df), 2);
+        expect(tQuantile(0.999, 3)).toBeCloseTo(10.215, 2);
+        expect(tQuantile(0.025, 7)).toBeCloseTo(-tQuantile(0.975, 7), 8);
+        expect(tCdf(0, 5)).toBeCloseTo(0.5, 10);
+    });
+
+    test('looks fall at half, three quarters and all of the seeds', () => {
+        expect(confirmLooks(8)).toEqual([4, 6, 8]);
+        expect(confirmLooks(12)).toEqual([6, 9, 12]);
+        expect(confirmLooks(4)).toEqual([3, 4]);
+    });
+
+    test('the budgets add up to the old test’s one-sided 2.5%', () => {
+        expect(CONFIRM_ALPHA).toBe(0.025);
+        expect(INTERIM_ALPHA * 2).toBeLessThan(CONFIRM_ALPHA);
+    });
+
+    test('an unmistakable gain stops at the first look, a hopeless one is dropped there, a close one waits', () => {
+        expect(sequentialVerdict({ mean: 10, se: 0.5, n: 4 }, 0, 3, 0.5)).toBe('accept');
+        expect(sequentialVerdict({ mean: -2, se: 0.3, n: 4 }, 0, 3, 0.5)).toBe('reject');
+        expect(sequentialVerdict({ mean: 1, se: 0.4, n: 4 }, 0, 3, 0.5)).toBe('continue');
+        // a gain that would only look big enough on a few seeds is not stopped for success early
+        expect(sequentialVerdict({ mean: 0.6, se: 0.05, n: 4 }, 0, 3, 0.5)).toBe('continue');
+    });
+
+    test('the final look keeps minGain and spends only what the interim looks left', () => {
+        // t = 2.39: past the old 2.365 bound at 7 df, short of the adjusted 2.42
+        const diff = { mean: 2.39, se: 1, n: 8 };
+        expect(accepts(diff, 0.5)).toBe(true);
+        expect(sequentialVerdict(diff, 2, 3, 0.5)).toBe('reject');
+        expect(sequentialVerdict({ mean: 2.5, se: 1, n: 8 }, 2, 3, 0.5)).toBe('accept');
+        expect(sequentialVerdict({ mean: 0.4, se: 0.01, n: 8 }, 2, 3, 0.5)).toBe('reject');
+        expect(sequentialVerdict({ mean: 5, se: Infinity, n: 1 }, 2, 3, 0.5)).toBe('reject');
+    });
+
+    /** A seeded normal stream, so the Monte Carlo below is the same every run */
+    function normals(seed) {
+        let state = seed >>> 0;
+        const uniform = () => {
+            state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+            return (state + 0.5) / 4294967296;
+        };
+        return () => Math.sqrt(-2 * Math.log(uniform())) * Math.cos(2 * Math.PI * uniform());
+    }
+
+    /** Run the sequential confirmation over simulated paired differences: accept rate and mean seeds */
+    function simulate(mu, sigma, reps, seed) {
+        const normal = normals(seed);
+        const looks = confirmLooks(8);
+        let accepted = 0;
+        let seeds = 0;
+        for (let r = 0; r < reps; r++) {
+            const d = Array.from({ length: 8 }, () => mu + sigma * normal());
+            let verdict = 'continue';
+            let used = 0;
+            for (let i = 0; i < looks.length && verdict === 'continue'; i++) {
+                used = looks[i];
+                verdict = sequentialVerdict(pairedDiff(d.slice(0, used), new Array(used).fill(0)), i, looks.length);
+            }
+            if (verdict === 'accept') accepted++;
+            seeds += used;
+        }
+        return { rate: accepted / reps, seeds: seeds / reps };
+    }
+
+    test('a change that does nothing is accepted no more than 2.5% of the time', () => {
+        // σ large against minGain, so minGain does not hide the test's own error rate
+        const { rate } = simulate(0, 10, 20000, 7);
+        expect(rate).toBeLessThanOrEqual(0.0275);
+    });
+
+    test('clear cases stop early; a real gain keeps its power', () => {
+        const clearNull = simulate(0, 0.2, 4000, 11);
+        expect(clearNull.rate).toBe(0);
+        expect(clearNull.seeds).toBeLessThan(5);
+        const clearGain = simulate(10, 2, 4000, 13);
+        expect(clearGain.rate).toBe(1);
+        expect(clearGain.seeds).toBeLessThan(6);
+        // two SE-units of gain at 8 seeds: the fixed test accepted 99.8% (measured), the sequential one about the same
+        expect(simulate(2, 1, 4000, 17).rate).toBeGreaterThan(0.99);
+    });
+});
+
 describe('successiveHalving', () => {
     /** Four seeds; a sample's score is its value, plus a seed offset shared by every value */
     const makeMeasure =
@@ -558,11 +649,12 @@ describe('runTriggerSearch with deterministic fakes', () => {
      */
     function world({ optimum = 300, gain = 1, noise = 0, salt = 'x', afterFinal = null, triggerUse = null } = {}) {
         const calls = [];
-        const measure = async (overrides, hours, stream, count) => {
-            calls.push({ overrides: { ...overrides }, hours, stream, count });
+        const measure = async (overrides, hours, stream, count, offset = 0) => {
+            calls.push({ overrides: { ...overrides }, hours, stream, count, offset });
             const fireball = overrides[FIRE_KEY] ?? 1;
             const sig = JSON.stringify(overrides);
-            return Array.from({ length: count }, (_, k) => {
+            return Array.from({ length: count }, (_, i) => {
+                const k = offset + i;
                 const seedLuck = gauss(`${salt}|${stream}|${k}`) * noise;
                 const setupLuck = gauss(`${salt}|${stream}|${k}|${sig}|${hours}`) * noise;
                 let xp = 1000 - gain * Math.abs(fireball - optimum) + k * 3 + seedLuck + setupLuck;
@@ -619,8 +711,24 @@ describe('runTriggerSearch with deterministic fakes', () => {
         // each step has its own, and none of them is the screen's, baseline's or final's
         const everything = [...select, ...confirm, 'baseline', 'final', `screen:${FIRE_KEY}`];
         expect(new Set(everything).size).toBe(everything.length);
-        // confirmations compare the winner with the current value, on enough seeds
-        expect(calls.filter((c) => c.stream.startsWith('confirm:')).every((c) => c.count === 8)).toBe(true);
+        // confirmations compare the winner with the current value, adding seeds look by look up to 8
+        for (const name of confirm) {
+            const arms = new Map();
+            for (const c of calls.filter((call) => call.stream === name)) {
+                const id = JSON.stringify(c.overrides);
+                if (!arms.has(id)) arms.set(id, []);
+                arms.get(id).push(c);
+            }
+            expect(arms.size).toBe(2);
+            for (const looks of arms.values()) {
+                let next = 0;
+                for (const c of looks) {
+                    expect(c.offset).toBe(next);
+                    next += c.count;
+                }
+                expect([4, 6, 8]).toContain(next);
+            }
+        }
     });
 
     test('nothing to improve means no changes and no combined check', async () => {
@@ -681,6 +789,25 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(result.unchanged.map((t) => t.itemName)).toContain('Donut');
     });
 
+    test('a noisy world where the threshold does nothing accepts a change in at most 5% of runs', async () => {
+        let accepted = 0;
+        const runs = 150;
+        for (let i = 0; i < runs; i++) {
+            const { measure } = world({ gain: 0, noise: 60, salt: `null-${i}` });
+            if ((await run(measure)).changes.length > 0) accepted++;
+        }
+        expect(accepted / runs).toBeLessThanOrEqual(0.05);
+    });
+
+    test('a clear winner is confirmed on fewer than the full eight seeds', async () => {
+        const { measure, calls } = world();
+        await run(measure);
+        const confirmCalls = calls.filter((c) => c.stream.startsWith('confirm:'));
+        const steps = new Set(confirmCalls.map((c) => c.stream)).size;
+        const seedsPerArm = confirmCalls.reduce((sum, c) => sum + c.count, 0) / 2 / steps;
+        expect(seedsPerArm).toBeLessThan(8);
+    });
+
     test('a null world yields no accepted changes, run after run', async () => {
         const salts = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
         for (const salt of salts) {
@@ -704,9 +831,9 @@ describe('runTriggerSearch with deterministic fakes', () => {
         const { measure } = world();
         let stop = false;
         const result = await run(
-            async (overrides, hours, stream, count) => {
+            async (overrides, hours, stream, count, offset) => {
                 if (stream === 'final') stop = true;
-                return measure(overrides, hours, stream, count);
+                return measure(overrides, hours, stream, count, offset);
             },
             { aborted: () => stop }
         );

@@ -592,6 +592,165 @@ export function accepts(diff, minGain = MIN_GAIN) {
     return diff.mean > tCritical((diff.n ?? 0) - 1) * diff.se;
 }
 
+// ─── Sequential confirmation ────────────────────────────────────────────────
+
+/**
+ * Where a confirmation looks at its data, as fractions of its full seed count.
+ * Each look adds seeds to the ones already run; none is ever re-run.
+ */
+export const CONFIRM_LOOK_FRACTIONS = [0.5, 0.75, 1];
+
+/**
+ * The confirmation's one-sided false-acceptance budget: the chance a change that
+ * does nothing gets accepted. The fixed-length test it replaced (two-sided 95% t)
+ * spent exactly this.
+ */
+export const CONFIRM_ALPHA = 0.025;
+
+/**
+ * Spent on stopping early for success at each interim look (a Haybittle-Peto
+ * boundary); the final look gets what is left, so the budgets add up to
+ * `CONFIRM_ALPHA` and the whole sequence keeps it (a union bound: no
+ * correlation between looks is assumed). Stopping early for futility only ever
+ * removes chances to accept, so it spends nothing.
+ */
+export const INTERIM_ALPHA = 0.001;
+
+/**
+ * The seed counts a confirmation of `total` seeds looks at.
+ * @param {number} total - Full seed count
+ * @returns {Array<number>} Ascending, unique, each at least 3 (a t test needs 2 df to say anything), ending at `total`
+ */
+export function confirmLooks(total) {
+    const n = Math.max(1, Math.round(total));
+    const looks = CONFIRM_LOOK_FRACTIONS.map((f) => Math.min(n, Math.max(3, Math.ceil(n * f))));
+    return [...new Set([...looks, n])].sort((a, b) => a - b);
+}
+
+/** Log gamma (Lanczos), for the incomplete beta below */
+function lnGamma(x) {
+    const g = [
+        676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905,
+        -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+    if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lnGamma(1 - x);
+    const z = x - 1;
+    let a = 0.99999999999980993;
+    const t = z + 7.5;
+    for (let i = 0; i < 8; i++) a += g[i] / (z + i + 1);
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+/** Continued fraction for the regularized incomplete beta (modified Lentz) */
+function betaContinuedFraction(a, b, x) {
+    const tiny = 1e-300;
+    let c = 1;
+    let d = 1 - ((a + b) * x) / (a + 1);
+    if (Math.abs(d) < tiny) d = tiny;
+    d = 1 / d;
+    let h = d;
+    for (let m = 1; m <= 300; m++) {
+        const m2 = 2 * m;
+        let aa = (m * (b - m) * x) / ((a + m2 - 1) * (a + m2));
+        d = 1 + aa * d;
+        if (Math.abs(d) < tiny) d = tiny;
+        c = 1 + aa / c;
+        if (Math.abs(c) < tiny) c = tiny;
+        d = 1 / d;
+        h *= d * c;
+        aa = (-(a + m) * (a + b + m) * x) / ((a + m2) * (a + m2 + 1));
+        d = 1 + aa * d;
+        if (Math.abs(d) < tiny) d = tiny;
+        c = 1 + aa / c;
+        if (Math.abs(c) < tiny) c = tiny;
+        d = 1 / d;
+        const delta = d * c;
+        h *= delta;
+        if (Math.abs(delta - 1) < 1e-14) break;
+    }
+    return h;
+}
+
+/** Regularized incomplete beta I_x(a, b) */
+function betaIncomplete(a, b, x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const front = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+    if (x < (a + 1) / (a + b + 2)) return (front * betaContinuedFraction(a, b, x)) / a;
+    return 1 - (front * betaContinuedFraction(b, a, 1 - x)) / b;
+}
+
+/**
+ * Student t cumulative distribution.
+ * @param {number} t
+ * @param {number} df - Degrees of freedom
+ * @returns {number} P(T <= t)
+ */
+export function tCdf(t, df) {
+    const tail = 0.5 * betaIncomplete(df / 2, 0.5, df / (df + t * t));
+    return t > 0 ? 1 - tail : tail;
+}
+
+/**
+ * Student t quantile, by bisection on `tCdf`.
+ * @param {number} p - Probability in (0, 1)
+ * @param {number} df - Degrees of freedom
+ * @returns {number} t with P(T <= t) = p
+ */
+export function tQuantile(p, df) {
+    if (!(df >= 1) || !(p > 0 && p < 1)) return NaN;
+    if (p < 0.5) return -tQuantile(1 - p, df);
+    const id = `${p}|${df}`;
+    if (!T_QUANTILES.has(id)) T_QUANTILES.set(id, solveTQuantile(p, df));
+    return T_QUANTILES.get(id);
+}
+
+/** Memo for tQuantile: the confirmation asks the same few (p, df) pairs over and over */
+const T_QUANTILES = new Map();
+
+function solveTQuantile(p, df) {
+    let lo = 0;
+    let hi = 1;
+    while (tCdf(hi, df) < p && hi < 1e7) hi *= 2;
+    for (let i = 0; i < 200 && hi - lo > 1e-10 * hi; i++) {
+        const mid = (lo + hi) / 2;
+        if (tCdf(mid, df) < p) lo = mid;
+        else hi = mid;
+    }
+    return (lo + hi) / 2;
+}
+
+/**
+ * One look of the sequential confirmation.
+ *
+ * - Interim look, success: the gain exceeds `minGain` by the t bound at
+ *   one-sided `INTERIM_ALPHA`, a boundary so strict only an unmistakable gain
+ *   crosses it. Testing against `minGain` rather than 0 keeps the early stop
+ *   from accepting a gain that only looked big enough on its first few seeds.
+ * - Interim look, futility: even the upper 95% bound of the gain is below
+ *   `minGain`, so the remaining seeds could not plausibly rescue it.
+ * - Final look: the old fixed-length rule with the budget the interim looks left
+ *   (`CONFIRM_ALPHA - interims x INTERIM_ALPHA`, one-sided), and `minGain`.
+ * @param {{mean: number, se: number, n: number}} diff - Paired difference so far
+ * @param {number} look - 0-based look index
+ * @param {number} lookCount - How many looks the confirmation has
+ * @param {number} [minGain] - Smallest gain worth having
+ * @returns {'accept'|'reject'|'continue'}
+ */
+export function sequentialVerdict(diff, look, lookCount, minGain = MIN_GAIN) {
+    const final = look >= lookCount - 1;
+    const df = (diff.n ?? 0) - 1;
+    if (!Number.isFinite(diff.se) || !(df >= 1)) return final ? 'reject' : 'continue';
+    const worthIt = diff.mean >= minGain && diff.mean > 0;
+    if (final) {
+        const alpha = CONFIRM_ALPHA - INTERIM_ALPHA * (lookCount - 1);
+        return worthIt && diff.mean > tQuantile(1 - alpha, df) * diff.se ? 'accept' : 'reject';
+    }
+    if (worthIt && diff.mean - minGain > tQuantile(1 - INTERIM_ALPHA, df) * diff.se) return 'accept';
+    if (diff.mean + tCritical(df) * diff.se < minGain) return 'reject';
+    return 'continue';
+}
+
 // ─── Successive halving ─────────────────────────────────────────────────────
 
 /**
@@ -704,8 +863,9 @@ function metricsMean(samples, hrids) {
  * 3. Coordinate descent, most impactful first, keeping earlier winners. Each
  *    step (a coarse halving, a fine halving, then a second fine pass) picks a
  *    winner on its own seeds, then runs winner against current on fresh seeds;
- *    only that second measurement can accept it (t test at the real number of
- *    seeds, and at least `MIN_GAIN` points).
+ *    only that second measurement can accept it (a sequential t test that may
+ *    stop early either way, within a 2.5% one-sided error budget, and at least
+ *    `MIN_GAIN` points).
  * 4. A fresh-seed head-to-head of the original setup against all the winners
  *    gates the whole result: if it is not significantly better, nothing is
  *    recommended.
@@ -715,9 +875,10 @@ function metricsMean(samples, hrids) {
  * @param {Object} params
  * @param {Array<Object>} params.tunables - From `collectTunables`
  * @param {Array<string>} params.scopeHrids - Players whose figures are judged
- * @param {Function} params.measure - `(overrides, hoursPerSeed, stream, count) => Promise<Array<Sample>|null>`;
+ * @param {Function} params.measure - `(overrides, hoursPerSeed, stream, count, offset) => Promise<Array<Sample>|null>`;
  *   `stream` names a set of seeds (equal names share seeds, different names never do), `count` is how
- *   many seeds. Samples are `{ perPlayer, encounters, pools, triggerUse? }`; null means stopped.
+ *   many seeds, `offset` (default 0) the index of the first, so a sequential look can add seeds 4..5
+ *   to seeds 0..3 already run. Samples are `{ perPlayer, encounters, pools, triggerUse? }`; null means stopped.
  * @param {Object} params.precision - An entry of PRECISIONS
  * @param {number} [params.maxEnemies] - Most enemies up at once in the zone
  * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
@@ -742,8 +903,8 @@ export async function runTriggerSearch({
     const progress = (description) => onProgress?.({ description });
     const stopped = () => Boolean(aborted?.());
 
-    const measureWith = (extra, hours, stream, count = precision.seeds) =>
-        measure({ ...overrides, ...extra }, hours, stream, count);
+    const measureWith = (extra, hours, stream, count = precision.seeds, offset = 0) =>
+        measure({ ...overrides, ...extra }, hours, stream, count, offset);
 
     progress('Triggers: measuring the baseline');
     const baselineSamples = await measureWith({}, hoursPerSeed * ROUND_GROWTH, 'baseline');
@@ -836,17 +997,31 @@ export async function runTriggerSearch({
         if (selection.winner === before || selection.diff.mean < minGain / 2) return false;
 
         progress(`Triggers: ${t.itemName} (confirming)`);
+        // Sequential: look after half, three quarters and all of the seeds, stopping as soon as the answer
+        // is clear either way (see sequentialVerdict). Each look only adds seeds.
         const stream = `confirm:${step}`;
-        const [referenceSamples, winnerSamples] = await Promise.all([
-            measureWith({ [t.key]: before }, confirmHours, stream, confirmSeeds),
-            measureWith({ [t.key]: selection.winner }, confirmHours, stream, confirmSeeds),
-        ]);
-        if (!referenceSamples || !winnerSamples || stopped()) return false;
-        const diff = pairedDiff(
-            winnerSamples.map((s) => score(s)),
-            referenceSamples.map((s) => score(s))
-        );
-        if (!accepts(diff, minGain)) return false;
+        const looks = confirmLooks(confirmSeeds);
+        let referenceSamples = [];
+        let winnerSamples = [];
+        let diff = null;
+        let verdict = 'continue';
+        for (let look = 0; look < looks.length && verdict === 'continue'; look++) {
+            const from = look > 0 ? looks[look - 1] : 0;
+            const count = looks[look] - from;
+            const [moreReference, moreWinner] = await Promise.all([
+                measureWith({ [t.key]: before }, confirmHours, stream, count, from),
+                measureWith({ [t.key]: selection.winner }, confirmHours, stream, count, from),
+            ]);
+            if (!moreReference || !moreWinner || stopped()) return false;
+            referenceSamples = referenceSamples.concat(moreReference);
+            winnerSamples = winnerSamples.concat(moreWinner);
+            diff = pairedDiff(
+                winnerSamples.map((s) => score(s)),
+                referenceSamples.map((s) => score(s))
+            );
+            verdict = sequentialVerdict(diff, look, looks.length, minGain);
+        }
+        if (verdict !== 'accept') return false;
 
         state.get(t.key).current = selection.winner;
         overrides[t.key] = selection.winner;

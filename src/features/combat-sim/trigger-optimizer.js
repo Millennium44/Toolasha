@@ -200,10 +200,11 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
      * @param {number} hours - Hours per seed
      * @param {string} stream - Name of the seed set
      * @param {number} count - How many seeds
+     * @param {number} [offset] - Index of the first seed within the stream
      * @returns {Promise<Array<Object>|null>} One sample per seed; null once stopped
      */
-    const measure = (overrides, hours, stream, count) => {
-        const id = `${signature(overrides)}|${hours}|${stream}|${count}`;
+    const measure = (overrides, hours, stream, count, offset = 0) => {
+        const id = `${signature(overrides)}|${hours}|${stream}|${count}|${offset}`;
         if (cache.has(id)) return cache.get(id);
 
         const dtos = applyTriggerValues(playerDTOs, tunables, overrides);
@@ -220,7 +221,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                             difficultyTier,
                             hours,
                             communityBuffs,
-                            seed: deriveSeed(baseSeed, base + k),
+                            seed: deriveSeed(baseSeed, base + offset + k),
                             taskDamageMode: TASK_DAMAGE_OFF,
                         },
                         null,
