@@ -1286,15 +1286,16 @@ describe('the Decompose chain/hr sort', () => {
         }
     });
 
-    test('a chain that cannot be valued names the unpriced items in its title', () => {
+    test('an output with no bid at all counts at zero, shows ≥ and names the item in its title', () => {
         fixture();
-        // The terminal has no bid at all, so the chain has nothing to sell
+        // The terminal has no bid at all, so it is counted at zero
         market.bids = {};
         bestItems.sortMode = 'decomposeChainPerHour';
         game.items['/items/term_c'] = { name: 'Term C', alchemyDetail: null };
         open([row('item_d', 1)]);
         const cell = bestItems.modal.querySelector('[data-mwi-chain]');
-        expect(cell.textContent).toBe('—');
+        expect(cell.textContent.startsWith('≥')).toBe(true);
+        expect(cell.title).toContain('lower bound');
         expect(cell.title).toContain('Term C');
     });
 
@@ -1306,12 +1307,12 @@ describe('the Decompose chain/hr sort', () => {
         expect(header.title).toContain('instant buy/sell prices');
     });
 
-    test('an estimated terminal bid leaves the whole chain unpriced', () => {
+    test('an estimated terminal bid counts at zero and marks every chain a lower bound', () => {
         fixture();
         market.estimated.add('/items/term_c');
         bestItems.sortMode = 'decomposeChainPerHour';
         open([row('item_a', 5), row('item_d', 1)]);
-        expect(chainCells()).toEqual(['\u2014', '\u2014']);
+        expect(chainCells().every((text) => text.startsWith('≥'))).toBe(true);
     });
 
     test('shows the catalyst the chain picked, not the single-step profit winner', () => {
