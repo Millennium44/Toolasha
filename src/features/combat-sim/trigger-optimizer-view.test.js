@@ -102,6 +102,22 @@ describe('renderTriggerResultsHtml', () => {
         expect(html).not.toContain('mwi-csim-trigger-apply');
     });
 
+    test('a food left untuned for want of a price is named', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                changes: [],
+                unchanged: [],
+                notPriced: [{ itemName: 'Donut' }, { itemName: 'Donut' }],
+                profitLeftOut: true,
+                unpriced: ['/items/donut'],
+                simCount: 4,
+            },
+            gameData
+        );
+        expect(html).toContain("Not tuned: Donut has no price, so the gold effect can't be checked.");
+    });
+
     test('Balanced says profit was left out, and does not print a profit delta it could not value', () => {
         const html = renderTriggerResultsHtml(
             {
@@ -120,6 +136,7 @@ describe('renderTriggerResultsHtml', () => {
         expect(html).toContain('Profit/h left out of the score where it could not be counted');
         expect(html).toContain('Donut has no price; the valuation failed.');
         expect(html).toContain('Δprofit/h ? (not valued)');
+        expect(html).not.toContain('Not tuned');
         expect(html).not.toContain('Δprofit/h +50');
         expect(html).not.toContain('Δprofit/h -2.0K');
     });

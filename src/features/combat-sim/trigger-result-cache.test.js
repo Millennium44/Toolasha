@@ -137,6 +137,7 @@ describe('compactTriggerResult', () => {
         expect(compact.unused).toEqual([{ itemName: 'Ice Spear' }]);
         expect(compact.objective).toBe('xp');
         expect(compact.profitLeftOut).toBe(true);
+        expect(compact.notPriced).toEqual([]);
         expect(compact.unpriced).toEqual(['/items/donut']);
         expect(compact.valuationFailed).toBe(false);
         expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(result()).length);

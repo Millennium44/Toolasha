@@ -1089,7 +1089,8 @@ function metricsMean(samples, hrids) {
  * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline.
  *   `profitLeftOut` is true when some comparison could not value profit (an unpriced drop, consumable
  *   or dungeon key, named in `unpriced`, or a valuation that threw, `valuationFailed`): Balanced
- *   judged that comparison on its other three terms, and Profit/h recommends nothing
+ *   judged that comparison on its other three terms, and Profit/h recommends nothing. `notPriced`
+ *   lists the food and drink rows left untuned because their own item has no price
  */
 export async function runTriggerSearch({
     tunables,
@@ -1161,7 +1162,15 @@ export async function runTriggerSearch({
     // 1b. Drop rows the baseline shows cannot matter (never read); they are reported, not tuned
     const unused = unusedTunables(tunables, baselineSamples);
     const unusedKeys = new Set(unused.map((t) => t.key));
-    const live = tunables.filter((t) => !unusedKeys.has(t.key));
+    // A food or drink with no price is not tuned: its own trigger decides how much of it is eaten, and
+    // that cost cannot be counted, so any change to it would be judged blind on gold. Its key lands here
+    // when the baseline, or a later comparison of it, shows it unpriced.
+    const notPricedKeys = new Set();
+    const ownItemUnpriced = (t, sampleSets) => profitValuation(sampleSets, scopeHrids).unpriced.includes(t.itemHrid);
+    for (const t of tunables) {
+        if (!unusedKeys.has(t.key) && baseValuation.unpriced.includes(t.itemHrid)) notPricedKeys.add(t.key);
+    }
+    const live = tunables.filter((t) => !unusedKeys.has(t.key) && !notPricedKeys.has(t.key));
 
     // Profit/h with a baseline that cannot be valued has nothing to optimize: say so, and spend no sims
     if (objective === 'profit' && !baseValuation.complete) {
@@ -1173,7 +1182,8 @@ export async function runTriggerSearch({
             screened: [],
             changes: [],
             rejected: [],
-            unchanged: live,
+            unchanged: tunables.filter((t) => !unusedKeys.has(t.key)),
+            notPriced: [],
             unused,
             combined: null,
             reliable: null,
@@ -1196,6 +1206,10 @@ export async function runTriggerSearch({
             entries.map((v) => measureWith({ [t.key]: v }, hoursPerSeed, `screen:${t.key}`))
         );
         if (stopped() || measured.some((m) => !m)) break;
+        if (ownItemUnpriced(t, measured)) {
+            notPricedKeys.add(t.key);
+            continue;
+        }
         const scores = scoreSets(measured);
         const means = scores.map(mean);
         let bestIndex = 1;
@@ -1224,6 +1238,7 @@ export async function runTriggerSearch({
         changeLog.set(t.key, entry);
     };
     const tune = async (t, values, label) => {
+        if (notPricedKeys.has(t.key)) return false;
         const candidates = values.filter((v) => v !== currentOf(t));
         if (candidates.length === 0) return false;
         for (const v of candidates) tried.get(t.key).add(v);
@@ -1267,6 +1282,11 @@ export async function runTriggerSearch({
             verdict = sequentialVerdict(diff, look, looks.length, minGain);
         }
         if (verdict !== 'accept') return false;
+        // Accepted on three terms with its own item unpriced: the gold it costs was never seen
+        if (ownItemUnpriced(t, [winnerSamples, referenceSamples])) {
+            notPricedKeys.add(t.key);
+            return false;
+        }
 
         state.get(t.key).current = selection.winner;
         overrides[t.key] = selection.winner;
@@ -1356,8 +1376,9 @@ export async function runTriggerSearch({
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),
         changes,
         rejected,
-        unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key)),
+        unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key) && !notPricedKeys.has(t.key)),
         unused,
+        notPriced: tunables.filter((t) => notPricedKeys.has(t.key) && !kept.has(t.key)),
         combined,
         reliable,
         ...profitNotes(),

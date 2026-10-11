@@ -48,6 +48,7 @@ vi.mock('./combat-sim-runner.js', () => ({
 const { runTriggerOptimization, sampleFromResult } = await import('./trigger-optimizer.js');
 
 const MONSTER = '/monsters/fly';
+const FIREBALL = '/abilities/fireball';
 const ZONE = '/actions/combat/fly';
 const ROW = {
     dependencyHrid: '/combat_trigger_dependencies/self',
@@ -61,10 +62,30 @@ const ROW = {
  * of `dropHrid`; `counters(threshold)` sets the per-hour rates the stub sim
  * reports for a threshold.
  */
-function scenario({ food = '/items/donut', dropHrid = '/items/coin', dropCount = 10, counters, objective, onSim }) {
+function scenario({
+    food = '/items/donut',
+    dropHrid = '/items/coin',
+    dropCount = 10,
+    counters,
+    objective,
+    onSim,
+    withFireball = false,
+}) {
     const gameData = {
         itemDetailMap: { [food]: { name: 'Donut', consumableDetail: { defaultCombatTriggers: [ROW] } } },
-        abilityDetailMap: {},
+        abilityDetailMap: {
+            [FIREBALL]: {
+                name: 'Fireball',
+                defaultCombatTriggers: [
+                    {
+                        dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+                        conditionHrid: '/combat_trigger_conditions/current_hp',
+                        comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                        value: 1,
+                    },
+                ],
+            },
+        },
         combatMonsterDetailMap: {
             [MONSTER]: {
                 dropTable: [
@@ -74,11 +95,13 @@ function scenario({ food = '/items/donut', dropHrid = '/items/coin', dropCount =
         },
         actionDetailMap: { [ZONE]: { combatZoneInfo: { fightInfo: { randomSpawnInfo: { maxSpawnCount: 1 } } } } },
     };
-    const playerDTOs = [{ hrid: 'player1', abilities: [], food: [{ hrid: food, triggers: null }], drinks: [] }];
+    const abilities = withFireball ? [null, { hrid: FIREBALL, level: 10, triggers: null }] : [];
+    const playerDTOs = [{ hrid: 'player1', abilities, food: [{ hrid: food, triggers: null }], drinks: [] }];
     mocks.respond = (p) => {
         onSim?.();
         const threshold = p.playerDTOs[0].food[0].triggers?.[0]?.value ?? 100;
-        const c = counters(threshold);
+        const fireball = p.playerDTOs[0].abilities[1]?.triggers?.[0]?.value ?? 1;
+        const c = counters(threshold, fireball);
         const h = p.hours;
         return {
             simulatedTime: h * 3600 * 1e9,
@@ -203,12 +226,25 @@ describe('an unpriced food', () => {
         return { kills: 500 + gain / 2, xp: 1000 + gain, dps: 100 + gain / 10, food: threshold < 100 ? 100 : 10 };
     };
 
-    test('Balanced leaves profit out, names the food and offers no profit gain', async () => {
+    test('Balanced does not tune the unpriced food, and names it', async () => {
         const result = await runTriggerOptimization(scenario({ counters }));
+        expect(result.changes).toHaveLength(0);
+        expect(result.reliable).not.toBe(true);
         expect(result.profitLeftOut).toBe(true);
         expect(result.unpriced).toEqual(['/items/donut']);
-        // Whatever is offered is offered on EXP, DPS and encounters alone
-        for (const c of result.changes) expect(c.deltaScore).toBeLessThanOrEqual(1 + 1e-9);
+        expect(result.notPriced.map((t) => t.itemHrid)).toEqual(['/items/donut']);
+    });
+
+    test('a priced ability trigger in the same run is still tuned', async () => {
+        // On top of the food, EXP peaks with Fireball held for enemies at 300 HP or more
+        const withFireball = (threshold, fireball) => {
+            const c = counters(threshold);
+            return { ...c, xp: c.xp + 200 - Math.min(200, Math.abs(fireball - 300)) };
+        };
+        const result = await runTriggerOptimization(scenario({ counters: withFireball, withFireball: true }));
+        expect(result.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+        expect(result.reliable).toBe(true);
+        expect(result.notPriced.map((t) => t.itemHrid)).toEqual(['/items/donut']);
     });
 
     test('Profit/h refuses to recommend', async () => {

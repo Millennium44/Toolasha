@@ -889,6 +889,21 @@ describe('runTriggerSearch with deterministic fakes', () => {
         return { measure, calls };
     }
 
+    test('Balanced does not tune a food whose own item has no price, and still tunes the rest', async () => {
+        // Every sample reports the Donut unpriced, and XP peaks at Fireball 300
+        const { measure } = world();
+        const unpricedDonut = async (...args) =>
+            (await measure(...args)).map((s) => ({
+                ...s,
+                perPlayer: { player1: { ...s.perPlayer.player1, unpriced: [DONUT] } },
+            }));
+        const result = await run(unpricedDonut);
+        expect(result.notPriced.map((t) => t.itemName)).toEqual(['Donut']);
+        expect(result.screened.map((s) => s.key)).not.toContain(`player1|food|${DONUT}|0`);
+        expect(result.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+        expect(result.unchanged.map((t) => t.itemName)).toEqual([]);
+    });
+
     test('profit that values completely is found under Profit/h (the control)', async () => {
         const result = await run(profitWorld({}).measure, { objective: 'profit' });
         expect(result.changes).toHaveLength(1);

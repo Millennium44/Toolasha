@@ -231,6 +231,13 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             `where it could not be counted: ${esc(profitReason)}.</div>`;
     }
 
+    const notPriced = [...new Set((result.notPriced || []).map((t) => t.itemName))];
+    if (notPriced.length > 0) {
+        body +=
+            `<div style="font-size:11px; color:#ff9800; margin-top:6px;">Not tuned: ${esc(notPriced.join(', '))} ` +
+            `${notPriced.length === 1 ? 'has' : 'have'} no price, so the gold effect can't be checked.</div>`;
+    }
+
     const unchanged = result.unchanged || [];
     if (unchanged.length > 0) {
         body +=
