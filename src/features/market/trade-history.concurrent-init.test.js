@@ -51,7 +51,11 @@ vi.mock('../../core/storage.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/sync-merge-registry.js', () => ({ registerSyncMerge: () => {}, registerSyncRetention: () => {} }));
+vi.mock('../../utils/sync-merge-registry.js', () => ({
+    registerSyncMerge: () => {},
+    registerSyncRetention: () => {},
+    retentionKeepsLocal: () => false,
+}));
 
 const { default: tradeHistory } = await import('./trade-history.js');
 
