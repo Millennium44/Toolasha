@@ -108,6 +108,7 @@ describe('triggerRunSignature', () => {
             { minGain: 1 },
             { objective: 'profit' },
             { communityBuffs: {} },
+            { pricing: { fetchedAt: 2, mode: 'hybrid' } },
         ];
         for (const over of variants) expect(triggerRunSignature(setup(over)), JSON.stringify(over)).not.toBe(base);
     });

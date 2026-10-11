@@ -4,6 +4,7 @@
  */
 
 import config from '../../core/config.js';
+import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
@@ -156,6 +157,20 @@ const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 /** Storage key for the Triggers chip's party mode, precision and min gain choices */
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
+/**
+ * What the trigger search's profit figures were priced under: the market snapshot and the pricing
+ * settings. A remembered result taken under other prices is not offered as unchanged.
+ * @returns {Object}
+ */
+function triggerPricingStamp() {
+    return {
+        fetchedAt: marketAPI?.lastFetchTimestamp ?? null,
+        mode: config.getSettingValue?.('profitCalc_pricingMode') ?? null,
+        tickBuy: config.getSettingValue?.('profitCalc_patientTickBuy') ?? null,
+        tickSell: config.getSettingValue?.('profitCalc_patientTickSell') ?? null,
+    };
+}
+
 const TRIGGER_CHOICE_IDS = {
     scope: 'mwi-csim-trigger-scope',
     include: 'mwi-csim-trigger-include',
@@ -3424,6 +3439,9 @@ class CombatSimUI {
         this.panel.addEventListener('change', (event) => {
             if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) {
                 this._saveTriggerChoices();
+                this._refreshCachedTriggerResult();
+            } else if (event.target?.id === 'mwi-csim-upgrade-player') {
+                // The selected player is part of the remembered result's signature
                 this._refreshCachedTriggerResult();
             }
         });
@@ -10206,6 +10224,7 @@ class CombatSimUI {
                 ...choices,
                 dtoSignatures: signatures,
                 communityBuffs: getCommunityBuffs(),
+                pricing: triggerPricingStamp(),
             });
             const cached = await loadTriggerResult(signature);
             // A later refresh, a run that started meanwhile, or a character switch owns the box now
@@ -10277,7 +10296,12 @@ class CombatSimUI {
         const liveDTOs = playerDTOs;
         const signatures = new Map(liveDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
         const communityBuffs = getCommunityBuffs();
-        const runSignature = triggerRunSignature({ ...choices, dtoSignatures: signatures, communityBuffs });
+        const runSignature = triggerRunSignature({
+            ...choices,
+            dtoSignatures: signatures,
+            communityBuffs,
+            pricing: triggerPricingStamp(),
+        });
         playerDTOs = structuredClone(liveDTOs);
 
         const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');

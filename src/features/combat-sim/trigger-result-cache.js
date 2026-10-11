@@ -95,6 +95,7 @@ function hash53(text) {
  * @param {number} setup.minGain - Minimum gain
  * @param {string} setup.objective - Objective key
  * @param {Object} [setup.communityBuffs] - Community buffs in force
+ * @param {Object} [setup.pricing] - Price snapshot and pricing settings the profit figures were taken under
  * @returns {string}
  */
 export function triggerRunSignature(setup) {
@@ -113,6 +114,7 @@ export function triggerRunSignature(setup) {
         minGain: Number(setup.minGain),
         objective: setup.objective ?? null,
         communityBuffs: setup.communityBuffs ?? null,
+        pricing: setup.pricing ?? null,
     });
     return `${text.length}:${hash53(text)}`;
 }

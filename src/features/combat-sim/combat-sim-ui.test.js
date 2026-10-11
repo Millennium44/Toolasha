@@ -9648,6 +9648,39 @@ describe('the Triggers option', () => {
             expect(box().textContent).not.toContain('Last result');
         });
 
+        test('is not shown after the market prices moved', async () => {
+            await finishOneRun();
+            const { default: marketAPI } = await import('../../api/marketplace.js');
+            const before = marketAPI.lastFetchTimestamp;
+            marketAPI.lastFetchTimestamp = 123456789;
+            try {
+                openTriggers();
+                await settle();
+                expect(box().textContent).not.toContain('Last result');
+            } finally {
+                marketAPI.lastFetchTimestamp = before;
+            }
+        });
+
+        test('follows the selected player', async () => {
+            await finishOneRun();
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            if (select && select.options.length > 1) {
+                select.value = select.options[1].value;
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                await settle();
+                expect(box().textContent).not.toContain('Last result');
+            } else {
+                // One player: changing the selection to itself still re-checks without error
+                select?.dispatchEvent(new Event('change', { bubbles: true }));
+                await settle();
+                expect(box().textContent).toContain('Last result (unchanged setup)');
+            }
+        });
+
         test('is not shown when the build changed since', async () => {
             await finishOneRun();
             mocks.editedDTOs.player1 = { ...mocks.editedDTOs.player1, abilities: [{ hrid: '/abilities/x' }] };
