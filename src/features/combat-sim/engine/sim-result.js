@@ -1,6 +1,28 @@
 // Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 import { getGameData } from './game-data.js';
 
+/**
+ * Round a loot stat for a histogram key: enough digits to keep every real
+ * value apart, few enough that float noise from buff arithmetic folds together.
+ * @param {number} value - A combat stat
+ * @returns {number} The rounded value (0 for a missing one)
+ */
+function roundLootStat(value) {
+    const n = Number(value) || 0;
+    return Math.round(n * 1e6) / 1e6 + 0;
+}
+
+/**
+ * The lootStates key for one set of loot stats.
+ * @param {number} dropRate - combatDropRate
+ * @param {number} rareFind - combatRareFind
+ * @param {number} dropQuantity - combatDropQuantity
+ * @returns {string} "<dropRate>|<rareFind>|<dropQuantity>"
+ */
+export function lootStateKey(dropRate, rareFind, dropQuantity) {
+    return `${roundLootStat(dropRate)}|${roundLootStat(rareFind)}|${roundLootStat(dropQuantity)}`;
+}
+
 class SimResult {
     constructor(zone, numberOfPlayers) {
         this.deaths = {};
@@ -19,6 +41,16 @@ class SimResult {
         this.playerPools = {};
         this.rareFindMultiplier = {};
         this.combatDropQuantity = {};
+        // Loot is valued at the stats each player held when the kill landed, not at
+        // the end of the run: a Lucky Coffee that lapsed at the cutoff must not
+        // strip its bonus from every kill it covered. Per player, per monster, a
+        // histogram of kills by "<dropRate>|<rareFind>|<dropQuantity>" (see
+        // lootStateKey). The end-of-run multipliers above stay for results
+        // recorded before this existed.
+        this.lootStates = {};
+        // Per player: dungeon completions by the drop quantity held at the
+        // completion, "<dropQuantity>" → completions
+        this.dungeonQtyStates = {};
         this.playerRanOutOfMana = {
             player1: false,
             player2: false,
@@ -96,6 +128,63 @@ class SimResult {
     }
 
     /**
+     * Record the loot stats each player holds as a monster dies, one kill in
+     * each player's histogram. The key is kept on the unit so a revive takes
+     * back exactly the tuple this death recorded (see undoDeath).
+     *
+     * Every player is credited, standing or down, the same as `deaths` credits
+     * every player today.
+     *
+     * @param {Object} unit - The monster that just died
+     * @param {Array<Object>} players - The party
+     */
+    addLootStates(unit, players) {
+        if (!unit || unit.isPlayer || !Array.isArray(players)) return;
+        const keys = {};
+        for (const player of players) {
+            const stats = player?.combatDetails?.combatStats;
+            if (!player?.hrid || !stats) continue;
+            const key = lootStateKey(stats.combatDropRate, stats.combatRareFind, stats.combatDropQuantity);
+            const byMonster = (this.lootStates[player.hrid] ??= {});
+            const buckets = (byMonster[unit.hrid] ??= {});
+            buckets[key] = (buckets[key] || 0) + 1;
+            keys[player.hrid] = key;
+        }
+        unit._lootKeys = keys;
+    }
+
+    /**
+     * Take back the loot tuple a revived monster's death recorded.
+     * @param {Object} unit - The revived monster
+     */
+    removeLootStates(unit) {
+        const keys = unit?._lootKeys;
+        if (!keys) return;
+        for (const [playerHrid, key] of Object.entries(keys)) {
+            const buckets = this.lootStates[playerHrid]?.[unit.hrid];
+            if (!buckets || !(buckets[key] > 0)) continue;
+            buckets[key] -= 1;
+            if (buckets[key] === 0) delete buckets[key];
+        }
+        unit._lootKeys = null;
+    }
+
+    /**
+     * Record the drop quantity each player holds at a dungeon completion.
+     * @param {Array<Object>} players - The party
+     */
+    addDungeonQtyStates(players) {
+        if (!Array.isArray(players)) return;
+        for (const player of players) {
+            const stats = player?.combatDetails?.combatStats;
+            if (!player?.hrid || !stats) continue;
+            const key = String(roundLootStat(stats.combatDropQuantity));
+            const buckets = (this.dungeonQtyStates[player.hrid] ??= {});
+            buckets[key] = (buckets[key] || 0) + 1;
+        }
+    }
+
+    /**
      * Take back a death a revive undid, for a monster.
      *
      * `deaths` is read as a kill count — the combat adapter multiplies
@@ -120,6 +209,7 @@ class SimResult {
         if (this.deaths[unit.hrid] > 0) {
             this.deaths[unit.hrid] -= 1;
         }
+        this.removeLootStates(unit);
 
         // The death also closed this unit's alive window and counted it. Reopen
         // the window at the revive and take the count back, so `count` stays a

@@ -1685,8 +1685,39 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
 }
 
 /**
+ * The kill-time loot buckets a result recorded for one player and monster:
+ * `[{ kills, dropRateMultiplier, rareFindMultiplier, combatDropQuantity }]`,
+ * or null when the result has none (a result from before they were recorded,
+ * or a synthetic one) and the end-of-run multipliers are all there is.
+ * @param {Object|undefined} buckets - `lootStates[player][monster]`
+ * @returns {Array<Object>|null} The buckets
+ */
+function lootBuckets(buckets) {
+    if (!buckets || typeof buckets !== 'object') return null;
+    const out = [];
+    for (const [key, kills] of Object.entries(buckets)) {
+        if (!(kills > 0)) continue;
+        const [dr, rf, qty] = key.split('|').map(Number);
+        out.push({
+            kills,
+            dropRateMultiplier: 1 + (dr || 0) || 1,
+            rareFindMultiplier: 1 + (rf || 0) || 1,
+            combatDropQuantity: qty || 0,
+        });
+    }
+    return out.length > 0 ? out : null;
+}
+
+/**
  * Calculate expected drops from simulation results for a specific player.
  * Uses deterministic expected-value math (no RNG rolls).
+ *
+ * Each kill is valued at the drop rate, rare find and drop quantity the
+ * player held when it landed (`simResult.lootStates`), and each dungeon
+ * completion at the drop quantity held then (`simResult.dungeonQtyStates`):
+ * consumable buffs come and go mid-run, and the end-of-run state misprices
+ * every kill a lapsed buff covered. A result without those histograms is
+ * valued at its end-of-run multipliers, as before.
  * @param {Object} simResult - SimResult from the engine
  * @param {Object} gameData - Game data maps
  * @param {string} [playerHrid='player1'] - Which player's drop multipliers to use
@@ -1728,11 +1759,26 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 // in one place, and the chest-luck panel's observed-versus-
                 // modelled rate is the thing that would show it up. See
                 // `docs/sim-claim-verification.md` claim 4.
-                const perCompletion = chestsPerCompletion({
-                    partySize: numberOfPlayers,
-                    dropQuantity: combatDropQuantity,
-                    levelGap: debuffOnLevelGap,
-                });
+                // Completions by the drop quantity held at each one; the
+                // end-of-run quantity for a result that did not record them
+                const qtyBuckets = Object.entries(simResult.dungeonQtyStates?.[playerHrid] || {})
+                    .filter(([, count]) => count > 0)
+                    .map(([qty, count]) => ({ count, qty: Number(qty) || 0 }));
+                const completionBuckets =
+                    qtyBuckets.length > 0
+                        ? qtyBuckets
+                        : [{ count: simResult.dungeonsCompleted, qty: combatDropQuantity }];
+                // Guaranteed chests across every completion, each at its own quantity
+                let guaranteedChests = 0;
+                for (const bucket of completionBuckets) {
+                    guaranteedChests +=
+                        bucket.count *
+                        chestsPerCompletion({
+                            partySize: numberOfPlayers,
+                            dropQuantity: bucket.qty,
+                            levelGap: debuffOnLevelGap,
+                        });
+                }
 
                 for (const drop of rewardDropTable) {
                     // Same tier scaling the client applies to `rewardDropTable`
@@ -1744,7 +1790,7 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
                     let expected;
                     if (adjustedRate >= 1.0) {
-                        expected = simResult.dungeonsCompleted * perCompletion * avgCount;
+                        expected = guaranteedChests * avgCount;
                     } else {
                         expected = simResult.dungeonsCompleted * adjustedRate * avgCount;
                     }
@@ -1762,6 +1808,11 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
             if (!monsterData) continue;
 
             const killCount = simResult.deaths[monsterHrid];
+            // Kills by the loot stats held when each landed; one bucket at the
+            // end-of-run multipliers for a result that did not record them
+            const buckets = lootBuckets(simResult.lootStates?.[playerHrid]?.[monsterHrid]) || [
+                { kills: killCount, dropRateMultiplier, rareFindMultiplier, combatDropQuantity },
+            ];
 
             // Regular drops
             if (monsterData.dropTable) {
@@ -1769,15 +1820,22 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     if (drop.minDifficultyTier > difficultyTier) continue;
 
                     const tieredRate = scaledDropRate(drop.dropRate, drop.dropRatePerDifficultyTier, difficultyTier);
-                    const adjustedRate = Math.min(1.0, tieredRate * dropRateMultiplier);
-                    if (adjustedRate <= 0) continue;
-
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
-                    const expected =
-                        (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
-                        numberOfPlayers;
+                    // Capped per bucket: a buffed stretch past certainty pays
+                    // certainty, not the excess spread over the unbuffed kills
+                    for (const bucket of buckets) {
+                        const adjustedRate = Math.min(1.0, tieredRate * bucket.dropRateMultiplier);
+                        if (adjustedRate <= 0) continue;
+                        const expected =
+                            (bucket.kills *
+                                adjustedRate *
+                                avgCount *
+                                (1 + debuffOnLevelGap) *
+                                (1 + bucket.combatDropQuantity)) /
+                            numberOfPlayers;
 
-                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                        totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                    }
                 }
             }
 
@@ -1809,14 +1867,20 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     // already in force on both of the other two paths, and it
                     // is the one reading that holds whichever way the guide is
                     // meant: a probability cannot exceed certainty either way.
-                    const adjustedRate = Math.min(1.0, (drop.dropRate || 0) * rareFindMultiplier);
-                    if (adjustedRate <= 0) continue;
                     const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
-                    const expected =
-                        (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
-                        numberOfPlayers;
+                    for (const bucket of buckets) {
+                        const adjustedRate = Math.min(1.0, (drop.dropRate || 0) * bucket.rareFindMultiplier);
+                        if (adjustedRate <= 0) continue;
+                        const expected =
+                            (bucket.kills *
+                                adjustedRate *
+                                avgCount *
+                                (1 + debuffOnLevelGap) *
+                                (1 + bucket.combatDropQuantity)) /
+                            numberOfPlayers;
 
-                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                        totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                    }
                 }
             }
         }

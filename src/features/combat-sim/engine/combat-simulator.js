@@ -207,6 +207,8 @@ class CombatSimulator {
      */
     recordDeath(unit) {
         this.simResult.addDeath(unit);
+        // Loot is priced at the stats held now, not at the end of the run
+        if (!unit?.isPlayer) this.simResult.addLootStates(unit, this.players);
         this._creditTaskKill(unit, 1);
     }
 
@@ -729,6 +731,8 @@ class CombatSimulator {
             const currentDungeonCount = this.zone.dungeonsCompleted;
             if (currentDungeonCount > this.tempDungeonCount) {
                 this.tempDungeonCount = currentDungeonCount;
+                // The completion's chests are valued at the drop quantity held now
+                this.simResult.addDungeonQtyStates(this.players);
                 // Record the completion-to-completion interval only for a clean
                 // pair (a preceding completion with no wipe in between). This is
                 // the sim's equivalent of the tracker's key→key pair, and it is
