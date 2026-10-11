@@ -113,7 +113,6 @@ export const OWNED_KEY_PREFIXES = [
     // Covers every rewrite batch's flag: v2, v3, and whatever comes next
     'settings_default_rewrites_',
     // Once-per-character flag that old defaults were pinned for existing players
-    'settings_pinned_defaults_',
     'settings_key_migrations_applied_',
     // When each setting last changed on the device that changed it, which the
     // automatic sync merge reads (`sync-payload.js` SETTING_STAMPS_PREFIX)

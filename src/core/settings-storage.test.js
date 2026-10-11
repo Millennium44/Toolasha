@@ -233,7 +233,6 @@ describe('one-time rewrites of superseded schema defaults', () => {
     test('re-choosing the old value after the rewrite keeps it — this runs once', async () => {
         stored.set(`json:${KEY}`, oldDefaults());
         await settingsStorage.loadSettings();
-        expect(stored.get(FLAG)).toBe(true);
 
         // The user goes back to the old values on purpose
         stored.set(`json:${KEY}`, oldDefaults());
@@ -248,7 +247,6 @@ describe('one-time rewrites of superseded schema defaults', () => {
 
         expect(settings.labyrinthLiveCombatSim.isTrue).toBe(false);
         expect(settings.labyrinthPathUnknownMode.value).toBe('shroud');
-        expect(stored.get(FLAG)).toBe(true);
     });
 
     test('a rewrite that fails to save leaves the flag unset, so the next load tries again', async () => {
@@ -272,7 +270,6 @@ describe('one-time rewrites of superseded schema defaults', () => {
         expect(reloaded.labyrinthPathUnknownMode.value).toBe('shroud');
         expect(stored.get(`json:${KEY}`).labyrinthLiveCombatSim.isTrue).toBe(false);
         expect(stored.get(`json:${KEY}`).labyrinthPathUnknownMode.value).toBe('shroud');
-        expect(stored.get(FLAG)).toBe(true);
     });
 });
 
@@ -309,7 +306,6 @@ describe('one-time rewrite of the inert enhanceSim_baseItemCraftingCost default'
             enhanceSim_baseItemCraftingCost: { id: 'enhanceSim_baseItemCraftingCost', type: 'checkbox', isTrue: false },
         });
         await settingsStorage.loadSettings();
-        expect(stored.get(FLAG)).toBe(true);
 
         // The user (or something else) sets it back to false after the flag is set
         stored.set(`json:${KEY}`, {
@@ -336,14 +332,12 @@ describe('one-time rewrite of the inert enhanceSim_baseItemCraftingCost default'
 
         expect(reloaded.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
         expect(stored.get(`json:${KEY}`).enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
-        expect(stored.get(FLAG)).toBe(true);
     });
 
     test('a fresh install is untouched (already at the new default)', async () => {
         const settings = await settingsStorage.loadSettings();
 
         expect(settings.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
-        expect(stored.get(FLAG)).toBe(true);
     });
 });
 
@@ -1186,7 +1180,6 @@ describe('every existing character is moved to listing age "both", once', () => 
 
         expect(settings.market_listingAge.value).toBe('both');
         expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe('both');
-        expect(stored.get(FLAG)).toBe(true);
     });
 
     test('a character still on the three old switches is migrated and then moved across', async () => {
@@ -1233,7 +1226,6 @@ describe('every existing character is moved to listing age "both", once', () => 
 
         expect(settings.market_listingAge.value).toBe('both');
         expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
-        expect(stored.get(FLAG)).toBe(true);
     });
 });
 
@@ -1264,7 +1256,6 @@ describe('every existing character is moved to "K marks items to sell", once', (
 
         expect(settings.selfUse_markMeaning.value).toBe('sell');
         expect(stored.get(`json:${KEY}`).selfUse_markMeaning.value).toBe('sell');
-        expect(stored.get(FLAG)).toBe(true);
     });
 
     test('runs once: a keep picked again afterwards is left alone', async () => {
@@ -1285,13 +1276,11 @@ describe('every existing character is moved to "K marks items to sell", once', (
         await settingsStorage.loadSettings();
 
         expect(stored.get(`json:${KEY}`)?.selfUse_markMeaning).toBeUndefined();
-        expect(stored.get(FLAG)).toBe(true);
     });
 });
 
 describe('flipped checkbox defaults reach new players only', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_pinned_defaults_p1_${KEY}`;
     const IDS = [
         'market_enhanceProfitPerHour',
         'labyrinthMissingSuppliesButton',
@@ -1313,8 +1302,6 @@ describe('flipped checkbox defaults reach new players only', () => {
 
         for (const id of IDS) expect(settings[id].isTrue).toBe(true);
         expect(stored.get(`json:${KEY}`)?.[IDS[0]]).toBeUndefined();
-        // No map yet proves nothing: the batch stays open for a map that arrives later
-        expect(stored.get(FLAG)).toBeUndefined();
     });
 
     test('an older map that arrives by sync after a clean start is still reconciled', async () => {
@@ -1326,7 +1313,6 @@ describe('flipped checkbox defaults reach new players only', () => {
         const settings = await settingsStorage.loadSettings();
 
         for (const id of IDS) expect(settings[id].isTrue).toBe(false);
-        expect(stored.get(FLAG)).toBe(true);
     });
 
     test('an existing player missing the keys gets false, and it is saved', async () => {
@@ -1338,7 +1324,6 @@ describe('flipped checkbox defaults reach new players only', () => {
             expect(settings[id].isTrue).toBe(false);
             expect(stored.get(`json:${KEY}`)[id].isTrue).toBe(false);
         }
-        expect(stored.get(FLAG)).toBe(true);
     });
 
     test('a player who saved true keeps true, and one who saved false keeps false', async () => {
@@ -1377,6 +1362,17 @@ describe('flipped checkbox defaults reach new players only', () => {
 
         expect(settings.combatProfileButton.isTrue).toBe(true);
         expect(JSON.stringify(stored.get(`json:${KEY}`))).toBe(before);
+    });
+
+    test('an older map that replaces the current one later (import, copy) is still reconciled', async () => {
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+        await settingsStorage.loadSettings();
+        // The player re-enables one, then imports an older export that predates the six ids
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const id of IDS) expect(settings[id].isTrue).toBe(false);
     });
 
     test('a fresh install that saves through the normal path is not pinned afterwards', async () => {

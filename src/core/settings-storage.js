@@ -118,8 +118,8 @@ const DEFAULT_REWRITES = [
  * was already in their known list. Not a DEFAULT_REWRITES case — nothing stored
  * is rewritten, only absent ids are filled in.
  *
- * Each batch runs once per character, under its own flag; a later flip gets a
- * new batch name so the earlier flag cannot hide it.
+ * Checked on every load (see applyPinnedPreviousDefaults): a map missing one of
+ * these ids is an older player's, and the id is stored as its previous value.
  */
 const PINNED_PREVIOUS_DEFAULTS = [
     { batch: 'p1', id: 'market_enhanceProfitPerHour', previous: false },
@@ -129,8 +129,6 @@ const PINNED_PREVIOUS_DEFAULTS = [
     { batch: 'p1', id: 'combatProfileButton', previous: false },
     { batch: 'p1', id: 'guildMembersShowGameMode', previous: false },
 ];
-
-const PINNED_DEFAULTS_FLAG_KEY = 'settings_pinned_defaults';
 
 /** The batch an entry belongs to when it does not name one */
 const DEFAULT_REWRITE_BATCH = 'v2';
@@ -1045,49 +1043,32 @@ class SettingsStorage {
      * @returns {Promise<Object|null>} The map to merge, absent ids pinned
      */
     async applyPinnedPreviousDefaults(saved, characterKey) {
-        let current = saved;
-        for (const batch of new Set(PINNED_PREVIOUS_DEFAULTS.map((entry) => entry.batch))) {
-            const flagKey = `${PINNED_DEFAULTS_FLAG_KEY}_${batch}_${characterKey}`;
-            try {
-                if (await storage.get(flagKey, this.storageArea, false)) continue;
-
-                let next = current;
-                if (current) {
-                    for (const entry of PINNED_PREVIOUS_DEFAULTS) {
-                        if (entry.batch !== batch || current[entry.id]) continue;
-                        next = next === current ? { ...current } : next;
-                        next[entry.id] = { id: entry.id, type: 'checkbox', isTrue: entry.previous };
-                    }
-                }
-
-                if (next !== current) {
-                    // Pins go onto what is on disk, not onto `current`: an
-                    // earlier step's refused write leaves `current` holding
-                    // changes that must stay unsaved until their own retry.
-                    // A refused write here leaves the flag unset, so the next
-                    // load retries.
-                    const onDisk = (await storage.getJSON(characterKey, this.storageArea, null)) ?? {};
-                    const persisted = { ...onDisk };
-                    for (const id of Object.keys(next)) {
-                        if (!current[id] && !persisted[id]) persisted[id] = next[id];
-                    }
-                    const written = await storage.setJSON(characterKey, persisted, this.storageArea, true);
-                    if (written === false) {
-                        current = next;
-                        continue;
-                    }
-                    await this._stampDiff(characterKey, onDisk, persisted, { system: true });
-                }
-                // No map yet is not proof of a new player: a sync or import can still bring an
-                // older map in. Leave the batch open; a map this install writes itself carries
-                // every id (saves fill absent ids from the live values), so it is never pinned.
-                if (current) await storage.set(flagKey, true, this.storageArea, true);
-                current = next;
-            } catch (error) {
-                console.error('[SettingsStorage] Pinning previous defaults failed:', error);
-            }
+        // Runs on every load, with no "done" flag: a flag goes stale the moment a map is replaced
+        // (an import, a copy from another character, a sync pull of an older map), and the check
+        // is six lookups. A map this install wrote holds every id, and a stored value is never
+        // touched, so only an older map missing an id is ever pinned. No map yet pins nothing.
+        if (!saved) return saved;
+        let next = saved;
+        for (const entry of PINNED_PREVIOUS_DEFAULTS) {
+            if (saved[entry.id]) continue;
+            next = next === saved ? { ...saved } : next;
+            next[entry.id] = { id: entry.id, type: 'checkbox', isTrue: entry.previous };
         }
-        return current;
+        if (next === saved) return saved;
+        try {
+            // Pins go onto what is on disk, not onto `saved`: an earlier step's refused write leaves
+            // `saved` holding changes that must stay unsaved until their own retry.
+            const onDisk = (await storage.getJSON(characterKey, this.storageArea, null)) ?? {};
+            const persisted = { ...onDisk };
+            for (const id of Object.keys(next)) {
+                if (!saved[id] && !persisted[id]) persisted[id] = next[id];
+            }
+            const written = await storage.setJSON(characterKey, persisted, this.storageArea, true);
+            if (written !== false) await this._stampDiff(characterKey, onDisk, persisted, { system: true });
+        } catch (error) {
+            console.error('[SettingsStorage] Pinning previous defaults failed:', error);
+        }
+        return next;
     }
 
     /**
