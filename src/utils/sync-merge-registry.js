@@ -329,9 +329,12 @@ const retentions = [];
  *   key that list does not name is outside the window. `parse` then answers `{group, id}`. Unlike the other rules
  *   this one reads a value, so it is only applied where the caller passes `valueOf` to {@link retentionDrops}, and a
  *   window whose index is absent or unreadable drops nothing
+ * @param {(key: string) => boolean} [options.keepLocal] - Keys this device holds that a pull must never delete
+ *   as displaced, though the rule drops them from a download and an upload: the owner still has to read them
+ *   (the pre-split networth array, which its loader migrates and then deletes itself)
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floorMarkers = false, index }) {
+export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floorMarkers = false, index, keepLocal }) {
     if (!store || typeof prefix !== 'string' || !prefix) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
     }
@@ -358,12 +361,33 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
         maxAge: hasAge ? maxAge : undefined,
         floorMarkers: floorMarkers === true,
         index: hasIndex ? index : undefined,
+        keepLocal: typeof keepLocal === 'function' ? keepLocal : undefined,
     };
     if (!existing) retentions.push(rule);
     return () => {
         const index = retentions.indexOf(rule);
         if (index !== -1) retentions.splice(index, 1);
     };
+}
+
+/**
+ * Whether a retention rule keeps this local key out of a pull's displaced deletes (see `keepLocal`)
+ * @param {string} store - Object store name
+ * @param {string} key - Raw key
+ * @returns {boolean} True if a pull must leave the local copy alone
+ */
+export function retentionKeepsLocal(store, key) {
+    return retentions.some((rule) => {
+        if (rule.store !== store || !rule.keepLocal || typeof key !== 'string' || !key.startsWith(rule.prefix)) {
+            return false;
+        }
+        try {
+            return rule.keepLocal(key) === true;
+        } catch (error) {
+            console.error(`[SyncMergeRegistry] keepLocal for ${rule.prefix} threw:`, error);
+            return false;
+        }
+    });
 }
 
 /**

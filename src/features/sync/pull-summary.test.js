@@ -156,6 +156,22 @@ describe('the keys written whole are named', () => {
         expect(summary.stores[0].wholeRecords).toEqual([{ key: 'networthDetail_32030' }]);
     });
 
+    test('a failed fold is named once, as overwritten, and a store with no expected count names nothing', () => {
+        const summary = buildPullSummary({
+            mergeFailed: [{ store: 'guildHistory', key: 'trials', label: 'trial records' }],
+            writtenWholeKeys: [
+                { store: 'guildHistory', key: 'trials' },
+                { store: 'guildHistory', key: 'other' },
+                { store: 'unknownStore', key: 'x' },
+            ],
+            expected: { guildHistory: 2 },
+        });
+        const byStore = Object.fromEntries(summary.stores.map((store) => [store.store, store]));
+
+        expect(byStore.guildHistory.wholeRecords).toEqual([{ key: 'other' }]);
+        expect(byStore.unknownStore.wholeRecords).toEqual([]);
+    });
+
     test('a result that does not name them leaves the list empty, not the count wrong', () => {
         const summary = buildPullSummary(oneOfEach);
 

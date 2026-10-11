@@ -144,6 +144,17 @@ export function buildPullSummary({
         target.writtenWhole = Math.max(0, count - target.combined);
     }
 
+    // A failed fold is already named as overwritten, and a store with no expected count has no whole-write
+    // figure to name keys against
+    for (const target of rows.values()) {
+        if (target.writtenWhole === null) {
+            target.wholeRecords = [];
+            continue;
+        }
+        const failed = new Set(target.overwrittenRecords.map((record) => record.key));
+        target.wholeRecords = target.wholeRecords.filter((record) => !failed.has(record.key));
+    }
+
     if (reported) {
         for (const [store, count] of Object.entries(unchanged)) {
             if (Number.isFinite(count) && count > 0) row(store).unchanged = count;

@@ -32,7 +32,7 @@ import {
 } from './sync-ownership.js';
 import { ensureExternalKeysLoaded, ensureExternalKeysSaved } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys, tombstoneCompanionKey } from '../../utils/full-backup.js';
-import { mergeForKey, retentionDrops } from '../../utils/sync-merge-registry.js';
+import { mergeForKey, retentionDrops, retentionKeepsLocal } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
 
 /** Matches the full-backup format, because that is what this produces */
@@ -40,15 +40,6 @@ const FORMAT_VERSION = 1;
 
 /** The store holding settings, and the only store a `settings` scope carries */
 const SETTINGS_STORE = 'settings';
-
-/**
- * Stores whose keys this script only ever deletes on purpose: rolling windows, retention prunes, a deleted
- * snapshot. A key one of them lacks that it held at the last exchange (and the gist still holds unchanged) was
- * deleted here, and a merging pull does not hand it back. Other stores keep the older reading, where a missing
- * key is written back (see "a deleted key is the case that came back" in the tests): they hold one-off records
- * that a cleared device is meant to recover.
- */
-const DELETIONS_ARE_DELIBERATE = new Set(['networthHistory']);
 
 /**
  * Setting IDs removed from every payload.
@@ -1492,7 +1483,8 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
                 // Pushed out of the window by what the download brings: the
                 // import only puts keys, so it is deleted here. One this device
                 // would drop by itself is left to its owner's own pruning
-                if (!ownDrops.has(key)) displaced.push({ store: storeName, key });
+                if (!ownDrops.has(key) && !retentionKeepsLocal(storeName, key))
+                    displaced.push({ store: storeName, key });
                 continue;
             }
             delete entries[key];
@@ -1538,20 +1530,6 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         if (!Array.isArray(entries)) {
             const localKeys = local && typeof local === 'object' && !Array.isArray(local) ? Object.keys(local) : [];
             dropOutsideRetention(storeName, entries, localKeys);
-        }
-        if (baseline && DELETIONS_ARE_DELIBERATE.has(storeName) && local && typeof local === 'object') {
-            // A key this device held at the last exchange, that is gone now, and that the gist still holds exactly
-            // as it was then, is one this device deleted since (a retention prune, a rolled window): the gist's
-            // copy is the older one, not news. A key the baseline lists with no local half was never held here
-            // (another device's), and comes in
-            for (const key of Object.keys(entries)) {
-                if (Object.hasOwn(local, key) || restoredKey(baseline[RESTORED_BASELINE], storeName, key)) continue;
-                const was = readBaselineEntry(baseline[baselineId(storeName, key)]);
-                if (was && was.local === was.gist && valueHash(entries[key]) === was.gist) {
-                    delete entries[key];
-                    retentionDropped = true;
-                }
-            }
         }
         if (baseline) {
             for (const key of Object.keys(entries)) {

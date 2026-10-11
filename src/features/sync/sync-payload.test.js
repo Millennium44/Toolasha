@@ -2950,50 +2950,41 @@ describe('a legacy chunked key this device has already split is not written back
         }));
 });
 
-describe('a key this device deleted since the last exchange is not written back', () => {
+describe('the pre-split networth detail key on a pull', () => {
     const STORE = 'networthHistory';
     const payloadOf = (stores) =>
         JSON.stringify({ formatVersion: 1, exportedAt: '2026-10-08T00:00:00.000Z', syncScope: 'everything', stores });
-    const id = (key) => `${STORE}\u0000${key}`;
+    const snaps = (id, count) =>
+        Object.fromEntries(Array.from({ length: count }, (_, i) => [`networthDetail_${id}_${1000 + i}`, { t: i }]));
 
-    test('a key both sides held at the exchange, gone here and unmoved in the gist, stays gone', async () => {
-        const gist = { rolled_1: { n: 1 }, kept_1: { n: 2 } };
-        storeState.stores[STORE] = { kept_1: { n: 2 } };
-        const baseline = wholeKeyHashes(payloadOf({ [STORE]: gist }));
+    test('an unmigrated local array is not deleted by a download that carries the snapshot keys', async () => {
+        const legacy = [{ t: 1, items: {} }];
+        storeState.stores[STORE] = { networthDetail_32030: legacy };
+        const gist = snaps('32030', 3);
 
-        const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline });
+        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores[STORE]).toEqual(gist);
+        expect((storeState.deleteCalls || []).filter((call) => call.key === 'networthDetail_32030')).toEqual([]);
+    });
+
+    test('a migrated device is not handed the gist copy of the array back', async () => {
+        storeState.stores[STORE] = snaps('32030', 3);
+        const gist = { ...snaps('32030', 3), networthDetail_32030: [{ t: 1, items: {} }] };
+
+        const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
 
         expect(importedPayloads[0].stores[STORE]).toEqual({});
         expect(result.writtenWholeKeys).toEqual([]);
     });
 
-    test('the gist having moved the key since the exchange brings it back', async () => {
+    test('a key another device added is named as written whole', async () => {
         storeState.stores[STORE] = {};
-        const baseline = wholeKeyHashes(payloadOf({ [STORE]: { rolled_1: { n: 1 } } }));
+        const gist = { theirs_1: { n: 1 } };
 
-        await applyPayload(payloadOf({ [STORE]: { rolled_1: { n: 5 } } }), { mode: 'merge', baseline });
-
-        expect(importedPayloads[0].stores[STORE]).toEqual({ rolled_1: { n: 5 } });
-    });
-
-    test("a key the exchange left only the gist holding (another device's) still comes in", async () => {
-        storeState.stores[STORE] = {};
-        const gist = { theirs_1: { n: 1 }, unlisted_1: { n: 2 } };
-        const hashes = wholeKeyHashes(payloadOf({ [STORE]: gist }));
-        const baseline = { [id('theirs_1')]: { gist: hashes[id('theirs_1')], local: null } };
-
-        const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline });
+        const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
 
         expect(importedPayloads[0].stores[STORE]).toEqual(gist);
-        expect(result.writtenWholeKeys.map((entry) => entry.key).sort()).toEqual(['theirs_1', 'unlisted_1']);
-    });
-
-    test('a manual pull, which has no baseline, takes everything', async () => {
-        storeState.stores[STORE] = {};
-        const gist = { rolled_1: { n: 1 } };
-
-        await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'pull', baseline: null });
-
-        expect(importedPayloads[0].stores[STORE]).toEqual(gist);
+        expect(result.writtenWholeKeys).toEqual([{ store: STORE, key: 'theirs_1' }]);
     });
 });

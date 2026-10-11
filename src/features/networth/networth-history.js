@@ -57,6 +57,9 @@ registerSyncRetention({
     // kept the copy an old build uploaded, every pull wrote it back whole, and the next load migrated
     // and deleted it again. With no snapshot key in the window there is nothing to supersede it.
     maxAge: { floor: (newestEnd) => (newestEnd > 0 ? 1 : 0) },
+    // Dropped from a download and an upload, never deleted here by a pull: a device still holding the array
+    // unmigrated must let `_loadDetailHistory` fold it into snapshot keys first
+    keepLocal: (key) => /^networthDetail_[0-9a-zA-Z]+$/.test(key) && !/^networthDetail_.+_\d+$/.test(key),
 });
 
 /** Beyond this age, the history is thinned rather than kept point for point */
