@@ -503,6 +503,7 @@ class CombatSimulator {
 
     reset() {
         this.tempDungeonCount = 0;
+        this._pendingDungeonQty = null;
         // Clear-time pairing state (see SimResult.dungeonCleanClearTimeTotal):
         // the timestamp of the last dungeon completion, and whether the run
         // since it was interrupted by a wipe (which drops the pair).
@@ -731,8 +732,11 @@ class CombatSimulator {
             const currentDungeonCount = this.zone.dungeonsCompleted;
             if (currentDungeonCount > this.tempDungeonCount) {
                 this.tempDungeonCount = currentDungeonCount;
-                // The completion's chests are valued at the drop quantity held now
-                this.simResult.addDungeonQtyStates(this.players);
+                // The completion's chests are valued at the drop quantity held when
+                // the boss died (taken in checkEncounterEnd). A completion with no
+                // capture reads it now.
+                this.simResult.addDungeonQtyStates(this.players, this._pendingDungeonQty, this.simulationTime);
+                this._pendingDungeonQty = null;
                 // Record the completion-to-completion interval only for a clean
                 // pair (a preceding completion with no wipe in between). This is
                 // the sim's equivalent of the tracker's key→key pair, and it is
@@ -1202,6 +1206,14 @@ class CombatSimulator {
                 this.enemies = null;
 
                 if (this.zone.isDungeon) {
+                    // The wave just cleared is the last when the next spawn will wrap
+                    // past maxWaves (Zone.getNextWave). The chest is paid for the
+                    // kill, so the quantity is taken now, not 3 s on at the respawn
+                    // where a buff may have lapsed. It is recorded at the respawn
+                    // with the completion, so the two counts cannot drift apart.
+                    if (this.zone.encountersKilled > this.zone.dungeonSpawnInfo.maxWaves) {
+                        this._pendingDungeonQty = this.simResult.dungeonQtyKeys(this.players, this.simulationTime);
+                    }
                     this.simResult.updateTimeSpentAlive(
                         '#' + (this.zone.encountersKilled - 1).toString(),
                         false,

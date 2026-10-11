@@ -1511,6 +1511,42 @@ describe('a buff does not outlive its duration when a downed player is put back 
         expect(victim.combatBuffs[TEST_BUFF.uniqueHrid]).toBeUndefined();
     });
 
+    test('a quantity buff that lapses between the boss kill and the respawn still pays the clear', () => {
+        const { sim, zone, players } = buffedParty(1);
+        const player = players[0];
+        player.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/test_quantity',
+                typeHrid: '/buff_types/combat_drop_quantity',
+                ratioBoost: 0,
+                ratioBoostLevelBonus: 0,
+                flatBoost: 0.2,
+                flatBoostLevelBonus: 0,
+                duration: 10 * ONE_SECOND,
+            },
+            sim.simulationTime
+        );
+
+        // Fight the last wave and kill the boss while the buff is up
+        zone.getNextWave();
+        sim.enemies = zone.getNextWave();
+        sim.enemies.forEach((enemy) => enemy.reset(sim.simulationTime));
+        sim.simResult.updateTimeSpentAlive('#' + (zone.encountersKilled - 1).toString(), true, sim.simulationTime);
+        sim.simulationTime += 5 * ONE_SECOND;
+        sim.enemies.forEach((enemy) => (enemy.combatDetails.currentHitpoints = 0));
+        sim.checkEncounterEnd();
+
+        // The buff lapses in the gap before the respawn fires
+        sim.simulationTime += 8 * ONE_SECOND;
+        player.removeExpiredBuffs(sim.simulationTime);
+        expect(player.combatDetails.combatStats.combatDropQuantity).toBe(0);
+        sim.startNewEncounter();
+
+        expect(zone.dungeonsCompleted).toBe(1);
+        // One record for the one completion, at the quantity held at the kill
+        expect(sim.simResult.dungeonQtyStates.player1).toEqual({ 0.2: 1 });
+    });
+
     test('a wipe restart re-arms the checks the wipe itself threw away', () => {
         const { sim, players } = buffedParty(1);
         const expiry = sim.simulationTime + TEST_BUFF.duration;

@@ -189,15 +189,34 @@ class SimResult {
     }
 
     /**
+     * The drop quantity bucket each player holds right now, without recording it.
+     * @param {Array<Object>} players - The party
+     * @param {number|null} [time] - Simulation time, for downed players
+     * @returns {Object<string, string>} Bucket key by player hrid
+     */
+    dungeonQtyKeys(players, time = null) {
+        const keys = {};
+        if (!Array.isArray(players)) return keys;
+        for (const player of players) {
+            const stats = activeLootStats(player, time);
+            if (!player?.hrid || !stats) continue;
+            keys[player.hrid] = String(roundLootStat(stats.combatDropQuantity));
+        }
+        return keys;
+    }
+
+    /**
      * Record the drop quantity each player holds at a dungeon completion.
      * @param {Array<Object>} players - The party
+     * @param {Object<string, string>|null} [captured] - Keys taken earlier with dungeonQtyKeys; read live when absent
+     * @param {number|null} [time] - Simulation time, for downed players
      */
-    addDungeonQtyStates(players) {
+    addDungeonQtyStates(players, captured = null, time = null) {
         if (!Array.isArray(players)) return;
+        const keys = captured || this.dungeonQtyKeys(players, time);
         for (const player of players) {
-            const stats = player?.combatDetails?.combatStats;
-            if (!player?.hrid || !stats) continue;
-            const key = String(roundLootStat(stats.combatDropQuantity));
+            const key = keys[player?.hrid];
+            if (key === undefined) continue;
             const buckets = (this.dungeonQtyStates[player.hrid] ??= {});
             buckets[key] = (buckets[key] || 0) + 1;
         }
