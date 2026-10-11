@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild XP columns show for ranked members
+
+- Guild members and leaderboard rows that carry a leaderboard rank badge now show their XP/h and XP/day again; the badge number was being read as part of the name, so those players were not found.
+
 ### Inventory and chat widths survive a reload
 
 - The inventory column and chat panel now come back at exactly the width you dragged them to; the game saves the width with decimals but reloads it rounded down to a whole percent, so both panels (and the docked overlay) used to shrink slightly after a reload.

@@ -4,7 +4,8 @@
 
 import { formatWithSeparator } from './formatters.js';
 import { parseGameNumber } from './number-parser.js';
-import { RANK_BADGE_ATTR } from './rank-badge-data.js';
+// Matches RANK_BADGE_ATTR in rank-badge-data.js; inlined so this module does not pull that one into the utils bundle.
+const RANK_BADGE_ATTR = 'data-toolasha-rank-badge';
 
 const SORT_ICON_CLASS = 'mwi-col-sort-icon';
 
