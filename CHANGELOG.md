@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Recent panels start on for new players
 
-- Task zone progress, the enhance-to-sell Profit/h column, the labyrinth missing-supplies button and room distribution, the protection marketplace button, the party profile button, the task claim toast and the guild members game-mode tag now start on for new players (existing choices are kept).
+- The enhance-to-sell Profit/h column, the labyrinth missing-supplies button and room distribution, the protection marketplace button, the party profile button and the guild members game-mode tag now start on for new players (existing choices are kept).
 
 ### Agent rule: new features may default on
 

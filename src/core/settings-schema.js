@@ -3401,7 +3401,7 @@ export const settingsGroups = {
                 id: 'taskStatistics_zoneProgress',
                 label: 'Show per-zone combat task progress in task statistics',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help: 'Adds a Zone Task Progress section to the Task Statistics popup: for each zone with active combat tasks, the fights and time needed to clear them and the slowest monster. Runs one combat simulation per zone each time the popup opens; click a zone to open it with the fight count filled in.',
             },
             taskClaimCollector: {
@@ -3415,7 +3415,7 @@ export const settingsGroups = {
                 id: 'taskClaimToast',
                 label: 'Show a toast summary when a task is claimed',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help: 'Pops a brief toast naming the coins, tokens, and items a claimed task paid out — the reward the claimed card no longer shows once it is gone.',
             },
             taskRerollSpendBadge: {
