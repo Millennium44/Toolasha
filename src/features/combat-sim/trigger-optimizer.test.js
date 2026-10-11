@@ -21,8 +21,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 
-const { runTriggerOptimization, sampleFromResult } = await import('./trigger-optimizer.js');
-const { TRIGGER_OPTIMIZER_SETTING } = await import('./trigger-tuning.js');
+const { runTriggerOptimization, sampleFromResult, monsterMaxHpReader } = await import('./trigger-optimizer.js');
+const { getGameData, setGameData } = await import('./engine/game-data.js');
 
 const HOUR_NS = 3600 * 1e9;
 const FIREBALL = '/abilities/fireball';
@@ -96,6 +96,78 @@ describe('sampleFromResult', () => {
             4
         );
         expect(sample.perPlayer.player1.xp).toBe(25);
+        // no read counts from the engine: the sample says nothing about use, so nothing gets skipped
+        expect(sample.triggerUse).toBeUndefined();
+    });
+
+    test('carries per-slot trigger reads, plus uses and casts, when the engine recorded them', () => {
+        const sample = sampleFromResult(
+            {
+                simulatedTime: HOUR_NS,
+                triggerChecks: { player1: { [FIREBALL]: 30, '/items/donut': 0, '/abilities/idle': 0 } },
+                consumablesUsed: { player1: { '/items/donut': 2 } },
+                manaUsed: { player1: { [FIREBALL]: 0 } },
+            },
+            gameData,
+            ['player1', 'player2'],
+            1
+        );
+        expect(sample.triggerUse.player1).toEqual({ [FIREBALL]: 31, '/items/donut': 2, '/abilities/idle': 0 });
+        expect(sample.triggerUse.player2).toEqual({});
+    });
+});
+
+const SLIME = '/monsters/slime';
+const SWAMP = '/actions/combat/swamp';
+/** Game data with one zone of one monster, enough for the engine to build it at a tier */
+function withMonsters(data) {
+    return {
+        ...data,
+        actionDetailMap: {
+            [SWAMP]: {
+                combatZoneInfo: {
+                    fightInfo: {
+                        randomSpawnInfo: {
+                            maxSpawnCount: 3,
+                            maxTotalStrength: 3,
+                            spawns: [{ combatMonsterHrid: SLIME, difficultyTier: 0, rate: 1, strength: 1 }],
+                        },
+                    },
+                },
+            },
+        },
+        combatMonsterDetailMap: {
+            [SLIME]: {
+                experience: 10,
+                enrageTime: 300 * 1e9,
+                abilities: [],
+                combatDetails: {
+                    staminaLevel: 10,
+                    intelligenceLevel: 1,
+                    attackLevel: 1,
+                    meleeLevel: 1,
+                    defenseLevel: 1,
+                    rangedLevel: 1,
+                    magicLevel: 1,
+                    attackInterval: 3e9,
+                    combatStats: { combatStyleHrids: ['/combat_styles/smash'], attackInterval: 0 },
+                },
+            },
+        },
+    };
+}
+
+describe('monsterMaxHpReader', () => {
+    test('reads max HP the way the sim builds the monster, at the tier asked, and leaves the engine as it was', () => {
+        const marker = { marker: true };
+        setGameData(marker);
+        const read = monsterMaxHpReader(withMonsters(gameData));
+        // 10 x (10 + stamina): stamina 10 at tier 0; (1 + 0.25) x (10 + 20) = 37.5 at tier 1
+        expect(read(SLIME, 0)).toBe(200);
+        expect(read(SLIME, 1)).toBe(475);
+        expect(read('/monsters/unknown', 0)).toBe(0);
+        expect(getGameData()).toBe(marker);
+        setGameData(null);
     });
 });
 
@@ -117,6 +189,18 @@ describe('runTriggerOptimization', () => {
             playerIndex: 0,
         });
         expect(result.noTunables).toBe(true);
+        expect(sims.calls).toHaveLength(0);
+    });
+
+    test('an empty scope reports nothing to tune and runs no sims', async () => {
+        const result = await runTriggerOptimization({
+            ...base,
+            playerDTOs: [dto('player1')],
+            playerIndex: 0,
+            include: 'consumables',
+        });
+        expect(result.noTunables).toBe(true);
+        expect(result.include).toBe('consumables');
         expect(sims.calls).toHaveLength(0);
     });
 
@@ -146,6 +230,39 @@ describe('runTriggerOptimization', () => {
         // ...and the many streams (screen, each selection, each confirmation, the final) never reuse one
         expect(valuesBySeed.size).toBeGreaterThan(16);
         expect(sims.calls.every((c) => Number.isInteger(c.seed))).toBe(true);
+    });
+
+    test('a confirmation that looks more than once adds new seeds rather than re-running old ones', async () => {
+        // per-run luck, so confirmations do not all settle at their first look
+        sims.respond = (params) => {
+            const result = resultFor(params);
+            const value = params.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
+            const luck = 60 * Math.sin(params.seed * 0.001 + value) * params.hours;
+            result.experienceGained.player1.magic += luck;
+            return result;
+        };
+        await runTriggerOptimization({ ...base, playerDTOs: [dto('player1')], playerIndex: 0 });
+        const seen = new Set();
+        for (const c of sims.calls) {
+            const value = c.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
+            const id = `${c.seed}|${value}|${c.hours}`;
+            expect(seen.has(id), id).toBe(false);
+            seen.add(id);
+        }
+    });
+
+    test("an enemy-HP gate is tried up to the zone's largest monster HP at the chosen tier", async () => {
+        await runTriggerOptimization({
+            ...base,
+            gameData: withMonsters(gameData),
+            zoneHrid: SWAMP,
+            difficultyTier: 1,
+            playerDTOs: [dto('player1')],
+            playerIndex: 0,
+        });
+        const values = sims.calls.map((c) => c.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1);
+        // a targeted-enemy row reads one slime: 475 HP at tier 1, not six seconds of the party's 100 DPS
+        expect(Math.max(...values)).toBe(475);
     });
 
     test('whole-party scope tunes every member and judges the party total', async () => {
@@ -192,6 +309,19 @@ describe('runTriggerOptimization', () => {
         expect(strict.changes).toEqual([]);
     });
 
+    test('the objective reaches the search and is reported back; an unknown one is balanced', async () => {
+        const dtos = [dto('player1')];
+        expect((await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0 })).objective).toBe(
+            'balanced'
+        );
+        const xp = await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0, objective: 'xp' });
+        expect(xp.objective).toBe('xp');
+        // the fake world moves only XP: about 30% at the optimum, so far more points than under the balanced average
+        expect(xp.changes[0].deltaScore).toBeGreaterThan(20);
+        const odd = await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0, objective: 'fame' });
+        expect(odd.objective).toBe('balanced');
+    });
+
     test('a failing sim stops the queue and surfaces the error', async () => {
         let started = 0;
         sims.respond = () => {
@@ -203,9 +333,5 @@ describe('runTriggerOptimization', () => {
         );
         // the baseline batch is the first to run; nothing past it is started once one has failed
         expect(started).toBeLessThanOrEqual(4);
-    });
-
-    test('the setting key matches', () => {
-        expect(TRIGGER_OPTIMIZER_SETTING).toBe('combatSim_triggerOptimizer');
     });
 });

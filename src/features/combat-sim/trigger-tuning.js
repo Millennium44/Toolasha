@@ -17,9 +17,6 @@
  * show-only, plus values written into the sim's own editor and text to copy.
  */
 
-/** Setting that gates the "Triggers" chip on the Upgrade tab */
-export const TRIGGER_OPTIMIZER_SETTING = 'combatSim_triggerOptimizer';
-
 /** Most rows the sim editor lets a trigger list hold */
 export const MAX_TRIGGERS = 4;
 
@@ -80,7 +77,10 @@ export const CONFIRM_SEEDS_MIN = 8;
  */
 export const SCREEN_Z = 2;
 
-/** Enemy-HP thresholds are tried from 0 up to this many seconds of party damage */
+/**
+ * Enemy-HP thresholds are tried from 0 up to this many seconds of party damage, when the zone's
+ * monsters' HP cannot be read (see `zoneEnemyHp`, which is the normal source)
+ */
 export const ENEMY_HP_DPS_SPAN = 6;
 
 /** Points in the coarse grid of an absolute threshold */
@@ -216,6 +216,15 @@ function humanize(hrid) {
         .replace(/_/g, ' ');
 }
 
+/** What the Triggers chip may tune: ability gates, food and drink thresholds, or both */
+export const TUNABLE_SCOPES = ['both', 'abilities', 'consumables'];
+export const DEFAULT_TUNABLE_SCOPE = 'both';
+const TUNABLE_SCOPE_SLOTS = {
+    both: [ABILITY_SLOT, 'food', 'drinks'],
+    abilities: [ABILITY_SLOT],
+    consumables: ['food', 'drinks'],
+};
+
 /**
  * Every tunable trigger row among the chosen players' abilities, food and drinks.
  * A slot with no custom triggers contributes the game's default rows, so an
@@ -227,14 +236,17 @@ function humanize(hrid) {
  * @param {Array<number>} params.playerIndices - Which players to tune
  * @param {Object} params.gameData - Game data payload
  * @param {Object} [params.playerNames] - hrid → display name
+ * @param {string} [params.include] - 'both' (default), 'abilities' or 'consumables' (food and drinks);
+ *   anything else counts as 'both'
  * @returns {Array<Object>} Tunables, in player / slot / row order
  */
-export function collectTunables({ playerDTOs, playerIndices, gameData, playerNames = {} }) {
+export function collectTunables({ playerDTOs, playerIndices, gameData, playerNames = {}, include = 'both' }) {
+    const slotTypes = TUNABLE_SCOPE_SLOTS[include] || TUNABLE_SCOPE_SLOTS.both;
     const tunables = [];
     for (const playerIndex of playerIndices) {
         const dto = playerDTOs[playerIndex];
         if (!dto) continue;
-        for (const slotType of [ABILITY_SLOT, 'food', 'drinks']) {
+        for (const slotType of slotTypes) {
             const slots = dto[slotType] || [];
             slots.forEach((slot, slotIndex) => {
                 if (!slot?.hrid) return;
@@ -330,19 +342,27 @@ function uniqueSorted(values) {
 
 /**
  * The largest threshold worth trying for a kind.
+ *
+ * An enemy-HP threshold's range is the HP the zone's monsters actually have: a
+ * `targeted_enemy` current/missing HP row reads one monster, so it runs up to the
+ * largest single monster's max HP; an `all_enemies` row reads the sum over every
+ * living enemy, so it runs up to the largest group that can be up at once
+ * (`zoneEnemyHp`). Without monster data it falls back to about six seconds of
+ * party damage, times the zone's largest spawn for `all_enemies`.
  * @param {Object} tunable - A tunable
- * @param {Object} ctx - { partyDps, pools: { [playerHrid]: { hp, mp } } }
+ * @param {Object} ctx - { partyDps, pools: { [playerHrid]: { hp, mp } }, maxEnemies, enemyHp: { single, total } }
  * @returns {number}
  */
 export function gridMaximum(tunable, ctx) {
     const fallback = Math.max(1000, tunable.original * 2);
     if (tunable.kind === KIND_ENEMY_PCT) return 100;
     if (tunable.kind === KIND_ENEMY_HP) {
+        const allEnemies = tunable.dependencyHrid === DEP_ALL_ENEMIES;
+        const fromMonsters = Number(allEnemies ? ctx?.enemyHp?.total : ctx?.enemyHp?.single);
+        if (fromMonsters > 0) return Math.round(fromMonsters);
         const dps = Number(ctx?.partyDps);
-        // `all_enemies` current/missing HP is the sum over every living enemy, so the range scales with
-        // how many can be up at once (the zone's largest spawn). A targeted-enemy row reads one enemy.
-        // Limit: the count is the zone's maximum, not the average, so the top of the grid can overshoot.
-        const count = tunable.dependencyHrid === DEP_ALL_ENEMIES ? Math.max(1, Number(ctx?.maxEnemies) || 1) : 1;
+        // Fallback. The count is the zone's maximum spawn, not the average, so the top can overshoot.
+        const count = allEnemies ? Math.max(1, Number(ctx?.maxEnemies) || 1) : 1;
         return dps > 0 ? Math.round(dps * ENEMY_HP_DPS_SPAN * count) : fallback;
     }
     const pool = ctx?.pools?.[tunable.playerHrid]?.[tunable.kind === KIND_HP_POOL ? 'hp' : 'mp'];
@@ -366,9 +386,10 @@ export function coarseStep(tunable, ctx) {
  * The coarse candidate values for a tunable, always including the current value
  * so the grid can be read against it.
  *
- * Enemy-HP thresholds run from 0 ("no gate") up to about six seconds of party
- * damage in twelve even steps; percentages run 0–100 in tens; food thresholds
- * run in 10% steps of the relevant pool. Everything is an integer and clamped.
+ * Enemy-HP thresholds run from 0 ("no gate") up to the zone's largest monster
+ * HP (or largest group, for `all_enemies`) in twelve even steps; percentages run
+ * 0–100 in tens; food thresholds run in 10% steps of the relevant pool.
+ * Everything is an integer and clamped.
  * @param {Object} tunable - A tunable
  * @param {Object} ctx - { partyDps, pools }
  * @returns {Array<number>} Ascending, unique
@@ -421,6 +442,133 @@ export function zoneMaxEnemies(gameData, zoneHrid) {
     return Math.max(1, ...counts.map((c) => Number(c) || 0));
 }
 
+/**
+ * The tunables whose threshold could not have changed the baseline runs, so screening them would only
+ * spend sims measuring noise.
+ *
+ * The rule rests on how the engine reads a trigger. A threshold enters a run only when its slot's rows
+ * are read (`Trigger.isActive`), and the rows are read only when the slot is ready: off cooldown, the
+ * player alive and not stunned (or silenced, for an ability), and — for an ability — no earlier ability
+ * slot already used that turn. The engine counts those reads per slot (`SimResult.triggerChecks`); casts
+ * and uses are added on top. A slot with no reads on any baseline seed ran exactly as it would have with
+ * any other threshold, so its rows are skipped. A gate that read false every time has reads and is kept —
+ * it blocked every cast, and that is precisely what tuning it can change. So is an ability that passed
+ * its gate but could never afford the mana: its rows were read.
+ *
+ * One exception keeps an unread ability: when an earlier ability slot of the same player is being tuned.
+ * Ability slots are tried in order and the first that fires ends the turn, so a later slot is reached
+ * only when an earlier one declines; changing the earlier slot's threshold can bring the later one into
+ * play. Food and drinks are each read on their own, with no such ordering.
+ *
+ * The evidence is the baseline seeds, not every seed there could be; it is a long run of the actual setup.
+ * When the samples carry no read counts (an engine that does not record them), nothing is skipped.
+ * @param {Array<Object>} tunables - From `collectTunables`
+ * @param {Array<Object>} samples - Baseline samples, each with `triggerUse: { [playerHrid]: { [hrid]: n } }`
+ * @returns {Array<Object>} The tunables to skip, in input order
+ */
+export function unusedTunables(tunables, samples) {
+    if (!samples?.length || samples.some((sample) => !sample?.triggerUse)) return [];
+    const reached = (t) => samples.some((sample) => (Number(sample.triggerUse[t.playerHrid]?.[t.itemHrid]) || 0) > 0);
+    const skip = new Set();
+    for (const t of tunables) {
+        if (t.slotType !== ABILITY_SLOT && !reached(t)) skip.add(t.key);
+    }
+    // Abilities in slot order per player, so an earlier slot's verdict is known before a later one's
+    const abilities = tunables
+        .filter((t) => t.slotType === ABILITY_SLOT)
+        .sort((a, b) => a.playerIndex - b.playerIndex || a.slotIndex - b.slotIndex);
+    const tunedSlots = new Map();
+    for (const t of abilities) {
+        const earlierTuned = (tunedSlots.get(t.playerHrid) || []).some((slotIndex) => slotIndex < t.slotIndex);
+        if (!reached(t) && !earlierTuned) {
+            skip.add(t.key);
+            continue;
+        }
+        if (!tunedSlots.has(t.playerHrid)) tunedSlots.set(t.playerHrid, []);
+        tunedSlots.get(t.playerHrid).push(t.slotIndex);
+    }
+    return tunables.filter((t) => skip.has(t.key));
+}
+
+/** Above this many spawn entries or picks, the largest random group is bounded rather than searched */
+const MAX_GROUP_SEARCH = { spawns: 12, picks: 10 };
+
+/**
+ * The largest total max HP one random spawn table can put up at once: up to
+ * `maxSpawnCount` draws (repeats allowed) whose summed strength stays within
+ * `maxTotalStrength`, the same limits `Zone.getRandomEncounter` applies.
+ * @param {Object} info - A randomSpawnInfo: { spawns, maxSpawnCount, maxTotalStrength }
+ * @param {Function} hpOf - (spawn) => max HP, 0 when unknown
+ * @returns {number}
+ */
+function largestRandomGroup(info, hpOf) {
+    const spawns = (info?.spawns || [])
+        .map((spawn) => ({ hp: hpOf(spawn), strength: Number(spawn.strength) || 0 }))
+        .filter((spawn) => spawn.hp > 0);
+    const picks = Math.max(0, Number(info?.maxSpawnCount) || 0);
+    if (spawns.length === 0 || picks === 0) return 0;
+    const cap = Number(info?.maxTotalStrength);
+    const capped = Number.isFinite(cap) && cap > 0;
+    if (!capped || spawns.length > MAX_GROUP_SEARCH.spawns || picks > MAX_GROUP_SEARCH.picks) {
+        return picks * Math.max(...spawns.map((spawn) => spawn.hp));
+    }
+    let best = 0;
+    const search = (from, left, strength, hp) => {
+        best = Math.max(best, hp);
+        if (left === 0) return;
+        for (let i = from; i < spawns.length; i++) {
+            const next = strength + spawns[i].strength;
+            if (next <= cap) search(i, left - 1, next, hp + spawns[i].hp);
+        }
+    };
+    search(0, picks, 0, 0);
+    return best;
+}
+
+/**
+ * The HP an enemy-HP trigger can read in a zone at a tier, from its spawn tables:
+ * the largest single monster's max HP, and the largest total max HP that can be
+ * up at once (one random draw, a boss wave, a dungeon's random tables or fixed
+ * waves). Monsters a fight adds later (summons, promotions) are not counted.
+ * @param {Object} gameData - Game data payload
+ * @param {string} zoneHrid - Zone action hrid
+ * @param {number} tier - The zone's difficulty tier
+ * @param {Function} monsterMaxHp - (monsterHrid, tier) => max HP; the sim's own monster stats
+ * @returns {{single: number, total: number}|null} null when no monster's HP could be read
+ */
+export function zoneEnemyHp(gameData, zoneHrid, tier, monsterMaxHp) {
+    const info = gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+    if (!info || typeof monsterMaxHp !== 'function') return null;
+    const memo = new Map();
+    const hpOf = (spawn) => {
+        const hrid = spawn?.combatMonsterHrid;
+        if (!hrid) return 0;
+        const at = (Number(spawn.difficultyTier) || 0) + (Number(tier) || 0);
+        const id = `${hrid}|${at}`;
+        if (!memo.has(id)) {
+            let hp = 0;
+            try {
+                hp = Number(monsterMaxHp(hrid, at)) || 0;
+            } catch (error) {
+                console.error('[TriggerTuning] Monster HP read failed:', error);
+            }
+            memo.set(id, hp > 0 ? hp : 0);
+        }
+        return memo.get(id);
+    };
+    const groupSum = (wave) => (wave || []).reduce((sum, spawn) => sum + hpOf(spawn), 0);
+
+    const totals = [largestRandomGroup(info.fightInfo?.randomSpawnInfo, hpOf), groupSum(info.fightInfo?.bossSpawns)];
+    for (const table of Object.values(info.dungeonInfo?.randomSpawnInfoMap || {})) {
+        totals.push(largestRandomGroup(table, hpOf));
+    }
+    for (const wave of Object.values(info.dungeonInfo?.fixedSpawnsMap || {})) totals.push(groupSum(wave));
+
+    const single = Math.max(0, ...memo.values());
+    const total = Math.max(0, ...totals);
+    return single > 0 ? { single, total: Math.max(total, single) } : null;
+}
+
 // ─── Objective ──────────────────────────────────────────────────────────────
 
 /**
@@ -466,17 +614,47 @@ const pct = (value, base) => {
  * @returns {number} Score points
  */
 export function balancedScore(metrics, base) {
-    const deathsTerm = Math.max(
-        -100,
-        Math.min(100, -DEATH_POINTS_PER_PER_HOUR * ((metrics.deaths || 0) - (base.deaths || 0)))
-    );
     const terms = [
         pct(metrics.xp, base.xp),
         pct(metrics.profit, base.profit),
         pct(metrics.dps, base.dps),
         pct(metrics.encounters, base.encounters),
     ];
-    return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm;
+    return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm(metrics, base);
+}
+
+/**
+ * Score points lost to extra deaths: `DEATH_POINTS_PER_PER_HOUR` per extra death
+ * per hour, clamped to ±100 like the percentage terms.
+ * @param {Object} metrics - From `scopeMetrics`
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @returns {number}
+ */
+function deathsTerm(metrics, base) {
+    return Math.max(-100, Math.min(100, -DEATH_POINTS_PER_PER_HOUR * ((metrics.deaths || 0) - (base.deaths || 0))));
+}
+
+/** What the search optimizes: the balanced score, or one rate alone */
+export const OBJECTIVES = [
+    { key: 'balanced', label: 'Balanced' },
+    { key: 'xp', label: 'XP/h' },
+    { key: 'profit', label: 'Profit/h' },
+];
+export const DEFAULT_OBJECTIVE = 'balanced';
+
+/**
+ * The score the search maximizes. Balanced is `balancedScore`; XP/h and Profit/h
+ * are the percentage change of that one rate, less the same deaths term, so the
+ * minimum gain and the confirmation work in that rate's percent points.
+ * @param {Object} metrics - From `scopeMetrics`
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @param {string} [objective] - An OBJECTIVES key; anything else is balanced
+ * @returns {number} Score points
+ */
+export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE) {
+    if (objective === 'xp') return pct(metrics.xp, base.xp) + deathsTerm(metrics, base);
+    if (objective === 'profit') return pct(metrics.profit, base.profit) + deathsTerm(metrics, base);
+    return balancedScore(metrics, base);
 }
 
 // ─── Statistics ─────────────────────────────────────────────────────────────
@@ -533,6 +711,165 @@ export function tCritical(df) {
 export function accepts(diff, minGain = MIN_GAIN) {
     if (!Number.isFinite(diff.se) || diff.mean < minGain || !(diff.mean > 0)) return false;
     return diff.mean > tCritical((diff.n ?? 0) - 1) * diff.se;
+}
+
+// ─── Sequential confirmation ────────────────────────────────────────────────
+
+/**
+ * Where a confirmation looks at its data, as fractions of its full seed count.
+ * Each look adds seeds to the ones already run; none is ever re-run.
+ */
+export const CONFIRM_LOOK_FRACTIONS = [0.5, 0.75, 1];
+
+/**
+ * The confirmation's one-sided false-acceptance budget: the chance a change that
+ * does nothing gets accepted. The fixed-length test it replaced (two-sided 95% t)
+ * spent exactly this.
+ */
+export const CONFIRM_ALPHA = 0.025;
+
+/**
+ * Spent on stopping early for success at each interim look (a Haybittle-Peto
+ * boundary); the final look gets what is left, so the budgets add up to
+ * `CONFIRM_ALPHA` and the whole sequence keeps it (a union bound: no
+ * correlation between looks is assumed). Stopping early for futility only ever
+ * removes chances to accept, so it spends nothing.
+ */
+export const INTERIM_ALPHA = 0.001;
+
+/**
+ * The seed counts a confirmation of `total` seeds looks at.
+ * @param {number} total - Full seed count
+ * @returns {Array<number>} Ascending, unique, each at least 3 (a t test needs 2 df to say anything), ending at `total`
+ */
+export function confirmLooks(total) {
+    const n = Math.max(1, Math.round(total));
+    const looks = CONFIRM_LOOK_FRACTIONS.map((f) => Math.min(n, Math.max(3, Math.ceil(n * f))));
+    return [...new Set([...looks, n])].sort((a, b) => a - b);
+}
+
+/** Log gamma (Lanczos), for the incomplete beta below */
+function lnGamma(x) {
+    const g = [
+        676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905,
+        -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+    if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lnGamma(1 - x);
+    const z = x - 1;
+    let a = 0.99999999999980993;
+    const t = z + 7.5;
+    for (let i = 0; i < 8; i++) a += g[i] / (z + i + 1);
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+/** Continued fraction for the regularized incomplete beta (modified Lentz) */
+function betaContinuedFraction(a, b, x) {
+    const tiny = 1e-300;
+    let c = 1;
+    let d = 1 - ((a + b) * x) / (a + 1);
+    if (Math.abs(d) < tiny) d = tiny;
+    d = 1 / d;
+    let h = d;
+    for (let m = 1; m <= 300; m++) {
+        const m2 = 2 * m;
+        let aa = (m * (b - m) * x) / ((a + m2 - 1) * (a + m2));
+        d = 1 + aa * d;
+        if (Math.abs(d) < tiny) d = tiny;
+        c = 1 + aa / c;
+        if (Math.abs(c) < tiny) c = tiny;
+        d = 1 / d;
+        h *= d * c;
+        aa = (-(a + m) * (a + b + m) * x) / ((a + m2) * (a + m2 + 1));
+        d = 1 + aa * d;
+        if (Math.abs(d) < tiny) d = tiny;
+        c = 1 + aa / c;
+        if (Math.abs(c) < tiny) c = tiny;
+        d = 1 / d;
+        const delta = d * c;
+        h *= delta;
+        if (Math.abs(delta - 1) < 1e-14) break;
+    }
+    return h;
+}
+
+/** Regularized incomplete beta I_x(a, b) */
+function betaIncomplete(a, b, x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const front = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+    if (x < (a + 1) / (a + b + 2)) return (front * betaContinuedFraction(a, b, x)) / a;
+    return 1 - (front * betaContinuedFraction(b, a, 1 - x)) / b;
+}
+
+/**
+ * Student t cumulative distribution.
+ * @param {number} t
+ * @param {number} df - Degrees of freedom
+ * @returns {number} P(T <= t)
+ */
+export function tCdf(t, df) {
+    const tail = 0.5 * betaIncomplete(df / 2, 0.5, df / (df + t * t));
+    return t > 0 ? 1 - tail : tail;
+}
+
+/**
+ * Student t quantile, by bisection on `tCdf`.
+ * @param {number} p - Probability in (0, 1)
+ * @param {number} df - Degrees of freedom
+ * @returns {number} t with P(T <= t) = p
+ */
+export function tQuantile(p, df) {
+    if (!(df >= 1) || !(p > 0 && p < 1)) return NaN;
+    if (p < 0.5) return -tQuantile(1 - p, df);
+    const id = `${p}|${df}`;
+    if (!T_QUANTILES.has(id)) T_QUANTILES.set(id, solveTQuantile(p, df));
+    return T_QUANTILES.get(id);
+}
+
+/** Memo for tQuantile: the confirmation asks the same few (p, df) pairs over and over */
+const T_QUANTILES = new Map();
+
+function solveTQuantile(p, df) {
+    let lo = 0;
+    let hi = 1;
+    while (tCdf(hi, df) < p && hi < 1e7) hi *= 2;
+    for (let i = 0; i < 200 && hi - lo > 1e-10 * hi; i++) {
+        const mid = (lo + hi) / 2;
+        if (tCdf(mid, df) < p) lo = mid;
+        else hi = mid;
+    }
+    return (lo + hi) / 2;
+}
+
+/**
+ * One look of the sequential confirmation.
+ *
+ * - Interim look, success: the gain exceeds `minGain` by the t bound at
+ *   one-sided `INTERIM_ALPHA`, a boundary so strict only an unmistakable gain
+ *   crosses it. Testing against `minGain` rather than 0 keeps the early stop
+ *   from accepting a gain that only looked big enough on its first few seeds.
+ * - Interim look, futility: even the upper 95% bound of the gain is below
+ *   `minGain`, so the remaining seeds could not plausibly rescue it.
+ * - Final look: the old fixed-length rule with the budget the interim looks left
+ *   (`CONFIRM_ALPHA - interims x INTERIM_ALPHA`, one-sided), and `minGain`.
+ * @param {{mean: number, se: number, n: number}} diff - Paired difference so far
+ * @param {number} look - 0-based look index
+ * @param {number} lookCount - How many looks the confirmation has
+ * @param {number} [minGain] - Smallest gain worth having
+ * @returns {'accept'|'reject'|'continue'}
+ */
+export function sequentialVerdict(diff, look, lookCount, minGain = MIN_GAIN) {
+    const final = look >= lookCount - 1;
+    const df = (diff.n ?? 0) - 1;
+    if (!Number.isFinite(diff.se) || !(df >= 1)) return final ? 'reject' : 'continue';
+    const worthIt = diff.mean >= minGain && diff.mean > 0;
+    if (final) {
+        const alpha = CONFIRM_ALPHA - INTERIM_ALPHA * (lookCount - 1);
+        return worthIt && diff.mean > tQuantile(1 - alpha, df) * diff.se ? 'accept' : 'reject';
+    }
+    if (worthIt && diff.mean - minGain > tQuantile(1 - INTERIM_ALPHA, df) * diff.se) return 'accept';
+    if (diff.mean + tCritical(df) * diff.se < minGain) return 'reject';
+    return 'continue';
 }
 
 // ─── Successive halving ─────────────────────────────────────────────────────
@@ -640,14 +977,16 @@ function metricsMean(samples, hrids) {
  * the luck that made it win, so:
  *
  * 1. Baseline on the original setup: scope figures, party DPS, HP/MP pools.
+ *    Rows whose slot never came into play are set aside (`unusedTunables`).
  * 2. Importance screen: each tunable across its coarse grid alone, on its own
  *    seeds; ordered by how far its scores spread and dropped unless some value
  *    clearly beats the current one.
  * 3. Coordinate descent, most impactful first, keeping earlier winners. Each
  *    step (a coarse halving, a fine halving, then a second fine pass) picks a
  *    winner on its own seeds, then runs winner against current on fresh seeds;
- *    only that second measurement can accept it (t test at the real number of
- *    seeds, and at least `MIN_GAIN` points).
+ *    only that second measurement can accept it (a sequential t test that may
+ *    stop early either way, within a 2.5% one-sided error budget, and at least
+ *    `MIN_GAIN` points).
  * 4. A fresh-seed head-to-head of the original setup against all the winners
  *    gates the whole result: if it is not significantly better, nothing is
  *    recommended.
@@ -657,12 +996,15 @@ function metricsMean(samples, hrids) {
  * @param {Object} params
  * @param {Array<Object>} params.tunables - From `collectTunables`
  * @param {Array<string>} params.scopeHrids - Players whose figures are judged
- * @param {Function} params.measure - `(overrides, hoursPerSeed, stream, count) => Promise<Array<Sample>|null>`;
+ * @param {Function} params.measure - `(overrides, hoursPerSeed, stream, count, offset) => Promise<Array<Sample>|null>`;
  *   `stream` names a set of seeds (equal names share seeds, different names never do), `count` is how
- *   many seeds. Samples are `{ perPlayer, encounters, pools }`; null means stopped.
+ *   many seeds, `offset` (default 0) the index of the first, so a sequential look can add seeds 4..5
+ *   to seeds 0..3 already run. Samples are `{ perPlayer, encounters, pools, triggerUse? }`; null means stopped.
  * @param {Object} params.precision - An entry of PRECISIONS
- * @param {number} [params.maxEnemies] - Most enemies up at once in the zone
+ * @param {number} [params.maxEnemies] - Most enemies up at once in the zone (the fallback enemy-HP range)
+ * @param {{single: number, total: number}|null} [params.enemyHp] - From `zoneEnemyHp`: the enemy-HP range
  * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
+ * @param {string} [params.objective] - What the score is: 'balanced' (default), 'xp' or 'profit' (`objectiveScore`)
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
  * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline
@@ -673,6 +1015,8 @@ export async function runTriggerSearch({
     measure,
     precision,
     maxEnemies = 1,
+    enemyHp = null,
+    objective = DEFAULT_OBJECTIVE,
     minGain = MIN_GAIN,
     onProgress,
     aborted,
@@ -684,8 +1028,8 @@ export async function runTriggerSearch({
     const progress = (description) => onProgress?.({ description });
     const stopped = () => Boolean(aborted?.());
 
-    const measureWith = (extra, hours, stream, count = precision.seeds) =>
-        measure({ ...overrides, ...extra }, hours, stream, count);
+    const measureWith = (extra, hours, stream, count = precision.seeds, offset = 0) =>
+        measure({ ...overrides, ...extra }, hours, stream, count, offset);
 
     progress('Triggers: measuring the baseline');
     const baselineSamples = await measureWith({}, hoursPerSeed * ROUND_GROWTH, 'baseline');
@@ -701,14 +1045,19 @@ export async function runTriggerSearch({
             encounters: mean(ms.map((m) => m.encounters)),
         };
     })();
-    const score = (sample) => balancedScore(scopeMetrics(sample, scopeHrids), baseScope);
+    const score = (sample) => objectiveScore(scopeMetrics(sample, scopeHrids), baseScope, objective);
 
     const partyDps = mean(
         baselineSamples.map((s) => Object.values(s.perPlayer || {}).reduce((sum, p) => sum + (p.dps || 0), 0))
     );
     const pools = {};
     for (const [hrid, p] of Object.entries(baselineSamples[0]?.pools || {})) pools[hrid] = p;
-    const ctx = { partyDps, pools, maxEnemies };
+    const ctx = { partyDps, pools, maxEnemies, enemyHp };
+
+    // 1b. Drop rows the baseline shows cannot matter (never read); they are reported, not tuned
+    const unused = unusedTunables(tunables, baselineSamples);
+    const unusedKeys = new Set(unused.map((t) => t.key));
+    const live = tunables.filter((t) => !unusedKeys.has(t.key));
 
     const state = new Map(tunables.map((t) => [t.key, { tunable: t, current: t.original }]));
     const currentOf = (t) => state.get(t.key).current;
@@ -716,7 +1065,7 @@ export async function runTriggerSearch({
 
     // 2. Importance screen, each trigger on its own seeds
     const screen = [];
-    for (const t of tunables) {
+    for (const t of live) {
         if (stopped()) break;
         const grid = coarseGrid(t, ctx).filter((v) => v !== t.original);
         progress(`Triggers: screening ${t.itemName}`);
@@ -773,17 +1122,31 @@ export async function runTriggerSearch({
         if (selection.winner === before || selection.diff.mean < minGain / 2) return false;
 
         progress(`Triggers: ${t.itemName} (confirming)`);
+        // Sequential: look after half, three quarters and all of the seeds, stopping as soon as the answer
+        // is clear either way (see sequentialVerdict). Each look only adds seeds.
         const stream = `confirm:${step}`;
-        const [referenceSamples, winnerSamples] = await Promise.all([
-            measureWith({ [t.key]: before }, confirmHours, stream, confirmSeeds),
-            measureWith({ [t.key]: selection.winner }, confirmHours, stream, confirmSeeds),
-        ]);
-        if (!referenceSamples || !winnerSamples || stopped()) return false;
-        const diff = pairedDiff(
-            winnerSamples.map((s) => score(s)),
-            referenceSamples.map((s) => score(s))
-        );
-        if (!accepts(diff, minGain)) return false;
+        const looks = confirmLooks(confirmSeeds);
+        let referenceSamples = [];
+        let winnerSamples = [];
+        let diff = null;
+        let verdict = 'continue';
+        for (let look = 0; look < looks.length && verdict === 'continue'; look++) {
+            const from = look > 0 ? looks[look - 1] : 0;
+            const count = looks[look] - from;
+            const [moreReference, moreWinner] = await Promise.all([
+                measureWith({ [t.key]: before }, confirmHours, stream, count, from),
+                measureWith({ [t.key]: selection.winner }, confirmHours, stream, count, from),
+            ]);
+            if (!moreReference || !moreWinner || stopped()) return false;
+            referenceSamples = referenceSamples.concat(moreReference);
+            winnerSamples = winnerSamples.concat(moreWinner);
+            diff = pairedDiff(
+                winnerSamples.map((s) => score(s)),
+                referenceSamples.map((s) => score(s))
+            );
+            verdict = sequentialVerdict(diff, look, looks.length, minGain);
+        }
+        if (verdict !== 'accept') return false;
 
         state.get(t.key).current = selection.winner;
         overrides[t.key] = selection.winner;
@@ -862,12 +1225,14 @@ export async function runTriggerSearch({
     const kept = new Set(changes.map((c) => c.key));
     return {
         stopped: stopped(),
+        objective,
         baseline: baseScope,
         partyDps,
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),
         changes,
         rejected,
-        unchanged: tunables.filter((t) => !kept.has(t.key)),
+        unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key)),
+        unused,
         combined,
         reliable,
     };

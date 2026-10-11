@@ -439,6 +439,17 @@ function mergeSimResults(results) {
             }
         }
 
+        // Trigger reads (per player → per ability or item)
+        if (r.triggerChecks) {
+            if (!merged.triggerChecks) merged.triggerChecks = {};
+            for (const [playerHrid, slots] of Object.entries(r.triggerChecks)) {
+                if (!merged.triggerChecks[playerHrid]) merged.triggerChecks[playerHrid] = {};
+                for (const [hrid, count] of Object.entries(slots)) {
+                    merged.triggerChecks[playerHrid][hrid] = (merged.triggerChecks[playerHrid][hrid] || 0) + count;
+                }
+            }
+        }
+
         // Hitpoints gained/spent (per unit → per source)
         for (const field of ['hitpointsGained', 'manapointsGained', 'hitpointsSpent']) {
             if (r[field]) {

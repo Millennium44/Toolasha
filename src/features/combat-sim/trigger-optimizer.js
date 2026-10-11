@@ -16,16 +16,21 @@
 import config from '../../core/config.js';
 import { calculateSimRevenue } from './combat-sim-adapter.js';
 import { runSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { getGameData, setGameData } from './engine/game-data.js';
+import Monster from './engine/monster.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import {
     PRECISIONS,
     DEFAULT_PRECISION,
+    DEFAULT_OBJECTIVE,
+    OBJECTIVES,
     applyTriggerValues,
     collectTunables,
     estimateTriggerSims,
     runTriggerSearch,
     zoneMaxEnemies,
+    zoneEnemyHp,
     MIN_GAIN,
 } from './trigger-tuning.js';
 
@@ -70,6 +75,32 @@ function createLimiter(limit) {
 }
 
 /**
+ * A reader of monster max HP at a tier, computed the way the sim builds its
+ * monsters (`Monster.updateCombatDetails`, the engine's tier scaling). The engine
+ * reads game data from a module singleton; it is pointed at this payload only
+ * for the duration of each read and put back after.
+ * @param {Object} gameData - Game data payload
+ * @returns {Function} (monsterHrid, tier) => max HP, 0 when it cannot be built
+ */
+export function monsterMaxHpReader(gameData) {
+    return (hrid, tier) => {
+        if (!gameData?.combatMonsterDetailMap?.[hrid]) return 0;
+        const previous = getGameData();
+        setGameData(gameData);
+        try {
+            const monster = new Monster(hrid, tier);
+            monster.updateCombatDetails();
+            return monster.combatDetails.maxHitpoints || 0;
+        } catch (error) {
+            console.error('[TriggerOptimizer] Monster HP read failed:', error);
+            return 0;
+        } finally {
+            setGameData(previous);
+        }
+    };
+}
+
+/**
  * Reduce one sim result to the figures the objective reads, per player.
  * @param {Object} simResult - Merged SimResult
  * @param {Object} gameData - Game data payload
@@ -98,7 +129,32 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
         const p = simResult.playerPools?.[hrid];
         if (p) pools[hrid] = { hp: p.maxHitpoints || 0, mp: p.maxManapoints || 0 };
     }
-    return { perPlayer, encounters: (simResult.encounters || 0) / simHours, pools };
+    const sample = { perPlayer, encounters: (simResult.encounters || 0) / simHours, pools };
+    // Left out when the engine did not record trigger reads, so nothing is ever skipped on missing data
+    if (simResult.triggerChecks) sample.triggerUse = triggerUseFromResult(simResult, hrids);
+    return sample;
+}
+
+/**
+ * Per player, how much each ability, food and drink came into play: trigger reads plus casts and
+ * uses. Casts and uses are counted on top of the reads only as a belt and braces — a slot with
+ * trigger rows cannot fire without its rows being read.
+ * @param {Object} simResult - Merged SimResult carrying `triggerChecks`
+ * @param {Array<string>} hrids - Players
+ * @returns {Object} hrid → ability/item hrid → count
+ */
+function triggerUseFromResult(simResult, hrids) {
+    const out = {};
+    for (const hrid of hrids) {
+        const use = { ...(simResult.triggerChecks?.[hrid] || {}) };
+        for (const [item, n] of Object.entries(simResult.consumablesUsed?.[hrid] || {})) {
+            use[item] = (use[item] || 0) + (n || 0);
+        }
+        // An ability that was ever cast has an entry here (its mana spent, possibly 0)
+        for (const ability of Object.keys(simResult.manaUsed?.[hrid] || {})) use[ability] = (use[ability] || 0) + 1;
+        out[hrid] = use;
+    }
+    return out;
 }
 
 /**
@@ -115,6 +171,8 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
  * @param {string} [params.precision] - 'quick', 'standard' or 'precise'
  * @param {number} [params.minGain] - Smallest score gain worth offering
  * @param {Object} [params.playerNames] - hrid → display name
+ * @param {string} [params.include] - 'both', 'abilities' or 'consumables': which kinds of row to tune
+ * @param {string} [params.objective] - 'balanced' (default), 'xp' or 'profit': what the score measures
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
  * @returns {Promise<Object|null>} The search result plus `scope`, `precision`, `simCount`, `tunableCount`;
@@ -132,14 +190,19 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         precision: precisionKey = DEFAULT_PRECISION,
         minGain = MIN_GAIN,
         playerNames = {},
+        include = 'both',
+        objective: objectiveKey = DEFAULT_OBJECTIVE,
     } = params;
+    const objective = OBJECTIVES.some((o) => o.key === objectiveKey) ? objectiveKey : DEFAULT_OBJECTIVE;
     const { abortSignal } = options;
     const precision = PRECISIONS[precisionKey] || PRECISIONS[DEFAULT_PRECISION];
     const wholeParty = scope === 'party' && playerDTOs.length > 1;
 
     const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
-    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames });
-    if (tunables.length === 0) return { noTunables: true, scope: wholeParty ? 'party' : 'me', changes: [] };
+    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
+    if (tunables.length === 0) {
+        return { noTunables: true, scope: wholeParty ? 'party' : 'me', include, objective, changes: [] };
+    }
 
     const allHrids = playerDTOs.map((d) => d.hrid);
     const scopeHrids = wholeParty ? allHrids : [playerDTOs[playerIndex].hrid];
@@ -171,10 +234,11 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
      * @param {number} hours - Hours per seed
      * @param {string} stream - Name of the seed set
      * @param {number} count - How many seeds
+     * @param {number} [offset] - Index of the first seed within the stream
      * @returns {Promise<Array<Object>|null>} One sample per seed; null once stopped
      */
-    const measure = (overrides, hours, stream, count) => {
-        const id = `${signature(overrides)}|${hours}|${stream}|${count}`;
+    const measure = (overrides, hours, stream, count, offset = 0) => {
+        const id = `${signature(overrides)}|${hours}|${stream}|${count}|${offset}`;
         if (cache.has(id)) return cache.get(id);
 
         const dtos = applyTriggerValues(playerDTOs, tunables, overrides);
@@ -191,7 +255,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                             difficultyTier,
                             hours,
                             communityBuffs,
-                            seed: deriveSeed(baseSeed, base + k),
+                            seed: deriveSeed(baseSeed, base + offset + k),
                             taskDamageMode: TASK_DAMAGE_OFF,
                         },
                         null,
@@ -224,7 +288,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         measure,
         precision,
         maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
+        enemyHp: zoneEnemyHp(gameData, zoneHrid, difficultyTier, monsterMaxHpReader(gameData)),
         minGain,
+        objective,
         onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
         aborted: stopped,
     });
@@ -233,6 +299,8 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     return {
         ...result,
         scope: wholeParty ? 'party' : 'me',
+        include,
+        objective,
         precision: precision.key,
         minGain,
         simCount,

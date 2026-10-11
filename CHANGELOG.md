@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trigger optimizer: a standard option, faster and more flexible
+
+- The trigger optimizer no longer needs its own setting: Triggers is always among the combat sim's Upgrade options, unchecked until you tick it, like Food. It can tune abilities only, food and drinks only, or both. It also skips triggers that never came into play, confirms changes with an early-stopping test, sizes enemy-HP gates from the zone's real monsters, can optimize for XP/h or profit/h instead of the balanced score, and shows the last result again when nothing changed.
+
 ### Agent rule: new features may default on
 
 - Contributor rules no longer force every new feature off by default: a feature may start on, with off reserved for intrusive, heavy or experimental ones, since players who want new switches held back already have "New settings start turned off".

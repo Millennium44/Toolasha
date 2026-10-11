@@ -171,6 +171,8 @@ class Ability {
         }
 
         this.lastUsed = Number.MIN_SAFE_INTEGER;
+        // How many times this slot's trigger rows were read (it was ready and not stunned); see SimResult.setTriggerChecks
+        this.triggerChecks = 0;
     }
 
     static createFromDTO(dto) {
@@ -203,6 +205,7 @@ class Ability {
             return true;
         }
 
+        this.triggerChecks++;
         let shouldTrigger = true;
         for (const trigger of this.triggers) {
             if (!trigger.isActive(source, target, friendlies, enemies, currentTime)) {

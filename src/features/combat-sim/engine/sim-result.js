@@ -35,6 +35,8 @@ class SimResult {
         this.manaCastsRefused = {};
         this.manaRefusalNextAt = {};
         this.manaUsed = {};
+        // unitHrid → ability/item hrid → how often its trigger rows were read; see setTriggerChecks
+        this.triggerChecks = {};
         this.timeSpentAlive = [];
         // Per dungeon wave: how long after the wave spawned the party first
         // landed damage on it — { name: '#k', total, count } in simulation
@@ -333,6 +335,23 @@ class SimResult {
         for (const [key, value] of unit.abilityManaCosts.entries()) {
             this.manaUsed[unit.hrid][key] = value;
         }
+    }
+
+    /**
+     * Record how often each of a unit's abilities, foods and drinks had its trigger rows read: the slot
+     * was ready (off cooldown, not stunned or silenced) and reached its turn, so `Trigger.isActive` ran.
+     * A slot with no rows, or one never reached, reads 0. A trigger row's threshold enters a run only
+     * through those reads, so a slot at 0 ran exactly as it would have with any other threshold —
+     * the trigger optimizer uses that to skip rows that cannot change the result.
+     * @param {Object} unit - A player at the end of the run
+     */
+    setTriggerChecks(unit) {
+        const out = {};
+        for (const slot of [...(unit.abilities || []), ...(unit.food || []), ...(unit.drinks || [])]) {
+            if (!slot) continue;
+            out[slot.hrid] = (out[slot.hrid] || 0) + (slot.triggerChecks || 0);
+        }
+        this.triggerChecks[unit.hrid] = out;
     }
 
     addHitpointsSpent(unit, source, amount) {

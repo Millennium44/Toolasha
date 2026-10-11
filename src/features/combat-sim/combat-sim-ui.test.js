@@ -133,6 +133,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./trigger-optimizer.js', () => ({
+    monsterMaxHpReader: () => () => 0,
     runTriggerOptimization: async (params) => {
         mocks.triggerRuns.push(params);
         if (mocks.triggerFail) throw mocks.triggerFail;
@@ -598,7 +599,6 @@ const {
     columnMenuLabel,
     upgradeRowKey,
     UPGRADE_PLAN_METRICS,
-    visibleUpgradeModes,
     gearFingerprint,
     buildAllZonesSnapshot,
     saveAllZonesSnapshot,
@@ -9461,14 +9461,6 @@ describe('the Triggers option', () => {
         deltaDeaths: 0,
     };
 
-    function enableSetting() {
-        return import('../../core/config.js').then(({ default: config }) => {
-            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
-                key === 'combatSim_triggerOptimizer' ? true : fallback
-            );
-        });
-    }
-
     /** Every candidate set off except Triggers (a few are on by default) */
     function onlyTriggers() {
         ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
@@ -9486,17 +9478,13 @@ describe('the Triggers option', () => {
     afterEach(() => {
         ui.destroy();
         mocks.editedDTOs = null;
+        // the in-memory store outlives the test; a remembered result must not be shown to the next one
+        for (const key of [...mocks.store.keys()])
+            if (key.includes('combatSimTriggerLastResult')) mocks.store.delete(key);
         vi.restoreAllMocks();
     });
 
-    test('is not offered while its setting is off', () => {
-        ui.buildPanel();
-        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
-        expect(visibleUpgradeModes().some((mode) => mode.key === 'triggers')).toBe(false);
-    });
-
-    test('is offered, unchecked, once its setting is on', async () => {
-        await enableSetting();
+    test('is always offered, unchecked by default', () => {
         ui.buildPanel();
         const box = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
         expect(box).not.toBeNull();
@@ -9505,20 +9493,14 @@ describe('the Triggers option', () => {
         expect(ui.panel.querySelector('#mwi-csim-trigger-precision').value).toBe('standard');
     });
 
-    test('the gating helper follows the predicate it is given', () => {
-        expect(visibleUpgradeModes(() => true).some((mode) => mode.key === 'triggers')).toBe(true);
-        expect(visibleUpgradeModes(() => false).some((mode) => mode.key === 'triggers')).toBe(false);
-        // every other set is unconditional
-        expect(visibleUpgradeModes(() => false).length).toBe(visibleUpgradeModes(() => true).length - 1);
-    });
-
     test('alone, it runs the optimizer and never the candidate ranking', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
         ui.panel.querySelector('#mwi-csim-trigger-scope').value = 'party';
         ui.panel.querySelector('#mwi-csim-trigger-precision').value = 'quick';
+        ui.panel.querySelector('#mwi-csim-trigger-include').value = 'abilities';
+        ui.panel.querySelector('#mwi-csim-trigger-objective').value = 'profit';
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         const before = mocks.upgradeRuns;
 
@@ -9528,64 +9510,45 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns).toHaveLength(1);
         expect(mocks.triggerRuns[0].scope).toBe('party');
         expect(mocks.triggerRuns[0].precision).toBe('quick');
+        expect(mocks.triggerRuns[0].include).toBe('abilities');
+        expect(mocks.triggerRuns[0].objective).toBe('profit');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
     });
 
-    test('the chip appears and disappears live with its setting', async () => {
-        const { default: config } = await import('../../core/config.js');
-        let on = false;
-        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
-            key === 'combatSim_triggerOptimizer' ? on : fallback
-        );
-        let notify = null;
-        vi.spyOn(config, 'onSettingChange').mockImplementation((key, callback) => {
-            if (key === 'combatSim_triggerOptimizer') notify = callback;
-            return () => {};
-        });
-        ui.buildPanel();
-        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
-
-        on = true;
-        notify();
-        const box = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
-        expect(box).not.toBeNull();
-        expect(ui.panel.querySelector('#mwi-csim-trigger-scope')).not.toBeNull();
-        // the new checkbox is wired like the others: checking it shows its options
-        box.checked = true;
-        box.dispatchEvent(new Event('change'));
-        expect(ui.panel.querySelector('[data-mode-options="triggers"]').style.display).toBe('inline-flex');
-
-        on = false;
-        notify();
-        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
-    });
-
-    test('remembered modes naming only Triggers fall back to the defaults while it is off', async () => {
+    test('remembered modes naming Triggers restore it as checked', async () => {
         const { writeScoped } = await import('../../utils/character-key.js');
         await writeScoped('combatSimUpgradeModes', ['triggers']);
         ui.buildPanel();
         await new Promise((resolve) => setTimeout(resolve, 0));
-        const checked = [...ui.panel.querySelectorAll('[data-upgrade-mode]')].filter((box) => box.checked);
-        expect(checked.length).toBeGreaterThan(0);
+        const checked = [...ui.panel.querySelectorAll('[data-upgrade-mode]')]
+            .filter((box) => box.checked)
+            .map((box) => box.getAttribute('data-upgrade-mode'));
+        expect(checked).toEqual(['triggers']);
     });
 
     describe('remembered choices', () => {
         const choices = () => ({
             scope: ui.panel.querySelector('#mwi-csim-trigger-scope').value,
+            include: ui.panel.querySelector('#mwi-csim-trigger-include').value,
             precision: ui.panel.querySelector('#mwi-csim-trigger-precision').value,
             minGain: ui.panel.querySelector('#mwi-csim-trigger-mingain').value,
+            objective: ui.panel.querySelector('#mwi-csim-trigger-objective').value,
         });
         const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
         test('defaults are unchanged when nothing is stored', async () => {
-            await enableSetting();
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'me', precision: 'standard', minGain: '0.5' });
+            expect(choices()).toEqual({
+                scope: 'me',
+                include: 'both',
+                precision: 'standard',
+                minGain: '0.5',
+                objective: 'balanced',
+            });
         });
 
         test('a changed choice survives a panel rebuild', async () => {
-            await enableSetting();
             ui.buildPanel();
             await settle();
             const set = (id, value) => {
@@ -9594,28 +9557,194 @@ describe('the Triggers option', () => {
                 select.dispatchEvent(new Event('change', { bubbles: true }));
             };
             set('#mwi-csim-trigger-scope', 'party');
+            set('#mwi-csim-trigger-include', 'consumables');
             set('#mwi-csim-trigger-precision', 'precise');
             set('#mwi-csim-trigger-mingain', '2');
+            set('#mwi-csim-trigger-objective', 'xp');
             await settle();
 
             ui.destroy();
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'party', precision: 'precise', minGain: '2' });
+            expect(choices()).toEqual({
+                scope: 'party',
+                include: 'consumables',
+                precision: 'precise',
+                minGain: '2',
+                objective: 'xp',
+            });
         });
 
         test('an invalid stored value falls back to the default', async () => {
             const { writeScoped } = await import('../../utils/character-key.js');
-            await writeScoped('combatSimTriggerChoices', { scope: 'everyone', precision: 'ludicrous', minGain: 7 });
-            await enableSetting();
+            await writeScoped('combatSimTriggerChoices', {
+                scope: 'everyone',
+                include: 'dessert',
+                precision: 'ludicrous',
+                minGain: 7,
+                objective: 'speed',
+            });
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'me', precision: 'standard', minGain: '0.5' });
+            expect(choices()).toEqual({
+                scope: 'me',
+                include: 'both',
+                precision: 'standard',
+                minGain: '0.5',
+                objective: 'balanced',
+            });
+        });
+    });
+
+    test('a build signature ignores task kill counts and the order of task monsters', async () => {
+        const { buildDtoSignature } = await import('./combat-sim-ui.js');
+        const a = {
+            hrid: 'player1',
+            equipment: {},
+            taskMonsterHrids: ['/monsters/rat', '/monsters/crab'],
+            taskMonsterRemaining: { '/monsters/rat': 86 },
+        };
+        const b = {
+            hrid: 'player1',
+            equipment: {},
+            taskMonsterHrids: ['/monsters/crab', '/monsters/rat'],
+            taskMonsterRemaining: { '/monsters/rat': 85 },
+        };
+        expect(buildDtoSignature(a)).toBe(buildDtoSignature(b));
+        expect(buildDtoSignature({ ...a, taskMonsterHrids: ['/monsters/rat'] })).not.toBe(buildDtoSignature(a));
+        expect(buildDtoSignature({ ...a, equipment: { x: 1 } })).not.toBe(buildDtoSignature(a));
+    });
+
+    describe('the remembered last result', () => {
+        const settle = async () => {
+            for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        const box = () => ui.panel.querySelector('#mwi-csim-trigger-box');
+        const openTriggers = () => {
+            const chip = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
+            chip.checked = true;
+            chip.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        async function finishOneRun() {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = {
+                scope: 'me',
+                objective: 'balanced',
+                changes: [{ ...fireballChange, baseRows: [{ value: 1 }], original: 1 }],
+                unchanged: [{ itemName: 'Donut', baseRows: [] }],
+                combined: null,
+                simCount: 10,
+                stopped: false,
+            };
+            await ui._onUpgradeAnalyze();
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            selectZone();
+            onlyTriggers();
+        }
+
+        test('is shown when Triggers opens on the same setup, labelled, with Run again', async () => {
+            await finishOneRun();
+            const runs = mocks.triggerRuns.length;
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+            expect(box().textContent).toContain('Fireball');
+            expect(box().textContent).toContain('Kept as is: Donut');
+            expect(box().querySelector('#mwi-csim-trigger-rerun')).not.toBeNull();
+            expect(box().querySelector('#mwi-csim-trigger-apply')).not.toBeNull();
+            // the stored copy holds what the box draws, not the search's working state
+            const stored = [...mocks.store.entries()].find(([key]) => key.includes('combatSimTriggerLastResult'))[1];
+            expect(stored.result.changes[0].baseRows).toBeUndefined();
+            expect(stored.result.unchanged).toEqual([{ itemName: 'Donut' }]);
+
+            box().querySelector('#mwi-csim-trigger-rerun').click();
+            await settle();
+            expect(mocks.triggerRuns.length).toBe(runs + 1);
+            expect(box().textContent).not.toContain('Last result');
+        });
+
+        test('is not shown after the market prices moved', async () => {
+            await finishOneRun();
+            const { default: marketAPI } = await import('../../api/marketplace.js');
+            const before = marketAPI.lastFetchTimestamp;
+            marketAPI.lastFetchTimestamp = 123456789;
+            try {
+                openTriggers();
+                await settle();
+                expect(box().textContent).not.toContain('Last result');
+            } finally {
+                marketAPI.lastFetchTimestamp = before;
+            }
+        });
+
+        test('follows the selected player', async () => {
+            await finishOneRun();
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            if (select && select.options.length > 1) {
+                select.value = select.options[1].value;
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                await settle();
+                expect(box().textContent).not.toContain('Last result');
+            } else {
+                // One player: changing the selection to itself still re-checks without error
+                select?.dispatchEvent(new Event('change', { bubbles: true }));
+                await settle();
+                expect(box().textContent).toContain('Last result (unchanged setup)');
+            }
+        });
+
+        test('is not shown when the build changed since', async () => {
+            await finishOneRun();
+            mocks.editedDTOs.player1 = { ...mocks.editedDTOs.player1, abilities: [{ hrid: '/abilities/x' }] };
+            openTriggers();
+            await settle();
+            expect(box().textContent).not.toContain('Last result');
+            expect(box().innerHTML.trim()).toBe('');
+        });
+
+        test('is taken down when a choice that decides it changes, and back when it is restored', async () => {
+            await finishOneRun();
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+
+            const objective = ui.panel.querySelector('#mwi-csim-trigger-objective');
+            objective.value = 'xp';
+            objective.dispatchEvent(new Event('change', { bubbles: true }));
+            await settle();
+            expect(box().innerHTML.trim()).toBe('');
+
+            objective.value = 'balanced';
+            objective.dispatchEvent(new Event('change', { bubbles: true }));
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+        });
+
+        test('a stopped run is not remembered', async () => {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [],
+                unchanged: [],
+                combined: null,
+                simCount: 3,
+                stopped: true,
+            };
+            await ui._onUpgradeAnalyze();
+            expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
         });
     });
 
     test('the results box sits outside the ranking container, so a redraw cannot wipe it', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
@@ -9632,7 +9761,6 @@ describe('the Triggers option', () => {
     });
 
     test('a triggers-only run drops the stale ranking so a re-render cannot bring it back', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
@@ -9648,7 +9776,6 @@ describe('the Triggers option', () => {
     });
 
     test('a failing optimizer cancels queued sims before the button comes back', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9664,7 +9791,6 @@ describe('the Triggers option', () => {
     });
 
     test('in a combined run, triggers do not start after the ranking analysis threw', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         ui.panel.querySelector('[data-upgrade-mode="triggers"]').checked = true;
@@ -9679,7 +9805,6 @@ describe('the Triggers option', () => {
     });
 
     test('Apply that skips everything leaves the button usable and says why', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9695,7 +9820,6 @@ describe('the Triggers option', () => {
     });
 
     test('the Min gain select defaults to 0.5 and its choice reaches the optimizer', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9711,7 +9835,6 @@ describe('the Triggers option', () => {
     });
 
     test('Apply writes the changes into the sim editor and nothing else', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9728,7 +9851,6 @@ describe('the Triggers option', () => {
     });
 
     test('the analysis runs on private copies of the editor DTOs', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9742,7 +9864,6 @@ describe('the Triggers option', () => {
     });
 
     test('Apply skips a player whose build was edited in place during the analysis', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9758,7 +9879,6 @@ describe('the Triggers option', () => {
     });
 
     test('Apply writes nothing after a guild shrine or scroll edit made during the analysis', async () => {
-        await enableSetting();
         ui.buildPanel();
         selectZone();
         onlyTriggers();
@@ -9773,7 +9893,6 @@ describe('the Triggers option', () => {
     });
 
     test('Apply writes nothing when another simulated party member changed', async () => {
-        await enableSetting();
         mocks.editedDTOs.player2 = { hrid: 'player2', equipment: {}, attackLevel: 50 };
         ui.buildPanel();
         selectZone();
@@ -9789,7 +9908,6 @@ describe('the Triggers option', () => {
     });
 
     test('Copy puts one line per change on the clipboard', async () => {
-        await enableSetting();
         const writeText = vi.fn().mockResolvedValue(undefined);
         Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
         ui.buildPanel();
