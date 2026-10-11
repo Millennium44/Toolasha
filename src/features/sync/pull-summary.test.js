@@ -146,6 +146,24 @@ describe('the toast line', () => {
     });
 });
 
+describe('the keys written whole are named', () => {
+    test('each store lists the keys the apply wrote that no fold produced', () => {
+        const summary = buildPullSummary({
+            ...oneOfEach,
+            writtenWholeKeys: [{ store: 'guildHistory', key: 'networthDetail_32030' }],
+        });
+
+        expect(summary.stores[0].wholeRecords).toEqual([{ key: 'networthDetail_32030' }]);
+    });
+
+    test('a result that does not name them leaves the list empty, not the count wrong', () => {
+        const summary = buildPullSummary(oneOfEach);
+
+        expect(summary.stores[0].wholeRecords).toEqual([]);
+        expect(summary.stores[0].writtenWhole).toBe(1);
+    });
+});
+
 describe('the session memory', () => {
     test('a second pull replaces the first, and a clear empties it', () => {
         rememberPullSummary(buildPullSummary(oneOfEach));

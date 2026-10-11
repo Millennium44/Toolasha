@@ -12,6 +12,9 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { UNCHANGED_UNKNOWN, lastPullSummary, formatPullSummaryLine } from './pull-summary.js';
 
+/** How many written-whole keys a store card names before counting the rest */
+const MAX_NAMED_WHOLE = 30;
+
 /** One shell, created on first open and reused. */
 let panel = null;
 
@@ -82,6 +85,14 @@ function draw(body) {
 
         for (const record of store.combinedRecords) {
             card.appendChild(panelNote(`· ${record.key}${record.label ? ` — ${record.label}` : ''}`));
+        }
+        // A first pull writes hundreds of keys; the ones worth naming are the few of a settled pull
+        const whole = store.wholeRecords || [];
+        for (const record of whole.slice(0, MAX_NAMED_WHOLE)) {
+            card.appendChild(panelNote(`· ${record.key} — written whole`));
+        }
+        if (whole.length > MAX_NAMED_WHOLE) {
+            card.appendChild(panelNote(`· …and ${whole.length - MAX_NAMED_WHOLE} more written whole`));
         }
     }
 }

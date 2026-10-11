@@ -42,6 +42,15 @@ const FORMAT_VERSION = 1;
 const SETTINGS_STORE = 'settings';
 
 /**
+ * Stores whose keys this script only ever deletes on purpose: rolling windows, retention prunes, a deleted
+ * snapshot. A key one of them lacks that it held at the last exchange (and the gist still holds unchanged) was
+ * deleted here, and a merging pull does not hand it back. Other stores keep the older reading, where a missing
+ * key is written back (see "a deleted key is the case that came back" in the tests): they hold one-off records
+ * that a cleared device is meant to recover.
+ */
+const DELETIONS_ARE_DELIBERATE = new Set(['networthHistory']);
+
+/**
  * Setting IDs removed from every payload.
  *
  * The token is a credential for the transport itself; uploading it would put a
@@ -851,6 +860,16 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
         const merged = histories.merged.filter(changed);
         const mergeFailed = histories.failed.filter(changed);
+        // What the import is about to write that no fold produced, named for the pull summary: every key left
+        // in the write, less the folds (a fold whose merge threw was written whole, so it stays in)
+        const folded = new Set(merged.map((entry) => baselineId(entry.store, entry.key)));
+        const writtenWholeKeys = [];
+        for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
+            if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
+            for (const key of Object.keys(stripExcludedKeys(storeName, entries))) {
+                if (!folded.has(baselineId(storeName, key))) writtenWholeKeys.push({ store: storeName, key });
+            }
+        }
 
         let imported;
         try {
@@ -904,6 +923,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             mergeFailed,
             mergeHeld,
             unchanged,
+            writtenWholeKeys,
             exportedAt: payload?.exportedAt ?? null,
             applied,
         };
@@ -1518,6 +1538,20 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         if (!Array.isArray(entries)) {
             const localKeys = local && typeof local === 'object' && !Array.isArray(local) ? Object.keys(local) : [];
             dropOutsideRetention(storeName, entries, localKeys);
+        }
+        if (baseline && DELETIONS_ARE_DELIBERATE.has(storeName) && local && typeof local === 'object') {
+            // A key this device held at the last exchange, that is gone now, and that the gist still holds exactly
+            // as it was then, is one this device deleted since (a retention prune, a rolled window): the gist's
+            // copy is the older one, not news. A key the baseline lists with no local half was never held here
+            // (another device's), and comes in
+            for (const key of Object.keys(entries)) {
+                if (Object.hasOwn(local, key) || restoredKey(baseline[RESTORED_BASELINE], storeName, key)) continue;
+                const was = readBaselineEntry(baseline[baselineId(storeName, key)]);
+                if (was && was.local === was.gist && valueHash(entries[key]) === was.gist) {
+                    delete entries[key];
+                    retentionDropped = true;
+                }
+            }
         }
         if (baseline) {
             for (const key of Object.keys(entries)) {

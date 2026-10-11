@@ -502,17 +502,21 @@ describe('the recorded gold figure', () => {
 });
 
 describe("the detail snapshots' window, as sync applies it", () => {
-    test('keeps the newest 25 per character over both sides, and leaves the pre-split key alone', () => {
+    test('keeps the newest 25 per character over both sides, and drops the pre-split key they supersede', () => {
         const keys = [
             ...Array.from({ length: 27 }, (_, i) => `networthDetail_32030_${1_000 + i}`),
             ...Array.from({ length: 3 }, (_, i) => `networthDetail_32325_${1_000 + i}`),
             'networthDetail_32030',
+            'networthDetail_32325',
+            'networthDetail_99999',
             'networthSeries_32030_2026-10',
         ];
 
         expect([...retentionDrops('networthHistory', keys)].sort()).toEqual([
+            'networthDetail_32030',
             'networthDetail_32030_1000',
             'networthDetail_32030_1001',
+            'networthDetail_32325',
         ]);
     });
 });

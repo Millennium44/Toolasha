@@ -29,14 +29,17 @@ const DETAIL_PREFIX = 'networthDetail';
 registerCharacterScopedPrefix(STORE_NAME, DETAIL_PREFIX);
 
 /**
- * A detail snapshot key's character and time, or null for anything else (the
- * pre-split `networthDetail_<id>` array key has no time and is not judged).
+ * A detail snapshot key's character and time. The pre-split `networthDetail_<id>`
+ * array key has no time and sorts as time 0, below every snapshot (see the
+ * retention rule below); anything else is null.
  * @param {string} key - Storage key
  * @returns {{group: string, order: number}|null} The character's window and the snapshot time
  */
 function parseDetailKey(key) {
     const match = /^networthDetail_(.+)_(\d+)$/.exec(key);
-    return match ? { group: match[1], order: Number(match[2]) } : null;
+    if (match) return { group: match[1], order: Number(match[2]) };
+    const legacy = /^networthDetail_([0-9a-zA-Z]+)$/.exec(key);
+    return legacy ? { group: legacy[1], order: 0 } : null;
 }
 
 /*
@@ -49,6 +52,11 @@ registerSyncRetention({
     prefix: `${DETAIL_PREFIX}_`,
     parse: parseDetailKey,
     keep: MAX_DETAIL_SNAPSHOTS,
+    // The pre-split array key is superseded by the per-snapshot keys: `_loadDetailHistory` migrates it
+    // into them and deletes it. It was left to sync's usual rules, which never drop a key — the gist
+    // kept the copy an old build uploaded, every pull wrote it back whole, and the next load migrated
+    // and deleted it again. With no snapshot key in the window there is nothing to supersede it.
+    maxAge: { floor: (newestEnd) => (newestEnd > 0 ? 1 : 0) },
 });
 
 /** Beyond this age, the history is thinned rather than kept point for point */
