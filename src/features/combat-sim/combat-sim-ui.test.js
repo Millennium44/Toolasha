@@ -9596,6 +9596,25 @@ describe('the Triggers option', () => {
         });
     });
 
+    test('a build signature ignores task kill counts and the order of task monsters', async () => {
+        const { buildDtoSignature } = await import('./combat-sim-ui.js');
+        const a = {
+            hrid: 'player1',
+            equipment: {},
+            taskMonsterHrids: ['/monsters/rat', '/monsters/crab'],
+            taskMonsterRemaining: { '/monsters/rat': 86 },
+        };
+        const b = {
+            hrid: 'player1',
+            equipment: {},
+            taskMonsterHrids: ['/monsters/crab', '/monsters/rat'],
+            taskMonsterRemaining: { '/monsters/rat': 85 },
+        };
+        expect(buildDtoSignature(a)).toBe(buildDtoSignature(b));
+        expect(buildDtoSignature({ ...a, taskMonsterHrids: ['/monsters/rat'] })).not.toBe(buildDtoSignature(a));
+        expect(buildDtoSignature({ ...a, equipment: { x: 1 } })).not.toBe(buildDtoSignature(a));
+    });
+
     describe('the remembered last result', () => {
         const settle = async () => {
             for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));

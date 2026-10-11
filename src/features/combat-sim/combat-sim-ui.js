@@ -324,7 +324,12 @@ function stableStringify(value) {
  */
 export function buildDtoSignature(dto) {
     if (!dto) return '';
-    return stableStringify(dto);
+    // Task progress is not the build: the kill counts tick down while the character fights, and the
+    // task monster list comes back in a different order on every load. Neither may make an unchanged
+    // build read as changed, so the counts are left out and the list is compared as a set.
+    const { taskMonsterRemaining: _remaining, taskMonsterHrids, ...build } = dto;
+    if (Array.isArray(taskMonsterHrids)) build.taskMonsterHrids = [...new Set(taskMonsterHrids)].sort();
+    return stableStringify(build);
 }
 
 /**
