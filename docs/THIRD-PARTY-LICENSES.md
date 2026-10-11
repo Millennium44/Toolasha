@@ -239,6 +239,18 @@ choice to show a player's best rank, and the shape of the optional data server's
 the parsing, merging, decorator and CSS are written fresh, and the server option is opt-in and
 off by default. See `third-party/mwitools/README.md`.
 
+## MWITools - market API back-off and Safe start
+
+Two ideas from **[MWITools](https://greasyfork.org/en/scripts/494467)** 26.4.19 (read 2026-10-10;
+CC-BY-NC-SA-4.0, attributed here as the BY clause requires). **No code was copied.**
+
+- The persisted market-API back-off in `src/api/marketplace.js`: a "next try" time that
+  survives reloads, 60 s after a failure, 5 min after a 403/429, and the server's `Retry-After`
+  honored.
+- The userscript-menu "Safe start" and "Reload with startup log" in `src/core/startup-mode.js`.
+
+Both were written fresh in Toolasha's idiom.
+
 ## Edible Tools
 
 The loot-log statistics (`src/features/actions/loot-log-stats.js`) are ported from

@@ -20,6 +20,22 @@ function marketValues() {
     return (typeof window !== 'undefined' && window.Toolasha?.Utils?.marketValues) || null;
 }
 
+/** Thrown inside _fetchInner to route a deferred (skipped) fetch to the cache fallback */
+class DeferredFetch extends Error {}
+
+/**
+ * Parse a Retry-After header (delta-seconds or an HTTP date) into milliseconds.
+ * @param {string|null|undefined} value - Header value
+ * @returns {number|undefined} Milliseconds to wait, or undefined when absent/unparseable
+ */
+function parseRetryAfter(value) {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+    const date = Date.parse(trimmed);
+    return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
 /**
  * MarketAPI class handles fetching and caching market price data
  */
@@ -35,6 +51,21 @@ class MarketAPI {
         this.CACHE_KEY_PATCHES = 'Toolasha_marketAPI_patches';
         this.CACHE_KEY_MIGRATION = 'Toolasha_marketAPI_migration_version';
         this.CURRENT_MIGRATION_VERSION = 1; // Increment this when patches need to be cleared
+
+        /**
+         * Persisted "do not ask the API again before" record: { until: ms, rateLimited: boolean }.
+         * Global, not character-scoped, and under the `Toolasha_marketAPI_` prefix so sync leaves it
+         * device-local. Without it every page reload with an expired cache re-hit a refusing API.
+         */
+        this.CACHE_KEY_RETRY = 'Toolasha_marketAPI_retry';
+        /** A failed fetch defers the next try this long (or the Retry-After, if larger) */
+        this.FAILURE_DEFER_MS = 60 * 1000;
+        /** A 403/429 defers the next try this long (or the Retry-After, if larger) */
+        this.RATE_LIMIT_DEFER_MS = 5 * 60 * 1000;
+        /** No deferral is honored past this, so a bad Retry-After or a clock step cannot park the feed */
+        this.MAX_DEFER_MS = 60 * 60 * 1000;
+        // Bumped by every fetch that actually landed fresh data, so a caller can tell it from a fallback
+        this._freshFetches = 0;
 
         // Current market data
         this.marketData = null;
@@ -173,9 +204,12 @@ class MarketAPI {
      * still never a burst.
      *
      * @param {boolean} forceFetch - Force a fresh fetch even if cache is valid
+     * @param {Object} [options] - Fetch options
+     * @param {boolean} [options.ignoreFailureDeferral] - A user-initiated fetch may skip a plain
+     *   60 s failure deferral; a 403/429 deferral is always honored
      * @returns {Promise<Object|null>} Market data object or null if failed
      */
-    async fetch(forceFetch = false) {
+    async fetch(forceFetch = false, options = {}) {
         // Several forced callers can pile up behind one plain in-flight fetch
         // (e.g. a manual refresh button and a patch-driven invalidation firing
         // at once). Each waits the plain fetch out, but only the first should
@@ -192,7 +226,7 @@ class MarketAPI {
             break;
         }
 
-        const run = this._fetchInner(forceFetch);
+        const run = this._fetchInner(forceFetch, options);
         this._inFlightFetch = run;
         this._inFlightForce = forceFetch;
         try {
@@ -208,10 +242,11 @@ class MarketAPI {
     /**
      * The actual fetch, always reached through `fetch()`'s in-flight dedup.
      * @param {boolean} forceFetch - Force a fresh fetch even if cache is valid
+     * @param {Object} [options] - See fetch()
      * @returns {Promise<Object|null>} Market data object or null if failed
      * @private
      */
-    async _fetchInner(forceFetch = false) {
+    async _fetchInner(forceFetch = false, options = {}) {
         // Check cache first (unless force fetch)
         if (!forceFetch) {
             const cached = await this.getCachedData();
@@ -249,9 +284,23 @@ class MarketAPI {
             return null;
         }
 
-        // Try to fetch fresh data
+        // A recent refusal or failure defers the next request, across reloads and tabs
         let rateLimited = false;
+        let deferral = await this.getDeferral();
+        if (deferral && options.ignoreFailureDeferral && !deferral.rateLimited) deferral = null;
+        if (deferral) {
+            rateLimited = deferral.rateLimited;
+            this._cacheExpiresAt = deferral.until;
+            console.warn(
+                `[MarketAPI] Skipping fetch; deferred until ${new Date(deferral.until).toISOString()} after a recent ` +
+                    (deferral.rateLimited ? 'rate-limit' : 'failure')
+            );
+        }
+
+        // Try to fetch fresh data
         try {
+            if (deferral) throw new DeferredFetch();
+            const requestStartedAt = Date.now();
             const response = await this.fetchFromAPI();
 
             if (response) {
@@ -268,23 +317,14 @@ class MarketAPI {
                 this.notifyListeners();
                 // Settled before returning, so a tab waiting on the refresh lock reads this copy
                 await cacheWritten;
+                await this.clearDeferral(requestStartedAt);
+                this._freshFetches += 1;
                 return this.marketData;
             }
         } catch (error) {
-            // marketplace.json is rate-limited by the game: a burst of requests —
-            // often several userscripts hitting it at once — trips a temporary
-            // CloudFront 403 (429 is the explicit rate-limit status). Call that out
-            // plainly instead of as a generic fetch failure, so a player seeing the
-            // block knows what it is and that Toolasha is not the cause on its own.
-            rateLimited = error?.status === 403 || error?.status === 429;
-            if (rateLimited) {
-                console.warn(
-                    `[MarketAPI] marketplace.json returned ${error.status} — the game rate-limits this file and a burst ` +
-                        'of fetches (often several userscripts at once) trips a temporary block. Falling back to cached ' +
-                        'prices; it retries on the normal 15-minute cache cadence.'
-                );
+            if (!(error instanceof DeferredFetch)) {
+                rateLimited = await this._handleFetchError(error);
             }
-            this.logError(rateLimited ? `Rate limited (${error.status})` : 'Fetch failed', error);
         }
 
         // Fallback: Try to use expired cache
@@ -310,6 +350,116 @@ class MarketAPI {
     }
 
     /**
+     * Log a failed fetch and persist the deferral it earns.
+     * marketplace.json is rate-limited by the game: a burst of requests (often several
+     * userscripts hitting it at once) trips a temporary CloudFront 403 (429 is the explicit
+     * rate-limit status). Call that out plainly instead of as a generic fetch failure.
+     * @param {Error & {status?: number, retryAfterMs?: number}} error - The fetch error
+     * @returns {Promise<boolean>} Whether the failure was a 403/429
+     * @private
+     */
+    async _handleFetchError(error) {
+        const rateLimited = error?.status === 403 || error?.status === 429;
+        if (rateLimited) {
+            console.warn(
+                `[MarketAPI] marketplace.json returned ${error.status} — the game rate-limits this file and a burst ` +
+                    'of fetches (often several userscripts at once) trips a temporary block. Falling back to cached ' +
+                    'prices; it retries after a persisted cooldown (at least 5 minutes, or the Retry-After if longer).'
+            );
+        }
+        this.logError(rateLimited ? `Rate limited (${error.status})` : 'Fetch failed', error);
+        await this.recordDeferral(rateLimited, error?.retryAfterMs);
+        return rateLimited;
+    }
+
+    /**
+     * Read the persisted retry deferral, if one is still in the future.
+     * @returns {Promise<{until: number, rateLimited: boolean}|null>} Active deferral or null
+     */
+    async getDeferral() {
+        try {
+            const record = await storage.getJSON(this.CACHE_KEY_RETRY, 'settings', null);
+            const until = Number(record?.until);
+            if (!Number.isFinite(until)) return null;
+            const remaining = until - Date.now();
+            // Past, or further out than any deferral we write (the clock stepped back): ignore it
+            if (!(remaining > 0 && remaining <= this.MAX_DEFER_MS)) return null;
+            return { until, rateLimited: Boolean(record.rateLimited) };
+        } catch (error) {
+            this.logError('Reading the retry deferral failed', error);
+            return null;
+        }
+    }
+
+    /**
+     * Persist a deferral after a failed fetch.
+     * @param {boolean} rateLimited - 403/429 (5 min) rather than a plain failure (60 s)
+     * @param {number} [retryAfterMs] - Server-requested wait; the larger of this and the base applies
+     * @returns {Promise<void>}
+     */
+    async recordDeferral(rateLimited, retryAfterMs) {
+        const base = rateLimited ? this.RATE_LIMIT_DEFER_MS : this.FAILURE_DEFER_MS;
+        const wait = Math.min(Math.max(base, Number.isFinite(retryAfterMs) ? retryAfterMs : 0), this.MAX_DEFER_MS);
+        const now = Date.now();
+        let record = { until: now + wait, rateLimited, at: now };
+        try {
+            // Merge with what another tab may have written: keep the later deadline, and never
+            // downgrade an active rate-limit to a plain failure
+            const result = await storage.update(
+                this.CACHE_KEY_RETRY,
+                (current) => {
+                    const currentUntil = Number(current?.until);
+                    const active =
+                        Number.isFinite(currentUntil) && currentUntil > now && currentUntil - now <= this.MAX_DEFER_MS;
+                    if (!active) return record;
+                    return {
+                        until: Math.max(currentUntil, record.until),
+                        rateLimited: Boolean(current.rateLimited) || rateLimited,
+                        at: Math.max(Number(current.at) || 0, now),
+                    };
+                },
+                'settings'
+            );
+            if (result?.value) record = result.value;
+        } catch (error) {
+            this.logError('Saving the retry deferral failed', error);
+        }
+        this._cacheExpiresAt = record.until;
+        // The auto-refresh check was scheduled for the old cache expiry: move it to the retry time
+        this._alignAutoRefresh();
+    }
+
+    /**
+     * Forget the deferral after a successful fetch, unless another tab recorded a newer one while
+     * this request was in flight: that refusal is later news than this success.
+     * @param {number} [requestStartedAt] - When the successful request was sent
+     * @returns {Promise<void>}
+     */
+    async clearDeferral(requestStartedAt = Infinity) {
+        try {
+            await storage.update(
+                this.CACHE_KEY_RETRY,
+                (current) => {
+                    if (current == null) return undefined;
+                    return Number(current.at) > requestStartedAt ? undefined : null;
+                },
+                'settings'
+            );
+        } catch (error) {
+            this.logError('Clearing the retry deferral failed', error);
+        }
+    }
+
+    /**
+     * When a user-initiated refresh may next hit the API, if a 403/429 deferral blocks it.
+     * @returns {Promise<number>} Epoch ms, or 0 when nothing blocks
+     */
+    async getRateLimitRetryAt() {
+        const deferral = await this.getDeferral();
+        return deferral?.rateLimited ? deferral.until : 0;
+    }
+
+    /**
      * Fetch from API endpoint
      * @returns {Promise<Object|null>} API response or null
      */
@@ -322,6 +472,7 @@ class MarketAPI {
                 // any other failure and message the player accordingly.
                 const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
                 error.status = response.status;
+                error.retryAfterMs = parseRetryAfter(response.headers?.get?.('Retry-After'));
                 throw error;
             }
 
@@ -745,16 +896,15 @@ class MarketAPI {
      * @returns {Promise<Object|null>} Fresh market data or null if failed
      */
     async clearCacheAndRefetch() {
-        // Clear storage cache
-        await storage.delete(this.CACHE_KEY_DATA, 'settings');
-        await storage.delete(this.CACHE_KEY_TIMESTAMP, 'settings');
+        // A 403/429 deferral holds even for a user press; leave the cache alone so it still serves
+        if (await this.getRateLimitRetryAt()) return null;
 
-        // Clear in-memory state
-        this.marketData = null;
-        this.lastFetchTimestamp = null;
-
-        // Force fresh fetch
-        return await this.fetch(true);
+        // Force a fresh fetch. The old snapshot stays until the new one lands: a refused or failed
+        // request falls back to it rather than leaving every price reader empty for the cooldown.
+        // The press itself reports only fresh data, so a fallback reads as the failed refresh it is.
+        const freshBefore = this._freshFetches;
+        const data = await this.fetch(true, { ignoreFailureDeferral: true });
+        return this._freshFetches > freshBefore ? data : null;
     }
 
     /**

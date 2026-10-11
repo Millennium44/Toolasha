@@ -171,13 +171,22 @@ const {
     settingsMirror,
 } = Core;
 
+const combatSimulatorSite = isCombatSimulatorPage();
+
+// One-shot: read here, and cleared by reading, so the next plain reload is a plain start.
+// Not consumed on simulator pages, which have no features to skip. Read before any page hook
+// below, so Safe start can skip every one of them.
+const startupModeRequest = combatSimulatorSite ? null : Core.startupMode?.consumeMode?.() || null;
+const safeStart = startupModeRequest === 'safe';
+
 // Claim the page before anything else can. Two Toolasha userscripts share one
 // database and one settings map, and the loser of that race has its settings
 // and custom tabs deleted — so the earliest possible moment is the right one to
 // find out. See dual-install-guard.js for what each signal can and cannot see.
 let dualInstallClaimed = false;
 try {
-    dualInstallClaimed = dualInstallGuard?.claimPage?.() || false;
+    // Safe start reads and writes no settings, so it has nothing to claim
+    dualInstallClaimed = safeStart ? false : dualInstallGuard?.claimPage?.() || false;
 } catch (error) {
     console.error('[Toolasha] Dual-install claim failed:', error);
 }
@@ -269,7 +278,7 @@ function checkMwiToolsWithRetries() {
 // hooks only ever record and never throw, so nothing here is made riskier by
 // installing them first; a Core bundle without the module (a stale cache of an
 // older library) just leaves the Diagnostics section's error list empty.
-errorLog?.install?.();
+if (!safeStart) errorLog?.install?.();
 
 const { setupScrollTooltipDismissal, addStyles } = Utils.dom;
 const { showToast } = Utils.toast;
@@ -284,14 +293,19 @@ const { GAME } = Utils.selectors;
 // their own; setting both here (rather than per-select inline styles) covers
 // every current and future `toolasha-select` from one rule, and reads
 // correctly whether the platform's native popup default is light or dark.
-addStyles('.toolasha-select option { background-color: #1a1a2e; color: #e0e0e0; }', 'toolasha-select-option-contrast');
+if (!safeStart) {
+    addStyles(
+        '.toolasha-select option { background-color: #1a1a2e; color: #e0e0e0; }',
+        'toolasha-select-option-contrast'
+    );
+}
 
 // Publishes --toolasha-visual-viewport-height/-offset-top on <html> so panel
 // CSS can size against the visible viewport rather than the layout one, which
 // does not shrink for the mobile on-screen keyboard. `<html>` exists at
 // document-start, so this needs no delay; never torn down, since it runs for
 // the life of the page the same as the select-option-contrast style above.
-Utils.visualViewport?.initVisualViewportTracking?.();
+if (!safeStart) Utils.visualViewport?.initVisualViewportTracking?.();
 
 /**
  * Detect if running on a supported Combat Simulator page.
@@ -2728,7 +2742,30 @@ function registerFeatures() {
     featureRegistry.replaceFeatures(features);
 }
 
-const combatSimulatorSite = isCombatSimulatorPage();
+/**
+ * Menu commands and the on-page notice for a one-shot startup mode (safe start / startup log).
+ * Never throws: a failure here must not stop the script from starting.
+ * @param {'safe'|'debug'|null} mode - The mode this load was started in
+ */
+function setupStartupModeUi(mode) {
+    const startupMode = Core.startupMode;
+    if (!startupMode) return;
+    try {
+        const onDownload = () =>
+            startupMode.downloadStartupLog(
+                startupMode.buildStartupLog({
+                    mode,
+                    performanceMonitor,
+                    errorLog,
+                    version: Utils.scriptVersion?.scriptVersion?.() || null,
+                })
+            );
+        startupMode.registerMenuCommands({ mode, onDownload });
+        if (mode) startupMode.showModeNotice({ mode, onDownload });
+    } catch (error) {
+        console.error('[Toolasha] Startup mode setup failed:', error);
+    }
+}
 
 if (combatSimulatorSite === 'metz') {
     Combat.combatSimIntegrationMetz.initialize();
@@ -2739,7 +2776,22 @@ if (combatSimulatorSite === 'metz') {
     Combat.combatSimIntegration.initialize();
 
     // Skip all other initialization
+} else if (safeStart) {
+    // Safe start: no feature runs. Deliberately no websocket hook, no DOM observer, no storage or
+    // config initialization and no registry - the game gets a page with nothing of ours attached
+    // (the websocket hook patches the socket the game opens, which is the most invasive thing we
+    // do, and the whole point of this mode is to rule us out). Only the menu command and the
+    // notice, which need nothing from the game. Settings and data are never read or written.
+    setupStartupModeUi('safe');
 } else {
+    setupStartupModeUi(startupModeRequest);
+    // A debug start also keeps the stall ledger running from the first moment
+    if (startupModeRequest === 'debug') {
+        // Recording is off by default; without it stalls carry no suspects or recent events
+        performanceMonitor.enabled = true;
+        performanceMonitor.startStallWatch?.();
+    }
+
     // CRITICAL: Install WebSocket hook FIRST, before game connects
     webSocketHook.install();
 
@@ -3004,6 +3056,7 @@ if (combatSimulatorSite === 'metz') {
                 await settingsUIReady;
 
                 const initFailures = await featureRegistry.initializeFeatures();
+                if (startupModeRequest === 'debug') Core.startupMode?.recordInitFailures?.(initFailures);
                 performanceMonitor.mark('startup:complete');
 
                 // Offer a full backup before the What's New popup can change any
