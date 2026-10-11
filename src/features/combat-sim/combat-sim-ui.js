@@ -132,8 +132,11 @@ import {
     PRECISIONS,
     TUNABLE_SCOPES,
     DEFAULT_TUNABLE_SCOPE,
+    OBJECTIVES,
+    DEFAULT_OBJECTIVE,
 } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
+import { loadTriggerResult, saveTriggerResult, triggerRunSignature } from './trigger-result-cache.js';
 import storage from '../../core/storage.js';
 import {
     createPricingQuickSettings,
@@ -158,6 +161,7 @@ const TRIGGER_CHOICE_IDS = {
     include: 'mwi-csim-trigger-include',
     precision: 'mwi-csim-trigger-precision',
     minGain: 'mwi-csim-trigger-mingain',
+    objective: 'mwi-csim-trigger-objective',
 };
 /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
 const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
@@ -3418,10 +3422,16 @@ class CombatSimUI {
         });
         // Delegated, so one listener covers the chip's selects
         this.panel.addEventListener('change', (event) => {
-            if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) this._saveTriggerChoices();
+            if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) {
+                this._saveTriggerChoices();
+                this._refreshCachedTriggerResult();
+            }
         });
-        this._restoreUpgradeModes();
-        this._restoreTriggerChoices();
+        // The remembered trigger result can only be matched once the chip and its choices are restored
+        (async () => {
+            await Promise.all([this._restoreUpgradeModes(), this._restoreTriggerChoices()]);
+            await this._refreshCachedTriggerResult();
+        })();
         this._restoreSwapAuraOnly();
         this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
@@ -6247,6 +6257,8 @@ class CombatSimUI {
             if (tabUpgrade) tabUpgrade.style.cssText = activeStyle;
             this._populateUpgradePlayerSelector();
             if (idle) this._setStatus('Select a player and click Analyze.');
+            // The zone, tier or build may have been changed on Configure since a remembered result was drawn
+            this._refreshCachedTriggerResult();
         } else {
             resultsContent.style.display = 'flex';
             tabResults.style.cssText = activeStyle;
@@ -9482,6 +9494,7 @@ class CombatSimUI {
         box.addEventListener('change', () => {
             this._onUpgradeModesChanged();
             this._saveUpgradeModes();
+            this._refreshCachedTriggerResult();
         });
     }
 
@@ -9788,6 +9801,7 @@ class CombatSimUI {
             const include = read(TRIGGER_CHOICE_IDS.include);
             const precision = read(TRIGGER_CHOICE_IDS.precision);
             const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
+            const objective = read(TRIGGER_CHOICE_IDS.objective);
             // A select that is not on the panel keeps its remembered value untouched
             const saved = (await readScoped(TRIGGER_CHOICES_KEY, 'settings', null)) || {};
             await writeScoped(TRIGGER_CHOICES_KEY, {
@@ -9796,6 +9810,7 @@ class CombatSimUI {
                 ...(include !== undefined ? { include } : {}),
                 ...(precision !== undefined ? { precision } : {}),
                 ...(Number.isFinite(minGain) ? { minGain } : {}),
+                ...(objective !== undefined ? { objective } : {}),
             });
         } catch (error) {
             console.error('[CombatSimUI] Failed to save trigger choices:', error);
@@ -9820,6 +9835,7 @@ class CombatSimUI {
                 Object.values(PRECISIONS).some((p) => p.key === v)
             );
             apply(TRIGGER_CHOICE_IDS.minGain, saved.minGain, (v) => MIN_GAIN_OPTIONS.includes(v));
+            apply(TRIGGER_CHOICE_IDS.objective, saved.objective, (v) => OBJECTIVES.some((o) => o.key === v));
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore trigger choices:', error);
         }
@@ -10129,6 +10145,90 @@ class CombatSimUI {
     }
 
     /**
+     * The Triggers chip's choices and the zone, tier and player they apply to, as the run reads them.
+     * @returns {Object} `{ zoneHrid, difficultyTier, playerIndex, scope, include, precision, minGain, objective }`
+     * @private
+     */
+    _readTriggerChoices() {
+        const value = (selector) => this.panel?.querySelector(selector)?.value;
+        const includeValue = value('#mwi-csim-trigger-include');
+        const minGainValue = parseFloat(value('#mwi-csim-trigger-mingain'));
+        const objectiveValue = value('#mwi-csim-trigger-objective');
+        return {
+            zoneHrid: value('#mwi-csim-zone'),
+            difficultyTier: parseInt(value('#mwi-csim-tier')) || 0,
+            playerIndex: parseInt(value('#mwi-csim-upgrade-player')) || 0,
+            scope: value('#mwi-csim-trigger-scope') === 'party' ? 'party' : 'me',
+            include: TUNABLE_SCOPES.includes(includeValue) ? includeValue : DEFAULT_TUNABLE_SCOPE,
+            precision: value('#mwi-csim-trigger-precision') || 'standard',
+            minGain: MIN_GAIN_OPTIONS.includes(minGainValue) ? minGainValue : MIN_GAIN,
+            objective: OBJECTIVES.some((o) => o.key === objectiveValue) ? objectiveValue : DEFAULT_OBJECTIVE,
+        };
+    }
+
+    /**
+     * The player DTOs a trigger run simulates: the sim editor's when it is open, else freshly built.
+     * @returns {Promise<Array<Object>>} The live objects (not copies)
+     * @private
+     */
+    async _loadTriggerDTOs() {
+        const editedDTOs = this._editor?.getEditedDTOs();
+        return editedDTOs ? Object.values(editedDTOs) : (await buildAllPlayerDTOs()).players;
+    }
+
+    /**
+     * Show the remembered trigger result when the Triggers chip is on and the setup still matches the one
+     * it was found for; take a remembered result down when it no longer matches. A result drawn by a run
+     * in this panel is never replaced.
+     * @private
+     */
+    async _refreshCachedTriggerResult() {
+        const gen = (this._triggerCacheGen = (this._triggerCacheGen || 0) + 1);
+        try {
+            const box = this.panel?.querySelector('#mwi-csim-trigger-box');
+            if (!box || this._isBusy()) return;
+            const showingCached = box.dataset.cached === '1';
+            if (box.innerHTML.trim() && !showingCached) return;
+            const takeDown = () => {
+                if (box.dataset.cached !== '1') return;
+                box.innerHTML = '';
+                delete box.dataset.cached;
+            };
+            const choices = this._readTriggerChoices();
+            if (!this._getUpgradeModes().includes('triggers') || !choices.zoneHrid) {
+                takeDown();
+                return;
+            }
+            const ownerId = dataManager.getCurrentCharacterId();
+            const liveDTOs = await this._loadTriggerDTOs();
+            const signatures = new Map((liveDTOs || []).map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+            const signature = triggerRunSignature({
+                ...choices,
+                dtoSignatures: signatures,
+                communityBuffs: getCommunityBuffs(),
+            });
+            const cached = await loadTriggerResult(signature);
+            // A later refresh, a run that started meanwhile, or a character switch owns the box now
+            if (gen !== this._triggerCacheGen || this._isBusy() || !this._stillSameCharacter(ownerId)) return;
+            if (box.innerHTML.trim() && box.dataset.cached !== '1') return;
+            if (!cached) {
+                takeDown();
+                return;
+            }
+            const gameData = buildGameDataPayload();
+            box.innerHTML = renderTriggerResultsHtml(cached, gameData, {
+                canApply: Boolean(this._editor?.getEditedDTOs()),
+                cached: true,
+            });
+            box.dataset.cached = '1';
+            this._wireTriggerResultButtons(cached, gameData, liveDTOs, signatures);
+            box.querySelector('#mwi-csim-trigger-rerun')?.addEventListener('click', () => this._onTriggerAnalyze());
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to show the remembered trigger result:', error);
+        }
+    }
+
+    /**
      * Run the trigger optimizer from the Upgrade tab. Show-only: the result is
      * drawn in a box, and the buttons under it either write into this panel's
      * own sim editor or copy text. Nothing here touches the game.
@@ -10140,15 +10240,8 @@ class CombatSimUI {
         if (this._isBusy()) return;
 
         const ownerId = dataManager.getCurrentCharacterId();
-        const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
-        const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
-        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
-        const scope = this.panel.querySelector('#mwi-csim-trigger-scope')?.value === 'party' ? 'party' : 'me';
-        const includeValue = this.panel.querySelector('#mwi-csim-trigger-include')?.value;
-        const include = TUNABLE_SCOPES.includes(includeValue) ? includeValue : DEFAULT_TUNABLE_SCOPE;
-        const precision = this.panel.querySelector('#mwi-csim-trigger-precision')?.value || 'standard';
-        const minGainValue = parseFloat(this.panel.querySelector('#mwi-csim-trigger-mingain')?.value);
-        const minGain = MIN_GAIN_OPTIONS.includes(minGainValue) ? minGainValue : MIN_GAIN;
+        const choices = this._readTriggerChoices();
+        const { zoneHrid, difficultyTier, playerIndex, scope, include, precision, minGain, objective } = choices;
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
             return;
@@ -10162,8 +10255,7 @@ class CombatSimUI {
         this._upgradeRunning = true;
         let playerDTOs;
         try {
-            const editedDTOs = this._editor?.getEditedDTOs();
-            playerDTOs = editedDTOs ? Object.values(editedDTOs) : (await buildAllPlayerDTOs()).players;
+            playerDTOs = await this._loadTriggerDTOs();
         } catch (error) {
             this._upgradeRunning = false;
             console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
@@ -10184,6 +10276,8 @@ class CombatSimUI {
         // fingerprint each build so Apply can tell it was edited in place.
         const liveDTOs = playerDTOs;
         const signatures = new Map(liveDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+        const communityBuffs = getCommunityBuffs();
+        const runSignature = triggerRunSignature({ ...choices, dtoSignatures: signatures, communityBuffs });
         playerDTOs = structuredClone(liveDTOs);
 
         const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
@@ -10200,6 +10294,7 @@ class CombatSimUI {
             this._upgradeResultsData = null;
         }
         triggerBox.innerHTML = '';
+        delete triggerBox.dataset.cached;
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
@@ -10215,11 +10310,12 @@ class CombatSimUI {
                     playerIndex,
                     zoneHrid,
                     difficultyTier,
-                    communityBuffs: getCommunityBuffs(),
+                    communityBuffs,
                     scope,
                     include,
                     precision,
                     minGain,
+                    objective,
                     playerNames,
                 },
                 ({ current, total, description }) => {
@@ -10240,6 +10336,7 @@ class CombatSimUI {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
             });
             this._wireTriggerResultButtons(result, gameData, liveDTOs, signatures);
+            if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
             this._setStatus(
                 result?.changes?.length
                     ? `Trigger tuning ${this._upgradeAborted ? 'stopped' : 'complete'}: ${result.changes.length} change(s) found.`

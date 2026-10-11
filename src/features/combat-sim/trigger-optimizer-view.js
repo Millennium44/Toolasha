@@ -11,6 +11,8 @@ import {
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
     DEFAULT_TUNABLE_SCOPE,
+    OBJECTIVES,
+    DEFAULT_OBJECTIVE,
     describeRow,
 } from './trigger-tuning.js';
 
@@ -44,6 +46,9 @@ export function triggerChipOptionsHtml() {
             (p) => `<option value="${p.key}"${p.key === DEFAULT_PRECISION ? ' selected' : ''}>${esc(p.label)}</option>`
         )
         .join('');
+    const objectiveOptions = OBJECTIVES.map(
+        (o) => `<option value="${o.key}"${o.key === DEFAULT_OBJECTIVE ? ' selected' : ''}>${esc(o.label)}</option>`
+    ).join('');
     const minGainOptions = MIN_GAIN_OPTIONS.map(
         (v) => `<option value="${v}"${v === MIN_GAIN ? ' selected' : ''}>Min gain ${v}</option>`
     ).join('');
@@ -60,6 +65,11 @@ export function triggerChipOptionsHtml() {
                 <option value="both"${DEFAULT_TUNABLE_SCOPE === 'both' ? ' selected' : ''}>Abilities + food</option>
                 <option value="abilities">Abilities only</option>
                 <option value="consumables">Food &amp; drinks only</option>
+            </select>
+            <span style="color:#888; font-size:11px;">Optimize for</span>
+            <select class="toolasha-select" id="mwi-csim-trigger-objective" style="${SELECT_STYLE}"
+                title="Optimize for: Balanced weighs EXP/h, profit/h, DPS and encounters/h equally. XP/h or Profit/h judges a change on that one rate alone. Every choice loses 10 points per extra death per hour.">
+                ${objectiveOptions}
             </select>
             <select class="toolasha-select" id="mwi-csim-trigger-precision" style="${SELECT_STYLE}"
                 title="How long each candidate value is simulated. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">
@@ -86,15 +96,32 @@ function deltaCells(c) {
 }
 
 /**
+ * What the score means, for the footer.
+ * @param {string} [objective] - An OBJECTIVES key
+ * @returns {string} Plain text
+ */
+export function objectiveFooterText(objective) {
+    const deaths = 'less 10 points per extra death per hour';
+    if (objective === 'xp') return `Optimizing for XP/h: score is the percent change in EXP/h, ${deaths}.`;
+    if (objective === 'profit') return `Optimizing for profit/h: score is the percent change in profit/h, ${deaths}.`;
+    return `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, ${deaths}.`;
+}
+
+/**
  * The results box: changes grouped by player, sorted by impact, with the
  * all-together line at the bottom and the Apply / Copy buttons.
  * @param {Object|null} result - From `runTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
- * @param {Object} [options] - `{ canApply }`
+ * @param {Object} [options] - `{ canApply, cached }`; `cached` labels a remembered result and offers Run again
  * @returns {string} HTML
  */
-export function renderTriggerResultsHtml(result, gameData, { canApply = true } = {}) {
-    const head = `<div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;">Trigger tuning</div>`;
+export function renderTriggerResultsHtml(result, gameData, { canApply = true, cached = false } = {}) {
+    const cachedLabel = cached
+        ? ` <span style="color:#888; font-weight:400; font-size:11px;">Last result (unchanged setup)</span>` +
+          ` <button id="mwi-csim-trigger-rerun" style="${BTN_STYLE} margin-left:6px;" ` +
+          `title="Runs the trigger search again on fresh seeds">Run again</button>`
+        : '';
+    const head = `<div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;">Trigger tuning${cachedLabel}</div>`;
     const wrap = (inner) =>
         `<div id="mwi-csim-trigger-results" style="border:1px solid #2a2a4a; border-radius:6px; padding:8px 10px; margin:8px 0;">${head}${inner}</div>`;
 
@@ -182,8 +209,8 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
 
     body +=
         `<div style="font-size:11px; color:#666; margin-top:6px;">` +
-        `Score is the average of the EXP/h, profit/h, DPS and encounters/h changes, less 10 points per extra ` +
-        `death per hour. A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least ${esc(result.minGain ?? MIN_GAIN)} points. ` +
+        `${esc(objectiveFooterText(result.objective))} ` +
+        `A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least ${esc(result.minGain ?? MIN_GAIN)} points. ` +
         `${esc(result.simCount)} sims${result.stopped ? ' (stopped early, showing what was accepted)' : ''}. ` +
         `The userscript never changes triggers in the game; enter these by hand.</div>`;
 

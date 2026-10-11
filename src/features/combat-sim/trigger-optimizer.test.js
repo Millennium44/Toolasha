@@ -309,6 +309,19 @@ describe('runTriggerOptimization', () => {
         expect(strict.changes).toEqual([]);
     });
 
+    test('the objective reaches the search and is reported back; an unknown one is balanced', async () => {
+        const dtos = [dto('player1')];
+        expect((await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0 })).objective).toBe(
+            'balanced'
+        );
+        const xp = await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0, objective: 'xp' });
+        expect(xp.objective).toBe('xp');
+        // the fake world moves only XP: about 30% at the optimum, so far more points than under the balanced average
+        expect(xp.changes[0].deltaScore).toBeGreaterThan(20);
+        const odd = await runTriggerOptimization({ ...base, playerDTOs: dtos, playerIndex: 0, objective: 'fame' });
+        expect(odd.objective).toBe('balanced');
+    });
+
     test('a failing sim stops the queue and surfaces the error', async () => {
         let started = 0;
         sims.respond = () => {

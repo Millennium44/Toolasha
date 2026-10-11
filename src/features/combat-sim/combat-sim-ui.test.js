@@ -9478,6 +9478,9 @@ describe('the Triggers option', () => {
     afterEach(() => {
         ui.destroy();
         mocks.editedDTOs = null;
+        // the in-memory store outlives the test; a remembered result must not be shown to the next one
+        for (const key of [...mocks.store.keys()])
+            if (key.includes('combatSimTriggerLastResult')) mocks.store.delete(key);
         vi.restoreAllMocks();
     });
 
@@ -9497,6 +9500,7 @@ describe('the Triggers option', () => {
         ui.panel.querySelector('#mwi-csim-trigger-scope').value = 'party';
         ui.panel.querySelector('#mwi-csim-trigger-precision').value = 'quick';
         ui.panel.querySelector('#mwi-csim-trigger-include').value = 'abilities';
+        ui.panel.querySelector('#mwi-csim-trigger-objective').value = 'profit';
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         const before = mocks.upgradeRuns;
 
@@ -9507,6 +9511,7 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns[0].scope).toBe('party');
         expect(mocks.triggerRuns[0].precision).toBe('quick');
         expect(mocks.triggerRuns[0].include).toBe('abilities');
+        expect(mocks.triggerRuns[0].objective).toBe('profit');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
     });
 
@@ -9527,13 +9532,20 @@ describe('the Triggers option', () => {
             include: ui.panel.querySelector('#mwi-csim-trigger-include').value,
             precision: ui.panel.querySelector('#mwi-csim-trigger-precision').value,
             minGain: ui.panel.querySelector('#mwi-csim-trigger-mingain').value,
+            objective: ui.panel.querySelector('#mwi-csim-trigger-objective').value,
         });
         const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
         test('defaults are unchanged when nothing is stored', async () => {
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'me', include: 'both', precision: 'standard', minGain: '0.5' });
+            expect(choices()).toEqual({
+                scope: 'me',
+                include: 'both',
+                precision: 'standard',
+                minGain: '0.5',
+                objective: 'balanced',
+            });
         });
 
         test('a changed choice survives a panel rebuild', async () => {
@@ -9548,12 +9560,19 @@ describe('the Triggers option', () => {
             set('#mwi-csim-trigger-include', 'consumables');
             set('#mwi-csim-trigger-precision', 'precise');
             set('#mwi-csim-trigger-mingain', '2');
+            set('#mwi-csim-trigger-objective', 'xp');
             await settle();
 
             ui.destroy();
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'party', include: 'consumables', precision: 'precise', minGain: '2' });
+            expect(choices()).toEqual({
+                scope: 'party',
+                include: 'consumables',
+                precision: 'precise',
+                minGain: '2',
+                objective: 'xp',
+            });
         });
 
         test('an invalid stored value falls back to the default', async () => {
@@ -9563,10 +9582,113 @@ describe('the Triggers option', () => {
                 include: 'dessert',
                 precision: 'ludicrous',
                 minGain: 7,
+                objective: 'speed',
             });
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'me', include: 'both', precision: 'standard', minGain: '0.5' });
+            expect(choices()).toEqual({
+                scope: 'me',
+                include: 'both',
+                precision: 'standard',
+                minGain: '0.5',
+                objective: 'balanced',
+            });
+        });
+    });
+
+    describe('the remembered last result', () => {
+        const settle = async () => {
+            for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        const box = () => ui.panel.querySelector('#mwi-csim-trigger-box');
+        const openTriggers = () => {
+            const chip = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
+            chip.checked = true;
+            chip.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        async function finishOneRun() {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = {
+                scope: 'me',
+                objective: 'balanced',
+                changes: [{ ...fireballChange, baseRows: [{ value: 1 }], original: 1 }],
+                unchanged: [{ itemName: 'Donut', baseRows: [] }],
+                combined: null,
+                simCount: 10,
+                stopped: false,
+            };
+            await ui._onUpgradeAnalyze();
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            selectZone();
+            onlyTriggers();
+        }
+
+        test('is shown when Triggers opens on the same setup, labelled, with Run again', async () => {
+            await finishOneRun();
+            const runs = mocks.triggerRuns.length;
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+            expect(box().textContent).toContain('Fireball');
+            expect(box().textContent).toContain('Kept as is: Donut');
+            expect(box().querySelector('#mwi-csim-trigger-rerun')).not.toBeNull();
+            expect(box().querySelector('#mwi-csim-trigger-apply')).not.toBeNull();
+            // the stored copy holds what the box draws, not the search's working state
+            const stored = [...mocks.store.entries()].find(([key]) => key.includes('combatSimTriggerLastResult'))[1];
+            expect(stored.result.changes[0].baseRows).toBeUndefined();
+            expect(stored.result.unchanged).toEqual([{ itemName: 'Donut' }]);
+
+            box().querySelector('#mwi-csim-trigger-rerun').click();
+            await settle();
+            expect(mocks.triggerRuns.length).toBe(runs + 1);
+            expect(box().textContent).not.toContain('Last result');
+        });
+
+        test('is not shown when the build changed since', async () => {
+            await finishOneRun();
+            mocks.editedDTOs.player1 = { ...mocks.editedDTOs.player1, abilities: [{ hrid: '/abilities/x' }] };
+            openTriggers();
+            await settle();
+            expect(box().textContent).not.toContain('Last result');
+            expect(box().innerHTML.trim()).toBe('');
+        });
+
+        test('is taken down when a choice that decides it changes, and back when it is restored', async () => {
+            await finishOneRun();
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+
+            const objective = ui.panel.querySelector('#mwi-csim-trigger-objective');
+            objective.value = 'xp';
+            objective.dispatchEvent(new Event('change', { bubbles: true }));
+            await settle();
+            expect(box().innerHTML.trim()).toBe('');
+
+            objective.value = 'balanced';
+            objective.dispatchEvent(new Event('change', { bubbles: true }));
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+        });
+
+        test('a stopped run is not remembered', async () => {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [],
+                unchanged: [],
+                combined: null,
+                simCount: 3,
+                stopped: true,
+            };
+            await ui._onUpgradeAnalyze();
+            expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
         });
     });
 

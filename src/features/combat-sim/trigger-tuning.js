@@ -614,17 +614,47 @@ const pct = (value, base) => {
  * @returns {number} Score points
  */
 export function balancedScore(metrics, base) {
-    const deathsTerm = Math.max(
-        -100,
-        Math.min(100, -DEATH_POINTS_PER_PER_HOUR * ((metrics.deaths || 0) - (base.deaths || 0)))
-    );
     const terms = [
         pct(metrics.xp, base.xp),
         pct(metrics.profit, base.profit),
         pct(metrics.dps, base.dps),
         pct(metrics.encounters, base.encounters),
     ];
-    return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm;
+    return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm(metrics, base);
+}
+
+/**
+ * Score points lost to extra deaths: `DEATH_POINTS_PER_PER_HOUR` per extra death
+ * per hour, clamped to ±100 like the percentage terms.
+ * @param {Object} metrics - From `scopeMetrics`
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @returns {number}
+ */
+function deathsTerm(metrics, base) {
+    return Math.max(-100, Math.min(100, -DEATH_POINTS_PER_PER_HOUR * ((metrics.deaths || 0) - (base.deaths || 0))));
+}
+
+/** What the search optimizes: the balanced score, or one rate alone */
+export const OBJECTIVES = [
+    { key: 'balanced', label: 'Balanced' },
+    { key: 'xp', label: 'XP/h' },
+    { key: 'profit', label: 'Profit/h' },
+];
+export const DEFAULT_OBJECTIVE = 'balanced';
+
+/**
+ * The score the search maximizes. Balanced is `balancedScore`; XP/h and Profit/h
+ * are the percentage change of that one rate, less the same deaths term, so the
+ * minimum gain and the confirmation work in that rate's percent points.
+ * @param {Object} metrics - From `scopeMetrics`
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @param {string} [objective] - An OBJECTIVES key; anything else is balanced
+ * @returns {number} Score points
+ */
+export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE) {
+    if (objective === 'xp') return pct(metrics.xp, base.xp) + deathsTerm(metrics, base);
+    if (objective === 'profit') return pct(metrics.profit, base.profit) + deathsTerm(metrics, base);
+    return balancedScore(metrics, base);
 }
 
 // ─── Statistics ─────────────────────────────────────────────────────────────
@@ -974,6 +1004,7 @@ function metricsMean(samples, hrids) {
  * @param {number} [params.maxEnemies] - Most enemies up at once in the zone (the fallback enemy-HP range)
  * @param {{single: number, total: number}|null} [params.enemyHp] - From `zoneEnemyHp`: the enemy-HP range
  * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
+ * @param {string} [params.objective] - What the score is: 'balanced' (default), 'xp' or 'profit' (`objectiveScore`)
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
  * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline
@@ -985,6 +1016,7 @@ export async function runTriggerSearch({
     precision,
     maxEnemies = 1,
     enemyHp = null,
+    objective = DEFAULT_OBJECTIVE,
     minGain = MIN_GAIN,
     onProgress,
     aborted,
@@ -1013,7 +1045,7 @@ export async function runTriggerSearch({
             encounters: mean(ms.map((m) => m.encounters)),
         };
     })();
-    const score = (sample) => balancedScore(scopeMetrics(sample, scopeHrids), baseScope);
+    const score = (sample) => objectiveScore(scopeMetrics(sample, scopeHrids), baseScope, objective);
 
     const partyDps = mean(
         baselineSamples.map((s) => Object.values(s.perPlayer || {}).reduce((sum, p) => sum + (p.dps || 0), 0))
@@ -1193,6 +1225,7 @@ export async function runTriggerSearch({
     const kept = new Set(changes.map((c) => c.key));
     return {
         stopped: stopped(),
+        objective,
         baseline: baseScope,
         partyDps,
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),

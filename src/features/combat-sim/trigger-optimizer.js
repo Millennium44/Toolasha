@@ -23,6 +23,8 @@ import { deriveSeed, randomSeed } from './engine/rng.js';
 import {
     PRECISIONS,
     DEFAULT_PRECISION,
+    DEFAULT_OBJECTIVE,
+    OBJECTIVES,
     applyTriggerValues,
     collectTunables,
     estimateTriggerSims,
@@ -170,6 +172,7 @@ function triggerUseFromResult(simResult, hrids) {
  * @param {number} [params.minGain] - Smallest score gain worth offering
  * @param {Object} [params.playerNames] - hrid → display name
  * @param {string} [params.include] - 'both', 'abilities' or 'consumables': which kinds of row to tune
+ * @param {string} [params.objective] - 'balanced' (default), 'xp' or 'profit': what the score measures
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
  * @returns {Promise<Object|null>} The search result plus `scope`, `precision`, `simCount`, `tunableCount`;
@@ -188,7 +191,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         minGain = MIN_GAIN,
         playerNames = {},
         include = 'both',
+        objective: objectiveKey = DEFAULT_OBJECTIVE,
     } = params;
+    const objective = OBJECTIVES.some((o) => o.key === objectiveKey) ? objectiveKey : DEFAULT_OBJECTIVE;
     const { abortSignal } = options;
     const precision = PRECISIONS[precisionKey] || PRECISIONS[DEFAULT_PRECISION];
     const wholeParty = scope === 'party' && playerDTOs.length > 1;
@@ -196,7 +201,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
     const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
     if (tunables.length === 0) {
-        return { noTunables: true, scope: wholeParty ? 'party' : 'me', include, changes: [] };
+        return { noTunables: true, scope: wholeParty ? 'party' : 'me', include, objective, changes: [] };
     }
 
     const allHrids = playerDTOs.map((d) => d.hrid);
@@ -285,6 +290,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
         enemyHp: zoneEnemyHp(gameData, zoneHrid, difficultyTier, monsterMaxHpReader(gameData)),
         minGain,
+        objective,
         onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
         aborted: stopped,
     });
@@ -294,6 +300,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         ...result,
         scope: wholeParty ? 'party' : 'me',
         include,
+        objective,
         precision: precision.key,
         minGain,
         simCount,

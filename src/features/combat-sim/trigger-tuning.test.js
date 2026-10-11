@@ -22,6 +22,8 @@ import {
     coarseGrid,
     fineGrid,
     balancedScore,
+    objectiveScore,
+    OBJECTIVES,
     scopeMetrics,
     pairedDiff,
     accepts,
@@ -436,6 +438,23 @@ describe('balancedScore', () => {
         };
         expect(scopeMetrics(sample, ['a'])).toEqual({ xp: 1, profit: 2, deaths: 3, dps: 4, encounters: 7 });
         expect(scopeMetrics(sample, ['a', 'b'])).toEqual({ xp: 11, profit: 22, deaths: 33, dps: 44, encounters: 7 });
+    });
+});
+
+describe('objectiveScore', () => {
+    const base = { xp: 1000, profit: 2000, deaths: 1, dps: 100, encounters: 10 };
+
+    test('XP/h and Profit/h score that one rate in percent, less the same 10 points per extra death per hour', () => {
+        const m = { xp: 1100, profit: 1000, deaths: 1.5, dps: 200, encounters: 20 };
+        expect(objectiveScore(m, base, 'xp')).toBeCloseTo(10 - 5, 10);
+        expect(objectiveScore(m, base, 'profit')).toBeCloseTo(-50 - 5, 10);
+        expect(objectiveScore(m, base, 'balanced')).toBeCloseTo(balancedScore(m, base), 10);
+        expect(objectiveScore(m, base)).toBeCloseTo(balancedScore(m, base), 10);
+        expect(objectiveScore(m, base, 'nonsense')).toBeCloseTo(balancedScore(m, base), 10);
+    });
+
+    test('the choices are Balanced, XP/h and Profit/h', () => {
+        expect(OBJECTIVES.map((o) => o.key)).toEqual(['balanced', 'xp', 'profit']);
     });
 });
 
@@ -954,6 +973,34 @@ describe('runTriggerSearch with deterministic fakes', () => {
         const result = await run(measure);
         expect(result.unused).toEqual([]);
         expect(result.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+    });
+
+    test('the objective decides what counts as better: a profit-only gain is offered for Profit/h, not XP/h', async () => {
+        // Raising Fireball's gate to 300 adds 40% profit and nothing else
+        const measure = async (overrides, hours, stream, count, offset = 0) =>
+            Array.from({ length: count }, (_, i) => {
+                const fireball = overrides[FIRE_KEY] ?? 1;
+                const k = offset + i;
+                return {
+                    perPlayer: {
+                        player1: {
+                            xp: 1000 + k,
+                            profit: 1000 + 400 * Math.max(0, 1 - Math.abs(fireball - 300) / 300) + k,
+                            deaths: 0,
+                            dps: 100,
+                        },
+                    },
+                    encounters: 10,
+                    pools: { player1: { hp: 1000, mp: 500 } },
+                };
+            });
+        const profit = await run(measure, { objective: 'profit' });
+        const xp = await run(measure, { objective: 'xp' });
+        expect(profit.objective).toBe('profit');
+        expect(profit.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+        // the gain is in profit percent points, not a quarter of them as in the balanced average
+        expect(profit.changes[0].deltaScore).toBeGreaterThan(20);
+        expect(xp.changes).toEqual([]);
     });
 
     test('the estimate grows with the number of triggers and the seed count', () => {

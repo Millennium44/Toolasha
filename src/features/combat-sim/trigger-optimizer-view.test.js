@@ -67,6 +67,31 @@ describe('renderTriggerResultsHtml', () => {
         expect(allUnused).not.toContain('No change beat');
     });
 
+    test('the footer explains the chosen objective', () => {
+        const render = (objective) =>
+            renderTriggerResultsHtml(
+                { scope: 'me', changes: [change()], unchanged: [], objective, simCount: 1 },
+                gameData
+            );
+        expect(render(undefined)).toContain(
+            'Score is the average of the EXP/h, profit/h, DPS and encounters/h changes'
+        );
+        expect(render('balanced')).toContain('Score is the average of the EXP/h');
+        expect(render('xp')).toContain('Optimizing for XP/h: score is the percent change in EXP/h, less 10 points');
+        expect(render('profit')).toContain('Optimizing for profit/h: score is the percent change in profit/h');
+    });
+
+    test('a remembered result is labelled and offers Run again; a fresh one does not', () => {
+        const result = { scope: 'me', changes: [change()], unchanged: [], simCount: 1 };
+        const cached = renderTriggerResultsHtml(result, gameData, { cached: true });
+        expect(cached).toContain('Last result (unchanged setup)');
+        expect(cached).toContain('mwi-csim-trigger-rerun');
+        expect(cached).toContain('mwi-csim-trigger-apply');
+        const fresh = renderTriggerResultsHtml(result, gameData);
+        expect(fresh).not.toContain('Last result');
+        expect(fresh).not.toContain('mwi-csim-trigger-rerun');
+    });
+
     test('the footer shows the chosen minimum gain', () => {
         const render = (minGain) =>
             renderTriggerResultsHtml(
@@ -163,6 +188,15 @@ describe('renderTriggerResultsHtml', () => {
 });
 
 describe('triggerChipOptionsHtml', () => {
+    test('offers Optimize for: Balanced (selected), XP/h and Profit/h', () => {
+        const html = triggerChipOptionsHtml();
+        expect(html).toContain('Optimize for');
+        expect(html).toContain('id="mwi-csim-trigger-objective"');
+        expect(html).toContain('<option value="balanced" selected>Balanced</option>');
+        expect(html).toContain('<option value="xp">XP/h</option>');
+        expect(html).toContain('<option value="profit">Profit/h</option>');
+    });
+
     test('offers Just me / Whole party and the three precisions, Standard selected', () => {
         const html = triggerChipOptionsHtml();
         expect(html).toContain('value="me" selected');
