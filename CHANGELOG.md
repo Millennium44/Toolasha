@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat dates, loot log and K marks fixes
+
+- Chat timestamps show the right date on browsers that write dates day-first, a cleared loot-log run no longer comes back when an old device syncs both copies of it, and old-format K marks written by another tab are cleared again when they arrive.
+
 ### Trigger optimizer and combat sim loot fixes
 
 - The trigger optimizer no longer recommends money-losing changes from a break-even baseline, values a whole search at one set of prices, never counts an unpriced item as free (and won't tune a food or drink with no price), simulates the same party as Simulate (Solo included), and refuses to Apply after the zone, tier or party changed; combat sim loot is now valued at the drink buffs active at each kill instead of whatever was active when the run ended.

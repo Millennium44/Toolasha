@@ -695,6 +695,33 @@ describe('one run under a reissued characterActionId', () => {
         expect(await lootLogHistory._load()).toEqual([]);
     });
 
+    test('an old-client tombstone without a rev still holds when a stale peer supplies both copies of a reissued run', async () => {
+        // The old build filed one tombstone per original row (fingerprint of that row, no rev)
+        const first = run(123, 123);
+        const second = run(148, 148);
+        const oldBuild = createChunkedHistory({
+            storeName: 'lootLogHistory',
+            prefix: 'lootLogRec',
+            legacyKey: (charId) => `lootLog_${charId}`,
+            groupOf: (e) => timeChunkId(Date.parse(e?.startTime), 'hour'),
+            compare: (a, b) => Date.parse(b?.startTime) - Date.parse(a?.startTime) || 0,
+            identityOf: (e) => e?.characterActionId,
+            label: 'OldLootLogHistory',
+        });
+        await oldBuild.save('char-1', [after, first, second, before]);
+        await oldBuild.save('char-1', [after, before]);
+        await flush();
+        const stones = storageMock.store.get(TOMB);
+        expect(Object.keys(stones).sort()).toEqual(['123', '148']);
+        expect(stones['123'].rev).toBeUndefined();
+
+        // A stale peer syncs both copies back; folding them adds legacyIds to the winner
+        storageMock.store.set(CHUNK, [second, first]);
+        lootLogHistory._store.forget();
+
+        expect((await lootLogHistory._load()).map((e) => e.characterActionId)).toEqual([2, 1]);
+    });
+
     test('rows folded on read also keep both ids', async () => {
         storageMock.store.set(CHUNK, [run(148, 148), run(123, 123)]);
         const [folded] = await lootLogHistory._load();
