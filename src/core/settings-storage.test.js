@@ -1375,6 +1375,14 @@ describe('flipped checkbox defaults reach new players only', () => {
         for (const id of IDS) expect(settings[id].isTrue).toBe(false);
     });
 
+    test('with no map on disk (an earlier write failed), the pins are not written alone', async () => {
+        const saved = { someOther: box('someOther', true) };
+        const result = await settingsStorage.applyPinnedPreviousDefaults(saved, KEY);
+
+        for (const id of IDS) expect(result[id].isTrue).toBe(false);
+        expect(stored.has(`json:${KEY}`)).toBe(false);
+    });
+
     test('a fresh install that saves through the normal path is not pinned afterwards', async () => {
         await settingsStorage.loadSettings();
         // Its own save fills every absent id from the live values, the new defaults included

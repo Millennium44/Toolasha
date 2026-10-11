@@ -1058,7 +1058,11 @@ class SettingsStorage {
         try {
             // Pins go onto what is on disk, not onto `saved`: an earlier step's refused write leaves
             // `saved` holding changes that must stay unsaved until their own retry.
-            const onDisk = (await storage.getJSON(characterKey, this.storageArea, null)) ?? {};
+            const onDisk = await storage.getJSON(characterKey, this.storageArea, null);
+            // No map on disk means an earlier step's write (the template copy) failed: writing the
+            // pins alone would leave a partial map that blocks that retry and drops every other
+            // setting. Keep the pins in memory only; the next load pins again once the map exists.
+            if (!onDisk) return next;
             const persisted = { ...onDisk };
             for (const id of Object.keys(next)) {
                 if (!saved[id] && !persisted[id]) persisted[id] = next[id];
