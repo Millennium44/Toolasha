@@ -7,7 +7,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import { leaderboardXPTracker, isLevelBoard, isWeeklyBoard } from './leaderboard-xp-tracker.js';
-import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
+import { fNum, rankBadge, addColumn, makeColumnSortable, readMemberName } from '../../utils/table-columns.js';
 
 const CSS_PREFIX = 'mwi-leaderboard-xp';
 
@@ -345,7 +345,7 @@ class LeaderboardXPDisplay {
 
         const allStats = [];
         for (const row of rows) {
-            const name = row.children[1]?.textContent?.trim();
+            const name = readMemberName(row.children[1]);
             const stats = name
                 ? leaderboardXPTracker.getPlayerStats(name, resolvedCategory)
                 : { lastXPH: 0, lastDayXPH: 0, samples: 0 };
