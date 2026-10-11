@@ -210,14 +210,27 @@ describe('detail snapshots are stored one key each', () => {
         expect(networthHistory.detailHistory.at(-1).items['/items/coin:0']).toEqual({ count: 5000, value: 5000 });
     });
 
+    /** A working detail store: putAll, delete, getAllKeys and get (which getMany reads through) share one map */
+    function detailStore(initial) {
+        const stored = new Map(Object.entries(initial));
+        storageMock.get.mockImplementation(async (key, store, fallback) =>
+            stored.has(key) ? stored.get(key) : fallback
+        );
+        storageMock.putAll.mockImplementation(async (store, entries) => {
+            for (const [key, value] of Object.entries(entries)) stored.set(key, value);
+            return Object.keys(entries).length;
+        });
+        storageMock.delete.mockImplementation(async (key) => stored.delete(key));
+        storageMock.getAllKeys.mockImplementation(async () => [...stored.keys()]);
+        return stored;
+    }
+
     test('the old single-array key is migrated into per-snapshot keys and removed', async () => {
         const legacy = [
             { t: 1, items: { a: 1 } },
             { t: 2, items: { b: 2 } },
         ];
-        storageMock.get.mockImplementation(async (key, store, fallback) =>
-            key === 'networthDetail_char-1' ? legacy : fallback
-        );
+        const stored = detailStore({ 'networthDetail_char-1': legacy });
 
         const loaded = await networthHistory._loadDetailHistory(networthHistory._generation, 'char-1');
 
@@ -226,7 +239,19 @@ describe('detail snapshots are stored one key each', () => {
             'networthDetail_char-1_1': legacy[0],
             'networthDetail_char-1_2': legacy[1],
         });
-        expect(storageMock.delete).toHaveBeenCalledWith('networthDetail_char-1', 'networthHistory');
+        expect(stored.has('networthDetail_char-1')).toBe(false);
+    });
+
+    test('a migrated array is read together with snapshot keys a pull already landed', async () => {
+        const legacy = [{ t: 1, items: { a: 1 } }];
+        detailStore({
+            'networthDetail_char-1': legacy,
+            'networthDetail_char-1_500': { t: 500, items: { b: 2 } },
+        });
+
+        const loaded = await networthHistory._loadDetailHistory(networthHistory._generation, 'char-1');
+
+        expect(loaded.map((s) => s.t)).toEqual([1, 500]);
     });
 
     test('already-split snapshots are gathered back into timestamp order', async () => {

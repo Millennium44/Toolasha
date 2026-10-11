@@ -287,15 +287,16 @@ class NetworthHistory {
         const legacy = await storage.get(legacyKey, STORE_NAME, null);
         if (this._generation !== generation) return [];
 
+        // Migrate the pre-split array into snapshot keys, then read the window as a whole: a pull can have
+        // landed newer snapshot keys beside an array this device still held, and the two belong together
         if (Array.isArray(legacy) && legacy.length > 0) {
-            const kept = legacy.slice(-MAX_DETAIL_SNAPSHOTS);
             const entries = {};
-            for (const snapshot of kept) {
+            for (const snapshot of legacy.slice(-MAX_DETAIL_SNAPSHOTS)) {
                 if (typeof snapshot?.t === 'number') entries[detailKey(snapshot.t)] = snapshot;
             }
             await storage.putAll(STORE_NAME, entries);
             await storage.delete(legacyKey, STORE_NAME);
-            return kept;
+            if (this._generation !== generation) return [];
         }
 
         // Already split: gather this character's snapshot keys back into order
