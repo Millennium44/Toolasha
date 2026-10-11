@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Agent rule: new features may default on
+
+- Contributor rules no longer force every new feature off by default: a feature may start on, with off reserved for intrusive, heavy or experimental ones, since players who want new switches held back already have "New settings start turned off".
+
 <!-- shipped in 3.67.0 -->
 
 ### Market API backs off after a refusal; Safe start

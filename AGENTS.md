@@ -149,7 +149,9 @@ Every brief to a sub-agent carries these lines:
   global install.
 - **Pull with `git pull --rebase`**, never a merge.
 - **A changed settings default applies to new users only.** Never migrate existing users' settings
-  unless the maintainer asks. New features default to off; bug fixes are on.
+  unless the maintainer asks. New features may default **on**; default one off only when it is
+  intrusive, heavy or experimental. Players who want every new switch held back have the
+  "New settings start turned off" setting (`whatsNew_newDefaultsOff`). Bug fixes are on.
 - **No call to a third-party server without a plainly labelled opt-in** whose setting names the host.
   Reusing data already fetched is fine.
 - **Press game spend and sell buttons through the game's React handler** —
