@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Triggers is a standard combat sim option
 
-- The trigger optimizer no longer needs its own setting: Triggers is always among the combat sim's Upgrade options, unchecked until you tick it, like Food.
+- The trigger optimizer no longer needs its own setting: Triggers is always among the combat sim's Upgrade options, unchecked until you tick it, like Food. It can tune abilities only, food and drinks only, or both.
 
 ### Agent rule: new features may default on
 
