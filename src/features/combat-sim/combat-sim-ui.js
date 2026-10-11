@@ -10465,7 +10465,9 @@ class CombatSimUI {
             const nowContext = this._triggerRunContext(nowChoices, nowParty);
             if (
                 runContext &&
-                (nowContext.playerHrid !== runContext.playerHrid ||
+                (nowContext.zoneHrid !== runContext.zoneHrid ||
+                    nowContext.difficultyTier !== runContext.difficultyTier ||
+                    nowContext.playerHrid !== runContext.playerHrid ||
                     nowContext.soloApplied !== runContext.soloApplied ||
                     [...nowContext.signatures.keys()].sort().join('|') !== [...signatures.keys()].sort().join('|'))
             ) {

@@ -10007,6 +10007,98 @@ describe('the Triggers option', () => {
         });
     });
 
+    describe('Apply revalidates the run context', () => {
+        const settle = async () => {
+            for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        const status = () => ui.panel.querySelector('#mwi-csim-status').textContent;
+        const twoPlayers = () => ({
+            player1: { hrid: 'player1', abilities: [], food: [], drinks: [] },
+            player2: { hrid: 'player2', abilities: [], food: [], drinks: [] },
+        });
+
+        function setUpPanel() {
+            ui.buildPanel();
+            selectZone();
+            ui.panel.querySelector('#mwi-csim-tier').innerHTML =
+                '<option value="0">0</option><option value="1">1</option>';
+            ui.panel.querySelector('#mwi-csim-tier').value = '0';
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            select.innerHTML = '<option value="0">One</option><option value="1">Two</option>';
+            select.value = '0';
+            onlyTriggers();
+        }
+
+        /** Analyze, then (for the cached case) reopen the panel so the remembered result is what Apply sees */
+        async function analyze(cached) {
+            mocks.editedDTOs = twoPlayers();
+            setUpPanel();
+            mocks.triggerResult = {
+                scope: 'me',
+                objective: 'balanced',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+            };
+            await ui._onUpgradeAnalyze();
+            if (!cached) return;
+            ui.destroy();
+            setUpPanel();
+            const chip = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
+            chip.checked = true;
+            chip.dispatchEvent(new Event('change', { bubbles: true }));
+            await settle();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-box').textContent).toContain('Last result');
+        }
+
+        const changes = {
+            'the zone changes': () => {
+                const zone = ui.panel.querySelector('#mwi-csim-zone');
+                zone.innerHTML = '<option value="/zones/b">B</option>';
+                zone.value = '/zones/b';
+            },
+            'the difficulty tier changes': () => {
+                ui.panel.querySelector('#mwi-csim-tier').value = '1';
+            },
+            'Solo is switched on': () => {
+                mocks.editorSoloMode = true;
+                mocks.editorActivePlayer = 'player1';
+            },
+            'the selected player changes': () => {
+                ui.panel.querySelector('#mwi-csim-upgrade-player').value = '1';
+            },
+        };
+
+        afterEach(() => {
+            mocks.editorSoloMode = false;
+            mocks.editorActivePlayer = null;
+        });
+
+        for (const cached of [false, true]) {
+            for (const [name, change] of Object.entries(changes)) {
+                test(`refuses a ${cached ? 'remembered' : 'fresh'} result after ${name}`, async () => {
+                    await analyze(cached);
+                    change();
+
+                    ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+                    expect(mocks.triggerApplied.flat()).toHaveLength(0);
+                    expect(status()).toContain('Setup changed since analysis (zone/tier/party)');
+                    expect(ui.panel.querySelector('#mwi-csim-trigger-apply').disabled).toBe(false);
+                });
+            }
+
+            test(`still applies a ${cached ? 'remembered' : 'fresh'} result when nothing changed`, async () => {
+                await analyze(cached);
+
+                ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+                expect(mocks.triggerApplied.flat()).toHaveLength(1);
+            });
+        }
+    });
+
     test('Copy puts one line per change on the clipboard', async () => {
         const writeText = vi.fn().mockResolvedValue(undefined);
         Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
