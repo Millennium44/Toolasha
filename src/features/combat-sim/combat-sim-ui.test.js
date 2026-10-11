@@ -9907,6 +9907,106 @@ describe('the Triggers option', () => {
         expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('1 skipped: changed since analysis');
     });
 
+    describe('the party a trigger run simulates', () => {
+        const twoPlayers = () => ({
+            player1: { hrid: 'player1', abilities: [], food: [], drinks: [], debuffOnLevelGap: 3 },
+            player2: { hrid: 'player2', abilities: [], food: [], drinks: [], debuffOnLevelGap: 5 },
+        });
+
+        afterEach(() => {
+            mocks.editorSoloMode = false;
+            mocks.editorActivePlayer = null;
+            mocks.editorSelfHrid = null;
+            mocks.buildPlayerDTOs = null;
+        });
+
+        async function runWithPlayerSelected(index) {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            ui._populateUpgradePlayerSelector();
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            select.innerHTML = '<option value="0">One</option><option value="1">Two</option>';
+            select.value = String(index);
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+            await ui._onUpgradeAnalyze();
+            return mocks.triggerRuns[0];
+        }
+
+        test('Solo on simulates only the open player, without the level-gap penalty', async () => {
+            mocks.editedDTOs = twoPlayers();
+            mocks.editorSoloMode = true;
+            mocks.editorActivePlayer = 'player2';
+
+            const run = await runWithPlayerSelected(1);
+
+            expect(run.playerDTOs.map((dto) => dto.hrid)).toEqual(['player2']);
+            expect(run.playerIndex).toBe(0);
+            expect(run.playerDTOs[0].debuffOnLevelGap).toBe(0);
+            // the editor's own DTO keeps its gap for the next full-party run
+            expect(mocks.editedDTOs.player2.debuffOnLevelGap).toBe(5);
+        });
+
+        test('Solo on simulates the open player whichever player the Upgrade tab names', async () => {
+            mocks.editedDTOs = twoPlayers();
+            mocks.editorSoloMode = true;
+            mocks.editorActivePlayer = 'player2';
+
+            const run = await runWithPlayerSelected(0);
+
+            expect(run.playerDTOs.map((dto) => dto.hrid)).toEqual(['player2']);
+            expect(run.playerIndex).toBe(0);
+        });
+
+        test('Solo off simulates the whole party and keeps the selected index', async () => {
+            mocks.editedDTOs = twoPlayers();
+
+            const run = await runWithPlayerSelected(1);
+
+            expect(run.playerDTOs.map((dto) => dto.hrid)).toEqual(['player1', 'player2']);
+            expect(run.playerIndex).toBe(1);
+            expect(run.playerDTOs[1].debuffOnLevelGap).toBe(5);
+        });
+
+        test('freshly built players (no editor DTOs) are all simulated, as Simulate does', async () => {
+            mocks.editedDTOs = null;
+            mocks.editorSoloMode = true;
+            mocks.buildPlayerDTOs = () => ({
+                players: Object.values(twoPlayers()),
+                playerInfo: [],
+                selfHrid: 'player1',
+                missingMembers: [],
+            });
+
+            const run = await runWithPlayerSelected(1);
+
+            expect(run.playerDTOs.map((dto) => dto.hrid)).toEqual(['player1', 'player2']);
+            expect(run.playerIndex).toBe(1);
+        });
+
+        test("Apply under Solo writes into the editor's own DTO for the solo player", async () => {
+            mocks.editedDTOs = twoPlayers();
+            mocks.editorSoloMode = true;
+            mocks.editorActivePlayer = 'player2';
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [{ ...fireballChange, playerHrid: 'player2' }],
+                unchanged: [],
+                combined: null,
+                simCount: 1,
+            };
+            await ui._onUpgradeAnalyze();
+
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            expect(mocks.triggerApplied).toHaveLength(1);
+            expect(mocks.triggerApplied[0][0].dtoRef).toBe(mocks.editedDTOs.player2);
+        });
+    });
+
     test('Copy puts one line per change on the clipboard', async () => {
         const writeText = vi.fn().mockResolvedValue(undefined);
         Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
