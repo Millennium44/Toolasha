@@ -551,6 +551,25 @@ describe('keeping a simulation worker warm', () => {
         expect(merged.encounters).toBe(0);
     });
 
+    test('trigger reads from every chunk add up', async () => {
+        const { built } = stubWorkerPool({ deferred: true });
+        const pending = runSimulation({
+            gameData: gameDataPayload(),
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 100,
+        });
+        await new Promise((resolve) => setTimeout(resolve));
+        built.forEach((worker, i) =>
+            worker.respond({
+                ...EMPTY_SIM_RESULT,
+                triggerChecks: { player1: { '/abilities/fireball': i + 1, '/items/donut': 0 } },
+            })
+        );
+        const merged = await pending;
+        expect(merged.triggerChecks.player1).toEqual({ '/abilities/fireball': 10, '/items/donut': 0 });
+    });
+
     test('and the next run borrows one of the four back', async () => {
         const { built } = stubWorkerPool();
 

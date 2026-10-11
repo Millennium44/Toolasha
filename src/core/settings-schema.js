@@ -3145,18 +3145,6 @@ export const settingsGroups = {
                 default: true,
                 help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
             },
-            combatSim_triggerOptimizer: {
-                id: 'combatSim_triggerOptimizer',
-                label: 'Combat Simulator: Trigger optimizer (Upgrade tab "Triggers")',
-                type: 'checkbox',
-                default: false,
-                help:
-                    'Adds a Triggers option to the Upgrade tab. It simulates different numbers for the HP and MP ' +
-                    'thresholds in your ability and food triggers (how much enemy HP Fireball waits for, how low ' +
-                    'your HP gets before a food fires) and reports which values do better. It only changes the ' +
-                    'numbers, never what a trigger watches. Results are shown for you to enter in the game by hand ' +
-                    "or write into the simulator's own trigger editor; the script never changes triggers in the game.",
-            },
             combatSim_soloMode: {
                 id: 'combatSim_soloMode',
                 label: 'Combat Simulator: Solo (Configure tab checkbox)',

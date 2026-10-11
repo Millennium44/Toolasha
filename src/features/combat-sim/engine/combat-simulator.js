@@ -470,6 +470,7 @@ class CombatSimulator {
             this.simResult.setDropRateMultipliers(this.players[i]);
             this.simResult.setPlayerPools(this.players[i]);
             this.simResult.setManaUsed(this.players[i]);
+            this.simResult.setTriggerChecks(this.players[i]);
         }
 
         if (this.zone.isDungeon) {

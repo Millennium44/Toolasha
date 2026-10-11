@@ -7,7 +7,6 @@
 
 import { describe, test, expect } from 'vitest';
 import {
-    TRIGGER_OPTIMIZER_SETTING,
     MAX_TRIGGERS,
     PRECISIONS,
     KIND_ENEMY_HP,
@@ -23,13 +22,24 @@ import {
     coarseGrid,
     fineGrid,
     balancedScore,
+    objectiveScore,
+    OBJECTIVES,
     scopeMetrics,
     pairedDiff,
     accepts,
     tCritical,
+    tCdf,
+    tQuantile,
+    confirmLooks,
+    sequentialVerdict,
+    CONFIRM_ALPHA,
+    INTERIM_ALPHA,
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
     zoneMaxEnemies,
+    zoneEnemyHp,
+    gridMaximum,
+    unusedTunables,
     successiveHalving,
     runTriggerSearch,
     estimateTriggerSims,
@@ -155,6 +165,16 @@ describe('activeRows and collectTunables', () => {
         ]);
         expect(tunables[0].playerName).toBe('Milkman');
         expect(tunables[0].key).toBe(`player1|abilities|${FIREBALL}|0`);
+    });
+
+    test('each scope includes only its rows, and both is the default', () => {
+        const args = { playerDTOs: [playerDTO()], playerIndices: [0], gameData: gameData() };
+        const names = (include) => collectTunables({ ...args, include }).map((t) => t.itemName);
+        expect(names('abilities')).toEqual(['Fireball']);
+        expect(names('consumables')).toEqual(['Donut']);
+        expect(names('both')).toEqual(['Fireball', 'Donut']);
+        expect(names(undefined)).toEqual(['Fireball', 'Donut']);
+        expect(names('nonsense')).toEqual(['Fireball', 'Donut']);
     });
 
     test('custom values are the starting point, and only the chosen players are read', () => {
@@ -307,6 +327,86 @@ describe('grids', () => {
     });
 });
 
+describe("enemy-HP range from the zone's monsters", () => {
+    const ZONE = '/actions/combat/swamp';
+    const HP = { '/monsters/frog': 100, '/monsters/croc': 500, '/monsters/boss': 5000 };
+    const hpOf = (hrid, tier) => HP[hrid] * (1 + tier);
+    const zone = (combatZoneInfo) => ({ actionDetailMap: { [ZONE]: { combatZoneInfo } } });
+    const spawn = (hrid, strength, difficultyTier = 0) => ({
+        combatMonsterHrid: hrid,
+        strength,
+        rate: 1,
+        difficultyTier,
+    });
+
+    test('the largest random group respects the spawn count and the strength cap', () => {
+        const data = zone({
+            fightInfo: {
+                randomSpawnInfo: {
+                    maxSpawnCount: 3,
+                    maxTotalStrength: 4,
+                    spawns: [spawn('/monsters/frog', 1), spawn('/monsters/croc', 2)],
+                },
+            },
+        });
+        // croc + croc (strength 4) beats croc + frog + frog (700) and three frogs (300)
+        expect(zoneEnemyHp(data, ZONE, 0, hpOf)).toEqual({ single: 500, total: 1000 });
+        // the zone's tier and each spawn's own tier offset both reach the monster
+        expect(zoneEnemyHp(data, ZONE, 1, hpOf)).toEqual({ single: 1000, total: 2000 });
+    });
+
+    test("a boss wave and a dungeon's fixed waves count as whole groups", () => {
+        const data = zone({
+            fightInfo: {
+                randomSpawnInfo: { maxSpawnCount: 1, maxTotalStrength: 9, spawns: [spawn('/monsters/frog', 1)] },
+                bossSpawns: [spawn('/monsters/boss', 0), spawn('/monsters/frog', 0)],
+            },
+            dungeonInfo: {
+                randomSpawnInfoMap: {
+                    0: { maxSpawnCount: 2, maxTotalStrength: 9, spawns: [spawn('/monsters/croc', 1, 1)] },
+                },
+                fixedSpawnsMap: { 5: [spawn('/monsters/boss', 0), spawn('/monsters/boss', 0)] },
+            },
+        });
+        expect(zoneEnemyHp(data, ZONE, 0, hpOf)).toEqual({ single: 5000, total: 10000 });
+    });
+
+    test('no readable monster means no range, so the grid falls back to party damage', () => {
+        const data = zone({ fightInfo: { randomSpawnInfo: { maxSpawnCount: 2, spawns: [spawn('/monsters/x', 1)] } } });
+        expect(zoneEnemyHp(data, ZONE, 0, () => 0)).toBeNull();
+        expect(
+            zoneEnemyHp(data, ZONE, 0, () => {
+                throw new Error('no data');
+            })
+        ).toBeNull();
+        expect(zoneEnemyHp({}, ZONE, 0, hpOf)).toBeNull();
+    });
+
+    test('the grid tops out at the largest monster for a targeted row and the largest group for all enemies', () => {
+        const ctx = { partyDps: 100, pools: {}, maxEnemies: 3, enemyHp: { single: 5000, total: 12000 } };
+        const targeted = { kind: KIND_ENEMY_HP, original: 1, dependencyHrid: TARGET, playerHrid: 'player1' };
+        const all = { kind: KIND_ENEMY_HP, original: 1, dependencyHrid: ENEMIES, playerHrid: 'player1' };
+        expect(gridMaximum(targeted, ctx)).toBe(5000);
+        expect(gridMaximum(all, ctx)).toBe(12000);
+        const grid = coarseGrid(targeted, ctx);
+        expect(grid[0]).toBe(0);
+        expect(grid[grid.length - 1]).toBe(5000);
+        expect(grid.filter((v) => v !== 1)).toHaveLength(12);
+        expect(coarseGrid(all, ctx).at(-1)).toBe(12000);
+        // percentages and pools are untouched by monster HP
+        expect(gridMaximum({ kind: KIND_ENEMY_PCT, original: 50 }, ctx)).toBe(100);
+        expect(
+            gridMaximum({ kind: KIND_HP_POOL, original: 5, playerHrid: 'p' }, { ...ctx, pools: { p: { hp: 900 } } })
+        ).toBe(900);
+    });
+
+    test('without monster HP the old party-damage range applies, times the largest spawn for all enemies', () => {
+        const ctx = { partyDps: 100, pools: {}, maxEnemies: 3, enemyHp: null };
+        expect(gridMaximum({ kind: KIND_ENEMY_HP, original: 1, dependencyHrid: TARGET }, ctx)).toBe(600);
+        expect(gridMaximum({ kind: KIND_ENEMY_HP, original: 1, dependencyHrid: ENEMIES }, ctx)).toBe(1800);
+    });
+});
+
 describe('balancedScore', () => {
     const base = { xp: 1000, profit: 2000, deaths: 1, dps: 100, encounters: 10 };
 
@@ -338,6 +438,23 @@ describe('balancedScore', () => {
         };
         expect(scopeMetrics(sample, ['a'])).toEqual({ xp: 1, profit: 2, deaths: 3, dps: 4, encounters: 7 });
         expect(scopeMetrics(sample, ['a', 'b'])).toEqual({ xp: 11, profit: 22, deaths: 33, dps: 44, encounters: 7 });
+    });
+});
+
+describe('objectiveScore', () => {
+    const base = { xp: 1000, profit: 2000, deaths: 1, dps: 100, encounters: 10 };
+
+    test('XP/h and Profit/h score that one rate in percent, less the same 10 points per extra death per hour', () => {
+        const m = { xp: 1100, profit: 1000, deaths: 1.5, dps: 200, encounters: 20 };
+        expect(objectiveScore(m, base, 'xp')).toBeCloseTo(10 - 5, 10);
+        expect(objectiveScore(m, base, 'profit')).toBeCloseTo(-50 - 5, 10);
+        expect(objectiveScore(m, base, 'balanced')).toBeCloseTo(balancedScore(m, base), 10);
+        expect(objectiveScore(m, base)).toBeCloseTo(balancedScore(m, base), 10);
+        expect(objectiveScore(m, base, 'nonsense')).toBeCloseTo(balancedScore(m, base), 10);
+    });
+
+    test('the choices are Balanced, XP/h and Profit/h', () => {
+        expect(OBJECTIVES.map((o) => o.key)).toEqual(['balanced', 'xp', 'profit']);
     });
 });
 
@@ -381,6 +498,91 @@ describe('paired statistics and the acceptance rule', () => {
         expect(tCritical(30)).toBeCloseTo(2.042, 3);
         expect(tCritical(500)).toBeCloseTo(1.96, 2);
         expect(tCritical(0)).toBe(Infinity);
+    });
+});
+
+describe('sequential confirmation', () => {
+    test('t quantiles match the two-sided 95% table and the tails are symmetric', () => {
+        for (let df = 1; df <= 30; df++) expect(tQuantile(0.975, df)).toBeCloseTo(tCritical(df), 2);
+        expect(tQuantile(0.999, 3)).toBeCloseTo(10.215, 2);
+        expect(tQuantile(0.025, 7)).toBeCloseTo(-tQuantile(0.975, 7), 8);
+        expect(tCdf(0, 5)).toBeCloseTo(0.5, 10);
+    });
+
+    test('looks fall at half, three quarters and all of the seeds', () => {
+        expect(confirmLooks(8)).toEqual([4, 6, 8]);
+        expect(confirmLooks(12)).toEqual([6, 9, 12]);
+        expect(confirmLooks(4)).toEqual([3, 4]);
+    });
+
+    test('the budgets add up to the old test’s one-sided 2.5%', () => {
+        expect(CONFIRM_ALPHA).toBe(0.025);
+        expect(INTERIM_ALPHA * 2).toBeLessThan(CONFIRM_ALPHA);
+    });
+
+    test('an unmistakable gain stops at the first look, a hopeless one is dropped there, a close one waits', () => {
+        expect(sequentialVerdict({ mean: 10, se: 0.5, n: 4 }, 0, 3, 0.5)).toBe('accept');
+        expect(sequentialVerdict({ mean: -2, se: 0.3, n: 4 }, 0, 3, 0.5)).toBe('reject');
+        expect(sequentialVerdict({ mean: 1, se: 0.4, n: 4 }, 0, 3, 0.5)).toBe('continue');
+        // a gain that would only look big enough on a few seeds is not stopped for success early
+        expect(sequentialVerdict({ mean: 0.6, se: 0.05, n: 4 }, 0, 3, 0.5)).toBe('continue');
+    });
+
+    test('the final look keeps minGain and spends only what the interim looks left', () => {
+        // t = 2.39: past the old 2.365 bound at 7 df, short of the adjusted 2.42
+        const diff = { mean: 2.39, se: 1, n: 8 };
+        expect(accepts(diff, 0.5)).toBe(true);
+        expect(sequentialVerdict(diff, 2, 3, 0.5)).toBe('reject');
+        expect(sequentialVerdict({ mean: 2.5, se: 1, n: 8 }, 2, 3, 0.5)).toBe('accept');
+        expect(sequentialVerdict({ mean: 0.4, se: 0.01, n: 8 }, 2, 3, 0.5)).toBe('reject');
+        expect(sequentialVerdict({ mean: 5, se: Infinity, n: 1 }, 2, 3, 0.5)).toBe('reject');
+    });
+
+    /** A seeded normal stream, so the Monte Carlo below is the same every run */
+    function normals(seed) {
+        let state = seed >>> 0;
+        const uniform = () => {
+            state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+            return (state + 0.5) / 4294967296;
+        };
+        return () => Math.sqrt(-2 * Math.log(uniform())) * Math.cos(2 * Math.PI * uniform());
+    }
+
+    /** Run the sequential confirmation over simulated paired differences: accept rate and mean seeds */
+    function simulate(mu, sigma, reps, seed) {
+        const normal = normals(seed);
+        const looks = confirmLooks(8);
+        let accepted = 0;
+        let seeds = 0;
+        for (let r = 0; r < reps; r++) {
+            const d = Array.from({ length: 8 }, () => mu + sigma * normal());
+            let verdict = 'continue';
+            let used = 0;
+            for (let i = 0; i < looks.length && verdict === 'continue'; i++) {
+                used = looks[i];
+                verdict = sequentialVerdict(pairedDiff(d.slice(0, used), new Array(used).fill(0)), i, looks.length);
+            }
+            if (verdict === 'accept') accepted++;
+            seeds += used;
+        }
+        return { rate: accepted / reps, seeds: seeds / reps };
+    }
+
+    test('a change that does nothing is accepted no more than 2.5% of the time', () => {
+        // σ large against minGain, so minGain does not hide the test's own error rate
+        const { rate } = simulate(0, 10, 20000, 7);
+        expect(rate).toBeLessThanOrEqual(0.0275);
+    });
+
+    test('clear cases stop early; a real gain keeps its power', () => {
+        const clearNull = simulate(0, 0.2, 4000, 11);
+        expect(clearNull.rate).toBe(0);
+        expect(clearNull.seeds).toBeLessThan(5);
+        const clearGain = simulate(10, 2, 4000, 13);
+        expect(clearGain.rate).toBe(1);
+        expect(clearGain.seeds).toBeLessThan(6);
+        // two SE-units of gain at 8 seeds: the fixed test accepted 99.8% (measured), the sequential one about the same
+        expect(simulate(2, 1, 4000, 17).rate).toBeGreaterThan(0.99);
     });
 });
 
@@ -481,6 +683,47 @@ describe('successiveHalving', () => {
     });
 });
 
+describe('unusedTunables (rows that could not have changed the run)', () => {
+    const tunables = () => collectTunables({ playerDTOs: [playerDTO()], playerIndices: [0], gameData: gameData() });
+    const sample = (use) => ({ perPlayer: {}, encounters: 0, pools: {}, triggerUse: { player1: use } });
+
+    test('a food never read or eaten is skipped; an ability read every time is kept', () => {
+        const skipped = unusedTunables(tunables(), [sample({ [FIREBALL]: 40 }), sample({ [FIREBALL]: 38 })]);
+        expect(skipped.map((t) => t.itemName)).toEqual(['Donut']);
+    });
+
+    test('an ability never read is skipped, but a gate that blocked every cast is not', () => {
+        // zero casts either way; only the read count tells "never in play" from "gate always false"
+        expect(unusedTunables(tunables(), [sample({ [DONUT]: 5 })]).map((t) => t.itemName)).toEqual(['Fireball']);
+        expect(unusedTunables(tunables(), [sample({ [DONUT]: 5, [FIREBALL]: 900 })])).toEqual([]);
+    });
+
+    test('one seed that reached the slot is enough to keep it', () => {
+        expect(unusedTunables(tunables(), [sample({}), sample({ [FIREBALL]: 1, [DONUT]: 1 })])).toEqual([]);
+    });
+
+    test('samples without read counts skip nothing', () => {
+        expect(unusedTunables(tunables(), [{ perPlayer: {}, encounters: 0, pools: {} }])).toEqual([]);
+        expect(unusedTunables(tunables(), [])).toEqual([]);
+    });
+
+    test('an unread ability behind a tuned earlier ability slot is kept: the earlier gate decides if it is reached', () => {
+        const ICE = '/abilities/ice_spear';
+        const data = gameData();
+        data.abilityDetailMap[ICE] = { name: 'Ice Spear', defaultCombatTriggers: [row(TARGET, C_HP, GTE, 1)] };
+        const dto = playerDTO();
+        dto.abilities = [
+            { hrid: FIREBALL, level: 1, triggers: null },
+            { hrid: ICE, level: 1, triggers: null },
+        ];
+        const list = collectTunables({ playerDTOs: [dto], playerIndices: [0], gameData: data, include: 'abilities' });
+        // Fireball in slot 0 fires whenever Ice Spear would have its turn
+        expect(unusedTunables(list, [sample({ [FIREBALL]: 50 })])).toEqual([]);
+        // with Fireball itself unread too, neither can matter
+        expect(unusedTunables(list, [sample({})]).map((t) => t.itemName)).toEqual(['Fireball', 'Ice Spear']);
+    });
+});
+
 describe('runTriggerSearch with deterministic fakes', () => {
     const precision = { ...PRECISIONS.standard, seeds: 4, pointHours: 40 };
     const FIRE_KEY = `player1|abilities|${FIREBALL}|0`;
@@ -505,13 +748,14 @@ describe('runTriggerSearch with deterministic fakes', () => {
      * the kind of per-run luck a real sim has (a shared per-seed part and a
      * part that differs between setups), repeatable by `salt`.
      */
-    function world({ optimum = 300, gain = 1, noise = 0, salt = 'x', afterFinal = null } = {}) {
+    function world({ optimum = 300, gain = 1, noise = 0, salt = 'x', afterFinal = null, triggerUse = null } = {}) {
         const calls = [];
-        const measure = async (overrides, hours, stream, count) => {
-            calls.push({ overrides: { ...overrides }, hours, stream, count });
+        const measure = async (overrides, hours, stream, count, offset = 0) => {
+            calls.push({ overrides: { ...overrides }, hours, stream, count, offset });
             const fireball = overrides[FIRE_KEY] ?? 1;
             const sig = JSON.stringify(overrides);
-            return Array.from({ length: count }, (_, k) => {
+            return Array.from({ length: count }, (_, i) => {
+                const k = offset + i;
                 const seedLuck = gauss(`${salt}|${stream}|${k}`) * noise;
                 const setupLuck = gauss(`${salt}|${stream}|${k}|${sig}|${hours}`) * noise;
                 let xp = 1000 - gain * Math.abs(fireball - optimum) + k * 3 + seedLuck + setupLuck;
@@ -520,6 +764,7 @@ describe('runTriggerSearch with deterministic fakes', () => {
                     perPlayer: { player1: { xp, profit: 0, deaths: 0, dps: 100 } },
                     encounters: 10,
                     pools: { player1: { hp: 1000, mp: 500 } },
+                    ...(triggerUse ? { triggerUse: { player1: triggerUse } } : {}),
                 };
             });
         };
@@ -567,8 +812,24 @@ describe('runTriggerSearch with deterministic fakes', () => {
         // each step has its own, and none of them is the screen's, baseline's or final's
         const everything = [...select, ...confirm, 'baseline', 'final', `screen:${FIRE_KEY}`];
         expect(new Set(everything).size).toBe(everything.length);
-        // confirmations compare the winner with the current value, on enough seeds
-        expect(calls.filter((c) => c.stream.startsWith('confirm:')).every((c) => c.count === 8)).toBe(true);
+        // confirmations compare the winner with the current value, adding seeds look by look up to 8
+        for (const name of confirm) {
+            const arms = new Map();
+            for (const c of calls.filter((call) => call.stream === name)) {
+                const id = JSON.stringify(c.overrides);
+                if (!arms.has(id)) arms.set(id, []);
+                arms.get(id).push(c);
+            }
+            expect(arms.size).toBe(2);
+            for (const looks of arms.values()) {
+                let next = 0;
+                for (const c of looks) {
+                    expect(c.offset).toBe(next);
+                    next += c.count;
+                }
+                expect([4, 6, 8]).toContain(next);
+            }
+        }
     });
 
     test('nothing to improve means no changes and no combined check', async () => {
@@ -629,6 +890,25 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(result.unchanged.map((t) => t.itemName)).toContain('Donut');
     });
 
+    test('a noisy world where the threshold does nothing accepts a change in at most 5% of runs', async () => {
+        let accepted = 0;
+        const runs = 150;
+        for (let i = 0; i < runs; i++) {
+            const { measure } = world({ gain: 0, noise: 60, salt: `null-${i}` });
+            if ((await run(measure)).changes.length > 0) accepted++;
+        }
+        expect(accepted / runs).toBeLessThanOrEqual(0.05);
+    });
+
+    test('a clear winner is confirmed on fewer than the full eight seeds', async () => {
+        const { measure, calls } = world();
+        await run(measure);
+        const confirmCalls = calls.filter((c) => c.stream.startsWith('confirm:'));
+        const steps = new Set(confirmCalls.map((c) => c.stream)).size;
+        const seedsPerArm = confirmCalls.reduce((sum, c) => sum + c.count, 0) / 2 / steps;
+        expect(seedsPerArm).toBeLessThan(8);
+    });
+
     test('a null world yields no accepted changes, run after run', async () => {
         const salts = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
         for (const salt of salts) {
@@ -652,9 +932,9 @@ describe('runTriggerSearch with deterministic fakes', () => {
         const { measure } = world();
         let stop = false;
         const result = await run(
-            async (overrides, hours, stream, count) => {
+            async (overrides, hours, stream, count, offset) => {
                 if (stream === 'final') stop = true;
-                return measure(overrides, hours, stream, count);
+                return measure(overrides, hours, stream, count, offset);
             },
             { aborted: () => stop }
         );
@@ -675,6 +955,52 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(seen.some((d) => /screening Fireball/.test(d))).toBe(true);
         expect(seen.some((d) => /Fireball \(confirming\)/.test(d))).toBe(true);
         expect(seen.some((d) => /confirming all changes/.test(d))).toBe(true);
+    });
+
+    test('a food the baseline never read is reported as unused and never screened', async () => {
+        const { measure, calls } = world({ triggerUse: { [FIREBALL]: 120 } });
+        const result = await run(measure);
+        expect(result.unused.map((t) => t.itemName)).toEqual(['Donut']);
+        expect(result.unchanged).toEqual([]);
+        expect(result.screened.map((s) => s.key)).toEqual([FIRE_KEY]);
+        expect(calls.some((c) => c.stream.includes(DONUT))).toBe(false);
+        expect(result.changes).toHaveLength(1);
+    });
+
+    test('a gate that blocked every cast is still tuned', async () => {
+        // Fireball's rows were read 120 times and it was never cast: the threshold decided that
+        const { measure } = world({ triggerUse: { [FIREBALL]: 120, [DONUT]: 30 } });
+        const result = await run(measure);
+        expect(result.unused).toEqual([]);
+        expect(result.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+    });
+
+    test('the objective decides what counts as better: a profit-only gain is offered for Profit/h, not XP/h', async () => {
+        // Raising Fireball's gate to 300 adds 40% profit and nothing else
+        const measure = async (overrides, hours, stream, count, offset = 0) =>
+            Array.from({ length: count }, (_, i) => {
+                const fireball = overrides[FIRE_KEY] ?? 1;
+                const k = offset + i;
+                return {
+                    perPlayer: {
+                        player1: {
+                            xp: 1000 + k,
+                            profit: 1000 + 400 * Math.max(0, 1 - Math.abs(fireball - 300) / 300) + k,
+                            deaths: 0,
+                            dps: 100,
+                        },
+                    },
+                    encounters: 10,
+                    pools: { player1: { hp: 1000, mp: 500 } },
+                };
+            });
+        const profit = await run(measure, { objective: 'profit' });
+        const xp = await run(measure, { objective: 'xp' });
+        expect(profit.objective).toBe('profit');
+        expect(profit.changes.map((c) => c.itemName)).toEqual(['Fireball']);
+        // the gain is in profit percent points, not a quarter of them as in the balanced average
+        expect(profit.changes[0].deltaScore).toBeGreaterThan(20);
+        expect(xp.changes).toEqual([]);
     });
 
     test('the estimate grows with the number of triggers and the seed count', () => {
@@ -744,9 +1070,5 @@ describe('write-back and text', () => {
         expect(party.split('\n')[0].startsWith('Milkman: ')).toBe(true);
         expect(party.split('\n')[1].startsWith('Cheesy: ')).toBe(true);
         expect(party.split('\n')[1]).toContain('Donut (food)');
-    });
-
-    test('the setting key is the one the schema declares', () => {
-        expect(TRIGGER_OPTIMIZER_SETTING).toBe('combatSim_triggerOptimizer');
     });
 });
