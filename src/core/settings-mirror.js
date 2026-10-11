@@ -136,7 +136,11 @@ const SHARED_SETTINGS_KEY = 'script_settingsMap_shared';
  * reconcile through the normal migration path, the same as any map that
  * "arrived from elsewhere").
  */
-const BOOKKEEPING_PREFIXES = ['settings_key_migrations_applied_', 'settings_default_rewrites_'];
+const BOOKKEEPING_PREFIXES = [
+    'settings_key_migrations_applied_',
+    'settings_default_rewrites_',
+    'settings_pinned_defaults_',
+];
 const BOOKKEEPING_EXACT_KEYS = ['settings_shared_scope_v3', 'known_character_ids'];
 
 /** Module-level so repeated calls (a timer tick, a manual trigger) self-throttle. */
