@@ -95,13 +95,22 @@ const pad = (value) => String(value).padStart(2, '0');
  * these entries carry no `updatedAt`, and the one entry shape that mutates in
  * place (the loot log's live session, whose `endTime` and `actionCount` are
  * rewritten while it runs) changes its JSON every time it is touched.
+ *
+ * `legacyIds` is alias metadata a fold adds to the winner (the ids a run has been seen under), not
+ * content: it is left out, so a tombstone filed before the fold — by an older client, or by this one
+ * on a row that had not yet been folded — still matches the folded row.
  * @param {Object} entry - A history entry
  * @returns {string} An 8-ish character hash, or '' for an entry that will not serialise
  */
 function fingerprintOf(entry) {
     let json;
     try {
-        json = JSON.stringify(entry);
+        if (entry && typeof entry === 'object' && !Array.isArray(entry) && 'legacyIds' in entry) {
+            const { legacyIds: _aliases, ...content } = entry;
+            json = JSON.stringify(content);
+        } else {
+            json = JSON.stringify(entry);
+        }
     } catch {
         return '';
     }
