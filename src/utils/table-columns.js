@@ -4,8 +4,30 @@
 
 import { formatWithSeparator } from './formatters.js';
 import { parseGameNumber } from './number-parser.js';
+import { RANK_BADGE_ATTR } from './rank-badge-data.js';
 
 const SORT_ICON_CLASS = 'mwi-col-sort-icon';
+
+/**
+ * Read the member name out of a table row's name cell. The cell can carry more than the
+ * name (Toolasha's own leaderboard rank chip sits right after the name element), so the
+ * cell's textContent is not the name: "Orvel" becomes "Orvel20". Prefers the name element's
+ * exact `data-name`, then its own text, and only then the cell's text with any rank chip
+ * and icons stripped.
+ * @param {Element|null|undefined} cell - The name cell (td)
+ * @returns {string} The name, or '' when unreadable
+ */
+export function readMemberName(cell) {
+    if (!cell) return '';
+    const nameEl = cell.querySelector?.('[class*="CharacterName_name"]');
+    if (nameEl) {
+        const exact = (nameEl.getAttribute('data-name') || nameEl.textContent || '').trim();
+        if (exact) return exact;
+    }
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll(`[${RANK_BADGE_ATTR}], svg`).forEach((el) => el.remove());
+    return (clone.textContent || '').trim();
+}
 
 /**
  * Format a number with thousands separators.

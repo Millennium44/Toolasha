@@ -17,7 +17,7 @@ import { openPlayerProfile } from '../../utils/profile-command.js';
 import storage from '../../core/storage.js';
 
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
+import { fNum, rankBadge, addColumn, makeColumnSortable, readMemberName } from '../../utils/table-columns.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 
 /** Whether the trial-signups block is folded; hydrated from storage, survives redraws */
@@ -601,7 +601,7 @@ class GuildXPDisplay {
         // Calculate stats for each row
         const allStats = [];
         for (const row of rows) {
-            const name = row.children[0]?.textContent?.trim();
+            const name = readMemberName(row.children[0]);
             const charId = nameToCharId[name];
             const memberStats = charId ? guildXPTracker.getMemberStats(charId) : { lastXPH: 0, lastDayXPH: 0 };
             const meta = charId ? guildXPTracker.getMemberMeta(charId) : null;
@@ -651,7 +651,7 @@ class GuildXPDisplay {
             // replay it verbatim on the Contributions tab (sprites, "Xd ago" text, etc.)
             const activityColIdx = activityIndex;
             for (const row of rows) {
-                const name = row.children[0]?.textContent?.trim();
+                const name = readMemberName(row.children[0]);
                 const cell = row.children[activityColIdx];
                 if (name && cell) {
                     this._activityCellCache[name] = cell.innerHTML;
@@ -777,7 +777,7 @@ class GuildXPDisplay {
         if (nameHeader && !nameHeader.querySelector('.mwi-col-sort-icon')) {
             makeColumnSortable(nameHeader, {
                 sortId: 'name',
-                valueGetter: (trEl) => trEl.children[0]?.textContent?.trim() || '',
+                valueGetter: (trEl) => readMemberName(trEl.children[0]),
             });
         }
 
@@ -787,7 +787,7 @@ class GuildXPDisplay {
             makeColumnSortable(expHeader, {
                 sortId: 'xp',
                 valueGetter: (trEl) => {
-                    const name = trEl.children[0]?.textContent?.trim();
+                    const name = readMemberName(trEl.children[0]);
                     const stat = allStats.find((s) => s.name === name);
                     return stat?.xp || 0;
                 },
@@ -860,7 +860,7 @@ class GuildXPDisplay {
         const selfName = dataManager.getCurrentCharacterName();
         if (selfName) {
             for (const row of rows) {
-                if (row.children[0]?.textContent?.trim() === selfName) {
+                if (readMemberName(row.children[0]) === selfName) {
                     row.style.backgroundColor = 'rgba(74, 222, 128, 0.1)';
                     break;
                 }
@@ -874,7 +874,7 @@ class GuildXPDisplay {
         if (activityHeader) {
             const actColIndex = Array.from(theadTr.children).indexOf(activityHeader);
             for (const row of rows) {
-                if (selfName && row.children[0]?.textContent?.trim() === selfName) continue;
+                if (selfName && readMemberName(row.children[0]) === selfName) continue;
                 const cell = row.children[actColIndex];
                 if (!cell) continue;
                 const text = cell.textContent?.trim() || '';
@@ -1071,7 +1071,7 @@ class GuildXPDisplay {
 
         const allStats = [];
         for (const row of rows) {
-            const name = row.children[1]?.textContent?.trim();
+            const name = readMemberName(row.children[1]);
             const stats = name ? guildXPTracker.getGuildStats(name) : { lastXPH: 0, lastDayXPH: 0 };
             allStats.push({ name, lastXPH: stats.lastXPH, lastDayXPH: stats.lastDayXPH });
         }
