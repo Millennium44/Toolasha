@@ -512,12 +512,29 @@ describe("the detail snapshots' window, as sync applies it", () => {
             'networthSeries_32030_2026-10',
         ];
 
-        expect([...retentionDrops('networthHistory', keys)].sort()).toEqual([
+        const values = {
+            networthDetail_32030: [{ t: 1 }], // older than the window the 27 snapshot keys fill
+            networthDetail_32325: [{ t: 1000 }], // its snapshot key is present
+            networthDetail_99999: [{ t: 5 }], // no snapshot key at all: the only copy
+        };
+
+        expect([...retentionDrops('networthHistory', keys, (key) => values[key])].sort()).toEqual([
             'networthDetail_32030',
             'networthDetail_32030_1000',
             'networthDetail_32030_1001',
             'networthDetail_32325',
         ]);
+    });
+
+    test('keeps the pre-split key while an entry has neither a snapshot key nor an age past the window', () => {
+        const keys = ['networthDetail_32030_5000', 'networthDetail_32030'];
+        const read = (legacy) => (key) => (key === 'networthDetail_32030' ? legacy : { t: 5000 });
+
+        // Another snapshot (a fresh install) is not proof the array was migrated
+        expect(retentionDrops('networthHistory', keys, read([{ t: 4000 }, { t: 5000 }])).size).toBe(0);
+        expect([...retentionDrops('networthHistory', keys, read([{ t: 5000 }]))]).toEqual(['networthDetail_32030']);
+        // No value to judge by: left alone
+        expect(retentionDrops('networthHistory', keys).size).toBe(0);
     });
 });
 

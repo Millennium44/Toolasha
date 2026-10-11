@@ -42,6 +42,33 @@ function parseDetailKey(key) {
     return legacy ? { group: legacy[1], order: 0 } : null;
 }
 
+/**
+ * Whether the pre-split networth array is redundant given the keys in play: every entry's snapshot key is
+ * present, or the entry is older than the keep-window the snapshot keys already fill (it would be pruned anyway).
+ * An array that is not a list of timed entries is left alone.
+ * @param {string} key - A `networthDetail_` key
+ * @param {*} value - Its value
+ * @param {string[]} keys - Every key in play
+ * @returns {boolean} True if nothing would be lost by leaving the array out
+ */
+function legacyDetailSuperseded(key, value, keys) {
+    const legacy = /^networthDetail_([0-9a-zA-Z]+)$/.exec(key);
+    if (!legacy || !Array.isArray(value)) return false;
+    const times = [];
+    for (const k of keys) {
+        const parsed = k === key ? null : parseDetailKey(k);
+        if (parsed && parsed.group === legacy[1]) times.push(parsed.order);
+    }
+    const present = new Set(times);
+    times.sort((a, b) => b - a);
+    const windowStart = times.length >= MAX_DETAIL_SNAPSHOTS ? times[MAX_DETAIL_SNAPSHOTS - 1] : -Infinity;
+    return value.every((entry) => {
+        const t = entry?.t;
+        if (typeof t !== 'number') return true;
+        return present.has(t) || t < windowStart;
+    });
+}
+
 /*
  * The rolling window, told to sync. Without it a snapshot dropped here stayed
  * in the gist — the upload merge keeps every key only the gist holds — and
@@ -52,11 +79,12 @@ registerSyncRetention({
     prefix: `${DETAIL_PREFIX}_`,
     parse: parseDetailKey,
     keep: MAX_DETAIL_SNAPSHOTS,
-    // The pre-split array key is superseded by the per-snapshot keys: `_loadDetailHistory` migrates it
-    // into them and deletes it. It was left to sync's usual rules, which never drop a key — the gist
-    // kept the copy an old build uploaded, every pull wrote it back whole, and the next load migrated
-    // and deleted it again. With no snapshot key in the window there is nothing to supersede it.
-    maxAge: { floor: (newestEnd) => (newestEnd > 0 ? 1 : 0) },
+    // The pre-split array key is superseded once `_loadDetailHistory` has migrated it: every entry then has a
+    // snapshot key. It was left to sync's usual rules, which never drop a key — the gist kept the copy an old
+    // build uploaded, every pull wrote it back whole, and the next load migrated and deleted it again. Judged by
+    // value, not by "the character has some snapshot key": a fresh install writes one before its first pull, and
+    // that must not discard an array whose entries were never migrated.
+    supersededBy: legacyDetailSuperseded,
     // Dropped from a download and an upload, never deleted here by a pull: a device still holding the array
     // unmigrated must let `_loadDetailHistory` fold it into snapshot keys first
     keepLocal: (key) => /^networthDetail_[0-9a-zA-Z]+$/.test(key) && !/^networthDetail_.+_\d+$/.test(key),

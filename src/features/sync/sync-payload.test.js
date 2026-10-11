@@ -2104,7 +2104,7 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         // This device migrated the array into per-snapshot keys and deleted it; the gist still holds the copy
         // an old build uploaded, and used to hand it back on every pull for the next load to migrate again
         storeState.stores[DAY] = snapshots('32030', T0, 25);
-        const gist = { ...snapshots('32030', T0, 25), networthDetail_32030: [{ t: 1, items: {} }] };
+        const gist = { ...snapshots('32030', T0, 25), networthDetail_32030: [{ t: T0, items: {} }] };
 
         const result = await applyPayload(payloadOf({ [DAY]: gist }), { mode: 'merge', baseline: {} });
 
@@ -2128,8 +2128,8 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         const gistCopy = {
             ...snapshots('32030', T0, 25),
             ...snapshots('32325', T0, 25),
-            networthDetail_32030: [{ t: 1, items: {} }],
-            networthDetail_32325: [{ t: 1, items: {} }],
+            networthDetail_32030: [{ t: T0, items: {} }],
+            networthDetail_32325: [{ t: T0, items: {} }],
         };
         storeState.stores[DAY] = {
             ...snapshots('32030', T0 + 3 * 3_600_000, 25),
@@ -2970,12 +2970,62 @@ describe('the pre-split networth detail key on a pull', () => {
 
     test('a migrated device is not handed the gist copy of the array back', async () => {
         storeState.stores[STORE] = snaps('32030', 3);
-        const gist = { ...snaps('32030', 3), networthDetail_32030: [{ t: 1, items: {} }] };
+        const gist = { ...snaps('32030', 3), networthDetail_32030: [{ t: 1000, items: {} }] };
 
         const result = await applyPayload(payloadOf({ [STORE]: gist }), { mode: 'merge', baseline: {} });
 
         expect(importedPayloads[0].stores[STORE]).toEqual({});
         expect(result.writtenWholeKeys).toEqual([]);
+    });
+
+    test('a fresh snapshot key does not discard a gist array whose entries were never migrated', async () => {
+        // A new install records a snapshot before its first pull; the gist holds only the old array
+        const fresh = { networthDetail_32030_9000: { t: 9000, items: {} } };
+        const legacy = [
+            { t: 1000, items: {} },
+            { t: 2000, items: {} },
+        ];
+        storeState.stores[STORE] = { ...fresh };
+
+        await applyPayload(payloadOf({ [STORE]: { networthDetail_32030: legacy } }), { mode: 'merge', baseline: {} });
+
+        expect(importedPayloads[0].stores[STORE]).toEqual({ networthDetail_32030: legacy });
+    });
+
+    test('the upload keeps the gist array that a fresh local snapshot key does not cover', () => {
+        const legacy = [{ t: 1000, items: {} }];
+        const local = payloadOf({ [STORE]: { networthDetail_32030_9000: { t: 9000, items: {} } } });
+        const remote = payloadOf({ [STORE]: { networthDetail_32030: legacy } });
+
+        const out = JSON.parse(mergeForUpload(local, remote, null).text).stores[STORE];
+
+        expect(out.networthDetail_32030).toEqual(legacy);
+        expect(out.networthDetail_32030_9000).toBeDefined();
+    });
+
+    test('the upload drops the gist array once the snapshot keys cover every entry', () => {
+        const local = payloadOf({ [STORE]: { networthDetail_32030_1000: { t: 1000, items: {} } } });
+        const remote = payloadOf({ [STORE]: { networthDetail_32030: [{ t: 1000, items: {} }] } });
+
+        const out = JSON.parse(mergeForUpload(local, remote, null).text).stores[STORE];
+
+        expect(out.networthDetail_32030).toBeUndefined();
+        expect(out.networthDetail_32030_1000).toBeDefined();
+    });
+
+    test('entries older than the 25-snapshot window are dropped with the array', async () => {
+        const T = 5_000_000;
+        const local = Object.fromEntries(
+            Array.from({ length: 25 }, (_, i) => [`networthDetail_32030_${T + i}`, { t: T + i, items: {} }])
+        );
+        storeState.stores[STORE] = local;
+
+        await applyPayload(payloadOf({ [STORE]: { networthDetail_32030: [{ t: 10, items: {} }] } }), {
+            mode: 'merge',
+            baseline: {},
+        });
+
+        expect(importedPayloads[0].stores[STORE]).toEqual({});
     });
 
     test('a key another device added is named as written whole', async () => {

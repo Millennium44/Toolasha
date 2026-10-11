@@ -1476,9 +1476,13 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
     const sameByStore = new Map();
     let retentionDropped = false;
     const displaced = [];
-    const dropOutsideRetention = (storeName, entries, localKeys) => {
+    const dropOutsideRetention = (storeName, entries, localKeys, localValues = {}) => {
         const ownDrops = new Set(retentionDrops(storeName, localKeys));
-        for (const key of retentionDrops(storeName, [...Object.keys(entries), ...localKeys])) {
+        // Value-aware rules (a key superseded by what else is in play) read the download's copy, else this device's
+        const valueOf = (key) => (Object.hasOwn(entries, key) ? entries[key] : localValues[key]);
+        for (const key of retentionDrops(storeName, [...Object.keys(entries), ...localKeys], undefined, {
+            supersedeValueOf: valueOf,
+        })) {
             if (!Object.hasOwn(entries, key)) {
                 // Pushed out of the window by what the download brings: the
                 // import only puts keys, so it is deleted here. One this device
@@ -1529,7 +1533,7 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         }
         if (!Array.isArray(entries)) {
             const localKeys = local && typeof local === 'object' && !Array.isArray(local) ? Object.keys(local) : [];
-            dropOutsideRetention(storeName, entries, localKeys);
+            dropOutsideRetention(storeName, entries, localKeys, local);
         }
         if (baseline) {
             for (const key of Object.keys(entries)) {
