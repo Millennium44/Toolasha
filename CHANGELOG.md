@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The best decompose chain sort and Best Items no longer drop an item when one output somewhere in its tree has no real buy order; that output counts as zero and the figure is marked ≥ with the item named, so equipment with long chains ranks again instead of only raw materials.
 
+### No more "Reload now" from your own skill checkpoints
+
+- A sync pull no longer reports the skill and ability checkpoint records as combined when the gist only holds an older copy of this browser's own data; they were stored in the game's skill order and the merge sorts them, so an unchanged record looked different and asked for a reload.
+
 ### Inventory and chat widths survive a reload
 
 - The inventory column and chat panel now come back at exactly the width you dragged them to; the game saves the width with decimals but reloads it rounded down to a whole percent, so both panels (and the docked overlay) used to shrink slightly after a reload.
