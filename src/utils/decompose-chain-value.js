@@ -173,6 +173,16 @@ function bookBidOf(hrid) {
     return prices.bid;
 }
 
+/**
+ * Whether an item is a container with an opening drop table (valued by its contents, not a bid).
+ * @param {string} hrid
+ * @returns {boolean}
+ */
+function isContainer(hrid) {
+    const table = dataManager.getInitClientData?.()?.openableLootDropMap?.[hrid];
+    return Array.isArray(table) && table.length > 0;
+}
+
 /** Sell-side resolver sources that are not a market price: Coin, dungeon tokens, nested crates */
 const NON_MARKET_SOURCES = new Set(['coin', 'dungeonToken', 'expectedValue']);
 
@@ -193,10 +203,20 @@ export function decomposeChain(itemHrid) {
             // Insta-sell value of an output: its real bid after market tax. An
             // estimate from the official value map is no bid anyone can sell into,
             // so it leaves the chain unpriced rather than ranking on a guess.
+            // An output with no real bid is worth zero here, not a reason to drop the whole item:
+            // the chain still gets a figure, flagged a lower bound below. A crate is the exception,
+            // since it has no bid of its own and is valued by its contents.
             const priceOf = (hrid) => {
                 const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
-                if (info.price === null || info.price === undefined || info.estimated) return null;
+                if (info.price === null || info.price === undefined || info.estimated) {
+                    return isContainer(hrid) ? null : 0;
+                }
                 return calculatePriceAfterTax(info.price);
+            };
+            const noRealBid = (hrid) => {
+                if (isContainer(hrid)) return false;
+                const info = getItemPriceInfo(hrid, { context: 'profit', side: 'sell' });
+                return info.price === null || info.price === undefined || Boolean(info.estimated);
             };
             // A crate's contents are sold the way the item tooltip sells them: Coin at face
             // value, Cowbells, dungeon tokens and nested crates through the sell-side resolver
@@ -240,6 +260,13 @@ export function decomposeChain(itemHrid) {
                     containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
                     priceOf: contentPriceOf,
                 });
+            // Terminals counted at zero for want of a real bid make the figure a lower bound
+            const markZeroed = (result) => {
+                const zeroed = (result.terminals ?? []).filter((t) => t.expected > 0 && noRealBid(t.itemHrid));
+                if (zeroed.length === 0) return result;
+                const partialItems = [...new Set([...result.partialItems, ...zeroed.map((t) => t.itemHrid)])];
+                return { ...result, partial: true, partialItems, partlyUnpriced: true };
+            };
             const chainDeps = {
                 getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
                 isChainable: (hrid) => {
@@ -349,7 +376,7 @@ export function decomposeChain(itemHrid) {
                         ownUseCost: ask,
                     });
                     // The calculator result the item's own step was priced with (its catalyst and teas)
-                    if (chain) chain = { ...chain, topStep: solved.selection.get(itemHrid) };
+                    if (chain) chain = markZeroed({ ...chain, topStep: solved.selection.get(itemHrid) });
                     return;
                 }
             }
@@ -364,7 +391,7 @@ export function decomposeChain(itemHrid) {
                 ownUseCost: firstAsk,
             });
             // The calculator result the item's own step was priced with (its catalyst and teas)
-            if (chain) chain = { ...chain, topStep: top };
+            if (chain) chain = markZeroed({ ...chain, topStep: top });
         });
     } catch (error) {
         console.error('[DecomposeChain] Chain failed for', itemHrid, error);

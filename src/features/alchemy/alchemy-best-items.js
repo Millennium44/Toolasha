@@ -58,7 +58,7 @@ export const SORT_MODES = [
             'catalyst/tea setup best for the chain per hour), insta-sell what is left at bid after market tax. ' +
             'Items with an unpriced step show no value and sort last. Always uses instant buy/sell prices ' +
             '(ask in, taxed bid out), whatever the Buy/Sell price dropdowns say, so it can differ from the ' +
-            'item tooltip. A leading ≥ marks a bonus crate with some contents unpriced.',
+            'item tooltip. A leading ≥ marks a figure with some output or bonus crate content unpriced, counted at zero.',
     },
 ];
 
@@ -1022,7 +1022,7 @@ class AlchemyBestItems {
                     const partialNames = this.chainItemNames(this.chainNotes.get(item.itemHrid)?.partial);
                     chainTd.textContent = `${partialNames ? '≥' : ''}${formatKMB(Math.round(chainValue))}`;
                     if (partialNames) {
-                        chainTd.title = `A lower bound: no price for some contents of ${partialNames}, counted at zero`;
+                        chainTd.title = `A lower bound: no real bid for ${partialNames}, counted at zero`;
                     }
                     chainTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${chainValue >= 0 ? '#4ade80' : '#f87171'};`;
                 }

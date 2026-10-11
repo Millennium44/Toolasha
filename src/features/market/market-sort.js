@@ -79,7 +79,7 @@ const CHAIN_TOOLTIP =
     'Insta-buy at ask, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
     'decomposed, then insta-sell what is left at bid after market tax. Ranked by gold per hour of alchemy time ' +
     'across the whole chain; each step uses the catalyst and tea setup that is best for the chain per hour, skipping setups that need an item with no real ask. Outputs with no real bid (estimated prices) are not sold. Ignores the global pricing mode on ' +
-    'purpose. Items with an unpriced step show no value.';
+    'purpose. An output with no real bid counts at zero and marks the figure a lower bound (≥).';
 
 /**
  * The explanation for a mode's figure.
@@ -748,7 +748,8 @@ class MarketSort {
 
         if (alchemyMode && detail) {
             indicator.title = `${detail} — ${modeTooltipText(this.sortMode)}`;
-            if (partial) indicator.title += ' (lower bound: a bonus crate has contents with no price)';
+            if (partial)
+                indicator.title += ' (lower bound: some output or crate content has no real bid, counted at zero)';
         }
 
         indicator.textContent = displayText;
