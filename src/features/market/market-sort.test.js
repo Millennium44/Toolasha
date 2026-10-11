@@ -577,6 +577,7 @@ describe('decompose chain mode', () => {
             profit: -600000,
             detail: 'decompose chain',
             partial: true,
+            partialItems: expect.any(Array),
         });
     });
 
@@ -597,6 +598,10 @@ describe('decompose chain mode', () => {
         expect(cached.profit).not.toBeNull();
         expect(cached.partial).toBe(true);
         expect(badges(container)[0].startsWith('≥')).toBe(true);
+        expect(cached.partialItems).toContain('/items/term_d');
+        const title = container.querySelector('.toolasha-profit-indicator').title;
+        expect(title).toContain('no real bid for');
+        expect(title).toContain(engine.itemDetails['/items/term_d']?.name || '/items/term_d');
     });
 
     test('an estimated ask on the item itself leaves the chain unpriced', async () => {
