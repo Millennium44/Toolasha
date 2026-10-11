@@ -3041,6 +3041,21 @@ describe('the pre-split networth detail key on a pull', () => {
         expect(importedPayloads[0].stores[STORE]).toEqual({});
     });
 
+    test('a full 25-snapshot window does not count the array out when it holds a newer uncovered entry', () => {
+        const T = 5_000_000;
+        const local = payloadOf({
+            [STORE]: Object.fromEntries(
+                Array.from({ length: 25 }, (_, i) => [`networthDetail_32030_${T + i}`, { t: T + i, items: {} }])
+            ),
+        });
+        const legacy = [{ t: T + 100, items: {} }];
+        const remote = payloadOf({ [STORE]: { networthDetail_32030: legacy } });
+
+        const out = JSON.parse(mergeForUpload(local, remote, null).text).stores[STORE];
+
+        expect(out.networthDetail_32030).toEqual(legacy);
+    });
+
     test('a key another device added is named as written whole', async () => {
         storeState.stores[STORE] = {};
         const gist = { theirs_1: { n: 1 } };

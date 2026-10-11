@@ -29,17 +29,16 @@ const DETAIL_PREFIX = 'networthDetail';
 registerCharacterScopedPrefix(STORE_NAME, DETAIL_PREFIX);
 
 /**
- * A detail snapshot key's character and time. The pre-split `networthDetail_<id>`
- * array key has no time and sorts as time 0, below every snapshot (see the
- * retention rule below); anything else is null.
+ * A detail snapshot key's character and time; anything else is null. The pre-split
+ * `networthDetail_<id>` array key is deliberately not a member of the window: counted
+ * there it would be dropped as the 26th key whatever it held. `supersededBy` alone
+ * retires it, by value (see the retention rule below).
  * @param {string} key - Storage key
  * @returns {{group: string, order: number}|null} The character's window and the snapshot time
  */
 function parseDetailKey(key) {
     const match = /^networthDetail_(.+)_(\d+)$/.exec(key);
-    if (match) return { group: match[1], order: Number(match[2]) };
-    const legacy = /^networthDetail_([0-9a-zA-Z]+)$/.exec(key);
-    return legacy ? { group: legacy[1], order: 0 } : null;
+    return match ? { group: match[1], order: Number(match[2]) } : null;
 }
 
 /**
