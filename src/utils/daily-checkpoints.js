@@ -228,7 +228,7 @@ class DailyCheckpoints {
             prefix,
             legacyKey,
             groupOf: (entry) => chunkOfDay(entry?.d),
-            compare: (a, b) => String(a?.d || '').localeCompare(String(b?.d || '')) || comparePart(a?.k, b?.k),
+            compare: compareEntries,
             // A checkpoint is identified by its day and its series and nothing
             // else. The default deep-equality identity would let a device that
             // wrote 4,000 xp for Monday and one that wrote 4,100 both survive a
@@ -341,7 +341,10 @@ class DailyCheckpoints {
         }
         if (added.length === 0) return 0;
 
-        this._entries = this._entries.concat(added);
+        // Written in the store's own order (day, then series), not the order the
+        // game listed the skills in: a sync fold returns sorted, and a stored copy
+        // in any other order reads as changed against an older copy of itself
+        this._entries = this._entries.concat(added).sort(compareEntries);
         // Not awaited: the write is debounced, so its promise resolves when the
         // timer fires rather than when the data lands, and the entrypoint's
         // `flushAll()` on unload is what makes the last one stick
@@ -357,6 +360,16 @@ class DailyCheckpoints {
         this._loading = null;
         this._store.forget();
     }
+}
+
+/**
+ * The order checkpoints are stored in: day, then series.
+ * @param {Object} a - Left entry
+ * @param {Object} b - Right entry
+ * @returns {number} Comparator result
+ */
+function compareEntries(a, b) {
+    return String(a?.d || '').localeCompare(String(b?.d || '')) || comparePart(a?.k, b?.k);
 }
 
 /**

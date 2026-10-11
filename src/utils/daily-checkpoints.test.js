@@ -94,11 +94,11 @@ describe('writing today’s checkpoint', () => {
 
         expect(written).toBe(2);
         expect(state.saved.charId).toBe('char-1');
-        // Handed to the store in sample order; the comparator it was built with
-        // is what puts them in day-then-series order on the way to disk
+        // Handed over in day-then-series order, not sample order: the store writes
+        // a chunk in the order it is handed, and a sync fold returns sorted
         expect(state.saved.entries).toEqual([
-            { d: '2026-03-14', k: '/skills/milking', xp: 100, level: 5 },
             { d: '2026-03-14', k: '/skills/cooking', xp: 200, level: 7 },
+            { d: '2026-03-14', k: '/skills/milking', xp: 100, level: 5 },
         ]);
     });
 
