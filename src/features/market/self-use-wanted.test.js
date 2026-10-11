@@ -467,6 +467,24 @@ describe('marks from before the default flipped to sell', () => {
     });
 });
 
+describe('legacy marks that appear after load', () => {
+    test('a bare-array record written by another tab is rewritten stamped-empty', async () => {
+        await selfUseWanted.load();
+        otherTabWrites('selfUseWanted_main', ['/items/frenzy', '/items/puncture']);
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual([]);
+        expect(state.stored.selfUseWanted_main).toEqual(rec([]));
+    });
+
+    test('a stamped record written by another tab is left as it is', async () => {
+        await selfUseWanted.load();
+        otherTabWrites('selfUseWanted_main', rec(['/items/frenzy']));
+        await settle();
+        expect(state.stored.selfUseWanted_main).toEqual(rec(['/items/frenzy']));
+        expect(state.writes).toEqual([]);
+    });
+});
+
 describe('the sync fold of the marks', () => {
     const OLD = ['/items/frenzy'];
     const NEW = rec(['/items/puncture']);

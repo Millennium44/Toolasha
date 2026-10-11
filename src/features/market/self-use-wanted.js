@@ -256,7 +256,8 @@ async function reloadFromStorage() {
     reloadSeq += 1;
     const seq = reloadSeq;
     try {
-        const stored = parseStored(await storage.getJSON(keyFor(charId), 'settings', null));
+        const raw = await storage.getJSON(keyFor(charId), 'settings', null);
+        const stored = parseStored(raw);
         if (charId !== currentCharId() || charId !== cacheCharId) return;
         // A re-read that started later read a list at least this new, and already won
         if (seq < adoptedReloadSeq) return;
@@ -269,6 +270,9 @@ async function reloadFromStorage() {
         adoptedReloadSeq = seq;
         adopt(charId, stored, { local: false });
         notify();
+        // An older tab, or a sync pull, wrote the pre-update shape after this tab loaded: load() will not
+        // retire it again this session. The retire is conditional, so a stamped record is never clobbered.
+        if (raw !== undefined && raw !== null && !isStampedRecord(decode(raw))) retireOldMarks(charId);
     } catch (error) {
         console.error('[SelfUseWanted] Reload after another tab wrote failed:', error);
     }
