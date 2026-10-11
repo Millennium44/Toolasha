@@ -204,6 +204,50 @@ class Player extends CombatUnit {
         return stats;
     }
 
+    /**
+     * The three loot stats as they stand at `time`, without touching any state.
+     *
+     * A downed unit has no buff-expiry checks queued (death sweeps them), and
+     * nothing prunes a buff until the unit is revived, so its folded
+     * `combatStats` keep a drink that lapsed while it was down. The loot record
+     * reads this instead for a downed player: the equipment base folded with
+     * only the buffs still running at `time`, by the same formula
+     * `updateCombatDetails` uses.
+     *
+     * @param {number} time - Simulation time in nanoseconds
+     * @returns {{combatDropRate: number, combatRareFind: number, combatDropQuantity: number}}
+     */
+    lootStatsAt(time) {
+        const equipmentStats = this._equipmentStats();
+        const live = [];
+        for (const key in this.combatBuffs) {
+            const buff = this.combatBuffs[key];
+            const sources = this.buffSources.get(buff.uniqueHrid);
+            if (sources) {
+                const active = sources.filter((b) => b.startTime + b.duration > time);
+                if (active.length > 0) live.push(this.strongestBuff(active));
+            } else if (!(buff.startTime + buff.duration <= time)) {
+                live.push(buff);
+            }
+        }
+        const fold = (stat, typeHrid) => {
+            let ratio = 0;
+            let flat = 0;
+            for (const buff of live) {
+                if (buff.typeHrid !== typeHrid) continue;
+                ratio += buff.ratioBoost;
+                flat += buff.flatBoost;
+            }
+            const base = equipmentStats[stat];
+            return base + (1 + base) * ratio + flat;
+        };
+        return {
+            combatDropRate: fold('combatDropRate', '/buff_types/combat_drop_rate'),
+            combatRareFind: fold('combatRareFind', '/buff_types/rare_find'),
+            combatDropQuantity: fold('combatDropQuantity', '/buff_types/combat_drop_quantity'),
+        };
+    }
+
     updateCombatDetails() {
         if (this.equipment['/equipment_types/main_hand']) {
             this.combatDetails.combatStats.combatStyleHrid =

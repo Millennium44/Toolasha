@@ -2387,3 +2387,57 @@ describe('casts refused for mana', () => {
         expect(refusalsOver(1, 0.5)).toBe(refusalsOver(1, 1.5));
     });
 });
+
+describe('loot is recorded at the buffs a downed player still has', () => {
+    const COFFEE = {
+        uniqueHrid: '/buff_uniques/test_lucky',
+        typeHrid: '/buff_types/combat_drop_rate',
+        ratioBoost: 0,
+        ratioBoostLevelBonus: 0,
+        flatBoost: 0.15,
+        flatBoostLevelBonus: 0,
+        duration: 100 * ONE_SECOND,
+    };
+
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('a coffee that lapses while its drinker is down no longer lifts teammates kills', () => {
+        installGameData();
+        const zone = new Zone(ZONE_HRID, 0);
+        const down = fixturePlayer();
+        const up = fixturePlayer();
+        down.hrid = 'player1';
+        up.hrid = 'player2';
+        for (const p of [down, up]) {
+            p.zoneBuffs = zone.buffs;
+            p.extraBuffs = [];
+        }
+        const sim = new CombatSimulator([down, up], zone);
+        sim.reset();
+        down.reset(0);
+        up.reset(0);
+        down.addBuff(COFFEE, 0);
+        up.addBuff(COFFEE, 0);
+
+        // A kill while the coffee is up credits it to both
+        sim.simulationTime = 50 * ONE_SECOND;
+        sim.recordDeath({ hrid: RAT_HRID, isPlayer: false });
+
+        // The drinker goes down; death sweeps their expiry checks, so the
+        // lapsed coffee stays folded into their stats
+        down.combatDetails.currentHitpoints = 0;
+        sim.eventQueue.clearEventsForUnit(down);
+        sim.simulationTime = 150 * ONE_SECOND;
+        up.removeExpiredBuffs(sim.simulationTime);
+        sim.recordDeath({ hrid: RAT_HRID, isPlayer: false });
+
+        const states = sim.simResult.lootStates;
+        expect(states.player1[RAT_HRID]).toEqual({ '0.15|0|0': 1, '0|0|0': 1 });
+        expect(states.player2[RAT_HRID]).toEqual({ '0.15|0|0': 1, '0|0|0': 1 });
+        // Read without pruning anything: the downed unit's own state is untouched
+        expect(down.combatBuffs[COFFEE.uniqueHrid]).toBeDefined();
+    });
+});

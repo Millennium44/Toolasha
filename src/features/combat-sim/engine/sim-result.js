@@ -13,6 +13,24 @@ function roundLootStat(value) {
 }
 
 /**
+ * A player's loot stats now. A downed player is read from the buffs still
+ * running at `time`: death clears their expiry checks, so the folded stats keep
+ * a drink that lapsed while they were down until a revive prunes it.
+ */
+function activeLootStats(player, time) {
+    const stats = player?.combatDetails?.combatStats;
+    if (
+        time !== null &&
+        stats &&
+        typeof player.lootStatsAt === 'function' &&
+        !(player.combatDetails.currentHitpoints > 0)
+    ) {
+        return player.lootStatsAt(time);
+    }
+    return stats;
+}
+
+/**
  * The lootStates key for one set of loot stats.
  * @param {number} dropRate - combatDropRate
  * @param {number} rareFind - combatRareFind
@@ -137,12 +155,13 @@ class SimResult {
      *
      * @param {Object} unit - The monster that just died
      * @param {Array<Object>} players - The party
+     * @param {number|null} [time] - Simulation time, so a downed player is read without buffs that lapsed while down
      */
-    addLootStates(unit, players) {
+    addLootStates(unit, players, time = null) {
         if (!unit || unit.isPlayer || !Array.isArray(players)) return;
         const keys = {};
         for (const player of players) {
-            const stats = player?.combatDetails?.combatStats;
+            const stats = activeLootStats(player, time);
             if (!player?.hrid || !stats) continue;
             const key = lootStateKey(stats.combatDropRate, stats.combatRareFind, stats.combatDropQuantity);
             const byMonster = (this.lootStates[player.hrid] ??= {});

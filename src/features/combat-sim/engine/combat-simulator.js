@@ -208,7 +208,7 @@ class CombatSimulator {
     recordDeath(unit) {
         this.simResult.addDeath(unit);
         // Loot is priced at the stats held now, not at the end of the run
-        if (!unit?.isPlayer) this.simResult.addLootStates(unit, this.players);
+        if (!unit?.isPlayer) this.simResult.addLootStates(unit, this.players, this.simulationTime);
         this._creditTaskKill(unit, 1);
     }
 
