@@ -851,15 +851,14 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
         const merged = histories.merged.filter(changed);
         const mergeFailed = histories.failed.filter(changed);
-        // What the import is about to write that no fold produced, named for the pull summary: every key left
-        // in the write, less the folds (a fold whose merge threw was written whole, so it stays in)
+        // What the import wrote that no fold produced, named for the pull summary: every key it wrote, less
+        // the folds (a fold whose merge threw was written whole, so it stays in). The importer's own list
+        // counts the tombstone companions its reconciliation adds; the payload's keys are the fallback.
         const folded = new Set(merged.map((entry) => baselineId(entry.store, entry.key)));
-        const writtenWholeKeys = [];
+        const payloadKeys = {};
         for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
             if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
-            for (const key of Object.keys(stripExcludedKeys(storeName, entries))) {
-                if (!folded.has(baselineId(storeName, key))) writtenWholeKeys.push({ store: storeName, key });
-            }
+            payloadKeys[storeName] = Object.keys(stripExcludedKeys(storeName, entries));
         }
 
         let imported;
@@ -870,6 +869,12 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             throw error;
         }
         const { restored, expected } = imported;
+        const writtenWholeKeys = [];
+        for (const [storeName, keys] of Object.entries(imported.writtenKeys ?? payloadKeys)) {
+            for (const key of keys) {
+                if (!folded.has(baselineId(storeName, key))) writtenWholeKeys.push({ store: storeName, key });
+            }
+        }
         let { failed, complete } = imported;
         // Only where the snapshots that push them out landed, and past the
         // latch the import (or an earlier pull) set: they are part of this restore

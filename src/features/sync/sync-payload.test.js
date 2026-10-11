@@ -92,6 +92,7 @@ vi.mock('../../utils/full-backup.js', () => ({
             restored: { settings: Object.keys(payload.stores?.settings || {}).length },
             failed: importOutcome.failed,
             complete: importOutcome.complete,
+            ...(importOutcome.writtenKeys ? { writtenKeys: importOutcome.writtenKeys } : {}),
         };
     },
     stripExcludedKeys: (storeName, entries) => {
@@ -149,6 +150,7 @@ beforeEach(() => {
     importedPayloads.length = 0;
     importOutcome.failed = [];
     importOutcome.complete = true;
+    importOutcome.writtenKeys = undefined;
     importOutcome.throws = null;
     storeState.unreadable = false;
     storeState.pending = {};
@@ -2151,6 +2153,17 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
 
         expect(Object.keys(importedPayloads[0].stores[DAY]).sort()).toEqual(Object.keys(stranger).sort());
         expect(next.writtenWholeKeys.map((entry) => entry.key).sort()).toEqual(Object.keys(stranger).sort());
+    });
+
+    test('names a key the import added on its own, such as a tombstone companion', async () => {
+        importOutcome.writtenKeys = {
+            settings: ['enhancementTracker_sessions_abc', 'enhancementTracker_sessionTombstones_abc'],
+        };
+        const result = await applyPayload(
+            payloadOf({ settings: { enhancementTracker_sessions_abc: { sessions: [] } } }),
+            { mode: 'merge', baseline: {} }
+        );
+        expect(result.writtenWholeKeys.map((entry) => entry.key)).toContain('enhancementTracker_sessionTombstones_abc');
     });
 
     test('a merged upload leaves out the snapshots outside the window, and says it sheds them', () => {
