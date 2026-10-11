@@ -96,6 +96,8 @@ function hash53(text) {
  * @param {string} setup.objective - Objective key
  * @param {Object} [setup.communityBuffs] - Community buffs in force
  * @param {Object} [setup.pricing] - Price snapshot and pricing settings the profit figures were taken under
+ * @param {string} [setup.scriptVersion] - The userscript build, so an update never replays an older algorithm
+ * @param {string} [setup.gameVersion] - The game data version, so a game update never replays old stats
  * @returns {string}
  */
 export function triggerRunSignature(setup) {
@@ -115,6 +117,8 @@ export function triggerRunSignature(setup) {
         objective: setup.objective ?? null,
         communityBuffs: setup.communityBuffs ?? null,
         pricing: setup.pricing ?? null,
+        scriptVersion: setup.scriptVersion ?? null,
+        gameVersion: setup.gameVersion ?? null,
     });
     return `${text.length}:${hash53(text)}`;
 }
@@ -157,6 +161,9 @@ export async function saveTriggerResult(signature, result) {
     }
 }
 
+/** How long a remembered result is offered as the answer for an unchanged setup */
+export const TRIGGER_RESULT_MAX_AGE_MS = 30 * 60 * 1000;
+
 /**
  * The remembered result for this signature, if the last one was for the same setup.
  * @param {string} signature - From `triggerRunSignature`
@@ -166,6 +173,10 @@ export async function loadTriggerResult(signature) {
     try {
         const record = await readScoped(TRIGGER_LAST_RESULT_KEY, STORE, null);
         if (!record || typeof record !== 'object' || !signature || record.signature !== signature) return null;
+        // Prices move on their own (live patches, custom overrides) without anything in the signature
+        // changing, so a remembered result is only offered while it is recent
+        const age = Date.now() - Number(record.savedAt);
+        if (!(age >= 0 && age <= TRIGGER_RESULT_MAX_AGE_MS)) return null;
         return record.result && typeof record.result === 'object' ? record.result : null;
     } catch (error) {
         console.error('[TriggerResultCache] Load failed:', error);

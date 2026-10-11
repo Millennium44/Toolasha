@@ -164,6 +164,8 @@ const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
  */
 function triggerPricingStamp() {
     return {
+        scriptVersion: scriptVersion(),
+        gameVersion: dataManager.getInitClientData?.()?.gameVersion ?? null,
         fetchedAt: marketAPI?.lastFetchTimestamp ?? null,
         mode: config.getSettingValue?.('profitCalc_pricingMode') ?? null,
         tickBuy: config.getSettingValue?.('profitCalc_patientTickBuy') ?? null,

@@ -152,4 +152,20 @@ describe('saving and loading', () => {
         expect(await saveTriggerResult(signature, null)).toBe(false);
         expect(await loadTriggerResult(signature)).toBeNull();
     });
+
+    test('a remembered result expires after half an hour, since prices move on their own', async () => {
+        const signature = triggerRunSignature(setup());
+        await saveTriggerResult(signature, result());
+        const key = `settings:${TRIGGER_LAST_RESULT_KEY}_char1`;
+        store.data[key].savedAt = Date.now() - 31 * 60 * 1000;
+        expect(await loadTriggerResult(signature)).toBeNull();
+        store.data[key].savedAt = Date.now() - 5 * 60 * 1000;
+        expect(await loadTriggerResult(signature)).not.toBeNull();
+    });
+
+    test('a different script or game version is a different setup', () => {
+        const base = triggerRunSignature(setup({ scriptVersion: '3.67.0', gameVersion: 'v1' }));
+        expect(triggerRunSignature(setup({ scriptVersion: '3.67.1', gameVersion: 'v1' }))).not.toBe(base);
+        expect(triggerRunSignature(setup({ scriptVersion: '3.67.0', gameVersion: 'v2' }))).not.toBe(base);
+    });
 });
