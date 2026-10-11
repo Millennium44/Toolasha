@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.68.0 -->
+
 ### Trigger optimizer and combat sim loot fixes
 
 - The trigger optimizer no longer recommends money-losing changes from a break-even baseline, values a whole search at one set of prices, never counts an unpriced item as free (and won't tune a food or drink with no price), simulates the same party as Simulate (Solo included), and refuses to Apply after the zone, tier or party changed; combat sim loot is now valued at the drink buffs active at each kill instead of whatever was active when the run ended.
@@ -5144,6 +5146,55 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.68.0](https://github.com/Millennium44/Toolasha/compare/v3.67.0...v3.68.0) (2026-10-11)
+
+### Features
+
+- combat sim Triggers chip can tune abilities only, food and drinks only, or both ([d1fd431](https://github.com/Millennium44/Toolasha/commit/d1fd4311ec5ee76b67cc96728778ea6938fe3e82))
+- combat sim Triggers remembers its last result and can optimize for XP/h or profit/h ([5fc5331](https://github.com/Millennium44/Toolasha/commit/5fc5331495d2968e8edb6895ade843db13464b20))
+- recent feature panels start on for new players ([295df0b](https://github.com/Millennium44/Toolasha/commit/295df0bc539fda865c3baa17b4008b5ea9a7dad5))
+- recent feature panels start on for new users ([6c41fd2](https://github.com/Millennium44/Toolasha/commit/6c41fd274ee764bf6fed0e4ee1a9a6a60edc6cda))
+- trigger tuning tries enemy-HP gates across the zone's real monster HP ([e559832](https://github.com/Millennium44/Toolasha/commit/e5598322ca422c16c38479c81fa7da294a820bd6))
+- Triggers is a standard combat sim Upgrade option ([061de20](https://github.com/Millennium44/Toolasha/commit/061de20807db7a639899c753a7311acfa3f7f157))
+- Triggers is a standard combat sim Upgrade option ([728e482](https://github.com/Millennium44/Toolasha/commit/728e4829d5ba1a168e1aa544bb8a32b1d239d0a5))
+
+### Bug Fixes
+
+- build signature ignores task kill counts and task-monster order ([ac30d41](https://github.com/Millennium44/Toolasha/commit/ac30d41dcc87c4118b97a56332f7dd4774b686d3))
+- combat sim dungeon chest quantity is taken at the boss kill, not the respawn ([a4c3177](https://github.com/Millennium44/Toolasha/commit/a4c31779d23995f3d5b8c53da59c7752fd06ec5d))
+- combat sim loot keys ignore buffs that lapsed while a player was down ([e74b156](https://github.com/Millennium44/Toolasha/commit/e74b1569680a54084e66f22fb86f240104af17ea))
+- combat sim values loot at the buffs held when each kill lands ([2eec21b](https://github.com/Millennium44/Toolasha/commit/2eec21bad489b428977cff33f0d3238343e01961))
+- flipped checkbox defaults no longer reach existing players ([8377cb9](https://github.com/Millennium44/Toolasha/commit/8377cb9668872f5eb50625e3a9743070c431965c))
+- flipped checkbox defaults no longer reach existing players ([04ea975](https://github.com/Millennium44/Toolasha/commit/04ea975d253224dfcd8fb0207636e8f0b6ace3ea))
+- pinned defaults are never written alone when no settings map is on disk ([bfd420c](https://github.com/Millennium44/Toolasha/commit/bfd420cbe104c11fe98913b0b731fcb6864e0e19))
+- pinned defaults stay open until a settings map exists, so a synced-in older map is reconciled ([6ce78da](https://github.com/Millennium44/Toolasha/commit/6ce78da37ce353045941e77a87f49206e8b3051a))
+- pinned previous defaults are checked on every load, with no flag to go stale ([5a54d48](https://github.com/Millennium44/Toolasha/commit/5a54d48737e212078df4647022b56a98ed50d798))
+- remembered trigger result expires after 30 minutes and follows script and game versions ([6d61143](https://github.com/Millennium44/Toolasha/commit/6d611439eb83a73e7b6ad8e51e23967a83e01641))
+- remembered trigger result follows prices and the selected player ([d13af87](https://github.com/Millennium44/Toolasha/commit/d13af87a870e211afda844914baf57bd8156e8fd))
+- task zone progress and the task claim toast stay off by default ([c1b4976](https://github.com/Millennium44/Toolasha/commit/c1b49766ee804164928c7f2b59b16549e62e391b))
+- trigger Apply refuses when the zone or tier changed since the analysis ([b020da6](https://github.com/Millennium44/Toolasha/commit/b020da63edd532cf20ea3c8e01946ff59534e4f4))
+- trigger optimizer counts profit changes from a zero baseline ([5b603a6](https://github.com/Millennium44/Toolasha/commit/5b603a6e1262d2942881bedc6e3471491e0c1d44))
+- trigger optimizer does not tune a food or drink that has no price ([f21dba9](https://github.com/Millennium44/Toolasha/commit/f21dba9e810f833d1854d40c1cdbb5bb2deda8b7))
+- trigger optimizer never scores a profit it could not value ([083771b](https://github.com/Millennium44/Toolasha/commit/083771b11ce60e50d4b2101abd6aa5717c35cff5))
+- trigger optimizer scoring, pricing, party and Apply checks; combat sim values loot at each kill ([6b839e9](https://github.com/Millennium44/Toolasha/commit/6b839e9addafef9b94b519f2a6670e0e1b47ab9c))
+- trigger optimizer simulates the party Simulate would, honoring Solo ([e43c163](https://github.com/Millennium44/Toolasha/commit/e43c16363f1c4f6cfe86a14dce5fa870e9b7c6ee))
+- trigger optimizer values every sim of a search at the same prices ([0bd1ca5](https://github.com/Millennium44/Toolasha/commit/0bd1ca5a39a2a1db71f5fdf81a36150d175cab97))
+
+### Performance Improvements
+
+- trigger tuning confirms changes sequentially and stops early on clear cases ([4dd5e04](https://github.com/Millennium44/Toolasha/commit/4dd5e04bdc036d672f248fe061f0e06c0cac4461))
+- trigger tuning skips triggers that never came into play in the fight ([2e1aa30](https://github.com/Millennium44/Toolasha/commit/2e1aa3016a0e64803c0dccbf443fb06a092e14f2))
+
+### Documentation
+
+- changelog for recent panels starting on ([6234aa1](https://github.com/Millennium44/Toolasha/commit/6234aa1ef951856fede7c3bcc0b4d7bba0521fa6))
+- changelog for the trigger optimizer and combat sim loot fixes ([3e7636b](https://github.com/Millennium44/Toolasha/commit/3e7636b2970e7e1343f6036aa37dc3e149db1d6f))
+- changelog for the trigger optimizer improvements ([3c7e67f](https://github.com/Millennium44/Toolasha/commit/3c7e67ff649f51398d21a132996356399efabb99))
+- changelog for Triggers as a standard option ([271d7ca](https://github.com/Millennium44/Toolasha/commit/271d7ca4c8a13396a2482ec748beb46d87498698))
+- changelog notes the Triggers tuning scope ([20a6f1e](https://github.com/Millennium44/Toolasha/commit/20a6f1ef1f1d9cdf4d0efefa336e68a26b76bd71))
+- changelog says existing players keep the flipped switches off ([f83c0fb](https://github.com/Millennium44/Toolasha/commit/f83c0fb1f212bf2d159213d78d4b1d083be9a16c))
+- new features may default on; off only for intrusive, heavy or experimental ones ([1fb71c4](https://github.com/Millennium44/Toolasha/commit/1fb71c43acfa67cf39c75e00427964c95adf9f89))
 
 ## [3.67.0](https://github.com/Millennium44/Toolasha/compare/v3.66.0...v3.67.0) (2026-10-11)
 
