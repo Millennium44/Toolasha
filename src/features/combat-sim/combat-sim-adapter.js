@@ -1936,6 +1936,27 @@ export function taxedDropValue(itemHrid, grossValue) {
 }
 
 /**
+ * What one unit of a drop is worth to the sim: its sell price net of the sale
+ * tax, or the expected value of opening it when it has no price.
+ * @param {string} itemHrid - The dropped item
+ * @returns {{priced: boolean, unitValue: number}} `priced` is false only when
+ *   nothing priced it; a price of 0 (e.g. a custom override) is a price
+ */
+function dropUnitValue(itemHrid) {
+    if (itemHrid === '/items/coin') return { priced: true, unitValue: 1 };
+    const priced = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
+    let unitValue = taxedDropValue(itemHrid, getSellPrice(itemHrid));
+    if (unitValue === 0) {
+        // The EV fallback already nets the sale tax (see expected-value-calculator),
+        // so it is taken as-is.
+        const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+        if (ev !== null && ev > 0) unitValue = ev;
+    }
+    return { priced, unitValue };
+}
+
+/**
  * Calculate revenue and costs from a sim result.
  * Respects the user's profitCalc_pricingMode setting. `costPerHour` covers consumables and, in a
  * dungeon, the entry and chest keys the runs consume.
@@ -1943,13 +1964,25 @@ export function taxedDropValue(itemHrid, grossValue) {
  * @param {Object} gameData - Game data payload from buildGameDataPayload()
  * @param {string} playerHrid - Player HRID to read drop multipliers and consumables for
  * @param {number} hours - Number of hours simulated
+ * @param {Object} [options]
+ * @param {Map} [options.priceCache] - Holds every price this reads, the first time it is read, and
+ *   answers later reads from it. A caller that values many results against each other passes one
+ *   Map for all of them, so a market update, a custom-price edit or a pricing-setting change partway
+ *   through cannot read as a difference between them (the trigger optimizer does).
  * @returns {{ revenuePerHour: number, costPerHour: number, keyCostPerHour: number, netPerHour: number,
  *             dropEntries: Array, consumableEntries: Array, unpricedDrops: string[],
  *             unpricedConsumables: string[] }} `unpricedDrops` and `unpricedConsumables` name the
  *             items nothing could price — they are counted at zero in the totals, so a drop total
  *             that has any is a floor and a cost total that has any is a lower bound on the cost
  */
-export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
+export function calculateSimRevenue(simResult, gameData, playerHrid, hours, options = {}) {
+    const cache = options.priceCache instanceof Map ? options.priceCache : null;
+    const held = (key, read) => {
+        if (!cache) return read();
+        if (!cache.has(key)) cache.set(key, read());
+        return cache.get(key);
+    };
+
     let revenuePerHour = 0;
     const dropEntries = [];
     const unpricedDrops = [];
@@ -1957,17 +1990,8 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
     for (const [itemHrid, total] of dropMap.entries()) {
         if (total <= 0) continue;
-        // A price of 0 (e.g. a custom override) is a price; only a missing one makes the total a floor
-        const priced =
-            itemHrid === '/items/coin' || getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
-        let unitValue = itemHrid === '/items/coin' ? 1 : taxedDropValue(itemHrid, getSellPrice(itemHrid));
-        if (unitValue === 0) {
-            // The EV fallback already nets the sale tax (see expected-value-calculator),
-            // so it is taken as-is.
-            const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-            const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
-            if (ev !== null && ev > 0) unitValue = ev;
-        }
+        // The finished per-unit value is what is held, so the sale tax is held with the price
+        const { priced, unitValue } = held(`drop|${itemHrid}`, () => dropUnitValue(itemHrid));
         const perHour = (total / hours) * unitValue;
         revenuePerHour += perHour;
         if (unitValue > 0 || priced) {
@@ -1986,11 +2010,13 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const unpricedConsumables = [];
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
-        const unitCost = getBuyPrice(itemHrid);
+        const { unitCost, priced } = held(`buy|${itemHrid}`, () => ({
+            unitCost: getBuyPrice(itemHrid),
+            // A custom price of 0 is a price, not a missing one
+            priced: getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null,
+        }));
         const perHour = (count / hours) * unitCost;
         costPerHour += perHour;
-        // A custom price of 0 is a price, not a missing one
-        const priced = getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null;
         if (unitCost > 0 || priced) {
             const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
             consumableEntries.push({ name: itemName, countPerHour: count / hours, unitCost, totalCost: perHour });
@@ -2008,7 +2034,8 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     // same helper rather than reading this one, so nothing double-counts.
     let keyCostPerHour = 0;
     if (simResult.isDungeon) {
-        for (const key of calculateDungeonKeyCosts(dropMap, getKeyPrice)) {
+        const keyPrice = (keyHrid) => held(`key|${keyHrid}`, () => getKeyPrice(keyHrid));
+        for (const key of calculateDungeonKeyCosts(dropMap, keyPrice)) {
             keyCostPerHour += key.totalCost / hours;
         }
         costPerHour += keyCostPerHour;

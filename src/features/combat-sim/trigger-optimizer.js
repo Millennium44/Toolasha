@@ -106,10 +106,12 @@ export function monsterMaxHpReader(gameData) {
  * @param {Object} gameData - Game data payload
  * @param {Array<string>} hrids - Every player in the sim
  * @param {number} fallbackHours - Hours asked for, when the result carries no clock
+ * @param {Object} [options]
+ * @param {Map} [options.priceCache] - The run's held prices (see `calculateSimRevenue`)
  * @returns {{perPlayer: Object, encounters: number, pools: Object}} perPlayer: hrid →
  *   `{ xp, profit, revenue, cost, deaths, dps }`, all per hour (dps per second)
  */
-export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
+export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { priceCache } = {}) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || fallbackHours;
     const perPlayer = {};
     const pools = {};
@@ -119,7 +121,7 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
         let revenue = 0;
         let cost = 0;
         try {
-            const value = calculateSimRevenue(simResult, gameData, hrid, simHours);
+            const value = calculateSimRevenue(simResult, gameData, hrid, simHours, { priceCache });
             profit = value?.netPerHour || 0;
             // Gross loot value and spend set the scale a profit change is judged against (profitScale)
             revenue = value?.revenuePerHour || 0;
@@ -220,6 +222,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const total = estimateTriggerSims(tunables.length, precision.key);
     let simCount = 0;
     const cache = new Map();
+    // Every price is read once and held for the whole run. Sims finish over minutes, and valuing each
+    // against whatever the market said when it finished made a price update look like a trigger effect.
+    const priceCache = new Map();
     // A sim that failed stops the rest: the queue would otherwise keep starting sims for a run already lost
     let failed = false;
     const stopped = () => failed || Boolean(abortSignal?.());
@@ -274,7 +279,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                     );
                     simCount++;
                     onProgress?.({ current: Math.min(simCount, total), total });
-                    return sampleFromResult(simResult, gameData, allHrids, hours);
+                    return sampleFromResult(simResult, gameData, allHrids, hours, { priceCache });
                 } catch (error) {
                     // A stopped run cancels the sims in flight; that is not a failure
                     if (stopped()) return null;

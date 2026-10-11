@@ -45,7 +45,7 @@ vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: async (params) => mocks.respond(params),
 }));
 
-const { runTriggerOptimization } = await import('./trigger-optimizer.js');
+const { runTriggerOptimization, sampleFromResult } = await import('./trigger-optimizer.js');
 
 const MONSTER = '/monsters/fly';
 const ZONE = '/actions/combat/fly';
@@ -149,5 +149,47 @@ describe('a zero-profit baseline', () => {
         expect(result.changes.length).toBeGreaterThan(0);
         expect(result.reliable).toBe(true);
         expect(result.combined.deltaProfit).toBeCloseTo(2500, 6);
+    });
+});
+
+describe('prices that move during a run', () => {
+    test('identical combat with a rising price is no difference and no change', async () => {
+        // After the review reproduction: every sim fights identically and drops one cheese a kill,
+        // while the cheese price rises by 1 every second finished sim (before the fix: a reliable +384 gold/h)
+        let sims = 0;
+        const params = scenario({
+            dropHrid: '/items/cheese',
+            dropCount: 1,
+            counters: () => ({ kills: 100, xp: 1000, dps: 100, food: 0 }),
+            onSim: () => {
+                sims++;
+                mocks.prices['/items/cheese'] = { ask: 100 + Math.floor(sims / 2) };
+            },
+        });
+        params.minGain = 0.25;
+        const result = await runTriggerOptimization(params);
+        expect(sims).toBeGreaterThan(7);
+        // Every candidate scored exactly what the baseline did
+        expect(result.screened.map((s) => s.range)).toEqual([0]);
+        expect(result.changes).toHaveLength(0);
+        expect(result.reliable).not.toBe(true);
+    });
+
+    test('samples valued under one run hold the first price they read', () => {
+        mocks.prices['/items/cheese'] = { ask: 100 };
+        const params = scenario({
+            dropHrid: '/items/cheese',
+            dropCount: 1,
+            counters: () => ({ kills: 100, xp: 1000, dps: 100, food: 0 }),
+        });
+        const simResult = mocks.respond({ ...params, hours: 1 });
+        const priceCache = new Map();
+        const first = sampleFromResult(simResult, params.gameData, ['player1'], 1, { priceCache });
+        mocks.prices['/items/cheese'] = { ask: 200 };
+        const second = sampleFromResult(simResult, params.gameData, ['player1'], 1, { priceCache });
+        expect(second.perPlayer.player1.profit - first.perPlayer.player1.profit).toBe(0);
+        // Without the run's cache it is the live price, as everywhere else
+        const live = sampleFromResult(simResult, params.gameData, ['player1'], 1);
+        expect(live.perPlayer.player1.profit).toBeGreaterThan(first.perPlayer.player1.profit);
     });
 });
