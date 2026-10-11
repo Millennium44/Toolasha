@@ -156,6 +156,16 @@ describe('activeRows and collectTunables', () => {
         expect(tunables[0].key).toBe(`player1|abilities|${FIREBALL}|0`);
     });
 
+    test('each scope includes only its rows, and both is the default', () => {
+        const args = { playerDTOs: [playerDTO()], playerIndices: [0], gameData: gameData() };
+        const names = (include) => collectTunables({ ...args, include }).map((t) => t.itemName);
+        expect(names('abilities')).toEqual(['Fireball']);
+        expect(names('consumables')).toEqual(['Donut']);
+        expect(names('both')).toEqual(['Fireball', 'Donut']);
+        expect(names(undefined)).toEqual(['Fireball', 'Donut']);
+        expect(names('nonsense')).toEqual(['Fireball', 'Donut']);
+    });
+
     test('custom values are the starting point, and only the chosen players are read', () => {
         const dtos = [playerDTO('player1', { abilityTriggers: [row(TARGET, C_HP, GTE, 600)] }), playerDTO('player2')];
         const solo = collectTunables({ playerDTOs: dtos, playerIndices: [0], gameData: gameData() });

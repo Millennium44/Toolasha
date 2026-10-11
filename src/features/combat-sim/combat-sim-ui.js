@@ -124,7 +124,15 @@ import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { runTriggerOptimization } from './trigger-optimizer.js';
-import { buildEditorChanges, formatChangesText, MIN_GAIN, MIN_GAIN_OPTIONS, PRECISIONS } from './trigger-tuning.js';
+import {
+    buildEditorChanges,
+    formatChangesText,
+    MIN_GAIN,
+    MIN_GAIN_OPTIONS,
+    PRECISIONS,
+    TUNABLE_SCOPES,
+    DEFAULT_TUNABLE_SCOPE,
+} from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
 import storage from '../../core/storage.js';
 import {
@@ -147,6 +155,7 @@ const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
 const TRIGGER_CHOICE_IDS = {
     scope: 'mwi-csim-trigger-scope',
+    include: 'mwi-csim-trigger-include',
     precision: 'mwi-csim-trigger-precision',
     minGain: 'mwi-csim-trigger-mingain',
 };
@@ -9776,6 +9785,7 @@ class CombatSimUI {
         try {
             const read = (id) => this.panel?.querySelector(`#${id}`)?.value;
             const scope = read(TRIGGER_CHOICE_IDS.scope);
+            const include = read(TRIGGER_CHOICE_IDS.include);
             const precision = read(TRIGGER_CHOICE_IDS.precision);
             const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
             // A select that is not on the panel keeps its remembered value untouched
@@ -9783,6 +9793,7 @@ class CombatSimUI {
             await writeScoped(TRIGGER_CHOICES_KEY, {
                 ...saved,
                 ...(scope !== undefined ? { scope } : {}),
+                ...(include !== undefined ? { include } : {}),
                 ...(precision !== undefined ? { precision } : {}),
                 ...(Number.isFinite(minGain) ? { minGain } : {}),
             });
@@ -9804,6 +9815,7 @@ class CombatSimUI {
                 if (select && valid(value)) select.value = String(value);
             };
             apply(TRIGGER_CHOICE_IDS.scope, saved.scope, (v) => v === 'me' || v === 'party');
+            apply(TRIGGER_CHOICE_IDS.include, saved.include, (v) => TUNABLE_SCOPES.includes(v));
             apply(TRIGGER_CHOICE_IDS.precision, saved.precision, (v) =>
                 Object.values(PRECISIONS).some((p) => p.key === v)
             );
@@ -10132,6 +10144,8 @@ class CombatSimUI {
         const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
         const scope = this.panel.querySelector('#mwi-csim-trigger-scope')?.value === 'party' ? 'party' : 'me';
+        const includeValue = this.panel.querySelector('#mwi-csim-trigger-include')?.value;
+        const include = TUNABLE_SCOPES.includes(includeValue) ? includeValue : DEFAULT_TUNABLE_SCOPE;
         const precision = this.panel.querySelector('#mwi-csim-trigger-precision')?.value || 'standard';
         const minGainValue = parseFloat(this.panel.querySelector('#mwi-csim-trigger-mingain')?.value);
         const minGain = MIN_GAIN_OPTIONS.includes(minGainValue) ? minGainValue : MIN_GAIN;
@@ -10203,6 +10217,7 @@ class CombatSimUI {
                     difficultyTier,
                     communityBuffs: getCommunityBuffs(),
                     scope,
+                    include,
                     precision,
                     minGain,
                     playerNames,

@@ -5,7 +5,14 @@
  */
 
 import { formatKMB } from '../../utils/formatters.js';
-import { PRECISIONS, DEFAULT_PRECISION, MIN_GAIN, MIN_GAIN_OPTIONS, describeRow } from './trigger-tuning.js';
+import {
+    PRECISIONS,
+    DEFAULT_PRECISION,
+    MIN_GAIN,
+    MIN_GAIN_OPTIONS,
+    DEFAULT_TUNABLE_SCOPE,
+    describeRow,
+} from './trigger-tuning.js';
 
 const ACCENT = '#4a9eff';
 const BTN_STYLE =
@@ -48,6 +55,12 @@ export function triggerChipOptionsHtml() {
                 <option value="me" selected>Just me</option>
                 <option value="party">Whole party</option>
             </select>
+            <select class="toolasha-select" id="mwi-csim-trigger-include" style="${SELECT_STYLE}"
+                title="Which triggers to tune: ability enemy-HP gates, food and drink HP/MP thresholds, or both.">
+                <option value="both"${DEFAULT_TUNABLE_SCOPE === 'both' ? ' selected' : ''}>Abilities + food</option>
+                <option value="abilities">Abilities only</option>
+                <option value="consumables">Food &amp; drinks only</option>
+            </select>
             <select class="toolasha-select" id="mwi-csim-trigger-precision" style="${SELECT_STYLE}"
                 title="How long each candidate value is simulated. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">
                 ${precisionOptions}
@@ -87,11 +100,17 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
 
     if (!result) return wrap('<div style="color:#888; font-size:12px;">Stopped before the baseline finished.</div>');
     if (result.noTunables) {
-        return wrap(
-            '<div style="color:#888; font-size:12px;">Nothing to tune: none of the ' +
-                `${result.scope === 'party' ? "party's" : "player's"} ability or food triggers compare an HP or MP ` +
-                'reading to a number.</div>'
-        );
+        const who = result.scope === 'party' ? "party's" : "player's";
+        const message =
+            result.include === 'abilities'
+                ? 'No tunable ability triggers in this setup: none of the ' +
+                  `${who} abilities have a trigger that compares an enemy's HP to a number.`
+                : result.include === 'consumables'
+                  ? 'No tunable food or drink triggers in this setup: none of the ' +
+                    `${who} food or drinks have a trigger that compares an HP or MP reading to a number.`
+                  : `Nothing to tune: none of the ${who} ability or food triggers compare an HP or MP ` +
+                    'reading to a number.';
+        return wrap(`<div style="color:#888; font-size:12px;">${esc(message)}</div>`);
     }
 
     const changes = result.changes || [];

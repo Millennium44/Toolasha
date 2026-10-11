@@ -119,6 +119,18 @@ describe('runTriggerOptimization', () => {
         expect(sims.calls).toHaveLength(0);
     });
 
+    test('an empty scope reports nothing to tune and runs no sims', async () => {
+        const result = await runTriggerOptimization({
+            ...base,
+            playerDTOs: [dto('player1')],
+            playerIndex: 0,
+            include: 'consumables',
+        });
+        expect(result.noTunables).toBe(true);
+        expect(result.include).toBe('consumables');
+        expect(sims.calls).toHaveLength(0);
+    });
+
     test('tunes the selected player, simulating the whole party on shared seeds', async () => {
         const result = await runTriggerOptimization({
             ...base,

@@ -213,6 +213,15 @@ function humanize(hrid) {
         .replace(/_/g, ' ');
 }
 
+/** What the Triggers chip may tune: ability gates, food and drink thresholds, or both */
+export const TUNABLE_SCOPES = ['both', 'abilities', 'consumables'];
+export const DEFAULT_TUNABLE_SCOPE = 'both';
+const TUNABLE_SCOPE_SLOTS = {
+    both: [ABILITY_SLOT, 'food', 'drinks'],
+    abilities: [ABILITY_SLOT],
+    consumables: ['food', 'drinks'],
+};
+
 /**
  * Every tunable trigger row among the chosen players' abilities, food and drinks.
  * A slot with no custom triggers contributes the game's default rows, so an
@@ -224,14 +233,17 @@ function humanize(hrid) {
  * @param {Array<number>} params.playerIndices - Which players to tune
  * @param {Object} params.gameData - Game data payload
  * @param {Object} [params.playerNames] - hrid → display name
+ * @param {string} [params.include] - 'both' (default), 'abilities' or 'consumables' (food and drinks);
+ *   anything else counts as 'both'
  * @returns {Array<Object>} Tunables, in player / slot / row order
  */
-export function collectTunables({ playerDTOs, playerIndices, gameData, playerNames = {} }) {
+export function collectTunables({ playerDTOs, playerIndices, gameData, playerNames = {}, include = 'both' }) {
+    const slotTypes = TUNABLE_SCOPE_SLOTS[include] || TUNABLE_SCOPE_SLOTS.both;
     const tunables = [];
     for (const playerIndex of playerIndices) {
         const dto = playerDTOs[playerIndex];
         if (!dto) continue;
-        for (const slotType of [ABILITY_SLOT, 'food', 'drinks']) {
+        for (const slotType of slotTypes) {
             const slots = dto[slotType] || [];
             slots.forEach((slot, slotIndex) => {
                 if (!slot?.hrid) return;

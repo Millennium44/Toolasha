@@ -9495,6 +9495,7 @@ describe('the Triggers option', () => {
         onlyTriggers();
         ui.panel.querySelector('#mwi-csim-trigger-scope').value = 'party';
         ui.panel.querySelector('#mwi-csim-trigger-precision').value = 'quick';
+        ui.panel.querySelector('#mwi-csim-trigger-include').value = 'abilities';
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         const before = mocks.upgradeRuns;
 
@@ -9504,6 +9505,7 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns).toHaveLength(1);
         expect(mocks.triggerRuns[0].scope).toBe('party');
         expect(mocks.triggerRuns[0].precision).toBe('quick');
+        expect(mocks.triggerRuns[0].include).toBe('abilities');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
     });
 
@@ -9521,6 +9523,7 @@ describe('the Triggers option', () => {
     describe('remembered choices', () => {
         const choices = () => ({
             scope: ui.panel.querySelector('#mwi-csim-trigger-scope').value,
+            include: ui.panel.querySelector('#mwi-csim-trigger-include').value,
             precision: ui.panel.querySelector('#mwi-csim-trigger-precision').value,
             minGain: ui.panel.querySelector('#mwi-csim-trigger-mingain').value,
         });
@@ -9529,7 +9532,7 @@ describe('the Triggers option', () => {
         test('defaults are unchanged when nothing is stored', async () => {
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'me', precision: 'standard', minGain: '0.5' });
+            expect(choices()).toEqual({ scope: 'me', include: 'both', precision: 'standard', minGain: '0.5' });
         });
 
         test('a changed choice survives a panel rebuild', async () => {
@@ -9541,6 +9544,7 @@ describe('the Triggers option', () => {
                 select.dispatchEvent(new Event('change', { bubbles: true }));
             };
             set('#mwi-csim-trigger-scope', 'party');
+            set('#mwi-csim-trigger-include', 'consumables');
             set('#mwi-csim-trigger-precision', 'precise');
             set('#mwi-csim-trigger-mingain', '2');
             await settle();
@@ -9548,15 +9552,20 @@ describe('the Triggers option', () => {
             ui.destroy();
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'party', precision: 'precise', minGain: '2' });
+            expect(choices()).toEqual({ scope: 'party', include: 'consumables', precision: 'precise', minGain: '2' });
         });
 
         test('an invalid stored value falls back to the default', async () => {
             const { writeScoped } = await import('../../utils/character-key.js');
-            await writeScoped('combatSimTriggerChoices', { scope: 'everyone', precision: 'ludicrous', minGain: 7 });
+            await writeScoped('combatSimTriggerChoices', {
+                scope: 'everyone',
+                include: 'dessert',
+                precision: 'ludicrous',
+                minGain: 7,
+            });
             ui.buildPanel();
             await settle();
-            expect(choices()).toEqual({ scope: 'me', precision: 'standard', minGain: '0.5' });
+            expect(choices()).toEqual({ scope: 'me', include: 'both', precision: 'standard', minGain: '0.5' });
         });
     });
 

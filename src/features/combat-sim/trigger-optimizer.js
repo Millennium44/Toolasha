@@ -115,6 +115,7 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
  * @param {string} [params.precision] - 'quick', 'standard' or 'precise'
  * @param {number} [params.minGain] - Smallest score gain worth offering
  * @param {Object} [params.playerNames] - hrid → display name
+ * @param {string} [params.include] - 'both', 'abilities' or 'consumables': which kinds of row to tune
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
  * @returns {Promise<Object|null>} The search result plus `scope`, `precision`, `simCount`, `tunableCount`;
@@ -132,14 +133,17 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         precision: precisionKey = DEFAULT_PRECISION,
         minGain = MIN_GAIN,
         playerNames = {},
+        include = 'both',
     } = params;
     const { abortSignal } = options;
     const precision = PRECISIONS[precisionKey] || PRECISIONS[DEFAULT_PRECISION];
     const wholeParty = scope === 'party' && playerDTOs.length > 1;
 
     const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
-    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames });
-    if (tunables.length === 0) return { noTunables: true, scope: wholeParty ? 'party' : 'me', changes: [] };
+    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
+    if (tunables.length === 0) {
+        return { noTunables: true, scope: wholeParty ? 'party' : 'me', include, changes: [] };
+    }
 
     const allHrids = playerDTOs.map((d) => d.hrid);
     const scopeHrids = wholeParty ? allHrids : [playerDTOs[playerIndex].hrid];
@@ -233,6 +237,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     return {
         ...result,
         scope: wholeParty ? 'party' : 'me',
+        include,
         precision: precision.key,
         minGain,
         simCount,

@@ -122,6 +122,13 @@ describe('renderTriggerResultsHtml', () => {
         expect(renderTriggerResultsHtml(null, gameData)).toContain('Stopped before the baseline');
     });
 
+    test('an empty scope says which kind of trigger is missing', () => {
+        const empty = (include) =>
+            renderTriggerResultsHtml({ noTunables: true, scope: 'me', include, changes: [] }, gameData);
+        expect(empty('abilities')).toContain('No tunable ability triggers in this setup');
+        expect(empty('consumables')).toContain('No tunable food or drink triggers in this setup');
+    });
+
     test('Apply is disabled when there is no sim editor to write into, and names are escaped', () => {
         const html = renderTriggerResultsHtml(
             { scope: 'me', changes: [change({ itemName: '<b>x</b>' })], unchanged: [], simCount: 1 },
@@ -145,5 +152,9 @@ describe('triggerChipOptionsHtml', () => {
         for (const v of [0.25, 0.5, 1, 2]) expect(html).toContain(`value="${v}"`);
         expect(html).toContain('value="0.5" selected');
         expect(html).toContain('smallest score gain worth offering');
+        expect(html).toContain('id="mwi-csim-trigger-include"');
+        expect(html).toContain('value="both" selected');
+        expect(html).toContain('value="abilities"');
+        expect(html).toContain('value="consumables"');
     });
 });
