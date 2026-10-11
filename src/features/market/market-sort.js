@@ -79,7 +79,7 @@ const CHAIN_TOOLTIP =
     'Insta-buy at ask, decompose it, decompose the gear that yields, and so on down to items that cannot be ' +
     'decomposed, then insta-sell what is left at bid after market tax. Ranked by gold per hour of alchemy time ' +
     'across the whole chain; each step uses the catalyst and tea setup that is best for the chain per hour, skipping setups that need an item with no real ask. Outputs with no real bid (estimated prices) are not sold. Ignores the global pricing mode on ' +
-    'purpose. Items with an unpriced step show no value.';
+    'purpose. An output with no real bid counts at zero and marks the figure a lower bound (≥).';
 
 /**
  * The explanation for a mode's figure.
@@ -531,7 +531,7 @@ class MarketSort {
             marketItemsContainer.appendChild(item.element);
 
             // Add profit indicator
-            this.addProfitIndicator(item.element, item.profit, item.detail, item.partial === true);
+            this.addProfitIndicator(item.element, item.profit, item.detail, item.partial === true, item.partialItems);
         }
     }
 
@@ -539,8 +539,9 @@ class MarketSort {
      * Calculate the figure the current mode ranks by.
      * @param {string} itemHrid - Item HRID
      * @param {Object} gameData - Game data
-     * @returns {Promise<{profit: number|null, detail: string|null, partial?: boolean}>} The figure, what it
-     *   describes, and whether it is a lower bound (a decompose chain with a partly unpriced bonus crate)
+     * @returns {Promise<{profit: number|null, detail: string|null, partial?: boolean, partialItems?: string[]}>}
+     *   The figure, what it describes, whether it is a lower bound (a decompose chain with an output or crate
+     *   content that has no real bid), and the hrids counted at zero
      */
     async calculateItemProfit(itemHrid, gameData) {
         const mode = getSortMode(this.sortMode);
@@ -548,7 +549,12 @@ class MarketSort {
         if (mode.chain) {
             const chain = this.decomposeChain(itemHrid);
             if (!chain || chain.netPerHour === null) return { profit: null, detail: null };
-            return { profit: chain.netPerHour, detail: 'decompose chain', partial: chain.partial === true };
+            return {
+                profit: chain.netPerHour,
+                detail: 'decompose chain',
+                partial: chain.partial === true,
+                partialItems: chain.partialItems ?? [],
+            };
         }
 
         if (mode.metric) {
@@ -709,8 +715,9 @@ class MarketSort {
      * @param {number|null} profit - The current mode's figure, or null when it does not apply
      * @param {string|null} [detail=null] - The winning alchemy action, for the badge's tooltip
      * @param {boolean} [partial=false] - The figure is a lower bound: shown with "≥" and explained in the title
+     * @param {string[]} [partialItems=[]] - Hrids counted at zero, named in the title
      */
-    addProfitIndicator(itemDiv, profit, detail = null, partial = false) {
+    addProfitIndicator(itemDiv, profit, detail = null, partial = false, partialItems = []) {
         // Remove existing indicator
         const existing = itemDiv.querySelector('.toolasha-profit-indicator');
         if (existing) {
@@ -748,7 +755,14 @@ class MarketSort {
 
         if (alchemyMode && detail) {
             indicator.title = `${detail} — ${modeTooltipText(this.sortMode)}`;
-            if (partial) indicator.title += ' (lower bound: a bonus crate has contents with no price)';
+            if (partial) {
+                const names = (partialItems ?? [])
+                    .map((hrid) => dataManager.getItemDetails(hrid)?.name || hrid)
+                    .join(', ');
+                indicator.title += names
+                    ? ` (lower bound: no real bid for ${names}, counted at zero)`
+                    : ' (lower bound: some output or crate content has no real bid, counted at zero)';
+            }
         }
 
         indicator.textContent = displayText;

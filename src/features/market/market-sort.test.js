@@ -565,7 +565,7 @@ describe('decompose chain mode', () => {
         expect(badges(container)).toEqual(['+1.7M', null]);
     });
 
-    test('an unpriced terminal leaves the item without a figure', async () => {
+    test('an unpriced terminal counts at zero and leaves a lower-bound figure', async () => {
         twoLevel();
         engine.bids = {};
         buildGrid(['item_a']);
@@ -574,20 +574,34 @@ describe('decompose chain mode', () => {
         await marketSort.sortByProfitability();
 
         expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a')).toEqual({
-            profit: null,
-            detail: null,
+            profit: -600000,
+            detail: 'decompose chain',
+            partial: true,
+            partialItems: expect.any(Array),
         });
     });
 
-    test('a terminal with only an estimated bid is not insta-sellable, so the chain is unpriced', async () => {
+    test('a terminal with only an estimated bid counts at zero, so the chain is a lower bound with ≥', async () => {
         twoLevel();
-        engine.estimated.add('/items/term_c');
-        buildGrid(['item_a']);
+        engine.bids['/items/term_d'] = 800;
+        engine.itemDetails['/items/item_a'] = gearDetails([
+            ['/items/mid_b', 1],
+            ['/items/term_d', 1],
+        ]);
+        engine.estimated.add('/items/term_d');
+        const container = buildGrid(['item_a']);
 
         marketSort.sortMode = 'decomposeChainPerHour';
         await marketSort.sortByProfitability();
 
-        expect(marketSort.profitCache.get('decomposeChainPerHour:/items/item_a').profit).toBeNull();
+        const cached = marketSort.profitCache.get('decomposeChainPerHour:/items/item_a');
+        expect(cached.profit).not.toBeNull();
+        expect(cached.partial).toBe(true);
+        expect(badges(container)[0].startsWith('≥')).toBe(true);
+        expect(cached.partialItems).toContain('/items/term_d');
+        const title = container.querySelector('.toolasha-profit-indicator').title;
+        expect(title).toContain('no real bid for');
+        expect(title).toContain(engine.itemDetails['/items/term_d']?.name || '/items/term_d');
     });
 
     test('an estimated ask on the item itself leaves the chain unpriced', async () => {

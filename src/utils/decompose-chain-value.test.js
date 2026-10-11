@@ -316,7 +316,7 @@ describe('fixtures where each step was already best stay as they were', () => {
         expect(decomposeChain('/items/item_a').netPerHour).toBeCloseTo(1_584_000);
     });
 
-    test('an unpriced terminal still leaves the chain without a figure, with its top step', () => {
+    test('an output with no bid at all counts at zero, flagged a lower bound, with its top step', () => {
         engine.itemDetails = {
             '/items/item_a': gear([['/items/mid_b', 1]]),
             '/items/mid_b': gear([['/items/term_c', 2]]),
@@ -324,9 +324,69 @@ describe('fixtures where each step was already best stay as they were', () => {
         };
         engine.candidates = { '/items/item_a': [setup(500, 3600)], '/items/mid_b': [setup(300, 1800)] };
         const chain = decomposeChain('/items/item_a');
-        expect(chain.netPerHour).toBeNull();
+        expect(chain.netPerHour).toBeCloseTo(-600_000);
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual(['/items/term_c']);
         expect(chain.partlyUnpriced).toBe(true);
         expect(chain.topStep).toBe(engine.candidates['/items/item_a'][0]);
+    });
+
+    test('an estimated-bid output is not accepted as a price: zero, named, never above the priced chain', () => {
+        const fixture = () => {
+            engine.itemDetails = {
+                '/items/item_a': gear([
+                    ['/items/mid_b', 1],
+                    ['/items/term_d', 1],
+                ]),
+                '/items/mid_b': gear([['/items/term_c', 2]]),
+                '/items/term_c': { alchemyDetail: null },
+                '/items/term_d': { alchemyDetail: null },
+            };
+            engine.bids = { '/items/term_c': 1000, '/items/term_d': 700 };
+            engine.candidates = { '/items/item_a': [setup(500, 3600)], '/items/mid_b': [setup(300, 1800)] };
+        };
+        fixture();
+        const priced = decomposeChain('/items/item_a');
+        expect(priced.partial).toBe(false);
+        expect(priced.partialItems).toEqual([]);
+
+        clearDecomposeChainCaches();
+        fixture();
+        engine.estimated.add('/items/term_d');
+        const lower = decomposeChain('/items/item_a');
+        expect(lower.netPerHour).not.toBeNull();
+        expect(lower.partial).toBe(true);
+        expect(lower.partialItems).toEqual(['/items/term_d']);
+        expect(lower.unpriced).toEqual([]);
+        expect(lower.netPerHour).toBeLessThan(priced.netPerHour);
+    });
+
+    test('a bonus drop with no real bid counts at zero and marks the chain partial', () => {
+        engine.itemDetails = {
+            '/items/item_a': gear([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.bids = { '/items/term_c': 1000 };
+        engine.estimated.add('/items/rare');
+        engine.candidates = {
+            '/items/item_a': [
+                setup(500, 3600, { dropRevenues: [{ itemHrid: '/items/rare', isRare: true, dropsPerHour: 36 }] }),
+            ],
+        };
+        const chain = decomposeChain('/items/item_a');
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500) * 3600);
+        expect(chain.partialItems).toEqual(['/items/rare']);
+    });
+
+    test('a step whose own ask is unknown is still unsolvable', () => {
+        engine.itemDetails = {
+            '/items/item_a': gear([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        engine.bids = { '/items/term_c': 1000 };
+        engine.estimated.add('/items/item_a');
+        engine.candidates = { '/items/item_a': [setup(500, 3600)] };
+        expect(decomposeChain('/items/item_a').netPerHour).toBeNull();
     });
 
     test('a cycle in the gear still walks the way it did', () => {
@@ -587,12 +647,14 @@ describe('a bonus crate', () => {
         expect(chain.netPerHour).toBeCloseTo((1920 - 500 + 0.01 * ((1000 * 0.82) / 10)) * 3600);
     });
 
-    test('a crate with nothing priced still leaves the chain without a figure', () => {
+    test('a crate with nothing priced counts at zero and keeps the chain as a lower bound', () => {
         crateFixture({ junkPriced: false });
         engine.sellResolved = {};
         delete engine.bids['/items/gem'];
         const chain = decomposeChain('/items/item_a');
-        expect(chain.netPerHour).toBeNull();
-        expect(chain.unpriced).toContain(CRATE);
+        expect(chain.netPerHour).toBeCloseTo((1920 - 500) * 3600);
+        expect(chain.partial).toBe(true);
+        expect(chain.partialItems).toEqual([CRATE]);
+        expect(chain.unpriced).toEqual([]);
     });
 });
