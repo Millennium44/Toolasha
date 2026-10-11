@@ -46,6 +46,27 @@ describe('renderTriggerResultsHtml', () => {
         expect(html).toContain('mwi-csim-trigger-copy');
     });
 
+    test('rows that never came into play are listed as not used in this fight', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                changes: [change()],
+                unchanged: [{ itemName: 'Donut' }],
+                unused: [{ itemName: 'Ice Spear' }, { itemName: 'Ice Spear' }],
+                simCount: 1,
+            },
+            gameData
+        );
+        expect(html).toContain('Not used in this fight: Ice Spear.');
+        expect(html).toContain('Kept as is: Donut.');
+        const allUnused = renderTriggerResultsHtml(
+            { scope: 'me', changes: [], unchanged: [], unused: [{ itemName: 'Ice Spear' }], simCount: 4 },
+            gameData
+        );
+        expect(allUnused).toContain('None of these triggers came into play');
+        expect(allUnused).not.toContain('No change beat');
+    });
+
     test('the footer shows the chosen minimum gain', () => {
         const render = (minGain) =>
             renderTriggerResultsHtml(

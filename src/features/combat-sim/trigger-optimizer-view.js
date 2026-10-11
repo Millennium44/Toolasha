@@ -120,6 +120,8 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
         players.get(c.playerHrid).rows.push(c);
     }
     const showNames = players.size > 1 || result.scope === 'party';
+    const unused = result.unused || [];
+    const allUnused = unused.length > 0 && (result.unchanged || []).length === 0 && changes.length === 0;
 
     let body = '';
     if (result.reliable === false) {
@@ -128,6 +130,10 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
             '<div style="color:#aaa; font-size:12px; margin-top:2px;">Some values looked better in single runs, ' +
             'but the combination did not beat your current triggers on fresh seeds by a clear margin, so none ' +
             'are recommended.</div>';
+    } else if (changes.length === 0 && allUnused) {
+        body +=
+            '<div style="color:#e0e0e0; font-size:12px;">None of these triggers came into play in this fight, ' +
+            'so no threshold could change the result.</div>';
     } else if (changes.length === 0) {
         body += '<div style="color:#e0e0e0; font-size:12px;">No change beat the current thresholds by a clear margin.';
         body += ' Your triggers are already about as good as this search can tell.</div>';
@@ -165,6 +171,13 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true } =
         body +=
             `<div style="font-size:11px; color:#666; margin-top:6px;">Kept as is: ` +
             `${esc([...new Set(unchanged.map((t) => t.itemName))].join(', '))}.</div>`;
+    }
+    if (unused.length > 0) {
+        body +=
+            `<div style="font-size:11px; color:#666; margin-top:4px;" title="Their triggers were never checked in ` +
+            `the baseline runs: the ability or food never came off cooldown at a moment it was looked at, so no ` +
+            `threshold could have changed anything.">Not used in this fight: ` +
+            `${esc([...new Set(unused.map((t) => t.itemName))].join(', '))}.</div>`;
     }
 
     body +=

@@ -95,6 +95,24 @@ describe('sampleFromResult', () => {
             4
         );
         expect(sample.perPlayer.player1.xp).toBe(25);
+        // no read counts from the engine: the sample says nothing about use, so nothing gets skipped
+        expect(sample.triggerUse).toBeUndefined();
+    });
+
+    test('carries per-slot trigger reads, plus uses and casts, when the engine recorded them', () => {
+        const sample = sampleFromResult(
+            {
+                simulatedTime: HOUR_NS,
+                triggerChecks: { player1: { [FIREBALL]: 30, '/items/donut': 0, '/abilities/idle': 0 } },
+                consumablesUsed: { player1: { '/items/donut': 2 } },
+                manaUsed: { player1: { [FIREBALL]: 0 } },
+            },
+            gameData,
+            ['player1', 'player2'],
+            1
+        );
+        expect(sample.triggerUse.player1).toEqual({ [FIREBALL]: 31, '/items/donut': 2, '/abilities/idle': 0 });
+        expect(sample.triggerUse.player2).toEqual({});
     });
 });
 

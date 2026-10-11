@@ -430,6 +430,54 @@ export function zoneMaxEnemies(gameData, zoneHrid) {
     return Math.max(1, ...counts.map((c) => Number(c) || 0));
 }
 
+/**
+ * The tunables whose threshold could not have changed the baseline runs, so screening them would only
+ * spend sims measuring noise.
+ *
+ * The rule rests on how the engine reads a trigger. A threshold enters a run only when its slot's rows
+ * are read (`Trigger.isActive`), and the rows are read only when the slot is ready: off cooldown, the
+ * player alive and not stunned (or silenced, for an ability), and — for an ability — no earlier ability
+ * slot already used that turn. The engine counts those reads per slot (`SimResult.triggerChecks`); casts
+ * and uses are added on top. A slot with no reads on any baseline seed ran exactly as it would have with
+ * any other threshold, so its rows are skipped. A gate that read false every time has reads and is kept —
+ * it blocked every cast, and that is precisely what tuning it can change. So is an ability that passed
+ * its gate but could never afford the mana: its rows were read.
+ *
+ * One exception keeps an unread ability: when an earlier ability slot of the same player is being tuned.
+ * Ability slots are tried in order and the first that fires ends the turn, so a later slot is reached
+ * only when an earlier one declines; changing the earlier slot's threshold can bring the later one into
+ * play. Food and drinks are each read on their own, with no such ordering.
+ *
+ * The evidence is the baseline seeds, not every seed there could be; it is a long run of the actual setup.
+ * When the samples carry no read counts (an engine that does not record them), nothing is skipped.
+ * @param {Array<Object>} tunables - From `collectTunables`
+ * @param {Array<Object>} samples - Baseline samples, each with `triggerUse: { [playerHrid]: { [hrid]: n } }`
+ * @returns {Array<Object>} The tunables to skip, in input order
+ */
+export function unusedTunables(tunables, samples) {
+    if (!samples?.length || samples.some((sample) => !sample?.triggerUse)) return [];
+    const reached = (t) => samples.some((sample) => (Number(sample.triggerUse[t.playerHrid]?.[t.itemHrid]) || 0) > 0);
+    const skip = new Set();
+    for (const t of tunables) {
+        if (t.slotType !== ABILITY_SLOT && !reached(t)) skip.add(t.key);
+    }
+    // Abilities in slot order per player, so an earlier slot's verdict is known before a later one's
+    const abilities = tunables
+        .filter((t) => t.slotType === ABILITY_SLOT)
+        .sort((a, b) => a.playerIndex - b.playerIndex || a.slotIndex - b.slotIndex);
+    const tunedSlots = new Map();
+    for (const t of abilities) {
+        const earlierTuned = (tunedSlots.get(t.playerHrid) || []).some((slotIndex) => slotIndex < t.slotIndex);
+        if (!reached(t) && !earlierTuned) {
+            skip.add(t.key);
+            continue;
+        }
+        if (!tunedSlots.has(t.playerHrid)) tunedSlots.set(t.playerHrid, []);
+        tunedSlots.get(t.playerHrid).push(t.slotIndex);
+    }
+    return tunables.filter((t) => skip.has(t.key));
+}
+
 // ─── Objective ──────────────────────────────────────────────────────────────
 
 /**
@@ -649,6 +697,7 @@ function metricsMean(samples, hrids) {
  * the luck that made it win, so:
  *
  * 1. Baseline on the original setup: scope figures, party DPS, HP/MP pools.
+ *    Rows whose slot never came into play are set aside (`unusedTunables`).
  * 2. Importance screen: each tunable across its coarse grid alone, on its own
  *    seeds; ordered by how far its scores spread and dropped unless some value
  *    clearly beats the current one.
@@ -668,7 +717,7 @@ function metricsMean(samples, hrids) {
  * @param {Array<string>} params.scopeHrids - Players whose figures are judged
  * @param {Function} params.measure - `(overrides, hoursPerSeed, stream, count) => Promise<Array<Sample>|null>`;
  *   `stream` names a set of seeds (equal names share seeds, different names never do), `count` is how
- *   many seeds. Samples are `{ perPlayer, encounters, pools }`; null means stopped.
+ *   many seeds. Samples are `{ perPlayer, encounters, pools, triggerUse? }`; null means stopped.
  * @param {Object} params.precision - An entry of PRECISIONS
  * @param {number} [params.maxEnemies] - Most enemies up at once in the zone
  * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
@@ -719,13 +768,18 @@ export async function runTriggerSearch({
     for (const [hrid, p] of Object.entries(baselineSamples[0]?.pools || {})) pools[hrid] = p;
     const ctx = { partyDps, pools, maxEnemies };
 
+    // 1b. Drop rows the baseline shows cannot matter (never read); they are reported, not tuned
+    const unused = unusedTunables(tunables, baselineSamples);
+    const unusedKeys = new Set(unused.map((t) => t.key));
+    const live = tunables.filter((t) => !unusedKeys.has(t.key));
+
     const state = new Map(tunables.map((t) => [t.key, { tunable: t, current: t.original }]));
     const currentOf = (t) => state.get(t.key).current;
     const tried = new Map(tunables.map((t) => [t.key, new Set([t.original])]));
 
     // 2. Importance screen, each trigger on its own seeds
     const screen = [];
-    for (const t of tunables) {
+    for (const t of live) {
         if (stopped()) break;
         const grid = coarseGrid(t, ctx).filter((v) => v !== t.original);
         progress(`Triggers: screening ${t.itemName}`);
@@ -876,7 +930,8 @@ export async function runTriggerSearch({
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),
         changes,
         rejected,
-        unchanged: tunables.filter((t) => !kept.has(t.key)),
+        unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key)),
+        unused,
         combined,
         reliable,
     };

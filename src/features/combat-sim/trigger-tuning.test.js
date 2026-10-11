@@ -29,6 +29,7 @@ import {
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
     zoneMaxEnemies,
+    unusedTunables,
     successiveHalving,
     runTriggerSearch,
     estimateTriggerSims,
@@ -490,6 +491,47 @@ describe('successiveHalving', () => {
     });
 });
 
+describe('unusedTunables (rows that could not have changed the run)', () => {
+    const tunables = () => collectTunables({ playerDTOs: [playerDTO()], playerIndices: [0], gameData: gameData() });
+    const sample = (use) => ({ perPlayer: {}, encounters: 0, pools: {}, triggerUse: { player1: use } });
+
+    test('a food never read or eaten is skipped; an ability read every time is kept', () => {
+        const skipped = unusedTunables(tunables(), [sample({ [FIREBALL]: 40 }), sample({ [FIREBALL]: 38 })]);
+        expect(skipped.map((t) => t.itemName)).toEqual(['Donut']);
+    });
+
+    test('an ability never read is skipped, but a gate that blocked every cast is not', () => {
+        // zero casts either way; only the read count tells "never in play" from "gate always false"
+        expect(unusedTunables(tunables(), [sample({ [DONUT]: 5 })]).map((t) => t.itemName)).toEqual(['Fireball']);
+        expect(unusedTunables(tunables(), [sample({ [DONUT]: 5, [FIREBALL]: 900 })])).toEqual([]);
+    });
+
+    test('one seed that reached the slot is enough to keep it', () => {
+        expect(unusedTunables(tunables(), [sample({}), sample({ [FIREBALL]: 1, [DONUT]: 1 })])).toEqual([]);
+    });
+
+    test('samples without read counts skip nothing', () => {
+        expect(unusedTunables(tunables(), [{ perPlayer: {}, encounters: 0, pools: {} }])).toEqual([]);
+        expect(unusedTunables(tunables(), [])).toEqual([]);
+    });
+
+    test('an unread ability behind a tuned earlier ability slot is kept: the earlier gate decides if it is reached', () => {
+        const ICE = '/abilities/ice_spear';
+        const data = gameData();
+        data.abilityDetailMap[ICE] = { name: 'Ice Spear', defaultCombatTriggers: [row(TARGET, C_HP, GTE, 1)] };
+        const dto = playerDTO();
+        dto.abilities = [
+            { hrid: FIREBALL, level: 1, triggers: null },
+            { hrid: ICE, level: 1, triggers: null },
+        ];
+        const list = collectTunables({ playerDTOs: [dto], playerIndices: [0], gameData: data, include: 'abilities' });
+        // Fireball in slot 0 fires whenever Ice Spear would have its turn
+        expect(unusedTunables(list, [sample({ [FIREBALL]: 50 })])).toEqual([]);
+        // with Fireball itself unread too, neither can matter
+        expect(unusedTunables(list, [sample({})]).map((t) => t.itemName)).toEqual(['Fireball', 'Ice Spear']);
+    });
+});
+
 describe('runTriggerSearch with deterministic fakes', () => {
     const precision = { ...PRECISIONS.standard, seeds: 4, pointHours: 40 };
     const FIRE_KEY = `player1|abilities|${FIREBALL}|0`;
@@ -514,7 +556,7 @@ describe('runTriggerSearch with deterministic fakes', () => {
      * the kind of per-run luck a real sim has (a shared per-seed part and a
      * part that differs between setups), repeatable by `salt`.
      */
-    function world({ optimum = 300, gain = 1, noise = 0, salt = 'x', afterFinal = null } = {}) {
+    function world({ optimum = 300, gain = 1, noise = 0, salt = 'x', afterFinal = null, triggerUse = null } = {}) {
         const calls = [];
         const measure = async (overrides, hours, stream, count) => {
             calls.push({ overrides: { ...overrides }, hours, stream, count });
@@ -529,6 +571,7 @@ describe('runTriggerSearch with deterministic fakes', () => {
                     perPlayer: { player1: { xp, profit: 0, deaths: 0, dps: 100 } },
                     encounters: 10,
                     pools: { player1: { hp: 1000, mp: 500 } },
+                    ...(triggerUse ? { triggerUse: { player1: triggerUse } } : {}),
                 };
             });
         };
@@ -684,6 +727,24 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(seen.some((d) => /screening Fireball/.test(d))).toBe(true);
         expect(seen.some((d) => /Fireball \(confirming\)/.test(d))).toBe(true);
         expect(seen.some((d) => /confirming all changes/.test(d))).toBe(true);
+    });
+
+    test('a food the baseline never read is reported as unused and never screened', async () => {
+        const { measure, calls } = world({ triggerUse: { [FIREBALL]: 120 } });
+        const result = await run(measure);
+        expect(result.unused.map((t) => t.itemName)).toEqual(['Donut']);
+        expect(result.unchanged).toEqual([]);
+        expect(result.screened.map((s) => s.key)).toEqual([FIRE_KEY]);
+        expect(calls.some((c) => c.stream.includes(DONUT))).toBe(false);
+        expect(result.changes).toHaveLength(1);
+    });
+
+    test('a gate that blocked every cast is still tuned', async () => {
+        // Fireball's rows were read 120 times and it was never cast: the threshold decided that
+        const { measure } = world({ triggerUse: { [FIREBALL]: 120, [DONUT]: 30 } });
+        const result = await run(measure);
+        expect(result.unused).toEqual([]);
+        expect(result.changes.map((c) => c.itemName)).toEqual(['Fireball']);
     });
 
     test('the estimate grows with the number of triggers and the seed count', () => {

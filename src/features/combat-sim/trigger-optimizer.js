@@ -98,7 +98,32 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours) {
         const p = simResult.playerPools?.[hrid];
         if (p) pools[hrid] = { hp: p.maxHitpoints || 0, mp: p.maxManapoints || 0 };
     }
-    return { perPlayer, encounters: (simResult.encounters || 0) / simHours, pools };
+    const sample = { perPlayer, encounters: (simResult.encounters || 0) / simHours, pools };
+    // Left out when the engine did not record trigger reads, so nothing is ever skipped on missing data
+    if (simResult.triggerChecks) sample.triggerUse = triggerUseFromResult(simResult, hrids);
+    return sample;
+}
+
+/**
+ * Per player, how much each ability, food and drink came into play: trigger reads plus casts and
+ * uses. Casts and uses are counted on top of the reads only as a belt and braces — a slot with
+ * trigger rows cannot fire without its rows being read.
+ * @param {Object} simResult - Merged SimResult carrying `triggerChecks`
+ * @param {Array<string>} hrids - Players
+ * @returns {Object} hrid → ability/item hrid → count
+ */
+function triggerUseFromResult(simResult, hrids) {
+    const out = {};
+    for (const hrid of hrids) {
+        const use = { ...(simResult.triggerChecks?.[hrid] || {}) };
+        for (const [item, n] of Object.entries(simResult.consumablesUsed?.[hrid] || {})) {
+            use[item] = (use[item] || 0) + (n || 0);
+        }
+        // An ability that was ever cast has an entry here (its mana spent, possibly 0)
+        for (const ability of Object.keys(simResult.manaUsed?.[hrid] || {})) use[ability] = (use[ability] || 0) + 1;
+        out[hrid] = use;
+    }
+    return out;
 }
 
 /**
