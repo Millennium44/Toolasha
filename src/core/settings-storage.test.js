@@ -1313,6 +1313,19 @@ describe('flipped checkbox defaults reach new players only', () => {
 
         for (const id of IDS) expect(settings[id].isTrue).toBe(true);
         expect(stored.get(`json:${KEY}`)?.[IDS[0]]).toBeUndefined();
+        // No map yet proves nothing: the batch stays open for a map that arrives later
+        expect(stored.get(FLAG)).toBeUndefined();
+    });
+
+    test('an older map that arrives by sync after a clean start is still reconciled', async () => {
+        // A clean browser starts with no map...
+        await settingsStorage.loadSettings();
+        // ...then the sync pull brings the player's older map in, without the new ids
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const id of IDS) expect(settings[id].isTrue).toBe(false);
         expect(stored.get(FLAG)).toBe(true);
     });
 
@@ -1366,9 +1379,11 @@ describe('flipped checkbox defaults reach new players only', () => {
         expect(JSON.stringify(stored.get(`json:${KEY}`))).toBe(before);
     });
 
-    test('a fresh install that later saves something is not pinned afterwards', async () => {
+    test('a fresh install that saves through the normal path is not pinned afterwards', async () => {
         await settingsStorage.loadSettings();
-        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+        // Its own save fills every absent id from the live values, the new defaults included
+        await settingsStorage.setSetting('actionQueue_showXp', true);
+        expect(stored.get(`json:${KEY}`)?.combatProfileButton?.isTrue).toBe(true);
 
         const settings = await settingsStorage.loadSettings();
 

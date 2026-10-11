@@ -1037,8 +1037,8 @@ class SettingsStorage {
      * Keep existing players on the old default of a flipped checkbox, once.
      *
      * See {@link PINNED_PREVIOUS_DEFAULTS}. A null map (fresh install) pins
-     * nothing but still records the batch, so a later load that finds a map
-     * written by the new defaults is not mistaken for an old player.
+     * nothing and leaves the batch open, so a map that arrives later from sync or an
+     * import is still reconciled; a map this install writes itself holds every id.
      *
      * @param {Object|null} saved - The stored settings map, or null when none
      * @param {string} characterKey - Storage key the map was loaded from
@@ -1078,7 +1078,10 @@ class SettingsStorage {
                     }
                     await this._stampDiff(characterKey, onDisk, persisted, { system: true });
                 }
-                await storage.set(flagKey, true, this.storageArea, true);
+                // No map yet is not proof of a new player: a sync or import can still bring an
+                // older map in. Leave the batch open; a map this install writes itself carries
+                // every id (saves fill absent ids from the live values), so it is never pinned.
+                if (current) await storage.set(flagKey, true, this.storageArea, true);
                 current = next;
             } catch (error) {
                 console.error('[SettingsStorage] Pinning previous defaults failed:', error);
