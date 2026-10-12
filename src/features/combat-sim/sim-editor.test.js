@@ -1526,6 +1526,11 @@ describe('scrolls section', () => {
         expect(editor._renderScrollsSection({ scrollBuffs: [] })).toBe('');
     });
 
+    test('the Lab Sim hides it — labyrinth sims drop scrolls', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), labMode: true });
+        expect(editor._renderScrollsSection({ scrollBuffs: ['/buff_types/damage'] })).toBe('');
+    });
+
     test('ticking a scroll adds it to the DTO; unticking removes it', () => {
         const el = document.createElement('div');
         const editor = new SimEditor({ editorEl: el });
