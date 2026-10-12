@@ -177,6 +177,22 @@ describe('startup log', () => {
         expect(log.errors[0].message).toBe('Failed to load character #');
     });
 
+    test('a URL query and a quoted value cut by the length limit leak nothing', () => {
+        const log = buildStartupLog({
+            mode: 'debug',
+            performanceMonitor: monitor,
+            errorLog: {
+                getEntries: () => [
+                    { module: 'A', message: 'GET https://api.example.com/gists?token=ghpSECRETtoken failed' },
+                    { module: 'B', message: `${'x'.repeat(285)} "passphraseSECRET and more" end` },
+                ],
+            },
+        });
+        const text = JSON.stringify(log.errors);
+        expect(text).not.toContain('SECRET');
+        expect(text).not.toContain('ghp');
+    });
+
     test('carries no payload fields', () => {
         const text = JSON.stringify(buildStartupLog({ mode: 'debug', performanceMonitor: monitor, errorLog }));
         expect(text).not.toContain('SecretChar');
