@@ -249,6 +249,12 @@ function readStamp(stamp) {
  * @returns {boolean} True when this side's value is kept
  */
 export function localStampWins(localStamp, incomingStamp) {
+    // A pinned previous default (`pin`) is this build's guess for a switch nobody touched. Any real
+    // value of the setting on the other side, stamped or not, is the player's choice and beats it.
+    const localPinned = Boolean(localStamp?.pin);
+    const incomingPinned = Boolean(incomingStamp?.pin);
+    if (incomingPinned && !localPinned) return true;
+    if (localPinned && !incomingPinned) return false;
     const local = readStamp(localStamp);
     const incoming = readStamp(incomingStamp);
     if (!local) return false;

@@ -1375,6 +1375,14 @@ describe('flipped checkbox defaults reach new players only', () => {
         for (const id of IDS) expect(settings[id].isTrue).toBe(false);
     });
 
+    test('pins are stamped as pins, so a sync merge never prefers one to a real choice', async () => {
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+        await settingsStorage.loadSettings();
+
+        const stamps = stored.get(`json:settings_changedAt_${KEY}`);
+        for (const id of IDS) expect(stamps[id]).toEqual({ at: 0, seq: null, system: true, pin: true });
+    });
+
     test('with no map on disk (an earlier write failed), the pins are not written alone', async () => {
         const saved = { someOther: box('someOther', true) };
         const result = await settingsStorage.applyPinnedPreviousDefaults(saved, KEY);

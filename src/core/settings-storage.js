@@ -1068,7 +1068,9 @@ class SettingsStorage {
                 if (!saved[id] && !persisted[id]) persisted[id] = next[id];
             }
             const written = await storage.setJSON(characterKey, persisted, this.storageArea, true);
-            if (written !== false) await this._stampDiff(characterKey, onDisk, persisted, { system: true });
+            // A pin is a guess about an untouched switch, not an opinion: marked so a sync merge lets any
+            // real value, stamped or not, beat it (see localStampWins)
+            if (written !== false) await this._stampDiff(characterKey, onDisk, persisted, { system: true, pin: true });
         } catch (error) {
             console.error('[SettingsStorage] Pinning previous defaults failed:', error);
         }
@@ -1455,7 +1457,7 @@ class SettingsStorage {
      * @returns {Promise<void>}
      * @private
      */
-    async _stampDiff(mapKey, before, after, { system = false, ids = null, absentIsChange = false } = {}) {
+    async _stampDiff(mapKey, before, after, { system = false, pin = false, ids = null, absentIsChange = false } = {}) {
         try {
             const old = before && typeof before === 'object' ? before : {};
             const next = after && typeof after === 'object' ? after : {};
@@ -1472,7 +1474,7 @@ class SettingsStorage {
             const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
             let stamp;
             if (system) {
-                stamp = { at: 0, seq: null, system: true };
+                stamp = pin ? { at: 0, seq: null, system: true, pin: true } : { at: 0, seq: null, system: true };
             } else {
                 const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
                 const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
