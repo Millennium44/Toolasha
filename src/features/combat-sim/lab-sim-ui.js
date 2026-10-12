@@ -1216,20 +1216,7 @@ class LabSimUI {
                 <option value="/items/advanced_tea_crate">Advanced</option>
                 <option value="/items/expert_tea_crate" selected>Expert</option>
             </select>
-            <label style="color:#888;">Coffee</label>
-            <select class="toolasha-select" id="mwi-labsim-skilling-coffee" style="${crateSelectStyle}">
-                <option value="">None</option>
-                <option value="/items/basic_coffee_crate">Basic</option>
-                <option value="/items/advanced_coffee_crate">Advanced</option>
-                <option value="/items/expert_coffee_crate" selected>Expert</option>
-            </select>
-            <label style="color:#888;">Food</label>
-            <select class="toolasha-select" id="mwi-labsim-skilling-food" style="${crateSelectStyle}">
-                <option value="">None</option>
-                <option value="/items/basic_food_crate">Basic</option>
-                <option value="/items/advanced_food_crate">Advanced</option>
-                <option value="/items/expert_food_crate" selected>Expert</option>
-            </select>
+            <span style="color:#666;">Only the tea crate applies in skilling rooms</span>
         `;
 
         const skillingLoadoutArea = document.createElement('div');
@@ -1308,7 +1295,7 @@ class LabSimUI {
         // equipped labyrinth crates rather than a hardcoded Expert — see
         // _applyEquippedCratesTo. A manual pick opts that trio out, so "what if I
         // ran Expert" still works.
-        for (const id of ['#mwi-labsim-skilling-tea', '#mwi-labsim-skilling-coffee', '#mwi-labsim-skilling-food']) {
+        for (const id of ['#mwi-labsim-skilling-tea']) {
             this.panel.querySelector(id)?.addEventListener('change', () => {
                 this._skillingCratesUserSet = true;
             });
@@ -5267,12 +5254,9 @@ class LabSimUI {
         // character data arrived; a manual pick has already opted out.
         this._applyEquippedSkillingCrates();
         const crates = [];
+        // Only the tea crate reaches a skilling room (measured); the coffee and food crates are combat-only
         const tea = this.panel?.querySelector('#mwi-labsim-skilling-tea')?.value;
-        const coffee = this.panel?.querySelector('#mwi-labsim-skilling-coffee')?.value;
-        const food = this.panel?.querySelector('#mwi-labsim-skilling-food')?.value;
         if (tea) crates.push(tea);
-        if (coffee) crates.push(coffee);
-        if (food) crates.push(food);
         return crates;
     }
 
