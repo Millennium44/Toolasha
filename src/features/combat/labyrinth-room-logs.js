@@ -49,6 +49,9 @@ import { clearRecord, clearedAtOf, mergeClearable } from '../../utils/cleared-re
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
+/** The game's roll-up entry in the skill list; its experience already contains every other skill's */
+const TOTAL_LEVEL_SKILL_HRID = '/skills/total_level';
+
 /** Re-exported from labyrinth-formulas.js, where it now lives */
 export { ROOM_TRAVEL_SECONDS };
 
@@ -318,12 +321,20 @@ class LabyrinthRoomLogs {
      * so reading it back would only confirm itself. Summing every skill also
      * picks up the experience a fight spreads over several of them.
      *
+     * The character's skill list carries a `/skills/total_level` entry whose
+     * experience is itself the sum of the others, so summing it too paid every
+     * room exactly twice. It is not a skill and is left out.
+     *
      * @returns {number|null} null when character data has not arrived
      */
     totalExperience() {
         const skills = dataManager.getSkills();
         if (!Array.isArray(skills)) return null;
-        return skills.reduce((sum, skill) => sum + (Number(skill?.experience) || 0), 0);
+        return skills.reduce(
+            (sum, skill) =>
+                skill?.skillHrid === TOTAL_LEVEL_SKILL_HRID ? sum : sum + (Number(skill?.experience) || 0),
+            0
+        );
     }
 
     /**
