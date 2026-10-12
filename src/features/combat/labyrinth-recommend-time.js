@@ -152,11 +152,15 @@ export async function findHighestLevelWithinSeconds({
             }
             return null;
         };
+        const bracketed = pass;
         if (pass === null) pass = await scanFor(base.delta - 1, -1);
         if (cancelled) return null;
-        if (pass === null) pass = await scanFor(base.delta + 1, 1);
+        // Above a failed base a higher pass beats any found below it
+        const above = await scanFor(base.delta + 1, 1);
         if (cancelled) return null;
-        if (pass !== null) fail = null;
+        if (above !== null && (pass === null || above > pass)) pass = above;
+        // A pass the scans found has no fail bracketing it from above; one the steps found still bisects
+        if (pass !== bracketed) fail = null;
     }
 
     if (pass !== null && fail !== null) {

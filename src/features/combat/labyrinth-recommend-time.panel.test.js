@@ -135,6 +135,17 @@ describe('Recommend by Time', () => {
         expect(await panel.findRecommendedThresholdSecondsCombat('/monsters/imp', 300)).toBeNull();
     });
 
+    test('a combat probe that could not run abandons the search instead of scoring a miss', async () => {
+        vi.spyOn(panel, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+        vi.spyOn(panel, 'computeCombatClear').mockImplementation(async () => ({
+            clearChance: 0,
+            expectedSeconds: Infinity,
+            failed: true,
+        }));
+        panel.beginSimBatch();
+        expect(await panel.findRecommendedThresholdSecondsCombat('/monsters/imp', 300)).toBeNull();
+    });
+
     test('a non-monotone combat curve still lands on the higher pass', async () => {
         vi.spyOn(panel, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
         vi.spyOn(panel, 'computeCombatClear').mockImplementation(async (hrid, roomLevel) => ({

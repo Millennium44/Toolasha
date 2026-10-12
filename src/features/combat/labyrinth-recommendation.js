@@ -168,7 +168,9 @@ export const recommendationMethods = {
             async (roomLevel) => {
                 if (this.simCancelled()) return { cancelled: true };
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, this.automationSimOptions());
-                if (result?.cancelled) return { cancelled: true };
+                // A sim that could not run (inputs still loading, a worker error) is no measurement:
+                // abandon the search rather than score the room as never clearing
+                if (result?.cancelled || result?.failed) return { cancelled: true };
                 return { seconds: result?.expectedSeconds };
             },
             { sweepSteps: 14, failStreak: 5 }

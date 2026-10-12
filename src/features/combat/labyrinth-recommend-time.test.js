@@ -95,6 +95,19 @@ describe('findHighestLevelWithinSeconds', () => {
         expect(found).toEqual({ delta: 2, seconds: 250, qualifies: true });
     });
 
+    test('a pass just above a failed base beats a lower one the downward scan found', async () => {
+        const { evaluate } = probeOf((d) => (d === -6 || d === 2 ? 250 : 400));
+        const found = await findHighestLevelWithinSeconds({ evaluate, ...WINDOW, targetSeconds: 300 });
+        expect(found).toEqual({ delta: 2, seconds: 250, qualifies: true });
+    });
+
+    test('a pass the downward steps found is still bisected against the fail above it', async () => {
+        const { evaluate, calls } = probeOf((d) => 500 + d * 10);
+        const found = await findHighestLevelWithinSeconds({ evaluate, ...WINDOW, targetSeconds: 300, sweepSteps: 0 });
+        expect(found).toEqual({ delta: -20, seconds: 300, qualifies: true });
+        expect(calls).toContain(-20);
+    });
+
     test('the sweep is bounded, so a far-off pass is not chased', async () => {
         const { evaluate, calls } = probeOf((d) => (d <= 9 || d === 150 ? 200 : 900));
         const found = await findHighestLevelWithinSeconds({ evaluate, ...WINDOW, targetSeconds: 300 });
