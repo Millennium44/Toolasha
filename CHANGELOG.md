@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth: Recommend by Time
+
+- Beside Recommend by Win %, the labyrinth panel can recommend the highest room level whose expected time per clear (failed runs included) fits a target time you set, defaulting to 300 seconds; adapted from the Labyrinth Win Rate Calculator 1.6.0.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log
