@@ -237,6 +237,9 @@ function readStamp(stamp) {
  * A system stamp (`at: 0`: a migration, a default rewrite, the first-load
  * seed) is older than any change a person made, so it never beats one.
  *
+ * A fill stamp (`fill`, a default written without the player touching it) loses to every other kind
+ * of value, a pin stamp (`pin`) loses to every real one; see the ranks in the body.
+ *
  * A stamp beats no stamp. Every write path of this build stamps what it
  * changes, so an unstamped setting is one nobody has changed since this build
  * arrived, or one an older build wrote. The second case is the risk: a change
@@ -249,6 +252,15 @@ function readStamp(stamp) {
  * @returns {boolean} True when this side's value is kept
  */
 export function localStampWins(localStamp, incomingStamp) {
+    // Three ranks of evidence. A fill (`fill`) is a default this install wrote into a map without the
+    // player touching it, so it loses to everything. A pinned previous default (`pin`) is this build's
+    // guess for a switch nobody touched: it beats a fill and loses to any real value on the other side,
+    // stamped or not (an existing player's deliberate choice may predate stamps). The same rank on both
+    // sides falls through to the usual rules.
+    const rank = (stamp) => (stamp?.fill ? 0 : stamp?.pin ? 1 : 2);
+    const localRank = rank(localStamp);
+    const incomingRank = rank(incomingStamp);
+    if (localRank !== incomingRank) return localRank > incomingRank;
     const local = readStamp(localStamp);
     const incoming = readStamp(incomingStamp);
     if (!local) return false;

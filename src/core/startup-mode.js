@@ -30,6 +30,8 @@ export const MENU_LABELS = Object.freeze({
 
 const NOTICE_ID = 'toolasha-startup-mode-notice';
 const MAX_ERROR_MESSAGE = 300;
+/** Stand-in for a redacted quote while the later passes run, so they cannot read it as an opener */
+const QUOTED = '\u0000';
 
 /**
  * Error text with every dynamic value taken out, so a log a player shares carries no game or
@@ -39,13 +41,29 @@ const MAX_ERROR_MESSAGE = 300;
  * @returns {string}
  */
 export function redactMessage(text) {
-    return String(text ?? '')
-        .slice(0, MAX_ERROR_MESSAGE)
-        .replace(/(["'`]).*?\1/g, '"…"')
-        .replace(/\/[\w/.-]+/g, '/…')
-        .replace(/\{.*\}|\[.*\]/g, '…')
-        .replace(/\d+(\.\d+)?/g, '#')
-        .replace(/:\s.*$/, ': …');
+    // Cut to the original positions first, so redaction that shortens a value can never pull a later
+    // part of the message into the log; a quote the cut splits is caught by the unclosed-quote pass
+    return (
+        String(text ?? '')
+            .slice(0, MAX_ERROR_MESSAGE)
+            .replace(/[a-z][\w+.-]*:\/\/\S*/gi, '/…')
+            // A query after a path, or one that starts a word on its own (`GET ?token=…`)
+            .replace(/(^|[\s:=(]|(?<=[\w/.~%-]))\?[^\s"'`]+/g, '$1')
+            // An unquoted `name=value` field keeps its name only
+            .replace(/\b([\w-]+)=[^\s"'`]+/g, '$1=…')
+            // A pair opens at a word start and closes where no letter follows, so the apostrophe in
+            // "can't" is never taken as the opening quote of a later value
+            .replace(/(^|[^\w])(["'`])[^]*?\2(?!\w)/g, `$1${QUOTED}`)
+            // A quote with no closing partner (the length limit upstream can cut it off) opens a secret that
+            // runs to the end; only a quote at a word start counts, so "don't" is left alone
+            .replace(/(^|[\s:=(])["'`].*$/, `$1${QUOTED}`)
+            .replaceAll(QUOTED, '"…"')
+            .replace(/\/[\w/.-]+/g, '/…')
+            .replace(/\{.*\}|\[.*\]/g, '…')
+            .replace(/\d+(\.\d+)?/g, '#')
+            .replace(/:\s.*$/, ': …')
+            .slice(0, MAX_ERROR_MESSAGE)
+    );
 }
 const MAX_ENTRIES = 200;
 

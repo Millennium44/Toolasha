@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 import {
+    redactMessage,
     MODE_FLAG_KEY,
     MENU_LABELS,
     requestMode,
@@ -175,6 +176,52 @@ describe('startup log', () => {
             expect(text).not.toContain(leak);
         }
         expect(log.errors[0].message).toBe('Failed to load character #');
+    });
+
+    test('a URL query and a quoted value cut by the length limit leak nothing', () => {
+        const log = buildStartupLog({
+            mode: 'debug',
+            performanceMonitor: monitor,
+            errorLog: {
+                getEntries: () => [
+                    { module: 'A', message: 'GET https://api.example.com/gists?token=ghpSECRETtoken failed' },
+                    { module: 'B', message: `${'x'.repeat(285)} "passphraseSECRET and more" end` },
+                ],
+            },
+        });
+        const text = JSON.stringify(log.errors);
+        expect(text).not.toContain('SECRET');
+        expect(text).not.toContain('ghp');
+    });
+
+    test('an unclosed quote, a relative URL query and a protocol-relative query leak nothing', () => {
+        const messages = [
+            `${'x'.repeat(290)} token "passphraseSECRET and more`,
+            "Bad value: key='SECRETone",
+            'GET /gists?token=SECRETtwo failed',
+            'GET //host.example/x?y=SECRETthree failed',
+        ].map((message) => ({ module: 'A', message }));
+        const log = buildStartupLog({
+            mode: 'debug',
+            performanceMonitor: monitor,
+            errorLog: { getEntries: () => messages },
+        });
+        expect(JSON.stringify(log.errors)).not.toContain('SECRET');
+        expect(redactMessage("it doesn't work")).toBe("it doesn't work");
+        expect(redactMessage("it said 'a' then \"b")).toBe('it said "…" then "…"');
+    });
+
+    test('a shortened value never pulls a later field in, and a query-only reference leaks nothing', () => {
+        // Past the original 300-character boundary: redacting the quote must not bring it into range
+        const late = `Failure "${'x'.repeat(340)}" token=SECRETlate`;
+        expect(redactMessage(late)).not.toContain('SECRET');
+        expect(redactMessage('GET ?token=SECRETquery failed')).not.toContain('SECRET');
+        expect(redactMessage('bad auth=SECRETfield here')).not.toContain('SECRET');
+    });
+
+    test('an apostrophe in a word is never paired with a later quoted value', () => {
+        expect(redactMessage("can't authenticate key='SECRETkey'")).not.toContain('SECRET');
+        expect(redactMessage("can't authenticate key='SECRETkey'")).toContain("can't");
     });
 
     test('carries no payload fields', () => {

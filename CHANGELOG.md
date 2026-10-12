@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync keeps a setting you turned on; safer startup log
+
+- A setting another device only kept at its old default no longer switches yours back off when the two sync; and the Safe start/debug startup log no longer leaks URL queries or the start of a quoted secret cut off by its length limit.
+
 ### Leaderboard Rank sort after a rank change
 
 - Sorting the leaderboard by Rank no longer misorders players whose rank just moved; the ▲/▼ movement mark was read as part of the rank, so rank 5 with ▲3 sorted as 53.

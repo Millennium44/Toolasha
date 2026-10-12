@@ -670,7 +670,10 @@ class SettingsStorage {
                     // Copy global template to this character
                     saved = globalTemplate;
                     const written = await storage.setJSON(characterKey, saved, this.storageArea, true);
-                    if (written !== false) await this._stampDiff(characterKey, null, saved, { system: true });
+                    if (written !== false) {
+                        await this._stampDiff(characterKey, null, saved, { system: true });
+                        await this._carryFillAndPinStamps(this.storageKey, characterKey);
+                    }
                 }
 
                 // Add character to known characters list
@@ -1068,7 +1071,9 @@ class SettingsStorage {
                 if (!saved[id] && !persisted[id]) persisted[id] = next[id];
             }
             const written = await storage.setJSON(characterKey, persisted, this.storageArea, true);
-            if (written !== false) await this._stampDiff(characterKey, onDisk, persisted, { system: true });
+            // A pin is a guess about an untouched switch, not an opinion: marked so a sync merge lets any
+            // real value, stamped or not, beat it (see localStampWins)
+            if (written !== false) await this._stampDiff(characterKey, onDisk, persisted, { system: true, pin: true });
         } catch (error) {
             console.error('[SettingsStorage] Pinning previous defaults failed:', error);
         }
@@ -1399,6 +1404,7 @@ class SettingsStorage {
         // so only ids already stored whose value moved count.
         const userIds = this._userIds(settings, dirtyKeys);
         await this._stampDiff(characterKey, stored, toWrite, { ids: userIds });
+        await this._stampFilled(characterKey, stored, toWrite, userIds);
 
         // The account-wide settings go to their own key as well as staying in
         // this character's map. Staying keeps a downgrade working and adds no
@@ -1455,7 +1461,7 @@ class SettingsStorage {
      * @returns {Promise<void>}
      * @private
      */
-    async _stampDiff(mapKey, before, after, { system = false, ids = null, absentIsChange = false } = {}) {
+    async _stampDiff(mapKey, before, after, { system = false, pin = false, ids = null, absentIsChange = false } = {}) {
         try {
             const old = before && typeof before === 'object' ? before : {};
             const next = after && typeof after === 'object' ? after : {};
@@ -1472,7 +1478,7 @@ class SettingsStorage {
             const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
             let stamp;
             if (system) {
-                stamp = { at: 0, seq: null, system: true };
+                stamp = pin ? { at: 0, seq: null, system: true, pin: true } : { at: 0, seq: null, system: true };
             } else {
                 const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
                 const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
@@ -1483,6 +1489,70 @@ class SettingsStorage {
             await storage.setJSON(stampKey, stamps, this.storageArea, true);
         } catch (error) {
             console.error('[SettingsStorage] Could not stamp changed settings:', error);
+        }
+    }
+
+    /**
+     * Copy a template map's fill and pin stamps onto a character map seeded from it.
+     * @param {string} fromKey - The template map's storage key
+     * @param {string} toKey - The character map's storage key
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _carryFillAndPinStamps(fromKey, toKey) {
+        // A copied template's untouched defaults and pins stay what they were: stamped as plain system
+        // values they would outrank another device's pin in a sync fold
+        try {
+            const source = await storage.getJSON(`${SETTING_STAMPS_PREFIX}${fromKey}`, this.storageArea, null);
+            if (!source || typeof source !== 'object' || Array.isArray(source)) return;
+            const stampKey = `${SETTING_STAMPS_PREFIX}${toKey}`;
+            const existing = await storage.getJSON(stampKey, this.storageArea, null);
+            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+            let carried = false;
+            for (const [id, stamp] of Object.entries(source)) {
+                if (!stamp?.fill && !stamp?.pin) continue;
+                stamps[id] = { ...stamp };
+                carried = true;
+            }
+            if (carried) await storage.setJSON(stampKey, stamps, this.storageArea, true);
+        } catch (error) {
+            console.error('[SettingsStorage] Could not carry template stamps:', error);
+        }
+    }
+
+    /**
+     * Stamp the ids a save wrote only because the stored map lacked them (defaults this install filled
+     * in, not choices) as `{at: 0, system: true, fill: true}`. A sync merge ranks a fill below every
+     * other value (see `localStampWins`), so a fresh browser's defaults cannot override what an existing
+     * profile holds, pinned previous defaults included. Never overwrites a stamp that already exists,
+     * and a later real change replaces it (`_stampDiff` writes the id's whole stamp).
+     *
+     * @param {string} mapKey - The settings map's storage key
+     * @param {Object|null} before - The map as stored before the write
+     * @param {Object|null} after - The map as written
+     * @param {Set<string>|null} userIds - Ids the save was asked to change (stamped as real choices)
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _stampFilled(mapKey, before, after, userIds) {
+        try {
+            const old = before && typeof before === 'object' ? before : {};
+            const filled = Object.keys(after && typeof after === 'object' ? after : {}).filter(
+                (id) => !Object.hasOwn(old, id) && !userIds?.has(id)
+            );
+            if (filled.length === 0) return;
+            const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
+            const existing = await storage.getJSON(stampKey, this.storageArea, null);
+            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+            let added = false;
+            for (const id of filled) {
+                if (Object.hasOwn(stamps, id)) continue;
+                stamps[id] = { at: 0, seq: null, system: true, fill: true };
+                added = true;
+            }
+            if (added) await storage.setJSON(stampKey, stamps, this.storageArea, true);
+        } catch (error) {
+            console.error('[SettingsStorage] Could not stamp filled settings:', error);
         }
     }
 
@@ -1546,6 +1616,7 @@ class SettingsStorage {
             const written = await storage.setJSON(characterKey, settings, this.storageArea, true);
             if (written === false) return false;
             await this._stampDiff(characterKey, null, settings, { ids: chosen });
+            await this._stampFilled(characterKey, null, settings, chosen);
             return this._writeSharedEntries(settings, touchedShared);
         }
 
@@ -1557,6 +1628,7 @@ class SettingsStorage {
         const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
         if (written === false) return false;
         await this._stampDiff(characterKey, stored, merged, { ids: chosen });
+        await this._stampFilled(characterKey, stored, merged, chosen);
         return this._writeSharedEntries(settings, touchedShared);
     }
 
