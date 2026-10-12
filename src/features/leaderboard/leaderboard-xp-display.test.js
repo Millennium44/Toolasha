@@ -20,8 +20,16 @@ vi.mock('./leaderboard-xp-tracker.js', () => ({
     seriesCategoryOf: (category) => category,
 }));
 
-const { xpPerDay, xpPerWeek, timeToOvertake, boardUnit, assignRateRanks, rateRankEligible, LEVEL_RATE_RANK_CUTOFF } =
-    await import('./leaderboard-xp-display.js');
+const {
+    readRankNumber,
+    xpPerDay,
+    xpPerWeek,
+    timeToOvertake,
+    boardUnit,
+    assignRateRanks,
+    rateRankEligible,
+    LEVEL_RATE_RANK_CUTOFF,
+} = await import('./leaderboard-xp-display.js');
 
 describe('xpPerDay', () => {
     test('a measured day is the 24h-window rate scaled to a day', () => {
@@ -173,5 +181,21 @@ describe('rate ranks on a level board', () => {
             floor: false,
             reason: 'unranked',
         });
+    });
+});
+
+describe('readRankNumber', () => {
+    test('ignores the movement mark appended to the rank cell', () => {
+        const cell = document.createElement('td');
+        cell.innerHTML = '5<span class="mwi-leaderboard-xp-delta">\u25B23</span>';
+        expect(readRankNumber(cell)).toBe(5);
+    });
+
+    test('reads a plain rank and an empty cell', () => {
+        const cell = document.createElement('td');
+        cell.textContent = '12';
+        expect(readRankNumber(cell)).toBe(12);
+        expect(readRankNumber(document.createElement('td'))).toBeNull();
+        expect(readRankNumber(null)).toBeNull();
     });
 });
