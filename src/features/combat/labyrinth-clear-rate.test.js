@@ -3881,6 +3881,11 @@ describe('a labyrinth DTO waits for the loadout it is told to wear', () => {
         expect(adapterMock.applyLoadoutSnapshotToDTO).not.toHaveBeenCalled();
     });
 
+    test('the DTO carries no combat scrolls, however many are active', () => {
+        adapterMock.buildPlayerDTO.mockReturnValue({ hrid: 'player1', scrollBuffs: ['/buff_types/damage'] });
+        expect(labyrinthClearRate.buildLabyrinthPlayerDTO(0).scrollBuffs).toEqual([]);
+    });
+
     test('a loaded store holding it applies that loadout', () => {
         Object.assign(gear.snapshots, { 3: { name: 'Fighting', equipment: [] } });
         expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).not.toBeNull();

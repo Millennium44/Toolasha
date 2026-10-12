@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({
     captureCalls: [],
     simulateThrows: false,
     trialCalls: [],
+    players: [],
 }));
 
 vi.mock('./engine/labyrinth.js', () => ({
@@ -42,7 +43,12 @@ vi.mock('./engine/zone.js', () => ({
 }));
 
 vi.mock('./engine/player.js', () => ({
-    default: { createFromDTO: (dto) => ({ ...dto }) },
+    default: {
+        createFromDTO: (dto) => {
+            harness.players.push(dto);
+            return { ...dto };
+        },
+    },
 }));
 
 vi.mock('./engine/combat-simulator.js', () => ({
@@ -100,6 +106,7 @@ beforeEach(async () => {
     harness.captureCalls = [];
     harness.simulateThrows = false;
     harness.trialCalls = [];
+    harness.players = [];
     vi.stubGlobal('postMessage', (message) => harness.posted.push(message));
     vi.stubGlobal('onmessage', null);
     vi.resetModules();
@@ -114,6 +121,29 @@ afterEach(() => {
 function fullAbilitiesArg() {
     return harness.labyrinthArgs[0][4];
 }
+
+describe('combat scrolls in a labyrinth sim', () => {
+    const withScrolls = (labyrinth) => {
+        const message = startMessage(labyrinth);
+        message.data.playerDTOs[0].scrollBuffs = ['/buff_types/damage'];
+        return message;
+    };
+
+    test('are stripped from the player inside the labyrinth', () => {
+        globalThis.onmessage(withScrolls({ roomLevel: 10, crates: [] }));
+        expect(harness.players[0].scrollBuffs).toEqual([]);
+    });
+
+    test('stay on for an isolated zone fight', () => {
+        globalThis.onmessage(withScrolls({ roomLevel: 10, crates: [], zoneFight: true }));
+        expect(harness.players[0].scrollBuffs).toEqual(['/buff_types/damage']);
+    });
+
+    test('stay on for an ordinary combat sim', () => {
+        globalThis.onmessage(withScrolls(null));
+        expect(harness.players[0].scrollBuffs).toEqual(['/buff_types/damage']);
+    });
+});
 
 describe('the labyrinth monster the worker builds', () => {
     test.each(['combat', 'skilling'])('returns individual %s attempts only when explicitly requested', (kind) => {

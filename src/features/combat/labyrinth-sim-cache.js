@@ -218,8 +218,11 @@ const COMBAT_CACHE_STORE = 'labyrinth';
  * go, and every entry now also carries the script version it was computed under
  * (below), so a release that changes the engine drops its predecessor's results
  * without needing this constant touched at all.
+ *
+ * 3: labyrinth sims no longer include combat scrolls, so results computed
+ * with the player's active scrolls are discarded.
  */
-export const COMBAT_CACHE_STORAGE_VERSION = 2;
+export const COMBAT_CACHE_STORAGE_VERSION = 3;
 /** A cached sim result older than this is dropped on load rather than trusted */
 const COMBAT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Newest entries kept when the persisted set is written back out */

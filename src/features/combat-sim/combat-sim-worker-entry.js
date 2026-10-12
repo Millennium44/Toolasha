@@ -95,6 +95,8 @@ onmessage = function (event) {
             if (labyrinth && !labyrinth.zoneFight) {
                 cloned.food = cloned.food.map(() => null);
                 cloned.drinks = cloned.drinks.map(() => null);
+                // Combat scrolls are not effective inside the labyrinth either
+                cloned.scrollBuffs = [];
             }
             const player = Player.createFromDTO(cloned);
             // Labyrinth: crate buffs go to zoneBuffs; a zone fight (isolated or

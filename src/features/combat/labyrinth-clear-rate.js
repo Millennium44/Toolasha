@@ -1885,6 +1885,11 @@ class LabyrinthClearRate {
         const dto = buildPlayerDTO();
         if (!dto) return null;
 
+        // Combat scrolls are not effective inside the labyrinth; the live
+        // scroll list `buildPlayerDTO` read is dropped here, and the worker's
+        // labyrinth branch strips it again for sims that bypass this builder
+        dto.scrollBuffs = [];
+
         // A configured loadout with the store still loading: not yet simmable
         if (Number(loadoutId) > 0 && !loadoutSnapshot.snapshotsReady) return null;
 
