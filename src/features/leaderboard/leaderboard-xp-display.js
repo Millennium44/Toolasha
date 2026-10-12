@@ -77,6 +77,20 @@ export function boardUnit(theadTr) {
 }
 
 /**
+ * The game's rank number out of a Rank cell. The cell also carries Toolasha's movement mark
+ * ("▲3"), so reading every digit of its text turns rank 5 with "▲3" into 53.
+ * @param {Element|null|undefined} cell - The row's first cell
+ * @returns {number|null} The rank, or null when the cell has none
+ */
+export function readRankNumber(cell) {
+    if (!cell) return null;
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll(`.${CSS_PREFIX}-delta`).forEach((el) => el.remove());
+    const digits = (clone.textContent || '').replace(/[^\d]/g, '');
+    return digits ? parseInt(digits, 10) : null;
+}
+
+/**
  * Rank movement since the previous reading, appended to the game's Rank cell:
  * "▲2" for two places up, "▼1" for one down, nothing when unchanged or unknown.
  * @param {Element} rankCell - The row's first cell
@@ -350,11 +364,11 @@ class LeaderboardXPDisplay {
                 ? leaderboardXPTracker.getPlayerStats(name, resolvedCategory)
                 : { lastXPH: 0, lastDayXPH: 0, samples: 0 };
             // The game's own rank and value for the row, for the catch-up column
-            const rankText = row.children[0]?.textContent?.replace(/[^\d]/g, '') || '';
+            const rank = readRankNumber(row.children[0]);
             allStats.push({
                 name,
                 ...stats,
-                rank: rankText ? parseInt(rankText, 10) : null,
+                rank,
                 value: leaderboardXPTracker.getLatestValue(name, resolvedCategory),
                 perDay: xpPerDay(stats),
                 perWeek: xpPerWeek(stats),
@@ -470,10 +484,7 @@ class LeaderboardXPDisplay {
             makeColumnSortable(rankHeader, {
                 sortId: 'rank',
                 skipFirst: true,
-                valueGetter: (trEl) => {
-                    const text = trEl.children[0]?.textContent?.replace(/[^\d]/g, '');
-                    return text ? parseInt(text, 10) : 0;
-                },
+                valueGetter: (trEl) => readRankNumber(trEl.children[0]) ?? 0,
             });
         }
     }
