@@ -743,6 +743,17 @@ describe('the community buffs the server is running reach a labyrinth room', () 
         expect(metrics.efficiencyBonus).toBe(0);
     });
 
+    test('the skilling recommendation tooltip names the tea crate only', () => {
+        dataManagerMock.characterData = {
+            characterLabyrinth: {
+                teaCrateItemHrid: '/items/expert_tea_crate',
+                coffeeCrateItemHrid: '/items/expert_coffee_crate',
+                foodCrateItemHrid: '/items/basic_food_crate',
+            },
+        };
+        expect(labyrinthClearRate._equippedCrateSummary()).toBe('Expert tea');
+    });
+
     test('and a fight’s award is raised by the same buff, which it used to ignore', () => {
         community.levels['/community_buff_types/experience'] = 11;
 
