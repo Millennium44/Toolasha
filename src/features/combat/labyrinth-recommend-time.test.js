@@ -89,6 +89,12 @@ describe('findHighestLevelWithinSeconds', () => {
         expect(found).toEqual({ delta: -2, seconds: 250, qualifies: true });
     });
 
+    test('a dip just above a failed base is found when nothing below qualifies', async () => {
+        const { evaluate } = probeOf((d) => (d === 2 ? 250 : 400));
+        const found = await findHighestLevelWithinSeconds({ evaluate, ...WINDOW, targetSeconds: 300 });
+        expect(found).toEqual({ delta: 2, seconds: 250, qualifies: true });
+    });
+
     test('the sweep is bounded, so a far-off pass is not chased', async () => {
         const { evaluate, calls } = probeOf((d) => (d <= 9 || d === 150 ? 200 : 900));
         const found = await findHighestLevelWithinSeconds({ evaluate, ...WINDOW, targetSeconds: 300 });
