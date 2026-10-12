@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync keeps a setting you turned on; safer startup log
+
+- A setting another device only kept at its old default no longer switches yours back off when the two sync; and the Safe start/debug startup log no longer leaks URL queries or the start of a quoted secret cut off by its length limit.
+
 ### No more "Reload now" from an old networth record
 
 - Sync no longer writes back the old single-record networth detail that newer builds convert and delete, which asked for a reload on every pull; "What changed?" now also names each record a pull wrote whole.
