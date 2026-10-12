@@ -403,7 +403,12 @@ export function buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, 
         equipmentBuffs: buildEquipmentBuffsForSkill(editorState.equipment, actionTypeHrid, gameData.itemDetailMap),
         communityBuffs: buildCommunityBuffsForSkill(editorState.communityBuffLevels, actionTypeHrid),
         houseBuffs: buildHouseBuffsForSkill(editorState.houseRooms, actionTypeHrid, gameData.houseRoomDetailMap),
-        crateBuffs: buildCrateBuffs(crateHrids, gameData.labyrinthCrateDetailMap),
+        // Only the tea crate reaches a skilling room (measured: a coffee crate's Wisdom does not), the same
+        // scoping as the live tiles' getCrateBuffs
+        crateBuffs: buildCrateBuffs(
+            (crateHrids || []).filter((hrid) => /_tea_crate$/.test(String(hrid))),
+            gameData.labyrinthCrateDetailMap
+        ),
         tokenUpgrades: editorState.tokenUpgrades,
     };
 }
