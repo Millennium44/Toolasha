@@ -29,14 +29,43 @@ const DETAIL_PREFIX = 'networthDetail';
 registerCharacterScopedPrefix(STORE_NAME, DETAIL_PREFIX);
 
 /**
- * A detail snapshot key's character and time, or null for anything else (the
- * pre-split `networthDetail_<id>` array key has no time and is not judged).
+ * A detail snapshot key's character and time; anything else is null. The pre-split
+ * `networthDetail_<id>` array key is deliberately not a member of the window: counted
+ * there it would be dropped as the 26th key whatever it held. `supersededBy` alone
+ * retires it, by value (see the retention rule below).
  * @param {string} key - Storage key
  * @returns {{group: string, order: number}|null} The character's window and the snapshot time
  */
 function parseDetailKey(key) {
     const match = /^networthDetail_(.+)_(\d+)$/.exec(key);
     return match ? { group: match[1], order: Number(match[2]) } : null;
+}
+
+/**
+ * Whether the pre-split networth array is redundant given the keys in play: every entry's snapshot key is
+ * present, or the entry is older than the keep-window the snapshot keys already fill (it would be pruned anyway).
+ * An array that is not a list of timed entries is left alone.
+ * @param {string} key - A `networthDetail_` key
+ * @param {*} value - Its value
+ * @param {string[]} keys - Every key in play
+ * @returns {boolean} True if nothing would be lost by leaving the array out
+ */
+function legacyDetailSuperseded(key, value, keys) {
+    const legacy = /^networthDetail_([0-9a-zA-Z]+)$/.exec(key);
+    if (!legacy || !Array.isArray(value)) return false;
+    const times = [];
+    for (const k of keys) {
+        const parsed = k === key ? null : parseDetailKey(k);
+        if (parsed && parsed.group === legacy[1]) times.push(parsed.order);
+    }
+    const present = new Set(times);
+    times.sort((a, b) => b - a);
+    const windowStart = times.length >= MAX_DETAIL_SNAPSHOTS ? times[MAX_DETAIL_SNAPSHOTS - 1] : -Infinity;
+    return value.every((entry) => {
+        const t = entry?.t;
+        if (typeof t !== 'number') return true;
+        return present.has(t) || t < windowStart;
+    });
 }
 
 /*
@@ -49,6 +78,15 @@ registerSyncRetention({
     prefix: `${DETAIL_PREFIX}_`,
     parse: parseDetailKey,
     keep: MAX_DETAIL_SNAPSHOTS,
+    // The pre-split array key is superseded once `_loadDetailHistory` has migrated it: every entry then has a
+    // snapshot key. It was left to sync's usual rules, which never drop a key — the gist kept the copy an old
+    // build uploaded, every pull wrote it back whole, and the next load migrated and deleted it again. Judged by
+    // value, not by "the character has some snapshot key": a fresh install writes one before its first pull, and
+    // that must not discard an array whose entries were never migrated.
+    supersededBy: legacyDetailSuperseded,
+    // Dropped from a download and an upload, never deleted here by a pull: a device still holding the array
+    // unmigrated must let `_loadDetailHistory` fold it into snapshot keys first
+    keepLocal: (key) => /^networthDetail_[0-9a-zA-Z]+$/.test(key) && !/^networthDetail_.+_\d+$/.test(key),
 });
 
 /** Beyond this age, the history is thinned rather than kept point for point */
@@ -249,15 +287,16 @@ class NetworthHistory {
         const legacy = await storage.get(legacyKey, STORE_NAME, null);
         if (this._generation !== generation) return [];
 
+        // Migrate the pre-split array into snapshot keys, then read the window as a whole: a pull can have
+        // landed newer snapshot keys beside an array this device still held, and the two belong together
         if (Array.isArray(legacy) && legacy.length > 0) {
-            const kept = legacy.slice(-MAX_DETAIL_SNAPSHOTS);
             const entries = {};
-            for (const snapshot of kept) {
+            for (const snapshot of legacy.slice(-MAX_DETAIL_SNAPSHOTS)) {
                 if (typeof snapshot?.t === 'number') entries[detailKey(snapshot.t)] = snapshot;
             }
             await storage.putAll(STORE_NAME, entries);
             await storage.delete(legacyKey, STORE_NAME);
-            return kept;
+            if (this._generation !== generation) return [];
         }
 
         // Already split: gather this character's snapshot keys back into order

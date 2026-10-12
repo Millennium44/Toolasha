@@ -194,6 +194,7 @@ describe('exportEverythingJSON', () => {
             expected: {},
             failed: [],
             complete: true,
+            writtenKeys: {},
         });
     });
 
@@ -516,6 +517,16 @@ describe('importEverything reports what did not land', () => {
         const keys = storage.finishRestore.mock.calls[0][0].get('settings');
         expect(keys.has('enhancementTracker_sessions_abc')).toBe(true);
         expect(keys.has('enhancementTracker_sessionTombstones_abc')).toBe(true);
+    });
+
+    test('reports every key it wrote, including a tombstone companion the reconciliation added', async () => {
+        const payload = await exportEverything();
+        payload.stores.settings = { enhancementTracker_sessions_abc: { sessions: [] } };
+
+        const result = await importEverything(payload);
+
+        expect(result.writtenKeys.settings).toContain('enhancementTracker_sessions_abc');
+        expect(result.writtenKeys.settings).toContain('enhancementTracker_sessionTombstones_abc');
     });
 
     test('latches a listing log and its graves together, whichever one the restore wrote', async () => {

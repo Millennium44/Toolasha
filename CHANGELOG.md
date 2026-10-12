@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### No more "Reload now" from an old networth record
+
+- Sync no longer writes back the old single-record networth detail that newer builds convert and delete, which asked for a reload on every pull; "What changed?" now also names each record a pull wrote whole.
+
 ### Decompose chain ranking lists gear again
 
 - The best decompose chain sort and Best Items no longer drop an item when one output somewhere in its tree has no real buy order; that output counts as zero and the figure is marked ≥ with the item named, so equipment with long chains ranks again instead of only raw materials.

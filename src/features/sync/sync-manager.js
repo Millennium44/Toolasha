@@ -1543,16 +1543,14 @@ class SyncManager {
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
-        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected, unchanged } = await applyPayload(
-            payload,
-            {
+        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected, unchanged, writtenWholeKeys } =
+            await applyPayload(payload, {
                 mode: silent ? 'merge' : 'pull',
                 baseline,
                 retryHeld,
                 // Which records the marker says were held, when it says
                 heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
-            }
-        );
+            });
         const pendingHeld = mergeHeld?.length
             ? {
                   exportedAt: remoteAt,
@@ -1673,6 +1671,7 @@ class SyncManager {
             merged,
             mergeFailed,
             mergeHeld,
+            writtenWholeKeys,
             expected,
             unchanged,
             at: new Date().toISOString(),

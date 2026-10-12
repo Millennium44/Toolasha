@@ -70,7 +70,11 @@ vi.mock('../../core/storage.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/sync-merge-registry.js', () => ({ registerSyncMerge: () => {}, registerSyncRetention: () => {} }));
+vi.mock('../../utils/sync-merge-registry.js', () => ({
+    registerSyncMerge: () => {},
+    registerSyncRetention: () => {},
+    retentionKeepsLocal: () => false,
+}));
 
 const { default: taskRerollTracker } = await import('./task-reroll-tracker.js');
 

@@ -210,14 +210,27 @@ describe('detail snapshots are stored one key each', () => {
         expect(networthHistory.detailHistory.at(-1).items['/items/coin:0']).toEqual({ count: 5000, value: 5000 });
     });
 
+    /** A working detail store: putAll, delete, getAllKeys and get (which getMany reads through) share one map */
+    function detailStore(initial) {
+        const stored = new Map(Object.entries(initial));
+        storageMock.get.mockImplementation(async (key, store, fallback) =>
+            stored.has(key) ? stored.get(key) : fallback
+        );
+        storageMock.putAll.mockImplementation(async (store, entries) => {
+            for (const [key, value] of Object.entries(entries)) stored.set(key, value);
+            return Object.keys(entries).length;
+        });
+        storageMock.delete.mockImplementation(async (key) => stored.delete(key));
+        storageMock.getAllKeys.mockImplementation(async () => [...stored.keys()]);
+        return stored;
+    }
+
     test('the old single-array key is migrated into per-snapshot keys and removed', async () => {
         const legacy = [
             { t: 1, items: { a: 1 } },
             { t: 2, items: { b: 2 } },
         ];
-        storageMock.get.mockImplementation(async (key, store, fallback) =>
-            key === 'networthDetail_char-1' ? legacy : fallback
-        );
+        const stored = detailStore({ 'networthDetail_char-1': legacy });
 
         const loaded = await networthHistory._loadDetailHistory(networthHistory._generation, 'char-1');
 
@@ -226,7 +239,19 @@ describe('detail snapshots are stored one key each', () => {
             'networthDetail_char-1_1': legacy[0],
             'networthDetail_char-1_2': legacy[1],
         });
-        expect(storageMock.delete).toHaveBeenCalledWith('networthDetail_char-1', 'networthHistory');
+        expect(stored.has('networthDetail_char-1')).toBe(false);
+    });
+
+    test('a migrated array is read together with snapshot keys a pull already landed', async () => {
+        const legacy = [{ t: 1, items: { a: 1 } }];
+        detailStore({
+            'networthDetail_char-1': legacy,
+            'networthDetail_char-1_500': { t: 500, items: { b: 2 } },
+        });
+
+        const loaded = await networthHistory._loadDetailHistory(networthHistory._generation, 'char-1');
+
+        expect(loaded.map((s) => s.t)).toEqual([1, 500]);
     });
 
     test('already-split snapshots are gathered back into timestamp order', async () => {
@@ -502,18 +527,39 @@ describe('the recorded gold figure', () => {
 });
 
 describe("the detail snapshots' window, as sync applies it", () => {
-    test('keeps the newest 25 per character over both sides, and leaves the pre-split key alone', () => {
+    test('keeps the newest 25 per character over both sides, and drops the pre-split key they supersede', () => {
         const keys = [
             ...Array.from({ length: 27 }, (_, i) => `networthDetail_32030_${1_000 + i}`),
             ...Array.from({ length: 3 }, (_, i) => `networthDetail_32325_${1_000 + i}`),
             'networthDetail_32030',
+            'networthDetail_32325',
+            'networthDetail_99999',
             'networthSeries_32030_2026-10',
         ];
 
-        expect([...retentionDrops('networthHistory', keys)].sort()).toEqual([
+        const values = {
+            networthDetail_32030: [{ t: 1 }], // older than the window the 27 snapshot keys fill
+            networthDetail_32325: [{ t: 1000 }], // its snapshot key is present
+            networthDetail_99999: [{ t: 5 }], // no snapshot key at all: the only copy
+        };
+
+        expect([...retentionDrops('networthHistory', keys, (key) => values[key])].sort()).toEqual([
+            'networthDetail_32030',
             'networthDetail_32030_1000',
             'networthDetail_32030_1001',
+            'networthDetail_32325',
         ]);
+    });
+
+    test('keeps the pre-split key while an entry has neither a snapshot key nor an age past the window', () => {
+        const keys = ['networthDetail_32030_5000', 'networthDetail_32030'];
+        const read = (legacy) => (key) => (key === 'networthDetail_32030' ? legacy : { t: 5000 });
+
+        // Another snapshot (a fresh install) is not proof the array was migrated
+        expect(retentionDrops('networthHistory', keys, read([{ t: 4000 }, { t: 5000 }])).size).toBe(0);
+        expect([...retentionDrops('networthHistory', keys, read([{ t: 5000 }]))]).toEqual(['networthDetail_32030']);
+        // No value to judge by: left alone
+        expect(retentionDrops('networthHistory', keys).size).toBe(0);
     });
 });
 

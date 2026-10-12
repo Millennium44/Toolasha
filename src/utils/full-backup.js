@@ -340,6 +340,8 @@ export async function importEverything(payload, options = {}) {
 
     const restored = {};
     const expected = {};
+    /** store -> keys this restore wrote, tombstone companions the reconciliation added included */
+    const writtenKeys = {};
     const failed = [];
     /** store -> keys the restore actually wrote (and their tombstone companions), for the per-key latch */
     const written = new Map();
@@ -379,6 +381,7 @@ export async function importEverything(payload, options = {}) {
             const count = await storage.putAll(storeName, entries, { bypassRestoreLatch: true });
             restored[storeName] = count;
             expected[storeName] = want;
+            writtenKeys[storeName] = Object.keys(entries);
 
             // One key the store refuses aborts the whole transaction and takes
             // every healthy key with it, so a shortfall is not "most of it
@@ -413,7 +416,7 @@ export async function importEverything(payload, options = {}) {
         }
     }
 
-    return { restored, expected, failed, complete: failed.length === 0 };
+    return { restored, expected, failed, complete: failed.length === 0, writtenKeys };
 }
 
 export default {

@@ -52,6 +52,8 @@ let lastSummary = null;
  * @property {number|null} unchanged - Keys left as they were because this device already held the downloaded
  *   value, or null when the result did not report it; see {@link UNCHANGED_UNKNOWN}
  * @property {Array<{key: string, label: string}>} combinedRecords - Folded keys and their registration
+ * @property {Array<{key: string}>} wholeRecords - Keys written whole, when the result named them (empty otherwise,
+ *   including for a result from an older caller: the count above is then all there is)
  * @property {Array<{key: string, label: string}>} heldRecords - Held keys and their registration
  * @property {Array<{key: string, label: string}>} overwrittenRecords - Failed folds and their registration
  */
@@ -67,6 +69,8 @@ let lastSummary = null;
  * @param {Array<{store: string, key: string, label: string}>} [result.merged] - Folded records
  * @param {Array<{store: string, key: string, label: string}>} [result.mergeFailed] - Folds that threw
  * @param {Array<{store: string, key: string, label: string}>} [result.mergeHeld] - Records held back
+ * @param {Array<{store: string, key: string}>} [result.writtenWholeKeys] - Keys the import wrote that no fold
+ *   produced, by store
  * @param {Record<string, number>} [result.expected] - Keys each store was asked to write
  * @param {Record<string, number>|null} [result.unchanged] - Keys each store left as they were; null or
  *   missing when not reported
@@ -78,6 +82,7 @@ export function buildPullSummary({
     merged = [],
     mergeFailed = [],
     mergeHeld = [],
+    writtenWholeKeys = [],
     expected = {},
     unchanged = null,
     at = null,
@@ -98,6 +103,7 @@ export function buildPullSummary({
                 overwritten: 0,
                 unchanged: reported ? 0 : null,
                 combinedRecords: [],
+                wholeRecords: [],
                 heldRecords: [],
                 overwrittenRecords: [],
             });
@@ -124,6 +130,11 @@ export function buildPullSummary({
         store.overwrittenRecords.push({ key: entry.key, label: entry.label || '' });
     }
 
+    for (const entry of writtenWholeKeys || []) {
+        if (!entry?.store) continue;
+        row(entry.store).wholeRecords.push({ key: entry.key });
+    }
+
     // A held key was deleted from the payload before the import, so it is not in
     // the expected count; a failed fold was written whole, so it is. What is
     // left after the folds is therefore exactly the whole writes.
@@ -131,6 +142,17 @@ export function buildPullSummary({
         if (!Number.isFinite(count)) continue;
         const target = row(store);
         target.writtenWhole = Math.max(0, count - target.combined);
+    }
+
+    // A failed fold is already named as overwritten, and a store with no expected count has no whole-write
+    // figure to name keys against
+    for (const target of rows.values()) {
+        if (target.writtenWhole === null) {
+            target.wholeRecords = [];
+            continue;
+        }
+        const failed = new Set(target.overwrittenRecords.map((record) => record.key));
+        target.wholeRecords = target.wholeRecords.filter((record) => !failed.has(record.key));
     }
 
     if (reported) {

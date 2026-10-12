@@ -32,7 +32,7 @@ import {
 } from './sync-ownership.js';
 import { ensureExternalKeysLoaded, ensureExternalKeysSaved } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys, tombstoneCompanionKey } from '../../utils/full-backup.js';
-import { mergeForKey, retentionDrops } from '../../utils/sync-merge-registry.js';
+import { mergeForKey, retentionDrops, retentionKeepsLocal } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
 
 /** Matches the full-backup format, because that is what this produces */
@@ -851,6 +851,15 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
         const merged = histories.merged.filter(changed);
         const mergeFailed = histories.failed.filter(changed);
+        // What the import wrote that no fold produced, named for the pull summary: every key it wrote, less
+        // the folds (a fold whose merge threw was written whole, so it stays in). The importer's own list
+        // counts the tombstone companions its reconciliation adds; the payload's keys are the fallback.
+        const folded = new Set(merged.map((entry) => baselineId(entry.store, entry.key)));
+        const payloadKeys = {};
+        for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
+            if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
+            payloadKeys[storeName] = Object.keys(stripExcludedKeys(storeName, entries));
+        }
 
         let imported;
         try {
@@ -860,6 +869,12 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             throw error;
         }
         const { restored, expected } = imported;
+        const writtenWholeKeys = [];
+        for (const [storeName, keys] of Object.entries(imported.writtenKeys ?? payloadKeys)) {
+            for (const key of keys) {
+                if (!folded.has(baselineId(storeName, key))) writtenWholeKeys.push({ store: storeName, key });
+            }
+        }
         let { failed, complete } = imported;
         // Only where the snapshots that push them out landed, and past the
         // latch the import (or an earlier pull) set: they are part of this restore
@@ -904,6 +919,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             mergeFailed,
             mergeHeld,
             unchanged,
+            writtenWholeKeys,
             exportedAt: payload?.exportedAt ?? null,
             applied,
         };
@@ -1465,14 +1481,19 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
     const sameByStore = new Map();
     let retentionDropped = false;
     const displaced = [];
-    const dropOutsideRetention = (storeName, entries, localKeys) => {
+    const dropOutsideRetention = (storeName, entries, localKeys, localValues = {}) => {
         const ownDrops = new Set(retentionDrops(storeName, localKeys));
-        for (const key of retentionDrops(storeName, [...Object.keys(entries), ...localKeys])) {
+        // Value-aware rules (a key superseded by what else is in play) read the download's copy, else this device's
+        const valueOf = (key) => (Object.hasOwn(entries, key) ? entries[key] : localValues[key]);
+        for (const key of retentionDrops(storeName, [...Object.keys(entries), ...localKeys], undefined, {
+            supersedeValueOf: valueOf,
+        })) {
             if (!Object.hasOwn(entries, key)) {
                 // Pushed out of the window by what the download brings: the
                 // import only puts keys, so it is deleted here. One this device
                 // would drop by itself is left to its owner's own pruning
-                if (!ownDrops.has(key)) displaced.push({ store: storeName, key });
+                if (!ownDrops.has(key) && !retentionKeepsLocal(storeName, key))
+                    displaced.push({ store: storeName, key });
                 continue;
             }
             delete entries[key];
@@ -1517,7 +1538,7 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         }
         if (!Array.isArray(entries)) {
             const localKeys = local && typeof local === 'object' && !Array.isArray(local) ? Object.keys(local) : [];
-            dropOutsideRetention(storeName, entries, localKeys);
+            dropOutsideRetention(storeName, entries, localKeys, local);
         }
         if (baseline) {
             for (const key of Object.keys(entries)) {

@@ -329,9 +329,26 @@ const retentions = [];
  *   key that list does not name is outside the window. `parse` then answers `{group, id}`. Unlike the other rules
  *   this one reads a value, so it is only applied where the caller passes `valueOf` to {@link retentionDrops}, and a
  *   window whose index is absent or unreadable drops nothing
+ * @param {(key: string) => boolean} [options.keepLocal] - Keys this device holds that a pull must never delete
+ *   as displaced, though the rule drops them from a download and an upload: the owner still has to read them
+ *   (the pre-split networth array, which its loader migrates and then deletes itself)
+ * @param {(key: string, value: *, keys: string[]) => boolean} [options.supersededBy] - A key whose own value says
+ *   the other keys in play make it redundant (the pre-split networth array, once every entry has a snapshot key).
+ *   Reads a value, so it is only applied where the caller passes `valueOf` to {@link retentionDrops}; a key with no
+ *   value to read is never dropped by it
  * @returns {() => void} Unregister, mostly for tests
  */
-export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floorMarkers = false, index }) {
+export function registerSyncRetention({
+    store,
+    prefix,
+    parse,
+    keep,
+    maxAge,
+    floorMarkers = false,
+    index,
+    keepLocal,
+    supersededBy,
+}) {
     if (!store || typeof prefix !== 'string' || !prefix) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a store and a prefix');
     }
@@ -344,7 +361,7 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
     if (index !== undefined && !hasIndex) {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs an index with key() and ids()');
     }
-    if (keep === undefined && !hasAge && floorMarkers !== true && !hasIndex) {
+    if (keep === undefined && !hasAge && floorMarkers !== true && !hasIndex && typeof supersededBy !== 'function') {
         throw new Error('[SyncMergeRegistry] registerSyncRetention needs a keep, a maxAge, floorMarkers or an index');
     }
     // One rule per store and prefix: a bundle copy of the owning module makes
@@ -358,12 +375,34 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
         maxAge: hasAge ? maxAge : undefined,
         floorMarkers: floorMarkers === true,
         index: hasIndex ? index : undefined,
+        keepLocal: typeof keepLocal === 'function' ? keepLocal : undefined,
+        supersededBy: typeof supersededBy === 'function' ? supersededBy : undefined,
     };
     if (!existing) retentions.push(rule);
     return () => {
         const index = retentions.indexOf(rule);
         if (index !== -1) retentions.splice(index, 1);
     };
+}
+
+/**
+ * Whether a retention rule keeps this local key out of a pull's displaced deletes (see `keepLocal`)
+ * @param {string} store - Object store name
+ * @param {string} key - Raw key
+ * @returns {boolean} True if a pull must leave the local copy alone
+ */
+export function retentionKeepsLocal(store, key) {
+    return retentions.some((rule) => {
+        if (rule.store !== store || !rule.keepLocal || typeof key !== 'string' || !key.startsWith(rule.prefix)) {
+            return false;
+        }
+        try {
+            return rule.keepLocal(key) === true;
+        } catch (error) {
+            console.error(`[SyncMergeRegistry] keepLocal for ${rule.prefix} threw:`, error);
+            return false;
+        }
+    });
 }
 
 /**
@@ -381,10 +420,12 @@ export function registerSyncRetention({ store, prefix, parse, keep, maxAge, floo
  * @param {string} store - Object store name
  * @param {Iterable<string>} keys - Every key in play (this device's and the other side's)
  * @param {(key: string) => *} [valueOf] - The value in force for a key, for index rules
- * @param {{indexOnly?: boolean}} [options] - `indexOnly` judges the index rules alone
+ * @param {{indexOnly?: boolean, supersedeValueOf?: (key: string) => *}} [options] - `indexOnly` judges the index
+ *   rules alone; `supersedeValueOf` supplies values for `supersededBy` rules without switching the index rules on
+ *   (`valueOf` serves both when it is the only one given)
  * @returns {Set<string>} The keys to leave out
  */
-export function retentionDrops(store, keys, valueOf, { indexOnly = false } = {}) {
+export function retentionDrops(store, keys, valueOf, { indexOnly = false, supersedeValueOf } = {}) {
     const dropped = new Set();
     const rules = retentions.filter((rule) => rule.store === store);
     if (rules.length === 0) return dropped;
@@ -396,6 +437,18 @@ export function retentionDrops(store, keys, valueOf, { indexOnly = false } = {})
             if (rule.keep === undefined && !rule.maxAge && !rule.floorMarkers) continue;
         }
         if (indexOnly) continue;
+        const supersedeOf = typeof supersedeValueOf === 'function' ? supersedeValueOf : valueOf;
+        if (rule.supersededBy && typeof supersedeOf === 'function') {
+            for (const key of keyList) {
+                if (typeof key !== 'string' || !key.startsWith(rule.prefix)) continue;
+                try {
+                    const value = supersedeOf(key);
+                    if (value !== undefined && rule.supersededBy(key, value, keyList) === true) dropped.add(key);
+                } catch (error) {
+                    console.error(`[SyncMergeRegistry] supersededBy for ${rule.prefix} threw:`, error);
+                }
+            }
+        }
         /** group → [{key, order}] */
         const groups = new Map();
         /** group → [{key, floor}], the floor markers, judged apart from the data keys */
