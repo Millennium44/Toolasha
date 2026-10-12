@@ -31,6 +31,8 @@ export const MENU_LABELS = Object.freeze({
 const NOTICE_ID = 'toolasha-startup-mode-notice';
 const MAX_ERROR_MESSAGE = 300;
 const MAX_INPUT = 4000;
+/** Stand-in for a redacted quote while the later passes run, so they cannot read it as an opener */
+const QUOTED = '\u0000';
 
 /**
  * Error text with every dynamic value taken out, so a log a player shares carries no game or
@@ -41,15 +43,22 @@ const MAX_INPUT = 4000;
  */
 export function redactMessage(text) {
     // Cut to length last: cutting first can split a quoted string and leave its tail unmatched
-    return String(text ?? '')
-        .slice(0, MAX_INPUT)
-        .replace(/[a-z][\w+.-]*:\/\/\S*/gi, '/…')
-        .replace(/(["'`]).*?\1/g, '"…"')
-        .replace(/\/[\w/.-]+/g, '/…')
-        .replace(/\{.*\}|\[.*\]/g, '…')
-        .replace(/\d+(\.\d+)?/g, '#')
-        .replace(/:\s.*$/, ': …')
-        .slice(0, MAX_ERROR_MESSAGE);
+    return (
+        String(text ?? '')
+            .slice(0, MAX_INPUT)
+            .replace(/[a-z][\w+.-]*:\/\/\S*/gi, '/…')
+            .replace(/(?<=[\w/.~%-])\?[^\s"'`]+/g, '')
+            .replace(/(["'`]).*?\1/g, QUOTED)
+            // A quote with no closing partner (the length limit upstream can cut it off) opens a secret that
+            // runs to the end; only a quote at a word start counts, so "don't" is left alone
+            .replace(/(^|[\s:=(])["'`].*$/, `$1${QUOTED}`)
+            .replaceAll(QUOTED, '"…"')
+            .replace(/\/[\w/.-]+/g, '/…')
+            .replace(/\{.*\}|\[.*\]/g, '…')
+            .replace(/\d+(\.\d+)?/g, '#')
+            .replace(/:\s.*$/, ': …')
+            .slice(0, MAX_ERROR_MESSAGE)
+    );
 }
 const MAX_ENTRIES = 200;
 

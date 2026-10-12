@@ -1401,6 +1401,7 @@ class SettingsStorage {
         // so only ids already stored whose value moved count.
         const userIds = this._userIds(settings, dirtyKeys);
         await this._stampDiff(characterKey, stored, toWrite, { ids: userIds });
+        await this._stampFilled(characterKey, stored, toWrite, userIds);
 
         // The account-wide settings go to their own key as well as staying in
         // this character's map. Staying keeps a downgrade working and adds no
@@ -1485,6 +1486,42 @@ class SettingsStorage {
             await storage.setJSON(stampKey, stamps, this.storageArea, true);
         } catch (error) {
             console.error('[SettingsStorage] Could not stamp changed settings:', error);
+        }
+    }
+
+    /**
+     * Stamp the ids a save wrote only because the stored map lacked them (defaults this install filled
+     * in, not choices) as `{at: 0, system: true, fill: true}`. A sync merge ranks a fill below every
+     * other value (see `localStampWins`), so a fresh browser's defaults cannot override what an existing
+     * profile holds, pinned previous defaults included. Never overwrites a stamp that already exists,
+     * and a later real change replaces it (`_stampDiff` writes the id's whole stamp).
+     *
+     * @param {string} mapKey - The settings map's storage key
+     * @param {Object|null} before - The map as stored before the write
+     * @param {Object|null} after - The map as written
+     * @param {Set<string>|null} userIds - Ids the save was asked to change (stamped as real choices)
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _stampFilled(mapKey, before, after, userIds) {
+        try {
+            const old = before && typeof before === 'object' ? before : {};
+            const filled = Object.keys(after && typeof after === 'object' ? after : {}).filter(
+                (id) => !Object.hasOwn(old, id) && !userIds?.has(id)
+            );
+            if (filled.length === 0) return;
+            const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
+            const existing = await storage.getJSON(stampKey, this.storageArea, null);
+            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+            let added = false;
+            for (const id of filled) {
+                if (Object.hasOwn(stamps, id)) continue;
+                stamps[id] = { at: 0, seq: null, system: true, fill: true };
+                added = true;
+            }
+            if (added) await storage.setJSON(stampKey, stamps, this.storageArea, true);
+        } catch (error) {
+            console.error('[SettingsStorage] Could not stamp filled settings:', error);
         }
     }
 

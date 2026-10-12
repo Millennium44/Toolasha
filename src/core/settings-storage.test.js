@@ -2023,6 +2023,31 @@ describe('settings change stamps, for the sync merge', () => {
         expect(Object.keys(stored.get(STAMPS)).sort()).toEqual(['chatCommands', 'whatsNew_showPopup']);
     });
 
+    test('the first scoped save stamps what it filled as fill and the dirty id as real', async () => {
+        await settingsStorage.saveSettings(
+            { chatCommands: { isTrue: true }, whatsNew_showPopup: { isTrue: true } },
+            new Set(['chatCommands'])
+        );
+
+        const stamps = stored.get(STAMPS);
+        expect(stamps.chatCommands).toEqual({ at: NOW, seq: null });
+        expect(stamps.whatsNew_showPopup).toEqual({ at: 0, seq: null, system: true, fill: true });
+    });
+
+    test('a fill never replaces a stamp that exists, and a later real change replaces the fill', async () => {
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+        stored.set(STAMPS, { whatsNew_showPopup: { at: 7, seq: 1 } });
+        await settingsStorage.saveSettings(
+            { chatCommands: { isTrue: true }, whatsNew_showPopup: { isTrue: true }, other: { isTrue: true } },
+            new Set(['chatCommands'])
+        );
+        expect(stored.get(STAMPS).whatsNew_showPopup).toEqual({ at: 7, seq: 1 });
+        expect(stored.get(STAMPS).other.fill).toBe(true);
+
+        await settingsStorage.saveSettings({ other: { isTrue: false } }, new Set(['other']));
+        expect(stored.get(STAMPS).other).toEqual({ at: NOW, seq: null });
+    });
+
     test('an account-wide setting is stamped beside the account-wide map too', async () => {
         await settingsStorage.saveSettings({ sync_auto: { isTrue: true } }, new Set(['sync_auto']));
         expect(stored.get('json:settings_changedAt_script_settingsMap_shared').sync_auto.at).toBe(NOW);
@@ -2135,8 +2160,11 @@ describe('change stamps through the real save path, as sync merges them', () => 
         await settingsStorage.saveSettings(mapB, new Set(['chatCommands']));
         keep(b);
 
-        // N filled in from its default is not B's choice
-        expect(b.get(`json:${STAMPS_KEY}`)).toEqual({ chatCommands: { at: T2, seq: null } });
+        // N filled in from its default is not B's choice: stamped as a fill, which loses to everything
+        expect(b.get(`json:${STAMPS_KEY}`)).toEqual({
+            chatCommands: { at: T2, seq: null },
+            whatsNew_showPopup: { at: 0, seq: null, system: true, fill: true },
+        });
 
         const payloadOf = (dev) =>
             JSON.stringify({

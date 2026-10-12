@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 import {
+    redactMessage,
     MODE_FLAG_KEY,
     MENU_LABELS,
     requestMode,
@@ -191,6 +192,23 @@ describe('startup log', () => {
         const text = JSON.stringify(log.errors);
         expect(text).not.toContain('SECRET');
         expect(text).not.toContain('ghp');
+    });
+
+    test('an unclosed quote, a relative URL query and a protocol-relative query leak nothing', () => {
+        const messages = [
+            `${'x'.repeat(290)} token "passphraseSECRET and more`,
+            "Bad value: key='SECRETone",
+            'GET /gists?token=SECRETtwo failed',
+            'GET //host.example/x?y=SECRETthree failed',
+        ].map((message) => ({ module: 'A', message }));
+        const log = buildStartupLog({
+            mode: 'debug',
+            performanceMonitor: monitor,
+            errorLog: { getEntries: () => messages },
+        });
+        expect(JSON.stringify(log.errors)).not.toContain('SECRET');
+        expect(redactMessage("it doesn't work")).toBe("it doesn't work");
+        expect(redactMessage("it said 'a' then \"b")).toBe('it said "…" then "…"');
     });
 
     test('carries no payload fields', () => {
