@@ -138,6 +138,22 @@ export async function findHighestLevelWithinSeconds({
             fail = next ? next.delta : Math.max(lo, fail - step);
             step = Math.min(maxStep, step * 2);
         }
+        // The exponential steps skip levels; on a non-monotone curve a pass can sit in a gap just
+        // under the base, so scan the nearest skipped levels before calling it a miss
+        if (pass === null) {
+            let steps = 0;
+            for (let delta = base.delta - 1; delta >= lo && steps < sweepSteps; delta--) {
+                if (samples.has(delta)) continue;
+                const sample = await probe(delta);
+                if (cancelled) return null;
+                steps++;
+                if (sample?.ok) {
+                    pass = delta;
+                    break;
+                }
+            }
+            if (pass !== null) fail = null;
+        }
     }
 
     if (pass !== null && fail !== null) {
