@@ -2681,6 +2681,16 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Default target clear rate for labyrinth skip threshold recommendations',
             },
+            labyrinthRecommendTargetSeconds: {
+                id: 'labyrinthRecommendTargetSeconds',
+                label: 'Labyrinth: Recommend target time per clear (s)',
+                type: 'number',
+                default: 300,
+                min: 1,
+                max: 100000,
+                step: 1,
+                help: 'Target for "Recommend by Time": the highest skip threshold whose expected time per clear, failed runs included, is within this many seconds',
+            },
             // How long a labyrinth simulation may run used to be eleven
             // settings — four "Uncapped" checkboxes (one per panel), two
             // precisions that disagreed about their own default, and five

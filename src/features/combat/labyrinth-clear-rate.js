@@ -172,6 +172,7 @@ class LabyrinthClearRate {
         this.recommendations = new Map();
         this.recommendRunning = false;
         this._recommendTargetPct = 70;
+        this._recommendBasis = 'winRate';
         this.liveProgressHandler = null;
         this.liveProgressTimeout = null;
         this.snapshotUpdateHandler = null;
@@ -442,7 +443,10 @@ class LabyrinthClearRate {
         const roomHrid = this.extractRoomHrid(cell);
         if (!roomHrid) return;
 
-        const recommended = this.recommendations.get(roomHrid)?.threshold;
+        const rec = this.recommendations.get(roomHrid);
+        // A time recommendation that only found the closest miss is not a level
+        // worth filling into the field
+        const recommended = rec?.qualifies === false ? null : rec?.threshold;
         const current = roomHrid.startsWith('/skills/')
             ? this.getSkipThreshold(roomHrid)
             : this.getCombatSkipThreshold(roomHrid);
