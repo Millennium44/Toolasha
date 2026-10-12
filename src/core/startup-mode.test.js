@@ -211,6 +211,14 @@ describe('startup log', () => {
         expect(redactMessage("it said 'a' then \"b")).toBe('it said "…" then "…"');
     });
 
+    test('a shortened value never pulls a later field in, and a query-only reference leaks nothing', () => {
+        // Past the original 300-character boundary: redacting the quote must not bring it into range
+        const late = `Failure "${'x'.repeat(340)}" token=SECRETlate`;
+        expect(redactMessage(late)).not.toContain('SECRET');
+        expect(redactMessage('GET ?token=SECRETquery failed')).not.toContain('SECRET');
+        expect(redactMessage('bad auth=SECRETfield here')).not.toContain('SECRET');
+    });
+
     test('carries no payload fields', () => {
         const text = JSON.stringify(buildStartupLog({ mode: 'debug', performanceMonitor: monitor, errorLog }));
         expect(text).not.toContain('SecretChar');

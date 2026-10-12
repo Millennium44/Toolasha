@@ -30,7 +30,6 @@ export const MENU_LABELS = Object.freeze({
 
 const NOTICE_ID = 'toolasha-startup-mode-notice';
 const MAX_ERROR_MESSAGE = 300;
-const MAX_INPUT = 4000;
 /** Stand-in for a redacted quote while the later passes run, so they cannot read it as an opener */
 const QUOTED = '\u0000';
 
@@ -42,12 +41,16 @@ const QUOTED = '\u0000';
  * @returns {string}
  */
 export function redactMessage(text) {
-    // Cut to length last: cutting first can split a quoted string and leave its tail unmatched
+    // Cut to the original positions first, so redaction that shortens a value can never pull a later
+    // part of the message into the log; a quote the cut splits is caught by the unclosed-quote pass
     return (
         String(text ?? '')
-            .slice(0, MAX_INPUT)
+            .slice(0, MAX_ERROR_MESSAGE)
             .replace(/[a-z][\w+.-]*:\/\/\S*/gi, '/…')
-            .replace(/(?<=[\w/.~%-])\?[^\s"'`]+/g, '')
+            // A query after a path, or one that starts a word on its own (`GET ?token=…`)
+            .replace(/(^|[\s:=(]|(?<=[\w/.~%-]))\?[^\s"'`]+/g, '$1')
+            // An unquoted `name=value` field keeps its name only
+            .replace(/\b([\w-]+)=[^\s"'`]+/g, '$1=…')
             .replace(/(["'`]).*?\1/g, QUOTED)
             // A quote with no closing partner (the length limit upstream can cut it off) opens a secret that
             // runs to the end; only a quote at a word start counts, so "don't" is left alone
