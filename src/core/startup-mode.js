@@ -51,7 +51,9 @@ export function redactMessage(text) {
             .replace(/(^|[\s:=(]|(?<=[\w/.~%-]))\?[^\s"'`]+/g, '$1')
             // An unquoted `name=value` field keeps its name only
             .replace(/\b([\w-]+)=[^\s"'`]+/g, '$1=…')
-            .replace(/(["'`]).*?\1/g, QUOTED)
+            // A pair opens at a word start and closes where no letter follows, so the apostrophe in
+            // "can't" is never taken as the opening quote of a later value
+            .replace(/(^|[^\w])(["'`])[^]*?\2(?!\w)/g, `$1${QUOTED}`)
             // A quote with no closing partner (the length limit upstream can cut it off) opens a secret that
             // runs to the end; only a quote at a word start counts, so "don't" is left alone
             .replace(/(^|[\s:=(])["'`].*$/, `$1${QUOTED}`)

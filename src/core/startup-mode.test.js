@@ -219,6 +219,11 @@ describe('startup log', () => {
         expect(redactMessage('bad auth=SECRETfield here')).not.toContain('SECRET');
     });
 
+    test('an apostrophe in a word is never paired with a later quoted value', () => {
+        expect(redactMessage("can't authenticate key='SECRETkey'")).not.toContain('SECRET');
+        expect(redactMessage("can't authenticate key='SECRETkey'")).toContain("can't");
+    });
+
     test('carries no payload fields', () => {
         const text = JSON.stringify(buildStartupLog({ mode: 'debug', performanceMonitor: monitor, errorLog }));
         expect(text).not.toContain('SecretChar');

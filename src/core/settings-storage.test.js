@@ -2048,6 +2048,32 @@ describe('settings change stamps, for the sync merge', () => {
         expect(stored.get(STAMPS).other).toEqual({ at: NOW, seq: null });
     });
 
+    test('a save before settings load stamps the untouched defaults it writes as fill', async () => {
+        const defaults = settingsStorage.buildDefaults();
+        const shared = new Set(settingsStorage.sharedSettingIds());
+        const [moved, untouched] = Object.keys(defaults).filter(
+            (id) => defaults[id].type === 'checkbox' && !shared.has(id)
+        );
+        const settings = { ...defaults, [moved]: { ...defaults[moved], isTrue: !defaults[moved].isTrue } };
+
+        await settingsStorage.saveSettingsKeepingStored(settings);
+
+        const stamps = stored.get(STAMPS);
+        expect(stamps[moved]).toEqual({ at: NOW, seq: null });
+        expect(stamps[untouched]).toEqual({ at: 0, seq: null, system: true, fill: true });
+    });
+
+    test('a character seeded from the global template keeps the template fill and pin stamps', async () => {
+        stored.set('json:script_settingsMap', { chatCommands: { isTrue: true }, whatsNew_showPopup: { isTrue: true } });
+        stored.set('json:settings_changedAt_script_settingsMap', {
+            whatsNew_showPopup: { at: 0, seq: null, system: true, fill: true },
+        });
+
+        await settingsStorage.loadSettings();
+
+        expect(stored.get(STAMPS).whatsNew_showPopup).toEqual({ at: 0, seq: null, system: true, fill: true });
+    });
+
     test('an account-wide setting is stamped beside the account-wide map too', async () => {
         await settingsStorage.saveSettings({ sync_auto: { isTrue: true } }, new Set(['sync_auto']));
         expect(stored.get('json:settings_changedAt_script_settingsMap_shared').sync_auto.at).toBe(NOW);
