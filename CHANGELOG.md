@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth: scrolls and worn tools
+
+- Labyrinth combat win rates no longer count your active combat scrolls, which do not work in the labyrinth (they read up to about 30% too strong with scrolls up), and skilling rooms now use the tool you are wearing when your labyrinth loadout has none, or the loadout is gone, instead of scoring the room as if you had no tool.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log
