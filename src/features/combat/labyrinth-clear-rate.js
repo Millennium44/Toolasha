@@ -1021,6 +1021,10 @@ class LabyrinthClearRate {
         const toolSlot = `/item_locations/${skillId}_tool`;
 
         const totals = {};
+        // Whether the loadout supplied a usable tool for this skill. A snapshot
+        // with no slot for it, or one whose item has no equipment detail, wears
+        // the tool the character has on instead (as the reference script does)
+        let loadoutHasTool = false;
         // Resolved, not stored: a "highest owned" loadout wears the best copy
         // owned now, and the stored level is only what it was at last save
         for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
@@ -1034,6 +1038,7 @@ class LabyrinthClearRate {
             const itemDetail = gameData.itemDetailMap[equip.itemHrid];
             const equipDetail = itemDetail?.equipmentDetail;
             if (!equipDetail) continue;
+            if (equip.itemLocationHrid === toolSlot) loadoutHasTool = true;
 
             const baseStats = equipDetail.noncombatStats || {};
             const enhStats = equipDetail.noncombatEnhancementBonuses || {};
@@ -1047,6 +1052,23 @@ class LabyrinthClearRate {
             for (const [key, value] of Object.entries(enhStats)) {
                 if (!Number.isFinite(value)) continue;
                 totals[key] = (totals[key] || 0) + value * enhMultiplier;
+            }
+        }
+
+        if (!loadoutHasTool) {
+            const worn = dataManager.getEquipment?.()?.get(toolSlot);
+            const wornDetail = worn?.itemHrid ? gameData.itemDetailMap[worn.itemHrid]?.equipmentDetail : null;
+            if (wornDetail) {
+                const enhLevel = worn.enhancementLevel || 0;
+                const enhMultiplier = enhTable[enhLevel] ?? enhLevel;
+                for (const [key, value] of Object.entries(wornDetail.noncombatStats || {})) {
+                    if (!Number.isFinite(value)) continue;
+                    totals[key] = (totals[key] || 0) + value;
+                }
+                for (const [key, value] of Object.entries(wornDetail.noncombatEnhancementBonuses || {})) {
+                    if (!Number.isFinite(value)) continue;
+                    totals[key] = (totals[key] || 0) + value * enhMultiplier;
+                }
             }
         }
 
@@ -1112,9 +1134,14 @@ class LabyrinthClearRate {
         const skillLevelType = `/buff_types/${skillId}_level`;
         const skillSuccessType = `/buff_types/${skillId}_success`;
 
-        // Equipment buffs come from the labyrinth loadout, not currently worn gear
+        // Equipment buffs come from the labyrinth loadout when it has gear; otherwise the worn gear
         const loadoutId = this.getSkillingLoadoutId(`/skills/${skillId}`);
-        const loadoutEquipBuffs = loadoutId ? this.getLoadoutEquipmentBuffs(loadoutId, skillId) : null;
+        // A loadout that is gone (deleted, never saved) or holds no equipment
+        // has nothing to contribute: the worn gear stands in, exactly as for a
+        // room with no loadout assigned. `[]` is truthy, so this cannot be left
+        // to an `||` on the buff list.
+        const loadoutHasGear = Boolean(loadoutId && loadoutSnapshot.snapshots[loadoutId]?.equipment?.length);
+        const loadoutEquipBuffs = loadoutHasGear ? this.getLoadoutEquipmentBuffs(loadoutId, skillId) : null;
 
         const buffSources = [
             loadoutEquipBuffs || charData.equipmentActionTypeBuffsMap?.[actionTypeHrid],
