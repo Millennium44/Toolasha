@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.68.0 -->
+
 ### Sync keeps a setting you turned on; safer startup log
 
 - A setting another device only kept at its old default no longer switches yours back off when the two sync; and the Safe start/debug startup log no longer leaks URL queries or the start of a quoted secret cut off by its length limit.
@@ -5176,6 +5178,96 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.68.0](https://github.com/Millennium44/Toolasha/compare/v3.67.0...v3.68.0) (2026-10-12)
+
+### Features
+
+- combat sim Triggers chip can tune abilities only, food and drinks only, or both ([d1fd431](https://github.com/Millennium44/Toolasha/commit/d1fd4311ec5ee76b67cc96728778ea6938fe3e82))
+- combat sim Triggers remembers its last result and can optimize for XP/h or profit/h ([5fc5331](https://github.com/Millennium44/Toolasha/commit/5fc5331495d2968e8edb6895ade843db13464b20))
+- recent feature panels start on for new players ([295df0b](https://github.com/Millennium44/Toolasha/commit/295df0bc539fda865c3baa17b4008b5ea9a7dad5))
+- recent feature panels start on for new users ([6c41fd2](https://github.com/Millennium44/Toolasha/commit/6c41fd274ee764bf6fed0e4ee1a9a6a60edc6cda))
+- trigger tuning tries enemy-HP gates across the zone's real monster HP ([e559832](https://github.com/Millennium44/Toolasha/commit/e5598322ca422c16c38479c81fa7da294a820bd6))
+- Triggers is a standard combat sim Upgrade option ([061de20](https://github.com/Millennium44/Toolasha/commit/061de20807db7a639899c753a7311acfa3f7f157))
+- Triggers is a standard combat sim Upgrade option ([728e482](https://github.com/Millennium44/Toolasha/commit/728e4829d5ba1a168e1aa544bb8a32b1d239d0a5))
+
+### Bug Fixes
+
+- a decompose chain crate with no priced contents counts at zero ([7299e5f](https://github.com/Millennium44/Toolasha/commit/7299e5f5caa13e96e2bce911daec7d10e7d77b3e))
+- a migrated networth array is read together with snapshot keys already stored ([7d944a8](https://github.com/Millennium44/Toolasha/commit/7d944a800072458b7340c32fea14c219abd79e46))
+- a pinned default never overrides a setting the player chose, and the startup log redacts URLs ([e34b72d](https://github.com/Millennium44/Toolasha/commit/e34b72dcedbed2dde502f6af32728d35bd2d568d))
+- a pinned default never overrides a setting the player really chose in sync ([9e033de](https://github.com/Millennium44/Toolasha/commit/9e033de02f31b955dc1abddd0837826f92a17390))
+- a pull no longer deletes an unmigrated local networth detail array ([8089442](https://github.com/Millennium44/Toolasha/commit/80894423b834fcb09a3621a0b48c89b74d494a6c))
+- an older copy of the same checkpoints no longer syncs as a change ([9e9ec63](https://github.com/Millennium44/Toolasha/commit/9e9ec630051229cd717ae29c544964cf8965c589))
+- an older copy of this browser's own checkpoints no longer asks for a reload ([5a30b74](https://github.com/Millennium44/Toolasha/commit/5a30b744b5199bcd1adf6535158f014fdb0b763d))
+- build signature ignores task kill counts and task-monster order ([ac30d41](https://github.com/Millennium44/Toolasha/commit/ac30d41dcc87c4118b97a56332f7dd4774b686d3))
+- chat 24hr timestamps read the native date in the browser's field order ([abb1b37](https://github.com/Millennium44/Toolasha/commit/abb1b37461e8f80192df7f7b468bce59e2de636f))
+- chat dates on day-first locales, loot log tombstones, and old-format K marks ([7c88646](https://github.com/Millennium44/Toolasha/commit/7c88646267ebf91b453fd887612ea752b48e825f))
+- combat sim dungeon chest quantity is taken at the boss kill, not the respawn ([a4c3177](https://github.com/Millennium44/Toolasha/commit/a4c31779d23995f3d5b8c53da59c7752fd06ec5d))
+- combat sim loot keys ignore buffs that lapsed while a player was down ([e74b156](https://github.com/Millennium44/Toolasha/commit/e74b1569680a54084e66f22fb86f240104af17ea))
+- combat sim values loot at the buffs held when each kill lands ([2eec21b](https://github.com/Millennium44/Toolasha/commit/2eec21bad489b428977cff33f0d3238343e01961))
+- decompose chain counts an output with no real bid at zero instead of dropping the item ([e0d2ede](https://github.com/Millennium44/Toolasha/commit/e0d2ede8d4ad2ffffb0549fc8f20c0ea18fd0ccd))
+- decompose chain ranking counts unpriced outputs as zero instead of dropping the item ([a894b02](https://github.com/Millennium44/Toolasha/commit/a894b02d0713ac9f2b913d1d0f17c954ea558df8))
+- every full-map settings write stamps its defaults as fills, and quotes pair only at word edges ([f517f01](https://github.com/Millennium44/Toolasha/commit/f517f015e6853a2749056d567f603fee175fcc63))
+- flipped checkbox defaults no longer reach existing players ([8377cb9](https://github.com/Millennium44/Toolasha/commit/8377cb9668872f5eb50625e3a9743070c431965c))
+- flipped checkbox defaults no longer reach existing players ([04ea975](https://github.com/Millennium44/Toolasha/commit/04ea975d253224dfcd8fb0207636e8f0b6ace3ea))
+- fresh-install defaults stamp as fills that lose to pins, and log redaction closes its gaps ([efaf0ae](https://github.com/Millennium44/Toolasha/commit/efaf0aea8c8ac770fefde80eec6943e420b9f6e3))
+- guild and leaderboard XP columns fill for members with a rank badge ([d22e011](https://github.com/Millennium44/Toolasha/commit/d22e01123915c032bbffd84898709da7a600e012))
+- guild member names drop the rank chip without pulling in another bundle ([cc263fb](https://github.com/Millennium44/Toolasha/commit/cc263fb15a5ffa37963242cfbe9a8af1825dd8f0))
+- guild members and leaderboard XP columns fill for members with a rank chip ([3368426](https://github.com/Millennium44/Toolasha/commit/3368426b04f016a78017b95dade4148e350b95c4))
+- leaderboard rank sort and rank read ignore the rank-movement mark ([afe0e7d](https://github.com/Millennium44/Toolasha/commit/afe0e7dc6fae253dae28ab9fd42e7bb9807e94ca))
+- leaderboard Rank sort ignores the rank movement mark ([4dc4764](https://github.com/Millennium44/Toolasha/commit/4dc47649c6967309379b38c2ebc8c203eea95f47))
+- loot log tombstones still match a run after its reissued ids are folded together ([65e645d](https://github.com/Millennium44/Toolasha/commit/65e645db714a5c731c7023cf72c8fe23c3ba7530))
+- marketplace chain badge names the outputs counted at zero ([116511e](https://github.com/Millennium44/Toolasha/commit/116511e21dde6fddcb427181f6a7b1ae003cd0e3))
+- networth sync keeps the pre-split detail array until its entries are covered by snapshot keys ([43068a6](https://github.com/Millennium44/Toolasha/commit/43068a6051a622776d08d0cc9d239f716c168a81))
+- pinned defaults are never written alone when no settings map is on disk ([bfd420c](https://github.com/Millennium44/Toolasha/commit/bfd420cbe104c11fe98913b0b731fcb6864e0e19))
+- pinned defaults stay open until a settings map exists, so a synced-in older map is reconciled ([6ce78da](https://github.com/Millennium44/Toolasha/commit/6ce78da37ce353045941e77a87f49206e8b3051a))
+- pinned previous defaults are checked on every load, with no flag to go stale ([5a54d48](https://github.com/Millennium44/Toolasha/commit/5a54d48737e212078df4647022b56a98ed50d798))
+- remembered trigger result expires after 30 minutes and follows script and game versions ([6d61143](https://github.com/Millennium44/Toolasha/commit/6d611439eb83a73e7b6ad8e51e23967a83e01641))
+- remembered trigger result follows prices and the selected player ([d13af87](https://github.com/Millennium44/Toolasha/commit/d13af87a870e211afda844914baf57bd8156e8fd))
+- restore the exact dragged inventory and chat panel widths after reload ([e9e2b0d](https://github.com/Millennium44/Toolasha/commit/e9e2b0d32be31f27c7195681f03db68c2e571727))
+- restore the exact dragged inventory and chat panel widths after reload ([4545d85](https://github.com/Millennium44/Toolasha/commit/4545d8537d7a7327b53506dbd5f3d80cc229336b))
+- self-use marks written in the old shape by another tab are retired on reload ([7a16cf8](https://github.com/Millennium44/Toolasha/commit/7a16cf841e7278a06316d6696328157f251682ee))
+- startup log redaction keeps the original cut and strips query-only and name=value secrets ([9add6d7](https://github.com/Millennium44/Toolasha/commit/9add6d76c2f828c10beb616a17e980dd1ef9bcca))
+- startup log redaction no longer leaks URL queries or quotes cut by the length limit ([1406895](https://github.com/Millennium44/Toolasha/commit/1406895267c9c3e5bca4ef0d611973067ea286b3))
+- sync stops writing back the old networth detail record on every pull ([de8125a](https://github.com/Millennium44/Toolasha/commit/de8125a7ed73ba1c3dde966916c0febe59484c5b))
+- sync stops writing back the pre-split networth detail key and names keys a pull wrote whole ([cc9e51c](https://github.com/Millennium44/Toolasha/commit/cc9e51c097f81ae1972895af7aa58b20ba57f11a))
+- task zone progress and the task claim toast stay off by default ([c1b4976](https://github.com/Millennium44/Toolasha/commit/c1b49766ee804164928c7f2b59b16549e62e391b))
+- the old networth array is never counted into the 25-snapshot window ([3f982c5](https://github.com/Millennium44/Toolasha/commit/3f982c5a04c2473ba9da44ac96f136f112e03f94))
+- the pull summary names tombstone companions the import added ([c812d3f](https://github.com/Millennium44/Toolasha/commit/c812d3f15c566a7008897d27acdcb074d6b5a898))
+- trigger Apply refuses when the zone or tier changed since the analysis ([b020da6](https://github.com/Millennium44/Toolasha/commit/b020da63edd532cf20ea3c8e01946ff59534e4f4))
+- trigger optimizer counts profit changes from a zero baseline ([5b603a6](https://github.com/Millennium44/Toolasha/commit/5b603a6e1262d2942881bedc6e3471491e0c1d44))
+- trigger optimizer does not tune a food or drink that has no price ([f21dba9](https://github.com/Millennium44/Toolasha/commit/f21dba9e810f833d1854d40c1cdbb5bb2deda8b7))
+- trigger optimizer never scores a profit it could not value ([083771b](https://github.com/Millennium44/Toolasha/commit/083771b11ce60e50d4b2101abd6aa5717c35cff5))
+- trigger optimizer scoring, pricing, party and Apply checks; combat sim values loot at each kill ([6b839e9](https://github.com/Millennium44/Toolasha/commit/6b839e9addafef9b94b519f2a6670e0e1b47ab9c))
+- trigger optimizer simulates the party Simulate would, honoring Solo ([e43c163](https://github.com/Millennium44/Toolasha/commit/e43c16363f1c4f6cfe86a14dce5fa870e9b7c6ee))
+- trigger optimizer values every sim of a search at the same prices ([0bd1ca5](https://github.com/Millennium44/Toolasha/commit/0bd1ca5a39a2a1db71f5fdf81a36150d175cab97))
+
+### Performance Improvements
+
+- trigger tuning confirms changes sequentially and stops early on clear cases ([4dd5e04](https://github.com/Millennium44/Toolasha/commit/4dd5e04bdc036d672f248fe061f0e06c0cac4461))
+- trigger tuning skips triggers that never came into play in the fight ([2e1aa30](https://github.com/Millennium44/Toolasha/commit/2e1aa3016a0e64803c0dccbf443fb06a092e14f2))
+
+### Documentation
+
+- changelog for recent panels starting on ([6234aa1](https://github.com/Millennium44/Toolasha/commit/6234aa1ef951856fede7c3bcc0b4d7bba0521fa6))
+- changelog for the chat date, loot log and K mark fixes ([48bdc20](https://github.com/Millennium44/Toolasha/commit/48bdc20a9d8b90075f23d713ca989dac0443986b))
+- changelog for the checkpoint sync fold fix ([d95746b](https://github.com/Millennium44/Toolasha/commit/d95746b3831a50c5cfe87f66e0557a7c9ed5a417))
+- changelog for the exact panel width restore ([b72c3d7](https://github.com/Millennium44/Toolasha/commit/b72c3d7807ac2e7e5ba74ccf1a9be19a0248e812))
+- changelog for the leaderboard rank sort fix ([002711b](https://github.com/Millennium44/Toolasha/commit/002711b2ae2f08c3de18ed7a170ca8b7882df341))
+- changelog for the old networth record sync fix ([fce31bf](https://github.com/Millennium44/Toolasha/commit/fce31bf418cacbae5608a0697c4873013e61080b))
+- changelog for the partial decompose chain ranking ([34a54d0](https://github.com/Millennium44/Toolasha/commit/34a54d0dfda3d505261188bd7e18fe8d76fed87c))
+- changelog for the pinned-default sync and startup log fixes ([6f8ee8d](https://github.com/Millennium44/Toolasha/commit/6f8ee8d2f7ddb4e093ae715b5806ac2bea8d2f86))
+- changelog for the trigger optimizer and combat sim loot fixes ([3e7636b](https://github.com/Millennium44/Toolasha/commit/3e7636b2970e7e1343f6036aa37dc3e149db1d6f))
+- changelog for the trigger optimizer improvements ([3c7e67f](https://github.com/Millennium44/Toolasha/commit/3c7e67ff649f51398d21a132996356399efabb99))
+- changelog for Triggers as a standard option ([271d7ca](https://github.com/Millennium44/Toolasha/commit/271d7ca4c8a13396a2482ec748beb46d87498698))
+- changelog notes the Triggers tuning scope ([20a6f1e](https://github.com/Millennium44/Toolasha/commit/20a6f1ef1f1d9cdf4d0efefa336e68a26b76bd71))
+- changelog says existing players keep the flipped switches off ([f83c0fb](https://github.com/Millennium44/Toolasha/commit/f83c0fb1f212bf2d159213d78d4b1d083be9a16c))
+- new features may default on; off only for intrusive, heavy or experimental ones ([1fb71c4](https://github.com/Millennium44/Toolasha/commit/1fb71c43acfa67cf39c75e00427964c95adf9f89))
+
+### Tests
+
+- registry mocks expose retentionKeepsLocal ([53aeb60](https://github.com/Millennium44/Toolasha/commit/53aeb60dd4a387b035c39b79e7324ae34817ef76))
 
 ## [3.67.0](https://github.com/Millennium44/Toolasha/compare/v3.66.0...v3.67.0) (2026-10-11)
 
