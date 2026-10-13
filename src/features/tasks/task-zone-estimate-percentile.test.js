@@ -17,6 +17,7 @@ import {
     createMedianHint,
     formatPercentSuffix,
     getZoneEstimatePercent,
+    zoneBottleneckEstimate,
     zoneFightEstimate,
     ZONE_ESTIMATE_PERCENTS,
 } from './task-zone-estimate-percentile.js';
@@ -112,5 +113,48 @@ describe('labels', () => {
         expect(hint.title).toContain('Planning for 90% confidence. Median (50%): ~');
         expect(createMedianHint(zoneFightEstimate({ ...rare, percent: 50 }))).toBeNull();
         expect(createMedianHint(zoneFightEstimate({ ...rare, deterministic: true, percent: 90 }))).toBeNull();
+    });
+});
+
+describe('zoneBottleneckEstimate', () => {
+    const entries = [
+        { hrid: '/monsters/slime', name: 'Slime', remaining: 110, taskCount: 1 },
+        { hrid: '/monsters/ooze', name: 'Ooze', remaining: 10, taskCount: 2 },
+    ];
+    const simResult = { deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 }, encounters: 100 };
+
+    test('takes the largest per-monster requirement, not the largest mean', () => {
+        const est = zoneBottleneckEstimate({ monsterEntries: entries, simResult, percent: 90 });
+        const ooze = fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 0.1, confidencePercent: 90 });
+        const oozeMedian = fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 0.1, confidencePercent: 50 });
+        expect(est.fightsNeeded).toBe(ooze);
+        expect(est.hoursNeeded).toBeCloseTo(ooze / 100);
+        // The median hint belongs to the monster that set the figure
+        expect(est.medianFightsNeeded).toBe(oozeMedian);
+        expect(est.limiting).toEqual({ hrid: '/monsters/ooze', name: 'Ooze', taskCount: 2 });
+    });
+
+    test('a boss contributes its mean, and a mean that wins shows unlabeled', () => {
+        const est = zoneBottleneckEstimate({
+            monsterEntries: [{ hrid: '/monsters/boss', name: 'Boss', remaining: 1000, taskCount: 1 }, entries[1]],
+            simResult: { deaths: { '/monsters/boss': 50, '/monsters/ooze': 10 }, encounters: 100 },
+            isBoss: (hrid) => hrid === '/monsters/boss',
+            percent: 90,
+        });
+        expect(est).toMatchObject({ fightsNeeded: 2000, percent: null, limiting: { name: 'Boss' } });
+    });
+
+    test('an uncleared monster makes the whole zone infinite', () => {
+        const est = zoneBottleneckEstimate({
+            monsterEntries: entries,
+            simResult: { deaths: { '/monsters/slime': 100 }, encounters: 100 },
+            percent: 90,
+        });
+        expect(est.fightsNeeded).toBe(Infinity);
+        expect(est.limiting.name).toBe('Ooze');
+    });
+
+    test('no entries gives null', () => {
+        expect(zoneBottleneckEstimate({ monsterEntries: [], simResult, percent: 90 })).toBeNull();
     });
 });

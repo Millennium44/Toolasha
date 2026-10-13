@@ -732,7 +732,9 @@ class TaskStatistics {
 
         for (const zone of okZones) {
             const finite = Number.isFinite(zone.hoursNeeded) && Number.isFinite(zone.fightsNeeded);
-            const bottleneck = zone.taskCount > 1 ? `${zone.bottleneckName} ×${zone.taskCount}` : zone.bottleneckName;
+            // Name the monster that sets the quoted figure, which need not be the mean bottleneck
+            const limiting = zone.estimate?.limiting || { name: zone.bottleneckName, taskCount: zone.taskCount };
+            const bottleneck = limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
             // The row quotes the percentile estimate; the click below pads the mean for its pre-fill
             const shown = zone.estimate || {
                 fightsNeeded: zone.fightsNeeded,

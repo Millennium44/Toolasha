@@ -280,6 +280,25 @@ describe('computeAllZoneProgress', () => {
         expect(row.estimate.hoursNeeded).toBeCloseTo(p95 / 50);
     });
 
+    test('the monster needing the most fights at the percentile sets the figure, not the largest mean', async () => {
+        // 100 fights an hour. Slime (common): 110 kills at 1 a fight, mean 110 fights.
+        // Ooze (rare): 10 kills at 0.1 a fight, mean 100 fights but a far longer tail.
+        h.quests = [quest('/monsters/slime', 110), quest('/monsters/ooze', 10)];
+        h.runSimulation.mockResolvedValue({
+            deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 },
+            encounters: 100,
+        });
+
+        const [row] = await computeAllZoneProgress({ percent: 90 });
+
+        const slime = fightsForKillConfidence({ killsNeeded: 110, killsPerFight: 1, confidencePercent: 90 });
+        const ooze = fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 0.1, confidencePercent: 90 });
+        expect(ooze).toBeGreaterThan(slime);
+        // The mean (what a click pads) still belongs to the largest-mean monster, slime
+        expect(row).toMatchObject({ bottleneckHrid: '/monsters/slime', fightsNeeded: 110, killsNeeded: 110 });
+        expect(row.estimate).toMatchObject({ fightsNeeded: ooze, percent: 90, limiting: { name: 'Ooze' } });
+    });
+
     test('rows sort by the hours they show, not the mean', async () => {
         // Zone A: a rare ooze, 5h on average but much longer at 90%.
         // Zone B: an imp every fight, 5.2h and no luck in it.

@@ -181,11 +181,12 @@ describe('an open combat estimate follows the task progress', () => {
 
         ooze.card.dataset.progress = '50';
         taskProfitDisplay._refreshOpenCombatEstimates();
-        // Gobo and Ooze both 5h now; the first one, Gobo, is named: 100 kills at half a kill a fight
-        const after = fightsForKillConfidence({ killsNeeded: 100, killsPerFight: 0.5, confidencePercent: 90 });
+        // Gobo and Ooze both 5h on average now, but Ooze is the rarer kill (50 kills at a quarter of
+        // a kill a fight) and needs more fights for 90% coverage, so it sets the figure
+        const after = fightsForKillConfidence({ killsNeeded: 50, killsPerFight: 0.25, confidencePercent: 90 });
         expect(after).not.toBe(before);
         expect(summaryOf()).toContain(`~${after} fights (90%)`);
-        expect(summaryOf()).toContain('bottleneck: Gobo');
+        expect(summaryOf()).toContain('bottleneck: Ooze');
 
         // A finished task is not part of the zone any more, so a single
         // task left in it is not a zone summary

@@ -19,7 +19,7 @@ import {
     createMedianHint,
     formatPercentSuffix,
     getZoneEstimatePercent,
-    zoneFightEstimate,
+    zoneBottleneckEstimate,
 } from './task-zone-estimate-percentile.js';
 import {
     isCardInConfirmState,
@@ -2383,18 +2383,20 @@ class TaskProfitDisplay {
                     // the mean (see task-zone-estimate-percentile.js); Go keeps
                     // padding the mean on its own setting
                     const zoneInfo = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
-                    const estimate = zoneFightEstimate({
-                        meanFights: bottleneck.fightsNeeded,
-                        meanHours: bottleneck.hoursNeeded,
-                        fightsPerHour: bottleneck.fightsPerHour,
-                        killsNeeded: bottleneck.bottleneckRemaining,
-                        killsPerFight: bottleneck.killsPerFight,
+                    const estimate = zoneBottleneckEstimate({
+                        monsterEntries: [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry })),
+                        simResult,
+                        simHours,
                         slotsPerFight: Number(zoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount) || null,
-                        deterministic: Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid)),
+                        isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
                         percent: getZoneEstimatePercent(),
                     });
                     const totalSeconds = Math.round(estimate.hoursNeeded * 3600);
-                    summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
+                    // Name the monster that sets the quoted figure, which need not be the mean bottleneck
+                    const limiting = estimate.limiting;
+                    const limitingLabel =
+                        limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
+                    summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(totalSeconds)} (bottleneck: ${limitingLabel})`;
                     const medianHint = createMedianHint(estimate);
                     if (medianHint) summary.appendChild(medianHint);
                 } else {

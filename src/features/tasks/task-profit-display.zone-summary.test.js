@@ -166,10 +166,30 @@ describe('zone summary line', () => {
             ],
             { deaths: { '/monsters/slime': 100, '/monsters/ooze': 50 } }
         );
-        // slime 1h is the bottleneck; fights/hour = 150, so 2/3 of a slime a fight
-        const fights = fightsForKillConfidence({ killsNeeded: 100, killsPerFight: 100 / 150, confidencePercent: 90 });
+        // both need 1h; fights/hour = 150. Ooze is the rarer kill (a third of one a fight), so it
+        // needs more fights for 90% coverage than slime (2/3 of one a fight) and sets the figure
+        const fights = fightsForKillConfidence({ killsNeeded: 50, killsPerFight: 50 / 150, confidencePercent: 90 });
         const seconds = Math.round((fights / 150) * 3600);
-        expect(text).toBe(`Zone Z: ~${fights} fights (90%) | ${timeReadable(seconds)} (bottleneck: Slime)`);
+        expect(text).toBe(`Zone Z: ~${fights} fights (90%) | ${timeReadable(seconds)} (bottleneck: Ooze)`);
+    });
+
+    test('the monster needing the most fights at the percentile sets the figure, not the largest mean', () => {
+        stubGame();
+        // 100 fights an hour. Slime (common): 110 kills at 1 a fight, mean 110 fights.
+        // Ooze (rare): 10 kills at 0.1 a fight, mean 100 fights but a far longer tail.
+        const text = renderSummary(
+            [
+                ['Slime', 110, 0],
+                ['Ooze', 10, 0],
+            ],
+            { deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 }, encounters: 100 }
+        );
+        const slime = fightsForKillConfidence({ killsNeeded: 110, killsPerFight: 1, confidencePercent: 90 });
+        const ooze = fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 0.1, confidencePercent: 90 });
+        expect(ooze).toBeGreaterThan(slime);
+        expect(text).toBe(
+            `Zone Z: ~${ooze} fights (90%) | ${timeReadable(Math.round((ooze / 100) * 3600))} (bottleneck: Ooze)`
+        );
     });
 });
 

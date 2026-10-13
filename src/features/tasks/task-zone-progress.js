@@ -18,7 +18,7 @@ import { TASK_DAMAGE_PER_MONSTER } from '../combat-sim/engine/task-damage-mode.j
 import { lastUsedTierForZone } from '../../utils/combat-actions.js';
 import { characterIdentityChanged } from '../../utils/combat-zone-open.js';
 import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
-import { getZoneEstimatePercent, zoneFightEstimate } from './task-zone-estimate-percentile.js';
+import { getZoneEstimatePercent, zoneBottleneckEstimate } from './task-zone-estimate-percentile.js';
 
 /**
  * Active combat tasks, grouped zone -> monster, the way the task card's zone summary counts them:
@@ -182,15 +182,13 @@ export async function computeAllZoneProgress({
                 killsPerFight: bottleneck.killsPerFight,
                 slotsPerFight,
                 deterministic,
-                // What the row shows: a quantile of the fights needed, not the mean above
-                estimate: zoneFightEstimate({
-                    meanFights: bottleneck.fightsNeeded,
-                    meanHours: bottleneck.hoursNeeded,
-                    fightsPerHour: bottleneck.fightsPerHour,
-                    killsNeeded: bottleneck.bottleneckRemaining,
-                    killsPerFight: bottleneck.killsPerFight,
+                // What the row shows: the largest per-monster quantile of the fights needed, not the
+                // mean above (which stays the mean bottleneck's, for padding a click's pre-fill)
+                estimate: zoneBottleneckEstimate({
+                    monsterEntries: entries,
+                    simResult,
                     slotsPerFight,
-                    deterministic,
+                    isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
                     percent,
                 }),
                 bottleneckHrid: bottleneck.bottleneckHrid,
