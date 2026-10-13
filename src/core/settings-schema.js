@@ -512,6 +512,13 @@ export const settingsGroups = {
                 ],
                 help: 'Which figure the best items table ranks by. The chain mode buys the item at its ask, decomposes it and everything it yields, and sells what is left at bid after tax; the buttons in the table change this too.',
             },
+            alchemyBestItems_prefillLevelFilter: {
+                id: 'alchemyBestItems_prefillLevelFilter',
+                label: 'Alchemy panel: Pre-fill Best Items max level from current skill level',
+                type: 'checkbox',
+                default: false,
+                help: 'When opening Best Items, sets the max level filter to your current Alchemy skill level. Off by default: alchemy has no hard level requirement, so a higher-level item can still be the most profitable.',
+            },
             alchemyItemPins: {
                 id: 'alchemyItemPins',
                 label: 'Alchemy panel: Pin items in the item picker',
