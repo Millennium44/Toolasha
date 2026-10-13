@@ -390,7 +390,17 @@ class WhatsNew {
         try {
             const current = this._identity();
             const schemaIds = getAllSettingIds();
-            const stored = await storage.getJSON(this._stateKey(), 'settings', null);
+            // `tryGet`, not `getJSON`: a timed-out or failed read answers the
+            // `null` fallback, which is indistinguishable from "never stored"
+            // and would hand a player with years of settings the fresh-install
+            // dialog while storage was merely not answering.
+            const stateKey = this._stateKey();
+            const probed = await storage.tryGet(stateKey, 'settings');
+            if (probed === null) {
+                console.warn('[WhatsNew] Could not read the update state; skipping reconciliation this load');
+                return;
+            }
+            const stored = probed.found ? storage.parseJSON(probed.value, stateKey, null) : null;
 
             // First run of the what's-new system. Two very different people
             // land here: a genuinely fresh install, and somebody arriving from
@@ -400,7 +410,17 @@ class WhatsNew {
             // fork added are computable even though the other script never ran
             // a line of our code.
             if (!stored) {
-                const storedIds = await config.storedSettingIds();
+                const storedRead = await config.tryStoredSettingIds();
+                if (!storedRead.readable) {
+                    // Same rule as the state read above: "could not read" is
+                    // not "nothing saved", and nothing is recorded so the
+                    // next good load reconciles normally.
+                    console.warn(
+                        '[WhatsNew] Could not read the saved settings; skipping the first-run offer this load'
+                    );
+                    return;
+                }
+                const storedIds = storedRead.ids;
                 // Whether there is another character to copy settings from — the
                 // one-click "make this alt like my main" a fresh character wants.
                 const canCopy = (await config.getKnownCharacterCount()) > 1;

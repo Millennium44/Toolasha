@@ -975,6 +975,14 @@ class Config {
         return settingsStorage.storedSettingIds();
     }
 
+    /**
+     * Stored setting ids with a flag for whether the read worked.
+     * @returns {Promise<{readable: boolean, ids: Array<string>|null}>}
+     */
+    async tryStoredSettingIds() {
+        return settingsStorage.tryStoredSettingIds();
+    }
+
     getSettingValue(key, defaultValue = null) {
         if (key in this._pendingValues) return this._pendingValues[key];
 

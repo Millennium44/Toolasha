@@ -1579,10 +1579,14 @@ class SyncManager {
         if (!this._stillOwns(opToken)) {
             if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
             console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
-            showToast('Sync imported data during a character switch. Reload now before making more changes.', {
-                kind: 'warn',
-                duration: 0,
-            });
+            // A pull that landed only live-safe records latched nothing (see below), so a takeover has
+            // nothing to reload for either. A result without the count is taken as having latched.
+            if (latched !== 0 || complete === false || mergeFailed?.length || mergeHeld?.length) {
+                showToast('Sync imported data during a character switch. Reload now before making more changes.', {
+                    kind: 'warn',
+                    duration: 0,
+                });
+            }
             return { ok: false, reason: 'stopped-after-apply' };
         }
 

@@ -45,24 +45,18 @@ export function isNonMarketCurrency(baseHrid) {
     );
 }
 
-/** The one calculator start in flight, so a burst of valuations enqueues a single worker pass */
-let evStartInFlight = false;
-
 /**
- * Start the expected-value calculator if it is not running, at most once at a time. A loot log
- * redraw values many task-token rows before the calculator finishes; without this each one
- * enqueued another full pass and another completion event. The flag clears when the start
- * settles, so a start that failed (no data yet) can be retried by a later valuation.
+ * Start the expected-value calculator if it is not running. A loot log redraw values many
+ * task-token rows before the calculator finishes; the calculator shares one in-flight start
+ * between every caller, so these calls join it rather than each enqueueing another full
+ * pass and completion event. A start that failed (no data yet) can be retried by a later valuation.
  */
 async function startExpectedValueCalculator() {
-    if (expectedValueCalculator.isInitialized || evStartInFlight) return;
-    evStartInFlight = true;
+    if (expectedValueCalculator.isInitialized) return;
     try {
         await expectedValueCalculator.initialize?.();
     } catch (error) {
         console.error('[LootLogCurrency] Expected value start failed:', error);
-    } finally {
-        evStartInFlight = false;
     }
 }
 
