@@ -189,8 +189,8 @@ const schema = {
                 type: 'button',
                 buttonLabel: 'Reset to pro defaults',
             },
-            itemTooltip_alchemyInsteadGoldPerHour: {
-                id: 'itemTooltip_alchemyInsteadGoldPerHour',
+            actionPanel_craftingPlanGoldPerHour: {
+                id: 'actionPanel_craftingPlanGoldPerHour',
                 label: 'Gold rate',
                 type: 'number',
                 shorthand: true,
@@ -2273,7 +2273,7 @@ describe('the self-use keep list review', () => {
 });
 
 describe('a shorthand number box (the alchemy gold rate)', () => {
-    const ID = 'itemTooltip_alchemyInsteadGoldPerHour';
+    const ID = 'actionPanel_craftingPlanGoldPerHour';
 
     /**
      * Type into the box and fire the change the browser would.

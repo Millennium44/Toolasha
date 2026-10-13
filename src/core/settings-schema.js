@@ -653,10 +653,12 @@ export const settingsGroups = {
             },
             actionPanel_craftingPlanGoldPerHour: {
                 id: 'actionPanel_craftingPlanGoldPerHour',
-                label: 'Action panel: Crafting plan gold/hr value',
+                label: 'Your time value (gold/hr)',
                 type: 'number',
+                shorthand: true,
                 default: 0,
-                help: 'Your time value in gold per hour. Used to calculate if crafting intermediates is worth the time. Set to your typical hourly profit (e.g., 500000).',
+                min: 0,
+                help: 'What an hour of your time earns elsewhere, in gold. The crafting plan uses it to decide whether crafting an intermediate is worth the time, and the "Instead of buying" alchemy routes charge their alchemy time at it. Set it to your typical hourly profit; 3m, 500k or 1.5b all work. 0 leaves time free.',
             },
             actionPanel_craftingPlanThinMarket: {
                 id: 'actionPanel_craftingPlanThinMarket',
@@ -899,17 +901,7 @@ export const settingsGroups = {
                 label: 'Show cheaper alchemy routes instead of buying',
                 type: 'checkbox',
                 default: false,
-                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than its ask, and how much each saves per unit. The source, catalyst and tea are bought at their asks; every other output is sold at its bid after tax, or valued at its ask when kept for self-use (see "What a K mark means"). Estimated prices are left out. Nothing is shown when buying is cheapest.',
-            },
-            itemTooltip_alchemyInsteadGoldPerHour: {
-                id: 'itemTooltip_alchemyInsteadGoldPerHour',
-                label: 'Cheaper alchemy routes: your gold rate (per hour)',
-                type: 'number',
-                shorthand: true,
-                default: 0,
-                min: 0,
-                requires: 'itemTooltip_alchemyInsteadOfBuying',
-                help: 'What an hour of your time earns elsewhere (combat, say). Type it as 3m, 500k or 1.5b if you like. The alchemy time a route takes is charged at this rate, so a route is shown only when it still beats buying, and its gain is given per hour over this rate. 0 leaves the time free.',
+                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than its ask, and how much each saves per unit. The source, catalyst and tea are bought at their asks; every other output is sold at its bid after tax, or valued at its ask when kept for self-use (see "What a K mark means"). Estimated prices are left out. Nothing is shown when buying is cheapest. Alchemy time is charged at "Your time value (gold/hr)".',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',

@@ -50,7 +50,7 @@ import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } fr
 /** The setting that draws the lines */
 export const INSTEAD_SETTING = 'itemTooltip_alchemyInsteadOfBuying';
 /** Your gold per hour; 0 leaves alchemy time free */
-export const GOLD_RATE_SETTING = 'itemTooltip_alchemyInsteadGoldPerHour';
+export const GOLD_RATE_SETTING = 'actionPanel_craftingPlanGoldPerHour';
 
 /** Most alternatives shown */
 export const MAX_ALTERNATIVES = 2;

@@ -39,7 +39,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
             if (id === 'itemTooltip_selfUseKeepChip') return settings.keepChip;
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
-            if (id === 'itemTooltip_alchemyInsteadGoldPerHour') return settings.goldRate;
+            if (id === 'actionPanel_craftingPlanGoldPerHour') return settings.goldRate;
             return true;
         },
         getSettingValue: (id, fallback) => {
