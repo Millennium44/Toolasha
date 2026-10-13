@@ -20,6 +20,8 @@ const game = vi.hoisted(() => ({
     // A dropped IndexedDB connection: reads say they could not be made
     unavailable: false,
     testServer: false,
+    /** Runs once, just before the next write lands */
+    beforeSet: null,
 }));
 
 vi.mock('../../utils/game-server.js', () => ({
@@ -46,8 +48,13 @@ vi.mock('../../core/storage.js', () => ({
                 ? { found: true, value: structuredClone(game.store[key]) }
                 : { found: false, value: null };
         },
-        set: async (key, value) => {
-            game.store[key] = value;
+        set: async (key, value, _store, _immediate, options) => {
+            // A write that lands later than it was asked for: a sync pull storing a value in between
+            const intervening = game.beforeSet;
+            game.beforeSet = null;
+            intervening?.();
+            // A folding write is handed what is stored when it lands, as the real one is
+            game.store[key] = options?.fold ? (options.fold(game.store[key], value) ?? value) : value;
             return true;
         },
         delete: async (key) => {
@@ -1356,6 +1363,17 @@ describe('the record cannot be wiped by a failed read or a stale copy', () => {
 
         expect(await saveTrialRecord('Milky Way', record([2, 3]))).toBe(true);
         expect(storedTimes()).toEqual([1, 2, 3]);
+    });
+
+    test('a value a sync pull stores between the probe and the write is folded in, not written over', async () => {
+        game.store[KEY] = record([1]);
+        // The pull lands after the save has probed storage and before its debounced write does
+        game.beforeSet = () => {
+            game.store[KEY] = record([1, 9]);
+        };
+
+        expect(await saveTrialRecord('Milky Way', record([1, 2]))).toBe(true);
+        expect(storedTimes()).toEqual([1, 2, 9]);
     });
 
     test('once storage is back, the next save lands everything', async () => {

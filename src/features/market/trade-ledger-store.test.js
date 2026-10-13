@@ -37,9 +37,14 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         }),
+        /** Runs once, just before the next write lands: a sync pull storing a value in the meantime */
+        beforeSet: null,
         // A folding write is handed what is stored when it lands, as the real one is
         set: vi.fn(async (key, value, store = 'settings', _immediate, options) => {
             if (storageMock.unavailable) return false;
+            const intervening = storageMock.beforeSet;
+            storageMock.beforeSet = null;
+            intervening?.();
             const map = storeFor(store);
             const folded = options?.fold ? (options.fold(map.get(key), value) ?? value) : value;
             map.set(key, structuredClone(folded));
@@ -393,6 +398,35 @@ describe('splitting the single key into day records', () => {
 
         expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1, 2]);
         expect(LEDGER().has('tradeLedgerRecords')).toBe(true);
+    });
+
+    test('the single key, while it is the record, folds a value a pull stores before the write lands', async () => {
+        LEDGER().set(RECORDS_KEY, [fill(1, DAY1)]);
+        tradeLedgerStore._legacy = true;
+        memory([fill(3, DAY3)], {});
+        // The pull lands after the save has probed storage and before its debounced write does
+        storageMock.beforeSet = () => LEDGER().set(RECORDS_KEY, [fill(1, DAY1), fill(9, DAY2)]);
+
+        await tradeLedgerStore.saveRecords(new Set());
+
+        expect(
+            LEDGER()
+                .get(RECORDS_KEY)
+                .map((r) => r.listingId)
+                .sort()
+        ).toEqual([1, 3, 9]);
+    });
+
+    test('the baselines fold a value a pull stores before the write lands', async () => {
+        const state = (filledQuantity) => ({ filledQuantity, itemHrid: '/items/a', enhancementLevel: 0 });
+        LEDGER().set(STATE_KEY, { 1: state(1) });
+        memory([], { 3: state(0) });
+        // The pull lands after the save has probed storage and before its write does
+        storageMock.beforeSet = () => LEDGER().set(STATE_KEY, { 1: state(1), 9: state(4) });
+
+        await tradeLedgerStore.saveStates();
+
+        expect(Object.keys(LEDGER().get(STATE_KEY)).sort()).toEqual(['1', '3', '9']);
     });
 
     test('a single key that comes back after the split is folded into the day records and removed', async () => {

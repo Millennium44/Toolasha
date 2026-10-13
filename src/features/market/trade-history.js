@@ -66,7 +66,14 @@ export function mergeHistory(base, fresh) {
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: 'settings', base: 'tradeHistory', merge: mergeHistory, label: 'Personal trade prices' });
+registerSyncMerge({
+    store: 'settings',
+    base: 'tradeHistory',
+    merge: mergeHistory,
+    label: 'Personal trade prices',
+    // Not liveSafe: readers use the in-memory `this.history`, which a pull does not refresh, so without a
+    // reload a running tab would keep showing old prices. `saveHistory` folds, so writes stay safe either way
+});
 
 /**
  * How long a burst of fills is allowed to gather before one save is made.
@@ -297,7 +304,13 @@ class TradeHistory {
                 this.history = pruneHistory(this.history);
                 // Not `immediate`: a price recorded a heartbeat before the tab
                 // closes is not worth flushing the store on every fill for
-                return await storage.setJSON(storageKey, this.history, 'settings');
+                // The write is debounced, and the probe above is only as fresh as the moment it ran: a sync pull
+                // can store a copy in the seconds before this lands. The same fold runs again inside the
+                // transaction that lands it, so that copy is merged rather than written over.
+                return await storage.setJSON(storageKey, this.history, 'settings', false, {
+                    fold: (stored, held) =>
+                        stored && typeof stored === 'object' ? pruneHistory(mergeHistory(stored, held)) : held,
+                });
             } catch (error) {
                 console.error('[TradeHistory] Failed to save history:', error);
                 return false;

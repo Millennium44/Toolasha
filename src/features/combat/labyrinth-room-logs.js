@@ -4040,6 +4040,8 @@ registerSyncMerge({
         mergeRoomLogsCleared(local, incoming, context?.forUpload ? MAX_LOG_SESSIONS : labyrinthRoomLogs.logSize()),
     label: 'Labyrinth room logs',
     capsLocally: true,
+    // Every write goes through `this.record`, a plain persisted record; only the user's Clear overwrites
+    liveSafe: true,
 });
 
 /** The singleton itself, for tests — the default export is the feature shell */

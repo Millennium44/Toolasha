@@ -7,6 +7,8 @@ const storageMock = vi.hoisted(() => {
     return {
         store,
         unavailable: false,
+        /** Runs once, just before the next write lands: a sync pull storing a value in the meantime */
+        beforeSet: null,
         tryGet: vi.fn(async (key) => {
             if (storageMock.unavailable) return null;
             return store.has(key)
@@ -14,8 +16,13 @@ const storageMock = vi.hoisted(() => {
                 : { found: false, value: null };
         }),
         get: vi.fn(async (key, _store, fallback = null) => (store.has(key) ? store.get(key) : fallback)),
-        set: vi.fn(async (key, value) => {
-            store.set(key, structuredClone(value));
+        set: vi.fn(async (key, value, _store, _immediate, options) => {
+            const intervening = storageMock.beforeSet;
+            storageMock.beforeSet = null;
+            intervening?.();
+            // A folding write is handed what is stored when it lands, as the real one is
+            const stored = store.has(key) ? structuredClone(store.get(key)) : undefined;
+            store.set(key, structuredClone(options?.fold ? (options.fold(stored, value) ?? value) : value));
             return true;
         }),
     };
@@ -327,6 +334,22 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
         await recorded;
 
         expect(guildXPTracker.leaderboardXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
+    });
+
+    test.each([
+        ['guild XP', GUILD_KEY],
+        ['member XP', MEMBER_KEY],
+        ['leaderboard XP', BOARD_KEY],
+    ])('%s: a value a sync pull stores between the probe and the write is folded in', async (_name, key) => {
+        storageMock.store.set(key, { a: [{ t: 1, xp: 1 }] });
+        // The pull lands after the save has probed storage and before its debounced write does
+        storageMock.beforeSet = () => {
+            storageMock.store.set(key, { a: [{ t: 1, xp: 1 }], pulled: [{ t: 5, xp: 5 }] });
+        };
+
+        expect(await guildXPTracker._persist(key, { a: [{ t: 1, xp: 1 }], mine: [{ t: 9, xp: 9 }] })).toBe(true);
+
+        expect(Object.keys(stored(key)).sort()).toEqual(['a', 'mine', 'pulled']);
     });
 
     test('a save merges what is stored under what is in memory, so another tab\u2019s samples survive', async () => {

@@ -1315,7 +1315,20 @@ function probeMergeWrite(key, value, merge, { overwrite = false } = {}) {
                     toWrite = merge(probe.value, value);
                 }
             }
-            await storage.set(key, toWrite, STORE_NAME);
+            // The write is debounced, and the probe above is only as fresh as the moment it ran: a sync pull can
+            // store a copy in the seconds before this lands. The fold is run again inside the transaction that
+            // lands it, so that copy is merged rather than written over. An overwrite states its value outright.
+            await storage.set(
+                key,
+                toWrite,
+                STORE_NAME,
+                false,
+                overwrite
+                    ? {}
+                    : {
+                          fold: (stored, held) => (stored && typeof stored === 'object' ? merge(stored, held) : held),
+                      }
+            );
             return true;
         } catch (error) {
             console.error(`[GuildTrialsStore] Failed to save ${key}:`, error);

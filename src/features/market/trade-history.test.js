@@ -33,8 +33,16 @@ const storageMock = vi.hoisted(() => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
         }),
-        setJSON: vi.fn(async (key, value, store = 'settings') => {
-            storeFor(store).set(key, structuredClone(value));
+        /** Runs once, just before the next write lands: a sync pull storing a value in the meantime */
+        beforeSet: null,
+        setJSON: vi.fn(async (key, value, store = 'settings', _immediate, options) => {
+            const intervening = storageMock.beforeSet;
+            storageMock.beforeSet = null;
+            intervening?.();
+            const map = storeFor(store);
+            // A folding write is handed what is stored when it lands, as the real one is
+            const folded = options?.fold ? (options.fold(map.get(key), value) ?? value) : value;
+            map.set(key, structuredClone(folded));
             return true;
         }),
     };
@@ -204,6 +212,20 @@ describe('saves are gathered rather than made per fill', () => {
 
         expect(tradeHistory.getHistory('/items/a', 0)).toEqual({ sell: 5, sellAt: NOW });
         expect(tradeHistory.getHistory('/items/a')).toEqual({ sell: 5, sellAt: NOW });
+    });
+});
+
+describe('a write queued before a sync pull lands keeps both', () => {
+    test('a price a pull stores between the probe and the write is folded in, not written over', async () => {
+        tradeHistory.history = { '/items/mine:0': { sell: 1, sellAt: NOW } };
+        // The pull lands after the save has probed storage and before its debounced write does
+        storageMock.beforeSet = () => {
+            storageMock.storeFor('settings').set(KEY, { '/items/pulled:0': { buy: 7, buyAt: NOW } });
+        };
+
+        expect(await tradeHistory.saveHistory()).toBe(true);
+
+        expect(Object.keys(stored()).sort()).toEqual(['/items/mine:0', '/items/pulled:0']);
     });
 });
 

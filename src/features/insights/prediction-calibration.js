@@ -89,6 +89,8 @@ registerSyncMerge({
     base: 'calibration',
     merge: mergeCalibrationRecords,
     label: 'Prediction calibration',
+    // Every write goes through `this.store`, a plain persisted record; only the user's Clear overwrites
+    liveSafe: true,
 });
 
 /** Under a minute a run's actual rate is mostly rounding on the clock */

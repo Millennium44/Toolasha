@@ -59,7 +59,15 @@ const LEGACY_PURGE_DONE_KEY = 'playerXPLegacyPurged';
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE_NAME, key: 'playerXP', merge: mergePlayerXP, label: 'Leaderboard XP' });
+registerSyncMerge({
+    store: STORE_NAME,
+    key: 'playerXP',
+    merge: mergePlayerXP,
+    label: 'Leaderboard XP',
+    // The only writer is `this.history`, a plain persisted record that folds stored under memory; the one overwrite
+    // is the once-per-install legacy purge
+    liveSafe: true,
+});
 
 const WINDOW_10M = 10 * 60 * 1000;
 const WINDOW_1H = 60 * 60 * 1000;

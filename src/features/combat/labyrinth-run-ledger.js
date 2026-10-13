@@ -89,7 +89,14 @@ const ledgerRecord = createPersistedRecord({
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE, base: STORAGE_KEY, merge: mergeLedgers, label: 'Labyrinth run ledger' });
+registerSyncMerge({
+    store: STORE,
+    base: STORAGE_KEY,
+    merge: mergeLedgers,
+    label: 'Labyrinth run ledger',
+    // Every write goes through `ledgerRecord.update`, a plain persisted record that folds stored under memory
+    liveSafe: true,
+});
 
 /**
  * The grid width of a floor — 4×4 on floor 1, one wider per floor, 8×8 from

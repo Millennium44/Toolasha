@@ -203,6 +203,8 @@ registerSyncMerge({
     base: OUTCOME_STORAGE_KEY,
     merge: mergeOutcomeDocuments,
     label: 'Labyrinth fight outcomes',
+    // Every write goes through `outcomeRecord`, a plain persisted record; only the user's reset overwrites
+    liveSafe: true,
 });
 
 /** Prototype methods mixed into LabyrinthClearRate */

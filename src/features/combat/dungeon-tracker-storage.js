@@ -1899,6 +1899,8 @@ registerSyncMerge({
     key: RUNS_DATE_REPAIR_KEY,
     merge: mergeClearEpochs,
     label: 'Dungeon run date-order repair',
+    // Written once, by `repairSwappedDateRuns`, as a bare stamp that never goes backwards
+    liveSafe: true,
 });
 
 /*

@@ -669,7 +669,21 @@ class GuildXPTracker {
                         Object.assign(map, mergeXPHistories(probe.value, map));
                     }
                 }
-                return await storage.set(key, map, STORE_NAME);
+                // The write is debounced, and the probe above is only as fresh as the moment it ran: a sync pull
+                // can store a copy in the seconds before this lands. The same merge runs again inside the
+                // transaction that lands it, so that copy is folded in. An overwrite states its value outright.
+                return await storage.set(
+                    key,
+                    map,
+                    STORE_NAME,
+                    false,
+                    overwrite
+                        ? {}
+                        : {
+                              fold: (stored, held) =>
+                                  stored && typeof stored === 'object' ? mergeXPHistories(stored, held) : held,
+                          }
+                );
             } catch (error) {
                 console.error(`[GuildXPTracker] Failed to save ${key}:`, error);
                 return false;

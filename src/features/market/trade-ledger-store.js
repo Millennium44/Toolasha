@@ -277,14 +277,24 @@ function groupByBucket(records) {
  * load), so the registry is complete by the time sync consults it. See
  * utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: LEDGER_STORE, base: RECORDS_BASE, merge: mergeRecords, label: 'Trade ledger fills' });
+registerSyncMerge({
+    store: LEDGER_STORE,
+    base: RECORDS_BASE,
+    merge: mergeRecords,
+    label: 'Trade ledger fills',
+});
 registerSyncMerge({
     store: LEDGER_STORE,
     prefix: `${RECORD_PREFIX}_`,
     merge: mergeRecords,
     label: 'Trade ledger fills (daily)',
 });
-registerSyncMerge({ store: LEDGER_STORE, base: STATE_BASE, merge: mergeStates, label: 'Trade ledger baselines' });
+registerSyncMerge({
+    store: LEDGER_STORE,
+    base: STATE_BASE,
+    merge: mergeStates,
+    label: 'Trade ledger baselines',
+});
 
 /*
  * The cap, told to sync. The cap keeps the newest LEDGER_RECORD_CAP fills across every day record and evicts
@@ -727,7 +737,13 @@ class TradeLedgerStore {
                     if (!current()) return false;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
                     this.records = mergeRecords(stored, this.records);
-                    return await storage.set(charKey(RECORDS_BASE, charId), this.records, LEDGER_STORE);
+                    // Debounced, and the probe above is only as fresh as the moment it ran: a sync pull can store
+                    // a copy in the seconds before this lands. The fold runs again inside the transaction that
+                    // lands it, so that copy is merged rather than written over.
+                    return await storage.set(charKey(RECORDS_BASE, charId), this.records, LEDGER_STORE, false, {
+                        fold: (now, held) =>
+                            Array.isArray(now) && Array.isArray(held) ? mergeRecords(now, held) : held,
+                    });
                 }
 
                 const grouped = groupByBucket(this.records);
@@ -893,7 +909,11 @@ class TradeLedgerStore {
                 if (this._generation !== started || ledgerCharId() !== charId) return false;
                 const stored = probe.found ? probe.value : {};
                 this.states = mergeStates(stored, this.states);
-                return await storage.set(charKey(STATE_BASE, charId), this.states, LEDGER_STORE);
+                // Debounced, and the probe above is only as fresh as the moment it ran: the fold runs again inside
+                // the transaction that lands the write, so a baseline a sync pull stored meanwhile is kept.
+                return await storage.set(charKey(STATE_BASE, charId), this.states, LEDGER_STORE, false, {
+                    fold: (now, held) => (now && typeof now === 'object' ? mergeStates(now, held) : held),
+                });
             } catch (error) {
                 console.error('[TradeLedger] Failed to save listing states:', error);
                 return false;

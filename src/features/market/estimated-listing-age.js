@@ -1051,6 +1051,15 @@ class EstimatedListingAge {
                         return false;
                     }
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
+                    // The tombstones this fold applies are the stored ones as well as this tab's own: a sync
+                    // pull stores a peer's deletions under a running page, and a fold that only knew the map
+                    // read at load would put a row they bury straight back. A map that cannot be read leaves
+                    // this tab's own standing.
+                    const gravesProbe = await storage.tryGet(this._gravesKey(owner), LISTINGS_STORE);
+                    if (!this._ownsMemory(owner)) return false;
+                    if (gravesProbe?.found) {
+                        this.listingGraves = mergeListingGraves(gravesProbe.value, this.listingGraves);
+                    }
                     // Tombstones applied to the stored side too, or a row deleted
                     // in this session would be folded straight back off disk
                     const personal = applyListingGraves(
@@ -2427,6 +2436,8 @@ registerSyncMerge({
     base: GRAVES_BASE,
     merge: (local, incoming) => mergeListingGraves(local, incoming),
     label: 'Market listing deletions',
+    // Not liveSafe: `_recordGraves` probes then writes in two steps, so a pull landing between them, or
+    // its own putAll landing after, could drop a tombstone and let a stale peer bring the listing back
 });
 
 export default estimatedListingAge;

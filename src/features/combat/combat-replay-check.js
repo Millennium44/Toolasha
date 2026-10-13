@@ -2220,12 +2220,16 @@ registerSyncMerge({
     base: STORAGE_KEY,
     merge: mergeObservations,
     label: 'Replay check observations',
+    // The only writer is `observationRecord`, a plain persisted record: every save probes and folds stored under memory
+    liveSafe: true,
 });
 registerSyncMerge({
     store: 'settings',
     base: HISTORY_KEY,
     merge: mergeCheckHistory,
     label: 'Replay check history',
+    // The only writer is `historyRecord`, a plain persisted record: every save probes and folds stored under memory
+    liveSafe: true,
 });
 
 class ReplayCheck {

@@ -155,6 +155,9 @@ registerSyncMerge({
     base: STORAGE_KEY_PREFIX,
     merge: mergeMarkRecords,
     label: 'Self-use marks',
+    // Every writer (`update`, `retireOldMarks`) is a `storage.update` read-fold-write on the stored value; the cache
+    // is display only and re-reads on the next change
+    liveSafe: true,
 });
 
 /**
