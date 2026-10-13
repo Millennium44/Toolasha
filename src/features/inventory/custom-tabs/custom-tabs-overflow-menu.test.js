@@ -120,3 +120,20 @@ describe('toolbar "⋯" overflow menu', () => {
         expect(menu()).toBeNull();
     });
 });
+
+describe('toolbar "⋯" menu follows its button', () => {
+    test('scrolling a box that holds the button closes the open menu', () => {
+        const sort = document.createElement('div');
+        sort.className = 'mwi-inventory-sort-controls';
+        document.body.appendChild(sort);
+        const ui = new CustomTabsUI();
+        ui._injectActionButtons();
+        const button = sort.querySelector('[data-ct-action="more"]');
+        const panel = document.querySelector('.toolasha-ct-overflow-menu');
+        button.click();
+        expect(panel.style.display).toBe('flex');
+        sort.dispatchEvent(new Event('scroll'));
+        expect(panel.style.display).toBe('none');
+        document.body.innerHTML = '';
+    });
+});
