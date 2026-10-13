@@ -9,6 +9,7 @@
 
 import storage from '../core/storage.js';
 import { flushPersistedRecords } from './persisted-record.js';
+import { isLiveSafeKey } from './sync-merge-registry.js';
 
 const FORMAT_VERSION = 1;
 
@@ -395,13 +396,15 @@ export async function importEverything(payload, options = {}) {
             } else if (want > 0) {
                 const latch = new Set();
                 for (const key of Object.keys(entries)) {
+                    // A record whose readers fold storage under memory takes the write and is not latched
+                    if (isLiveSafeKey(storeName, key)) continue;
                     latch.add(key);
                     // A record and its tombstones are one unit: latching only one
                     // lets a pre-restore write to the other undo the pairing
                     const companion = latchCompanionKey(storeName, key);
                     if (companion) latch.add(companion);
                 }
-                written.set(storeName, latch);
+                if (latch.size > 0) written.set(storeName, latch);
             }
         }
     } finally {
@@ -416,7 +419,10 @@ export async function importEverything(payload, options = {}) {
         }
     }
 
-    return { restored, expected, failed, complete: failed.length === 0, writtenKeys };
+    // How many keys now refuse writes until a reload; a restore that latched none asks for none
+    let latched = 0;
+    for (const keys of written.values()) latched += keys.size;
+    return { restored, expected, failed, complete: failed.length === 0, writtenKeys, latched };
 }
 
 export default {

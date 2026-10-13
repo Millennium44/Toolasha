@@ -339,7 +339,16 @@ const sessionRecord = createPersistedRecord({
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE_NAME, base: STORE_KEY, merge: mergeSessionHistory, label: 'Combat sessions' });
+registerSyncMerge({
+    store: STORE_NAME,
+    base: STORE_KEY,
+    merge: mergeSessionHistory,
+    label: 'Combat sessions',
+    // Every reader goes through `loadSessions` and the one writer through `archiveSession`/`clearSessions`;
+    // all of them probe storage and fold it under memory with `mergeSessionHistory`, so a pulled copy is
+    // adopted on the next read and the next save keeps it. No reload, no write latch.
+    liveSafe: true,
+});
 
 /** Whose sessions the record in memory holds — a change means forget them first */
 let recordOwner = null;

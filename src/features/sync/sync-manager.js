@@ -1543,14 +1543,24 @@ class SyncManager {
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
-        const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected, unchanged, writtenWholeKeys } =
-            await applyPayload(payload, {
-                mode: silent ? 'merge' : 'pull',
-                baseline,
-                retryHeld,
-                // Which records the marker says were held, when it says
-                heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
-            });
+        const {
+            merged,
+            mergeFailed,
+            mergeHeld,
+            complete,
+            failed,
+            applied,
+            expected,
+            unchanged,
+            writtenWholeKeys,
+            latched,
+        } = await applyPayload(payload, {
+            mode: silent ? 'merge' : 'pull',
+            baseline,
+            retryHeld,
+            // Which records the marker says were held, when it says
+            heldKeys: retryHeld && Array.isArray(held?.keys) ? held.keys : null,
+        });
         const pendingHeld = mergeHeld?.length
             ? {
                   exportedAt: remoteAt,
@@ -1718,6 +1728,23 @@ class SyncManager {
             ? ` The records kept from this device (${mergeHeld.map((entry) => entry.label).join(', ')}) ` +
               'could not be read here; pull again once storage is healthy. Pushes are paused until then.'
             : '';
+        // A pull that landed only records whose readers fold storage under memory (`liveSafe`) latched
+        // nothing: no write is refused, so there is nothing to reload for. A result without the count is
+        // taken as having latched.
+        if (latched === 0 && !notCombined && !heldBack) {
+            console.debug('[Sync] Pull landed live-safe records only; no reload needed.', summary);
+            if (!silent) {
+                showToast(`Synced from GitHub. ${formatPullSummaryLine(summary)}`, {
+                    action: { label: 'What changed?', onClick: () => openPullSummaryPanel() },
+                });
+            }
+            if (pushBack && !mergeHeld?.length) {
+                const pushed = await this._doPush(false, opToken);
+                return { ok: true, merged: merged?.length || 0, pushedBack: pushed?.ok === true && !pushed?.skipped };
+            }
+            return { ok: true, merged: merged?.length || 0 };
+        }
+
         // Not politeness: the stores this pull replaced stop accepting writes
         // until the reload (see `storage.finishRestore`), because anything this
         // session still holds in memory is the pre-pull copy and writing it

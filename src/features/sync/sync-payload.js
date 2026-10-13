@@ -880,7 +880,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             await restoreMigrationRecords(migrationRecords);
             throw error;
         }
-        const { restored, expected } = imported;
+        const { restored, expected, latched } = imported;
         const writtenWholeKeys = [];
         for (const [storeName, keys] of Object.entries(imported.writtenKeys ?? payloadKeys)) {
             for (const key of keys) {
@@ -932,6 +932,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             mergeHeld,
             unchanged,
             writtenWholeKeys,
+            latched,
             exportedAt: payload?.exportedAt ?? null,
             applied,
         };

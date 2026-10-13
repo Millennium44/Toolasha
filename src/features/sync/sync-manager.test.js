@@ -93,6 +93,8 @@ vi.mock('./sync-payload.js', () => ({
             // Undefined unless a test sets it: a result without counts is taken as having written
             expected: payload.expected,
             unchanged: payload.unchanged,
+            // Undefined unless a test sets it: a result without the count is taken as having latched
+            latched: payload.latched,
             exportedAt: null,
             applied: payload.appliedText ?? json,
         };
@@ -218,6 +220,7 @@ beforeEach(() => {
     payload.mergeHeld = [];
     payload.expected = undefined;
     payload.unchanged = undefined;
+    payload.latched = undefined;
     payload.complete = true;
     payload.failed = [];
     gist.found = null;
@@ -2347,6 +2350,42 @@ describe('automatic pushes merge into the upload, never into this device', () =>
             expect(result).toMatchObject({ ok: true, reason: 'wrote-nothing' });
             expect(toasts).toHaveLength(0);
             expect(stored.map.toolasha_sync_unapplied).toBeNull();
+        });
+
+        test('a silent pull that landed only live-safe records shows no reload toast', async () => {
+            payload.expected = { combatStats: 1 };
+            payload.unchanged = { combatStats: 6 };
+            payload.merged = [{ label: 'Combat sessions', store: 'combatStats', key: 'combatSessionHistory_1' }];
+            payload.latched = 0;
+
+            const result = await syncManager.pull({ silent: true, startup: true });
+
+            expect(result).toMatchObject({ ok: true });
+            expect(toasts).toHaveLength(0);
+            expect(lastPullSummary()).not.toBeNull();
+        });
+
+        test('a pressed pull that landed only live-safe records says so without asking for a reload', async () => {
+            payload.expected = { combatStats: 1 };
+            payload.unchanged = { combatStats: 6 };
+            payload.merged = [{ label: 'Combat sessions', store: 'combatStats', key: 'combatSessionHistory_1' }];
+            payload.latched = 0;
+
+            await syncManager.pull();
+
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].message).toContain('Synced from GitHub');
+            expect(toasts[0].message).not.toContain('Reload now');
+        });
+
+        test('a silent pull that latched something still asks for the reload', async () => {
+            payload.expected = { combatStats: 1, settings: 1 };
+            payload.latched = 1;
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].message).toContain('Reload now');
         });
 
         test('a takeover while this device is built leaves the newer record alone', async () => {
