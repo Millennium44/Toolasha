@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Instead of buying: clearer figures
+
+- The tooltip's Instead of buying line now says its hourly figure is per hour of alchemy at the rate you would use the item, shows what making and selling it instead would net after tax, and says so when no alchemy route beats buying rather than showing nothing.
+
 ### Labyrinth: loadout swaps keep the sim cache
 
 - When every labyrinth combat room has its own loadout, the lab swapping loadouts between rooms no longer throws away cached combat sims and on-screen recommendations; the abilities you happen to have equipped only count while some room falls back to your worn gear. If every room already has a loadout, labyrinth sims re-run once after this update.
