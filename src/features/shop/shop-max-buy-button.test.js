@@ -129,6 +129,74 @@ describe('shop Max buy button', () => {
         expect(buyClick).not.toHaveBeenCalled();
     });
 
+    test('finds Buy in the panel modal even when it is not a sibling of the input container', async () => {
+        document.body.innerHTML = `
+            <div class="TasksPanel_modalContent__a">
+                <div class="TasksPanel_buyRow__b">
+                    <div class="TasksPanel_inputContainer__c">
+                        <div class="Input_inputContainer"><input type="number" value="1"></div>
+                    </div>
+                </div>
+                <button class="Button_button Button_success">Buy</button>
+            </div>`;
+        const container = document.querySelector('[class*="TasksPanel_inputContainer"]');
+        const input = container.querySelector('input');
+        const buy = document.querySelector('button[class*="Button_success"]');
+        input.addEventListener('input', () => {
+            buy.disabled = Number(input.value) > 9;
+        });
+        state.owned = 100;
+        shopMaxBuyButton.initialize();
+        state.handlers.find((h) => h.className === 'TasksPanel_inputContainer').callback(container);
+        container.querySelector('.toolasha-shop-max-buy-button').click();
+        await flush();
+        expect(input.value).toBe('9');
+    });
+
+    test('ignores a same-styled button outside the panel modal', async () => {
+        const { container, input } = modal({ cap: 9 });
+        document.body.insertAdjacentHTML('beforeend', '<button class="Button_success">Other</button>');
+        state.owned = 100;
+        shopMaxBuyButton.initialize();
+        state.handlers.find((h) => h.className === 'TasksPanel_inputContainer').callback(container);
+        container.querySelector('.toolasha-shop-max-buy-button').click();
+        await flush();
+        expect(input.value).toBe('9');
+    });
+
+    test('stops without searching when two visible Buy buttons make the oracle ambiguous', async () => {
+        const { container, input } = modal({ cap: 9 });
+        container
+            .closest('[class*="TasksPanel_modalContent"]')
+            .insertAdjacentHTML('beforeend', '<button class="Button_success">Second</button>');
+        state.owned = 100;
+        shopMaxBuyButton.initialize();
+        state.handlers.find((h) => h.className === 'TasksPanel_inputContainer').callback(container);
+        container.querySelector('.toolasha-shop-max-buy-button').click();
+        await flush();
+        expect(input.value).toBe('100');
+    });
+
+    test('stops when the only Buy button is not visible', async () => {
+        const { container, input, buy } = modal({ cap: 9 });
+        Object.defineProperty(buy, 'offsetParent', { value: null, configurable: true });
+        state.owned = 100;
+        shopMaxBuyButton.initialize();
+        state.handlers.find((h) => h.className === 'TasksPanel_inputContainer').callback(container);
+        container.querySelector('.toolasha-shop-max-buy-button').click();
+        await flush();
+        expect(input.value).toBe('100');
+    });
+
+    test('styles the button and removes the style on disable', () => {
+        shopMaxBuyButton.initialize();
+        expect(document.getElementById('mwi-shop-max-buy-button-style')?.textContent).toContain(
+            'toolasha-shop-max-buy-button'
+        );
+        shopMaxBuyButton.disable();
+        expect(document.getElementById('mwi-shop-max-buy-button-style')).toBeNull();
+    });
+
     test('leaves the input alone when nothing is affordable', async () => {
         const { container, input } = modal();
         state.owned = 0;
