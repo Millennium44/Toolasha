@@ -239,35 +239,52 @@ describe('timeToCombatLevel', () => {
         expect(timeToCombatLevel({ skills: skills(build), table, rates: {}, target: 127 })).toBeNull();
     });
 
-    test('the time it lands is the time the formula crosses the target', () => {
+    test('the time it lands is the time whole skill levels cross the target', () => {
         const rates = { melee: 1000000, attack: 400000 };
         const seconds = timeToCombatLevel({ skills: skills(build), table, rates, target: 127 });
 
-        // Checked by replaying it: a moment before, still short; at it, there
+        // Checked by replaying it with the levels the game would count: a
+        // moment before, still short; at it, there
         const at = (elapsed) => {
             const levels = {};
             for (const skill of skills(build)) {
-                levels[skill.name] = fractionalLevelOf(
-                    skill.experience + (rates[skill.name] || 0) * (elapsed / 3600),
-                    table
+                levels[skill.name] = Math.floor(
+                    fractionalLevelOf(skill.experience + (rates[skill.name] || 0) * (elapsed / 3600), table)
                 );
             }
-            return combatLevel(levels).exact;
+            return combatLevel(levels).level;
         };
-        expect(at(seconds)).toBeCloseTo(127, 3);
-        expect(at(seconds - 60)).toBeLessThan(127);
+        expect(at(seconds)).toBeGreaterThanOrEqual(127);
+        expect(at(seconds - 1)).toBeLessThan(127);
+    });
+
+    test('a part-finished skill level counts for nothing until it completes', () => {
+        // Combat 126.3 with Melee 50% of the way to 135. The continuous figure
+        // would pass 127 partway through Melee 135 -> 136; the game's combat
+        // level does not move until Melee actually reaches 136
+        const halfway = skills(build).map((skill) =>
+            skill.name === 'melee' ? { ...skill, experience: (table[134] + table[135]) / 2 } : skill
+        );
+        const perHour = 100000;
+        const seconds = timeToCombatLevel({ skills: halfway, table, rates: { melee: perHour }, target: 127 });
+
+        const toLevel136 = table[136] - (table[134] + table[135]) / 2;
+        expect(seconds).toBeCloseTo((toLevel136 / perHour) * 3600, 0);
     });
 
     test('two skills moving get there sooner than one of them alone', () => {
-        const both = timeToCombatLevel({
+        // Melee 135 (+0.6) and Attack 130 (+0.1) together are one hour away from
+        // 127.0; Melee alone needs a second whole level
+        const rates = { melee: table[135] - table[134], attack: table[130] - table[129] };
+        const both = timeToCombatLevel({ skills: skills(build), table, rates, target: 127 });
+        const one = timeToCombatLevel({
             skills: skills(build),
             table,
-            rates: { melee: 1000000, attack: 400000 },
+            rates: { melee: rates.melee },
             target: 127,
         });
-        const one = timeToCombatLevel({ skills: skills(build), table, rates: { melee: 1000000 }, target: 127 });
 
-        // Attack is worth 0.1 a level against Melee's 0.6, so it helps a little
+        expect(both).toBeCloseTo(3600, 0);
         expect(both).toBeLessThan(one);
     });
 

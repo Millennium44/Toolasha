@@ -281,6 +281,12 @@ export function fractionalLevelOf(experience, table) {
  * with different weights. The honest answer is to run the clock forward and ask
  * the formula, which is what this does.
  *
+ * The clock is stepped through **whole** skill levels. The game computes the
+ * combat level from integer skill levels, so a level of Melee that is 80%
+ * earned counts for nothing until it completes: the answer is the moment
+ * `floor(combatLevel(integer levels))` reaches the target, not the moment the
+ * continuous, part-finished figure the panel's progress bar draws crosses it.
+ *
  * Combat level is non-decreasing in time, since every skill's level is, so the
  * time is found by doubling until the target is passed and then bisecting. That
  * is exact to the second in a few dozen evaluations, where a closed form would
@@ -300,9 +306,10 @@ export function timeToCombatLevel({ skills, table, rates, target }) {
         const levels = {};
         for (const skill of skills || []) {
             const gained = ((rates?.[skill.name] || 0) * seconds) / 3600;
-            levels[skill.name] = fractionalLevelOf(skill.experience + gained, table);
+            // Whole levels only, as the game counts them
+            levels[skill.name] = Math.floor(fractionalLevelOf(skill.experience + gained, table));
         }
-        return combatLevel(levels).exact;
+        return combatLevel(levels).level;
     };
 
     if (!Array.isArray(table) || table.length < 2) return null;
