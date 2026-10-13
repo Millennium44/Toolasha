@@ -403,6 +403,9 @@ describe('parseShorthandAmount', () => {
         expect(parseShorthandAmount('12bananas')).toBeNull();
         expect(parseShorthandAmount('1mm')).toBeNull();
         expect(parseShorthandAmount('abc')).toBeNull();
+        // A cleared box is none, as a number box saved it
+        expect(parseShorthandAmount('')).toBe(0);
+        expect(parseShorthandAmount('   ')).toBe(0);
         // A stray space is not grouping
         expect(parseShorthandAmount('1 2b')).toBeNull();
         expect(parseShorthandAmount('12 34 5')).toBeNull();

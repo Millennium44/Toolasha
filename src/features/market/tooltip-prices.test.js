@@ -1536,6 +1536,8 @@ describe('instead of buying', () => {
             expect(detail({ costPerUnit: -44200 })).not.toContain('-44.2K');
             expect(detail({ costPerUnit: -44200, partlyUnpriced: true })).toContain('gains ≥44.2K/unit');
             expect(detail({ costPerUnit: 4 })).toContain('4/unit vs 10 ask');
+            // A positive cost missing an unpriced credit is an upper bound
+            expect(detail({ costPerUnit: 4, partlyUnpriced: true })).toContain('≤4/unit vs 10 ask');
         });
 
         test('the buy side is named by the pricing settings, not always ask', () => {

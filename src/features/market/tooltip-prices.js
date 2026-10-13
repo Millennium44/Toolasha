@@ -983,7 +983,7 @@ class TooltipPrices {
             const costText =
                 alt.costPerUnit < 0
                     ? `gains ${atLeast}${formatKMB(-alt.costPerUnit)}/unit`
-                    : `${formatKMB(alt.costPerUnit)}/unit`;
+                    : `${alt.partlyUnpriced ? '≤' : ''}${formatKMB(alt.costPerUnit)}/unit`;
             const parts = [`${costText} vs ${formatKMB(targetAsk)} ${buySideWord()}`];
             if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
             // Under 10 s one decimal, so a 0.3 s unit does not read "0s"; from 10 s on the usual format

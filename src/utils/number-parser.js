@@ -389,6 +389,8 @@ export function parseShorthandAmount(text) {
     const trimmed = String(text ?? '')
         .trim()
         .toLowerCase();
+    // A cleared box means none, the same as the 0 a number box saved
+    if (trimmed === '') return 0;
     const { group, decimal } = gameNumberSeparators();
     const forms = [
         { group: /\s/.test(group || '') ? ' ' : group || ',', decimal: decimal || '.' },
