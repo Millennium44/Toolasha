@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings: reset to defaults turns off device-wide switches
+
+- Reset to defaults now also turns off the test server's live prices and automatic reload when character data is missed; both are stored per device, and either could come back on after the next reload.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
