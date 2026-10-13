@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
     costs: [],
     actions: [],
     characterData: null,
+    prices: {},
 }));
 
 const trackerMock = vi.hoisted(() => {
@@ -104,7 +105,9 @@ vi.mock('../../core/data-manager.js', () => ({
         },
     },
 }));
-vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: { getPrice: (hrid, level = 0) => state.prices[`${hrid}:${level}`] ?? null },
+}));
 vi.mock('./enhancement-xp.js', () => ({
     calculateSuccessXP: () => 0,
     calculateFailureXP: () => 0,
@@ -145,6 +148,7 @@ beforeEach(() => {
     state.costs = [];
     state.actions = [];
     state.characterData = null;
+    state.prices = {};
     trackerMock.pendingSessionStart = false;
     setupEnhancementHandlers();
 });
@@ -352,6 +356,36 @@ describe('a protected failure with no market quote for the protection', () => {
         await state.handlers.action_completed(attempt(4, 79));
 
         expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
+    });
+});
+
+describe('a protected failure consuming a spare at an enhancement level', () => {
+    const CAPE = '/items/radiant_cape';
+    const spare =
+        (level, hash = `30404::/item_locations/inventory::${CAPE}::${level}`) =>
+        (primaryLevel, count) => {
+            const message = attempt(primaryLevel, count);
+            message.endCharacterAction.secondaryItemHash = hash;
+            return message;
+        };
+
+    test('is charged what that level sells for, not the +0 price', async () => {
+        state.prices[`${CAPE}:0`] = { ask: 3_000_000, bid: 2_900_000 };
+        state.prices[`${CAPE}:2`] = { ask: 7_000_000, bid: 6_500_000 };
+        const spareAt2 = spare(2);
+        await state.handlers.action_completed(spareAt2(5, 78));
+        await state.handlers.action_completed(spareAt2(4, 79));
+
+        expect(state.calls).toContainEqual(['prot', CAPE, 7_000_000]);
+    });
+
+    test('a level the market has no quote for falls back to the +0 price', async () => {
+        state.prices[`${CAPE}:0`] = { ask: 3_000_000, bid: 2_900_000 };
+        const spareAt1 = spare(1);
+        await state.handlers.action_completed(spareAt1(5, 78));
+        await state.handlers.action_completed(spareAt1(4, 79));
+
+        expect(state.calls).toContainEqual(['prot', CAPE, 3_000_000]);
     });
 });
 
