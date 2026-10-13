@@ -154,13 +154,17 @@ class ProfitCalculator {
 
         const { totalEfficiency, levelEfficiency, effectiveRequirement } = efficiencyBreakdown;
 
+        // Enhancement level of the upgrade input, normalized once: the timing block below and the
+        // material costing must agree on it, and an enhanced input is bought, never crafted.
+        const upgradeLevel = actionDetails.upgradeItemHrid ? Math.max(0, Math.floor(Number(upgradeItemLevel) || 0)) : 0;
+
         // Adjust action time for crafting chain if upgrade item is crafted.
         // "Direct recipe only" buys the upgrade item at market instead of
         // crafting it, so there is no upgrade chain to add time for.
         let effectiveActionTime = actionTime;
         const craftUpgradeItems =
             config.getSetting('profitCalc_craftUpgradeItems') && !config.getSetting('itemTooltip_detailedProfitFlat');
-        if (actionDetails.upgradeItemHrid && craftUpgradeItems) {
+        if (actionDetails.upgradeItemHrid && craftUpgradeItems && upgradeLevel === 0) {
             const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid);
             if (upgradeChainTime > 0) {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
@@ -195,7 +199,6 @@ class ProfitCalculator {
         const totalItemsPerHour = itemsPerHour + gourmetBonusItems;
 
         // Calculate material costs (with artisan reduction if applicable)
-        const upgradeLevel = actionDetails.upgradeItemHrid ? Math.max(0, Math.floor(Number(upgradeItemLevel) || 0)) : 0;
         const materialCosts = this.calculateMaterialCosts(actionDetails, artisanBonus, {
             upgradeItemLevel: upgradeLevel,
         });
@@ -218,9 +221,11 @@ class ProfitCalculator {
                 ? this.expectedUpgradeOutputPrice(itemHrid, upgradeLevel, actionDetails, getCachedPrice)
                 : getCachedPrice(itemHrid, { context: 'profit', side: 'sell' });
         const outputPriceMissing = rawOutputPrice === null;
-        const craftingFallback = outputPriceMissing
-            ? this.calculateCraftingCostFallback(itemHrid, getCachedPrice, action.actionHrid)
-            : 0;
+        // An enhanced output has no +0 craft cost to fall back on: crafting yields a +0 item
+        const craftingFallback =
+            outputPriceMissing && upgradeLevel === 0
+                ? this.calculateCraftingCostFallback(itemHrid, getCachedPrice, action.actionHrid)
+                : 0;
         const outputPriceEstimated = outputPriceMissing && craftingFallback > 0;
         const outputPrice = outputPriceMissing ? craftingFallback : rawOutputPrice;
 

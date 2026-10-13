@@ -769,6 +769,31 @@ describe('calculateProfit — enhancement carried through an upgrade craft', () 
         expect(result.outputPrice).toBeCloseTo(2000, 6);
     });
 
+    test('an enhanced output with no listing at its floor level is left unpriced, not valued as a +0 craft', async () => {
+        setup();
+        delete mocks.marketPrices['/items/upgraded:3'];
+        mocks.marketPrices['/items/rune'] = 100; // so a +0 craft estimate would exist
+        const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+        expect(result.outputPriceMissing).toBe(true);
+        expect(result.outputPriceEstimated).toBe(false);
+        expect(result.outputPrice).toBe(0);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('an enhanced input is bought, so the +0 upgrade item chain time is not charged', async () => {
+        setup();
+        mocks.settings.profitCalc_craftUpgradeItems = true;
+        mocks.chainTimes['/items/rune'] = 30;
+        mocks.productionCosts['/items/rune'] = 400;
+        mocks.resolvedPrices['/items/rune'] = 1000; // crafting would win at +0
+
+        const plain = await profitCalculator.calculateProfit('/items/upgraded');
+        const enhanced = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+
+        expect(plain.actionTime).toBeCloseTo(50, 6);
+        expect(enhanced.actionTime).toBeCloseTo(20, 6);
+    });
+
     test('no selected stack leaves the +0 valuation untouched', async () => {
         setup();
         const result = await profitCalculator.calculateProfit('/items/upgraded');
