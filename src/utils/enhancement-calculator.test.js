@@ -9,6 +9,8 @@ import { describe, test, expect, beforeAll } from 'vitest';
 import * as mathjs from 'mathjs';
 import {
     applyMirrorOptimization,
+    blessedMirrorChance,
+    mirrorLandingOdds,
     calculateEnhancement,
     buildEnhancementMarkov,
     BLESSED_TEA_BASE_CHANCE,
@@ -202,5 +204,48 @@ describe('applyMirrorOptimization', () => {
         const used = applyMirrorOptimization(costs, 0.000001);
         expect(used).toEqual([false, false, false]);
         expect(costs).toEqual([1, 1, 1000]);
+    });
+});
+
+describe('Blessed Tea on a mirror step', () => {
+    test('a zero chance reproduces the old cost[n-2] + cost[n-1] + mirror sum', () => {
+        const costs = [100, 10_100, 33_433, 85_285, 300_000];
+        applyMirrorOptimization(costs, 2000, 0);
+        expect(costs[3]).toBe(33_433 + 10_100 + 2000);
+        expect(costs[4]).toBe(45_533 + 33_433 + 2000);
+    });
+
+    test('a +2 mirror success lowers the quote: the skipped step is not paid for', () => {
+        const base = [100, 10_100, 33_433, 85_285, 300_000, 900_000];
+        const plain = [...base];
+        const blessed = [...base];
+        applyMirrorOptimization(plain, 2000, 0);
+        const used = applyMirrorOptimization(blessed, 2000, 0.1);
+
+        // +3 steps from a +2 that is hard-built, so it is always run: unchanged
+        expect(blessed[3]).toBe(plain[3]);
+        // +4 is only run when the chain landed on +3 (90%), so its step is discounted by 10%
+        expect(used[4]).toBe(true);
+        expect(blessed[4]).toBeCloseTo(blessed[3] + 0.9 * (blessed[2] + 2000), 6);
+        expect(blessed[4]).toBeLessThan(plain[4]);
+        expect(blessed[5]).toBeLessThan(plain[5]);
+    });
+
+    test('landing odds follow the renewal recursion', () => {
+        const used = [false, false, false, true, true, true];
+        const landing = mirrorLandingOdds(used, 0.1);
+        expect(landing[3]).toBeCloseTo(0.9, 10);
+        expect(landing[4]).toBeCloseTo(0.9 * 0.9 + 0.1 * 1, 10);
+        expect(landing[5]).toBeCloseTo(0.9 * landing[4] + 0.1 * landing[3], 10);
+        expect(mirrorLandingOdds(used, 0)).toEqual([1, 1, 1, 1, 1, 1]);
+    });
+
+    test('the chance is the blessed bonus times guzzling, zero without the tea', () => {
+        expect(blessedMirrorChance({ teas: { blessed: false }, blessedTeaBonus: 0.01, guzzlingBonus: 1 })).toBe(0);
+        expect(blessedMirrorChance({ teas: { blessed: true }, blessedTeaBonus: 0.01, guzzlingBonus: 1.2 })).toBeCloseTo(
+            0.012,
+            10
+        );
+        expect(blessedMirrorChance({ blessedTea: true })).toBeCloseTo(0.01, 10);
     });
 });

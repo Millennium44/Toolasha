@@ -119,7 +119,7 @@ function describeRow(quote, result) {
         `Expected attempts: ${formatWithSeparator(Math.round(quote.attempts))}`,
         `Expected protections: ${formatWithSeparator(Math.round(quote.protections))}`,
     ];
-    if (quote.mirrors > 0) lines.push(`Philosopher's Mirrors: ${quote.mirrors}`);
+    if (quote.mirrors > 0) lines.push(`Philosopher's Mirrors: ${Math.round(quote.mirrors * 10) / 10}`);
     lines.push('Your enhancing stats; optimal protection strategy');
     return lines.join('\n');
 }

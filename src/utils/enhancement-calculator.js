@@ -131,25 +131,78 @@ export function buildEnhancementMarkov(math, options) {
  * Like `buildEnhancementMarkov`, this closes over nothing: the networth worker serialises it
  * with `toString()`, so a module-scope read from here would not exist inside the worker.
  *
+ * **Blessed Tea.** A mirror step is guaranteed to succeed, but Blessed Tea can still make that
+ * success +2 (measured 2026-09-27), with the same chance `b` the calculator gives an ordinary
+ * success. A +2 lands on n+1 instead of n, so the *next* mirror step of the same chain, the one
+ * that would have built n+1, never has to be run. The model keeps the array a cost-to-reach-at-
+ * least-n figure: let `e[n]` be the probability the chain lands exactly on n (1 for a level that
+ * is not mirror-built, `(1−b)·e[n−1] + b·e[n−2]` for one that is, the second term only when
+ * n−1 is itself mirror-built). A step into n is only run when the chain stands on n−1, so
+ *
+ *   cost[n] = cost[n−1] + e[n−1] · (cost[n−2] + mirrorPrice)
+ *
+ * which is the old `cost[n−2] + cost[n−1] + mirrorPrice` when `b` is 0. Copies are approximated
+ * as following the same chain. Closed over nothing, because the networth worker serialises this
+ * function with `toString()`.
+ *
  * @param {number[]} targetCosts - Cost to reach each level, index 0 being the unenhanced item.
  *   Mutated in place, each entry lowered to the mirror price when mirroring is cheaper.
  * @param {number} mirrorPrice - Coins one Philosopher's Mirror costs; a non-positive price
  *   means mirroring is not available and nothing is changed
+ * @param {number} [blessedChance=0] - Chance a mirror success is +2 (Blessed Tea's chance times
+ *   the guzzling bonus, as a decimal); 0 without Blessed Tea
  * @returns {boolean[]} Per-level flag, true where the mirror combination won
  */
-export function applyMirrorOptimization(targetCosts, mirrorPrice) {
+export function applyMirrorOptimization(targetCosts, mirrorPrice, blessedChance = 0) {
     const usedMirror = new Array(targetCosts.length).fill(false);
     if (!(mirrorPrice > 0)) return usedMirror;
 
+    const b = blessedChance > 0 ? Math.min(1, blessedChance) : 0;
+    // Chance the chain lands exactly on each level; a level not built by a mirror is always landed on
+    const landing = new Array(targetCosts.length).fill(1);
+
     for (let level = 3; level < targetCosts.length; level++) {
-        const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
+        const mirrorCost = targetCosts[level - 1] + landing[level - 1] * (targetCosts[level - 2] + mirrorPrice);
         if (mirrorCost < targetCosts[level]) {
             usedMirror[level] = true;
             targetCosts[level] = mirrorCost;
+            landing[level] = (1 - b) * landing[level - 1] + (usedMirror[level - 1] ? b * landing[level - 2] : 0);
         }
     }
 
     return usedMirror;
+}
+
+/**
+ * The chance a mirror chain lands exactly on each level, given which levels were mirror-built.
+ * The same recursion {@link applyMirrorOptimization} runs, for a caller that needs the numbers
+ * to expand the plan into expected item counts.
+ *
+ * @param {boolean[]} usedMirror - Per-level mirror decisions
+ * @param {number} blessedChance - Chance a mirror success is +2
+ * @returns {number[]} Landing probability per level; 1 where the level is not mirror-built
+ */
+export function mirrorLandingOdds(usedMirror, blessedChance) {
+    const b = blessedChance > 0 ? Math.min(1, blessedChance) : 0;
+    const landing = new Array(usedMirror.length).fill(1);
+    for (let level = 3; level < usedMirror.length; level++) {
+        if (!usedMirror[level]) continue;
+        landing[level] = (1 - b) * landing[level - 1] + (usedMirror[level - 1] ? b * landing[level - 2] : 0);
+    }
+    return landing;
+}
+
+/**
+ * Chance a Philosopher's Mirror success is +2, from the enhancing parameters.
+ * @param {{teas?: {blessed?: boolean}, blessedTea?: boolean, guzzlingBonus?: number,
+ *   blessedTeaBonus?: number}} params - Enhancing parameters, either shape
+ * @returns {number} Decimal chance, 0 without Blessed Tea
+ */
+export function blessedMirrorChance(params) {
+    const active = Boolean(params?.teas?.blessed ?? params?.blessedTea);
+    if (!active) return 0;
+    const chance = (params.blessedTeaBonus ?? BLESSED_TEA_BASE_CHANCE) * (params.guzzlingBonus ?? 1);
+    return chance > 0 ? Math.min(1, chance) : 0;
 }
 
 /**

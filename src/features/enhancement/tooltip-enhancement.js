@@ -9,7 +9,12 @@
  * - Item tooltips: Shows optimal path to reach current enhancement level
  */
 
-import { applyMirrorOptimization, calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import {
+    applyMirrorOptimization,
+    blessedMirrorChance,
+    calculateEnhancement,
+    mirrorLandingOdds,
+} from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 const toolashaConfig = config;
 import dataManager from '../../core/data-manager.js';
@@ -170,7 +175,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Like Enhancelator lines 456-465. The pass itself lives in the calculator so the networth
     // worker and the profile score run the identical sweep instead of three copies of it.
     const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
-    const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice);
+    const mirrorBlessedChance = blessedMirrorChance(config);
+    const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
 
     // Step 4: Build final result with breakdown
     const _finalCost = targetCosts[currentEnhancementLevel];
@@ -187,7 +193,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Which levels the finished plan actually mirrors is a question about the path back from
     // the target, not about the first level where mirroring happened to look cheap. A level
     // that mirrors but is never reached from the target contributes nothing.
-    const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
+    const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror, mirrorBlessedChance);
 
     let optimalStrategy;
 
@@ -475,13 +481,18 @@ function priceEnhancementInputs(itemHrid, itemDetails) {
  *
  * @param {number} targetLevel - Level the plan is building
  * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
+ * @param {number} [blessedChance=0] - Chance a mirror success is +2 under Blessed Tea. A step
+ *   into level n is only run when the chain stands on n-1, which happens with probability
+ *   `landing[n-1]` (see applyMirrorOptimization), so mirror operations and the copies they
+ *   consume are expected counts and may be fractional
  * @returns {{leaves: Array<{level: number, quantity: number, primary: boolean}>,
  *   mirrorOperations: Array<{level: number, quantity: number, primary: boolean}>,
  *   mirrorCount: number, mirrorStartLevel: number|null}} Leaves are levels bought traditionally,
  *   highest first; mirror operations record the guaranteed enhancements in the selected route
  * @private
  */
-function expandMirrorPlan(targetLevel, usedMirror) {
+function expandMirrorPlan(targetLevel, usedMirror, blessedChance = 0) {
+    const landing = mirrorLandingOdds(usedMirror, blessedChance);
     // Two demands, because a mirror step is not symmetric: the primary item —
     // the one being upgraded, which for a refined piece is the refined one —
     // carries on at level-1, and what is consumed beside it is a *copy of the
@@ -503,18 +514,23 @@ function expandMirrorPlan(targetLevel, usedMirror) {
         const copies = needCopy[level];
         if (!primary && !copies) continue;
 
-        mirrorCount += primary + copies;
+        // The step into this level only runs when the chain stands on level-1
+        const stepOdds = landing[level - 1];
+        const primarySteps = primary * stepOdds;
+        const copySteps = copies * stepOdds;
+
+        mirrorCount += primarySteps + copySteps;
         mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
-        if (primary > 0) mirrorOperations.push({ level, quantity: primary, primary: true });
-        if (copies > 0) mirrorOperations.push({ level, quantity: copies, primary: false });
+        if (primarySteps > 0) mirrorOperations.push({ level, quantity: primarySteps, primary: true });
+        if (copySteps > 0) mirrorOperations.push({ level, quantity: copySteps, primary: false });
         if (primary) {
             needPrimary[level - 1] += primary;
-            needCopy[level - 2] += primary;
+            needCopy[level - 2] += primarySteps;
             needPrimary[level] = 0;
         }
         if (copies) {
             needCopy[level - 1] += copies;
-            needCopy[level - 2] += copies;
+            needCopy[level - 2] += copySteps;
             needCopy[level] = 0;
         }
     }
