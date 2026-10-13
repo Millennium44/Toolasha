@@ -89,7 +89,15 @@ export function chatStampToDate(
     now = new Date()
 ) {
     let month, day;
-    if (!ambiguousOrder && dayFirst === false) {
+    if (!ambiguousOrder && first > 12 && second <= 12) {
+        // A field over 12 is the day whatever order the stamp claims: a stamp written in
+        // another date format before the setting changed must not roll into a 13th+ month
+        day = first;
+        month = second;
+    } else if (!ambiguousOrder && second > 12 && first <= 12) {
+        month = first;
+        day = second;
+    } else if (!ambiguousOrder && dayFirst === false) {
         month = first;
         day = second;
     } else if (!ambiguousOrder) {

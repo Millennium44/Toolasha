@@ -148,6 +148,15 @@ describe('the stamp a chat line opens with', () => {
         expect([game.getMonth() + 1, game.getDate()]).toEqual([8, 4]);
     });
 
+    test('a dash stamp with a field over 12 reads that field as the day, whatever the setting says', () => {
+        const now = new Date(2026, 9, 12);
+        // Written as MM-DD before the player switched to DD-MM: 08-25 is August 25, not month 25
+        chatSettings.enabled = true;
+        chatSettings.dateFormat = 'DD-MM';
+        const stamp = chatStampToDate(leadingChatStampFields('[08-25 10:15:30] Gil: hi'), now);
+        expect([stamp.getMonth() + 1, stamp.getDate()]).toEqual([8, 25]);
+    });
+
     test('ignores a stamp that is not at the start, and a line with none', () => {
         expect(leadingChatStampFields('Gil: see [10/1 7:42:44 AM]')).toBeNull();
         expect(leadingChatStampFields('no stamp')).toBeNull();
