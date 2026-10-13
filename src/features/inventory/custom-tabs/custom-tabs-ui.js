@@ -679,6 +679,7 @@ export default class CustomTabsUI {
         this._badgeRefreshRunning = false; // A post-layout badge render is waiting or rendering
         this._badgeRefreshWanted = false; // Another badge render was requested meanwhile
         this._lastRebuildTileCount = 0; // Tile count at last full rebuild (detects inventory changes)
+        this._overflowMenu = null; // {close, remove} for the "⋯" menu
         this._actionBtnsEl = null; // +Tab/Export/Import appended to sort controls row on Toolasha tab
         this._tileObserver = null; // MutationObserver for instant tile visibility on React swaps
         this._observedContainer = null; // Container currently being observed by _tileObserver
@@ -911,6 +912,8 @@ export default class CustomTabsUI {
         this._tabBtn?.remove();
         this._actionBtnsEl?.remove();
         this._actionBtnsEl = null;
+        this._overflowMenu?.remove();
+        this._overflowMenu = null;
         this._styleEl?.remove();
         document.querySelectorAll('.toolasha-ct-add-to-tab').forEach((el) => el.remove());
         document.querySelectorAll('.toolasha-ct-add-to-tab-panel').forEach((el) => el.remove());
@@ -2295,6 +2298,8 @@ export default class CustomTabsUI {
     _removeInjectedEls() {
         this._actionBtnsEl?.remove();
         this._actionBtnsEl = null;
+        this._overflowMenu?.remove();
+        this._overflowMenu = null;
         for (const el of this._injectedEls) {
             el.remove();
         }
@@ -2313,6 +2318,7 @@ export default class CustomTabsUI {
      */
     _injectActionButtons() {
         this._actionBtnsEl?.remove();
+        this._overflowMenu?.remove();
 
         const actionsDiv = document.createElement('div');
         actionsDiv.className = 'toolasha-ct-action-btns';
@@ -2324,30 +2330,7 @@ export default class CustomTabsUI {
         addBtn.textContent = '+ Tab';
         addBtn.addEventListener('click', () => this._onAddTab(null));
 
-        const exportBtn = document.createElement('button');
-        exportBtn.className = 'toolasha-ct-add-btn';
-        exportBtn.textContent = 'Export';
-        exportBtn.addEventListener('click', () => this._exportLayout());
-
-        const importBtn = document.createElement('div');
-        importBtn.className = 'toolasha-ct-add-btn';
-        importBtn.style.position = 'relative';
-        importBtn.style.overflow = 'hidden';
-        importBtn.textContent = 'Import';
-        const importInput = document.createElement('input');
-        importInput.type = 'file';
-        importInput.accept = '.json,application/json';
-        importInput.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;';
-        importInput.addEventListener('change', () => {
-            const file = importInput.files?.[0];
-            if (file) this._handleImportFile(file);
-            importInput.value = '';
-        });
-        importBtn.appendChild(importInput);
-
         actionsDiv.appendChild(addBtn);
-        actionsDiv.appendChild(exportBtn);
-        actionsDiv.appendChild(importBtn);
 
         // Compact icon buttons; the label lives in the tooltip and for screen readers
         const expandBtn = document.createElement('button');
@@ -2368,19 +2351,47 @@ export default class CustomTabsUI {
         collapseBtn.addEventListener('click', () => this._onSetAllTabsOpen(false));
         actionsDiv.appendChild(collapseBtn);
 
-        const clearAllBtn = document.createElement('button');
-        clearAllBtn.className = 'toolasha-ct-add-btn';
-        clearAllBtn.textContent = 'Clear All';
-        clearAllBtn.title = 'Delete every custom tab';
-        clearAllBtn.addEventListener('click', () => this._onClearAllTabs());
-        actionsDiv.appendChild(clearAllBtn);
+        // Rarely used actions share one "⋯" menu so the row stays short on a narrow inventory
+        const importInput = document.createElement('input');
+        importInput.type = 'file';
+        importInput.accept = '.json,application/json';
+        importInput.style.display = 'none';
+        importInput.addEventListener('change', () => {
+            const file = importInput.files?.[0];
+            if (file) this._handleImportFile(file);
+            importInput.value = '';
+        });
+        actionsDiv.appendChild(importInput);
 
-        const importCategoriesBtn = document.createElement('button');
-        importCategoriesBtn.className = 'toolasha-ct-add-btn';
-        importCategoriesBtn.textContent = 'Import Categories';
-        importCategoriesBtn.title = "Create one tab per native item category, filled with that category's items";
-        importCategoriesBtn.addEventListener('click', () => this._onImportNativeCategories());
-        actionsDiv.appendChild(importCategoriesBtn);
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'toolasha-ct-add-btn toolasha-ct-icon-btn';
+        moreBtn.dataset.ctAction = 'more';
+        moreBtn.textContent = '⋯';
+        moreBtn.title = 'Export, import and clear tabs';
+        moreBtn.setAttribute('aria-label', 'More tab actions');
+        moreBtn.setAttribute('aria-haspopup', 'menu');
+        this._bindOverflowMenu(moreBtn, [
+            {
+                action: 'export',
+                label: 'Export',
+                title: 'Download the tab layout as a file',
+                run: () => this._exportLayout(),
+            },
+            { action: 'import', label: 'Import', title: 'Load a tab layout file', run: () => importInput.click() },
+            {
+                action: 'import-categories',
+                label: 'Import Categories',
+                title: "Create one tab per native item category, filled with that category's items",
+                run: () => this._onImportNativeCategories(),
+            },
+            {
+                action: 'clear-all',
+                label: 'Clear All',
+                title: 'Delete every custom tab',
+                run: () => this._onClearAllTabs(),
+            },
+        ]);
+        actionsDiv.appendChild(moreBtn);
 
         this._actionBtnsEl = actionsDiv;
 
@@ -2396,6 +2407,95 @@ export default class CustomTabsUI {
         topbar.className = 'toolasha-ct-topbar';
         topbar.appendChild(actionsDiv);
         return topbar;
+    }
+
+    /**
+     * Wire a button to a small dropdown menu. The panel is portaled to <body> and fixed-positioned from the
+     * button's rect so the panel's overflow cannot clip it. Document listeners exist only while it is open.
+     * @param {HTMLElement} button
+     * @param {Array<{action: string, label: string, title: string, run: Function}>} entries
+     */
+    _bindOverflowMenu(button, entries) {
+        const panel = document.createElement('div');
+        panel.className = 'toolasha-ct-overflow-menu';
+        panel.setAttribute('role', 'menu');
+        panel.style.cssText = `
+            display: none;
+            position: fixed;
+            z-index: ${config.Z_POPUP};
+            flex-direction: column;
+            background: var(--color-surface, #1e1e2e);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            overflow-x: hidden;
+            overflow-y: auto;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+            padding: 4px;
+            gap: 3px;
+            box-sizing: border-box;
+        `;
+        const outsideClick = (e) => {
+            if (!panel.contains(e.target) && !button.contains(e.target)) close();
+        };
+        const onKeydown = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        const onResize = () => close();
+        let bound = false;
+        const close = () => {
+            panel.style.display = 'none';
+            if (bound) {
+                document.removeEventListener('click', outsideClick, true);
+                document.removeEventListener('keydown', onKeydown, true);
+                window.removeEventListener('resize', onResize);
+                bound = false;
+            }
+        };
+        for (const entry of entries) {
+            const row = document.createElement('button');
+            row.dataset.ctAction = entry.action;
+            row.setAttribute('role', 'menuitem');
+            row.textContent = entry.label;
+            row.title = entry.title;
+            row.style.cssText = `display: block; width: 100%; padding: 6px 12px; border: none; border-radius: 4px;
+                cursor: pointer; font-size: 0.85rem; font-weight: 600; text-align: left; white-space: nowrap;
+                color: #fff; background: rgba(255,255,255,0.08);`;
+            row.addEventListener('click', (e) => {
+                e.stopPropagation();
+                close();
+                entry.run();
+            });
+            panel.appendChild(row);
+        }
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (panel.style.display !== 'none') {
+                close();
+                return;
+            }
+            panel.style.display = 'flex';
+            const rect = button.getBoundingClientRect();
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            const width = panel.getBoundingClientRect().width || 0;
+            panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - width))}px`;
+            panel.style.top = `${rect.bottom + 4}px`;
+            if (!bound) {
+                document.addEventListener('click', outsideClick, true);
+                document.addEventListener('keydown', onKeydown, true);
+                window.addEventListener('resize', onResize);
+                bound = true;
+            }
+        });
+        markToolashaSurface(panel, 'popover');
+        document.body.appendChild(panel);
+        this._overflowMenu?.remove();
+        this._overflowMenu = {
+            close,
+            remove: () => {
+                close();
+                panel.remove();
+            },
+        };
     }
 
     /**
