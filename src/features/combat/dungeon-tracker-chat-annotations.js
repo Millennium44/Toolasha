@@ -19,7 +19,7 @@ import { RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { gameDigitsSource } from '../../utils/number-parser.js';
-import { chatStampToDate } from '../../utils/locale-date-order.js';
+import { chatStampToDate, dashStampDayFirst } from '../../utils/locale-date-order.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 
 class DungeonTrackerChatAnnotations {
@@ -1078,12 +1078,14 @@ class DungeonTrackerChatAnnotations {
         // Use \s* to handle potential spacing variations
         let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
         let isAmerican = true;
+        let dayFirst = true;
 
         if (!match) {
             // Try international format: [DD-M HH:MM:SS] (24-hour)
             // Use \s* to handle potential spacing variations in dungeon chat
             match = text.match(/\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
             isAmerican = false;
+            dayFirst = dashStampDayFirst();
         }
 
         if (!match) {
@@ -1108,6 +1110,7 @@ class DungeonTrackerChatAnnotations {
             first: parseInt(first, 10),
             second: parseInt(second, 10),
             ambiguousOrder: isAmerican,
+            dayFirst,
             hour: parseInt(hour, 10),
             minute: parseInt(min, 10),
             sec: parseInt(sec, 10),

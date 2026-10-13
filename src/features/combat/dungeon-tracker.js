@@ -19,7 +19,7 @@ import { runningAction, runningCombatAction } from '../../utils/combat-actions.j
 import { assessRecoveredStart, RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.js';
 import { dungeonChestItems } from '../../utils/dungeon-chest-luck.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
-import { chatStampToDate } from '../../utils/locale-date-order.js';
+import { chatStampToDate, dashStampDayFirst } from '../../utils/locale-date-order.js';
 import { recordingAttempts } from './dungeon-run-attempt-setting.js';
 import { MIN_RECORDED_ATTEMPT_MS, RUN_RESULT_CANCEL, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 
@@ -28,8 +28,10 @@ import { MIN_RECORDED_ATTEMPT_MS, RUN_RESULT_CANCEL, RUN_RESULT_FAIL } from '../
  *
  * All three read `[<first><sep><second> HH:MM:SS <AM/PM>]` into the same seven
  * groups, so they share one reading of it: the slash separator leaves the field
- * order to the game's locale (overruled by any field over 12), the dash and dot
- * separators are day-first in every locale that renders them, and the year is
+ * order to the game's locale (overruled by any field over 12), the dot separator
+ * is day-first, the dash separator is day-first as the game renders it but follows
+ * the player's date format when Toolasha's chat timestamps rewrote it
+ * (`dashStampDayFirst`), and the year is
  * whichever puts the stamp in the recent past.
  *
  * Only the DOM scans need this. The in-memory chat messages carry a real ISO
@@ -43,6 +45,7 @@ function stampFromMatch(match) {
         first: parseInt(match[1], 10),
         second: parseInt(match[3], 10),
         ambiguousOrder: match[2] === '/',
+        dayFirst: match[2] === '-' ? dashStampDayFirst() : true,
         hour: parseInt(match[4], 10),
         minute: parseInt(match[5], 10),
         sec: parseInt(match[6], 10),

@@ -7,7 +7,16 @@
  * digits.
  */
 
-import { describe, test, expect, afterEach, beforeEach } from 'vitest';
+import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
+
+const chatSettings = vi.hoisted(() => ({ enabled: false, dateFormat: 'MM-DD' }));
+vi.mock('../core/config.js', () => ({
+    default: {
+        getSetting: (key) => (key === 'chat_24hrTimestamps' ? chatSettings.enabled : false),
+        getSettingValue: (key, fallback) => (key === 'market_listingDateFormat' ? chatSettings.dateFormat : fallback),
+    },
+}));
+
 import {
     detectDayFirst,
     isDayFirstLocale,
@@ -16,7 +25,11 @@ import {
     _resetDateFieldOrder,
 } from './locale-date-order.js';
 
-afterEach(() => _resetDateFieldOrder());
+afterEach(() => {
+    _resetDateFieldOrder();
+    chatSettings.enabled = false;
+    chatSettings.dateFormat = 'MM-DD';
+});
 
 /** Pretend the client renders dates in this order, whatever the runtime's locale is. */
 const clientOrder = (dayFirst) => _resetDateFieldOrder(dayFirst);
@@ -99,6 +112,7 @@ describe('the stamp a chat line opens with', () => {
             first: 10,
             second: 1,
             ambiguousOrder: true,
+            dayFirst: true,
             hour: 7,
             minute: 42,
             sec: 44,
@@ -117,6 +131,21 @@ describe('the stamp a chat line opens with', () => {
         });
         expect(leadingChatStampFields('[1.10. 12:42:44 AM] Gil: hi')).toMatchObject({ hour: 12, period: 'AM' });
         expect(leadingChatStampFields('[01-10 19:42:44] Gil: hi').period).toBeUndefined();
+    });
+
+    test('a dash stamp written by Toolasha follows the chosen date format, not the game day-first one', () => {
+        const now = new Date(2026, 9, 12);
+        chatSettings.enabled = true;
+        chatSettings.dateFormat = 'MM-DD';
+        const mmdd = chatStampToDate(leadingChatStampFields('[08-04 10:15:30 PM] Gil: hi'), now);
+        expect([mmdd.getMonth() + 1, mmdd.getDate(), mmdd.getHours()]).toEqual([8, 4, 22]);
+        chatSettings.dateFormat = 'DD-MM';
+        const ddmm = chatStampToDate(leadingChatStampFields('[04-08 10:15:30 PM] Gil: hi'), now);
+        expect([ddmm.getMonth() + 1, ddmm.getDate()]).toEqual([8, 4]);
+        // Feature off: the dash stamp is the game's own, day-first
+        chatSettings.enabled = false;
+        const game = chatStampToDate(leadingChatStampFields('[04-8 22:15:30] Gil: hi'), now);
+        expect([game.getMonth() + 1, game.getDate()]).toEqual([8, 4]);
     });
 
     test('ignores a stamp that is not at the start, and a line with none', () => {
