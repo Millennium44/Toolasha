@@ -634,6 +634,20 @@ describe('protection picker in the sweep', () => {
         expect(rows.every((row) => row.children[4].textContent === '-')).toBe(true);
     });
 
+    test('an unpriced pick with a few spare copies still warns that rows needing more are left out', async () => {
+        state.settings.enhanceSim_protectFromStock = true;
+        state.settings.enhanceSim_protectStockReserve = 0;
+        delete state.prices['/items/cheese_sword_protector'];
+        state.sellPrices = { '/items/cheese_sword_protector': 3_000 };
+        state.inventory = [stack('/items/cheese_sword_protector', 1)];
+        const panel = buildPanel({ protection: null, protectFrom: 0 });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        await choose(panel, '/items/cheese_sword_protector');
+        expect(panel.textContent).toContain('has no market price');
+        expect(panel.textContent).toContain('beyond your 1 spare');
+        await choose(panel, '');
+    });
+
     test("a Philosopher's Mirror in the slot names the pick instead of claiming the cheapest item", async () => {
         const panel = buildPanel({ protection: 'philosophers_mirror' });
         await displayEnhancementStats(panel, '/items/cheese_sword');
