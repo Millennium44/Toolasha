@@ -158,7 +158,14 @@ export function applyMirrorOptimization(targetCosts, mirrorPrice, blessedChance 
     if (!(mirrorPrice > 0)) return usedMirror;
 
     const b = blessedChance > 0 ? Math.min(1, blessedChance) : 0;
-    // Chance the chain lands exactly on each level; a level not built by a mirror is always landed on
+    // Chance the chain lands exactly on each level; a level not built by a mirror is taken as
+    // always landed on. That is an approximation: a traditionally built level under Blessed Tea
+    // can overshoot (+2 past the target), landing exactly with 1 - M[0][t-1] * skipChance(t-1)
+    // in the Markov chain. Using it would mean threading the chosen strategy's fundamental
+    // matrix out of three separate producers (tooltip, profile score, the networth worker) into
+    // this sweep; the error is at most the overshoot odds (blessed chance times the success rate
+    // times the visits to the last transient level, a percent or two) and an overshoot is not
+    // wasted, it lands on the next level up. So the simple 1 is kept deliberately.
     const landing = new Array(targetCosts.length).fill(1);
 
     for (let level = 3; level < targetCosts.length; level++) {
