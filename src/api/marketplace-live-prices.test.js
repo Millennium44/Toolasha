@@ -8,6 +8,7 @@ describe('MarketAPI live-server prices on the test server', () => {
     const originalLocation = globalThis.location;
     let store;
     let fetchMock;
+    let failReads;
 
     const payload = (ask) => ({
         marketData: { '/items/cheese': { 0: { a: ask, b: ask - 1 } } },
@@ -21,8 +22,9 @@ describe('MarketAPI live-server prices on the test server', () => {
         vi.doMock('../features/market/network-alert.js', () => ({ default: { hide: vi.fn(), show: vi.fn() } }));
         vi.doMock('../core/storage.js', () => ({
             default: {
-                get: vi.fn(async (key) => store.get(key) ?? null),
+                get: vi.fn(async (key, _s, fallback = null) => (failReads ? fallback : (store.get(key) ?? fallback))),
                 getJSON: vi.fn(async (key, _s, fallback) => (store.has(key) ? store.get(key) : fallback)),
+                tryGet: vi.fn(async (key) => (failReads ? null : { found: store.has(key), value: store.get(key) })),
                 set: vi.fn(async (key, value) => void store.set(key, value)),
                 setJSON: vi.fn(async (key, value) => void store.set(key, value)),
             },
@@ -33,6 +35,7 @@ describe('MarketAPI live-server prices on the test server', () => {
 
     beforeEach(() => {
         store = new Map();
+        failReads = false;
         fetchMock = vi.fn(async (url) => ({
             ok: true,
             json: async () => payload(url === LIVE_URL ? 500 : 100),
@@ -128,6 +131,23 @@ describe('MarketAPI live-server prices on the test server', () => {
         await third.fetch();
         expect(fetchMock).not.toHaveBeenCalled();
         expect(third.getPrice('/items/cheese').ask).toBe(100);
+    });
+
+    test('a failed read of the setting keeps a live-sourced tab live; a missing key means off', async () => {
+        store.set(MIRROR_KEY, true);
+        const marketAPI = await load('https://test.milkywayidle.com');
+        await marketAPI.fetch(true);
+        expect(marketAPI.liveSourced).toBe(true);
+
+        failReads = true;
+        await marketAPI._resolveSource();
+        expect(marketAPI.liveSourced).toBe(true);
+        expect(marketAPI.getPrice('/items/cheese').ask).toBe(500);
+
+        failReads = false;
+        store.delete(MIRROR_KEY);
+        await marketAPI._resolveSource();
+        expect(marketAPI.liveSourced).toBe(false);
     });
 
     test('flipping the setting mid-session drops the other source from memory', async () => {

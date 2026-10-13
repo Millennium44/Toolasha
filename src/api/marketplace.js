@@ -223,9 +223,15 @@ class MarketAPI {
     async _resolveSource() {
         let live = false;
         try {
-            live = isTestServer() && (await storage.get(LIVE_PRICES_MIRROR_KEY, 'settings', false)) === true;
+            if (isTestServer()) {
+                // tryGet tells a missing key (off) from a read that failed (keep the source as it is)
+                const read = await storage.tryGet(LIVE_PRICES_MIRROR_KEY, 'settings');
+                if (!read) return;
+                live = read.found && read.value === true;
+            }
         } catch (error) {
             console.warn('[MarketAPI] Could not read the live-prices setting:', error);
+            return;
         }
         if (live === this.liveSourced) return;
         this._applySource(live);
