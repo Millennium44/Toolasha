@@ -714,7 +714,7 @@ describe('the queue value total with no priced rows', () => {
             menu
         );
 
-        expect(game.productionProfitCalls).toEqual([['/items/cheese', { actionHrid: CHEESE }]]);
+        expect(game.productionProfitCalls).toEqual([['/items/cheese', { actionHrid: CHEESE, upgradeItemLevel: 0 }]]);
         expect(rowValue.textContent).toContain('Value: +36');
         expect(total.textContent).toContain('Estimated value: +36');
         expect(total.textContent).not.toContain('[?]');

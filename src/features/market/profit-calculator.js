@@ -23,6 +23,7 @@ import {
     resolveItemPrice,
 } from '../../utils/profit-helpers.js';
 import { findProducingActions } from '../../utils/production-index.js';
+import { upgradeOutputLevels } from '../../utils/upgrade-enhancement.js';
 
 /**
  * ProfitCalculator class handles profit calculations for production actions
@@ -81,9 +82,13 @@ class ProfitCalculator {
      * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
      *   (`profitCalc_excludeSellTax`) and always deduct the market tax. Item tooltips, market
      *   sorting, optimizers and planners pass it: they value output as a sale.
+     * @param {number} [options.upgradeItemLevel=0] - Enhancement level of the upgrade item the
+     *   action consumes (the stack the player selected). The input is priced at that level and the
+     *   output at the level the craft carries over (70% with a chance of one more, or all of it for
+     *   a recipe that retains enhancement). Callers with no selected stack leave it at +0.
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
-    async calculateProfit(itemHrid, { actionHrid, keepSellTax = false } = {}) {
+    async calculateProfit(itemHrid, { actionHrid, keepSellTax = false, upgradeItemLevel = 0 } = {}) {
         // Get item details
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (!itemDetails) {
@@ -190,7 +195,10 @@ class ProfitCalculator {
         const totalItemsPerHour = itemsPerHour + gourmetBonusItems;
 
         // Calculate material costs (with artisan reduction if applicable)
-        const materialCosts = this.calculateMaterialCosts(actionDetails, artisanBonus);
+        const upgradeLevel = actionDetails.upgradeItemHrid ? Math.max(0, Math.floor(Number(upgradeItemLevel) || 0)) : 0;
+        const materialCosts = this.calculateMaterialCosts(actionDetails, artisanBonus, {
+            upgradeItemLevel: upgradeLevel,
+        });
 
         // Total material cost per action
         const totalMaterialCost = materialCosts.reduce((sum, mat) => sum + mat.totalCost, 0);
@@ -205,7 +213,10 @@ class ProfitCalculator {
 
         // Get output price based on pricing mode setting
         // Uses 'profit' context with 'sell' side to get correct sell price
-        const rawOutputPrice = getCachedPrice(itemHrid, { context: 'profit', side: 'sell' });
+        const rawOutputPrice =
+            upgradeLevel > 0
+                ? this.expectedUpgradeOutputPrice(itemHrid, upgradeLevel, actionDetails, getCachedPrice)
+                : getCachedPrice(itemHrid, { context: 'profit', side: 'sell' });
         const outputPriceMissing = rawOutputPrice === null;
         const craftingFallback = outputPriceMissing
             ? this.calculateCraftingCostFallback(itemHrid, getCachedPrice, action.actionHrid)
@@ -332,6 +343,36 @@ class ProfitCalculator {
             requiredLevel: effectiveRequirement, // For backwards compatibility
             pricingMode, // Pricing mode for display
         };
+    }
+
+    /**
+     * Expected sale price of an upgrade craft's output when its input was enhanced.
+     *
+     * The craft carries part of the input's level over (see `upgrade-enhancement.js`): a whole
+     * target level is one price, a fractional one is a mix of the floor and ceil levels weighted by
+     * the chance of the extra level. A level nobody lists falls back to the floor level's price, as
+     * Milkonomy does, rather than counting the output as worthless.
+     *
+     * @param {string} itemHrid - The output item
+     * @param {number} inputLevel - Enhancement level of the consumed upgrade item
+     * @param {Object} actionDetails - The recipe (`retainAllEnhancement` selects full carry-over)
+     * @param {Function} getCachedPrice - Price lookup
+     * @returns {number|null} Expected price, null when the floor level has no price
+     */
+    expectedUpgradeOutputPrice(itemHrid, inputLevel, actionDetails, getCachedPrice) {
+        const levels = upgradeOutputLevels(inputLevel, { retainAll: Boolean(actionDetails.retainAllEnhancement) });
+        const priceAt = (enhancementLevel) =>
+            getCachedPrice(itemHrid, { context: 'profit', side: 'sell', enhancementLevel });
+
+        const floorPrice = priceAt(levels[0].level);
+        if (floorPrice === null || floorPrice === undefined) return null;
+
+        let expected = 0;
+        for (const { level, weight } of levels) {
+            const price = level === levels[0].level ? floorPrice : priceAt(level);
+            expected += weight * (price > 0 ? price : floorPrice);
+        }
+        return expected;
     }
 
     /**
@@ -471,9 +512,12 @@ class ProfitCalculator {
      * Calculate material costs for an action
      * @param {Object} actionDetails - Action details from game data
      * @param {number} artisanBonus - Artisan material reduction (0 to 1, e.g., 0.112 for 11.2% reduction)
+     * @param {Object} [options]
+     * @param {number} [options.upgradeItemLevel=0] - Enhancement level of the upgrade item, priced
+     *   at that level's market price (an enhanced copy has no crafting-cost shortcut)
      * @returns {Array} Array of material cost objects
      */
-    calculateMaterialCosts(actionDetails, artisanBonus = 0) {
+    calculateMaterialCosts(actionDetails, artisanBonus = 0, { upgradeItemLevel = 0 } = {}) {
         const costs = [];
 
         // Check for upgrade item (e.g., Crimson Bulwark → Rainbow Bulwark)
@@ -486,11 +530,16 @@ class ProfitCalculator {
                 if (actionDetails.upgradeItemHrid === '/items/coin') {
                     resolved = { price: 1, custom: false, missing: false };
                 } else {
-                    resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
+                    resolved = resolveItemPrice(actionDetails.upgradeItemHrid, {
+                        context: 'profit',
+                        side: 'buy',
+                        enhancementLevel: upgradeItemLevel,
+                    });
 
                     // "Direct recipe only" costs the upgrade item at market
                     // (buy it), rather than recursing into how it is crafted.
                     const craftEnabled =
+                        upgradeItemLevel === 0 &&
                         config.getSetting('profitCalc_craftUpgradeItems') &&
                         !config.getSetting('itemTooltip_detailedProfitFlat');
                     // Inputs of the craft are bought on the same side the market price above is

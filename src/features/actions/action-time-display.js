@@ -5575,6 +5575,7 @@ class ActionTimeDisplay {
                 // could answer about a different recipe that happens to yield the same item
                 profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
                     actionHrid: action.actionHrid,
+                    upgradeItemLevel: this.getProductionUpgradeLevel(actionDetails, action),
                 });
             }
         }
@@ -5986,6 +5987,7 @@ class ActionTimeDisplay {
                 } else if (actionDetails.outputItems?.[0]?.itemHrid) {
                     profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
                         actionHrid,
+                        upgradeItemLevel: this.getProductionUpgradeLevel(actionDetails, action),
                     });
                 }
             }
