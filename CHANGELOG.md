@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim: wave swing timing, Moo Pass, blind
+
+- Every weapon now starts its first swing a full attack interval after a new wave appears, as measured in September (slow weapons such as crossbows, bulwarks, staffs, maces and bows were getting part of a swing free each wave), your Moo Pass Wisdom is no longer given to every party member in party sims, and a blinded unit can still cast abilities, as the game's blind only stops auto attacks.
+
 ### Labyrinth: Recommend by Time
 
 - Beside Recommend by Win %, the labyrinth panel can recommend the highest room level whose expected time per clear (failed runs included) fits a target time you set, defaulting to 300 seconds; adapted from the Labyrinth Win Rate Calculator 1.6.0.
