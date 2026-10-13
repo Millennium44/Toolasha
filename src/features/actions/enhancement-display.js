@@ -1009,6 +1009,11 @@ export function protectSweepHTML({
             priceOf: sweepBuyPrice,
             nameOf,
         });
+        // A pick equal to the slot item is ignored by the sweep and drawn as Auto, so drop it: left
+        // stored, it would turn active when the slot later changes, under a select still showing Auto
+        if (pickedHrid === undefined && protectPicks.get(itemDetails.hrid) === protectionItemHrid) {
+            protectPicks.delete(itemDetails.hrid);
+        }
         const chosen = pickedHrid === undefined ? protectPicks.get(itemDetails.hrid) || null : pickedHrid;
         const { options, selectedIsMirror } = chooseProtectionOptions({
             itemHrid: itemDetails.hrid,

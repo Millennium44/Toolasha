@@ -645,4 +645,18 @@ describe('protection picker in the sweep', () => {
         expect(panel.textContent).not.toContain('prices the cheapest protect-from item');
         expect(panel.textContent).toContain('Mirror Of Protection, your pick, instead');
     });
+
+    test('a pick equal to the slot item is dropped, not left to activate when the slot changes', async () => {
+        const first = buildPanel({ protection: 'cheese_sword_protector' });
+        await displayEnhancementStats(first, '/items/cheese_sword');
+        await choose(first, '');
+        await choose(first, '/items/cheese_sword_protector');
+        expect(shownPick(first)).toBe('');
+
+        document.body.innerHTML = '';
+        const second = buildPanel({ protection: 'mirror_of_protection' });
+        await displayEnhancementStats(second, '/items/cheese_sword');
+        expect(shownPick(second)).toBe('');
+        expect(second.textContent).not.toContain('your pick');
+    });
 });
