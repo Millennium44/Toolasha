@@ -27,6 +27,7 @@ const {
     buildCommunityBuffsForSkill,
     generateSkillingCommunityBuffCandidates,
     buildEquipmentBuffsForSkill,
+    buildOverridesForSkill,
     MAX_COMMUNITY_BUFF_LEVEL,
 } = await import('./skilling-sim-helpers.js');
 
@@ -334,5 +335,23 @@ describe('a community buff target level in the skilling tab', () => {
         );
 
         expect(candidate.upgradeLevel).toBe(4);
+    });
+});
+
+describe('the crates a skilling forecast is run under', () => {
+    test('only the tea crate counts; the coffee and food crates do not reach a skilling room', () => {
+        const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.15, ratioBoost: 0 };
+        const crateMap = {
+            '/items/expert_tea_crate': [wisdom],
+            '/items/expert_coffee_crate': [wisdom],
+            '/items/expert_food_crate': [{ typeHrid: '/buff_types/hp_regen', flatBoost: 0.01, ratioBoost: 0 }],
+        };
+        const overrides = buildOverridesForSkill(
+            { equipment: {}, houseRooms: {}, tokenUpgrades: {}, communityBuffLevels: {} },
+            '/action_types/cheesesmithing',
+            ['/items/expert_tea_crate', '/items/expert_coffee_crate', '/items/expert_food_crate'],
+            { itemDetailMap: {}, houseRoomDetailMap: {}, labyrinthCrateDetailMap: crateMap }
+        );
+        expect(overrides.crateBuffs).toEqual([wisdom]);
     });
 });

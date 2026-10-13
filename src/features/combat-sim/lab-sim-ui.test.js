@@ -1732,9 +1732,13 @@ describe('the skilling crate dropdowns follow the equipped crates', () => {
         await Promise.resolve();
 
         expect(ui.panel.querySelector('#mwi-labsim-skilling-tea').value).toBe('/items/advanced_tea_crate');
-        expect(ui.panel.querySelector('#mwi-labsim-skilling-coffee').value).toBe('/items/basic_coffee_crate');
+        expect(ui.panel.querySelector('#mwi-labsim-coffee').value).toBe('/items/basic_coffee_crate');
         // No food crate equipped reads as None, not the old hardcoded Expert
-        expect(ui.panel.querySelector('#mwi-labsim-skilling-food').value).toBe('');
+        expect(ui.panel.querySelector('#mwi-labsim-food').value).toBe('');
+        // The skilling tab offers the tea crate only: coffee and food do not reach a skilling room
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-coffee')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-food')).toBeNull();
+        expect(ui._getSkillingCrates()).toEqual(['/items/advanced_tea_crate']);
     });
 
     test('a manual pick opts out, so a later read does not drag it back', async () => {

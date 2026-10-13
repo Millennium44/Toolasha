@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Labyrinth combat win rates no longer count your active combat scrolls, which do not work in the labyrinth (they read up to about 30% too strong with scrolls up), and skilling rooms now use the tool you are wearing when your labyrinth loadout has none, or the loadout is gone, instead of scoring the room as if you had no tool.
 
+### Labyrinth XP: room log and skilling forecast
+
+- The labyrinth room log no longer records every room's XP twice (it was counting the game's total-level entry as well as the skill), and skilling-room XP forecasts no longer add the coffee crate's Wisdom, which only the tea crate gives in skilling rooms; rooms logged before this update keep their doubled figures.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log

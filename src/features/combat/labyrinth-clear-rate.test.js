@@ -797,6 +797,42 @@ describe('the community buffs the server is running reach a labyrinth room', () 
         expect(metrics.experienceBonus).toBeCloseTo(0.2, 10);
     });
 
+    test('only the tea crate’s wisdom reaches a skilling room, not the coffee crate’s', () => {
+        // Measured on the test server: a level-39 room with expert tea and expert
+        // coffee crates (0.15 wisdom each) paid 4481.88 = 39 x 50 x 2.2984, where
+        // counting both crates predicted 4774.38 = 39 x 50 x 2.4484
+        dataManagerMock.characterData = {
+            characterLabyrinth: {
+                teaCrateItemHrid: '/items/expert_tea_crate',
+                coffeeCrateItemHrid: '/items/expert_coffee_crate',
+                foodCrateItemHrid: '/items/expert_food_crate',
+            },
+        };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            labyrinthCrateDetailMap: {
+                '/items/expert_tea_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.15, ratioBoost: 0 }],
+                '/items/expert_coffee_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.15, ratioBoost: 0 }],
+                '/items/expert_food_crate': [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.2, ratioBoost: 0 }],
+            },
+        });
+
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+
+        expect(metrics.experienceBonus).toBeCloseTo(0.15, 10);
+        expect(metrics.efficiencyBonus).toBe(0);
+    });
+
+    test('the skilling recommendation tooltip names the tea crate only', () => {
+        dataManagerMock.characterData = {
+            characterLabyrinth: {
+                teaCrateItemHrid: '/items/expert_tea_crate',
+                coffeeCrateItemHrid: '/items/expert_coffee_crate',
+                foodCrateItemHrid: '/items/basic_food_crate',
+            },
+        };
+        expect(labyrinthClearRate._equippedCrateSummary()).toBe('Expert tea');
+    });
+
     test('and a fight’s award is raised by the same buff, which it used to ignore', () => {
         community.levels['/community_buff_types/experience'] = 11;
 

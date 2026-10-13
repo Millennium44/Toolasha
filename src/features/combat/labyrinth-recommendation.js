@@ -669,18 +669,15 @@ export const recommendationMethods = {
     },
 
     /**
-     * The equipped labyrinth crate tiers as "Expert tea · Advanced coffee · …",
-     * for the recommendation tooltip's crate line.
+     * The equipped tea crate tier as "Expert tea", for the skilling recommendation
+     * tooltip's crate line. Only the tea crate reaches a skilling room; the coffee
+     * and food crates are combat-only, so naming them would claim they contributed.
      * @private
      */
     _equippedCrateSummary() {
         const labyrinth = dataManager.characterData?.characterLabyrinth;
         const setting = dataManager.characterData?.characterSetting;
-        return [
-            labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || '',
-            labyrinth?.coffeeCrateItemHrid || setting?.labyrinthCoffeeCrateHrid || '',
-            labyrinth?.foodCrateItemHrid || setting?.labyrinthFoodCrateHrid || '',
-        ]
+        return [labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || '']
             .map((hrid) => {
                 const match = /\/items\/(\w+?)_(tea|coffee|food)_crate/.exec(hrid || '');
                 return match ? `${match[1].charAt(0).toUpperCase()}${match[1].slice(1)} ${match[2]}` : '';

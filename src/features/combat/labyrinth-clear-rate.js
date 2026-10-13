@@ -846,7 +846,12 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Get crate buff arrays for all equipped crates
+     * Get crate buffs for skilling and enhancing rooms (tea crate only).
+     *
+     * Measured on the test server: with expert tea and expert coffee crates both
+     * carrying 0.15 wisdom, a level-39 room paid 2.2984x its base experience, not
+     * 2.4484x. Only the tea crate's wisdom reaches skilling experience, so the
+     * coffee and food crates stay out of the skilling metrics.
      */
     getCrateBuffs() {
         const labyrinth = dataManager.characterData?.characterLabyrinth;
@@ -854,11 +859,7 @@ class LabyrinthClearRate {
         const gameData = dataManager.getInitClientData();
         if (!gameData?.labyrinthCrateDetailMap) return [];
 
-        const crateHrids = [
-            labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || '',
-            labyrinth?.coffeeCrateItemHrid || setting?.labyrinthCoffeeCrateHrid || '',
-            labyrinth?.foodCrateItemHrid || setting?.labyrinthFoodCrateHrid || '',
-        ];
+        const crateHrids = [labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || ''];
 
         const allBuffs = [];
         for (const hrid of crateHrids) {
