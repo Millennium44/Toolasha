@@ -54,8 +54,12 @@ export const DISCARD_LEGACY = { migrate: 'discard' };
  * field-by-field max, which would stitch clears from one count onto attempts
  * from another. A tab that recorded fights before its read landed keeps them
  * only when its bucket is the larger; the alternative, summing, would double
- * every fight both sides already share. The seen-set and the baseline are one
- * tab's working state and memory's copy wins.
+ * every fight both sides already share. The seen-set is one tab's working
+ * state and memory's copy wins. The baseline is the user's mark, and the newer
+ * mark wins whichever side holds it: a save after a sync pull must not put this
+ * tab's older mark back over a peer's. Forgetting the mark stamps
+ * `baselineClearedAt`, unioned as a max, so a fold cannot restore a mark the
+ * user took away.
  *
  * A stored document of another version is not merged at all: the version bump
  * exists to drop it, and that drop is the one intentional overwrite here.
@@ -108,18 +112,24 @@ export function mergeOutcomeDocuments(stored, memory) {
     }
 
     const seen = mine.seen && Object.keys(mine.seen).length ? mine.seen : stored.seen || {};
+    const markedAt = (mark) => Number(mark?.at) || 0;
+    const ours = mine.baseline ?? null;
+    const theirs = stored.baseline ?? null;
+    const baseline = ours && (!theirs || markedAt(ours) >= markedAt(theirs)) ? ours : theirs;
+    const baselineClearedAt = Math.max(Number(stored.baselineClearedAt) || 0, Number(mine.baselineClearedAt) || 0);
     // A baseline marked before the reset is a mark into a record that no longer
     // exists, and subtracting it from what has been counted since is nonsense
-    const baseline = mine.baseline ?? stored.baseline ?? null;
+    const cutoff = Math.max(clearedAt, baselineClearedAt);
     const document = {
         version: OUTCOME_STORAGE_VERSION,
         totals: kept,
         seen,
-        baseline: !(clearedAt > 0) || (Number(baseline?.at) || 0) > clearedAt ? baseline : null,
+        baseline: baseline && (cutoff === 0 || markedAt(baseline) > cutoff) ? baseline : null,
     };
     // Not written unless something asked for it, so a record that has never been
     // reset stores exactly the shape it always did
     if (clearedAt > 0) document.clearedAt = clearedAt;
+    if (baselineClearedAt > 0) document.baselineClearedAt = baselineClearedAt;
     return document;
 }
 
@@ -271,6 +281,7 @@ export const outcomeMethods = {
             baseline: this._baseline || null,
         };
         if (this._outcomesClearedAt > 0) document.clearedAt = this._outcomesClearedAt;
+        if (this._baselineClearedAt > 0) document.baselineClearedAt = this._baselineClearedAt;
         return document;
     },
 
@@ -280,6 +291,7 @@ export const outcomeMethods = {
         this._outcomesSeen = doc?.seen || {};
         this._baseline = doc?.baseline || null;
         this._outcomesClearedAt = Number(doc?.clearedAt) || 0;
+        this._baselineClearedAt = Number(doc?.baselineClearedAt) || 0;
     },
 
     /**
@@ -292,6 +304,7 @@ export const outcomeMethods = {
         this._outcomesSeen = {};
         this._baseline = null;
         this._outcomesClearedAt = 0;
+        this._baselineClearedAt = 0;
         this._outcomesLoaded = false;
         // The record's own generation covers what it holds; this one covers the
         // singleton's copy of it. A fold that started before the switch resumes
@@ -587,6 +600,8 @@ export const outcomeMethods = {
     async clearOutcomeBaseline() {
         await this.loadOutcomes();
         this._baseline = null;
+        // Stamped, or the fold takes the stored mark back
+        this._baselineClearedAt = Date.now();
         await this.saveOutcomes();
     },
 
