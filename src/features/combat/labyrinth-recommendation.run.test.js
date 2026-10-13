@@ -260,6 +260,25 @@ describe('Recommend run over skilling and combat rooms', () => {
         expect(panel.recommendations.has(MONSTERS[0])).toBe(false);
     });
 
+    test('cancelling after a mid-run change drops the records settled before it', async () => {
+        buildTable();
+        vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);
+        let calls = 0;
+        vi.spyOn(panel, 'findRecommendedThresholdCombat').mockImplementation(async () => {
+            calls++;
+            if (calls === 2) inputsChange('gear-b');
+            // The player presses Cancel while the last room is searched
+            if (calls === MONSTERS.length) vi.spyOn(panel, 'simCancelled').mockReturnValue(true);
+            return 6;
+        });
+
+        await panel.runRecommendations();
+
+        for (const hrid of SKILLS) expect(panel.recommendations.has(hrid)).toBe(false);
+        expect(panel.recommendations.has(MONSTERS[0])).toBe(false);
+        expect(panel.recommendations.has(MONSTERS[1])).toBe(false);
+    });
+
     test('a change between runs still drops the recommendations it made stale', async () => {
         buildTable();
         vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);

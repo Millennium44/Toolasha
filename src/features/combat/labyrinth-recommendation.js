@@ -558,13 +558,28 @@ export const recommendationMethods = {
                     }
                 }
                 skillSerial = latest;
-                if (aborted || this._recommendChangeSerial === latest) break;
+                // A whole pass with the inputs holding still: every record now answers for them
+                if (!aborted && this._recommendChangeSerial === latest) {
+                    this._recommendInputsChangedMidRun = false;
+                    break;
+                }
+                if (aborted) break;
             }
         } finally {
             // Nothing here belongs to a run the feature was torn down under: the
             // flag has already been cleared by `disable()` and reclaimed by the
             // arriving character, and the button is that character's button.
             if (this.simEpoch() === epoch) {
+                // The inputs changed and the recovery never finished (cancelled, or still moving
+                // after its last pass): what was settled before the latest change answers for
+                // gear that is gone, so it is dropped rather than shown as current
+                if (this._recommendInputsChangedMidRun) {
+                    const latest = this._recommendChangeSerial;
+                    for (const { roomHrid, isSkill } of rooms) {
+                        const stale = isSkill || (combatSearchedAt.get(roomHrid) ?? -1) < latest;
+                        if (stale) this.recommendations.delete(roomHrid);
+                    }
+                }
                 this.recommendRunning = false;
                 this._recommendInputsChangedMidRun = false;
                 this.refreshAutomationRunningState();
