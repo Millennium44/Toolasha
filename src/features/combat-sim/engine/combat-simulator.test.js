@@ -2043,6 +2043,28 @@ describe('out-of-mana is a mana state and nothing else', () => {
         expect(player.isOutOfMana).toBe(false);
     });
 
+    test('a blinded survivor cadence wake does not outlive the wave clear', () => {
+        // The wake stands in for the swing the clear retires. Left queued it
+        // fires in the respawn gap, where addNextAttackEvent evaluates
+        // abilities before its no-enemies guard: a ready ability would cast
+        // with no target, spend mana and start its cooldown.
+        const { sim, player } = soloFight();
+        player.isBlinded = true;
+        sim.addNextAttackEvent(player);
+        expect(queued(sim, AwaitCooldownEvent.type, player).length).toBe(1);
+        // A wake with another meaning (mana restoration) must survive the clear.
+        const other = { ...player };
+        sim.eventQueue.addEvent(new AwaitCooldownEvent(sim.simulationTime + ONE_SECOND, other));
+
+        sim.enemies.forEach((enemy) => {
+            enemy.combatDetails.currentHitpoints = 0;
+        });
+        sim.checkEncounterEnd();
+
+        expect(queued(sim, AwaitCooldownEvent.type, player)).toEqual([]);
+        expect(queued(sim, AwaitCooldownEvent.type, other).length).toBe(1);
+    });
+
     test('a unit that cannot afford its triggered ability still swings', () => {
         // Measured on the live game, and the reason this is a test rather than
         // a detail: a character whose cheapest ability costs 10 mana was driven

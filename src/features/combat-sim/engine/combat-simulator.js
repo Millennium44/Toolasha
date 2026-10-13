@@ -1170,6 +1170,16 @@ class CombatSimulator {
             // An in-progress cast is a separate rule and is untouched:
             // startNewEncounter clears AbilityCastEndEvent and restarts it.
             this.eventQueue.clearEventsOfType(AutoAttackEvent.type);
+            // A blinded survivor's cadence wake stands in for the swing just
+            // retired, so it goes with it: left queued it would fire in the
+            // respawn gap, and addNextAttackEvent evaluates abilities before
+            // its no-enemies guard, so a ready ability would cast, spend mana
+            // and start its cooldown with no target. startAttacks() re-arms
+            // the unit at the spawn. Only the blind wakes are flagged; the
+            // mana-restoration and other wakes mean something else.
+            this.eventQueue.minHeap.data
+                .filter((queued) => queued.type === AwaitCooldownEvent.type && queued.blindWake)
+                .forEach((queued) => this.eventQueue.minHeap.remove(queued));
 
             if (!this.labyrinth && this.zone.isDungeon && allPlayersDown) {
                 // Wipe wins in a dungeon. A dungeon run ends the moment the
@@ -1410,7 +1420,8 @@ class CombatSimulator {
                 this.eventQueue.addEvent(
                     new AwaitCooldownEvent(
                         this.simulationTime + source.combatDetails.combatStats.attackInterval,
-                        source
+                        source,
+                        true
                     )
                 );
             }
