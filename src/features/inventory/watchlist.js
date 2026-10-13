@@ -355,9 +355,10 @@ export function watchlistRows() {
         listedOf: (hrid, level) => listed[watchlistKey(hrid, level)],
         // The payout the game-facing market code uses: the cowbell bag's own rate, floored per unit.
         // An Iron Cow character never pays market tax (the same rule as profit-helpers' outputTaxRate,
-        // which is too heavy to import here), and its prices are untaxed vendor/coinify values
+        // which is too heavy to import here), and its prices are untaxed vendor/coinify values, kept
+        // as they are: a coinify value is a fractional expected value, not a per-unit market sale
         afterTax: (price, hrid) =>
-            Math.floor(price * (1 - (ironCow ? 0 : hrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX))),
+            ironCow ? price : Math.floor(price * (1 - (hrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX))),
     });
     return sortRows(rows, state.sortBy, state.direction);
 }

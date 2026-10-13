@@ -435,6 +435,12 @@ describe('the rows', () => {
         const row = watchlistRows().find((r) => r.hrid === '/items/rare_hat');
         expect(row.totalBid).toBe(5000);
         expect(row.flag).not.toBe('below-vendor');
+
+        // A fractional coinify expected value is not floored per unit
+        game.prices['/items/cheese'] = { ask: 200, bid: 92.5 };
+        game.inventory = [{ itemHrid: '/items/cheese', count: 100 }];
+        const frac = watchlistRows().find((r) => r.hrid === '/items/cheese');
+        expect(frac.totalBid).toBe(9250);
     });
 
     test('a cowbell bag is judged at its own 18% market tax', () => {
