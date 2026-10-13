@@ -215,6 +215,24 @@ describe('reading a timestamp off a message', () => {
         expect(annotations.getTimestampFromMessage(node)).toEqual(aug4(22, 15, 30));
     });
 
+    test('dash format with a twelve-hour clock, as the chat 24h feature writes it', () => {
+        expect(annotations.getTimestampFromMessage(message('[04-8 10:15:30 PM]', 'Key counts: [Alice - 1]'))).toEqual(
+            aug4(22, 15, 30)
+        );
+        expect(annotations.getTimestampFromMessage(message('[04-8 12:30:00 AM]', 'Key counts: [Alice - 1]'))).toEqual(
+            aug4(0, 30, 0)
+        );
+        expect(annotations.getTimestampFromMessage(message('[04-8 12:30:00 PM]', 'Key counts: [Alice - 1]'))).toEqual(
+            aug4(12, 30, 0)
+        );
+    });
+
+    test('dot format with a twelve-hour clock', () => {
+        expect(annotations.getTimestampFromMessage(message('[4.8. 10:15:30 PM]', 'Key counts: [Alice - 1]'))).toEqual(
+            aug4(22, 15, 30)
+        );
+    });
+
     test('European dot format is day first too', () => {
         const node = message('[4.8. 22:15:30]', 'Key counts: [Alice - 1]');
         expect(annotations.getTimestampFromMessage(node)).toEqual(aug4(22, 15, 30));

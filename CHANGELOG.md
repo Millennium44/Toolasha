@@ -22,6 +22,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Alchemy Best Items gains a Max level filter, a "preview levels ahead" option and green/red level coloring (an optional setting fills the filter with your level), the Alchemy panel now hides Action Speed & Time and Level Progress when those sections are turned off, and editing the Level Progress target fills the Repeat count; ported from upstream.
 
+### Loads on milkywayidle.com, and small fixes from upstream
+
+- Toolasha now also loads when the game is opened at milkywayidle.com without the www, 12-hour chat timestamps like [MM-DD h:mm PM] are read correctly by dungeon chat annotations and saved chat ordering, the Max buy button only fills a quantity when it can find that shop window's own Buy button (and is now styled), and the queue edit menu keeps its delete button on the right when a long completion time wraps; ported from upstream.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log

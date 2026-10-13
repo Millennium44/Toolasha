@@ -129,4 +129,11 @@ describe('findMaxValidQuantity', () => {
     test('returns null when even one is rejected', async () => {
         expect(await findMaxValidQuantity(50, async () => true)).toBeNull();
     });
+
+    test('stops when the oracle is lost at the first probe or mid-search', async () => {
+        expect(await findMaxValidQuantity(50, async () => null)).toBeNull();
+        const probe = vi.fn(async (q) => (q === 50 ? true : null));
+        expect(await findMaxValidQuantity(50, probe)).toBeNull();
+        expect(probe).toHaveBeenCalledTimes(2);
+    });
 });

@@ -109,6 +109,13 @@ describe('the copies of the target list stay in sync', () => {
     });
 
     test.each(['userscript-header.txt', 'library-headers/entrypoint.txt'])(
+        '%s matches the apex game domain',
+        (headerPath) => {
+            expect(read(headerPath)).toMatch(/^\/\/ @match\s+https:\/\/milkywayidle\.com\/\*$/m);
+        }
+    );
+
+    test.each(['userscript-header.txt', 'library-headers/entrypoint.txt'])(
         '%s grants access to every target',
         (headerPath) => {
             const header = read(headerPath);

@@ -137,6 +137,17 @@ describe('QueuedActions edit-menu width contract', () => {
         expect(css).toContain('max-width: 100%;');
     });
 
+    test('the text column has a zero flex-basis and the delete button stays right-aligned on wrap', () => {
+        actionTimeDisplay.initializeQueueObserver();
+        const css = styleText();
+        const textRule = css.match(/\[class\*="QueuedActions_actionText"\] \{[^}]*\}/)?.[0] ?? '';
+
+        expect(textRule).toContain('flex: 1 1 0%;');
+        const buttonRule =
+            css.match(/\[class\*="QueuedActions_action__"\] \[class\*="Button_warning__"\] \{[^}]*\}/)?.[0] ?? '';
+        expect(buttonRule).toContain('margin-left: auto;');
+    });
+
     test('the contract applies with no injected rows present at all', () => {
         actionTimeDisplay.initializeQueueObserver();
         const menu = editMenu();

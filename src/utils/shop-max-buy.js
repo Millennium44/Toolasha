@@ -117,19 +117,24 @@ export function computeMaxAffordable(costLines) {
  * is rejected (the Buy button's disabled state). Some purchases cap quantity beyond affordability
  * (a purchase limit) and the cap is not readable from the page.
  * @param {number} candidate - The affordability ceiling
- * @param {(quantity: number) => Promise<boolean>} isDisabledAt - Sets the quantity and reports
- *   whether the dialog rejects it
- * @returns {Promise<number|null>} The accepted quantity, or null when even 1 is rejected
+ * @param {(quantity: number) => Promise<boolean|null>} isDisabledAt - Sets the quantity and reports
+ *   whether the dialog rejects it; null means the oracle is lost or ambiguous, which stops the search
+ * @returns {Promise<number|null>} The accepted quantity, or null when even 1 is rejected or the
+ *   oracle was lost
  */
 export async function findMaxValidQuantity(candidate, isDisabledAt) {
-    if (!(await isDisabledAt(candidate))) return candidate;
+    const first = await isDisabledAt(candidate);
+    if (first === null) return null;
+    if (!first) return candidate;
 
     let low = 1;
     let high = candidate - 1;
     let best = null;
     while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        if (await isDisabledAt(mid)) {
+        const rejected = await isDisabledAt(mid);
+        if (rejected === null) return null; // lost the oracle mid-search: stop rather than guess
+        if (rejected) {
             high = mid - 1;
         } else {
             best = mid;

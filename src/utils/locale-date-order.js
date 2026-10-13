@@ -15,6 +15,8 @@
  * Changing the game's language leaves the stamp format alone — confirmed both in
  * the client bundle and by changing it in the game's own settings.
  */
+import config from '../core/config.js';
+
 /** A date whose month and day cannot be confused for one another. */
 const PROBE_DATE = new Date(2020, 10, 22); // 22 November 2020
 
@@ -82,9 +84,23 @@ export function isDayFirstLocale() {
  * @param {Date} [now] - The instant the stamp is read against; defaults to the clock
  * @returns {Date|null} The stamp's date, or null when no reading of it is one
  */
-export function chatStampToDate({ first, second, ambiguousOrder, hour, minute, sec, period }, now = new Date()) {
+export function chatStampToDate(
+    { first, second, ambiguousOrder, dayFirst, hour, minute, sec, period },
+    now = new Date()
+) {
     let month, day;
-    if (!ambiguousOrder) {
+    if (!ambiguousOrder && first > 12 && second <= 12) {
+        // A field over 12 is the day whatever order the stamp claims: a stamp written in
+        // another date format before the setting changed must not roll into a 13th+ month
+        day = first;
+        month = second;
+    } else if (!ambiguousOrder && second > 12 && first <= 12) {
+        month = first;
+        day = second;
+    } else if (!ambiguousOrder && dayFirst === false) {
+        month = first;
+        day = second;
+    } else if (!ambiguousOrder) {
         day = first;
         month = second;
     } else if (first > 12 && second > 12) {
@@ -127,14 +143,32 @@ export function _resetDateFieldOrder(dayFirst) {
 }
 
 /**
+ * Whether a dash stamp (`[a-b HH:MM:SS]`) is day-first. The game renders dash stamps
+ * day-first; Toolasha's own chat timestamps rewrite every stamp as a dash stamp in the
+ * order the player picked (`market_listingDateFormat`, MM-DD by default), so while that
+ * feature is on its setting decides.
+ * @returns {boolean} True for day-first, false for month-first
+ */
+export function dashStampDayFirst() {
+    try {
+        if (config.getSetting('chat_24hrTimestamps')) {
+            return config.getSettingValue('market_listingDateFormat', 'MM-DD') === 'DD-MM';
+        }
+    } catch {
+        // No settings yet: the game's own layout
+    }
+    return true;
+}
+
+/**
  * The three stamp layouts the game renders, anchored at the start of a line's
  * text: slash (`[M/D h:mm:ss AM]`, or D/M by locale), dash (`[DD-M HH:MM:SS]`)
  * and dot (`[D.M. HH:MM:SS]`). The same layouts the dungeon tracker reads.
  */
 const LEADING_STAMP_RES = [
     { re: /^\s*\[(\d{1,2})\/(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: true },
-    { re: /^\s*\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/, ambiguousOrder: false },
-    { re: /^\s*\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\]/, ambiguousOrder: false },
+    { re: /^\s*\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: false, dash: true },
+    { re: /^\s*\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: false },
 ];
 
 /**
@@ -149,7 +183,7 @@ const LEADING_STAMP_RES = [
  */
 export function leadingChatStampFields(text) {
     if (typeof text !== 'string') return null;
-    for (const { re, ambiguousOrder } of LEADING_STAMP_RES) {
+    for (const { re, ambiguousOrder, dash } of LEADING_STAMP_RES) {
         const match = text.match(re);
         if (!match) continue;
         const [, first, second, hour, minute, sec, period] = match;
@@ -157,6 +191,7 @@ export function leadingChatStampFields(text) {
             first: parseInt(first, 10),
             second: parseInt(second, 10),
             ambiguousOrder,
+            dayFirst: dash ? dashStampDayFirst() : true,
             hour: parseInt(hour, 10),
             minute: parseInt(minute, 10),
             sec: parseInt(sec, 10),

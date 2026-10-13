@@ -26,6 +26,7 @@ const TEST_HOSTNAMES = new Set([
 /** Every origin the game itself is served from. The sim-site @matches are not on this list. */
 const GAME_ORIGINS = new Set([
     'https://www.milkywayidle.com',
+    'https://milkywayidle.com',
     'https://test.milkywayidle.com',
     'https://www.milkywayidlecn.com',
     'https://test.milkywayidlecn.com',
