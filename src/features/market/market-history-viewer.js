@@ -1743,6 +1743,9 @@ class MarketHistoryViewer {
 
             let imported = 0;
             let skipped = 0;
+            // Only the file's rows go to the log: the import takes back their tombstones, and a row already in
+            // the log must stay deletable by a peer
+            const importedListings = [];
             // Imported rows are exact id↔time pairs too — mirror them into the
             // shared anchor pool the same way live recording does
             const newAnchors = [];
@@ -1852,12 +1855,13 @@ class MarketHistoryViewer {
                 };
 
                 existingListings.push(listing);
+                importedListings.push(listing);
                 newAnchors.push({ id: listing.id, timestamp: listing.timestamp });
                 imported++;
             }
 
             // Save to storage
-            if (!(await estimatedListingAge.importListings(existingListings))) {
+            if (!(await estimatedListingAge.importListings(importedListings))) {
                 throw new Error('the listing log could not be read or written, so the listings were not imported');
             }
             await estimatedListingAge.addAnchors(newAnchors);
@@ -1998,6 +2002,9 @@ class MarketHistoryViewer {
 
             let imported = 0;
             let skipped = 0;
+            // Only the file's rows go to the log: the import takes back their tombstones, and a row already in
+            // the log must stay deletable by a peer
+            const importedListings = [];
             // Imported rows are exact id↔time pairs too — mirror them into the
             // shared anchor pool the same way live recording does
             const newAnchors = [];
@@ -2036,12 +2043,13 @@ class MarketHistoryViewer {
                 };
 
                 existingListings.push(toolashaListing);
+                importedListings.push(toolashaListing);
                 newAnchors.push({ id: toolashaListing.id, timestamp: toolashaListing.timestamp });
                 imported++;
             }
 
             // Save to storage
-            if (!(await estimatedListingAge.importListings(existingListings))) {
+            if (!(await estimatedListingAge.importListings(importedListings))) {
                 throw new Error('the listing log could not be read or written, so the listings were not imported');
             }
             await estimatedListingAge.addAnchors(newAnchors);
