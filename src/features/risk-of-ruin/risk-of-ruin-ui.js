@@ -34,7 +34,7 @@ import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhance
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
-import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
+import { setCustomPriceOverride, getCustomPriceOverridesAsync } from '../settings/custom-price-overrides.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -445,7 +445,9 @@ class RiskOfRuinUI {
 
         // A double click must not write twice
         button.disabled = true;
-        await setCustomPriceOverride(button.dataset.itemHrid, 0, null, price);
+        // The setter replaces the whole entry, so carry any buy-side override the player set
+        const existing = (await getCustomPriceOverridesAsync())?.[`${button.dataset.itemHrid}:0`];
+        await setCustomPriceOverride(button.dataset.itemHrid, 0, existing?.buy ?? null, price);
         this._run();
     }
 
@@ -824,8 +826,16 @@ class RiskOfRuinUI {
      */
     _alchemyDepthCapItems(breakdown, costPerAction) {
         const candidates = [];
+        // A self-return branch is not sold (no market item to track), but getting the input back
+        // offsets the cost, so its value still counts in the denominator the shares are taken from
+        let selfReturnEV = 0;
         for (const branch of breakdown.mainBranches) {
-            if (branch.isSelfReturn || !(branch.count > 0)) continue;
+            if (branch.isSelfReturn && branch.count > 0) {
+                const value = branch.payout * breakdown.successRate * branch.dropRate;
+                if (value > 0) selfReturnEV += value;
+                continue;
+            }
+            if (!(branch.count > 0)) continue;
             candidates.push({
                 itemHrid: branch.itemHrid,
                 quantityPerAction: breakdown.successRate * branch.dropRate * branch.count,
@@ -842,7 +852,7 @@ class RiskOfRuinUI {
         }
 
         const tracked = candidates.filter((c) => c.expectedValue > 0);
-        const totalEV = tracked.reduce((sum, c) => sum + c.expectedValue, 0);
+        const totalEV = tracked.reduce((sum, c) => sum + c.expectedValue, 0) + selfReturnEV;
         return tracked.map((c) => ({
             itemHrid: c.itemHrid,
             quantityPerAction: c.quantityPerAction,

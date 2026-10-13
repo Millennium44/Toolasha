@@ -96,8 +96,10 @@ vi.mock('../../utils/protection-substitute-lookup.js', () => ({
     suggestProtectionSubstituteProxyPrice: vi.fn(() => null),
 }));
 
+const storedOverrides = vi.hoisted(() => ({ map: {} }));
 vi.mock('../settings/custom-price-overrides.js', () => ({
     setCustomPriceOverride: vi.fn(async () => {}),
+    getCustomPriceOverridesAsync: vi.fn(async () => storedOverrides.map),
 }));
 
 const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
@@ -546,11 +548,14 @@ describe('depth-cap cost attribution', () => {
             800
         );
 
-        // EV: x = 600*0.5 = 300, ess = 1000*0.1 = 100 -> shares 3/4 and 1/4
-        expect(items).toEqual([
-            { itemHrid: '/items/x', quantityPerAction: 0.5, costShare: 600 },
-            { itemHrid: '/items/ess', quantityPerAction: 0.2, costShare: 200 },
-        ]);
+        // EV: x = 600*0.5 = 300, self-return = 300, ess = 1000*0.1 = 100. The self-return is not a
+        // tracked item, but getting the input back offsets cost, so it stays in the denominator:
+        // shares 300/700 and 100/700
+        expect(items.map((i) => i.itemHrid)).toEqual(['/items/x', '/items/ess']);
+        expect(items[0].quantityPerAction).toBe(0.5);
+        expect(items[1].quantityPerAction).toBe(0.2);
+        expect(items[0].costShare).toBeCloseTo((800 * 300) / 700, 6);
+        expect(items[1].costShare).toBeCloseTo((800 * 100) / 700, 6);
     });
 });
 
@@ -602,6 +607,21 @@ describe('protection-substitute proxy price', () => {
         expect(setCustomPriceOverride).toHaveBeenCalledTimes(1);
         expect(setCustomPriceOverride).toHaveBeenCalledWith('/items/chimerical_quiver', 0, null, 192000);
         expect(runSpy).toHaveBeenCalled();
+        runSpy.mockRestore();
+    });
+
+    test('applying the suggested sell price keeps a buy-side override the player already set', async () => {
+        const runSpy = vi.spyOn(riskOfRuinUI, '_run').mockImplementation(() => {});
+        storedOverrides.map = { '/items/chimerical_quiver:0': { buy: 150000 } };
+        document.body.innerHTML =
+            '<button class="mwi-ror-apply-substitute-price" data-item-hrid="/items/chimerical_quiver" data-suggested-price="192000"></button>';
+
+        await riskOfRuinUI._handleApplySubstitutePriceClick({
+            target: document.querySelector('.mwi-ror-apply-substitute-price'),
+        });
+
+        expect(setCustomPriceOverride).toHaveBeenCalledWith('/items/chimerical_quiver', 0, 150000, 192000);
+        storedOverrides.map = {};
         runSpy.mockRestore();
     });
 
