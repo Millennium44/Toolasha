@@ -204,6 +204,8 @@ class MarketAPI {
     _applySource(live) {
         const suffix = live ? LIVE_KEY_SUFFIX : '';
         this.liveSourced = live;
+        // The page server's value map and bands describe its own market, not the live one
+        marketValues()?.setForeignBook?.(live);
         this.API_URL = `${live ? liveGameOrigin() : gameOrigin()}/game_data/marketplace.json`;
         this.CACHE_KEY_DATA = `Toolasha_marketAPI_json${suffix}`;
         this.CACHE_KEY_TIMESTAMP = `Toolasha_marketAPI_timestamp${suffix}`;
@@ -607,6 +609,8 @@ class MarketAPI {
         // and future) inherits banded prices. A missing side stays null: the
         // band never invents a price where the book has none.
         const bands = marketValues();
+        // Utils can land after the source was chosen; keep its foreign-book flag in step
+        bands?.setForeignBook?.(this.liveSourced);
         bands?.refreshMarketValues();
         const normalizeMarketPriceValue = (value) => {
             if (typeof value !== 'number') {

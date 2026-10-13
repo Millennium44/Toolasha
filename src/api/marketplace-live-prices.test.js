@@ -62,6 +62,31 @@ describe('MarketAPI live-server prices on the test server', () => {
         expect(marketAPI.getPrice('/items/cheese').ask).toBe(500);
     });
 
+    test("the test server's own price bands are switched off while live-sourced", async () => {
+        store.set(MIRROR_KEY, true);
+        const setForeignBook = vi.fn();
+        // A band that would pull every price up to 1000, as the test server's value map does
+        globalThis.window = {
+            Toolasha: {
+                Utils: {
+                    marketValues: {
+                        setForeignBook,
+                        refreshMarketValues: () => {},
+                        clampToBand: (price) => Math.max(price, 1000),
+                    },
+                },
+            },
+        };
+        try {
+            const marketAPI = await load('https://test.milkywayidle.com');
+            await marketAPI.fetch(true);
+            marketAPI.getPrice('/items/cheese');
+            expect(setForeignBook).toHaveBeenLastCalledWith(true);
+        } finally {
+            delete globalThis.window;
+        }
+    });
+
     test('the CN test server reads the CN live copy', async () => {
         store.set(MIRROR_KEY, true);
         const marketAPI = await load('https://test.milkywayidlecn.com');

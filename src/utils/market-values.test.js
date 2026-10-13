@@ -31,11 +31,13 @@ import {
     nextPriceUp,
     nextPriceDown,
     _resetMarketValues,
+    setForeignBook,
 } from './market-values.js';
 
 const payload = (version, values) => ({ marketValuesVersion: version, marketItemValues: values });
 
 afterEach(() => {
+    setForeignBook(false);
     _resetMarketValues();
     mocks.items = {};
     vi.useRealTimers();
@@ -624,5 +626,20 @@ describe('books that mix old-grid and new-grid prices', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         expect(clampToBand(1003, '/items/cheese')).toBe(1003);
         expect(reconcileBook(1005, 995, '/items/cheese')).toMatchObject({ ask: 1005, bid: 995 });
+    });
+});
+
+describe('a foreign price feed', () => {
+    test("the page server's bands and values stand down while prices come from another server", () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        setForeignBook(true);
+        // A live price far below this server's band is not pulled up into it
+        expect(clampToBand(43, '/items/cheese')).toBe(43);
+        expect(marketValueFor('/items/cheese')).toBeNull();
+        // and an empty side is not filled with this server's value
+        expect(reconcileBook(43, null, '/items/cheese')).toMatchObject({ ask: 43, bid: null });
+        setForeignBook(false);
+        expect(clampToBand(43, '/items/cheese')).toBe(904);
     });
 });

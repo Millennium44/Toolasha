@@ -85,12 +85,30 @@ export function refreshMarketValues(now = Date.now()) {
 }
 
 /**
+ * Set while market prices come from another server's feed (the test server's optional
+ * live-server prices). The value map and the tradable bands this module holds are the page
+ * server's own, so applying them to another server's book would clamp its prices into the
+ * wrong range (a live 43K Moonstone read as the test server's 416K floor) and fill empty
+ * sides with the wrong server's values.
+ */
+let foreignBook = false;
+
+/**
+ * Turn the page server's value map and bands off (or back on) for a foreign price feed.
+ * @param {boolean} on - Whether prices come from another server's market
+ */
+export function setForeignBook(on) {
+    foreignBook = Boolean(on);
+}
+
+/**
  * The official value of one item at one enhancement level, from cache.
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level
  * @returns {number|null}
  */
 export function marketValueFor(itemHrid, enhancementLevel = 0) {
+    if (foreignBook) return null;
     const value = cache.values?.[itemHrid]?.[String(enhancementLevel)];
     return typeof value === 'number' && value > 0 ? value : null;
 }
@@ -300,6 +318,7 @@ function vendorPriceOf(itemHrid) {
  * @returns {{min:number, max:number}|null}
  */
 function bandFor(itemHrid, enhancementLevel) {
+    if (foreignBook) return null;
     const wire = wireBandFor(itemHrid, enhancementLevel);
     if (wire) return wire;
     let perLevel = bandCache.get(itemHrid);
