@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy: Best Items level filter, panel settings respected
+
+- Alchemy Best Items gains a Max level filter, a "preview levels ahead" option and green/red level coloring (an optional setting fills the filter with your level), the Alchemy panel now hides Action Speed & Time and Level Progress when those sections are turned off, and editing the Level Progress target fills the Repeat count; ported from upstream.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log
