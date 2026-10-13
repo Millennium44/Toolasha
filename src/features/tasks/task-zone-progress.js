@@ -17,7 +17,8 @@ import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { TASK_DAMAGE_PER_MONSTER } from '../combat-sim/engine/task-damage-mode.js';
 import { lastUsedTierForZone } from '../../utils/combat-actions.js';
 import { characterIdentityChanged } from '../../utils/combat-zone-open.js';
-import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
+import { computeZoneBottleneck, fightsPerHour, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
+import { getZoneEstimatePercent, zoneBottleneckEstimate } from './task-zone-estimate-percentile.js';
 
 /**
  * Active combat tasks, grouped zone -> monster, the way the task card's zone summary counts them:
@@ -63,8 +64,9 @@ export function groupCombatTasksByZone(actionDetailMap) {
 }
 
 /**
- * Soonest-to-clear zone first; zones that can never be cleared sort last.
- * @param {Array<{hoursNeeded: number}>} rows
+ * Soonest-to-clear zone first, by the hours the row quotes (its percentile estimate); zones that
+ * can never be cleared sort last.
+ * @param {Array<{hoursNeeded: number, estimate?: {hoursNeeded: number}}>} rows
  * @returns {Array<Object>} A sorted copy
  */
 function sortRows(rows) {
@@ -72,8 +74,10 @@ function sortRows(rows) {
         // Failed zones carry no figures; they trail the rows that do
         if (Boolean(a.failed) !== Boolean(b.failed)) return a.failed ? 1 : -1;
         if (a.failed) return 0;
-        if (a.hoursNeeded === b.hoursNeeded) return 0;
-        return a.hoursNeeded < b.hoursNeeded ? -1 : 1;
+        const hoursA = a.estimate?.hoursNeeded ?? a.hoursNeeded;
+        const hoursB = b.estimate?.hoursNeeded ?? b.hoursNeeded;
+        if (hoursA === hoursB) return 0;
+        return hoursA < hoursB ? -1 : 1;
     });
 }
 
@@ -82,15 +86,23 @@ function sortRows(rows) {
  * @param {() => boolean} [options.isCancelled] - Polled between steps; true stops the run
  * @param {(rows: Array<Object>) => void} [options.onProgress] - Called with the rows so far
  *   (sorted) after each zone finishes
+ * @param {number} [options.percent] - Coverage of the displayed estimate, in percent; defaults to
+ *   the `taskCombatEstimatePercentile` setting
  * @returns {Promise<Array<{zoneHrid: string, zoneName: string, tier: number, hoursNeeded: number,
- *   fightsNeeded: number, bottleneckHrid: string, bottleneckName: string, taskCount: number,
+ *   fightsNeeded: number, estimate: Object, bottleneckHrid: string, bottleneckName: string, taskCount: number,
  *   shared: boolean}>|null>}
+ *   `hoursNeeded`/`fightsNeeded` are the mean — what a click pads for its pre-fill — and `estimate`
+ *   is the figure to show (see task-zone-estimate-percentile.js `zoneFightEstimate`).
  *   Sorted ascending by hoursNeeded, followed by a `{zoneHrid, zoneName, tier, failed: true,
  *   interrupted}` marker for each zone whose sim failed (`interrupted` when an ordinary sim
  *   cancelled it rather than the worker failing); empty when there are no combat tasks (no sim runs). Null when
  *   cancelled or the character changed mid-run: nothing in it belongs to anyone on screen.
  */
-export async function computeAllZoneProgress({ isCancelled = () => false, onProgress } = {}) {
+export async function computeAllZoneProgress({
+    isCancelled = () => false,
+    onProgress,
+    percent = getZoneEstimatePercent(),
+} = {}) {
     // Identity is captured before the first await and checked after every one
     const characterId = dataManager.getCurrentCharacterId();
     const stale = () => isCancelled() || characterIdentityChanged(characterId);
@@ -154,6 +166,25 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
         }));
         const bottleneck = computeZoneBottleneck(entries, simResult);
         if (bottleneck) {
+            const slotsPerFight =
+                Number(
+                    gameData.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount
+                ) || null;
+            const deterministic = Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid));
+            // Every task monster's own inputs, so a click can pad each one and take the largest: the
+            // mean bottleneck is not always the monster that needs the most fights at the chosen coverage
+            const fph = fightsPerHour(simResult, ZONE_SIM_HOURS);
+            const monsterThresholds = entries.map((entry) => {
+                const killsPerHour = (simResult?.deaths?.[entry.hrid] ?? 0) / ZONE_SIM_HOURS;
+                return {
+                    hrid: entry.hrid,
+                    meanFights: killsPerHour > 0 ? Math.round((fph * entry.remaining) / killsPerHour) : Infinity,
+                    killsNeeded: entry.remaining,
+                    killsPerFight: fph > 0 && killsPerHour > 0 ? killsPerHour / fph : null,
+                    slotsPerFight,
+                    deterministic: Boolean(dataManager.isBossMonster?.(entry.hrid)),
+                };
+            });
             rows.push({
                 zoneHrid,
                 zoneName: gameData.actionDetailMap?.[zoneHrid]?.name || zoneHrid.split('/').pop(),
@@ -163,11 +194,18 @@ export async function computeAllZoneProgress({ isCancelled = () => false, onProg
                 // For padding the fight count on a click, the way the task Go flow does
                 killsNeeded: bottleneck.bottleneckRemaining,
                 killsPerFight: bottleneck.killsPerFight,
-                slotsPerFight:
-                    Number(
-                        gameData.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount
-                    ) || null,
-                deterministic: Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid)),
+                slotsPerFight,
+                deterministic,
+                monsterThresholds,
+                // What the row shows: the largest per-monster quantile of the fights needed, not the
+                // mean above (which stays the mean bottleneck's, for padding a click's pre-fill)
+                estimate: zoneBottleneckEstimate({
+                    monsterEntries: entries,
+                    simResult,
+                    slotsPerFight,
+                    isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
+                    percent,
+                }),
                 bottleneckHrid: bottleneck.bottleneckHrid,
                 bottleneckName: bottleneck.bottleneckName,
                 taskCount: bottleneck.bottleneckTaskCount,

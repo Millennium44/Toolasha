@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { padFightCount } from '../../utils/fight-confidence.js';
 
 const h = vi.hoisted(() => ({
     enabled: true,
@@ -198,6 +199,105 @@ describe('Zone Task Progress section', () => {
 
         const { count } = h.openZone.mock.calls[0][2];
         expect(count).toBeGreaterThan(200);
+    });
+
+    test('a row shows its percentile estimate with the median on hover', async () => {
+        h.compute.mockResolvedValue([
+            row({
+                estimate: {
+                    fightsNeeded: 180,
+                    hoursNeeded: 3,
+                    percent: 90,
+                    medianFightsNeeded: 118,
+                    medianHoursNeeded: 1.5,
+                },
+            }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+
+        expect(popupText()).toContain('~180 fights (90%) | 3h 00m 00s (bottleneck: Ooze)');
+        const hint = document.querySelector('.mwi-zone-estimate-hint');
+        expect(hint.title).toBe('Planning for 90% confidence. Median (50%): ~118 fights | 1h 30m 00s');
+    });
+
+    test('a row without an estimate quotes the mean, unlabelled', async () => {
+        h.compute.mockResolvedValue([row()]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        expect(popupText()).toContain('~120 fights | 2h 00m 00s');
+        expect(document.querySelector('.mwi-zone-estimate-hint')).toBeNull();
+    });
+
+    test('the click pads the mean, not the percentile figure the row shows', async () => {
+        const stochastic = { fightsNeeded: 200, killsNeeded: 100, killsPerFight: 0.5, slotsPerFight: 1 };
+        h.compute.mockResolvedValue([row(stochastic)]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+        const plain = h.openZone.mock.calls[0][2].count;
+
+        h.openZone.mockClear();
+        h.compute.mockResolvedValue([
+            row({
+                ...stochastic,
+                estimate: {
+                    fightsNeeded: 240,
+                    hoursNeeded: 4,
+                    percent: 90,
+                    medianFightsNeeded: 200,
+                    medianHoursNeeded: 3.3,
+                },
+            }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+
+        expect(h.openZone.mock.calls[0][2].count).toBe(plain);
+    });
+
+    test('the click pads every task monster and fills the largest, not just the mean bottleneck', async () => {
+        const common = {
+            hrid: '/monsters/slime',
+            meanFights: 110,
+            killsNeeded: 110,
+            killsPerFight: 1,
+            slotsPerFight: 3,
+            deterministic: false,
+        };
+        const rare = {
+            hrid: '/monsters/ooze',
+            meanFights: 100,
+            killsNeeded: 10,
+            killsPerFight: 0.1,
+            slotsPerFight: 3,
+            deterministic: false,
+        };
+        const padded = (m) =>
+            padFightCount({
+                unpaddedFights: m.meanFights,
+                thresholds: [m],
+                confidencePercent: 90,
+                floorPercent: 5,
+            }).fights;
+        expect(padded(rare)).toBeGreaterThan(padded(common));
+
+        // The row's mean fields are the common monster's, as computeAllZoneProgress reports them
+        h.compute.mockResolvedValue([
+            row({
+                fightsNeeded: 110,
+                killsNeeded: 110,
+                killsPerFight: 1,
+                slotsPerFight: 3,
+                monsterThresholds: [common, rare],
+            }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+
+        expect(h.openZone.mock.calls[0][2].count).toBe(padded(rare));
     });
 
     test('closing the popup mid-compute cancels the run and draws nothing afterwards', async () => {

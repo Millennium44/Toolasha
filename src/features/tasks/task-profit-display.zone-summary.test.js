@@ -1,8 +1,9 @@
 /**
  * @vitest-environment happy-dom
  *
- * The combat task card's zone summary line, unchanged by the bottleneck extraction
- * into task-zone-bottleneck.js.
+ * The combat task card's zone summary line. It names the bottleneck the way
+ * task-zone-bottleneck.js finds it, and quotes the fights at the coverage the
+ * `taskCombatEstimatePercentile` setting asks for (task-zone-estimate-percentile.js).
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
@@ -16,8 +17,10 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     calculateSimRevenue: vi.fn(() => ({ netPerHour: 0, dropEntries: [], consumableEntries: [] })),
 }));
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import taskProfitDisplay from './task-profit-display.js';
+import { fightsForKillConfidence } from '../../utils/fight-confidence.js';
 import { timeReadable } from '../../utils/formatters.js';
 
 const ZONE = '/actions/combat/zone_z';
@@ -38,6 +41,18 @@ const rewardValue = {
  * @returns {string|undefined} Summary text
  */
 function renderSummary(tasks, simResult) {
+    const line = renderSummaryLine(tasks, simResult);
+    if (!line) return undefined;
+    // The line's own text, without the median hint's "?"
+    const copy = line.cloneNode(true);
+    copy.querySelector('.mwi-zone-estimate-hint')?.remove();
+    return copy.textContent;
+}
+
+/**
+ * @returns {HTMLElement|undefined} The summary line element
+ */
+function renderSummaryLine(tasks, simResult) {
     const list = document.createElement('div');
     list.className = 'TasksPanel_taskList__x';
     for (const [name, quantity, currentProgress] of tasks) {
@@ -70,10 +85,18 @@ function renderSummary(tasks, simResult) {
         true,
         { drops: [], consumables: [] }
     );
-    return [...container.children].map((c) => c.textContent).find((t) => t.startsWith('Zone Z'));
+    return [...container.children].find((c) => c.textContent.startsWith('Zone Z'));
 }
 
-function stubGame() {
+/** Pin the zone estimate coverage setting */
+function setPercent(value) {
+    const real = config.getSettingValue.bind(config);
+    vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) =>
+        key === 'taskCombatEstimatePercentile' ? value : real(key, fallback)
+    );
+}
+
+function stubGame({ maxSpawnCount } = {}) {
     vi.spyOn(dataManager, 'getInitClientData').mockReturnValue({
         actionDetailMap: {
             [ZONE]: {
@@ -81,6 +104,7 @@ function stubGame() {
                 combatZoneInfo: {
                     fightInfo: {
                         randomSpawnInfo: {
+                            maxSpawnCount,
                             spawns: [{ combatMonsterHrid: '/monsters/slime' }, { combatMonsterHrid: '/monsters/ooze' }],
                         },
                         bossSpawns: [],
@@ -113,8 +137,12 @@ describe('zone summary line', () => {
             ],
             { deaths: { '/monsters/slime': 100, '/monsters/ooze': 100 }, encounters: 40 }
         );
-        // ooze: 600 remaining / 100 per hour = 6h; 40 fights/hour * 6h = 240 fights
-        expect(text).toBe(`Zone Z: ~240 fights | ${timeReadable(21600)} (bottleneck: Ooze ×2)`);
+        // ooze: 600 remaining / 100 per hour = 6h, 240 fights on average at 40 fights an hour.
+        // The line quotes the 90% quantile of that instead (the default coverage)
+        const fights = fightsForKillConfidence({ killsNeeded: 600, killsPerFight: 2.5, confidencePercent: 90 });
+        expect(fights).toBeGreaterThan(240);
+        const seconds = Math.round((fights / 40) * 3600);
+        expect(text).toBe(`Zone Z: ~${fights} fights (90%) | ${timeReadable(seconds)} (bottleneck: Ooze ×2)`);
     });
 
     test('says so when the slowest monster is never killed', () => {
@@ -138,7 +166,84 @@ describe('zone summary line', () => {
             ],
             { deaths: { '/monsters/slime': 100, '/monsters/ooze': 50 } }
         );
-        // slime 1h is the bottleneck; fights/hour = 150
-        expect(text).toBe(`Zone Z: ~150 fights | ${timeReadable(3600)} (bottleneck: Slime)`);
+        // both need 1h; fights/hour = 150. Ooze is the rarer kill (a third of one a fight), so it
+        // needs more fights for 90% coverage than slime (2/3 of one a fight) and sets the figure
+        const fights = fightsForKillConfidence({ killsNeeded: 50, killsPerFight: 50 / 150, confidencePercent: 90 });
+        const seconds = Math.round((fights / 150) * 3600);
+        expect(text).toBe(`Zone Z: ~${fights} fights (90%) | ${timeReadable(seconds)} (bottleneck: Ooze)`);
+    });
+
+    test('the monster needing the most fights at the percentile sets the figure, not the largest mean', () => {
+        stubGame();
+        // 100 fights an hour. Slime (common): 110 kills at 1 a fight, mean 110 fights.
+        // Ooze (rare): 10 kills at 0.1 a fight, mean 100 fights but a far longer tail.
+        const text = renderSummary(
+            [
+                ['Slime', 110, 0],
+                ['Ooze', 10, 0],
+            ],
+            { deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 }, encounters: 100 }
+        );
+        const slime = fightsForKillConfidence({ killsNeeded: 110, killsPerFight: 1, confidencePercent: 90 });
+        const ooze = fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 0.1, confidencePercent: 90 });
+        expect(ooze).toBeGreaterThan(slime);
+        expect(text).toBe(
+            `Zone Z: ~${ooze} fights (90%) | ${timeReadable(Math.round((ooze / 100) * 3600))} (bottleneck: Ooze)`
+        );
+    });
+});
+
+describe('zone summary coverage', () => {
+    const board = [
+        ['Slime', 100, 0],
+        ['Ooze', 30, 0],
+    ];
+    const sim = { deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 }, encounters: 40 };
+
+    test('the chosen coverage sets the figure, and the median is on hover', () => {
+        stubGame({ maxSpawnCount: 1 });
+        setPercent('95');
+        const line = renderSummaryLine(board, sim);
+        // Ooze: 30 kills at a quarter of a kill a fight, one slot a fight
+        const p95 = fightsForKillConfidence({
+            killsNeeded: 30,
+            killsPerFight: 0.25,
+            slotsPerFight: 1,
+            confidencePercent: 95,
+        });
+        const median = fightsForKillConfidence({
+            killsNeeded: 30,
+            killsPerFight: 0.25,
+            slotsPerFight: 1,
+            confidencePercent: 50,
+        });
+        expect(line.textContent).toContain(`~${p95} fights (95%) | ${timeReadable(Math.round((p95 / 40) * 3600))}`);
+        const hint = line.querySelector('.mwi-zone-estimate-hint');
+        expect(hint.title).toBe(
+            `Planning for 95% confidence. Median (50%): ~${median} fights | ${timeReadable(Math.round((median / 40) * 3600))}`
+        );
+    });
+
+    test('at the median there is no hover hint', () => {
+        stubGame({ maxSpawnCount: 1 });
+        setPercent('50');
+        const line = renderSummaryLine(board, sim);
+        expect(line.textContent).toContain('fights (50%)');
+        expect(line.querySelector('.mwi-zone-estimate-hint')).toBeNull();
+    });
+
+    test('an unrecognized setting value reads as 90%', () => {
+        stubGame({ maxSpawnCount: 1 });
+        setPercent('42');
+        expect(renderSummary(board, sim)).toContain('fights (90%)');
+    });
+
+    test('a boss bottleneck quotes the plain mean: its kills are not luck', () => {
+        stubGame({ maxSpawnCount: 1 });
+        vi.spyOn(dataManager, 'isBossMonster').mockImplementation((hrid) => hrid === '/monsters/ooze');
+        const line = renderSummaryLine(board, sim);
+        // Ooze: 30 / 10 an hour = 3h, 120 fights
+        expect(line.textContent).toBe(`Zone Z: ~120 fights | ${timeReadable(10800)} (bottleneck: Ooze)`);
+        expect(line.querySelector('.mwi-zone-estimate-hint')).toBeNull();
     });
 });

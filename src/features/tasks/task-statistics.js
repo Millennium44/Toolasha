@@ -24,6 +24,7 @@ import taskRerollTracker from './task-reroll-tracker.js';
 import { countActiveTasks, forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { computeAllZoneProgress } from './task-zone-progress.js';
+import { createMedianHint, formatPercentSuffix } from './task-zone-estimate-percentile.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
@@ -731,12 +732,22 @@ class TaskStatistics {
 
         for (const zone of okZones) {
             const finite = Number.isFinite(zone.hoursNeeded) && Number.isFinite(zone.fightsNeeded);
-            const bottleneck = zone.taskCount > 1 ? `${zone.bottleneckName} ×${zone.taskCount}` : zone.bottleneckName;
+            // Name the monster that sets the quoted figure, which need not be the mean bottleneck
+            const limiting = zone.estimate?.limiting || { name: zone.bottleneckName, taskCount: zone.taskCount };
+            const bottleneck = limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
+            // The row quotes the percentile estimate; the click below pads the mean for its pre-fill
+            const shown = zone.estimate || {
+                fightsNeeded: zone.fightsNeeded,
+                hoursNeeded: zone.hoursNeeded,
+                percent: null,
+            };
             const value = finite
-                ? `~${formatKMB(zone.fightsNeeded)} fights | ${timeReadable(Math.round(zone.hoursNeeded * 3600))} (bottleneck: ${bottleneck})`
+                ? `~${formatKMB(shown.fightsNeeded)} fights${formatPercentSuffix(shown.percent)} | ${timeReadable(Math.round(shown.hoursNeeded * 3600))} (bottleneck: ${bottleneck})`
                 : `??? (no kills for ${bottleneck} in sim)`;
 
             const row = this.createRow(zone.zoneName, value, textColor);
+            const medianHint = finite ? createMedianHint(shown) : null;
+            if (medianHint) row.lastChild.appendChild(medianHint);
             row.style.cursor = 'pointer';
             row.title = 'Open this zone';
             row.onclick = () => {
@@ -777,6 +788,10 @@ class TaskStatistics {
     /**
      * The fight count to pre-fill for a zone row: the expected count padded for kill-count variance
      * with the same `taskCombatGoBuffer` / `combatFightConfidence` settings the task Go flow uses.
+     * Padded from the means, never from the percentile figure the row shows, so the two coverages
+     * do not compound. Each task monster (`zone.monsterThresholds`) is padded on its own and the
+     * largest wins, because the monster that needs the most fights at the chosen confidence need not
+     * be the mean bottleneck. Rows without per-monster inputs pad the mean bottleneck alone.
      * @param {Object} zone - Row from computeAllZoneProgress
      * @returns {number} Fights to enter
      */
@@ -785,6 +800,20 @@ class TaskStatistics {
         const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
         const confidenceDefault = getSettingDefinition('combatFightConfidence')?.default ?? 90;
         const confidencePercent = config.getSettingValue('combatFightConfidence', confidenceDefault);
+        if (Array.isArray(zone.monsterThresholds) && zone.monsterThresholds.length > 0) {
+            let best = Math.ceil(Number(zone.fightsNeeded) || 0);
+            for (const monster of zone.monsterThresholds) {
+                if (!Number.isFinite(monster.meanFights)) continue;
+                const { fights } = padFightCount({
+                    unpaddedFights: monster.meanFights,
+                    thresholds: Number.isFinite(monster.killsPerFight) ? [monster] : [],
+                    confidencePercent,
+                    floorPercent: monster.deterministic ? 0 : bufferPercent,
+                });
+                best = Math.max(best, fights);
+            }
+            return best;
+        }
         const { fights } = padFightCount({
             unpaddedFights: zone.fightsNeeded,
             thresholds: Number.isFinite(zone.killsPerFight)

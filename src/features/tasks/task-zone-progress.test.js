@@ -28,6 +28,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runSimulation: h.runSimulation }));
 
 import { computeAllZoneProgress } from './task-zone-progress.js';
+import { fightsForKillConfidence } from '../../utils/fight-confidence.js';
 
 const ZONE_A = '/actions/combat/zone_a';
 const ZONE_B = '/actions/combat/zone_b';
@@ -252,6 +253,90 @@ describe('computeAllZoneProgress', () => {
         h.quests = [quest('/monsters/slime', 100, 100)];
         expect(await computeAllZoneProgress()).toEqual([]);
         expect(h.runSimulation).not.toHaveBeenCalled();
+    });
+
+    test('each row carries the percentile estimate it shows beside the mean it pads', async () => {
+        h.gameData.actionDetailMap[ZONE_A].combatZoneInfo.fightInfo.randomSpawnInfo.maxSpawnCount = 1;
+        h.quests = [quest('/monsters/ooze', 20)];
+        // 50 fights an hour, 5 ooze: a tenth of a kill a fight, 20 wanted -> 200 fights on average
+        h.runSimulation.mockResolvedValue({ deaths: { '/monsters/ooze': 5 }, encounters: 50 });
+
+        const [row] = await computeAllZoneProgress({ percent: 95 });
+
+        const p95 = fightsForKillConfidence({
+            killsNeeded: 20,
+            killsPerFight: 0.1,
+            slotsPerFight: 1,
+            confidencePercent: 95,
+        });
+        const median = fightsForKillConfidence({
+            killsNeeded: 20,
+            killsPerFight: 0.1,
+            slotsPerFight: 1,
+            confidencePercent: 50,
+        });
+        expect(row).toMatchObject({ fightsNeeded: 200, hoursNeeded: 4, killsNeeded: 20, slotsPerFight: 1 });
+        expect(row.estimate).toMatchObject({ fightsNeeded: p95, percent: 95, medianFightsNeeded: median });
+        expect(row.estimate.hoursNeeded).toBeCloseTo(p95 / 50);
+    });
+
+    test('the monster needing the most fights at the percentile sets the figure, not the largest mean', async () => {
+        // 100 fights an hour. Slime (common): 110 kills at 1 a fight, mean 110 fights.
+        // Ooze (rare): 10 kills at 0.1 a fight, mean 100 fights but a far longer tail.
+        h.quests = [quest('/monsters/slime', 110), quest('/monsters/ooze', 10)];
+        h.runSimulation.mockResolvedValue({
+            deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 },
+            encounters: 100,
+        });
+
+        const [row] = await computeAllZoneProgress({ percent: 90 });
+
+        const slime = fightsForKillConfidence({ killsNeeded: 110, killsPerFight: 1, confidencePercent: 90 });
+        const ooze = fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 0.1, confidencePercent: 90 });
+        expect(ooze).toBeGreaterThan(slime);
+        // The mean (what a click pads) still belongs to the largest-mean monster, slime
+        expect(row).toMatchObject({ bottleneckHrid: '/monsters/slime', fightsNeeded: 110, killsNeeded: 110 });
+        expect(row.estimate).toMatchObject({ fightsNeeded: ooze, percent: 90, limiting: { name: 'Ooze' } });
+    });
+
+    test('the row carries every task monster threshold inputs for a click to pad', async () => {
+        h.quests = [quest('/monsters/slime', 110), quest('/monsters/ooze', 10)];
+        h.runSimulation.mockResolvedValue({
+            deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 },
+            encounters: 100,
+        });
+
+        const [row] = await computeAllZoneProgress({ percent: 90 });
+
+        expect(row.monsterThresholds).toHaveLength(2);
+        expect(row.monsterThresholds.find((m) => m.hrid === '/monsters/ooze')).toMatchObject({
+            meanFights: 100,
+            killsNeeded: 10,
+            killsPerFight: 0.1,
+        });
+        expect(row.monsterThresholds.find((m) => m.hrid === '/monsters/slime')).toMatchObject({
+            meanFights: 110,
+            killsNeeded: 110,
+            killsPerFight: 1,
+        });
+    });
+
+    test('rows sort by the hours they show, not the mean', async () => {
+        // Zone A: a rare ooze, 5h on average but much longer at 90%.
+        // Zone B: an imp every fight, 5.2h and no luck in it.
+        h.quests = [quest('/monsters/ooze', 10), quest('/monsters/imp', 520)];
+        h.runSimulation.mockImplementation(async ({ zoneHrid }) =>
+            zoneHrid === ZONE_A
+                ? { deaths: { '/monsters/ooze': 2 }, encounters: 100 }
+                : { deaths: { '/monsters/imp': 100 }, encounters: 100 }
+        );
+
+        const rows = await computeAllZoneProgress({ percent: 90 });
+
+        expect(rows.find((r) => r.zoneHrid === ZONE_A).hoursNeeded).toBeLessThan(
+            rows.find((r) => r.zoneHrid === ZONE_B).hoursNeeded
+        );
+        expect(rows.map((r) => r.zoneHrid)).toEqual([ZONE_B, ZONE_A]);
     });
 
     test('dungeon zones are never rows', async () => {

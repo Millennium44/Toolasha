@@ -3279,6 +3279,23 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays a loadout dropdown and estimate button on combat task cards.',
             },
+            taskCombatEstimatePercentile: {
+                id: 'taskCombatEstimatePercentile',
+                label: 'Zone fight estimate confidence',
+                type: 'select',
+                default: '90',
+                options: [
+                    { value: '50', label: 'Median (50%)' },
+                    { value: '80', label: '80%' },
+                    { value: '90', label: '90%' },
+                    { value: '95', label: '95%' },
+                ],
+                help:
+                    'How many fights the zone estimates (the zone line on a combat task card and the Zone Task ' +
+                    'Progress rows in Task Statistics) plan for. At 90% the slowest task in the zone is finished ' +
+                    'by then nine times in ten; the median is shown on hover. The counts Go and a zone row fill ' +
+                    'in are padded separately, by the Combat pre-fill confidence setting.',
+            },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',
                 label: 'Show task efficiency rating (tokens/profit per hour)',

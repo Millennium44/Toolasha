@@ -14,7 +14,13 @@ import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper
 import { padFightCount } from '../../utils/fight-confidence.js';
 import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } from '../../utils/combat-zone-open.js';
 import { calculateTaskProfit, calculateTaskRewardValue, formatTokenFigure } from './task-profit-calculator.js';
-import { computeZoneBottleneck } from './task-zone-bottleneck.js';
+import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
+import {
+    createMedianHint,
+    formatPercentSuffix,
+    getZoneEstimatePercent,
+    zoneBottleneckEstimate,
+} from './task-zone-estimate-percentile.js';
 import {
     isCardInConfirmState,
     isConfirmPendingFor,
@@ -96,6 +102,9 @@ const MIN_RATED_CARDS_FOR_MEDIAN = 3;
 
 /** How long a shared full-zone sim result stands before it is re-run */
 const ZONE_SIM_TTL_MS = 3 * 60 * 1000;
+
+/** Marks a combat estimate container that is showing a result a progress change can redraw */
+const COMBAT_ESTIMATE_RESULT_CLASS = 'mwi-combat-est-result';
 
 /**
  * Fallback tier for a combat task estimate when the zone is nowhere in the
@@ -588,6 +597,14 @@ class TaskProfitDisplay {
             }
         });
 
+        // An open zone result's summary quotes this coverage; redraw it from
+        // the cached sim, the same way a progress change does
+        config.onSettingChange('taskCombatEstimatePercentile', () => {
+            if (this.isInitialized) {
+                this._refreshOpenCombatEstimates({ force: true });
+            }
+        });
+
         config.onSettingChange('taskEfficiencyGradient', () => {
             if (this.isInitialized) {
                 this.updateEfficiencyGradientColors();
@@ -720,6 +737,7 @@ class TaskProfitDisplay {
             this._questsTimer = setTimeout(() => {
                 this._questsTimer = null;
                 this.updateTaskProfits();
+                this._refreshOpenCombatEstimates();
             }, 250);
         };
 
@@ -1597,6 +1615,7 @@ class TaskProfitDisplay {
         // or count computed for a task this card no longer describes.
         const cardTaskNode = container.closest(GAME.TASK_INFO);
         if (cardTaskNode) this._cardEstimates.delete(cardTaskNode);
+        this._forgetCachedCombatEstimate(container);
 
         container.innerHTML = '';
         const snapshots = getLoadoutSnapshot()
@@ -1661,6 +1680,7 @@ class TaskProfitDisplay {
         // stale one left over from before a re-run.
         const cardTaskNode = container.closest(GAME.TASK_INFO);
         if (cardTaskNode) this._cardEstimates.delete(cardTaskNode);
+        this._forgetCachedCombatEstimate(container);
 
         // Extract monster name from "Defeat - Monster Name" description
         const match = taskData.description.match(/^Defeat\s*-\s*(.+)$/i);
@@ -1755,7 +1775,9 @@ class TaskProfitDisplay {
                 };
             }
 
-            const SIM_HOURS = 1;
+            // The same span the Task Statistics zone rows simulate, so a card
+            // and its zone row quote figures from equally long runs
+            const SIM_HOURS = ZONE_SIM_HOURS;
             // Full-zone sims (zone mode / boss targets) are shared across all
             // task cards for the same zone+loadout, so every card in a zone
             // reports identical numbers instead of independent RNG rolls
@@ -1817,68 +1839,30 @@ class TaskProfitDisplay {
                 });
             }
 
-            const kills = simResult.deaths?.[monsterHrid] ?? 0;
-            const killsPerHour = Math.round(kills / SIM_HOURS);
-            const remaining = Math.max((taskData.quantity ?? 0) - (taskData.currentProgress ?? 0), 0);
-            const completionSeconds = killsPerHour > 0 ? Math.round((remaining / killsPerHour) * 3600) : null;
-            const timeEstimate = completionSeconds !== null ? timeReadable(completionSeconds) : '???';
-
-            // Fights (encounters) needed to land `remaining` kills of the task
-            // monster — same ratio the zone-summary bottleneck below uses,
-            // generalized to every card so Go has something to fill even
-            // outside the multi-task zone-summary case. A fight is not
-            // guaranteed to be against the task monster (zone mode spawns the
-            // whole table), so this is encounters-per-hour scaled by the
-            // target's kill rate, not just `remaining` kills. Null — never 0
-            // or a guess — when the sim recorded no kills of the monster at
-            // all, so Go has nothing certain to pre-fill with.
-            const totalFightsPerHour =
-                (simResult.encounters ?? 0) > 0
-                    ? simResult.encounters / SIM_HOURS
-                    : Object.values(simResult.deaths || {}).reduce((s, v) => s + v, 0) / SIM_HOURS;
-            const predictedFights =
-                killsPerHour > 0 && Number.isFinite(totalFightsPerHour)
-                    ? Math.ceil(remaining * (totalFightsPerHour / killsPerHour))
-                    : null;
-            // The prediction is a ratio, and Go needs the two halves of it
-            // separately to size a confidence interval: how many kills are
-            // still wanted, and how often a fight produces one. Carried with
-            // the estimate for the same reason the tier is — the padding must
-            // be computed from the numbers this run simulated, not from
-            // whatever the panel looks like when Go is finally pressed.
-            const killsPerFight =
-                killsPerHour > 0 && Number.isFinite(totalFightsPerHour) && totalFightsPerHour > 0
-                    ? killsPerHour / totalFightsPerHour
-                    : null;
-            if (cardTaskNode) {
-                // `tier` travels with the estimate so Go (`_applyGoEstimate`)
-                // acts on the tier this exact estimate simulated, never one
-                // recomputed at click time — the same reason the zone itself
-                // is carried here rather than re-derived.
-                this._cardEstimates.set(cardTaskNode, {
-                    zoneHrid,
-                    predictedFights,
-                    monsterHrid,
-                    tier: estimateTier,
-                    killsNeeded: remaining,
-                    killsPerFight,
-                });
-            }
+            // The sim took a while, and the card may have progressed under it
+            // (or been queued from an auto-estimate, or a Re-run, holding the
+            // progress of when the card was first drawn). Remaining kills are
+            // read off the card as it is now; the sim result does not depend
+            // on them.
+            const liveTaskData = this._liveTaskData(cardTaskNode, taskData) || taskData;
+            const figures = this._deriveCombatEstimateFigures(simResult, monsterHrid, SIM_HOURS, liveTaskData);
+            if (cardTaskNode) this._storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, estimateTier, figures);
 
             const playerHrid = players[0]?.hrid || 'player1';
             const { netPerHour, dropEntries, consumableEntries, unpricedDrops, unpricedConsumables } =
                 calculateSimRevenue(simResult, simGameData, playerHrid, SIM_HOURS);
 
             // Task completion rewards (one-time: coins + token value + Purple's Gift)
-            const rewardValue = calculateTaskRewardValue(taskData.coinReward, taskData.taskTokenReward);
+            const rewardValue = calculateTaskRewardValue(liveTaskData.coinReward, liveTaskData.taskTokenReward);
 
-            this._renderCombatEstimateResult(
-                container,
-                taskData,
+            // Everything the result rests on that does not change as the task
+            // progresses, so a progress change can redraw the figures that do
+            // (remaining kills, time, totals, the zone summary, Go's count)
+            // without simulating again or dropping the chosen loadout and mode.
+            const cached = {
+                description: liveTaskData.description,
                 monsterName,
-                killsPerHour,
-                timeEstimate,
-                completionSeconds,
+                monsterHrid,
                 loadoutName,
                 netPerHour,
                 rewardValue,
@@ -1886,11 +1870,13 @@ class TaskProfitDisplay {
                 consumableEntries,
                 mode,
                 simResult,
+                simHours: SIM_HOURS,
                 zoneHrid,
                 estimateTier,
                 estimateTierKnown,
-                { drops: unpricedDrops || [], consumables: unpricedConsumables || [] }
-            );
+                unpriced: { drops: unpricedDrops || [], consumables: unpricedConsumables || [] },
+            };
+            this._drawCachedCombatEstimate(container, cached, liveTaskData, figures);
         } catch (e) {
             console.error('[TaskProfit] Combat estimate failed:', e);
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">Estimate failed. </span>';
@@ -1899,6 +1885,202 @@ class TaskProfitDisplay {
             retry.style.cssText = 'color:#4a9eff; cursor:pointer; font-size:11px;';
             retry.addEventListener('click', () => this._renderCombatEstimateConfig(container, taskData));
             container.appendChild(retry);
+        }
+    }
+
+    /**
+     * The card's task as it reads now, or null when the card no longer shows
+     * the task `taskData` describes (rerolled, or not readable).
+     * @param {Element|null} taskNode - The card
+     * @param {Object} taskData - The task the caller started from
+     * @returns {Object|null}
+     * @private
+     */
+    _liveTaskData(taskNode, taskData) {
+        if (!taskNode) return null;
+        const live = this.parseTaskData(taskNode);
+        if (!live || live.description !== taskData.description || live.quantity !== taskData.quantity) return null;
+        return live;
+    }
+
+    /**
+     * The figures of a combat estimate that move with the task's progress,
+     * derived from a finished sim and the task as it stands.
+     * @param {Object} simResult - The sim result
+     * @param {string} monsterHrid - The task monster
+     * @param {number} simHours - Hours the sim covered
+     * @param {Object} taskData - Parsed task data
+     * @returns {{killsPerHour: number, remaining: number, completionSeconds: number|null, timeEstimate: string,
+     *   predictedFights: number|null, killsPerFight: number|null}}
+     * @private
+     */
+    _deriveCombatEstimateFigures(simResult, monsterHrid, simHours, taskData) {
+        const kills = simResult.deaths?.[monsterHrid] ?? 0;
+        const killsPerHour = Math.round(kills / simHours);
+        const remaining = Math.max((taskData.quantity ?? 0) - (taskData.currentProgress ?? 0), 0);
+        const completionSeconds = killsPerHour > 0 ? Math.round((remaining / killsPerHour) * 3600) : null;
+        const timeEstimate = completionSeconds !== null ? timeReadable(completionSeconds) : '???';
+
+        // Fights (encounters) needed to land `remaining` kills of the task
+        // monster — same ratio the zone-summary bottleneck uses, generalized
+        // to every card so Go has something to fill even outside the
+        // multi-task zone-summary case. A fight is not guaranteed to be
+        // against the task monster (zone mode spawns the whole table), so this
+        // is encounters-per-hour scaled by the target's kill rate, not just
+        // `remaining` kills. Null — never 0 or a guess — when the sim recorded
+        // no kills of the monster at all, so Go has nothing certain to
+        // pre-fill with.
+        const totalFightsPerHour =
+            (simResult.encounters ?? 0) > 0
+                ? simResult.encounters / simHours
+                : Object.values(simResult.deaths || {}).reduce((s, v) => s + v, 0) / simHours;
+        const predictedFights =
+            killsPerHour > 0 && Number.isFinite(totalFightsPerHour)
+                ? Math.ceil(remaining * (totalFightsPerHour / killsPerHour))
+                : null;
+        // The prediction is a ratio, and Go needs the two halves of it
+        // separately to size a confidence interval: how many kills are still
+        // wanted, and how often a fight produces one.
+        const killsPerFight =
+            killsPerHour > 0 && Number.isFinite(totalFightsPerHour) && totalFightsPerHour > 0
+                ? killsPerHour / totalFightsPerHour
+                : null;
+        return { killsPerHour, remaining, completionSeconds, timeEstimate, predictedFights, killsPerFight };
+    }
+
+    /**
+     * Prime the card's Go button with an estimate.
+     *
+     * `tier` travels with the estimate so Go (`_applyGoEstimate`) acts on the
+     * tier this exact estimate simulated, never one recomputed at click time —
+     * the same reason the zone itself is carried here rather than re-derived.
+     * The kill figures are the card's current ones: a progress refresh calls
+     * this again, so Go never fills the count of a task that has since moved.
+     * @private
+     */
+    _storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, tier, figures) {
+        this._cardEstimates.set(cardTaskNode, {
+            zoneHrid,
+            predictedFights: figures.predictedFights,
+            monsterHrid,
+            tier,
+            killsNeeded: figures.remaining,
+            killsPerFight: figures.killsPerFight,
+        });
+    }
+
+    /**
+     * Draw a combat estimate result from its cached inputs and remember them on
+     * the container, so `_refreshOpenCombatEstimates` can redraw it when the
+     * task's progress changes.
+     * @param {Element} container - The estimate container
+     * @param {Object} cached - The progress-independent inputs (see `_runCombatSimEstimate`)
+     * @param {Object} taskData - The task as it stands
+     * @param {Object} figures - From `_deriveCombatEstimateFigures`
+     * @private
+     */
+    _drawCachedCombatEstimate(container, cached, taskData, figures) {
+        this._renderCombatEstimateResult(
+            container,
+            taskData,
+            cached.monsterName,
+            figures.killsPerHour,
+            figures.timeEstimate,
+            figures.completionSeconds,
+            cached.loadoutName,
+            cached.netPerHour,
+            cached.rewardValue,
+            cached.dropEntries,
+            cached.consumableEntries,
+            cached.mode,
+            cached.simResult,
+            cached.zoneHrid,
+            cached.estimateTier,
+            cached.estimateTierKnown,
+            cached.unpriced,
+            cached.simHours
+        );
+        container._mwiCombatEstimate = cached;
+        container.classList.add(COMBAT_ESTIMATE_RESULT_CLASS);
+        container.dataset.progressSignature = this._combatEstimateProgressSignature(taskData, cached.mode);
+    }
+
+    /**
+     * Drop a container's cached result: it is about to show the config UI or
+     * a fresh run, and a progress refresh must not draw the old result over it.
+     * @param {Element} container
+     * @private
+     */
+    _forgetCachedCombatEstimate(container) {
+        container._mwiCombatEstimate = null;
+        container.classList.remove(COMBAT_ESTIMATE_RESULT_CLASS);
+        delete container.dataset.progressSignature;
+    }
+
+    /**
+     * What a drawn result depends on that can change without a re-run: the
+     * card's own progress, and — for a zone-mode result, whose summary line
+     * counts every combat task on the board — every card's progress.
+     * @param {Object} taskData - The card's task
+     * @param {string} mode - 'solo' or 'zone'
+     * @returns {string}
+     * @private
+     */
+    _combatEstimateProgressSignature(taskData, mode) {
+        const own = `${taskData.currentProgress ?? 0}`;
+        if (mode !== 'zone') return own;
+        const taskListNode = document.querySelector(GAME.TASK_LIST);
+        const nodes = taskListNode ? taskListNode.querySelectorAll(GAME.TASK_INFO) : [];
+        const board = [];
+        for (const node of nodes) {
+            const td = this.parseTaskData(node);
+            if (td) board.push(`${td.description}|${td.quantity}|${td.currentProgress}`);
+        }
+        return `${own}#${board.join(';')}`;
+    }
+
+    /**
+     * Redraw every open combat estimate result whose task progress has moved
+     * since it was drawn — remaining kills, time, totals, the zone summary and
+     * Go's count — from the cached sim result. No sim runs, and the chosen
+     * loadout, mode and expanded breakdown are kept.
+     *
+     * A card's estimate is otherwise keyed on `description|quantity`, which a
+     * kill does not change, so without this an open estimate kept the figures
+     * from when Estimate was clicked for as long as it stayed open.
+     * @param {Object} [options]
+     * @param {boolean} [options.force] - Redraw zone-mode results even if no progress moved
+     *   (the zone estimate coverage setting changed)
+     * @private
+     */
+    _refreshOpenCombatEstimates({ force = false } = {}) {
+        if (!this.isInitialized) return;
+        for (const container of document.querySelectorAll(`.${COMBAT_ESTIMATE_RESULT_CLASS}`)) {
+            const cached = container._mwiCombatEstimate;
+            if (!cached) continue;
+            const taskNode = container.closest(GAME.TASK_INFO);
+            if (!taskNode) continue;
+            // A card waiting on the player's second click keeps its rows still
+            if (shouldSkipConfirmingCard(taskNode, 'profit')) continue;
+            const taskData = this.parseTaskData(taskNode);
+            // A different task on the card is updateTaskProfits' to redraw
+            if (!taskData || taskData.description !== cached.description) continue;
+
+            const signature = this._combatEstimateProgressSignature(taskData, cached.mode);
+            const forced = force && cached.mode === 'zone';
+            if (!forced && signature === container.dataset.progressSignature) continue;
+
+            const figures = this._deriveCombatEstimateFigures(
+                cached.simResult,
+                cached.monsterHrid,
+                cached.simHours,
+                taskData
+            );
+            this._storeCardEstimate(taskNode, cached.zoneHrid, cached.monsterHrid, cached.estimateTier, figures);
+
+            const wasOpen = container.querySelector('.mwi-task-profit-breakdown')?.style.display === 'block' || false;
+            this._drawCachedCombatEstimate(container, cached, taskData, figures);
+            if (wasOpen) container.firstElementChild?.click();
         }
     }
 
@@ -1917,6 +2099,8 @@ class TaskProfitDisplay {
      * @param {number} estimateTier - The difficulty tier this estimate simulated at
      * @param {boolean} estimateTierKnown - Whether `estimateTier` came from the player's own
      *   queue (`_resolveEstimateTier`) rather than the no-recorded-tier T0 fallback
+     * @param {{drops: Array, consumables: Array}} [unpriced] - Drops/consumables the market could not price
+     * @param {number} [simHours] - Hours the sim covered
      * @private
      */
     _renderCombatEstimateResult(
@@ -1936,7 +2120,8 @@ class TaskProfitDisplay {
         zoneHrid,
         estimateTier,
         estimateTierKnown,
-        unpriced = { drops: [], consumables: [] }
+        unpriced = { drops: [], consumables: [] },
+        simHours = ZONE_SIM_HOURS
     ) {
         container.innerHTML = '';
         // An unpriced consumable was charged at zero, so the profit is overstated by an unknown
@@ -2168,6 +2353,9 @@ class TaskProfitDisplay {
                 if (!mHrid || !zoneMonsterHrids.has(mHrid)) continue;
 
                 const rem = Math.max((td.quantity ?? 0) - (td.currentProgress ?? 0), 0);
+                // A finished task has nothing left to clear, the way the Task
+                // Statistics zone rows count it (groupCombatTasksByZone)
+                if (rem <= 0) continue;
                 const entry = perMonster.get(mHrid) || { name: mName, remaining: 0, taskCount: 0 };
                 entry.remaining += rem;
                 entry.taskCount += 1;
@@ -2178,7 +2366,8 @@ class TaskProfitDisplay {
             if (zoneTaskCount > 1) {
                 const bottleneck = computeZoneBottleneck(
                     [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry })),
-                    simResult
+                    simResult,
+                    simHours
                 );
 
                 const summary = document.createElement('div');
@@ -2190,8 +2379,26 @@ class TaskProfitDisplay {
                         ? `${bottleneck.bottleneckName} ×${bottleneck.bottleneckTaskCount}`
                         : bottleneck.bottleneckName;
                 if (Number.isFinite(bottleneck.hoursNeeded)) {
-                    const totalSeconds = Math.round(bottleneck.hoursNeeded * 3600);
-                    summary.textContent = `${zoneName}: ~${formatKMB(bottleneck.fightsNeeded)} fights | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
+                    // The quoted figure is a quantile of the fights needed, not
+                    // the mean (see task-zone-estimate-percentile.js); Go keeps
+                    // padding the mean on its own setting
+                    const zoneInfo = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+                    const estimate = zoneBottleneckEstimate({
+                        monsterEntries: [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry })),
+                        simResult,
+                        simHours,
+                        slotsPerFight: Number(zoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount) || null,
+                        isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
+                        percent: getZoneEstimatePercent(),
+                    });
+                    const totalSeconds = Math.round(estimate.hoursNeeded * 3600);
+                    // Name the monster that sets the quoted figure, which need not be the mean bottleneck
+                    const limiting = estimate.limiting;
+                    const limitingLabel =
+                        limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
+                    summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(totalSeconds)} (bottleneck: ${limitingLabel})`;
+                    const medianHint = createMedianHint(estimate);
+                    if (medianHint) summary.appendChild(medianHint);
                 } else {
                     summary.textContent = `${zoneName}: ??? (no kills for ${bottleneckLabel} in sim)`;
                 }
