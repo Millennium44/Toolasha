@@ -307,6 +307,13 @@ class LootLogStats {
             webSocketHook.off('loot_log_updated', wsHandler);
         });
 
+        // The task token is priced through the expected-value calculator, which finishes starting
+        // a beat after the first rows are drawn; rows stamped before then are priced at nothing
+        // and would stay that way until an unrelated redraw
+        const repriceOnEvReady = () => this.repriceStampedRows();
+        dataManager.on('expected_value_initialized', repriceOnEvReady);
+        this.unregisterHandlers.push(() => dataManager.off('expected_value_initialized', repriceOnEvReady));
+
         // The per-row statistics overlays and the historical entries, each under its own setting
         this.syncParts();
 
@@ -373,6 +380,18 @@ class LootLogStats {
         this._resetGatheringContextCache();
         const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
         lootLogElements.forEach((element, index) => this.processLootLogElement(element, index, lootLogElements.length));
+    }
+
+    /**
+     * Draw every loot log row again, even those whose entry has not changed, now that the prices
+     * they were drawn with may have been missing.
+     */
+    repriceStampedRows() {
+        if (!config.getSetting('lootLogStats')) return;
+        document.querySelectorAll('.LootLogPanel_actionLoot__32gl_').forEach((row) => {
+            delete row.dataset.mwiLootLogStamp;
+        });
+        this.processVisibleRows();
     }
 
     /**
