@@ -197,6 +197,18 @@ describe('valueWatchlist', () => {
         expect(b.totalBid).toBeCloseTo(1920, 6);
     });
 
+    test('an enhanced row has no vendor floor, since the vendor takes only +0 items', () => {
+        const [row] = valueWatchlist([{ hrid: '/items/a', name: 'A', enhancementLevel: 5 }], {
+            quantityOf: () => 1,
+            pricesFor: () => ({ ask: 200, bid: 101 }),
+            vendorOf: () => 100,
+            afterTax: (price) => Math.floor(price * 0.96),
+        });
+        expect(row.flag).toBeNull();
+        expect(row.bid).toBe(101);
+        expect(row.totalBid).toBe(96);
+    });
+
     test('an item with no price and none held is zero rather than NaN', () => {
         const [row] = valueWatchlist([{ hrid: '/items/x', name: 'X' }], {
             quantityOf: () => undefined,

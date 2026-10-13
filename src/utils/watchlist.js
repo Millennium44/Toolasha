@@ -326,7 +326,8 @@ export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, liste
         // the vendor price and vendor / (1 - tax) pays less than the vendor does
         const grossBid = Number(prices.bid) || 0;
         const netBid = grossBid > 0 && afterTax ? Number(afterTax(grossBid, entry.hrid)) || 0 : grossBid;
-        const floor = vendorFloor(netBid, vendorOf?.(entry.hrid));
+        // The vendor takes only +0 items, so an enhanced row has no vendor floor
+        const floor = vendorFloor(netBid, level > 0 ? 0 : vendorOf?.(entry.hrid));
 
         return {
             ...entry,
