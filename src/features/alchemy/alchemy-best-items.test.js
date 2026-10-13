@@ -249,6 +249,8 @@ beforeEach(() => {
     market.estimated = new Set();
     market.candidates = {};
     settings.values.alchemy_bestItems_sortMode = 'profit';
+    // The mock answers true for unknown keys; this one defaults off in the schema
+    settings.values.alchemyBestItems_prefillLevelFilter = false;
     experience.totalMultiplier = 1;
     liquidity.throttleByItem = {};
     liquidity.calls = [];
@@ -272,6 +274,7 @@ afterEach(() => {
     bestItems.filterProfitMax = null;
     bestItems.filterPriceMin = null;
     bestItems.filterPriceMax = null;
+    bestItems.filterLevelMax = null;
     bestItems.itemsSpriteUrl = null;
     if (bestItems.modal?.parentNode) bestItems.modal.remove();
     bestItems.modal = null;
@@ -898,6 +901,7 @@ describe('the Buy / Sell pricing dropdowns in the modal header', () => {
             profitCalc_pricingNaming: false,
             profitCalc_patientTickBuy: false,
             profitCalc_patientTickSell: false,
+            alchemyBestItems_prefillLevelFilter: false,
         };
         settings.changeListeners = {};
         settings.loadedListeners = [];
@@ -1403,5 +1407,117 @@ describe('the Decompose chain/hr sort', () => {
         expect(label()).toBe('Profit/hr:');
         bestItems.chooseSortMode('decomposeChainPerHour');
         expect(label()).toBe('Chain/hr:');
+    });
+});
+
+describe('the Max level filter and level preview', () => {
+    const row = (name, itemLevel, profitPerHour = 100) => ({
+        itemHrid: `/items/${name}`,
+        name,
+        itemLevel,
+        itemPrice: 0,
+        profitPerHour,
+        xpPerHour: 0,
+        catalyst: null,
+        profitData: null,
+    });
+    const rows = () => [row('low', 10, 300), row('mid', 40, 200), row('high', 80, 900)];
+    const names = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map((tr) => tr.children[1]?.textContent);
+    const levelInput = () => bestItems.modal.querySelector('[data-mwi-level-max]');
+    const lookaheadInput = () => bestItems.modal.querySelector('[data-mwi-lookahead]');
+    const levelColors = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map((tr) => tr.children[2].style.color);
+
+    function open(type = 'coinify') {
+        game.skills = [{ skillHrid: '/skills/alchemy', level: 40 }];
+        bestItems.createModal();
+        bestItems.currentType = type;
+        bestItems.cachedRankings[type] = rows();
+        bestItems.renderTable();
+    }
+
+    function type(input, value) {
+        input.value = value;
+        input.dispatchEvent(new Event('change'));
+    }
+
+    test('the filter is shown but starts empty: every item is ranked', () => {
+        open();
+        expect(levelInput().value).toBe('');
+        expect(names()).toEqual(['high', 'low', 'mid']);
+    });
+
+    test('the pre-fill setting fills the filter with the alchemy level', () => {
+        settings.values.alchemyBestItems_prefillLevelFilter = true;
+        open();
+        expect(levelInput().value).toBe('40');
+        expect(names()).toEqual(['low', 'mid']);
+    });
+
+    test('a reopened modal re-fills the pre-filled level with the level the player has now', async () => {
+        settings.values.alchemyBestItems_prefillLevelFilter = true;
+        open();
+        game.skills = [{ skillHrid: '/skills/alchemy', level: 85 }];
+        bestItems.itemsSpriteUrl = 'sprite';
+        const load = vi.spyOn(bestItems, 'loadRankings').mockImplementation(() => {});
+        const detect = vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await bestItems.openModal();
+        expect(levelInput().value).toBe('85');
+        expect(bestItems.filterLevelMax).toBe(85);
+        load.mockRestore();
+        detect.mockRestore();
+    });
+
+    test('a typed max level drops higher-level items, and clearing it brings them back', () => {
+        open();
+        type(levelInput(), '40');
+        expect(names()).toEqual(['low', 'mid']);
+        type(levelInput(), '');
+        expect(names()).toEqual(['high', 'low', 'mid']);
+    });
+
+    test('previewing N levels ahead raises the ceiling from the real level', () => {
+        open();
+        type(lookaheadInput(), '45');
+        expect(levelInput().value).toBe('85');
+        expect(names()).toEqual(['high', 'low', 'mid']);
+        type(lookaheadInput(), '0');
+        expect(names()).toEqual(['low', 'mid']);
+    });
+
+    test('the Level column is green when unlocked and red when not, whatever the filter says', () => {
+        open();
+        // Ranked high, low, mid: levels 80, 10, 40 against an alchemy level of 40
+        expect(levelColors()).toEqual(['#f87171', '#4ade80', '#4ade80']);
+    });
+
+    test('the filter applies on every tab', () => {
+        for (const tab of ['coinify', 'decompose', 'transmute']) {
+            open(tab);
+            type(levelInput(), '40');
+            expect(names()).toEqual(['low', 'mid']);
+            bestItems.modal.remove();
+            bestItems.modal = null;
+        }
+    });
+
+    test('the filter applies under the XP sort', () => {
+        open();
+        bestItems.sortMode = 'xp';
+        type(levelInput(), '40');
+        expect(names()).toHaveLength(2);
+        expect(names()).not.toContain('high');
+    });
+
+    test('under the chain sort, filtered-out items are never priced or ranked', () => {
+        open('decompose');
+        bestItems.sortMode = 'decomposeChainPerHour';
+        const chain = vi.spyOn(bestItems, 'chainPerHour').mockReturnValue(1000);
+        type(levelInput(), '40');
+        expect(names()).toEqual(expect.not.arrayContaining(['high']));
+        expect(names()).toHaveLength(2);
+        const pricedHrids = new Set(chain.mock.calls.map(([hrid]) => hrid));
+        expect(pricedHrids.has('/items/high')).toBe(false);
     });
 });
