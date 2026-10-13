@@ -324,6 +324,30 @@ describe('rows an import cannot use', () => {
     });
 });
 
+describe('what an import hands the listing log', () => {
+    test('only the rows from the file, so its restore stamp cannot cover rows already in the log', async () => {
+        dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
+        estimatedListingAgeMock.personalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        const csv = [
+            'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
+            '2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,556',
+        ].join('\n');
+
+        await marketHistoryViewer.importCSV(csv);
+
+        expect(estimatedListingAgeMock.importListings.mock.calls[0][0].map((listing) => listing.id)).toEqual([556]);
+    });
+
+    test('the same for an Edible Tools import', async () => {
+        estimatedListingAgeMock.personalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        const payload = JSON.stringify([{ id: 2, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a' }]);
+
+        await marketHistoryViewer.importEdibleToolsData(payload);
+
+        expect(estimatedListingAgeMock.importListings.mock.calls[0][0].map((listing) => listing.id)).toEqual([2]);
+    });
+});
+
 describe('an import the listing log refuses', () => {
     test('a CSV import says it failed rather than complete', async () => {
         dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
