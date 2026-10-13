@@ -388,6 +388,13 @@ class WhatsNew {
      */
     async applyPolicy() {
         try {
+            // The settings read this load fell back to defaults. This method's own reads can still succeed a
+            // moment later, but every decision below (the newDefaultsOff switch, the preset offer) would then
+            // be made against the shipped defaults instead of the player's settings, and recorded as done.
+            if (config.characterSettingsLoaded === false) {
+                console.warn('[WhatsNew] The saved settings were not read this load; skipping reconciliation');
+                return;
+            }
             const current = this._identity();
             const schemaIds = getAllSettingIds();
             // `tryGet`, not `getJSON`: a timed-out or failed read answers the
