@@ -1158,9 +1158,12 @@ export function protectSweepHTML({
         } else if (!selectedHrid && !pickedOption) {
             notes.push('Nothing in the protection slot — priced with the cheapest item that would work.');
         }
-        if (pickedOption?.buyPriceUnknown && !(pickedOption.stock > 0)) {
+        // Spare copies cover only the rows whose expected use fits in them: any row that would
+        // still have to buy one is left out, so the warning stands whenever copies run short
+        if (pickedOption?.buyPriceUnknown) {
+            const covered = pickedOption.stock > 0 ? ` beyond your ${pickedOption.stock.toLocaleString()} spare` : '';
             notes.push(
-                `${pickedOption.name} has no market price, so rows that would need to buy it are left out; pick another item.`
+                `${pickedOption.name} has no market price, so rows that would need to buy it${covered} are left out; pick another item.`
             );
         }
         if (stockSettings.enabled) {
