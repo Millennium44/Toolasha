@@ -966,6 +966,28 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         expect(applyListingGraves(log, merge(local, later)).map((l) => l.id)).toEqual([2]);
     });
 
+    test('an import is stamped before the tombstone reaches this device, so a later pull cannot bury it', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        storageMock.storeFor('marketListings').set(LOG_KEY, []);
+        knownAs([]);
+        // The peer deleted these rows before this device imported them; its tombstones are still on the way
+        const deletedAt = Date.now() - 60_000;
+        const imported = Array.from({ length: 2_500 }, (_, i) => row(i + 1));
+
+        await estimatedListingAge.importListings(imported);
+
+        const { merge } = mergeForKey('marketListings', GRAVES_KEY);
+        const local = storageMock.storeFor('marketListings').get(GRAVES_KEY);
+        const peer = { removed: { 1: deletedAt, 2_500: deletedAt }, clearedThrough: 0 };
+        const log = [row(1), row(2_500)];
+        expect(applyListingGraves(log, merge(local, peer)).map((l) => l.id)).toEqual([1, 2_500]);
+        expect(applyListingGraves(log, merge(peer, local)).map((l) => l.id)).toEqual([1, 2_500]);
+
+        // A delete made after the import still stands
+        const later = { removed: { 1: Date.now() + 1_000 }, clearedThrough: 0 };
+        expect(applyListingGraves(log, merge(local, later)).map((l) => l.id)).toEqual([2_500]);
+    });
+
     test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
         storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
         knownAs([row(1), row(2)]);
