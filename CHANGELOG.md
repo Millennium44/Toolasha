@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loads on milkywayidle.com, and small fixes from upstream
+
+- Toolasha now also loads when the game is opened at milkywayidle.com without the www, 12-hour chat timestamps like [MM-DD h:mm PM] are read correctly by dungeon chat annotations and saved chat ordering, the Max buy button only fills a quantity when it can find that shop window's own Buy button (and is now styled), and the queue edit menu keeps its delete button on the right when a long completion time wraps; ported from upstream.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log
