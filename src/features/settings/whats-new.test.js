@@ -39,6 +39,11 @@ const mocks = vi.hoisted(() => ({
     copySucceeds: true,
     knownCount: 1,
     openSettingsCalls: [],
+    // The what's-new state read: null = the read failed, else {found, value}.
+    stateRead: { found: false, value: null },
+    // The saved-settings read: {readable, ids}.
+    idsRead: { readable: true, ids: null },
+    saved: [],
 }));
 
 vi.mock('../../utils/choice-dialog.js', () => ({
@@ -62,13 +67,19 @@ vi.mock('../../core/config.js', () => ({
             return { success: mocks.copySucceeds };
         },
         getKnownCharacterCount: async () => mocks.knownCount,
+        tryStoredSettingIds: async () => mocks.idsRead,
+        storedSettingIds: async () => mocks.idsRead.ids,
     },
 }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async () => null,
-        setJSON: async () => {},
+        getJSON: async () => (mocks.stateRead?.found ? mocks.stateRead.value : null),
+        setJSON: async (...args) => {
+            mocks.saved.push(args);
+        },
+        tryGet: async () => mocks.stateRead,
+        parseJSON: (raw) => (typeof raw === 'string' ? JSON.parse(raw) : raw),
     },
 }));
 
@@ -160,6 +171,9 @@ beforeEach(() => {
     mocks.copySucceeds = true;
     mocks.knownCount = 1;
     mocks.openSettingsCalls = [];
+    mocks.stateRead = { found: false, value: null };
+    mocks.idsRead = { readable: true, ids: null };
+    mocks.saved = [];
     whatsNew._pending = null;
     virtualChangelog.text = '';
     delete whatsNew._pickSourceCharacter; // restore the real method if a test replaced it
@@ -704,5 +718,41 @@ describe('the changelog pages when there is more than one screen of it', () => {
         expect(copied).toContain('### Entry 1\n');
         expect(copied).toContain('### Entry 65\n');
         whatsNew.close();
+    });
+});
+
+describe('applyPolicy when storage does not answer', () => {
+    test('a failed state read shows no dialog, writes no setting and saves no state', async () => {
+        mocks.stateRead = null;
+        await whatsNew.applyPolicy();
+        expect(mocks.lastChoiceOptions).toBeNull();
+        expect(mocks.written).toEqual([]);
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(mocks.saved).toEqual([]);
+        expect(whatsNew._pending).toBeNull();
+    });
+
+    test('a failed saved-settings read shows no dialog and saves no state', async () => {
+        mocks.idsRead = { readable: false, ids: null };
+        await whatsNew.applyPolicy();
+        expect(mocks.lastChoiceOptions).toBeNull();
+        expect(mocks.written).toEqual([]);
+        expect(mocks.saved).toEqual([]);
+    });
+
+    test('a successful empty read still offers the fresh-install preset and saves state', async () => {
+        mocks.answer = NO_CHANGE;
+        await whatsNew.applyPolicy();
+        expect(mocks.lastChoiceOptions).not.toBeNull();
+        expect(mocks.saved.length).toBe(1);
+    });
+
+    test('a successful read of existing state reconciles as before', async () => {
+        defineSchema(['newFeatureA']);
+        mocks.stateRead = { found: true, value: { fork: 'Toolasha', version: '0.0.1', knownIds: [] } };
+        await whatsNew.applyPolicy();
+        expect(mocks.lastChoiceOptions).toBeNull();
+        expect(whatsNew._pending.newIds).toEqual(['newFeatureA']);
+        expect(mocks.saved.length).toBe(1);
     });
 });

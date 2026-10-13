@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A sync pull cut short by a character switch asks you to reload only when it actually locked a record, matching the normal pull.
 
+### Settings: a stuck database no longer looks like a fresh install
+
+- When the browser's storage stops answering, Toolasha no longer greets a returning player with the first-run preset dialog, so a preset click can't overwrite real settings; the next good load reconciles as usual.
+
 ### Custom Tabs toolbar fits narrow inventories
 
 - The Custom Tabs toolbar no longer pushes the inventory panel into a sideways scroll: Export, Import, Import Categories and Clear All moved into a "⋯" menu beside + Tab, expand and collapse, and the row wraps if it is still too wide.
