@@ -21,9 +21,18 @@ import {
     houseRoomsPart,
     tagFingerprint,
 } from './labyrinth-fingerprint.js';
+import {
+    DEFAULT_RECOMMEND_TARGET_SECONDS,
+    MAX_RECOMMEND_TARGET_SECONDS,
+    MIN_RECOMMEND_TARGET_SECONDS,
+    findHighestLevelWithinSeconds,
+    normalizeTargetSeconds,
+    recommendationBasisKey,
+} from './labyrinth-recommend-time.js';
 
 export const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
+export const RECOMMEND_SECONDS_BUTTON_CLASS = `${RECOMMEND_CONTROLS_CLASS}-run-seconds`;
 /** Fallback for the recommend panel's Target Win %, matching settings-schema */
 const DEFAULT_RECOMMEND_TARGET_PCT = 70;
 
@@ -112,6 +121,81 @@ export const recommendationMethods = {
     },
 
     /**
+     * Highest skip threshold whose expected seconds per clear (failed runs
+     * included) is within a target, for a skilling or enhancing room.
+     *
+     * Time is not monotone in room level, so this brackets and then sweeps
+     * rather than bisecting blind — see {@link findHighestLevelWithinSeconds}.
+     * Closed-form clears are cheap, so the sweep is long.
+     * @param {string} skillHrid - Skill room
+     * @param {number} targetSeconds - Time limit
+     * @returns {Promise<{threshold: number, seconds: number, qualifies: boolean}|null>}
+     */
+    async findRecommendedThresholdSeconds(skillHrid, targetSeconds) {
+        const effectiveLevel = this.getEffectiveLevel(skillHrid);
+        if (!(effectiveLevel > 0)) return null;
+        const isEnhancing = skillHrid === '/skills/enhancing';
+        return this._searchSeconds(
+            effectiveLevel,
+            targetSeconds,
+            async (roomLevel) => {
+                const result = isEnhancing
+                    ? this.computeEnhancingClear(roomLevel)
+                    : this.computeSkillingClear(skillHrid, roomLevel);
+                return { seconds: result?.expectedSeconds };
+            },
+            { sweepSteps: 48, failStreak: 14 }
+        );
+    },
+
+    /**
+     * Highest skip threshold whose expected seconds per clear is within a
+     * target, for a combat room. Every probe is a measured simulation — a
+     * decision sim stops as soon as the win rate is placed against a bar, which
+     * leaves too few fights for a time figure — so these share the ordinary
+     * precision-keyed cache slot with the table badges.
+     * @param {string} monsterHrid - Labyrinth monster
+     * @param {number} targetSeconds - Time limit
+     * @returns {Promise<{threshold: number, seconds: number, qualifies: boolean}|null>}
+     *   Null when cancelled or there is no combat level to anchor on
+     */
+    async findRecommendedThresholdSecondsCombat(monsterHrid, targetSeconds) {
+        const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
+        if (!(effectiveCombatLevel > 0)) return null;
+        return this._searchSeconds(
+            effectiveCombatLevel,
+            targetSeconds,
+            async (roomLevel) => {
+                if (this.simCancelled()) return { cancelled: true };
+                const result = await this.computeCombatClear(monsterHrid, roomLevel, this.automationSimOptions());
+                // A sim that could not run (inputs still loading, a worker error) is no measurement:
+                // abandon the search rather than score the room as never clearing
+                if (result?.cancelled || result?.failed) return { cancelled: true };
+                return { seconds: result?.expectedSeconds };
+            },
+            { sweepSteps: 14, failStreak: 5 }
+        );
+    },
+
+    /**
+     * Shared body of the two time searches: maps the search's room-level
+     * offsets onto skip thresholds (threshold t is room effective + t − 1).
+     * @private
+     */
+    async _searchSeconds(effectiveLevel, targetSeconds, evaluateRoom, tuning) {
+        const found = await findHighestLevelWithinSeconds({
+            evaluate: (delta) => evaluateRoom(Math.floor(effectiveLevel + delta)),
+            // A room below level 1 does not exist; the threshold window is ±RANGE
+            minDelta: Math.max(-SKIP_THRESHOLD_RANGE - 1, 1 - Math.floor(effectiveLevel)),
+            maxDelta: SKIP_THRESHOLD_RANGE - 1,
+            targetSeconds,
+            ...tuning,
+        });
+        if (!found) return null;
+        return { threshold: found.delta + 1, seconds: found.seconds, qualifies: found.qualifies };
+    },
+
+    /**
      * The room level a Recommend run says this fight should be skipped to.
      *
      * The recommendation is a *threshold* — an offset — and the room it picks
@@ -130,7 +214,11 @@ export const recommendationMethods = {
      * @returns {number} Room level, 0 when there is no recommendation
      */
     getRecommendedCombatRoomLevel(monsterHrid) {
-        const threshold = this.recommendations?.get(monsterHrid)?.threshold;
+        const rec = this.recommendations?.get(monsterHrid);
+        // A closest-miss from Recommend by Time is shown, not applied: it is
+        // the level nearest the limit, not one that meets it
+        if (rec?.qualifies === false) return 0;
+        const threshold = rec?.threshold;
         if (!Number.isFinite(threshold)) return 0;
 
         const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
@@ -290,9 +378,28 @@ export const recommendationMethods = {
     },
 
     /**
-     * Run recommendations for all visible rooms
+     * The recommend panel's Target Time (s), read from the input, clamped to
+     * 1..100000 and written back to the setting — the same
+     * input-is-authority, setting-is-what-a-fresh-panel-reads arrangement as
+     * {@link getRecommendTargetPct}.
+     * @returns {number} Whole seconds
      */
-    async runRecommendations() {
+    getRecommendTargetSeconds() {
+        const input = document.getElementById('mwi-recommend-target-seconds');
+        const stored = config.getSettingValue('labyrinthRecommendTargetSeconds', DEFAULT_RECOMMEND_TARGET_SECONDS);
+        const seconds = normalizeTargetSeconds(input?.value, normalizeTargetSeconds(stored));
+        if (input) input.value = String(seconds);
+        config.setSettingValue('labyrinthRecommendTargetSeconds', seconds);
+        return seconds;
+    },
+
+    /**
+     * Run recommendations for all visible rooms
+     * @param {'winRate'|'seconds'} [basis] - Highest threshold that still clears
+     *   at the Target Win %, or the highest whose expected clear time is within
+     *   the Target Time
+     */
+    async runRecommendations(basis = 'winRate') {
         if (this.recommendRunning) return;
         this.recommendRunning = true;
         this.beginSimBatch();
@@ -310,8 +417,17 @@ export const recommendationMethods = {
         this._settingsFingerprint = this._recommendSettingsFingerprint();
         this._snapshotFingerprint = this._snapshotContentFingerprint();
 
+        const bySeconds = basis === 'seconds';
         this._recommendTargetPct = this.getRecommendTargetPct();
         const targetRate = this._recommendTargetPct / 100;
+        const targetSeconds = bySeconds ? this.getRecommendTargetSeconds() : 0;
+        // Stamped on every record so a badge, an autofill or a Lab Sim read can
+        // say which question the number answers
+        const basisKey = recommendationBasisKey(
+            bySeconds ? 'seconds' : 'winRate',
+            bySeconds ? targetSeconds : this._recommendTargetPct
+        );
+        this._recommendBasis = bySeconds ? 'seconds' : 'winRate';
 
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
         const rooms = [];
@@ -333,14 +449,43 @@ export const recommendationMethods = {
                 // Cancelling a batch has to stop the queue of rooms behind the
                 // one being simulated, not only that room's sim
                 if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                if (isSkill) {
+                if (bySeconds) {
+                    if (!isSkill) this.refreshAutomationRunningState(completed + 1, totalRooms);
+                    const found = isSkill
+                        ? await this.findRecommendedThresholdSeconds(roomHrid, targetSeconds)
+                        : await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
+                    if (this.simCancelled() || this.simEpoch() !== epoch) break;
+                    // An interrupted combat room reports nothing, as win-rate does
+                    if (!isSkill && !found) {
+                        completed++;
+                        continue;
+                    }
+                    this.recommendations.set(roomHrid, {
+                        threshold: found ? found.threshold : null,
+                        basis: 'seconds',
+                        basisKey,
+                        target: targetSeconds,
+                        qualifies: found ? found.qualifies : false,
+                        seconds: found ? found.seconds : null,
+                    });
+                } else if (isSkill) {
                     const threshold = this.findRecommendedThreshold(roomHrid, targetRate);
-                    this.recommendations.set(roomHrid, { threshold });
+                    this.recommendations.set(roomHrid, {
+                        threshold,
+                        basis: 'winRate',
+                        basisKey,
+                        target: this._recommendTargetPct,
+                    });
                 } else {
                     this.refreshAutomationRunningState(completed + 1, totalRooms);
                     const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
                     if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                    this.recommendations.set(roomHrid, { threshold });
+                    this.recommendations.set(roomHrid, {
+                        threshold,
+                        basis: 'winRate',
+                        basisKey,
+                        target: this._recommendTargetPct,
+                    });
                 }
                 completed++;
             }
@@ -371,15 +516,36 @@ export const recommendationMethods = {
      */
     refreshAutomationRunningState(done = 0, total = 0) {
         const button = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_CONTROLS_CLASS}-run`);
-        if (!button) return;
+        const secondsButton = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_SECONDS_BUTTON_CLASS}`);
+        if (!button && !secondsButton) return;
         const running = !!this.recommendRunning || !!this.simRunning;
-        if (running) {
-            const hint = total > 0 ? ` (${done}/${total})` : '';
-            button.textContent = `Cancel${hint}`;
-            button.title = 'Stop the run. Rooms already simulated keep their results.';
-        } else {
-            button.textContent = 'Recommend';
-            button.title = 'Search every room for the highest skip threshold that still clears at the target win rate';
+        // The button that started a time batch becomes its Cancel; every other
+        // run state keeps the original button as the Cancel, and the time
+        // button is disabled so a second batch cannot start on top of it
+        const timeRun = !!this.recommendRunning && this._recommendBasis === 'seconds';
+        const hint = total > 0 ? ` (${done}/${total})` : '';
+        if (button) {
+            if (running && !timeRun) {
+                button.textContent = `Cancel${hint}`;
+                button.title = 'Stop the run. Rooms already simulated keep their results.';
+            } else {
+                button.textContent = 'Recommend';
+                button.title =
+                    'Search every room for the highest skip threshold that still clears at the target win rate';
+            }
+            button.disabled = timeRun;
+        }
+        if (secondsButton) {
+            if (timeRun) {
+                secondsButton.textContent = `Cancel${hint}`;
+                secondsButton.title = 'Stop the run. Rooms already simulated keep their results.';
+            } else {
+                secondsButton.textContent = 'Recommend by Time';
+                secondsButton.title =
+                    'Search every room for the highest skip threshold whose expected time per clear, ' +
+                    'failed runs included, is within the target time';
+            }
+            secondsButton.disabled = running && !timeRun;
         }
     },
 
@@ -417,9 +583,16 @@ export const recommendationMethods = {
             // under the recommendation skips fights you would have cleared.
             // Above it is the opposite error and is graded by how far.
             const gap = currentThreshold - rec.threshold;
-            const target = `≥${this._recommendTargetPct}% clear rate`;
+            const bySeconds = rec.basis === 'seconds';
+            const target = bySeconds
+                ? `${rec.target}s expected clear time`
+                : `≥${this._recommendTargetPct}% clear rate`;
             let note;
-            if (gap === 0) {
+            if (bySeconds && rec.qualifies === false) {
+                badge.style.color = '#d9534f';
+                const took = Number.isFinite(rec.seconds) ? `${rec.seconds}s` : 'never clearing';
+                note = `No level meets the ${target}; this is the closest (${took})`;
+            } else if (gap === 0) {
                 badge.style.color = '#00c896';
                 note = `On the recommendation for a ${target}`;
             } else if (gap < 0) {
@@ -531,6 +704,14 @@ export const recommendationMethods = {
             // now write straight through to the setting, so the only thing left
             // to protect is a field being typed into right now.
             if (rateInput && document.activeElement !== rateInput) rateInput.value = defaultRate;
+            const secondsInput = document.getElementById('mwi-recommend-target-seconds');
+            if (secondsInput && document.activeElement !== secondsInput) {
+                secondsInput.value = String(
+                    normalizeTargetSeconds(
+                        config.getSettingValue('labyrinthRecommendTargetSeconds', DEFAULT_RECOMMEND_TARGET_SECONDS)
+                    )
+                );
+            }
             const precisionInput = document.getElementById('mwi-automation-sim-precision');
             if (precisionInput && document.activeElement !== precisionInput) {
                 precisionInput.value = String(this.getAutomationSimPrecisionPct());
@@ -569,6 +750,28 @@ export const recommendationMethods = {
         // Persist on commit rather than on every keystroke: typing "7" on the
         // way to "70" should not store 7
         rateInput.addEventListener('change', () => this.getRecommendTargetPct());
+
+        const secondsLabel = document.createElement('span');
+        secondsLabel.style.cssText = labelStyle;
+        secondsLabel.textContent = 'Target time (s)';
+
+        const secondsInput = document.createElement('input');
+        secondsInput.type = 'number';
+        secondsInput.id = 'mwi-recommend-target-seconds';
+        secondsInput.min = String(MIN_RECOMMEND_TARGET_SECONDS);
+        secondsInput.max = String(MAX_RECOMMEND_TARGET_SECONDS);
+        secondsInput.step = '1';
+        secondsInput.value = String(
+            normalizeTargetSeconds(
+                config.getSettingValue('labyrinthRecommendTargetSeconds', DEFAULT_RECOMMEND_TARGET_SECONDS)
+            )
+        );
+        secondsInput.style.cssText = inputStyle.replace('width:50px', 'width:64px');
+        secondsInput.title =
+            'Recommend by Time picks the highest skip threshold whose expected seconds per clear, ' +
+            'failed runs included, is within this. If no level qualifies it shows the closest miss. ' +
+            'Saved as you change it.';
+        secondsInput.addEventListener('change', () => this.getRecommendTargetSeconds());
 
         // The Automation tab's own precision. The per-room table and the floor
         // map ask different questions — the table is a plan and is worth
@@ -636,12 +839,29 @@ export const recommendationMethods = {
             }
         });
 
+        const secondsButton = document.createElement('button');
+        secondsButton.className = RECOMMEND_SECONDS_BUTTON_CLASS;
+        secondsButton.textContent = 'Recommend by Time';
+        secondsButton.style.cssText = button.style.cssText;
+        // Starts a time run, and while that one is going it stops it
+        secondsButton.addEventListener('click', () => {
+            if (this.recommendRunning || this.simRunning) {
+                this.cancelRunningSims();
+                this.refreshAutomationRunningState();
+            } else {
+                this.runRecommendations('seconds');
+            }
+        });
+
         container.appendChild(rateLabel);
         container.appendChild(rateInput);
+        container.appendChild(secondsLabel);
+        container.appendChild(secondsInput);
         container.appendChild(precisionLabel);
         container.appendChild(precisionInput);
         container.appendChild(uncappedButton);
         container.appendChild(button);
+        container.appendChild(secondsButton);
         table.parentNode.insertBefore(container, table);
         this.refreshAutomationRunningState();
     },

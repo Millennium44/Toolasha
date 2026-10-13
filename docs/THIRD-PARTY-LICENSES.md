@@ -215,7 +215,9 @@ Parts of `src/features/combat/labyrinth-room-logs.js`, the clear-chance distribu
 (`src/features/combat/labyrinth-room-distribution.js`, idea and bin-width control only) — and material
 consulted throughout the labyrinth simulator — are ported from the
 **[Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829)** by dakonglong
-(MIT). The MIT licence text, with the holder named, is vendored at `third-party/labyrinth-clear-rate/LICENSE.md`.
+(MIT). "Recommend by Time" (`src/features/combat/labyrinth-recommend-time.js` and its controls in
+`labyrinth-recommendation.js`) was taken from version 1.6.0 of that script. The MIT licence text, with the holder
+named, is vendored at `third-party/labyrinth-clear-rate/LICENSE.md`.
 
 ## MWITools - Extended
 
