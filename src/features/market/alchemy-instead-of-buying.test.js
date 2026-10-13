@@ -211,6 +211,20 @@ describe('findAlchemyAlternatives', () => {
         expect(noCheaperRoute).toBe(true);
     });
 
+    test('no "no cheaper route" when the source list was cut to its best few', () => {
+        const prices = {
+            [ESSENCE]: { ask: 100 },
+            [SHOOTER]: { ask: 1000 },
+            [BOOMSTICK]: { ask: 600 },
+            [LEATHER]: { ask: 250, bid: 200 },
+        };
+        const cut = findAlchemyAlternatives(ESSENCE, depsFor(prices, { truncated: true }));
+        expect(cut.alternatives).toEqual([]);
+        expect(cut.noCheaperRoute).toBe(false);
+        expect(cut.truncated).toBe(true);
+        expect(findAlchemyAlternatives(ESSENCE, depsFor(prices)).noCheaperRoute).toBe(true);
+    });
+
     test('no "no cheaper route" without a real ask, without sources, or with nothing costed', () => {
         const prices = { [ESSENCE]: { ask: 100 }, [BOOMSTICK]: { ask: 600 } };
         expect(findAlchemyAlternatives(ESSENCE, depsFor({ [BOOMSTICK]: { ask: 600 } })).noCheaperRoute).toBe(false);

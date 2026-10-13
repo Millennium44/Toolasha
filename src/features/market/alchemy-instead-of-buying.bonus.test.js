@@ -235,6 +235,14 @@ describe('Alchemy Essence as a target', () => {
         expect((await settle(ESSENCE)).alternatives).toEqual([]);
     });
 
+    test('buying looking cheapest says nothing while sources were pruned unseen', async () => {
+        world.prices[ESSENCE] = { ask: 1000, bid: 900 };
+        const found = await settle(ESSENCE);
+        // Thirty sources, ten costed: a pruned one might still win, so no "no cheaper route" line
+        expect(found.truncated).toBe(true);
+        expect(found.noCheaperRoute).toBe(false);
+    });
+
     test('an essence with no ask runs nothing', () => {
         delete world.prices[ESSENCE];
         const found = liveAlternatives(ESSENCE, new Set());

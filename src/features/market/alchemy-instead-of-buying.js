@@ -264,6 +264,8 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
  * @param {Function} [deps.containerValue] - A kept crate's opened value at the ask
  * @param {Function} [deps.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @param {number} [deps.goldPerHour=0] - The player's gold rate; 0 leaves time free
+ * @param {boolean} [deps.truncated=false] - The source list was cut to the best-ranked few; a miss then
+ *   never sets `noCheaperRoute`
  * @param {number} [deps.limit=MAX_ALTERNATIVES]
  * @returns {{targetAsk: number|null, alternatives: Array<Object>, noCheaperRoute: boolean}}
  *   Alternatives cheapest first, each `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving,
@@ -277,6 +279,8 @@ export function findAlchemyAlternatives(targetHrid, deps) {
     const { sources, getItemDetails, askOf, sellOf, candidatesOf, isWanted, containerValue, sellContainerValue } = deps;
     const goldPerHour = Math.max(0, Number(deps.goldPerHour) || 0);
     const limit = deps.limit ?? MAX_ALTERNATIVES;
+    // The source list was cut to its best few, so a miss among them proves nothing
+    const truncated = Boolean(deps.truncated);
     const targetAsk = askOf(targetHrid);
     if (targetAsk === null || !(targetAsk > 0)) return { targetAsk: null, alternatives: [], noCheaperRoute: false };
     // The bid after tax of the target itself: what selling it instead of using it pays
@@ -348,7 +352,8 @@ export function findAlchemyAlternatives(targetHrid, deps) {
     return {
         targetAsk,
         alternatives: alternatives.slice(0, limit),
-        noCheaperRoute: costed > 0 && !uncertain && alternatives.length === 0,
+        noCheaperRoute: costed > 0 && !uncertain && !truncated && alternatives.length === 0,
+        truncated,
     };
 }
 
@@ -852,10 +857,11 @@ function makeRankDeps() {
 /**
  * Keep the {@link BONUS_SOURCE_LIMIT} cheapest of a ranking.
  * @param {Array<{source: Object, cost: number}>} scored
- * @returns {Array<{sourceHrid: string, actionType: string}>}
+ * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, truncated: boolean}} `truncated` is
+ *   true when the ranking held more sources than were kept
  */
 function topRanked(scored) {
-    return scored
+    const sources = scored
         .sort(
             (a, b) =>
                 a.cost - b.cost ||
@@ -864,6 +870,8 @@ function topRanked(scored) {
         )
         .slice(0, BONUS_SOURCE_LIMIT)
         .map(({ source }) => source);
+    // Sources past the limit were never costed in full, so one of them might still win
+    return { sources, truncated: scored.length > BONUS_SOURCE_LIMIT };
 }
 
 /**
@@ -908,17 +916,18 @@ async function rankBonusSources(targetHrid, epoch) {
  * Every source one lookup costs: the items whose base outputs include the target, and —
  * for a bonus drop — its best-ranked sources once they are ranked for this price snapshot.
  * @param {string} targetHrid
- * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, ranked: boolean}} `ranked` is
- *   false while a bonus drop still waits for its ranking
+ * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, ranked: boolean, truncated: boolean}}
+ *   `ranked` is false while a bonus drop still waits for its ranking; `truncated` is true when the
+ *   ranking kept only the best of more sources
  */
 function lookupSources(targetHrid) {
     const base = sourcesOf(targetHrid);
-    if (bonusSourcesOf(targetHrid).length === 0) return { sources: base, ranked: true };
+    if (bonusSourcesOf(targetHrid).length === 0) return { sources: base, ranked: true, truncated: false };
     const best = bonusRanks.get(targetHrid);
-    if (!best) return { sources: base, ranked: false };
+    if (!best) return { sources: base, ranked: false, truncated: false };
     const seen = new Set(base.map(({ sourceHrid, actionType }) => `${actionType}|${sourceHrid}`));
-    const extra = best.filter(({ sourceHrid, actionType }) => !seen.has(`${actionType}|${sourceHrid}`));
-    return { sources: [...base, ...extra], ranked: true };
+    const extra = best.sources.filter(({ sourceHrid, actionType }) => !seen.has(`${actionType}|${sourceHrid}`));
+    return { sources: [...base, ...extra], ranked: true, truncated: best.truncated };
 }
 
 /**
@@ -949,8 +958,8 @@ function computeAlternatives(targetHrid, wanted) {
         for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored, rankDeps);
         bonusRanks.set(targetHrid, topRanked(scored));
     }
-    const { sources } = lookupSources(targetHrid);
-    let found = { targetAsk: null, alternatives: [], noCheaperRoute: false };
+    const { sources, truncated } = lookupSources(targetHrid);
+    let found = { targetAsk: null, alternatives: [], noCheaperRoute: false, truncated: false };
     if (sources.length > 0) {
         const askOf = (hrid) => realPrice(hrid, 'ask');
         const sellOf = (hrid) => {
@@ -996,6 +1005,7 @@ function computeAlternatives(targetHrid, wanted) {
             containerValue,
             sellContainerValue,
             goldPerHour,
+            truncated,
         });
     }
     resultCache.set(key, found);
