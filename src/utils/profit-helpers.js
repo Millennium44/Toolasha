@@ -466,8 +466,9 @@ export function resolveItemPrice(itemHrid, options = {}) {
     const market = getItemPriceInfo(itemHrid, { enhancementLevel, mode, context, side });
     const marketPrice = market.price;
 
-    // 3. Shop price floor (buy-side only)
-    if (side === 'buy') {
+    // 3. Shop price floor (buy-side, +0 only: the shop sells the base item, never an
+    // enhanced copy, so its price is the wrong figure for a +N input)
+    if (side === 'buy' && enhancementLevel === 0) {
         const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0 && (marketPrice === null || shopCost < marketPrice)) {
             return { price: shopCost, custom: false, missing: false, estimated: false };

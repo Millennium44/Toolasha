@@ -638,6 +638,21 @@ describe('resolveItemPrice', () => {
         });
     });
 
+    test('an enhanced buy never takes the +0 shop floor', () => {
+        chain.shop = 400;
+
+        chain.market = { price: 9000, source: 'book', estimated: false };
+        expect(resolveItemPrice('/items/cheese', { side: 'buy', enhancementLevel: 5 }).price).toBe(9000);
+
+        chain.market = null;
+        expect(resolveItemPrice('/items/cheese', { side: 'buy', enhancementLevel: 5 })).toEqual({
+            price: null,
+            custom: false,
+            missing: true,
+            estimated: false,
+        });
+    });
+
     test('nothing can price it: null, not zero', () => {
         // Zero meant "free", and a material that is free makes a recipe look wildly
         // profitable. Null is unpriced, and arithmetic on it goes visibly wrong rather
