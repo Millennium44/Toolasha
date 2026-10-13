@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Reset to defaults now also turns off the test server's live prices and automatic reload when character data is missed; both are stored per device, and either could come back on after the next reload.
 
+### Settings: new defaults wait for your saved settings
+
+- When your saved settings could not be read at load, Toolasha no longer applies new settings' defaults (or offers the first-run presets) against the shipped defaults; it waits for a load that reads your real "New settings start turned off" choice.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
