@@ -1559,6 +1559,39 @@ describe('a save adopts the deletions a sync pull stored since this tab read the
         // And the tombstone is now held in memory, so the next save applies it too
         expect(estimatedListingAge.listingGraves.removed).toHaveProperty('2');
     });
+
+    test('a row this tab holds in memory is dropped too, not written back over the tombstone', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        const row = (id) => ({ id, itemHrid: '/items/a', status: 'listed', firstSeen: 1_000, lastSeen: Date.now() });
+        estimatedListingAge.anchorsLoaded = true;
+        estimatedListingAge.knownListings = [row(1), row(2)];
+        estimatedListingAge.listingGraves = { removed: {}, clearedThrough: 0 };
+        // Another tab (or a pull) deleted row 2: the stored log lost it and the tombstone buries it
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2), row(3)]);
+        storageMock.storeFor('marketListings').set(GRAVES_KEY, { removed: { 2: Date.now() }, clearedThrough: 0 });
+
+        expect(await estimatedListingAge.saveHistoricalData()).toBe(true);
+
+        const stored = storageMock.storeFor('marketListings').get(LOG_KEY);
+        expect(stored.map((listing) => listing.id)).toEqual([1, 3]);
+        expect(estimatedListingAge.knownListings.map((listing) => listing.id)).toEqual([1, 3]);
+    });
+
+    test('a fold that buries one held row and adds one stored row writes the fold, not memory', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        const row = (id) => ({ id, itemHrid: '/items/a', status: 'listed', firstSeen: 1_000, lastSeen: Date.now() });
+        estimatedListingAge.anchorsLoaded = true;
+        estimatedListingAge.knownListings = [row(1), row(2), row(4)];
+        estimatedListingAge.listingGraves = { removed: {}, clearedThrough: 0 };
+        // Same length either side of the fold: row 2 buried, row 3 stored by another tab
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(3), row(4)]);
+        storageMock.storeFor('marketListings').set(GRAVES_KEY, { removed: { 2: Date.now() }, clearedThrough: 0 });
+
+        expect(await estimatedListingAge.saveHistoricalData()).toBe(true);
+
+        const stored = storageMock.storeFor('marketListings').get(LOG_KEY);
+        expect(stored.map((listing) => listing.id)).toEqual([1, 3, 4]);
+    });
 });
 
 describe('a character switch landing inside a delete', () => {

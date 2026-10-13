@@ -1067,10 +1067,19 @@ class EstimatedListingAge {
                         this.listingGraves
                     );
                     // Retention again over the fold, or rows the log had already
-                    // let go of would come back from storage on every save
-                    const merged = applyListingRetention(this._mergeListings(personal, this.knownListings));
+                    // let go of would come back from storage on every save. The
+                    // tombstones again too: memory can hold a row another tab or a
+                    // pull deleted, and the write below is memory
+                    const merged = applyListingRetention(
+                        applyListingGraves(this._mergeListings(personal, this.knownListings), this.listingGraves)
+                    );
                     if (!this._ownsMemory(owner)) return false;
-                    if (merged.length !== this.knownListings.length) {
+                    // By ids, not length: a fold can bury one held row and add one stored row
+                    const held = new Set(this.knownListings.map((listing) => listing?.id));
+                    if (
+                        merged.length !== this.knownListings.length ||
+                        merged.some((listing) => !held.has(listing.id))
+                    ) {
                         this.knownListings = merged;
                         this.rebuildEstimationPoints();
                     }
