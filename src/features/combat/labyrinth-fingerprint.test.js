@@ -15,6 +15,7 @@ import {
     ABILITY_SLOTS,
     combatLevelsPart,
     abilitiesPart,
+    LOADOUT_ONLY_ABILITIES,
     houseRoomsPart,
     fingerprintInput,
     tagFingerprint,
@@ -128,6 +129,15 @@ const kit = (over = {}) => ({
 const slots = (...abilities) => [...abilities, null, null, null, null, null].slice(0, 5);
 
 describe('abilitiesPart', () => {
+    test('loadout-only drops the worn kit but keeps the learned levels', () => {
+        const a = abilitiesPart(kit({ equipped: LOADOUT_ONLY_ABILITIES }));
+        const b = abilitiesPart(kit({ equipped: LOADOUT_ONLY_ABILITIES, learned: { '/abilities/berserk': 21 } }));
+        expect(a).toBe('abilities=loadout-only|learned=/abilities/berserk@20,/abilities/cleave@15');
+        expect(b).not.toBe(a);
+        expect(a).not.toBe(abilitiesPart(kit()));
+        expect(a).not.toBe('abilities=unknown');
+    });
+
     test('every slot is written, empty ones included, so a kit cannot shift under the hash', () => {
         const part = abilitiesPart(kit());
         expect(ABILITY_SLOTS).toBe(5);

@@ -15,6 +15,8 @@ const gear = vi.hoisted(() => ({ snapshots: {}, ready: true, waiters: [], listen
 
 /** Guild shrine data the mocked adapter and data manager report */
 const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
+/** The labyrinth monster list the adapter reports; empty means "unreadable" to the fingerprint */
+const labMonsters = vi.hoisted(() => ({ list: [] }));
 
 /** Community buff levels the mocked data manager reports, by buff hrid */
 const community = vi.hoisted(() => ({ levels: {} }));
@@ -77,6 +79,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildPlayerDTO: vi.fn(),
     buildGameDataPayload: vi.fn(),
     applyLoadoutSnapshotToDTO: vi.fn(),
+    getLabyrinthMonsters: () => labMonsters.list,
     getCommunityBuffs: () => ({ mooPass: false, comExp: 0, comDrop: 0 }),
     getGuildBuffDetailMap: () => shrines.detailMap,
     applyGuildBuffLevel: (buffs, detail, level) => [
@@ -4798,6 +4801,109 @@ describe('the build fingerprint', () => {
             // of the build and must not be part of the hash
             adapterMock.buildPlayerDTO.mockReturnValue(dto({ houseRooms: { '/house_rooms/gym': 5 } }));
             expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(before);
+        });
+
+        describe('the worn ability kit only counts while some combat room falls back to it', () => {
+            const MONSTERS = [
+                { hrid: '/monsters/imp', name: 'Imp' },
+                { hrid: '/monsters/fly', name: 'Fly' },
+            ];
+            const kit = (hrid) => ({
+                abilities: [{ hrid, level: 20, triggers: null }, null, null, null, null],
+            });
+            const settings = (over = {}) => ({
+                characterAbilities: [],
+                characterSetting: { labyrinthLoadoutImp: 1, labyrinthLoadoutFly: 2, ...over },
+            });
+
+            beforeEach(() => {
+                labMonsters.list = MONSTERS;
+                setGear({ 1: sword, 2: axe });
+                dataManagerMock.characterData = settings();
+            });
+
+            afterEach(() => {
+                labMonsters.list = [];
+            });
+
+            test('with a loadout on every room, a swap that only changes the worn kit leaves it alone', () => {
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                const before = labyrinthClearRate._snapshotContentFingerprint();
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/cleave')));
+                expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(before);
+            });
+
+            test('the worn-kit fingerprint a zone-context sim compares still sees that swap', () => {
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                const labBefore = labyrinthClearRate._snapshotContentFingerprint();
+                const wornBefore = labyrinthClearRate._snapshotContentFingerprint({ wornKit: true });
+                // Reading the worn kit is not the same value as ignoring it
+                expect(wornBefore).not.toBe(labBefore);
+
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/cleave')));
+                expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(labBefore);
+                expect(labyrinthClearRate._snapshotContentFingerprint({ wornKit: true })).not.toBe(wornBefore);
+            });
+
+            test('...and the lab swapping loadouts does not clear the combat cache or recommendations', () => {
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                labyrinthClearRate._invalidateIfInputsChanged();
+                labyrinthClearRate.combatCache.set('k', { clearChance: 0.5 });
+                labyrinthClearRate.recommendations.set('r', { threshold: 3 });
+
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/cleave')));
+                expect(labyrinthClearRate._invalidateIfInputsChanged()).toBe(false);
+                expect(labyrinthClearRate.combatCache.size).toBe(1);
+                expect(labyrinthClearRate.recommendations.size).toBe(1);
+                labyrinthClearRate.combatCache.clear();
+                labyrinthClearRate.recommendations.clear();
+            });
+
+            test('with one room on the worn-gear fallback, the same swap invalidates', () => {
+                dataManagerMock.characterData = settings({ labyrinthLoadoutFly: 0 });
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                labyrinthClearRate._invalidateIfInputsChanged();
+                labyrinthClearRate.combatCache.set('k', { clearChance: 0.5 });
+
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/cleave')));
+                expect(labyrinthClearRate._invalidateIfInputsChanged()).toBe(true);
+                expect(labyrinthClearRate.combatCache.size).toBe(0);
+            });
+
+            test('a loadout id the store does not hold is a fallback room too', () => {
+                dataManagerMock.characterData = settings({ labyrinthLoadoutFly: 99 });
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                const before = labyrinthClearRate._snapshotContentFingerprint();
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/cleave')));
+                expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+            });
+
+            test('real changes still move it: combat level, a loadout snapshot edit, house, learned level', () => {
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                const before = labyrinthClearRate._snapshotContentFingerprint();
+
+                dataManagerMock.getSkills.mockReturnValue(levels({ melee: 100 }));
+                expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+                dataManagerMock.getSkills.mockReturnValue(levels());
+
+                setGear({ 1: axe, 2: axe });
+                expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+                setGear({ 1: sword, 2: axe });
+
+                adapterMock.buildPlayerDTO.mockReturnValue(
+                    dto({ ...kit('/abilities/berserk'), houseRooms: { '/house_rooms/gym': 9 } })
+                );
+                expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+
+                setGear({ 1: { ...sword, abilities: [{ abilityHrid: '/abilities/toughness' }] }, 2: axe });
+                const named = labyrinthClearRate._snapshotContentFingerprint();
+                dataManagerMock.characterData = {
+                    ...settings(),
+                    characterAbilities: [{ abilityHrid: '/abilities/toughness', level: 9 }],
+                };
+                expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(named);
+            });
         });
 
         test('changing a tea or a drink does NOT move it', () => {

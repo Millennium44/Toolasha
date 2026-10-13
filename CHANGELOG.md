@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth: loadout swaps keep the sim cache
+
+- When every labyrinth combat room has its own loadout, the lab swapping loadouts between rooms no longer throws away cached combat sims and on-screen recommendations; the abilities you happen to have equipped only count while some room falls back to your worn gear. If every room already has a loadout, labyrinth sims re-run once after this update.
+
 ### Labyrinth Recommend keeps every badge
 
 - A labyrinth Recommend run no longer loses the skilling rooms' and early combat rooms' recommendations when your gear or loadout changes partway through (the lab swapping loadouts between rooms did it); the skilling rooms are re-checked against the new gear at the end. A combat probe that could not run is no longer scored as a 0% clear.

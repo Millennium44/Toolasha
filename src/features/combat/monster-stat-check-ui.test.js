@@ -15,6 +15,7 @@ const stored = vi.hoisted(() => ({ value: null }));
 /** Mutable state behind the clear-rate mock, reset per test. */
 const clearRate = vi.hoisted(() => ({
     fingerprint: 'fp-now',
+    fingerprintCalls: [],
     probeResults: [],
     probeCalls: 0,
     playerProbeCalls: [],
@@ -130,7 +131,10 @@ vi.mock('./labyrinth-clear-rate.js', () => ({
             clearRate.playerProbeCalls.push(args);
             return clearRate.playerProbeResult;
         },
-        _snapshotContentFingerprint: () => clearRate.fingerprint,
+        _snapshotContentFingerprint: (options) => {
+            clearRate.fingerprintCalls.push(options);
+            return clearRate.fingerprint;
+        },
         blindBuffProbe: async () => {
             const result = clearRate.probeResults[clearRate.probeCalls] ?? { produced: [], ran: true };
             clearRate.probeCalls++;
@@ -183,6 +187,7 @@ beforeEach(() => {
     panel.displayed = null;
     stored.value = null;
     clearRate.fingerprint = 'fp-now';
+    clearRate.fingerprintCalls = [];
     clearRate.probeResults = [];
     clearRate.probeCalls = 0;
     clearRate.playerProbeCalls = [];
@@ -265,6 +270,18 @@ describe('the uptime harness capture gate', () => {
         expect(panel.displayed.uptime.armed).toBeUndefined();
         expect(panel.displayed.uptime.error).toContain('saved capture (2 ticks)');
         expect(panel.displayed.uptime.error).toContain('different build');
+    });
+
+    test('a zone-context harness compares the worn-kit fingerprint, a labyrinth one the loadout-reduced one', async () => {
+        tickCapture.file = { ticks: [] };
+
+        panel.displayed = { ...snap({}), zone: { hrid: '/actions/combat/twilight_zone', tier: 5 } };
+        await panel._runUptimeHarness();
+        expect(clearRate.fingerprintCalls.at(-1)).toEqual({ wornKit: true });
+
+        panel.displayed = snap({});
+        await panel._runUptimeHarness();
+        expect(clearRate.fingerprintCalls.at(-1)).toEqual({ wornKit: false });
     });
 
     test('a wrong-monster capture names the monster, not the build', async () => {

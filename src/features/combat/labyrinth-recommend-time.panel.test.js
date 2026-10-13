@@ -49,6 +49,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildPlayerDTO: vi.fn(),
     buildGameDataPayload: vi.fn(),
     applyLoadoutSnapshotToDTO: vi.fn(),
+    getLabyrinthMonsters: () => [],
     getCommunityBuffs: () => ({ mooPass: false, comExp: 0, comDrop: 0 }),
     getGuildBuffDetailMap: () => ({}),
     applyGuildBuffLevel: (buffs) => buffs,
