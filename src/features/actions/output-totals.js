@@ -108,7 +108,7 @@ class OutputTotals {
         // hardcoded `[\d,.]+` plus an unconditional comma→period swap read
         // "1,234%" (a grouped number, unrealistic here but not impossible) as
         // 1.234%, and got a comma-decimal locale's "7,29%" right only by luck.
-        const match = el.textContent.trim().match(new RegExp(`(${gameDigitsSource()})%`));
+        const match = el.textContent.trim().match(new RegExp(`(${gameDigitsSource({ grouping: false })})%`));
         if (!match) return 1;
         const rate = parseGameNumber(match[1]);
         return Number.isFinite(rate) ? rate / 100 : 1;
@@ -165,7 +165,9 @@ class OutputTotals {
 
             // Check for rares (< 5% drop rate, not essences)
             if (container.innerText.includes('%')) {
-                const percentageMatch = container.innerText.match(new RegExp(`(${gameDigitsSource()})%`));
+                const percentageMatch = container.innerText.match(
+                    new RegExp(`(${gameDigitsSource({ grouping: false })})%`)
+                );
                 if (percentageMatch && parseGameNumber(percentageMatch[1]) < 5) {
                     this.processDropContainer(container, amount, isIndeterminate, placeholderLabel);
                     processedContainers.add(container);
@@ -249,7 +251,7 @@ class OutputTotals {
 
         // Extract drop rate from the child's text
         const dropRateText = child.innerText;
-        const rateMatch = dropRateText.match(new RegExp(`~?(${gameDigitsSource()})%`));
+        const rateMatch = dropRateText.match(new RegExp(`~?(${gameDigitsSource({ grouping: false })})%`));
         const dropRate = rateMatch ? parseGameNumber(rateMatch[1]) / 100 : 1; // Default to 100%
 
         // Create styled clone (same as MWIT-E)

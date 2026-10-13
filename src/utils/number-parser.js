@@ -354,10 +354,14 @@ export function gameNumberPattern() {
  *
  * @param {Object} [options]
  * @param {boolean} [options.decimal=true] - Allow an optional decimal tail
+ * @param {boolean} [options.grouping=true] - Allow group separators. Pass false for a
+ *   percentage: a rate is never grouped, and in a space-grouping locale "1 100%" (an
+ *   output count, then 100%) is otherwise indistinguishable from the number 1 100
  * @returns {string} A regex source fragment, e.g. `\d[\d,]*(?:\.\d+)?`
  */
-export function gameDigitsSource({ decimal = true } = {}) {
+export function gameDigitsSource({ decimal = true, grouping = true } = {}) {
     const { group, decimal: decimalChar } = gameNumberPattern();
+    if (!grouping) return decimal ? `\\d+(?:${decimalChar}\\d+)?` : '\\d+';
     // Whitespace only groups between exactly-three-digit runs ("1 234 567"); a
     // loose `[\d\s]*` swallowed a neighbouring number in text like "1,5 7,29%".
     const base = group === '\\s' ? '(?:\\d{1,3}(?:\\s\\d{3})+(?!\\d)|\\d+)' : `\\d[\\d${group}]*`;

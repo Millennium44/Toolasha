@@ -53,6 +53,14 @@ describe('processChildElement in a comma-decimal locale', () => {
         expect(clone.innerText.replace(/\s/g, '')).toMatch(/^10[.,]9/);
     });
 
+    test('a space-grouping locale reads "1 100%" as 100%, not 1 100%', () => {
+        localStorage.setItem('i18nextLng', 'fr-FR');
+        _resetGameNumberSeparators();
+        const clone = outputTotals.processChildElement(drop('1', '100%'), 100, false, '0.0');
+        // 1 * 100 * 1.00 = 100
+        expect(clone.innerText.replace(/\s/g, '')).toMatch(/^100[.,]0/);
+    });
+
     test('reads a "1,3 - 3,9" range', () => {
         localStorage.setItem('i18nextLng', 'de-DE');
         _resetGameNumberSeparators();
