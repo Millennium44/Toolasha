@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk sell: vendor totals the game abbreviates
+
+- Bulk sell no longer refuses a vendor sale whose total the game shortens on its button (26,987 × 32 = 863,584 shows as "Sell For 863K"); the check accepts any total the shortened label could stand for and still stops on a real mismatch.
+
 ### Labyrinth: loadout swaps keep the sim cache
 
 - When every labyrinth combat room has its own loadout, the lab swapping loadouts between rooms no longer throws away cached combat sims and on-screen recommendations; the abilities you happen to have equipped only count while some room falls back to your worn gear. If every room already has a loadout, labyrinth sims re-run once after this update.
