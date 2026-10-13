@@ -415,4 +415,19 @@ describe('parseShorthandAmount', () => {
         expect(parseShorthandAmount('1,000,000')).toBe(1_000_000);
         expect(parseShorthandAmount('1 000 000')).toBe(1_000_000);
     });
+
+    test("reads the game's own number format as well as the en-US one", () => {
+        localStorage.setItem('i18nextLng', 'de-DE');
+        _resetGameNumberSeparators();
+        try {
+            expect(parseShorthandAmount('1,5m')).toBe(1_500_000);
+            expect(parseShorthandAmount('3.000.000')).toBe(3_000_000);
+            expect(parseShorthandAmount('1.5m')).toBe(1_500_000);
+            expect(parseShorthandAmount('1.000,000')).toBe(1000);
+            expect(parseShorthandAmount('1.000 000')).toBeNull();
+        } finally {
+            localStorage.removeItem('i18nextLng');
+            _resetGameNumberSeparators();
+        }
+    });
 });
