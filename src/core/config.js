@@ -1347,6 +1347,9 @@ class Config {
         // set was holding is now moot — the reset covers those ids too.
         this._dirtyKeys = new Set();
         await settingsStorage.saveSettings(this.settingsMap, settingsStorage.SAVE_ALL_KEYS);
+        // The reload-recovery copy is read before settings load, and in the very case it exists for
+        // (the character data was missed) they never do, so a stale one would outlive the reset
+        this._mirrorReloadRecoverySetting(this.getSetting(RELOAD_RECOVERY_SETTING_KEY));
         // The device copy decides on every load, so a reset that left it behind would flip the
         // switch back on at the next reload
         this._mirrorLivePricesSetting(this.getSetting(LIVE_PRICES_SETTING_KEY));
