@@ -1525,7 +1525,7 @@ describe('instead of buying', () => {
         test('an hourly rate is a lower bound when an output is unpriced', () => {
             const withGold = { savingPerHour: 5000, timeCostPerUnit: 2 };
             const noGold = { savingPerHour: 5000, timeCostPerUnit: 0 };
-            expect(detail({ ...withGold, partlyUnpriced: true })).toContain('+≥5.0K/hr of alchemy');
+            expect(detail({ ...withGold, partlyUnpriced: true })).toContain('— ≥5.0K/hr of alchemy');
             expect(detail({ ...noGold, partlyUnpriced: true })).toContain('≥5.0K per hour of alchemy');
             expect(detail(withGold)).toContain('+5.0K/hr of alchemy');
             expect(detail(noGold)).toContain('— 5.0K per hour of alchemy');
@@ -1640,6 +1640,12 @@ describe('instead of buying', () => {
             expect(section).toBe(placed);
             expect(section.style.display).toBe('');
             expect(section.textContent).toBe('Instead of buying: no alchemy route beats the ask');
+        });
+
+        test('the no-route line says so when a losing route had an unpriced output', () => {
+            const div = document.createElement('div');
+            div.innerHTML = tooltipPrices.buildNoCheaperRouteHTML(true);
+            expect(div.textContent).toBe('Instead of buying: no alchemy route beats the ask (some outputs unpriced)');
         });
 
         test('the no-route line names the buy side the routes were compared against', () => {

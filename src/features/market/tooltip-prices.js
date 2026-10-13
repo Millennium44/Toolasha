@@ -902,7 +902,7 @@ class TooltipPrices {
             );
             div.innerHTML = found.alternatives.length
                 ? this.buildInsteadOfBuyingHTML(found.targetAsk, found.alternatives)
-                : this.buildNoCheaperRouteHTML();
+                : this.buildNoCheaperRouteHTML(found.noRouteUncertain);
             tooltipText.appendChild(div);
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
@@ -920,7 +920,10 @@ class TooltipPrices {
      */
     async fillInsteadLater(tooltipElement, section, itemHrid, itemName, wanted) {
         try {
-            const { targetAsk, alternatives, noCheaperRoute } = await settleAlternatives(itemHrid, wanted);
+            const { targetAsk, alternatives, noCheaperRoute, noRouteUncertain } = await settleAlternatives(
+                itemHrid,
+                wanted
+            );
             // A stale section is removed when the tooltip moves to another item
             if (!section.isConnected || tooltipElement.dataset.pricesProcessedItem !== itemName) return;
             if (!alternatives.length && !noCheaperRoute) {
@@ -929,7 +932,7 @@ class TooltipPrices {
             }
             section.innerHTML = alternatives.length
                 ? this.buildInsteadOfBuyingHTML(targetAsk, alternatives)
-                : this.buildNoCheaperRouteHTML();
+                : this.buildNoCheaperRouteHTML(noRouteUncertain);
             section.style.display = '';
             dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
         } catch (error) {
@@ -940,13 +943,14 @@ class TooltipPrices {
     /**
      * The dim line for an item that has alchemy sources, none of which beat its price on the
      * player's buy side (the ask, bid or bid +1, as the routes were compared).
+     * @param {boolean} [uncertain] - A losing route had an unpriced output, so pricing it could change the answer
      * @returns {string}
      */
-    buildNoCheaperRouteHTML() {
+    buildNoCheaperRouteHTML(uncertain = false) {
         return (
             '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' +
             `<div style="color: ${config.COLOR_TOOLTIP_INFO}; opacity: 0.7;" title="${insteadTitle()}">` +
-            `Instead of buying: no alchemy route beats the ${buySideWord()}</div></div>`
+            `Instead of buying: no alchemy route beats the ${buySideWord()}${uncertain ? ' (some outputs unpriced)' : ''}</div></div>`
         );
     }
 
@@ -968,7 +972,7 @@ class TooltipPrices {
                 const units = formatInsteadUnitsPerHour(3600 / alt.secondsPerUnit);
                 rate =
                     alt.timeCostPerUnit > 0
-                        ? ` — +${atLeast}${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
+                        ? ` — ${atLeast || '+'}${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
                         : ` — ${atLeast}${formatKMB(alt.savingPerHour)} per hour of alchemy if you use ~${units}/hr`;
             }
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;

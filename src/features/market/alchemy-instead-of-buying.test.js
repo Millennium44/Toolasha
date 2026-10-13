@@ -237,14 +237,15 @@ describe('findAlchemyAlternatives', () => {
         expect(wins.noCheaperRoute).toBe(false);
     });
 
-    test('a miss on a route with an unpriced output is not proof that none is cheaper', () => {
+    test('a miss on a route with an unpriced output is reported, marked as not proof', () => {
         // Shooter's leather has no price: its cost is an upper bound of 1100 / 5 = 220, over the 100 ask
-        const { alternatives, noCheaperRoute } = findAlchemyAlternatives(
+        const { alternatives, noCheaperRoute, noRouteUncertain } = findAlchemyAlternatives(
             ESSENCE,
             depsFor({ [ESSENCE]: { ask: 100 }, [SHOOTER]: { ask: 1000 } })
         );
         expect(alternatives).toEqual([]);
-        expect(noCheaperRoute).toBe(false);
+        expect(noCheaperRoute).toBe(true);
+        expect(noRouteUncertain).toBe(true);
     });
 
     test('the setup is chosen on cost per unit, a dearer catalyst winning when its success pays', () => {

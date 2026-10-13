@@ -349,7 +349,10 @@ export function findAlchemyAlternatives(targetHrid, deps) {
     return {
         targetAsk,
         alternatives: alternatives.slice(0, limit),
-        noCheaperRoute: costed > 0 && !uncertain && !truncated && alternatives.length === 0,
+        // A losing route with an unpriced output is an upper-bound cost, so its miss is not proof;
+        // the line still says nothing won, marked so (noRouteUncertain) rather than staying silent
+        noCheaperRoute: costed > 0 && !truncated && alternatives.length === 0,
+        noRouteUncertain: uncertain,
         truncated,
     };
 }
