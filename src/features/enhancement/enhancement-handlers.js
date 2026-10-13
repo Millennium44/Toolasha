@@ -444,6 +444,25 @@ function unitPrice(itemHrid, level = 0) {
 }
 
 /**
+ * Price of the protection item one protected failure consumed. A spare loaded at an enhancement
+ * level (the last segment of its item hash) is that stack, and is worth what that level sells
+ * for, not the +0 price. A level the market has no quote for falls back to the +0 price.
+ * @param {Object} action - Enhance action
+ * @param {string} protectionItemHrid - The protection item consumed
+ * @returns {number} Unit price
+ */
+function protectionUnitPrice(action, protectionItemHrid) {
+    const loaded = parseItemHash(action?.secondaryItemHash);
+    if (loaded.itemHrid === protectionItemHrid && loaded.level > 0) {
+        const quote =
+            ironCowBook(protectionItemHrid, loaded.level) ?? marketAPI.getPrice(protectionItemHrid, loaded.level);
+        const price = quote?.ask || quote?.bid || 0;
+        if (price > 0) return price;
+    }
+    return unitPrice(protectionItemHrid);
+}
+
+/**
  * Whether the action's protection slot holds a Philosopher's Mirror.
  * @param {Object} action - Enhance action
  * @returns {boolean}
@@ -554,7 +573,10 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
     if (wasProtectedFailure && !mirror) {
         const protectionItemHrid = getProtectionItemHrid(action);
         if (protectionItemHrid) {
-            await enhancementTracker.trackProtectionCost(protectionItemHrid, unitPrice(protectionItemHrid));
+            await enhancementTracker.trackProtectionCost(
+                protectionItemHrid,
+                protectionUnitPrice(action, protectionItemHrid)
+            );
         }
     }
 
