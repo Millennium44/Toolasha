@@ -20,6 +20,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A market listing deleted in another tab or on another device is no longer written back by this tab's next save, and re-importing listings you cleared or deleted now keeps them instead of dropping them on the next load.
 - The labyrinth accuracy mark's Forget now sticks, and a newer mark set on another device is no longer reverted by this one's next save.
 
+### Enhancement tracker prices enhanced spare protections; tabs menu follows scrolling
+
+- The Enhancement Tracker now books a +1 or +2 spare used as protection at that level's price instead of the +0 price, so mixed-protection runs and their merged totals no longer understate the cost (costs already recorded are not re-priced).
+- The Custom Tabs "⋯" menu closes when the inventory or page scrolls instead of floating away from its button.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
