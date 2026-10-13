@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk sell: vendor sales in any game language
+
+- Bulk sell finds the vendor Sell For button by the coin figure on it instead of its English label, so vendor steps work with the game in Chinese.
+
 ### Sync: no reload after a character switch with nothing locked
 
 - A sync pull cut short by a character switch asks you to reload only when it actually locked a record, matching the normal pull.

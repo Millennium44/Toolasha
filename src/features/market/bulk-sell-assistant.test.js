@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
 const game = vi.hoisted(() => ({
     items: [],
@@ -1227,6 +1228,7 @@ describe('confirming from the strip', () => {
         let armClicks;
         beforeEach(() => {
             armClicks = 0;
+            bulkSell._vendorUnarmedShape = undefined;
         });
 
         /**
@@ -1243,6 +1245,7 @@ describe('confirming from the strip', () => {
             enhanced = false,
             icon = true,
             title = null,
+            armed = null,
         } = {}) => {
             const menu = document.createElement('div');
             menu.className = 'Item_actionMenu__q';
@@ -1262,12 +1265,17 @@ describe('confirming from the strip', () => {
             const sell = document.createElement('button');
             sell.className = 'Button_button__1Fe9z Button_sell__x';
             sell.textContent = label;
+            // Whether the game considers the button armed is its own state, not something read off the words
+            let armedNow = armed ?? /^confirm/i.test(label ?? '');
             sell.addEventListener('click', () => {
-                if (/^confirm/i.test(sell.textContent)) {
+                if (armedNow) {
                     gameClicks++;
                 } else {
                     armClicks++;
-                    if (!neverArms) sell.textContent = armedLabel;
+                    if (!neverArms) {
+                        sell.textContent = armedLabel;
+                        armedNow = true;
+                    }
                 }
             });
             menu.append(input, all);
@@ -1604,6 +1612,48 @@ describe('confirming from the strip', () => {
                 const result = verdict(count, price, label);
                 expect(result.why === undefined).toBe(accepted);
             });
+
+            describe('in a comma-decimal language (de-DE)', () => {
+                beforeEach(() => {
+                    localStorage.setItem('i18nextLng', 'de-DE');
+                    _resetGameNumberSeparators();
+                });
+                afterEach(() => {
+                    localStorage.removeItem('i18nextLng');
+                    _resetGameNumberSeparators();
+                });
+
+                test.each([
+                    ['M, truncated, comma decimal', 1000, 4567.891, 'Sell For 4,56M Coins', true],
+                    ['M, a different total', 1000, 4567.891, 'Sell For 4,7M Coins', false],
+                    ['an exact total grouped with periods', 18, 22222, 'Sell For 399.996 Coins', true],
+                    ['an exact total off by one', 18, 22222, 'Sell For 399.995 Coins', false],
+                    ['K, truncated', 1000, 863.584, 'Sell For 863K Coins', true],
+                ])('%s', (_name, count, price, label, accepted) => {
+                    const result = verdict(count, price, label);
+                    expect(result.why === undefined).toBe(accepted);
+                });
+            });
+
+            describe('in a space-grouping language (fr-FR)', () => {
+                beforeEach(() => {
+                    localStorage.setItem('i18nextLng', 'fr-FR');
+                    _resetGameNumberSeparators();
+                });
+                afterEach(() => {
+                    localStorage.removeItem('i18nextLng');
+                    _resetGameNumberSeparators();
+                });
+
+                test.each([
+                    ['an exact total grouped with a space', 18, 22222, 'Vendre pour 399 996 pièces', true],
+                    ['grouped with a narrow no-break space', 18, 22222, 'Vendre pour 399 996 pièces', true],
+                    ['an exact total off by one', 18, 22222, 'Vendre pour 399 995 pièces', false],
+                ])('%s', (_name, count, price, label, accepted) => {
+                    const result = verdict(count, price, label);
+                    expect(result.why === undefined).toBe(accepted);
+                });
+            });
         });
 
         test('a relabel that shows a different amount is refused and sells nothing', async () => {
@@ -1626,6 +1676,75 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(0);
             expect(bulkSell.confirmNote).toMatch(/did not arm in time/);
             expect(bulkSell._confirmSent()).toBe(false);
+        });
+
+        describe('with the game in another language', () => {
+            const CN = { label: '出售 400K 金币', armedLabel: '确认出售 400K 金币' };
+
+            test('an unarmed button is found by its figure, armed by one click, then sold by one more', async () => {
+                openMenu(CN);
+                vendorRun();
+                expect(bulkSell._confirmTarget().why).toBeUndefined();
+
+                await pressAndSettle();
+                expect(armClicks).toBe(1);
+                expect(gameClicks).toBe(1);
+                expect(reactClicks.calls.at(-1).element.textContent).toBe('确认出售 400K 金币');
+            });
+
+            test('the total is still checked against the queued one', async () => {
+                openMenu({ label: '出售 410K 金币', armedLabel: '确认出售 410K 金币' });
+                vendorRun();
+
+                await pressAndSettle();
+                expect(gameClicks).toBe(0);
+                expect(armClicks).toBe(0);
+                expect(bulkSell.confirmNote).toMatch(/says 410K/);
+            });
+
+            test('a button that never relabels is not taken for armed', async () => {
+                openMenu({ ...CN, neverArms: true });
+                vendorRun();
+
+                await pressAndSettle();
+                expect(gameClicks).toBe(0);
+                expect(bulkSell.confirmNote).toMatch(/did not arm in time/);
+            });
+
+            test('a button already armed when first looked at is taken for armed, from what a fresh menu showed', async () => {
+                runAtStep0();
+                bulkSell.state = 'preparing';
+                const inventory = document.createElement('div');
+                inventory.className = 'Inventory_items__x';
+                inventory.innerHTML =
+                    '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use href="#cheese"></use></svg></div></div>';
+                document.body.appendChild(inventory);
+                expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+                // The run's own click opened the menu: unarmed, so this is what an unarmed button reads like
+                const fresh = openMenu(CN);
+                await vi.advanceTimersByTimeAsync(360);
+                expect(bulkSell.state).toBe('awaiting_confirm');
+                fresh.remove();
+
+                // The game redraws the menu with the button already in its confirm state
+                openMenu({ label: CN.armedLabel, armed: true });
+                armClicks = 0;
+                reactClicks.calls = [];
+                expect(bulkSell._confirmTarget().armed).toBe(true);
+
+                confirmBtn().click();
+                await vi.advanceTimersByTimeAsync(1200);
+                expect(armClicks).toBe(0);
+                expect(gameClicks).toBe(1);
+                expect(reactClicks.calls).toHaveLength(1);
+                inventory.remove();
+            });
+
+            test('a menu with no button carrying a figure still stops at "not found"', () => {
+                openMenu({ label: '出售' });
+                vendorRun();
+                expect(bulkSell._confirmTarget().why).toMatch(/Sell For button was not found/);
+            });
         });
 
         test.each([
