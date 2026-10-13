@@ -1538,6 +1538,29 @@ describe('teardown is awaitable, so the switch waits for the listing log to land
     });
 });
 
+describe('a save adopts the deletions a sync pull stored since this tab read them', () => {
+    test('a row a pulled tombstone buries is not folded back into the stored log', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        const row = (id) => ({ id, itemHrid: '/items/a', status: 'listed', firstSeen: 1_000, lastSeen: Date.now() });
+        estimatedListingAge.anchorsLoaded = true;
+        estimatedListingAge.knownListings = [row(1)];
+        estimatedListingAge.listingGraves = { removed: {}, clearedThrough: 0 };
+        // The stored log still holds the row; the pull stored the tombstone that buries it
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2), row(3)]);
+        storageMock.storeFor('marketListings').set(GRAVES_KEY, { removed: { 2: Date.now() }, clearedThrough: 0 });
+
+        expect(await estimatedListingAge.saveHistoricalData()).toBe(true);
+
+        const ids = storageMock
+            .storeFor('marketListings')
+            .get(LOG_KEY)
+            .map((listing) => listing.id);
+        expect(ids).toEqual([1, 3]);
+        // And the tombstone is now held in memory, so the next save applies it too
+        expect(estimatedListingAge.listingGraves.removed).toHaveProperty('2');
+    });
+});
+
 describe('a character switch landing inside a delete', () => {
     test('the arriving character’s listing log is not overwritten by it', async () => {
         // `deleteListing` re-syncs from storage first — several storage hops —
