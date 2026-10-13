@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings: a stuck database no longer looks like a fresh install
+
+- When the browser's storage stops answering, Toolasha no longer greets a returning player with the first-run preset dialog, so a preset click can't overwrite real settings; the next good load reconciles as usual.
+
 ### Instead of buying: clearer figures
 
 - The tooltip's Instead of buying line now follows your Buy and Sell pricing settings instead of always buying at ask, says its hourly figure is per hour of alchemy at the rate you would use the item, shows what making and selling it instead would net after tax, reads "gains" when the by-products are worth more than the input, names the outputs it counts at your buy price, and says so when no alchemy route beats buying rather than showing nothing.
