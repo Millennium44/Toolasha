@@ -408,4 +408,11 @@ describe('parseShorthandAmount', () => {
         expect(parseShorthandAmount('12 34 5')).toBeNull();
         expect(parseShorthandAmount('3 000 000')).toBe(3_000_000);
     });
+
+    test('every thousands group uses the same separator', () => {
+        expect(parseShorthandAmount('1,000 000')).toBeNull();
+        expect(parseShorthandAmount('1 000,000')).toBeNull();
+        expect(parseShorthandAmount('1,000,000')).toBe(1_000_000);
+        expect(parseShorthandAmount('1 000 000')).toBe(1_000_000);
+    });
 });
