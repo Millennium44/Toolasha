@@ -71,6 +71,7 @@ describe('isTestServer', () => {
 describe('gameOrigin', () => {
     test.each([
         'https://www.milkywayidle.com',
+        'https://milkywayidle.com',
         'https://test.milkywayidle.com',
         'https://www.milkywayidlecn.com',
         'https://test.milkywayidlecn.com',
@@ -97,6 +98,7 @@ describe('isPooledDatasetSite', () => {
         expect(isPooledDatasetSite('test.milkywayidle.com')).toBe(false);
         expect(isPooledDatasetSite('www.milkywayidlecn.com')).toBe(false);
         expect(isPooledDatasetSite('test.milkywayidlecn.com')).toBe(false);
+        expect(isPooledDatasetSite('milkywayidle.com')).toBe(false);
         expect(isPooledDatasetSite('')).toBe(false);
     });
 });
