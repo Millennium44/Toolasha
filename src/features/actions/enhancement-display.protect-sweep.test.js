@@ -633,4 +633,16 @@ describe('protection picker in the sweep', () => {
         );
         expect(rows.every((row) => row.children[4].textContent === '-')).toBe(true);
     });
+
+    test("a Philosopher's Mirror in the slot names the pick instead of claiming the cheapest item", async () => {
+        const panel = buildPanel({ protection: 'philosophers_mirror' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        // Picks live for the session, so an earlier test's choice must be cleared first
+        await choose(panel, '');
+        expect(panel.textContent).toContain('prices the cheapest protect-from item');
+
+        await choose(panel, '/items/mirror_of_protection');
+        expect(panel.textContent).not.toContain('prices the cheapest protect-from item');
+        expect(panel.textContent).toContain('Mirror Of Protection, your pick, instead');
+    });
 });
