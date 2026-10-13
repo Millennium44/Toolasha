@@ -466,3 +466,39 @@ describe('ingestMarketSnapshot', () => {
         expect(store.ingestSnapshot.mock.calls[0][1]).toBeGreaterThanOrEqual(before);
     });
 });
+
+describe('autoRefresh of an open chart', () => {
+    const TEN_MINUTES = 10 * 60 * 1000;
+
+    beforeEach(() => {
+        panel.panel = {};
+        panel.current = { itemHrid: '/items/cheese', enhancementLevel: 0 };
+        panel.prefs.open = true;
+        panel.showItem = vi.fn();
+        panel.drawnAt = Date.now() - TEN_MINUTES - 1000;
+    });
+
+    test('redraws once the data is ten minutes old', () => {
+        expect(panel.autoRefresh()).toBe(true);
+        expect(panel.showItem).toHaveBeenCalledWith('/items/cheese', 0);
+        expect(panel.shown).toBeNull();
+    });
+
+    test('leaves fresh data, a closed panel and a hidden tab alone', () => {
+        panel.drawnAt = Date.now() - 60 * 1000;
+        expect(panel.autoRefresh()).toBe(false);
+
+        panel.drawnAt = Date.now() - TEN_MINUTES - 1000;
+        panel.prefs.open = false;
+        expect(panel.autoRefresh()).toBe(false);
+
+        panel.prefs.open = true;
+        vi.stubGlobal('document', { hidden: true });
+        try {
+            expect(panel.autoRefresh()).toBe(false);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+        expect(panel.showItem).not.toHaveBeenCalled();
+    });
+});

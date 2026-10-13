@@ -147,3 +147,10 @@ describe('freshestSighting', () => {
         expect(freshestSighting(rows)).toEqual({ time: 4000 * 1000, ask: 120, bid: 110 });
     });
 });
+
+describe('HISTORY_RANGES', () => {
+    test('offers a year, the longest range mooket II charts', async () => {
+        const { HISTORY_RANGES } = await import('./market-history-data.js');
+        expect(HISTORY_RANGES.at(-1)).toBe(365);
+    });
+});

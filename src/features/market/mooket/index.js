@@ -34,7 +34,13 @@ import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
 import { hasCoarsePointer } from '../../../utils/mobile.js';
 import marketPriceStore from './market-price-store.js';
 import marketHistoryAPI from './market-history-api.js';
-import { buildHistorySeries, historyLabels, HISTORY_RANGES, describeCooldown } from './market-history-data.js';
+import {
+    AUTO_REFRESH_MS,
+    buildHistorySeries,
+    historyLabels,
+    HISTORY_RANGES,
+    describeCooldown,
+} from './market-history-data.js';
 import { priceKey } from './market-prices.js';
 import {
     addWatched,
@@ -339,6 +345,31 @@ class MarketHistoryPanel {
 
         const poll = setInterval(() => this.followMarketplace(), POLL_MS);
         this.cleanupRegistry.registerInterval(poll, 'mooket.followMarketplace');
+
+        // An open chart goes stale while it sits there. A one-minute check redraws it once its data
+        // is 10 minutes old; a hidden tab skips the check, and coming back to the tab catches up at
+        // once instead of waiting out the interval.
+        const refreshTick = setInterval(() => this.autoRefresh(), 60 * 1000);
+        this.cleanupRegistry.registerInterval(refreshTick, 'mooket.autoRefresh');
+        this.cleanupRegistry.registerListener(document, 'visibilitychange', () => this.autoRefresh());
+    }
+
+    /**
+     * Redraw the open chart from fresh rows when its data is older than {@link AUTO_REFRESH_MS}.
+     * Does nothing while the panel is closed, no item is shown or the tab is hidden, so a
+     * background tab makes no history requests.
+     * @returns {boolean} Whether a refresh was started
+     */
+    autoRefresh() {
+        if (!this.prefs?.open || !this.current || !this.panel) return false;
+        if (typeof document !== 'undefined' && document.hidden) return false;
+        if (this.drawnAt && Date.now() - this.drawnAt < AUTO_REFRESH_MS) return false;
+        if (!this.drawnAt) return false;
+
+        // The forced redraw of the same item showItem already does for a range change
+        this.shown = null;
+        this.showItem(this.current.itemHrid, this.current.enhancementLevel);
+        return true;
     }
 
     disable() {
@@ -1081,6 +1112,7 @@ class MarketHistoryPanel {
         }
         this.showHistoryStatus(null);
 
+        this.drawnAt = Date.now();
         this.drawChart(buildHistorySeries(rows, this.prefs.days));
         this.drawAftermath(priceKey(itemHrid, level), rows);
     }

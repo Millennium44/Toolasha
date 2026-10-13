@@ -152,6 +152,8 @@ with Toolasha's own game data, the storage moved from `localStorage` to Toolasha
 IndexedDB layer, and the WebSocket interception dropped in favour of Toolasha's existing
 hook — but the market history API, the volume-split estimate, and the shape of the price
 panel are Q7's work.
+The 365-day range and the 10-minute auto-refresh of an open chart follow mooket II's `DAYS`
+list and `AUTO_REFRESH_INTERVAL`.
 
 <https://greasyfork.org/scripts/569362>
 
