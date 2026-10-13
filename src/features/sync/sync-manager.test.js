@@ -646,6 +646,44 @@ describe('pull', () => {
         expect(toasts.at(-1).message).toContain('Reload now');
     });
 
+    test('cleanup during an import that latched nothing does not ask for a reload', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.latched = 0;
+        let finishApply;
+        payload.applyWait = new Promise((resolve) => {
+            finishApply = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+        syncManager.cleanup();
+        finishApply();
+
+        expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(toasts.some((toast) => toast.message.includes('Reload now'))).toBe(false);
+    });
+
+    test('cleanup during an import that latched something still asks for a reload', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.latched = 1;
+        let finishApply;
+        payload.applyWait = new Promise((resolve) => {
+            finishApply = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+        syncManager.cleanup();
+        finishApply();
+
+        expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(toasts.at(-1).message).toContain('Reload now');
+    });
+
     test('cleanup during an import still guards histories held back from that download', async () => {
         stored.map.toolasha_sync_gistId = 'abc';
         gist.read = remote('2026-02-01T00:00:00.000Z');

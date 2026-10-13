@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync: no reload after a character switch with nothing locked
+
+- A sync pull cut short by a character switch asks you to reload only when it actually locked a record, matching the normal pull.
+
 ### Custom Tabs toolbar fits narrow inventories
 
 - The Custom Tabs toolbar no longer pushes the inventory panel into a sideways scroll: Export, Import, Import Categories and Clear All moved into a "⋯" menu beside + Tab, expand and collapse, and the row wraps if it is still too wide.
