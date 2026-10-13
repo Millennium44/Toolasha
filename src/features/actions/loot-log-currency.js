@@ -6,15 +6,18 @@
  * item value leaves them out. This only routes to the valuations Toolasha
  * already uses elsewhere; it prices nothing itself:
  *
- * - coin, cowbell (bag / 10 after the bag's tax) and dungeon tokens:
- *   `expectedValueCalculator.resolveSellSideValue`, the drop-valuation chain
- * - labyrinth tokens: the best labyrinth shop line, at the profit pricing mode
+ * - cowbell: the bag's sell price after the bag's 18% tax, over 10
+ * - dungeon tokens: `expectedValueCalculator.resolveSellSideValue`, taxed where it says so
+ * - labyrinth tokens: the best labyrinth shop line's quote after market tax
  * - task tokens: the best Task Shop line (`calculateTaskTokenValue`)
  */
 
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { calculateLabyrinthTokenValueDetail, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
+import { getItemPrice } from '../../utils/market-data.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 
 const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
 const TASK_TOKEN_HRID = '/items/task_token';
@@ -45,12 +48,23 @@ export function resolveCurrencyValue(baseHrid) {
     if (!isNonMarketCurrency(baseHrid)) return null;
 
     let value = null;
-    if (baseHrid === TASK_TOKEN_HRID) {
+    if (baseHrid === COWBELL_HRID) {
+        // A tenth of the bag after the bag's own tax. Read directly rather than through the
+        // expected-value chain, whose "include cowbells" toggle is about container EV, not loot
+        const bag = getItemPrice(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' });
+        value = bag > 0 ? calculatePriceAfterTax(bag, COWBELL_BAG_TAX) / 10 : null;
+    } else if (baseHrid === TASK_TOKEN_HRID) {
+        // Task tokens price through the expected-value calculator, which only the tooltip EV
+        // feature starts; the loot log must not depend on that display being on
+        if (!expectedValueCalculator.isInitialized) expectedValueCalculator.initialize?.();
         value = calculateTaskTokenValue()?.tokenValue;
     } else if (baseHrid === LABYRINTH_TOKEN_HRID) {
-        value = calculateLabyrinthTokenValueDetail()?.value;
+        // The best shop reward's market quote: a sale of it pays the market tax
+        const quote = calculateLabyrinthTokenValueDetail()?.value;
+        value = quote > 0 ? calculatePriceAfterTax(quote) : null;
     } else {
-        value = expectedValueCalculator.resolveSellSideValue(baseHrid, 0)?.value;
+        const resolved = expectedValueCalculator.resolveSellSideValue(baseHrid, 0);
+        value = resolved?.needsTax && resolved.value > 0 ? calculatePriceAfterTax(resolved.value) : resolved?.value;
     }
     return value > 0 ? value : null;
 }
