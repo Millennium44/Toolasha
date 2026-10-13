@@ -1522,6 +1522,15 @@ describe('instead of buying', () => {
             expect(detail({ secondsPerUnit: 71 })).toContain('1m 11s/unit');
         });
 
+        test('an hourly rate is a lower bound when an output is unpriced', () => {
+            const withGold = { savingPerHour: 5000, timeCostPerUnit: 2 };
+            const noGold = { savingPerHour: 5000, timeCostPerUnit: 0 };
+            expect(detail({ ...withGold, partlyUnpriced: true })).toContain('+≥5.0K/hr of alchemy');
+            expect(detail({ ...noGold, partlyUnpriced: true })).toContain('≥5.0K per hour of alchemy');
+            expect(detail(withGold)).toContain('+5.0K/hr of alchemy');
+            expect(detail(noGold)).toContain('— 5.0K per hour of alchemy');
+        });
+
         test('a negative cost reads as a gain, a lower bound when an output is unpriced', () => {
             expect(detail({ costPerUnit: -44200 })).toContain('gains 44.2K/unit vs 10 ask');
             expect(detail({ costPerUnit: -44200 })).not.toContain('-44.2K');

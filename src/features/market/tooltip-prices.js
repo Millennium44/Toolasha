@@ -968,8 +968,8 @@ class TooltipPrices {
                 const units = formatInsteadUnitsPerHour(3600 / alt.secondsPerUnit);
                 rate =
                     alt.timeCostPerUnit > 0
-                        ? ` — +${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
-                        : ` — ${formatKMB(alt.savingPerHour)} per hour of alchemy if you use ~${units}/hr`;
+                        ? ` — +${atLeast}${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
+                        : ` — ${atLeast}${formatKMB(alt.savingPerHour)} per hour of alchemy if you use ~${units}/hr`;
             }
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
             html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
