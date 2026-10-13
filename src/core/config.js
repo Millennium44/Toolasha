@@ -49,6 +49,7 @@ const RELOAD_WATCHDOG_MS = 15000;
  */
 /** Mirrored to device storage for marketplace.js, whose startup fetch runs before settings load */
 const LIVE_PRICES_SETTING_KEY = 'pricing_useLivePrices';
+const LIVE_PRICES_MIRROR_KEY = 'Toolasha_marketAPI_livePrices';
 
 const RELOAD_RECOVERY_SETTING_KEY = 'startupRecovery_autoReload';
 
@@ -597,6 +598,8 @@ class Config {
 
         // Load settings from settings-storage (which uses settings-schema as source of truth)
         const loadedMap = await settingsStorage.loadSettings();
+        // The live-prices setting is device-wide: the device copy, not this character's stored one, decides.
+        const deviceLivePrices = await this._readLivePricesMirror();
 
         // Captured before the read, checked after it. `settingsOwner` records
         // whose map is in hand but cannot arbitrate two loads in flight at
@@ -646,7 +649,7 @@ class Config {
             // over a stored `false` — the very substitution the mirror exists to
             // stop.
             this._mirrorReloadRecoverySetting(this.getSetting(RELOAD_RECOVERY_SETTING_KEY));
-            this._mirrorLivePricesSetting(this.getSetting(LIVE_PRICES_SETTING_KEY));
+            this._adoptDeviceLivePrices(deviceLivePrices);
         }
 
         this._anySettingChangeHeld += 1;
@@ -814,14 +817,46 @@ class Config {
     }
 
     /**
+     * Read the device-wide live-prices value.
+     * @returns {Promise<boolean|null|undefined>} null when never set on this device, undefined when unreadable
+     * @private
+     */
+    async _readLivePricesMirror() {
+        try {
+            const read = await storage.tryGet?.(LIVE_PRICES_MIRROR_KEY, 'settings');
+            if (!read) return undefined;
+            return read.found && typeof read.value === 'boolean' ? read.value : null;
+        } catch (error) {
+            console.warn('[Config] Could not read the live-prices device setting:', error);
+            return undefined;
+        }
+    }
+
+    /**
+     * Make the in-memory setting follow the device copy. A character's stored value never overrides it;
+     * it only seeds the device copy when none exists yet.
+     * @param {boolean|null} deviceValue - What _readLivePricesMirror returned
+     * @private
+     */
+    _adoptDeviceLivePrices(deviceValue) {
+        const setting = this.settingsMap[LIVE_PRICES_SETTING_KEY];
+        if (!setting || deviceValue === undefined) return; // unreadable: leave the device copy alone
+        if (deviceValue === null) {
+            this._mirrorLivePricesSetting(this.getSetting(LIVE_PRICES_SETTING_KEY));
+        } else {
+            this._writeSettingField(setting, deviceValue);
+        }
+    }
+
+    /**
      * Mirror the live-prices setting to device storage, where marketplace.js reads it before
-     * character settings have loaded. Device-wide: the last character loaded decides.
+     * character settings have loaded. Device-wide: this copy is the source of truth.
      * @param {boolean} value - The value to mirror
      * @private
      */
     _mirrorLivePricesSetting(value) {
         try {
-            storage.set?.('Toolasha_marketAPI_livePrices', value === true, 'settings');
+            storage.set?.(LIVE_PRICES_MIRROR_KEY, value === true, 'settings');
         } catch (error) {
             console.warn('[Config] Could not mirror the live-prices setting:', error);
         }

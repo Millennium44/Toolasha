@@ -5,9 +5,12 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /** The sync-pull restore latch, which refuses writes to a store until a reload */
-const storageMock = vi.hoisted(() => ({ restorePending: false }));
+const storageMock = vi.hoisted(() => ({ restorePending: false, unreadable: false, device: new Map() }));
 vi.mock('./storage.js', () => ({
     default: {
+        tryGet: async (key) =>
+            storageMock.unreadable ? null : { found: storageMock.device.has(key), value: storageMock.device.get(key) },
+        set: (key, value) => void storageMock.device.set(key, value),
         isRestorePending: (storeName) => storageMock.restorePending && storeName === 'settings',
     },
 }));
@@ -81,6 +84,8 @@ beforeEach(() => {
     dataManagerMock.characterId = 'char-1';
     dataManagerMock.mirrored = [];
     storageMock.restorePending = false;
+    storageMock.device.clear();
+    storageMock.unreadable = false;
     settingsStorageMock.lastLoadReadable = true;
     settingsStorageMock.loadSettings.mockReset().mockImplementation(() => Promise.resolve({}));
     settingsStorageMock.saveSettings.mockReset().mockImplementation(() => Promise.resolve());
@@ -1339,5 +1344,37 @@ describe('startupRecovery_autoReload has to be mirrored, not read', () => {
         config.setSetting(KEY, false);
 
         expect(dataManagerMock.mirrored).toEqual([false]);
+    });
+});
+
+describe('Config - live prices are device-wide', () => {
+    const MIRROR = 'Toolasha_marketAPI_livePrices';
+    const load = async (characterId, stored) => {
+        dataManagerMock.characterId = characterId;
+        settingsStorageMock.loadSettings.mockImplementation(async () => ({
+            pricing_useLivePrices: { id: 'pricing_useLivePrices', isTrue: stored },
+        }));
+        await config.loadSettings();
+    };
+
+    test('a second character with a stored false leaves the device copy true', async () => {
+        await load('char-1', true);
+        expect(storageMock.device.get(MIRROR)).toBe(true);
+        await load('char-2', false);
+        expect(storageMock.device.get(MIRROR)).toBe(true);
+        expect(config.getSetting('pricing_useLivePrices')).toBe(true);
+    });
+
+    test('an unreadable device copy is neither overwritten nor trusted over the character', async () => {
+        storageMock.device.set(MIRROR, true);
+        storageMock.unreadable = true;
+        await load('char-2', false);
+        expect(storageMock.device.get(MIRROR)).toBe(true);
+    });
+
+    test('turning it on writes the device copy', async () => {
+        await load('char-1', false);
+        config.setSetting('pricing_useLivePrices', true);
+        expect(storageMock.device.get(MIRROR)).toBe(true);
     });
 });

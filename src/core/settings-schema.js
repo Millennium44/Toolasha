@@ -2033,7 +2033,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 hidden: !isTestServer(),
-                help: "On the test server, price everything from the live server's market instead of the test server's (your own test listings are unaffected). Takes effect on reload.",
+                help: "On the test server, price everything from the live server's market instead of the test server's (your own test listings are unaffected). Applies to every character on this device. Takes effect on reload.",
             },
             profitCalc_ironCowValuation: {
                 id: 'profitCalc_ironCowValuation',
