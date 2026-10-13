@@ -51,7 +51,12 @@ import { navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createFloatingWidget } from '../../utils/floating-widget.js';
 import { formatKMB } from '../../utils/formatters.js';
-import { MAGNITUDE_SUFFIXES, gameNumberSeparators, parseGameNumber } from '../../utils/number-parser.js';
+import {
+    MAGNITUDE_SUFFIXES,
+    gameDigitsSource,
+    gameNumberSeparators,
+    parseGameNumber,
+} from '../../utils/number-parser.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -62,7 +67,10 @@ import { clickThroughReact } from '../../utils/react-click.js';
  * The coin total printed on the item menu's vendor button, whatever language the game is in: the first number,
  * with its magnitude letter if it carries one ("863K"). The words around it are never read.
  */
-const VENDOR_AMOUNT = /\d[\d.,]*[kmbtq]?(?![a-z])/i;
+function vendorAmountPattern() {
+    // Built per call from the game's own separators, so "399 996" (fr-FR) is read whole, not as 399
+    return new RegExp(`${gameDigitsSource()}[kmbtq]?(?![a-z])`, 'i');
+}
 
 /**
  * Read a vendor-menu button's label without depending on its words.
@@ -72,7 +80,7 @@ const VENDOR_AMOUNT = /\d[\d.,]*[kmbtq]?(?![a-z])/i;
  */
 function vendorLabel(button) {
     const text = String(button?.textContent ?? '').trim();
-    const found = text.match(VENDOR_AMOUNT);
+    const found = text.match(vendorAmountPattern());
     if (!found) return null;
     return { amount: found[0].replace(/[.,]+$/, ''), shape: text.replace(found[0], '#').toLowerCase() };
 }

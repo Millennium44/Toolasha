@@ -1634,6 +1634,26 @@ describe('confirming from the strip', () => {
                     expect(result.why === undefined).toBe(accepted);
                 });
             });
+
+            describe('in a space-grouping language (fr-FR)', () => {
+                beforeEach(() => {
+                    localStorage.setItem('i18nextLng', 'fr-FR');
+                    _resetGameNumberSeparators();
+                });
+                afterEach(() => {
+                    localStorage.removeItem('i18nextLng');
+                    _resetGameNumberSeparators();
+                });
+
+                test.each([
+                    ['an exact total grouped with a space', 18, 22222, 'Vendre pour 399 996 pièces', true],
+                    ['grouped with a narrow no-break space', 18, 22222, 'Vendre pour 399 996 pièces', true],
+                    ['an exact total off by one', 18, 22222, 'Vendre pour 399 995 pièces', false],
+                ])('%s', (_name, count, price, label, accepted) => {
+                    const result = verdict(count, price, label);
+                    expect(result.why === undefined).toBe(accepted);
+                });
+            });
         });
 
         test('a relabel that shows a different amount is refused and sells nothing', async () => {
