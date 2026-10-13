@@ -33,6 +33,8 @@ import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/al
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
+import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -421,9 +423,30 @@ class RiskOfRuinUI {
 
         this.panel.querySelector('#mwi-ror-mode').addEventListener('change', () => this._renderModeInputs());
         this.panel.querySelector('#mwi-ror-run').addEventListener('click', () => this._run());
+        this.panel.addEventListener('click', (e) => this._handleApplySubstitutePriceClick(e));
 
         this._populateItemLists();
         this._renderModeInputs();
+    }
+
+    /**
+     * Delegated handler for the "Apply" button beside a protection-substitute drop's suggested
+     * price. One click saves that one suggestion through the Custom Price Overrides record (the
+     * path a hand-entered override takes), then reruns the calculation so the cost, EV and
+     * depth-cap context pick up the new price. Nothing else ever writes an override from here.
+     * @param {MouseEvent} e
+     */
+    async _handleApplySubstitutePriceClick(e) {
+        const button = e.target.closest?.('.mwi-ror-apply-substitute-price');
+        if (!button) return;
+
+        const price = Number(button.dataset.suggestedPrice);
+        if (!button.dataset.itemHrid || !(price > 0)) return;
+
+        // A double click must not write twice
+        button.disabled = true;
+        await setCustomPriceOverride(button.dataset.itemHrid, 0, null, price);
+        this._run();
     }
 
     _bodyHTML() {
@@ -1017,7 +1040,9 @@ class RiskOfRuinUI {
                         <td style="padding:2px 6px;">${drop.itemName}${drop.dropRate === 1 ? ' (guaranteed)' : ''}</td>
                         <td style="padding:2px 6px; text-align:right;">${formatPercentage(drop.dropRate, 2)}</td>
                         <td style="padding:2px 6px; text-align:right;">${drop.avgCount}</td>
-                        <td style="padding:2px 6px; text-align:right;">${drop.hasPriceData ? fmtGold(drop.priceEach) : '—'}</td>
+                        <td style="padding:2px 6px; text-align:right;">${
+                            drop.hasPriceData ? fmtGold(drop.priceEach) : this._protectionSubstituteCellHTML(drop)
+                        }</td>
                         <td style="padding:2px 6px; text-align:right;">${fmtGold(drop.expectedValue)}</td>
                     </tr>`
             )
@@ -1039,6 +1064,25 @@ class RiskOfRuinUI {
                     true
                 )
         );
+    }
+
+    /**
+     * For an unpriced drop that is a known enhancement-protection substitute (e.g. a quiver usable
+     * in place of a Mirror of Protection), suggest a proxy sell price taken from the universal
+     * protection item, with an Apply button that saves it as a custom price override.
+     * @param {Object} drop - A dropBreakdown entry with hasPriceData === false.
+     * @returns {string}
+     */
+    _protectionSubstituteCellHTML(drop) {
+        const suggestion = suggestProtectionSubstituteProxyPrice(drop.itemHrid);
+        if (!suggestion) return '—';
+
+        const viaName = dataManager.getItemDetails(suggestion.viaItemHrid)?.name || suggestion.viaItemHrid;
+        return `<span style="color:#888; font-style:italic;" title="This item has no market price, but it is a known substitute for this enhancement-protection item, so it has real value - click Apply to use that as its price.">≈ ${fmtGold(suggestion.price)} via ${viaName}</span>
+        <button type="button" class="mwi-ror-apply-substitute-price" data-item-hrid="${drop.itemHrid}" data-suggested-price="${suggestion.price}" style="
+            margin-left:4px; font-size:10px; padding:1px 5px; cursor:pointer;
+            background:rgba(96,165,250,0.15); border:1px solid rgba(96,165,250,0.4); border-radius:4px; color:#60a5fa;
+        ">Apply</button>`;
     }
 
     _alchemyDetailsHTML({ breakdown }, startingBalance, maxSinglePossibleLoss, minActions) {

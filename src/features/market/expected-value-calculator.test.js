@@ -218,6 +218,17 @@ describe('resolveSellSideValue', () => {
     });
 });
 
+describe('getDropPriceInfo', () => {
+    test('answers the resolver value and its tax contract in one call', () => {
+        expect(expectedValueCalculator.getDropPriceInfo(GEM_HRID)).toEqual({ value: 1000, needsTax: true });
+        expect(expectedValueCalculator.getDropPriceInfo('/items/coin')).toEqual({ value: 1, needsTax: false });
+    });
+
+    test('an unpriceable item is a null value, not a zero', () => {
+        expect(expectedValueCalculator.getDropPriceInfo('/items/unpriced')).toEqual({ value: null, needsTax: false });
+    });
+});
+
 describe('resolveBuySideValue', () => {
     test('an ordinary item is priced buy side, with the enhancement level carried through', () => {
         expect(expectedValueCalculator.resolveBuySideValue(GEM_HRID, 3)).toEqual({ value: 1000, source: 'market' });

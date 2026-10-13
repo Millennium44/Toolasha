@@ -92,6 +92,14 @@ vi.mock('../../utils/enhancement-config.js', () => ({
     })),
 }));
 
+vi.mock('../../utils/protection-substitute-lookup.js', () => ({
+    suggestProtectionSubstituteProxyPrice: vi.fn(() => null),
+}));
+
+vi.mock('../settings/custom-price-overrides.js', () => ({
+    setCustomPriceOverride: vi.fn(async () => {}),
+}));
+
 const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
     PANEL_ID: 'mwi-risk-of-ruin-panel',
     LAUNCHER_ID: 'mwi-risk-of-ruin-launcher',
@@ -104,6 +112,8 @@ import dataManager from '../../core/data-manager.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
+import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
+import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
 
 /** A stand-in for the character column's tab strip, found by its Inventory tab */
 function buildTabStrip() {
@@ -541,5 +551,72 @@ describe('depth-cap cost attribution', () => {
             { itemHrid: '/items/x', quantityPerAction: 0.5, costShare: 600 },
             { itemHrid: '/items/ess', quantityPerAction: 0.2, costShare: 200 },
         ]);
+    });
+});
+
+describe('protection-substitute proxy price', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+        document.body.innerHTML = '';
+    });
+
+    test('an unpriced drop that is not a substitute stays a dash', () => {
+        suggestProtectionSubstituteProxyPrice.mockReturnValue(null);
+
+        expect(riskOfRuinUI._protectionSubstituteCellHTML({ itemHrid: '/items/jade' })).toBe('—');
+    });
+
+    test('a substitute shows the suggested price, its source, and an Apply button carrying the price', () => {
+        suggestProtectionSubstituteProxyPrice.mockReturnValue({
+            price: 192000,
+            viaItemHrid: '/items/mirror_of_protection',
+        });
+
+        const html = riskOfRuinUI._protectionSubstituteCellHTML({ itemHrid: '/items/chimerical_quiver' });
+
+        expect(html).toContain('192,000');
+        expect(html).toContain('mwi-ror-apply-substitute-price');
+        expect(html).toContain('data-item-hrid="/items/chimerical_quiver"');
+        expect(html).toContain('data-suggested-price="192000"');
+    });
+
+    test('rendering a suggestion never writes an override by itself', () => {
+        suggestProtectionSubstituteProxyPrice.mockReturnValue({
+            price: 192000,
+            viaItemHrid: '/items/mirror_of_protection',
+        });
+
+        riskOfRuinUI._protectionSubstituteCellHTML({ itemHrid: '/items/chimerical_quiver' });
+
+        expect(setCustomPriceOverride).not.toHaveBeenCalled();
+    });
+
+    test('one Apply click saves one sell-side override at level 0 and reruns the calculation', async () => {
+        const runSpy = vi.spyOn(riskOfRuinUI, '_run').mockImplementation(() => {});
+        document.body.innerHTML =
+            '<button class="mwi-ror-apply-substitute-price" data-item-hrid="/items/chimerical_quiver" data-suggested-price="192000"></button>';
+        const button = document.querySelector('.mwi-ror-apply-substitute-price');
+
+        await riskOfRuinUI._handleApplySubstitutePriceClick({ target: button });
+
+        expect(setCustomPriceOverride).toHaveBeenCalledTimes(1);
+        expect(setCustomPriceOverride).toHaveBeenCalledWith('/items/chimerical_quiver', 0, null, 192000);
+        expect(runSpy).toHaveBeenCalled();
+        runSpy.mockRestore();
+    });
+
+    test('a click anywhere else, or on a button with a bad price, saves nothing', async () => {
+        const runSpy = vi.spyOn(riskOfRuinUI, '_run').mockImplementation(() => {});
+        document.body.innerHTML =
+            '<div id="x"></div><button class="mwi-ror-apply-substitute-price" data-item-hrid="/items/q" data-suggested-price="abc"></button>';
+
+        await riskOfRuinUI._handleApplySubstitutePriceClick({ target: document.querySelector('#x') });
+        await riskOfRuinUI._handleApplySubstitutePriceClick({
+            target: document.querySelector('.mwi-ror-apply-substitute-price'),
+        });
+
+        expect(setCustomPriceOverride).not.toHaveBeenCalled();
+        expect(runSpy).not.toHaveBeenCalled();
+        runSpy.mockRestore();
     });
 });
