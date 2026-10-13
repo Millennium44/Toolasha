@@ -1249,12 +1249,31 @@ class BulkSellAssistant {
         if (/^confirm\b/i.test(button.textContent.trim())) return true;
         const shape = vendorLabel(button)?.shape;
         if (!this._vendorShapes) this._vendorShapes = new WeakMap();
-        const first = this._vendorShapes.get(button);
+        let first = this._vendorShapes.get(button);
         if (first === undefined) {
-            this._vendorShapes.set(button, shape);
-            return false;
+            // A button met for the first time is taken for unarmed only when nothing better is known. A menu this
+            // run opened itself was seen unarmed (see `_noteFreshVendorMenu`), and every menu draws the same
+            // words, so that shape is the baseline for a button that is already armed when first looked at.
+            first = this._vendorUnarmedShape ?? shape;
+            this._vendorShapes.set(button, first);
         }
         return shape !== first;
+    }
+
+    /**
+     * Remember what an unarmed vendor button looks like in this language. Called for a menu the run opened
+     * itself, whose Sell For button has not been clicked yet, so it is unarmed whatever its words.
+     * @param {Element} menu - The freshly opened item menu
+     */
+    _noteFreshVendorMenu(menu) {
+        if (!this._vendorShapes) this._vendorShapes = new WeakMap();
+        for (const button of menu.querySelectorAll('button')) {
+            const shape = vendorLabel(button)?.shape;
+            if (shape === undefined || /^confirm\b/i.test(button.textContent.trim())) continue;
+            // Already seen means the arming click was caught before this ran, and that sighting was pre-click
+            if (!this._vendorShapes.has(button)) this._vendorShapes.set(button, shape);
+            this._vendorUnarmedShape = this._vendorShapes.get(button);
+        }
     }
 
     /**
@@ -2016,6 +2035,8 @@ class BulkSellAssistant {
 
         // From before the menu can open: an arming during the wait for it still counts
         this._trackVendorArming();
+        // A menu that was not open before our click is fresh, so its Sell For button is unarmed
+        const menuWasOpen = !!document.querySelector('[class*="Item_actionMenu"]');
         (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
             new MouseEvent('click', { bubbles: true, cancelable: true })
         );
@@ -2036,6 +2057,7 @@ class BulkSellAssistant {
                 }
                 return;
             }
+            if (!menuWasOpen) this._noteFreshVendorMenu(menu);
             const allBtn = Array.from(menu.querySelectorAll('button')).find((b) => b.textContent.trim() === 'All');
             allBtn?.click();
             this.decision = {

@@ -1227,6 +1227,7 @@ describe('confirming from the strip', () => {
         let armClicks;
         beforeEach(() => {
             armClicks = 0;
+            bulkSell._vendorUnarmedShape = undefined;
         });
 
         /**
@@ -1243,6 +1244,7 @@ describe('confirming from the strip', () => {
             enhanced = false,
             icon = true,
             title = null,
+            armed = null,
         } = {}) => {
             const menu = document.createElement('div');
             menu.className = 'Item_actionMenu__q';
@@ -1263,7 +1265,7 @@ describe('confirming from the strip', () => {
             sell.className = 'Button_button__1Fe9z Button_sell__x';
             sell.textContent = label;
             // Whether the game considers the button armed is its own state, not something read off the words
-            let armedNow = /^confirm/i.test(label ?? '');
+            let armedNow = armed ?? /^confirm/i.test(label ?? '');
             sell.addEventListener('click', () => {
                 if (armedNow) {
                     gameClicks++;
@@ -1664,6 +1666,35 @@ describe('confirming from the strip', () => {
                 await pressAndSettle();
                 expect(gameClicks).toBe(0);
                 expect(bulkSell.confirmNote).toMatch(/did not arm in time/);
+            });
+
+            test('a button already armed when first looked at is taken for armed, from what a fresh menu showed', async () => {
+                runAtStep0();
+                bulkSell.state = 'preparing';
+                const inventory = document.createElement('div');
+                inventory.className = 'Inventory_items__x';
+                inventory.innerHTML =
+                    '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use href="#cheese"></use></svg></div></div>';
+                document.body.appendChild(inventory);
+                expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+                // The run's own click opened the menu: unarmed, so this is what an unarmed button reads like
+                const fresh = openMenu(CN);
+                await vi.advanceTimersByTimeAsync(360);
+                expect(bulkSell.state).toBe('awaiting_confirm');
+                fresh.remove();
+
+                // The game redraws the menu with the button already in its confirm state
+                openMenu({ label: CN.armedLabel, armed: true });
+                armClicks = 0;
+                reactClicks.calls = [];
+                expect(bulkSell._confirmTarget().armed).toBe(true);
+
+                confirmBtn().click();
+                await vi.advanceTimersByTimeAsync(1200);
+                expect(armClicks).toBe(0);
+                expect(gameClicks).toBe(1);
+                expect(reactClicks.calls).toHaveLength(1);
+                inventory.remove();
             });
 
             test('a menu with no button carrying a figure still stops at "not found"', () => {
