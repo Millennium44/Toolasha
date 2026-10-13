@@ -875,7 +875,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
 
         let imported;
         try {
-            imported = await importEverything(payload);
+            imported = await importEverything(payload, { liveSafeMerge: true });
         } catch (error) {
             await restoreMigrationRecords(migrationRecords);
             throw error;
