@@ -384,7 +384,7 @@ export function _resetGameNumberSeparators() {
  */
 export function parseShorthandAmount(text) {
     const trimmed = String(text ?? '').trim();
-    if (!/^\d[\d.,\s]*[kmb]?$/i.test(trimmed)) return null;
+    if (!/^(?:\d+|\d{1,3}(?:[,\s]\d{3})+)(?:\.\d+)?[kmb]?$/i.test(trimmed)) return null;
     const n = parseItemCount(trimmed, NaN);
     return Number.isFinite(n) && n >= 0 ? n : null;
 }
