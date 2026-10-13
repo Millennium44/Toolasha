@@ -248,7 +248,9 @@ function calculateStrategyRealCost(
     itemHrid,
     recipes
 ) {
-    const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
+    const { enhancingLevel, toolBonus, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
+    // getEnhancingParams() nests Blessed at teas.blessed; older callers pass a flat blessedTea
+    const blessedTea = Boolean(enhancementParams.teas?.blessed ?? enhancementParams.blessedTea);
 
     // Calculate success multiplier
     let totalBonus;
