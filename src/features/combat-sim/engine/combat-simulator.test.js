@@ -15,7 +15,7 @@
  * meant to change behavior, that is the bug this test exists to catch.
  */
 
-import { describe, test, expect, afterEach } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
 import CombatUtilities from './combat-utilities.js';
@@ -2063,6 +2063,38 @@ describe('out-of-mana is a mana state and nothing else', () => {
 
         expect(queued(sim, AwaitCooldownEvent.type, player)).toEqual([]);
         expect(queued(sim, AwaitCooldownEvent.type, other).length).toBe(1);
+    });
+
+    test('a blind landing between turns keeps the cancelled swing due time for the first wake', () => {
+        const { sim, player } = soloFight();
+        const monster = sim.enemies[0];
+        const interval = player.combatDetails.combatStats.attackInterval;
+        const due = sim.simulationTime + interval;
+        sim.eventQueue.addEvent(new AutoAttackEvent(due, player));
+        sim.simulationTime = due - ONE_SECOND / 2;
+        vi.spyOn(CombatUtilities, 'processAttack').mockReturnValue({
+            didHit: true,
+            damageDone: 0,
+            isCrit: false,
+            hpDrain: 0,
+            thornDamageDone: 0,
+            retaliationDamageDone: 0,
+        });
+        try {
+            sim.processAbilityDamageEffect(
+                monster,
+                { hrid: '/abilities/fixture_blind' },
+                { targetType: 'enemy', blindChance: 1, blindDuration: 5 * ONE_SECOND, damageOverTimeRatio: 0 }
+            );
+        } finally {
+            vi.restoreAllMocks();
+        }
+
+        expect(player.isBlinded).toBe(true);
+        const wakes = queued(sim, AwaitCooldownEvent.type, player);
+        expect(wakes.length).toBe(1);
+        expect(wakes[0].time).toBe(due);
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
     });
 
     test('a unit that cannot afford its triggered ability still swings', () => {
