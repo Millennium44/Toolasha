@@ -71,8 +71,8 @@ registerSyncMerge({
     base: 'tradeHistory',
     merge: mergeHistory,
     label: 'Personal trade prices',
-    // The only writer is `saveHistory`, which probes, folds and writes with the same fold inside the transaction
-    liveSafe: true,
+    // Not liveSafe: readers use the in-memory `this.history`, which a pull does not refresh, so without a
+    // reload a running tab would keep showing old prices. `saveHistory` folds, so writes stay safe either way
 });
 
 /**
