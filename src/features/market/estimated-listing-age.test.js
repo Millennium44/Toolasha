@@ -1033,6 +1033,18 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1]);
     });
 
+    test('an import whose tombstones cannot be taken back fails whole, adding no rows', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1)]);
+        knownAs([row(1)]);
+        storageMock.unavailable = true;
+
+        expect(await estimatedListingAge.importListings([row(1), row(9)])).toBe(false);
+
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1]);
+        storageMock.unavailable = false;
+        expect(storedLog().map((l) => l.id)).toEqual([1]);
+    });
+
     test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
         storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
         knownAs([row(1), row(2)]);
