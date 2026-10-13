@@ -25,6 +25,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Enhancement Tracker now books a +1 or +2 spare used as protection at that level's price instead of the +0 price, so mixed-protection runs and their merged totals no longer understate the cost (costs already recorded are not re-priced).
 - The Custom Tabs "⋯" menu closes when the inventory or page scrolls instead of floating away from its button.
 
+### Enhancing: price the protect-from sweep with any protection
+
+- The Enhancement Calculator's protect-from sweep has a "Price with" picker listing every protection item that works on the item, Mirror of Protection included, so you can price a protection you don't own yet even when something else is cheaper.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
