@@ -1056,18 +1056,24 @@ function nameOf(itemHrid) {
 
 /**
  * What selling the worn piece would actually put in hand: its bid net of the
- * market sell tax, since a trade-in is a sale. Zero when nothing is worn or
- * nothing bids on it. (Equipment is never a cowbell bag, so the 18% bag rate
- * cannot apply here.)
+ * market sell tax, since a trade-in is a sale — or the vendor's flat price when
+ * that pays at least as much (the bulk-sell assistant's rule: the vendor wins a
+ * tie, and only unenhanced stacks can be vendored). With no bid, an unenhanced
+ * piece still fetches the vendor price. Zero when nothing is worn or nothing
+ * would buy it. (Equipment is never a cowbell bag, so the 18% bag rate cannot
+ * apply here.)
  *
  * @param {{itemHrid: string, enhancementLevel?: number}|null} worn - The worn item
  * @returns {number} After-tax whole coins
  */
 function wornTradeIn(worn) {
     if (!worn) return 0;
-    const bid = getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0;
+    const level = worn.enhancementLevel || 0;
+    const bid = getItemPrices(worn.itemHrid, level)?.bid || 0;
     // The game floors the after-tax price of a sale to whole coins per unit
-    return bid > 0 ? Math.floor(calculatePriceAfterTax(bid)) : 0;
+    const market = bid > 0 ? Math.floor(calculatePriceAfterTax(bid)) : 0;
+    const vendor = level === 0 ? Number(dataManager.getItemDetails?.(worn.itemHrid)?.sellPrice) || 0 : 0;
+    return Math.max(market, vendor);
 }
 
 /**

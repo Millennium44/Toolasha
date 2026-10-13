@@ -327,6 +327,31 @@ describe('costing a target', () => {
         expect(target.cost).toBe(100_000_000 - 96);
     });
 
+    test('the vendor price stands in when it beats the bid after tax', () => {
+        game.details['/items/cheese_sword'].sellPrice = 100;
+        game.prices['/items/cheese_sword:0'] = { ask: 45_000_000, bid: 101 };
+        watchTarget('/items/holy_sword');
+        // 101 nets 96 after tax, but the vendor pays 100 flat
+        expect(watchedTargets()[0].worn.bid).toBe(100);
+    });
+
+    test('the after-tax bid stays when it beats the vendor price', () => {
+        game.details['/items/cheese_sword'].sellPrice = 100;
+        game.prices['/items/cheese_sword:0'] = { ask: 45_000_000, bid: 200 };
+        watchTarget('/items/holy_sword');
+        expect(watchedTargets()[0].worn.bid).toBe(192);
+    });
+
+    test('an enhanced worn piece cannot be vendored, so its bid stands', () => {
+        game.details['/items/cheese_sword'].sellPrice = 100;
+        game.equipment = new Map([
+            ['/item_locations/main_hand', { itemHrid: '/items/cheese_sword', enhancementLevel: 3 }],
+        ]);
+        game.prices['/items/cheese_sword:3'] = { ask: 45_000_000, bid: 101 };
+        watchTarget('/items/holy_sword');
+        expect(watchedTargets()[0].worn.bid).toBe(96);
+    });
+
     test('an empty slot has nothing to trade in', () => {
         watchTarget('/items/rough_boots');
         expect(watchedTargets()[0].cost).toBe(5_000_000);
