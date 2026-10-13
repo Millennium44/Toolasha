@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync: more records take a pull without a reload
+
+- A sync pull that only changes labyrinth logs, replay checks, XP history, calibrations, leaderboards, treasure tally, guild loadouts, self-use marks or personal trade prices no longer asks you to reload; guild trial, guild XP, trade ledger and trade price saves now merge with what a pull just stored instead of overwriting it.
+
 ### Custom Tabs toolbar fits narrow inventories
 
 - The Custom Tabs toolbar no longer pushes the inventory panel into a sideways scroll: Export, Import, Import Categories and Clear All moved into a "⋯" menu beside + Tab, expand and collapse, and the row wraps if it is still too wide.
