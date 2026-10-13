@@ -109,7 +109,12 @@ export const recommendationMethods = {
             // this batch's flag. The partial bestThreshold at that point is a
             // lower bound, not the answer, and returning it had the badge
             // present it as final — so an interrupted room reports nothing.
-            if (result.cancelled) return null;
+            //
+            // A probe that could not run at all (inputs still loading, a worker
+            // error) is no measurement either. Scoring it as a 0% clear sent the
+            // search below the real answer and stored that as the room's
+            // recommendation; the time search already abandons on it.
+            if (result.cancelled || result.failed) return null;
             if (result.clearChance >= targetRate) {
                 bestThreshold = mid;
                 low = mid + 1;
@@ -353,7 +358,19 @@ export const recommendationMethods = {
         this._snapshotFingerprint = snapshotFp;
 
         if (stale) {
-            this.recommendations.clear();
+            if (this.recommendRunning) {
+                // A run in flight owns the map. Clearing it here emptied every
+                // room the run had already settled — the skilling rows, written
+                // in the first instant, and the combat rows before the change —
+                // while the rooms after it kept writing, so the run finished
+                // with only its tail on screen. In a live labyrinth this fires
+                // mid-run whenever the lab swaps loadouts or a level comes in.
+                // The run re-searches its skilling rooms at the end instead,
+                // and keeps the combat rooms it got through.
+                this._recommendInputsChangedMidRun = true;
+            } else {
+                this.recommendations.clear();
+            }
         }
         return stale;
     },
@@ -429,6 +446,32 @@ export const recommendationMethods = {
         );
         this._recommendBasis = bySeconds ? 'seconds' : 'winRate';
 
+        this._recommendInputsChangedMidRun = false;
+
+        const secondsRecord = (found) => ({
+            threshold: found ? found.threshold : null,
+            basis: 'seconds',
+            basisKey,
+            target: targetSeconds,
+            qualifies: found ? found.qualifies : false,
+            seconds: found ? found.seconds : null,
+        });
+        // Skilling rooms are closed-form: no sims, nothing to cancel
+        const searchSkillRoom = async (roomHrid) => {
+            if (bySeconds) {
+                const found = await this.findRecommendedThresholdSeconds(roomHrid, targetSeconds);
+                if (this.simEpoch() !== epoch) return;
+                this.recommendations.set(roomHrid, secondsRecord(found));
+                return;
+            }
+            this.recommendations.set(roomHrid, {
+                threshold: this.findRecommendedThreshold(roomHrid, targetRate),
+                basis: 'winRate',
+                basisKey,
+                target: this._recommendTargetPct,
+            });
+        };
+
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
         const rooms = [];
 
@@ -449,33 +492,18 @@ export const recommendationMethods = {
                 // Cancelling a batch has to stop the queue of rooms behind the
                 // one being simulated, not only that room's sim
                 if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                if (bySeconds) {
-                    if (!isSkill) this.refreshAutomationRunningState(completed + 1, totalRooms);
-                    const found = isSkill
-                        ? await this.findRecommendedThresholdSeconds(roomHrid, targetSeconds)
-                        : await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
+                if (isSkill) {
+                    await searchSkillRoom(roomHrid);
+                } else if (bySeconds) {
+                    this.refreshAutomationRunningState(completed + 1, totalRooms);
+                    const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
                     if (this.simCancelled() || this.simEpoch() !== epoch) break;
                     // An interrupted combat room reports nothing, as win-rate does
-                    if (!isSkill && !found) {
+                    if (!found) {
                         completed++;
                         continue;
                     }
-                    this.recommendations.set(roomHrid, {
-                        threshold: found ? found.threshold : null,
-                        basis: 'seconds',
-                        basisKey,
-                        target: targetSeconds,
-                        qualifies: found ? found.qualifies : false,
-                        seconds: found ? found.seconds : null,
-                    });
-                } else if (isSkill) {
-                    const threshold = this.findRecommendedThreshold(roomHrid, targetRate);
-                    this.recommendations.set(roomHrid, {
-                        threshold,
-                        basis: 'winRate',
-                        basisKey,
-                        target: this._recommendTargetPct,
-                    });
+                    this.recommendations.set(roomHrid, secondsRecord(found));
                 } else {
                     this.refreshAutomationRunningState(completed + 1, totalRooms);
                     const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
@@ -489,12 +517,22 @@ export const recommendationMethods = {
                 }
                 completed++;
             }
+            // The inputs moved under the run. Its skilling rooms were settled in
+            // its first instant and are closed-form, so they are searched again
+            // against what is current now; the combat rooms keep what they got.
+            if (this._recommendInputsChangedMidRun && !this.simCancelled() && this.simEpoch() === epoch) {
+                for (const { roomHrid, isSkill } of rooms) {
+                    if (isSkill && this.recommendations.has(roomHrid)) await searchSkillRoom(roomHrid);
+                    if (this.simEpoch() !== epoch) break;
+                }
+            }
         } finally {
             // Nothing here belongs to a run the feature was torn down under: the
             // flag has already been cleared by `disable()` and reclaimed by the
             // arriving character, and the button is that character's button.
             if (this.simEpoch() === epoch) {
                 this.recommendRunning = false;
+                this._recommendInputsChangedMidRun = false;
                 this.refreshAutomationRunningState();
             }
         }
