@@ -10,6 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { valueOfLoot } from '../combat-stats/combat-stats-calculator.js';
 
 /**
  * Whether a `battle_unit_fetched` payload is an end-of-session summary rather
@@ -135,6 +136,12 @@ class CombatSummary {
                 if (loot.itemHrid === '/items/coin') {
                     totalPriceAsk += itemCount;
                     totalPriceBid += itemCount;
+                } else if (dataManager.getItemDetails(loot.itemHrid)?.isOpenable) {
+                    // Openable containers have no market listing: value them exactly the way Combat Stats does
+                    // (expected value, with the player's measured chest luck), so the two totals agree
+                    const { ask, bid } = valueOfLoot(loot);
+                    totalPriceAsk += ask;
+                    totalPriceBid += bid;
                 } else {
                     // Other items: get market price
                     const prices = ironCowBook(loot.itemHrid) ?? marketAPI.getPrice(loot.itemHrid);

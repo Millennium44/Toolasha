@@ -44,7 +44,12 @@ vi.mock('../../core/websocket.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
+        getItemDetails: (hrid) => (hrid === '/items/purple_chest' ? { isOpenable: true } : {}),
     },
+}));
+vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
+    // Combat Stats' own per-drop valuation: a chest is worth its expected value
+    valueOfLoot: (loot) => ({ ask: loot.count * 1000, bid: loot.count * 1000, value: loot.count * 1000 }),
 }));
 
 const combatSummary = (await import('./combat-summary.js')).default;
@@ -113,6 +118,24 @@ describe('combat summary', () => {
         // ask: 500 + 20*10 = 700, bid: 500 + 20*8 = 660
         expect(text('mwi-combat-revenue')).toBe('Total revenue: 700 / 660');
         expect(text('mwi-combat-total-exp')).toBe('Total exp: 1.50K');
+    });
+
+    test('an openable chest is valued the way Combat Stats values it, not left out for want of a listing', async () => {
+        buildBattlePanel('Combat Duration: 1h 0m 0s | Battles: 11 | Deaths: 0');
+        game.prices['/items/bones'] = { ask: 10, bid: 8 };
+
+        await game.wsHandlers.battle_unit_fetched({
+            unit: {
+                totalLootMap: {
+                    a: { itemHrid: '/items/purple_chest', count: 3 },
+                    b: { itemHrid: '/items/bones', count: 20 },
+                },
+                totalSkillExperienceMap: {},
+            },
+        });
+
+        // chest 3 * 1000 plus bones 20*10 / 20*8
+        expect(text('mwi-combat-revenue')).toBe('Total revenue: 3.20K / 3.16K');
     });
 
     test('battle count in the header excludes the battle in progress', async () => {
