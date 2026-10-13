@@ -483,8 +483,11 @@ export const recommendationMethods = {
             if (bySeconds) {
                 const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
                 if (this.simCancelled() || this.simEpoch() !== epoch) return false;
-                // An interrupted combat room reports nothing, as win-rate does
+                // An interrupted combat room reports nothing, as win-rate does — and a retry
+                // that could not run drops the record it was retrying, rather than leave a
+                // threshold for the inputs that changed
                 if (found) this.recommendations.set(roomHrid, secondsRecord(found));
+                else this.recommendations.delete(roomHrid);
                 return true;
             }
             const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
@@ -531,17 +534,31 @@ export const recommendationMethods = {
             // settled in the first instant) and the combat rooms whose search
             // started before it are searched again against what is current now,
             // so one run never mixes thresholds from two sets of gear.
-            if (this._recommendInputsChangedMidRun && !this.simCancelled() && this.simEpoch() === epoch) {
+            // Repeated until a whole pass completes without the inputs moving again, bounded so
+            // inputs that keep changing (a lab cycling loadouts) cannot hold the run open forever
+            let skillSerial = 0;
+            for (let pass = 0; pass < 3; pass++) {
+                if (!this._recommendInputsChangedMidRun || this.simCancelled() || this.simEpoch() !== epoch) break;
                 const latest = this._recommendChangeSerial;
+                if (skillSerial === latest) break;
+                let aborted = false;
                 for (const { roomHrid, isSkill } of rooms) {
-                    if (this.simCancelled() || this.simEpoch() !== epoch) break;
+                    if (this.simCancelled() || this.simEpoch() !== epoch) {
+                        aborted = true;
+                        break;
+                    }
                     if (isSkill) {
                         if (this.recommendations.has(roomHrid)) await searchSkillRoom(roomHrid);
                     } else if (combatSearchedAt.has(roomHrid) && combatSearchedAt.get(roomHrid) < latest) {
                         this.refreshAutomationRunningState(completed, totalRooms);
-                        if (!(await searchCombatRoom(roomHrid))) break;
+                        if (!(await searchCombatRoom(roomHrid))) {
+                            aborted = true;
+                            break;
+                        }
                     }
                 }
+                skillSerial = latest;
+                if (aborted || this._recommendChangeSerial === latest) break;
             }
         } finally {
             // Nothing here belongs to a run the feature was torn down under: the

@@ -217,6 +217,49 @@ describe('Recommend run over skilling and combat rooms', () => {
         expect(calls.filter((hrid) => hrid === MONSTERS[2])).toHaveLength(1);
     });
 
+    test('a change during the recovery pass runs another pass until the inputs hold still', async () => {
+        buildTable();
+        vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);
+        let gearLevel = 6;
+        let calls = 0;
+        vi.spyOn(panel, 'findRecommendedThresholdCombat').mockImplementation(async () => {
+            calls++;
+            const answer = gearLevel;
+            // First change while the second room is searched; a second one while the
+            // recovery pass re-searches the first room
+            if (calls === 2 || calls === 4) {
+                gearLevel += 3;
+                inputsChange(`gear-${calls}`);
+            }
+            return answer;
+        });
+
+        await panel.runRecommendations();
+
+        for (const hrid of MONSTERS) expect(panel.recommendations.get(hrid).threshold).toBe(gearLevel);
+    });
+
+    test('a time retry that cannot run drops the record it was retrying', async () => {
+        buildTable();
+        vi.spyOn(panel, 'findRecommendedThresholdSeconds').mockResolvedValue({
+            threshold: 8,
+            seconds: 90,
+            qualifies: true,
+        });
+        let calls = 0;
+        vi.spyOn(panel, 'findRecommendedThresholdSecondsCombat').mockImplementation(async () => {
+            calls++;
+            if (calls === 2) inputsChange('gear-b');
+            // The recovery retry of the first room cannot run
+            if (calls > MONSTERS.length) return null;
+            return { threshold: 6, seconds: 200, qualifies: true };
+        });
+
+        await panel.runRecommendations('seconds');
+
+        expect(panel.recommendations.has(MONSTERS[0])).toBe(false);
+    });
+
     test('a change between runs still drops the recommendations it made stale', async () => {
         buildTable();
         vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);
