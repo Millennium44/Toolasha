@@ -81,6 +81,25 @@ export function gameOrigin(origin = globalThis.location?.origin) {
     return GAME_ORIGINS.has(normalized) ? normalized : FALLBACK_ORIGIN;
 }
 
+/** A test host's live counterpart, for reading the live server's static files from a test page */
+const LIVE_ORIGIN_OF_TEST = new Map([
+    ['https://test.milkywayidle.com', 'https://www.milkywayidle.com'],
+    ['https://test.milkywayidlecn.com', 'https://www.milkywayidlecn.com'],
+]);
+
+/**
+ * The live server's origin when the page is a test server, else the page's own
+ * (see {@link gameOrigin}). Used only to read the live market file; nothing is
+ * ever written back to it.
+ *
+ * @param {string} [origin] - Overrides the page's own, for tests
+ * @returns {string} An origin with no trailing slash
+ */
+export function liveGameOrigin(origin = globalThis.location?.origin) {
+    const own = gameOrigin(origin);
+    return LIVE_ORIGIN_OF_TEST.get(own) ?? own;
+}
+
 /**
  * Whether this page is on the host whose market the pooled price dataset
  * describes. The CN mirror and the test servers are excluded: whether the CN

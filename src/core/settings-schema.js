@@ -2027,6 +2027,14 @@ export const settingsGroups = {
                 hidden: !isTestServer(),
                 help: "Test server only. Buy-side prices floor at the Tester shop's coin prices — house materials, ability books, enhancement materials — and the simulators' Upgrade tabs price equipment as bought from the shop at +10 and mirrored up with Philosopher's Mirrors (guaranteed, consuming a copy one level below) beyond that.",
             },
+            pricing_useLivePrices: {
+                id: 'pricing_useLivePrices',
+                label: 'Use live-server prices on the test server',
+                type: 'checkbox',
+                default: false,
+                hidden: !isTestServer(),
+                help: "On the test server, price everything from the live server's market instead of the test server's (your own test listings are unaffected). Takes effect on reload.",
+            },
             profitCalc_ironCowValuation: {
                 id: 'profitCalc_ironCowValuation',
                 label: 'Iron Cow: value items at',

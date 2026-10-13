@@ -47,6 +47,9 @@ const RELOAD_WATCHDOG_MS = 15000;
  * for a named export of `data-manager.js` from here would break every test that
  * mocks it with a bare default.
  */
+/** Mirrored to device storage for marketplace.js, whose startup fetch runs before settings load */
+const LIVE_PRICES_SETTING_KEY = 'pricing_useLivePrices';
+
 const RELOAD_RECOVERY_SETTING_KEY = 'startupRecovery_autoReload';
 
 /**
@@ -643,6 +646,7 @@ class Config {
             // over a stored `false` — the very substitution the mirror exists to
             // stop.
             this._mirrorReloadRecoverySetting(this.getSetting(RELOAD_RECOVERY_SETTING_KEY));
+            this._mirrorLivePricesSetting(this.getSetting(LIVE_PRICES_SETTING_KEY));
         }
 
         this._anySettingChangeHeld += 1;
@@ -806,6 +810,20 @@ class Config {
             dataManager.rememberAutoReloadPreference?.(value === true);
         } catch (error) {
             console.warn('[Config] Could not mirror the startup-recovery setting:', error);
+        }
+    }
+
+    /**
+     * Mirror the live-prices setting to device storage, where marketplace.js reads it before
+     * character settings have loaded. Device-wide: the last character loaded decides.
+     * @param {boolean} value - The value to mirror
+     * @private
+     */
+    _mirrorLivePricesSetting(value) {
+        try {
+            storage.set?.('Toolasha_marketAPI_livePrices', value === true, 'settings');
+        } catch (error) {
+            console.warn('[Config] Could not mirror the live-prices setting:', error);
         }
     }
 
@@ -999,6 +1017,9 @@ class Config {
 
             if (key === RELOAD_RECOVERY_SETTING_KEY) {
                 this._mirrorReloadRecoverySetting(value);
+            }
+            if (key === LIVE_PRICES_SETTING_KEY) {
+                this._mirrorLivePricesSetting(value);
             }
 
             // Re-apply colors if color setting changed

@@ -5,7 +5,7 @@
 
 import connectionState from '../core/connection-state.js';
 import storage from '../core/storage.js';
-import { gameOrigin } from '../utils/game-server.js';
+import { gameOrigin, liveGameOrigin, isTestServer } from '../utils/game-server.js';
 import networkAlert from '../features/market/network-alert.js';
 
 /**
@@ -19,6 +19,16 @@ import networkAlert from '../features/market/network-alert.js';
 function marketValues() {
     return (typeof window !== 'undefined' && window.Toolasha?.Utils?.marketValues) || null;
 }
+
+/**
+ * Device-level mirror of the "use live-server prices" setting (written by config, read here).
+ * The setting itself is character-scoped and loads after the startup market fetch, so the
+ * fetch reads this copy. Under the `Toolasha_marketAPI_` prefix so sync leaves it device-local.
+ */
+export const LIVE_PRICES_MIRROR_KEY = 'Toolasha_marketAPI_livePrices';
+
+/** Appended to every cache key while the data comes from the live server, so the two never mix */
+const LIVE_KEY_SUFFIX = '_live';
 
 /** Thrown inside _fetchInner to route a deferred (skipped) fetch to the cache fallback */
 class DeferredFetch extends Error {}
@@ -41,14 +51,13 @@ function parseRetryAfter(value) {
  */
 class MarketAPI {
     constructor() {
-        // API endpoint
-        this.API_URL = `${gameOrigin()}/game_data/marketplace.json`;
+        // Where the snapshot comes from, and the cache keys that belong to that source.
+        // Set by _applySource(); the page's own host until the mirror says otherwise.
+        this.liveSourced = false;
+        this._applySource(false);
 
         // Cache settings
         this.CACHE_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds
-        this.CACHE_KEY_DATA = 'Toolasha_marketAPI_json';
-        this.CACHE_KEY_TIMESTAMP = 'Toolasha_marketAPI_timestamp';
-        this.CACHE_KEY_PATCHES = 'Toolasha_marketAPI_patches';
         this.CACHE_KEY_MIGRATION = 'Toolasha_marketAPI_migration_version';
         this.CURRENT_MIGRATION_VERSION = 1; // Increment this when patches need to be cleared
 
@@ -57,7 +66,7 @@ class MarketAPI {
          * Global, not character-scoped, and under the `Toolasha_marketAPI_` prefix so sync leaves it
          * device-local. Without it every page reload with an expired cache re-hit a refusing API.
          */
-        this.CACHE_KEY_RETRY = 'Toolasha_marketAPI_retry';
+        // (CACHE_KEY_RETRY is set per source by _applySource())
         /** A failed fetch defers the next try this long (or the Retry-After, if larger) */
         this.FAILURE_DEFER_MS = 60 * 1000;
         /** A 403/429 defers the next try this long (or the Retry-After, if larger) */
@@ -184,6 +193,46 @@ class MarketAPI {
         }
     }
 
+    /**
+     * Point the API at one source and give it that source's own cache keys.
+     * Live-sourced data (read from the live server while on a test page) lives under
+     * `_live`-suffixed keys, so a snapshot or a deferral from one source can never be
+     * served as the other's.
+     * @param {boolean} live - Whether the snapshot comes from the live server
+     * @private
+     */
+    _applySource(live) {
+        const suffix = live ? LIVE_KEY_SUFFIX : '';
+        this.liveSourced = live;
+        this.API_URL = `${live ? liveGameOrigin() : gameOrigin()}/game_data/marketplace.json`;
+        this.CACHE_KEY_DATA = `Toolasha_marketAPI_json${suffix}`;
+        this.CACHE_KEY_TIMESTAMP = `Toolasha_marketAPI_timestamp${suffix}`;
+        this.CACHE_KEY_PATCHES = `Toolasha_marketAPI_patches${suffix}`;
+        this.CACHE_KEY_RETRY = `Toolasha_marketAPI_retry${suffix}`;
+    }
+
+    /**
+     * Read the live-prices mirror and switch source if it changed. Only a test server can
+     * be live-sourced; on any other host the mirror is ignored. A switch drops the old
+     * source's in-memory snapshot and patches so none of it is shown as the new source's.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _resolveSource() {
+        let live = false;
+        try {
+            live = isTestServer() && (await storage.get(LIVE_PRICES_MIRROR_KEY, 'settings', false)) === true;
+        } catch (error) {
+            console.warn('[MarketAPI] Could not read the live-prices setting:', error);
+        }
+        if (live === this.liveSourced) return;
+        this._applySource(live);
+        this.marketData = null;
+        this.lastFetchTimestamp = null;
+        this.pricePatchs = {};
+        this._cacheExpiresAt = null;
+    }
+
     /** Stop the page-lifetime base-snapshot refresh interval. */
     stopAutoRefresh() {
         if (!this._autoRefreshRunning) return;
@@ -247,6 +296,7 @@ class MarketAPI {
      * @private
      */
     async _fetchInner(forceFetch = false, options = {}) {
+        await this._resolveSource();
         // Check cache first (unless force fetch)
         if (!forceFetch) {
             const cached = await this.getCachedData();
@@ -757,9 +807,16 @@ class MarketAPI {
      * and print as "as of just now". Such callers pass `observedAt`.
      * @param {Array<{itemHrid: string, enhancementLevel: number, ask: number|null,
      *   bid: number|null, observedAt?: number}>} entries
+     * @param {Object} [options]
+     * @param {boolean} [options.pageOrderBook] - The entries come from the page's own order-book
+     *   messages. Ignored while the snapshot is live-sourced: those books are the test server's,
+     *   and patching them over live prices would mix two economies in one table.
      */
-    updatePrices(entries) {
+    updatePrices(entries, options = {}) {
         if (!Array.isArray(entries) || entries.length === 0) {
+            return;
+        }
+        if (options.pageOrderBook && this.liveSourced) {
             return;
         }
 
