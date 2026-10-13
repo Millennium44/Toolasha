@@ -92,6 +92,16 @@ vi.mock('../../utils/enhancement-config.js', () => ({
     })),
 }));
 
+vi.mock('../../utils/protection-substitute-lookup.js', () => ({
+    suggestProtectionSubstituteProxyPrice: vi.fn(() => null),
+}));
+
+const storedOverrides = vi.hoisted(() => ({ map: {} }));
+vi.mock('../settings/custom-price-overrides.js', () => ({
+    setCustomPriceOverride: vi.fn(async () => {}),
+    getCustomPriceOverridesAsync: vi.fn(async () => storedOverrides.map),
+}));
+
 const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
     PANEL_ID: 'mwi-risk-of-ruin-panel',
     LAUNCHER_ID: 'mwi-risk-of-ruin-launcher',
@@ -104,6 +114,8 @@ import dataManager from '../../core/data-manager.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
+import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
+import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
 
 /** A stand-in for the character column's tab strip, found by its Inventory tab */
 function buildTabStrip() {
@@ -495,5 +507,136 @@ describe('RiskOfRuinUI enhancement with incomplete input prices', () => {
             '/items/cheese_sword',
             expect.objectContaining({ itemLevel: 1 })
         );
+    });
+});
+
+describe('depth-cap cost attribution', () => {
+    test('chest mode splits the cost across priced drops by their share of expected value', () => {
+        const items = riskOfRuinUI._chestDepthCapItems(
+            [
+                { itemHrid: '/items/a', dropRate: 0.5, avgCount: 2, expectedValue: 300, hasPriceData: true },
+                { itemHrid: '/items/b', dropRate: 0.1, avgCount: 1, expectedValue: 100, hasPriceData: true },
+                { itemHrid: '/items/c', dropRate: 0.2, avgCount: 1, expectedValue: 0, hasPriceData: false },
+            ],
+            1000
+        );
+
+        expect(items).toEqual([
+            { itemHrid: '/items/a', quantityPerAction: 1, costShare: 750 },
+            { itemHrid: '/items/b', quantityPerAction: 0.1, costShare: 250 },
+        ]);
+    });
+
+    test('a single tracked chest drop is charged the whole cost', () => {
+        const items = riskOfRuinUI._chestDepthCapItems(
+            [{ itemHrid: '/items/a', dropRate: 1, avgCount: 1, expectedValue: 50, hasPriceData: true }],
+            400
+        );
+        expect(items[0].costShare).toBe(400);
+    });
+
+    test('alchemy mode attributes cost by per-action EV across main branches and bonus drops', () => {
+        const items = riskOfRuinUI._alchemyDepthCapItems(
+            {
+                successRate: 0.5,
+                mainBranches: [
+                    { itemHrid: '/items/x', dropRate: 1, count: 1, payout: 600, isSelfReturn: false },
+                    { itemHrid: '/items/self', dropRate: 1, count: 1, payout: 600, isSelfReturn: true },
+                ],
+                bonusDrops: [{ itemHrid: '/items/ess', dropRate: 0.1, count: 2, payout: 1000 }],
+            },
+            800
+        );
+
+        // EV: x = 600*0.5 = 300, self-return = 300, ess = 1000*0.1 = 100. The self-return is not a
+        // tracked item, but getting the input back offsets cost, so it stays in the denominator:
+        // shares 300/700 and 100/700
+        expect(items.map((i) => i.itemHrid)).toEqual(['/items/x', '/items/ess']);
+        expect(items[0].quantityPerAction).toBe(0.5);
+        expect(items[1].quantityPerAction).toBe(0.2);
+        expect(items[0].costShare).toBeCloseTo((800 * 300) / 700, 6);
+        expect(items[1].costShare).toBeCloseTo((800 * 100) / 700, 6);
+    });
+});
+
+describe('protection-substitute proxy price', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+        document.body.innerHTML = '';
+    });
+
+    test('an unpriced drop that is not a substitute stays a dash', () => {
+        suggestProtectionSubstituteProxyPrice.mockReturnValue(null);
+
+        expect(riskOfRuinUI._protectionSubstituteCellHTML({ itemHrid: '/items/jade' })).toBe('—');
+    });
+
+    test('a substitute shows the suggested price, its source, and an Apply button carrying the price', () => {
+        suggestProtectionSubstituteProxyPrice.mockReturnValue({
+            price: 192000,
+            viaItemHrid: '/items/mirror_of_protection',
+        });
+
+        const html = riskOfRuinUI._protectionSubstituteCellHTML({ itemHrid: '/items/chimerical_quiver' });
+
+        expect(html).toContain('192,000');
+        expect(html).toContain('mwi-ror-apply-substitute-price');
+        expect(html).toContain('data-item-hrid="/items/chimerical_quiver"');
+        expect(html).toContain('data-suggested-price="192000"');
+    });
+
+    test('rendering a suggestion never writes an override by itself', () => {
+        suggestProtectionSubstituteProxyPrice.mockReturnValue({
+            price: 192000,
+            viaItemHrid: '/items/mirror_of_protection',
+        });
+
+        riskOfRuinUI._protectionSubstituteCellHTML({ itemHrid: '/items/chimerical_quiver' });
+
+        expect(setCustomPriceOverride).not.toHaveBeenCalled();
+    });
+
+    test('one Apply click saves one sell-side override at level 0 and reruns the calculation', async () => {
+        const runSpy = vi.spyOn(riskOfRuinUI, '_run').mockImplementation(() => {});
+        document.body.innerHTML =
+            '<button class="mwi-ror-apply-substitute-price" data-item-hrid="/items/chimerical_quiver" data-suggested-price="192000"></button>';
+        const button = document.querySelector('.mwi-ror-apply-substitute-price');
+
+        await riskOfRuinUI._handleApplySubstitutePriceClick({ target: button });
+
+        expect(setCustomPriceOverride).toHaveBeenCalledTimes(1);
+        expect(setCustomPriceOverride).toHaveBeenCalledWith('/items/chimerical_quiver', 0, null, 192000);
+        expect(runSpy).toHaveBeenCalled();
+        runSpy.mockRestore();
+    });
+
+    test('applying the suggested sell price keeps a buy-side override the player already set', async () => {
+        const runSpy = vi.spyOn(riskOfRuinUI, '_run').mockImplementation(() => {});
+        storedOverrides.map = { '/items/chimerical_quiver:0': { buy: 150000 } };
+        document.body.innerHTML =
+            '<button class="mwi-ror-apply-substitute-price" data-item-hrid="/items/chimerical_quiver" data-suggested-price="192000"></button>';
+
+        await riskOfRuinUI._handleApplySubstitutePriceClick({
+            target: document.querySelector('.mwi-ror-apply-substitute-price'),
+        });
+
+        expect(setCustomPriceOverride).toHaveBeenCalledWith('/items/chimerical_quiver', 0, 150000, 192000);
+        storedOverrides.map = {};
+        runSpy.mockRestore();
+    });
+
+    test('a click anywhere else, or on a button with a bad price, saves nothing', async () => {
+        const runSpy = vi.spyOn(riskOfRuinUI, '_run').mockImplementation(() => {});
+        document.body.innerHTML =
+            '<div id="x"></div><button class="mwi-ror-apply-substitute-price" data-item-hrid="/items/q" data-suggested-price="abc"></button>';
+
+        await riskOfRuinUI._handleApplySubstitutePriceClick({ target: document.querySelector('#x') });
+        await riskOfRuinUI._handleApplySubstitutePriceClick({
+            target: document.querySelector('.mwi-ror-apply-substitute-price'),
+        });
+
+        expect(setCustomPriceOverride).not.toHaveBeenCalled();
+        expect(runSpy).not.toHaveBeenCalled();
+        runSpy.mockRestore();
     });
 });

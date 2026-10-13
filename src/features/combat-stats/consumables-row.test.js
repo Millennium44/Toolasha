@@ -28,7 +28,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('./combat-stats-data-collector.js', () => ({ default: { getLatestData: () => null } }));
-vi.mock('./combat-stats-calculator.js', () => ({ calculatePlayerStats: () => ({}), describeLuckAdjustment: () => '' }));
+vi.mock('./combat-stats-calculator.js', () => ({
+    valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
+    calculatePlayerStats: () => ({}),
+    describeLuckAdjustment: () => '',
+}));
 vi.mock('../../utils/consumable-forecast.js', () => ({
     forecastAll: () => [],
     drinkRatePerDay: () => 0,

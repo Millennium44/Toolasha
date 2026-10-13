@@ -42,6 +42,7 @@ vi.mock('./combat-stats-data-collector.js', () => ({
 // The real calculator prices a loot map through the market; a stub keeps this
 // file about the cache rather than about pricing arithmetic
 vi.mock('./combat-stats-calculator.js', () => ({
+    valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
     calculatePlayerStats: (player) => ({
         name: player.name,
         isCurrentPlayer: player.isCurrentPlayer,

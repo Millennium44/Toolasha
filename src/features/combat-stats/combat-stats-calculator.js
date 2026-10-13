@@ -90,7 +90,7 @@ export function describeLuckAdjustment(adjustment) {
  * @param {Object} loot - One entry from a lootMap (`{itemHrid, count}`)
  * @returns {{ask: number, bid: number, value: number}}
  */
-function valueOfLoot(loot) {
+export function valueOfLoot(loot) {
     const itemCount = loot.count;
 
     // Coins are revenue at face value (1 coin = 1 gold), on every reading

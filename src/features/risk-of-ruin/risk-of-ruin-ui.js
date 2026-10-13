@@ -33,6 +33,8 @@ import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/al
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
+import { setCustomPriceOverride, getCustomPriceOverridesAsync } from '../settings/custom-price-overrides.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -421,9 +423,32 @@ class RiskOfRuinUI {
 
         this.panel.querySelector('#mwi-ror-mode').addEventListener('change', () => this._renderModeInputs());
         this.panel.querySelector('#mwi-ror-run').addEventListener('click', () => this._run());
+        this.panel.addEventListener('click', (e) => this._handleApplySubstitutePriceClick(e));
 
         this._populateItemLists();
         this._renderModeInputs();
+    }
+
+    /**
+     * Delegated handler for the "Apply" button beside a protection-substitute drop's suggested
+     * price. One click saves that one suggestion through the Custom Price Overrides record (the
+     * path a hand-entered override takes), then reruns the calculation so the cost, EV and
+     * depth-cap context pick up the new price. Nothing else ever writes an override from here.
+     * @param {MouseEvent} e
+     */
+    async _handleApplySubstitutePriceClick(e) {
+        const button = e.target.closest?.('.mwi-ror-apply-substitute-price');
+        if (!button) return;
+
+        const price = Number(button.dataset.suggestedPrice);
+        if (!button.dataset.itemHrid || !(price > 0)) return;
+
+        // A double click must not write twice
+        button.disabled = true;
+        // The setter replaces the whole entry, so carry any buy-side override the player set
+        const existing = (await getCustomPriceOverridesAsync())?.[`${button.dataset.itemHrid}:0`];
+        await setCustomPriceOverride(button.dataset.itemHrid, 0, existing?.buy ?? null, price);
+        this._run();
     }
 
     _bodyHTML() {
@@ -564,7 +589,11 @@ class RiskOfRuinUI {
      * The last computed cost-per-action + per-item output quantities, for market-depth-cap.js to
      * check the currently-viewed marketplace item against. Null when the enhanced item is
      * untradeable, or nothing has been calculated yet.
-     * @returns {{costPerAction: number, items: Array<{itemHrid: string, quantityPerAction: number}>}|null}
+     * @returns {{costPerAction: number, items: Array<{itemHrid: string, quantityPerAction: number, costShare?: number}>}|null}
+     *   costShare, when present (chest/alchemy modes), is this item's share of costPerAction by its
+     *   share of total expected value - market-depth-cap.js prefers it over the shared costPerAction,
+     *   since no single multi-output drop alone needs to recoup the whole action cost. Absent for
+     *   single-output modes (enhancement), where the full cost is correct.
      */
     getDepthCapContext() {
         return this.lastDepthCapContext;
@@ -621,9 +650,7 @@ class RiskOfRuinUI {
             };
             this.lastDepthCapContext = {
                 costPerAction: chestModel.cost,
-                items: dropBreakdown
-                    .filter((d) => d.dropRate > 0 && d.avgCount > 0)
-                    .map((d) => ({ itemHrid: d.itemHrid, quantityPerAction: d.avgCount * d.dropRate })),
+                items: this._chestDepthCapItems(dropBreakdown, chestModel.cost),
             };
             optimalCommit = calculateOptimalCommit({
                 outcomeDistribution: chestModel.outcomeDistribution,
@@ -669,7 +696,7 @@ class RiskOfRuinUI {
             detailInfo = { mode: 'alchemy', breakdown: alchemyModel.breakdown };
             this.lastDepthCapContext = {
                 costPerAction: alchemyModel.cost,
-                items: this._alchemyDepthCapItems(alchemyModel.breakdown),
+                items: this._alchemyDepthCapItems(alchemyModel.breakdown, alchemyModel.cost),
             };
             detailInfo.untrackedOutputs = this._findUntrackedAlchemyOutputs(hrid, alchemyModel.breakdown);
             optimalCommit = calculateOptimalCommit({
@@ -767,26 +794,70 @@ class RiskOfRuinUI {
     }
 
     /**
-     * Recover the raw per-attempt output quantity for each item a Transmute attempt can produce,
-     * for market-depth-cap.js — main branches are conditional on success (successRate * dropRate),
-     * bonus drops (essence/rare) are independent per-attempt Bernoulli events already unconditional.
-     * @param {Object} breakdown - alchemyModel.breakdown from buildAlchemyTransmuteModel().
-     * @returns {Array<{itemHrid: string, quantityPerAction: number}>}
+     * Depth-cap tracking items for chest mode, charging each drop its share of costPerAction by
+     * its share of total expected value rather than the whole action cost - no single drop of a
+     * multi-output chest recoups the whole cost, so charging it to each meant the widget never
+     * showed. Collapses to the full cost for a single tracked item. Unpriced drops are excluded
+     * (a zero-EV item would get a zero cost share and falsely look like unlimited depth).
+     * @param {Array} dropBreakdown - expectedValueCalculator.getDropBreakdown() output.
+     * @param {number} costPerAction
+     * @returns {Array<{itemHrid: string, quantityPerAction: number, costShare: number}>}
      */
-    _alchemyDepthCapItems(breakdown) {
-        const items = [];
+    _chestDepthCapItems(dropBreakdown, costPerAction) {
+        const tracked = dropBreakdown.filter((d) => d.dropRate > 0 && d.avgCount > 0 && d.hasPriceData);
+        const totalEV = tracked.reduce((sum, d) => sum + d.expectedValue, 0);
+        return tracked.map((d) => ({
+            itemHrid: d.itemHrid,
+            quantityPerAction: d.avgCount * d.dropRate,
+            costShare: totalEV > 0 ? costPerAction * (d.expectedValue / totalEV) : costPerAction,
+        }));
+    }
+
+    /**
+     * Recover the raw per-attempt output quantity for each item a Transmute attempt can produce,
+     * for market-depth-cap.js - main branches are conditional on success (successRate * dropRate),
+     * bonus drops (essence/rare) are independent per-attempt Bernoulli events already unconditional.
+     * Also attributes costPerAction by each item's share of total expected value, as for chests;
+     * branch/bonus `payout` is per occurrence, so it is multiplied back by its own trigger
+     * probability to recover the item's per-action EV.
+     * @param {Object} breakdown - alchemyModel.breakdown from buildAlchemyTransmuteModel().
+     * @param {number} costPerAction
+     * @returns {Array<{itemHrid: string, quantityPerAction: number, costShare: number}>}
+     */
+    _alchemyDepthCapItems(breakdown, costPerAction) {
+        const candidates = [];
+        // A self-return branch is not sold (no market item to track), but getting the input back
+        // offsets the cost, so its value still counts in the denominator the shares are taken from
+        let selfReturnEV = 0;
         for (const branch of breakdown.mainBranches) {
-            if (branch.isSelfReturn || !(branch.count > 0)) continue;
-            items.push({
+            if (branch.isSelfReturn && branch.count > 0) {
+                const value = branch.payout * breakdown.successRate * branch.dropRate;
+                if (value > 0) selfReturnEV += value;
+                continue;
+            }
+            if (!(branch.count > 0)) continue;
+            candidates.push({
                 itemHrid: branch.itemHrid,
                 quantityPerAction: breakdown.successRate * branch.dropRate * branch.count,
+                expectedValue: branch.payout * breakdown.successRate * branch.dropRate,
             });
         }
         for (const bonus of breakdown.bonusDrops) {
             if (!(bonus.count > 0)) continue;
-            items.push({ itemHrid: bonus.itemHrid, quantityPerAction: bonus.dropRate * bonus.count });
+            candidates.push({
+                itemHrid: bonus.itemHrid,
+                quantityPerAction: bonus.dropRate * bonus.count,
+                expectedValue: bonus.payout * bonus.dropRate,
+            });
         }
-        return items;
+
+        const tracked = candidates.filter((c) => c.expectedValue > 0);
+        const totalEV = tracked.reduce((sum, c) => sum + c.expectedValue, 0) + selfReturnEV;
+        return tracked.map((c) => ({
+            itemHrid: c.itemHrid,
+            quantityPerAction: c.quantityPerAction,
+            costShare: totalEV > 0 ? costPerAction * (c.expectedValue / totalEV) : costPerAction,
+        }));
     }
 
     /**
@@ -979,7 +1050,9 @@ class RiskOfRuinUI {
                         <td style="padding:2px 6px;">${drop.itemName}${drop.dropRate === 1 ? ' (guaranteed)' : ''}</td>
                         <td style="padding:2px 6px; text-align:right;">${formatPercentage(drop.dropRate, 2)}</td>
                         <td style="padding:2px 6px; text-align:right;">${drop.avgCount}</td>
-                        <td style="padding:2px 6px; text-align:right;">${drop.hasPriceData ? fmtGold(drop.priceEach) : '—'}</td>
+                        <td style="padding:2px 6px; text-align:right;">${
+                            drop.hasPriceData ? fmtGold(drop.priceEach) : this._protectionSubstituteCellHTML(drop)
+                        }</td>
                         <td style="padding:2px 6px; text-align:right;">${fmtGold(drop.expectedValue)}</td>
                     </tr>`
             )
@@ -1001,6 +1074,25 @@ class RiskOfRuinUI {
                     true
                 )
         );
+    }
+
+    /**
+     * For an unpriced drop that is a known enhancement-protection substitute (e.g. a quiver usable
+     * in place of a Mirror of Protection), suggest a proxy sell price taken from the universal
+     * protection item, with an Apply button that saves it as a custom price override.
+     * @param {Object} drop - A dropBreakdown entry with hasPriceData === false.
+     * @returns {string}
+     */
+    _protectionSubstituteCellHTML(drop) {
+        const suggestion = suggestProtectionSubstituteProxyPrice(drop.itemHrid);
+        if (!suggestion) return '—';
+
+        const viaName = dataManager.getItemDetails(suggestion.viaItemHrid)?.name || suggestion.viaItemHrid;
+        return `<span style="color:#888; font-style:italic;" title="This item has no market price, but it is a known substitute for this enhancement-protection item, so it has real value - click Apply to use that as its price.">≈ ${fmtGold(suggestion.price)} via ${viaName}</span>
+        <button type="button" class="mwi-ror-apply-substitute-price" data-item-hrid="${drop.itemHrid}" data-suggested-price="${suggestion.price}" style="
+            margin-left:4px; font-size:10px; padding:1px 5px; cursor:pointer;
+            background:rgba(96,165,250,0.15); border:1px solid rgba(96,165,250,0.4); border-radius:4px; color:#60a5fa;
+        ">Apply</button>`;
     }
 
     _alchemyDetailsHTML({ breakdown }, startingBalance, maxSinglePossibleLoss, minActions) {

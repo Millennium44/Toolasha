@@ -55,6 +55,7 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
     loadSessions: async () => game.archived,
 }));
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
+    valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
     calculatePlayerStats: () => game.stats,
 }));
 vi.mock('./prediction-calibration.js', () => ({

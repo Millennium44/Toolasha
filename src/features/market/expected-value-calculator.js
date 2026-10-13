@@ -531,6 +531,21 @@ class ExpectedValueCalculator {
     }
 
     /**
+     * A drop item's sell-side price and tax contract in one call, for callers that need the
+     * resolved figure without a whole container breakdown (e.g. proxying one item's price from
+     * another's). Same resolver as every drop row, so pricing mode, custom overrides and the
+     * Iron Cow valuation all apply.
+     * @param {string} itemHrid - Item HRID
+     * @returns {{value: number|null, needsTax: boolean}} value is null when the item cannot be priced
+     */
+    getDropPriceInfo(itemHrid) {
+        const resolved = this.resolveSellSideValue(itemHrid, 0);
+        return resolved
+            ? { value: resolved.value, needsTax: resolved.needsTax || false }
+            : { value: null, needsTax: false };
+    }
+
+    /**
      * Resolve a buy-side economic value — the mirror of resolveSellSideValue, for something
      * being consumed or lost rather than gained. Never taxed, because nothing is being sold.
      * An openable container is valued at its ordinary buy price here, not its expected value:
