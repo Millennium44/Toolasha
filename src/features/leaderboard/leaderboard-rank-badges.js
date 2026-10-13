@@ -157,7 +157,15 @@ function hasFutureBoard(stored) {
     return Object.values(stored).some((board) => Number.isFinite(board?.at) && board.at > now);
 }
 
-registerSyncMerge({ store: STORE_NAME, key: STORAGE_KEY, merge: mergeBoards, label: 'Leaderboard rank badges' });
+registerSyncMerge({
+    store: STORE_NAME,
+    key: STORAGE_KEY,
+    merge: mergeBoards,
+    label: 'Leaderboard rank badges',
+    // Every write goes through `this.record`, a plain persisted record that folds stored under memory; the one
+    // overwrite (restart, after a future-dated board was capped) is a one-time repair
+    liveSafe: true,
+});
 
 /**
  * Tooltip text for a player's entries.

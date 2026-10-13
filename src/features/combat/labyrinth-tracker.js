@@ -42,6 +42,8 @@ registerSyncMerge({
     base: STORAGE_KEY_PREFIX,
     merge: mergeBestLevels,
     label: 'Labyrinth best levels',
+    // The only writer is `this.record`, a plain persisted record; a stale memory copy can only be raised by the fold
+    liveSafe: true,
 });
 
 const COMBAT_ROOM_TYPE = '/labyrinth_room_types/combat';

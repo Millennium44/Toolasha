@@ -189,6 +189,8 @@ registerSyncMerge({
     // sample this device had thinned since it uploaded them (see the module)
     pull: (local, incoming) => foldXPSeriesForPull(local, incoming, { windowMs: WINDOW_1W, recentMs: WINDOW_10M }),
     label: 'Skill XP history',
+    // The only writer is `this.history`, a plain persisted record that folds stored under memory
+    liveSafe: true,
 });
 
 /**

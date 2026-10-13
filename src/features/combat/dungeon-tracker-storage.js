@@ -1899,6 +1899,8 @@ registerSyncMerge({
     key: RUNS_DATE_REPAIR_KEY,
     merge: mergeClearEpochs,
     label: 'Dungeon run date-order repair',
+    // Written once, by `repairSwappedDateRuns`, as a bare stamp that never goes backwards
+    liveSafe: true,
 });
 
 /*
@@ -1912,6 +1914,9 @@ registerSyncMerge({
     key: AVERAGE_BASELINE_KEY,
     merge: mergeAverageBaselines,
     label: 'Dungeon average baselines',
+    // The only writer, `setAverageBaseline`, probes the stored map and folds it under the cache before an
+    // immediate write; the cache only lags a pulled marker until the next mark
+    liveSafe: true,
 });
 
 export default dungeonTrackerStorage;

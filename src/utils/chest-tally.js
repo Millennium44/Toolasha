@@ -266,7 +266,14 @@ export function mergeStoredTally(stored, memory) {
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See sync-merge-registry.js.
  */
-registerSyncMerge({ store: 'settings', base: 'treasureTally', merge: mergeStoredTally, label: 'Treasure tally' });
+registerSyncMerge({
+    store: 'settings',
+    base: 'treasureTally',
+    merge: mergeStoredTally,
+    label: 'Treasure tally',
+    // The only writer is the tracker's `ledger`, a plain persisted record; the overwrites are the user's reset/import
+    liveSafe: true,
+});
 
 /**
  * What one chest owes on average, per item.

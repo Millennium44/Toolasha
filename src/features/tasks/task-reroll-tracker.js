@@ -128,6 +128,8 @@ registerSyncMerge({
     base: HISTORY_KEY,
     merge: mergeHistory,
     label: 'Task reroll history',
+    // The only writer is `historyRecord`, a plain persisted record that folds stored under memory
+    liveSafe: true,
 });
 
 class TaskRerollTracker {

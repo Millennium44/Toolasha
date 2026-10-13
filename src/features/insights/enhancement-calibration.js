@@ -82,6 +82,8 @@ registerSyncMerge({
     base: 'calibrationEnhancing',
     merge: mergeEnhancementRecords,
     label: 'Enhancement calibration',
+    // Every write goes through the per-character persisted record; only the user's Clear overwrites
+    liveSafe: true,
 });
 
 /** Keep a pending storage operation bound to the character that requested it. */

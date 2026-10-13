@@ -2415,6 +2415,9 @@ registerSyncMerge({
     key: ANCHORS_KEY,
     merge: mergeAnchorPools,
     label: 'Market listing anchors',
+    // Writers: `_persistAnchors` folds inside the write's own transaction; `loadAnchors` writes only a pool it just
+    // built from a read of the same key, at load
+    liveSafe: true,
 });
 
 /*
@@ -2427,6 +2430,8 @@ registerSyncMerge({
     base: GRAVES_BASE,
     merge: (local, incoming) => mergeListingGraves(local, incoming),
     label: 'Market listing deletions',
+    // The only writer, `_recordGraves`, probes the stored map and folds it in before an immediate write
+    liveSafe: true,
 });
 
 export default estimatedListingAge;

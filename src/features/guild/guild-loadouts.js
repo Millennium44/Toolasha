@@ -605,6 +605,8 @@ registerSyncMerge({
     prefix: `${LOADOUT_KEY_PREFIX}_`,
     merge: mergeLoadoutRecords,
     label: 'Guild loadout sightings',
+    // The only writer is `saveLoadouts`, which folds with `mergeLoadoutRecords` inside the write's own transaction
+    liveSafe: true,
 });
 
 /** The last list built, and the two inputs it was built from */

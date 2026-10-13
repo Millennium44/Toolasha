@@ -283,6 +283,8 @@ registerSyncMerge({
     prefix: `${RECORD_PREFIX}_`,
     merge: mergeRecords,
     label: 'Trade ledger fills (daily)',
+    // `saveRecords` probes each day record and writes it with a fold, so a pulled copy is merged, not written over
+    liveSafe: true,
 });
 registerSyncMerge({ store: LEDGER_STORE, base: STATE_BASE, merge: mergeStates, label: 'Trade ledger baselines' });
 

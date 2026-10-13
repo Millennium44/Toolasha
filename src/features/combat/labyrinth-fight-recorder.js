@@ -468,7 +468,14 @@ const record = createPersistedRecord({
  * earliest pull (the staggered startup pull, 20s+ after load), so the registry
  * is complete by the time sync consults it. See utils/sync-merge-registry.js.
  */
-registerSyncMerge({ store: STORE, base: KEY, merge: mergeAttempts, label: 'Labyrinth fights' });
+registerSyncMerge({
+    store: STORE,
+    base: KEY,
+    merge: mergeAttempts,
+    label: 'Labyrinth fights',
+    // Every write goes through `record`, a plain persisted record saved by `persist`, which folds stored under memory
+    liveSafe: true,
+});
 
 // Memory keeps the pool EXPANDED: every record holds its saved build, shared
 // by reference so one object serves every fight of that build. The stored form
