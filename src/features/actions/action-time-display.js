@@ -203,8 +203,14 @@ const QUEUE_EDIT_MENU_CSS = `
     max-width: 100%;
 }
 .${QUEUE_EDIT_MENU_MARKER_CLASS} [class*="QueuedActions_actionText"] {
+    flex: 1 1 0%;
     min-width: 0;
     overflow-wrap: anywhere;
+}
+/* flex-basis:0 keeps the row's line-fit check from treating a long "Complete at" date as a
+   reason to wrap the whole row; if a row still wraps, pin the delete button to the right edge. */
+.${QUEUE_EDIT_MENU_MARKER_CLASS} [class*="QueuedActions_action__"] [class*="Button_warning__"] {
+    margin-left: auto;
 }
 `;
 
