@@ -317,6 +317,16 @@ describe('costing a target', () => {
         expect(target.cost).toBe(100_000_000 - 38_400_000);
     });
 
+    test('the trade-in is floored to whole coins, as the game floors a per-unit sale', () => {
+        game.prices['/items/cheese_sword:0'] = { ask: 45_000_000, bid: 101 };
+        watchTarget('/items/holy_sword');
+        const [target] = watchedTargets();
+
+        // 101 at 4% tax is 96.96: the game pays 96
+        expect(target.worn.bid).toBe(96);
+        expect(target.cost).toBe(100_000_000 - 96);
+    });
+
     test('an empty slot has nothing to trade in', () => {
         watchTarget('/items/rough_boots');
         expect(watchedTargets()[0].cost).toBe(5_000_000);

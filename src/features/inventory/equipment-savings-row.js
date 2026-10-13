@@ -1061,12 +1061,13 @@ function nameOf(itemHrid) {
  * cannot apply here.)
  *
  * @param {{itemHrid: string, enhancementLevel?: number}|null} worn - The worn item
- * @returns {number} After-tax coins
+ * @returns {number} After-tax whole coins
  */
 function wornTradeIn(worn) {
     if (!worn) return 0;
     const bid = getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0;
-    return bid > 0 ? calculatePriceAfterTax(bid) : 0;
+    // The game floors the after-tax price of a sale to whole coins per unit
+    return bid > 0 ? Math.floor(calculatePriceAfterTax(bid)) : 0;
 }
 
 /**
