@@ -17,12 +17,12 @@
  */
 
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
 import {
     calculateDungeonTokenValue,
     calculateLabyrinthTokenValueDetail,
     DUNGEON_TOKEN_HRIDS,
 } from '../../utils/token-valuation.js';
-import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -54,20 +54,15 @@ let evStartInFlight = false;
  * enqueued another full pass and another completion event. The flag clears when the start
  * settles, so a start that failed (no data yet) can be retried by a later valuation.
  */
-function startExpectedValueCalculator() {
+async function startExpectedValueCalculator() {
     if (expectedValueCalculator.isInitialized || evStartInFlight) return;
     evStartInFlight = true;
-    const clear = () => {
-        evStartInFlight = false;
-    };
     try {
-        Promise.resolve(expectedValueCalculator.initialize?.()).then(clear, (error) => {
-            console.error('[LootLogCurrency] Expected value start failed:', error);
-            clear();
-        });
+        await expectedValueCalculator.initialize?.();
     } catch (error) {
         console.error('[LootLogCurrency] Expected value start failed:', error);
-        clear();
+    } finally {
+        evStartInFlight = false;
     }
 }
 
