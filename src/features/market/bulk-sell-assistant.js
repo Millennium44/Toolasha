@@ -57,6 +57,25 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 
+/**
+ * The coin total printed on the item menu's vendor button, whatever language the game is in: the first number,
+ * with its magnitude letter if it carries one ("863K"). The words around it are never read.
+ */
+const VENDOR_AMOUNT = /\d[\d.,]*[kmbtq]?(?![a-z])/i;
+
+/**
+ * Read a vendor-menu button's label without depending on its words.
+ * @param {Element} button - A button in the item action menu
+ * @returns {{amount: string, shape: string}|null} The printed total, and the label with that total blanked out
+ *   (the part that changes when the button arms); null when the label has no number, so is not the vendor button
+ */
+function vendorLabel(button) {
+    const text = String(button?.textContent ?? '').trim();
+    const found = text.match(VENDOR_AMOUNT);
+    if (!found) return null;
+    return { amount: found[0].replace(/[.,]+$/, ''), shape: text.replace(found[0], '#').toLowerCase() };
+}
+
 /** Bound on waiting for the vendor button to relabel after its arming click */
 const VENDOR_ARM_WAIT_MS = 1000;
 const VENDOR_ARM_POLL_MS = 50;
@@ -1189,20 +1208,20 @@ class BulkSellAssistant {
             return { why: `the item menu says ${quantity}, not the queued ${this.current.count}` };
         }
 
-        const button = Array.from(menu.querySelectorAll('button')).find(
-            (btn) =>
-                !String(btn.className || '').includes('mwi-') &&
-                /^(confirm\s+)?sell for\b/i.test(btn.textContent.trim())
+        // Found by the number it prints, not by its words, so a game running in Chinese is read the same
+        // way: no other button in this menu carries a figure. Several would be a menu this does not know.
+        const found = Array.from(menu.querySelectorAll('button')).filter(
+            (btn) => !String(btn.className || '').includes('mwi-') && vendorLabel(btn)
         );
+        const button =
+            found.length <= 1
+                ? found[0]
+                : found.find((btn) => String(btn.className || '').includes('Button_sell')) ||
+                  found.find((btn) => /^(confirm\s+)?sell for\b/i.test(btn.textContent.trim()));
         if (!button) return { why: "the item menu's Sell For button was not found" };
-        // "Confirm Sell For N Coins" is the same button after its arming click
-        const armed = /^confirm\b/i.test(button.textContent.trim());
+        const armed = this._vendorButtonArmed(button);
 
-        const amount = button.textContent
-            .trim()
-            .replace(/^(confirm\s+)?sell for/i, '')
-            .replace(/coins?\s*$/i, '')
-            .trim();
+        const amount = vendorLabel(button).amount;
         const shown = parseKMB(amount);
         const expected = this.current.count * (this.decision?.price || 0);
         if (!Number.isFinite(shown) || !(expected > 0)) return { why: 'the Sell For amount cannot be read' };
@@ -1217,6 +1236,25 @@ class BulkSellAssistant {
             return { why: `Sell For says ${amount}, not the queued ${formatKMB(expected)}` };
         }
         return { button, armed };
+    }
+
+    /**
+     * Whether the vendor button has been armed (relabeled by its first click). The English label says so
+     * outright ("Confirm Sell For"); in any other language the label's words are not known, so the button
+     * is armed once its label, with the total blanked out, no longer matches the one first seen on it.
+     * @param {HTMLButtonElement} button - The vendor button
+     * @returns {boolean}
+     */
+    _vendorButtonArmed(button) {
+        if (/^confirm\b/i.test(button.textContent.trim())) return true;
+        const shape = vendorLabel(button)?.shape;
+        if (!this._vendorShapes) this._vendorShapes = new WeakMap();
+        const first = this._vendorShapes.get(button);
+        if (first === undefined) {
+            this._vendorShapes.set(button, shape);
+            return false;
+        }
+        return shape !== first;
     }
 
     /**
@@ -1354,7 +1392,7 @@ class BulkSellAssistant {
             watch.menuClicked = true;
             const sold = event.target.closest('button');
             const early = watch.armedAt !== null && Date.now() - watch.armedAt < VENDOR_CONFIRM_SETTLE_MS;
-            if (sold && !early && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
+            if (sold && !early && vendorLabel(sold) && this._vendorButtonArmed(sold)) {
                 this._confirmedStep = key;
                 this._guardSale(sold);
                 this._render();
@@ -1376,7 +1414,7 @@ class BulkSellAssistant {
         this._vendorArmedAt = null;
         const onClick = (event) => {
             const button = event.target?.closest?.('[class*="Item_actionMenu"] button');
-            if (button && /^sell for\b/i.test(button.textContent.trim())) this._vendorArmedAt = Date.now();
+            if (button && vendorLabel(button) && !this._vendorButtonArmed(button)) this._vendorArmedAt = Date.now();
         };
         document.addEventListener('click', onClick, true);
         this._vendorArmTracker = onClick;
@@ -1395,7 +1433,7 @@ class BulkSellAssistant {
         this._confirmedStep = this._stepKey();
         this._render();
         // Read before the click: the label is what says this is the vendor sale
-        const vendorSale = /^confirm\s+sell for\b/i.test(button.textContent.trim());
+        const vendorSale = !!this.decision?.vendor && !!vendorLabel(button);
         // The vendor's Confirm Sell For handler ignores a click without isTrusted (measured on the
         // test server, 2026-10-02), as the task reroll spend buttons do, so it is pressed through the
         // game's React handler the way the reroll walk presses those. Still one press of ours for one
@@ -1491,13 +1529,13 @@ class BulkSellAssistant {
         const menuOpen = () => !!document.querySelector('[class*="Item_actionMenu"]');
         const onClick = (event) => {
             const target = event.target?.closest?.('[class*="Item_actionMenu"] button');
-            if (!target || !/^(confirm\s+)?sell for\b/i.test(target.textContent.trim())) return;
+            if (!target || !vendorLabel(target)) return;
             event.preventDefault();
             event.stopImmediatePropagation();
         };
         document.addEventListener('click', onClick, true);
         const poll = setInterval(() => {
-            const armed = sold?.isConnected && /^confirm\s+sell for\b/i.test(sold.textContent.trim());
+            const armed = sold?.isConnected && this._vendorButtonArmed(sold);
             if (!menuOpen() || !armed) this._releaseSaleGuard();
         }, 100);
         this._saleGuard = { onClick, poll };

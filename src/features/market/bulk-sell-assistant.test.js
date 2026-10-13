@@ -1262,12 +1262,17 @@ describe('confirming from the strip', () => {
             const sell = document.createElement('button');
             sell.className = 'Button_button__1Fe9z Button_sell__x';
             sell.textContent = label;
+            // Whether the game considers the button armed is its own state, not something read off the words
+            let armedNow = /^confirm/i.test(label ?? '');
             sell.addEventListener('click', () => {
-                if (/^confirm/i.test(sell.textContent)) {
+                if (armedNow) {
                     gameClicks++;
                 } else {
                     armClicks++;
-                    if (!neverArms) sell.textContent = armedLabel;
+                    if (!neverArms) {
+                        sell.textContent = armedLabel;
+                        armedNow = true;
+                    }
                 }
             });
             menu.append(input, all);
@@ -1626,6 +1631,46 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(0);
             expect(bulkSell.confirmNote).toMatch(/did not arm in time/);
             expect(bulkSell._confirmSent()).toBe(false);
+        });
+
+        describe('with the game in another language', () => {
+            const CN = { label: '出售 400K 金币', armedLabel: '确认出售 400K 金币' };
+
+            test('an unarmed button is found by its figure, armed by one click, then sold by one more', async () => {
+                openMenu(CN);
+                vendorRun();
+                expect(bulkSell._confirmTarget().why).toBeUndefined();
+
+                await pressAndSettle();
+                expect(armClicks).toBe(1);
+                expect(gameClicks).toBe(1);
+                expect(reactClicks.calls.at(-1).element.textContent).toBe('确认出售 400K 金币');
+            });
+
+            test('the total is still checked against the queued one', async () => {
+                openMenu({ label: '出售 410K 金币', armedLabel: '确认出售 410K 金币' });
+                vendorRun();
+
+                await pressAndSettle();
+                expect(gameClicks).toBe(0);
+                expect(armClicks).toBe(0);
+                expect(bulkSell.confirmNote).toMatch(/says 410K/);
+            });
+
+            test('a button that never relabels is not taken for armed', async () => {
+                openMenu({ ...CN, neverArms: true });
+                vendorRun();
+
+                await pressAndSettle();
+                expect(gameClicks).toBe(0);
+                expect(bulkSell.confirmNote).toMatch(/did not arm in time/);
+            });
+
+            test('a menu with no button carrying a figure still stops at "not found"', () => {
+                openMenu({ label: '出售' });
+                vendorRun();
+                expect(bulkSell._confirmTarget().why).toMatch(/Sell For button was not found/);
+            });
         });
 
         test.each([
