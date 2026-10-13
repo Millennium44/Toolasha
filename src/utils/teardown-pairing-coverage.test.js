@@ -328,6 +328,10 @@ const KNOWN_SAFE = {
         'A registered feature (`entrypoint.js` key `expectedValueCalculator`), so the registry owns both ends ' +
         'of its lifecycle; `ensureMarketDataInitialized()` only makes sure it is up before asking it for a ' +
         'container value.',
+    'src/features/actions/loot-log-currency.js#expectedValueCalculator':
+        'Same as task-profit-display: a registered feature (`entrypoint.js` key `expectedValueCalculator`) the ' +
+        'registry owns; the loot log only makes sure it is up before asking it for a task-token value, and ' +
+        'what it holds is price-derived caches it invalidates itself, not character data.',
     'src/features/ui/command-palette.js#pformancePanel':
         'Deliberate, and documented at the call site: `disable()` would also take the panel off the page, and ' +
         'the palette’s `cleanup()` runs on every character switch — a diagnostic the user is watching must ' +

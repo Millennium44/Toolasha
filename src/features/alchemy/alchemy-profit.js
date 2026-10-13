@@ -59,7 +59,7 @@ export function parseDropCountAndRate(text, dropRateFromGameData) {
     if (dropRateFromGameData !== null && dropRateFromGameData !== undefined) {
         dropRate = dropRateFromGameData;
     } else {
-        const rateMatch = raw.match(new RegExp(`~?(${gameDigitsSource()})%`));
+        const rateMatch = raw.match(new RegExp(`~?(${gameDigitsSource({ grouping: false })})%`));
         dropRate = rateMatch ? parseGameNumber(rateMatch[1]) / 100 || 1 : 1;
     }
 

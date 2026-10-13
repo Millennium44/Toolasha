@@ -19,6 +19,7 @@ import { LootLogStats } from './loot-log-stats.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
+import dataManager from '../../core/data-manager.js';
 import lootLogHistory from './loot-log-history.js';
 
 vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
@@ -35,12 +36,14 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(() => () => {}) } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getActionDetails: vi.fn(), getItemDetails: vi.fn() },
+    default: { getActionDetails: vi.fn(), getItemDetails: vi.fn(), on: vi.fn(), off: vi.fn() },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn() }));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: vi.fn() },
 }));
+vi.mock('./loot-log-currency.js', () => ({ resolveCurrencyValue: vi.fn(() => null) }));
+
 vi.mock('./loot-log-history.js', () => ({
     default: {
         mergeAndSave: vi.fn(),
@@ -224,5 +227,59 @@ describe('LootLogStats: switching either part live', () => {
 
         expect(lootLogHistory.mergeAndSave).not.toHaveBeenCalled();
         expect(document.querySelector('.mwi-loot-log-history')).toBeNull();
+    });
+});
+
+describe('LootLogStats: rows drawn before the expected-value calculator finished starting', () => {
+    let stats;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        config.getSetting.mockImplementation((key) => key === 'lootLogStats');
+        document.body.innerHTML =
+            '<div class="LootLogPanel_actionLoot__32gl_" data-mwi-loot-log-stamp="1|1"><div></div><div></div><div></div></div>';
+        stats = new LootLogStats();
+    });
+
+    const evHandler = () => dataManager.on.mock.calls.find((call) => call[0] === 'expected_value_initialized')?.[1];
+
+    test('redraws stamped rows once the calculator reports it is ready', async () => {
+        await stats.initialize();
+        const processSpy = vi.spyOn(stats, 'processLootLogElement').mockImplementation(() => {});
+        const row = document.querySelector('.LootLogPanel_actionLoot__32gl_');
+
+        expect(evHandler()).toBeTypeOf('function');
+        evHandler()();
+
+        expect(row.dataset.mwiLootLogStamp).toBeUndefined();
+        expect(processSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('with both on, redraws the native rows and the historical entries', async () => {
+        config.getSetting.mockImplementation((key) => key === 'lootLogStats' || key === 'lootLogHistory');
+        await stats.initialize();
+        const processSpy = vi.spyOn(stats, 'processLootLogElement').mockImplementation(() => {});
+        const renderSpy = vi.spyOn(stats, 'renderHistoricalEntries').mockImplementation(async () => {});
+
+        evHandler()();
+
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        expect(renderSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('with only history on, rebuilds the historical entries and leaves native rows alone; cleanup withdraws the listener', async () => {
+        await stats.initialize();
+        const handler = evHandler();
+        const processSpy = vi.spyOn(stats, 'processLootLogElement').mockImplementation(() => {});
+        const renderSpy = vi.spyOn(stats, 'renderHistoricalEntries').mockImplementation(async () => {});
+
+        config.getSetting.mockImplementation((key) => key === 'lootLogHistory');
+        stats.syncParts();
+        handler();
+        expect(processSpy).not.toHaveBeenCalled();
+        expect(renderSpy).toHaveBeenCalledTimes(1);
+
+        stats.cleanup();
+        expect(dataManager.off).toHaveBeenCalledWith('expected_value_initialized', handler);
     });
 });

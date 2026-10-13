@@ -367,6 +367,19 @@ describe('gameNumberPattern / gameDigitsSource', () => {
             expect('1 234 567'.match(re)?.[0]).toBe('1 234 567');
             expect('1 234 567'.match(re)?.[0]).toBe('1 234 567');
         });
+
+        test('whitespace groups only before exactly three digits', () => {
+            const re = new RegExp(`(${gameDigitsSource()})%`);
+            expect('1,5 7,29%'.match(re)?.[1]).toBe('7,29');
+            expect('12 345,6%'.match(re)?.[1]).toBe('12 345,6');
+            // A percentage is never grouped: "1 100%" is an output count, then 100%
+            const pct = new RegExp(`(${gameDigitsSource({ grouping: false })})%`);
+            expect('1 100%'.match(pct)?.[1]).toBe('100');
+            expect('1,5 100%'.match(pct)?.[1]).toBe('100');
+            expect('1,5 7,29%'.match(pct)?.[1]).toBe('7,29');
+            const whole = new RegExp(`^${gameDigitsSource({ decimal: false })}$`);
+            expect('1 234 567'.match(whole)?.[0]).toBe('1 234 567');
+        });
     });
 
     test('re-resolves when the game language changes mid-session', () => {

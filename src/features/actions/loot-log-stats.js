@@ -34,6 +34,7 @@ import {
 } from '../../utils/gathering-drop-model.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
+import { resolveCurrencyValue } from './loot-log-currency.js';
 import { lootEntryIdentity } from './loot-log-analytics.js';
 import { reconstructEnhancingRun, computeEnhancingSummary, mergeEnhancingSummaries } from './enhancing-loot-summary.js';
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
@@ -306,6 +307,13 @@ class LootLogStats {
             webSocketHook.off('loot_log_updated', wsHandler);
         });
 
+        // The task token is priced through the expected-value calculator, which finishes starting
+        // a beat after the first rows are drawn; rows stamped before then are priced at nothing
+        // and would stay that way until an unrelated redraw
+        const repriceOnEvReady = () => this.repriceStampedRows();
+        dataManager.on('expected_value_initialized', repriceOnEvReady);
+        this.unregisterHandlers.push(() => dataManager.off('expected_value_initialized', repriceOnEvReady));
+
         // The per-row statistics overlays and the historical entries, each under its own setting
         this.syncParts();
 
@@ -372,6 +380,22 @@ class LootLogStats {
         this._resetGatheringContextCache();
         const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
         lootLogElements.forEach((element, index) => this.processLootLogElement(element, index, lootLogElements.length));
+    }
+
+    /**
+     * Draw every loot log row again, even those whose entry has not changed, now that the prices
+     * they were drawn with may have been missing.
+     */
+    repriceStampedRows() {
+        if (config.getSetting('lootLogStats')) {
+            document.querySelectorAll('.LootLogPanel_actionLoot__32gl_').forEach((row) => {
+                delete row.dataset.mwiLootLogStamp;
+            });
+            this.processVisibleRows();
+        }
+        // The historical entries total their rows from the same prices, and are not stamped, so
+        // they are rebuilt whole
+        if (this.historyEnabled && this.unregisterHistoryObserver) this.renderHistoricalEntries();
     }
 
     /**
@@ -740,6 +764,15 @@ class LootLogStats {
                 continue;
             }
 
+            // Cowbells and tokens have no order book — value them the way the rest of Toolasha does
+            const askCurrency = resolveCurrencyValue(baseHrid, 'ask');
+            const bidCurrency = resolveCurrencyValue(baseHrid, 'bid');
+            if (askCurrency !== null || bidCurrency !== null) {
+                askTotal += (askCurrency ?? bidCurrency) * count;
+                bidTotal += (bidCurrency ?? askCurrency) * count;
+                continue;
+            }
+
             // Check for openable containers (caches, chests) — use expected value
             const itemDetails = dataManager.getItemDetails(baseHrid);
             if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
@@ -844,6 +877,14 @@ class LootLogStats {
             if (baseHrid === '/items/coin') {
                 askRevenue += count;
                 bidRevenue += count;
+                continue;
+            }
+            // Cowbell and token values are already net of tax, like container EV
+            const askCurrency = resolveCurrencyValue(baseHrid, 'ask');
+            const bidCurrency = resolveCurrencyValue(baseHrid, 'bid');
+            if (askCurrency !== null || bidCurrency !== null) {
+                askRevenue += (askCurrency ?? bidCurrency) * count;
+                bidRevenue += (bidCurrency ?? askCurrency) * count;
                 continue;
             }
             // Container EV already taxes its market contents and keeps coins at
@@ -963,6 +1004,12 @@ class LootLogStats {
      * @returns {{ask: number, bid: number}|null} Null when nothing prices it
      */
     priceExpectedDrop(itemHrid, count) {
+        const askCurrency = resolveCurrencyValue(itemHrid, 'ask');
+        const bidCurrency = resolveCurrencyValue(itemHrid, 'bid');
+        if (askCurrency !== null || bidCurrency !== null) {
+            return { ask: (askCurrency ?? bidCurrency) * count, bid: (bidCurrency ?? askCurrency) * count };
+        }
+
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
             const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
@@ -1186,6 +1233,9 @@ class LootLogStats {
      */
     getModelPrice(itemHrid) {
         if (itemHrid === '/items/coin') return 1;
+
+        const currencyValue = resolveCurrencyValue(itemHrid, 'ask');
+        if (currencyValue !== null) return currencyValue;
 
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
@@ -1667,8 +1717,15 @@ class LootLogStats {
         let askPerItem = 0;
         let bidPerItem = 0;
 
+        const askCurrency = resolveCurrencyValue(baseHrid, 'ask');
+        const bidCurrency = resolveCurrencyValue(baseHrid, 'bid');
+        if (askCurrency !== null || bidCurrency !== null) {
+            askPerItem = askCurrency ?? bidCurrency;
+            bidPerItem = bidCurrency ?? askCurrency;
+        }
+
         // Check for openable containers — use expected value
-        if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+        if (askPerItem === 0 && itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
             const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
             if (evData && evData.expectedValue > 0) {
                 askPerItem = evData.expectedValue;

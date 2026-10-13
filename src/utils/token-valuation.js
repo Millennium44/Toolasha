@@ -55,14 +55,18 @@ function tokenPricingSide(pricingModeSetting, respectModeSetting) {
  * @param {string|false} respectModeSetting - Config setting key for respect pricing mode flag (default:
  *   'expectedValue_respectPricingMode'), or `false` for an instant sale: order-book bids only, whatever
  *   the settings say
+ * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this side of the book, ignoring the pricing settings
  * @returns {number|null} Value per token, or null if no data
  */
 export function calculateDungeonTokenValue(
     tokenHrid,
     pricingModeSetting = 'profitCalc_pricingMode',
-    respectModeSetting = 'expectedValue_respectPricingMode'
+    respectModeSetting = 'expectedValue_respectPricingMode',
+    forcedSide = null
 ) {
-    return calculateDungeonTokenValueDetail(tokenHrid, pricingModeSetting, respectModeSetting)?.value ?? null;
+    return (
+        calculateDungeonTokenValueDetail(tokenHrid, pricingModeSetting, respectModeSetting, forcedSide)?.value ?? null
+    );
 }
 
 /**
@@ -73,18 +77,20 @@ export function calculateDungeonTokenValue(
  * @param {string} tokenHrid - Token HRID (e.g., '/items/chimerical_token')
  * @param {string} pricingModeSetting - Config setting key for pricing mode
  * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
+ * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this side of the book, ignoring the pricing settings
  * @returns {{value: number, itemHrid: string, via: 'shop'|'essence'}|null} Coins per token and
  *   the item they come from, or null if no data
  */
 export function calculateDungeonTokenValueDetail(
     tokenHrid,
     pricingModeSetting = 'profitCalc_pricingMode',
-    respectModeSetting = 'expectedValue_respectPricingMode'
+    respectModeSetting = 'expectedValue_respectPricingMode',
+    forcedSide = null
 ) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) return null;
 
-    const priceOf = tokenPriceOf(pricingModeSetting, respectModeSetting);
+    const priceOf = tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide);
 
     // Only single-currency lines price a token cleanly
     const tokenShop = Object.values(gameData.shopItemDetailMap || {}).filter((line) => {
@@ -110,24 +116,30 @@ export function calculateDungeonTokenValueDetail(
  *
  * @param {string} pricingModeSetting - Config setting key for pricing mode
  * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
+ * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this side of the book, ignoring the pricing settings
  * @returns {{value: number, itemHrid: string}|null} Coins per token and the shop item, or null
  */
 export function calculateLabyrinthTokenValueDetail(
     pricingModeSetting = 'profitCalc_pricingMode',
-    respectModeSetting = 'expectedValue_respectPricingMode'
+    respectModeSetting = 'expectedValue_respectPricingMode',
+    forcedSide = null
 ) {
     const shopMap = dataManager.getInitClientData()?.labyrinthShopItemDetailMap;
     if (!shopMap) return null;
-    return labyrinthTokenValueDetail(shopMap, tokenPriceOf(pricingModeSetting, respectModeSetting));
+    return labyrinthTokenValueDetail(shopMap, tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide));
 }
 
 /**
  * The pricer a token valuation reads its shop lines through.
  * @param {string} pricingModeSetting - Config setting key for pricing mode
  * @param {string} respectModeSetting - Config setting key for respect pricing mode flag
+ * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this book side (no patient tick), ignoring both settings
  * @returns {Function} `(itemHrid) => number|null`
  */
-function tokenPriceOf(pricingModeSetting, respectModeSetting) {
+function tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide = null) {
+    if (forcedSide === 'ask' || forcedSide === 'bid') {
+        return (hrid) => (hrid ? getItemPrice(hrid, { mode: forcedSide }) : null);
+    }
     // An instant-sale caller (`false`) gets order-book bids only: a custom price or value-map
     // estimate is no bid anyone can sell into
     if (respectModeSetting === false) {
