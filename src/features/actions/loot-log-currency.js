@@ -7,7 +7,7 @@
  * already uses elsewhere; it prices nothing itself:
  *
  * - cowbell: the bag's sell price after the bag's 18% tax, over 10
- * - dungeon tokens: the best token-shop line's quote, untaxed as the expected-value chain has it
+ * - dungeon tokens: the best token-shop line's quote after market tax
  * - labyrinth tokens: the best labyrinth shop line's quote after market tax
  * - task tokens: the best Task Shop line (`calculateTaskTokenValue`)
  *
@@ -74,8 +74,11 @@ export function resolveCurrencyValue(baseHrid, side = 'ask') {
         const quote = calculateLabyrinthTokenValueDetail(undefined, undefined, bookSide)?.value;
         value = quote > 0 ? calculatePriceAfterTax(quote) : null;
     } else {
-        // The expected-value chain values a dungeon token untaxed (needsTax false), so this does too
-        value = calculateDungeonTokenValue(baseHrid, undefined, undefined, bookSide);
+        // The token is worth its best shop item, and turning that into coins is a market sale that
+        // pays the tax (the expected-value chain leaves it untaxed for its own purposes). Iron Cow
+        // characters sell nothing on the market; calculatePriceAfterTax already waives it for them
+        const quote = calculateDungeonTokenValue(baseHrid, undefined, undefined, bookSide);
+        value = quote > 0 ? calculatePriceAfterTax(quote) : null;
     }
     return value > 0 ? value : null;
 }

@@ -48,8 +48,8 @@ describe('resolveCurrencyValue', () => {
         expect(resolveCurrencyValue('/items/cowbell', 'bid')).toBeCloseTo(65_600, 6);
 
         mocks.dungeon.mockImplementation((hrid, a, b, side) => (side === 'ask' ? 1_500 : 1_200));
-        expect(resolveCurrencyValue('/items/chimerical_token', 'ask')).toBe(1_500);
-        expect(resolveCurrencyValue('/items/chimerical_token', 'bid')).toBe(1_200);
+        expect(resolveCurrencyValue('/items/chimerical_token', 'ask')).toBeCloseTo(1_440, 6);
+        expect(resolveCurrencyValue('/items/chimerical_token', 'bid')).toBeCloseTo(1_152, 6);
 
         mocks.labyrinth.mockImplementation((a, b, side) => ({ value: side === 'ask' ? 2_000 : 1_000, itemHrid: 'x' }));
         expect(resolveCurrencyValue('/items/labyrinth_token', 'ask')).toBeCloseTo(1_920, 6);
@@ -62,9 +62,9 @@ describe('resolveCurrencyValue', () => {
         expect(resolveCurrencyValue('/items/task_token', 'bid')).toBe(30_000);
     });
 
-    test('a dungeon token is its best shop line, untaxed as the expected-value chain has it', () => {
+    test('a dungeon token is its best shop line after market tax, since turning it into coins is a sale', () => {
         mocks.dungeon.mockReturnValue(1_500);
-        expect(resolveCurrencyValue('/items/sinister_token', 'ask')).toBe(1_500);
+        expect(resolveCurrencyValue('/items/sinister_token', 'ask')).toBeCloseTo(1_440, 6);
         expect(mocks.dungeon).toHaveBeenCalledWith('/items/sinister_token', undefined, undefined, 'ask');
     });
 
