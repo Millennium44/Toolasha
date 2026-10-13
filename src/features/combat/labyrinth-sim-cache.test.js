@@ -1062,3 +1062,51 @@ describe('a sim queue torn down mid-flight', () => {
         expect(ctx.simRunning).toBe(true);
     });
 });
+
+/**
+ * A sim whose inputs change while the worker runs answers for the old inputs. The change
+ * clears the cache; caching the late result on top (stamped with the new fingerprint)
+ * would hand a pre-change answer to the very next probe.
+ */
+describe('a sim that finishes after an input change is not cached', () => {
+    const context = (fingerprint) => ({
+        ...simCacheMethods,
+        combatCache: new Map(),
+        _combatCacheMeta: new Map(),
+        _snapshotContentFingerprint: () => fingerprint.value,
+        _persistCombatCacheEntry: vi.fn(),
+        getLabyrinthLoadoutId: () => 0,
+        buildLabyrinthPlayerDTO: () => ({ hrid: 'player1' }),
+        getLabyrinthCombatBuffs: () => [],
+        getCombatExperienceBonus: () => 0,
+    });
+
+    afterEach(() => {
+        simRuns.implementation = null;
+        simRuns.result = {};
+    });
+
+    test('the result is returned but neither cached nor persisted', async () => {
+        const fingerprint = { value: 'gear-a' };
+        const ctx = context(fingerprint);
+        simRuns.implementation = () => {
+            fingerprint.value = 'gear-b';
+            return { simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 };
+        };
+
+        const result = await ctx.computeCombatClear('/monsters/imp', 200);
+
+        expect(result.clearChance).toBe(1);
+        expect(ctx.combatCache.size).toBe(0);
+        expect(ctx._persistCombatCacheEntry).not.toHaveBeenCalled();
+    });
+
+    test('an unchanged fingerprint still caches the result', async () => {
+        const ctx = context({ value: 'gear-a' });
+        simRuns.implementation = () => ({ simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 });
+
+        await ctx.computeCombatClear('/monsters/imp', 200);
+
+        expect(ctx.combatCache.size).toBe(1);
+    });
+});
