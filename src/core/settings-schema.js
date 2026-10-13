@@ -905,10 +905,11 @@ export const settingsGroups = {
                 id: 'itemTooltip_alchemyInsteadGoldPerHour',
                 label: 'Cheaper alchemy routes: your gold rate (per hour)',
                 type: 'number',
+                shorthand: true,
                 default: 0,
                 min: 0,
                 requires: 'itemTooltip_alchemyInsteadOfBuying',
-                help: 'What an hour of your time earns elsewhere (combat, say). The alchemy time a route takes is charged at this rate, so a route is shown only when it still beats buying, and its gain is given per hour over this rate. 0 leaves the time free.',
+                help: 'What an hour of your time earns elsewhere (combat, say). Type it as 3m, 500k or 1.5b if you like. The alchemy time a route takes is charged at this rate, so a route is shown only when it still beats buying, and its gain is given per hour over this rate. 0 leaves the time free.',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',

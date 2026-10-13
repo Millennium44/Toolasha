@@ -12,6 +12,7 @@ import storage from '../../core/storage.js';
 import storagePersistence from '../../core/storage-persistence.js';
 import settingsCSS from './settings-styles.css?raw';
 import marketAPI from '../../api/marketplace.js';
+import { parseShorthandAmount } from '../../utils/number-parser.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
@@ -1044,6 +1045,18 @@ class SettingsUI {
 
             case 'number': {
                 const value = currentSetting?.value ?? settingDef.default ?? 0;
+                if (settingDef.shorthand) {
+                    // A box people type an amount into: 3m, 500k, 1.5b. A number input
+                    // would blank those and the save would read 0
+                    return `
+                    <input type="text" inputmode="decimal"
+                        id="${settingId}"
+                        class="toolasha-number-input"
+                        data-shorthand="true"
+                        value="${value}"
+                        title="Digits or K/M/B, e.g. 3m">
+                `;
+                }
                 return `
                     <input type="number"
                         id="${settingId}"
@@ -2510,6 +2523,23 @@ class SettingsUI {
         // Get value based on type
         if (isCheckboxType) {
             value = input.checked;
+        } else if (type === 'number' && input.dataset.shorthand === 'true') {
+            const parsed = parseShorthandAmount(input.value);
+            if (parsed === null) {
+                // Refuse it: the stored value stays, and the box says why
+                input.classList.add('toolasha-input-invalid');
+                input.style.borderColor = '#e05252';
+                input.title = 'Use digits or K/M/B, e.g. 3m';
+                return;
+            }
+            const def = this.findSettingDef(settingId);
+            value = parsed;
+            if (def?.min !== undefined) value = Math.max(def.min, value);
+            if (def?.max !== undefined) value = Math.min(def.max, value);
+            input.classList.remove('toolasha-input-invalid');
+            input.style.borderColor = '';
+            input.title = `Digits or K/M/B, e.g. 3m (saved as ${value.toLocaleString('en-US')})`;
+            input.value = String(value);
         } else if (type === 'number' || type === 'slider') {
             value = parseFloat(input.value) || 0;
             // Update the slider value display if it's a slider

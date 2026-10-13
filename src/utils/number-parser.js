@@ -373,3 +373,18 @@ export function _resetGameNumberSeparators() {
     separatorCache = null;
     patternCache = null;
 }
+
+/**
+ * Read an amount a person typed into a settings box: 3m, 500k, 1.5b, 3,000,000,
+ * plain digits. Stricter than parseItemCount, which falls back to its default
+ * on anything and reads a number out of surrounding words.
+ *
+ * @param {string} text - What was typed
+ * @returns {number|null} The amount, or null when it is not one
+ */
+export function parseShorthandAmount(text) {
+    const trimmed = String(text ?? '').trim();
+    if (!/^\d[\d.,\s]*[a-z]*$/i.test(trimmed)) return null;
+    const n = parseItemCount(trimmed, NaN);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+}

@@ -47,6 +47,7 @@ import {
 import forkChangelog from 'virtual:fork-changelog';
 import forkOverview from 'virtual:fork-overview';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { parseShorthandAmount } from '../../utils/number-parser.js';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
 
@@ -1200,12 +1201,27 @@ class WhatsNew {
             control.addEventListener('change', () => config.setSetting(id, control.checked));
         } else if (type === 'number') {
             control = document.createElement('input');
-            control.type = 'number';
+            control.type = definition.shorthand ? 'text' : 'number';
             if (definition.min !== undefined) control.min = definition.min;
             if (definition.max !== undefined) control.max = definition.max;
             control.value = config.getSettingValue(id, definition.default ?? 0);
             control.style.width = '70px';
-            control.addEventListener('change', () => config.setSetting(id, Number(control.value)));
+            control.addEventListener('change', () => {
+                if (!definition.shorthand) {
+                    config.setSetting(id, Number(control.value));
+                    return;
+                }
+                const parsed = parseShorthandAmount(control.value);
+                if (parsed === null) {
+                    control.style.borderColor = '#e05252';
+                    control.title = 'Use digits or K/M/B, e.g. 3m';
+                    return;
+                }
+                control.style.borderColor = '';
+                control.title = '';
+                control.value = String(parsed);
+                config.setSetting(id, parsed);
+            });
         } else if (type === 'select' && Array.isArray(definition.options)) {
             control = document.createElement('select');
             control.classList.add('toolasha-select');
