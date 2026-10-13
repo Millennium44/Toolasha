@@ -17,7 +17,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Calibration badges, listing deletions and the labyrinth accuracy mark
 
 - Forecast calibration badges show again: since September they had read the calibration ledger in its old shape and found it empty.
-- A market listing deleted in another tab or on another device is no longer written back by this tab's next save.
+- A market listing deleted in another tab or on another device is no longer written back by this tab's next save, and re-importing listings you cleared or deleted now keeps them instead of dropping them on the next load.
 - The labyrinth accuracy mark's Forget now sticks, and a newer mark set on another device is no longer reverted by this one's next save.
 
 <!-- shipped in 3.69.0 -->
