@@ -422,6 +422,21 @@ describe('the rows', () => {
         expect(row.totalBid).toBe(860);
     });
 
+    test('an Iron Cow character pays no market tax, so its totals are untaxed and a vendor-equal bid is not flagged', () => {
+        game.gameMode = 'ironcow';
+        watchItem('/items/cheese');
+        game.inventory = [{ itemHrid: '/items/cheese', count: 10 }];
+        expect(watchlistRows()[0].totalBid).toBe(900);
+
+        // A bid equal to the vendor price is not below it once no tax comes off
+        game.prices['/items/rare_hat'] = { ask: 5000, bid: 5000 };
+        watchItem('/items/rare_hat');
+        game.inventory = [{ itemHrid: '/items/rare_hat', count: 1 }];
+        const row = watchlistRows().find((r) => r.hrid === '/items/rare_hat');
+        expect(row.totalBid).toBe(5000);
+        expect(row.flag).not.toBe('below-vendor');
+    });
+
     test('a cowbell bag is judged at its own 18% market tax', () => {
         // A 100 bid pays floor(82) after the bag's tax, below the 85 vendor price
         watchItem('/items/bag_of_10_cowbells');

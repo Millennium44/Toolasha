@@ -40,6 +40,7 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -346,13 +347,17 @@ export function watchlistRows() {
         dataManager.getCharacterData?.()?.myMarketListings || dataManager.characterData?.myMarketListings
     );
 
+    const ironCow = isIronCowCharacter();
     const rows = valueWatchlist(state.entries, {
         quantityOf: heldCount,
         pricesFor: (hrid, level) => getItemPrices(hrid, level),
         vendorOf: vendorPriceOf,
         listedOf: (hrid, level) => listed[watchlistKey(hrid, level)],
-        // The payout the game-facing market code uses: the cowbell bag's own rate, floored per unit
-        afterTax: (price, hrid) => Math.floor(price * (1 - (hrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX))),
+        // The payout the game-facing market code uses: the cowbell bag's own rate, floored per unit.
+        // An Iron Cow character never pays market tax (the same rule as profit-helpers' outputTaxRate,
+        // which is too heavy to import here), and its prices are untaxed vendor/coinify values
+        afterTax: (price, hrid) =>
+            Math.floor(price * (1 - (ironCow ? 0 : hrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX))),
     });
     return sortRows(rows, state.sortBy, state.direction);
 }
