@@ -2316,7 +2316,8 @@ export default class CustomTabsUI {
 
         const actionsDiv = document.createElement('div');
         actionsDiv.className = 'toolasha-ct-action-btns';
-        actionsDiv.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
+        // Wraps rather than overflowing: on a narrow inventory the last button pushed the panel into a side scroll
+        actionsDiv.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;min-width:0;';
 
         const addBtn = document.createElement('button');
         addBtn.className = 'toolasha-ct-add-btn';
