@@ -239,6 +239,8 @@ class MarketAPI {
         this._cacheExpiresAt = null;
         // Whatever the new source then yields (or fails to), consumers must drop the old economy's figures
         this.notifyListeners();
+        // and hear again when a fallback cache of the new source is installed below, which notifies nothing itself
+        this._switchPending = true;
     }
 
     /** Stop the page-lifetime base-snapshot refresh interval. */
@@ -334,6 +336,7 @@ class MarketAPI {
                 this.lastFetchTimestamp = cachedFallback.timestamp * 1000;
                 // Load patches from storage
                 await this.loadPatches();
+                this._notifyAfterSwitch();
                 console.warn('[MarketAPI] Skipping fetch; disconnected. Using cached data.');
                 return this.marketData;
             }
@@ -394,6 +397,7 @@ class MarketAPI {
             this.lastFetchTimestamp = expiredCache.timestamp * 1000;
             // Load patches from storage
             await this.loadPatches();
+            this._notifyAfterSwitch();
             // Show alert when using expired cache
             networkAlert.show(
                 rateLimited ? '⚠️ Market API rate-limited — using cached prices' : '⚠️ Using outdated market data'
@@ -991,6 +995,17 @@ class MarketAPI {
     /**
      * Notify all listeners that prices have been updated
      */
+    /**
+     * After a source switch, tell listeners once that fallback data of the new source is in.
+     * A normal fetch or a fresh cache notifies by itself, so this only covers the fallbacks.
+     * @private
+     */
+    _notifyAfterSwitch() {
+        if (!this._switchPending) return;
+        this._switchPending = false;
+        this.notifyListeners();
+    }
+
     notifyListeners() {
         // A direct notification (a fetch landing) covers any patch still waiting
         // on the coalescing timer

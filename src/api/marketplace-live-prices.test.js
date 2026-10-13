@@ -98,6 +98,25 @@ describe('MarketAPI live-server prices on the test server', () => {
         expect(listener).toHaveBeenCalled();
     });
 
+    test('a source switch that falls back to the new source cache tells listeners once it is in', async () => {
+        const marketAPI = await load('https://test.milkywayidle.com');
+        await marketAPI.fetch(true);
+        const seen = [];
+        marketAPI.on(() => seen.push(marketAPI.marketData));
+        store.set(MIRROR_KEY, true);
+        // The live source has only an old cache, and the request fails
+        store.set('Toolasha_marketAPI_json_live', {
+            marketData: { '/items/cheese': { 0: { a: 700, b: 699 } } },
+            timestamp: 1,
+        });
+        fetchMock.mockImplementation(async () => {
+            throw new Error('offline');
+        });
+        await marketAPI.fetch(true);
+        expect(marketAPI.getPrice('/items/cheese').ask).toBe(700);
+        expect(seen.at(-1)).not.toBeNull();
+    });
+
     test('the CN test server reads the CN live copy', async () => {
         store.set(MIRROR_KEY, true);
         const marketAPI = await load('https://test.milkywayidlecn.com');
