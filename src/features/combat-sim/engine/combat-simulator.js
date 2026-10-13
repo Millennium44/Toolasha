@@ -2184,12 +2184,16 @@ class CombatSimulator {
                     this.eventQueue.clearByTypeAndSource(BlindExpirationEvent.type, target);
                     const cancelledSwing = this.eventQueue.getByTypeAndSource(AutoAttackEvent.type, target);
                     if (this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, target)) {
-                        this.addNextAttackEvent(target);
-                        // The first wake keeps the cancelled swing's due time,
-                        // not a full interval from the blind hit; later wakes
-                        // are at the attack interval.
+                        // Nothing is evaluated at the blind-hit time: the
+                        // unit's turn was the cancelled swing's due time, so a
+                        // ready ability must not cast before it. The first
+                        // wake keeps that due time (later wakes are at the
+                        // attack interval) and the wake dispatcher runs the
+                        // ability loop then. A wake with another meaning
+                        // (mana restoration) is left alone; it re-enters
+                        // addNextAttackEvent and reaches the blind branch.
                         const wake = this.eventQueue.getByTypeAndSource(AwaitCooldownEvent.type, target);
-                        if (wake && wake.blindWake && cancelledSwing.time < wake.time) {
+                        if (!wake || wake.blindWake) {
                             this.eventQueue.clearByTypeAndSource(AwaitCooldownEvent.type, target);
                             this.eventQueue.addEvent(new AwaitCooldownEvent(cancelledSwing.time, target, true));
                         }

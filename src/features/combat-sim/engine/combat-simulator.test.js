@@ -2097,6 +2097,47 @@ describe('out-of-mana is a mana state and nothing else', () => {
         expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
     });
 
+    test('a blind landing between turns does not let a ready ability cast before the swing was due', () => {
+        const { sim, player } = soloFight();
+        const monster = sim.enemies[0];
+        const interval = player.combatDetails.combatStats.attackInterval;
+        const due = sim.simulationTime + interval;
+        sim.eventQueue.addEvent(new AutoAttackEvent(due, player));
+        sim.simulationTime = due - ONE_SECOND / 2;
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = 500;
+        vi.spyOn(CombatUtilities, 'processAttack').mockReturnValue({
+            didHit: true,
+            damageDone: 0,
+            isCrit: false,
+            hpDrain: 0,
+            thornDamageDone: 0,
+            retaliationDamageDone: 0,
+        });
+        try {
+            sim.processAbilityDamageEffect(
+                monster,
+                { hrid: '/abilities/fixture_blind' },
+                { targetType: 'enemy', blindChance: 1, blindDuration: 5 * ONE_SECOND, damageOverTimeRatio: 0 }
+            );
+        } finally {
+            vi.restoreAllMocks();
+        }
+
+        // Nothing cast at the blind-hit time; the wake stands at the due time.
+        expect(queued(sim, AbilityCastEndEvent.type, player)).toEqual([]);
+        const wakes = queued(sim, AwaitCooldownEvent.type, player);
+        expect(wakes.length).toBe(1);
+        expect(wakes[0].time).toBe(due);
+
+        // At the due time the wake runs the ability loop and the cast lands.
+        sim.simulationTime = due;
+        sim.processEvent(sim.eventQueue.getByTypeAndSource(AwaitCooldownEvent.type, player));
+        const casts = queued(sim, AbilityCastEndEvent.type, player);
+        expect(casts.length).toBe(1);
+        expect(casts[0].time).toBe(due);
+    });
+
     test('a unit that cannot afford its triggered ability still swings', () => {
         // Measured on the live game, and the reason this is a test rather than
         // a detail: a character whose cheapest ability costs 10 mana was driven
