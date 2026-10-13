@@ -28,6 +28,9 @@ const bag = vi.hoisted(() => ({ items: null }));
 /** What the mocked marketplace client knows */
 const market = vi.hoisted(() => ({ loaded: false, prices: {} }));
 
+/** The gear the mocked data manager reports as worn: slot hrid -> character item */
+const worn = vi.hoisted(() => ({ map: new Map() }));
+
 /** Backing store for the mocked config's settings */
 const settings = vi.hoisted(() => ({ map: new Map() }));
 
@@ -65,6 +68,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCommunityBuffLevel: (hrid) => community.levels[hrid] || 0,
         getCharacterGuildBuffLevel: (hrid) => shrines.owned[hrid] || 0,
         getInventory: () => bag.items,
+        getEquipment: () => new Map(worn.map),
         characterData: null,
     },
 }));
@@ -671,6 +675,81 @@ describe('equipment experience reaches a labyrinth room', () => {
         });
         const buffs = labyrinthClearRate.getLoadoutEquipmentBuffs(3, 'milking');
         expect(buffs.some((b) => b.typeHrid === '/buff_types/wisdom')).toBe(false);
+    });
+});
+
+describe('a skilling room falls back to worn gear when the loadout cannot supply it', () => {
+    const SPEED = (amount) => [{ typeHrid: '/buff_types/action_speed', flatBoost: amount, ratioBoost: 0 }];
+
+    beforeEach(() => {
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        worn.map.clear();
+        worn.map.set('/item_locations/milking_tool', {
+            itemHrid: '/items/celestial_shears',
+            itemLocationHrid: '/item_locations/milking_tool',
+            enhancementLevel: 0,
+        });
+        dataManagerMock.characterData = {
+            characterSetting: { labyrinthLoadoutMilking: 3 },
+            equipmentActionTypeBuffsMap: { '/action_types/milking': SPEED(0.5) },
+        };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/philosophers_necklace': { equipmentDetail: { noncombatStats: { milkingSpeed: 0.1 } } },
+                '/items/celestial_shears': { equipmentDetail: { noncombatStats: { milkingSpeed: 0.2 } } },
+            },
+            enhancementLevelTotalBonusMultiplierTable: {},
+        });
+    });
+
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        worn.map.clear();
+    });
+
+    test('a deleted loadout scores the worn gear, as an unassigned room does', () => {
+        // loadout 3 is assigned in characterSetting but has no snapshot
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+        expect(metrics.actionSpeedBonus).toBeCloseTo(0.5, 10);
+    });
+
+    test('a loadout with no equipment scores the worn gear', () => {
+        gear.snapshots[3] = { equipment: [] };
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+        expect(metrics.actionSpeedBonus).toBeCloseTo(0.5, 10);
+    });
+
+    test('a loadout without the skill tool slot keeps its gear and borrows the worn tool', () => {
+        gear.snapshots[3] = {
+            equipment: [{ itemHrid: '/items/philosophers_necklace', itemLocationHrid: '/item_locations/neck' }],
+        };
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+        // 0.1 from the loadout's necklace + 0.2 from the worn shears
+        expect(metrics.actionSpeedBonus).toBeCloseTo(0.3, 10);
+    });
+
+    test('a loadout that has the tool slot does not also add the worn tool', () => {
+        gear.snapshots[3] = {
+            equipment: [{ itemHrid: '/items/philosophers_necklace', itemLocationHrid: '/item_locations/milking_tool' }],
+        };
+        const metrics = labyrinthClearRate.getSkillingMetrics('milking', '/action_types/milking');
+        expect(metrics.actionSpeedBonus).toBeCloseTo(0.1, 10);
+    });
+
+    test('a tile signature moves when the worn tool changes', () => {
+        gear.snapshots[3] = {
+            equipment: [{ itemHrid: '/items/philosophers_necklace', itemLocationHrid: '/item_locations/neck' }],
+        };
+        const read = () => labyrinthClearRate._tileInputsReader()({ skillHrid: '/skills/milking' }, 10);
+        const before = read();
+        worn.map.set('/item_locations/milking_tool', {
+            itemHrid: '/items/philosophers_necklace',
+            itemLocationHrid: '/item_locations/milking_tool',
+            enhancementLevel: 0,
+        });
+        expect(read()).not.toBe(before);
     });
 });
 
@@ -3800,6 +3879,11 @@ describe('a labyrinth DTO waits for the loadout it is told to wear', () => {
         Object.assign(gear.snapshots, { 1: { name: 'Fighting', equipment: [] } });
         expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).not.toBeNull();
         expect(adapterMock.applyLoadoutSnapshotToDTO).not.toHaveBeenCalled();
+    });
+
+    test('the DTO carries no combat scrolls, however many are active', () => {
+        adapterMock.buildPlayerDTO.mockReturnValue({ hrid: 'player1', scrollBuffs: ['/buff_types/damage'] });
+        expect(labyrinthClearRate.buildLabyrinthPlayerDTO(0).scrollBuffs).toEqual([]);
     });
 
     test('a loaded store holding it applies that loadout', () => {

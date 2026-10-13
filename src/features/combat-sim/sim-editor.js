@@ -2833,11 +2833,12 @@ export class SimEditor {
      * The Labyrinth combat scrolls the player can carry into a fight. Each grants
      * a 30-minute buff effective in normal combat (not the Labyrinth or Guild
      * Trials); ticking one folds its buff into the sim. Skilling mode hides the
-     * section — its scroll picker lives elsewhere.
+     * section — its scroll picker lives elsewhere — and so does lab mode, whose sims
+     * drop scrolls in the worker.
      * @private
      */
     _renderScrollsSection(dto) {
-        if (this.skillingMode) return '';
+        if (this.skillingMode || this.labMode) return '';
         const active = new Set(Array.isArray(dto.scrollBuffs) ? dto.scrollBuffs : []);
         const activeCount = COMBAT_SCROLL_BUFF_TYPES.filter((typeHrid) => active.has(typeHrid)).length;
 
