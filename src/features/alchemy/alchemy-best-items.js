@@ -514,6 +514,13 @@ class AlchemyBestItems {
 
         if (!this.modal) {
             this.createModal();
+        } else if (config.getSetting('alchemyBestItems_prefillLevelFilter')) {
+            // The modal is reused across openings; the prefill promises the level the
+            // player has now, so a level gained since the last open moves the filter
+            const playerLevel = getPlayerAlchemyLevel();
+            const levelMax = this.modal.querySelector('[data-mwi-level-max]');
+            if (levelMax) levelMax.value = String(playerLevel);
+            this.filterLevelMax = playerLevel;
         }
 
         this.modal.style.display = 'flex';

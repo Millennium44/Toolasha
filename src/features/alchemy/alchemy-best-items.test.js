@@ -1455,6 +1455,20 @@ describe('the Max level filter and level preview', () => {
         expect(names()).toEqual(['low', 'mid']);
     });
 
+    test('a reopened modal re-fills the pre-filled level with the level the player has now', async () => {
+        settings.values.alchemyBestItems_prefillLevelFilter = true;
+        open();
+        game.skills = [{ skillHrid: '/skills/alchemy', level: 85 }];
+        bestItems.itemsSpriteUrl = 'sprite';
+        const load = vi.spyOn(bestItems, 'loadRankings').mockImplementation(() => {});
+        const detect = vi.spyOn(bestItems, 'detectAlchemyType').mockReturnValue('coinify');
+        await bestItems.openModal();
+        expect(levelInput().value).toBe('85');
+        expect(bestItems.filterLevelMax).toBe(85);
+        load.mockRestore();
+        detect.mockRestore();
+    });
+
     test('a typed max level drops higher-level items, and clearing it brings them back', () => {
         open();
         type(levelInput(), '40');
