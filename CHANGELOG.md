@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Enhancing mirror plans now account for Blessed Tea's chance of a +2 mirror step, the market price-history chart offers a 365-day range and refreshes an open chart every 10 minutes (from mooket II), and crafting an upgrade from an enhanced item values the output at the enhancement it inherits (70% of the input's level, with the fraction as a chance of one more; all of it for refined items), from Milkonomy and the game's own recipe text.
 
+### Labyrinth Recommend keeps every badge
+
+- A labyrinth Recommend run no longer loses the skilling rooms' and early combat rooms' recommendations when your gear or loadout changes partway through (the lab swapping loadouts between rooms did it); the skilling rooms are re-checked against the new gear at the end. A combat probe that could not run is no longer scored as a 0% clear.
+
 ### Labyrinth: Recommend by Time
 
 - Beside Recommend by Win %, the labyrinth panel can recommend the highest room level whose expected time per clear (failed runs included) fits a target time you set, defaulting to 300 seconds; adapted from the Labyrinth Win Rate Calculator 1.6.0.

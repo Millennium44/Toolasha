@@ -1358,6 +1358,10 @@ export const simCacheMethods = {
         }
 
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        // The inputs this sim is run under. An input change while the worker runs clears the
+        // cache; a result that lands afterwards answers for the old inputs and must not be
+        // cached (or stamped with the new fingerprint) on top of that clear
+        const fingerprintAtStart = this._snapshotContentFingerprint();
         const dto = this.buildLabyrinthPlayerDTO(loadoutId);
         if (!dto) return { clearChance: 0, expectedSeconds: Infinity, failed: true };
 
@@ -1468,7 +1472,7 @@ export const simCacheMethods = {
             // Don't cache 0% results: right after page load the loadout
             // snapshots may not be loaded yet, so a 0% can come from simming
             // with the wrong gear. Leaving it uncached lets a retry correct it.
-            if (winRate > 0) {
+            if (winRate > 0 && this._snapshotContentFingerprint() === fingerprintAtStart) {
                 this.combatCache.set(cacheKey, result);
                 this._persistCombatCacheEntry(cacheKey, result);
             }
