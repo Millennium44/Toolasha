@@ -392,12 +392,15 @@ export function resolveTarget(state, what, level) {
     // skills underneath it do, at different rates and different weights — so it
     // is answered by running the clock forward rather than by dividing
     if (what === COMBAT_TARGET) {
-        const now = combatProgress(state).partial.exact;
-        const target = level ?? Math.floor(now) + 1;
+        // The level the game shows, from whole skill levels: the clock below
+        // only counts whole-level crossings, so a default taken from the
+        // fractional figure could name a level the ETA skips past
+        const now = combatLevel(state.levels).level;
+        const target = level ?? now + 1;
         return {
             name: 'Combat',
             hrid: COMBAT_TARGET,
-            level: Math.floor(now),
+            level: now,
             target,
             perHour: state.totalPerHour || undefined,
             seconds: timeToCombatLevel({
