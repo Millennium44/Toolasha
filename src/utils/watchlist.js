@@ -300,8 +300,8 @@ export function listedCounts(listings) {
  * @param {Function} lookups.pricesFor - `(hrid, enhancementLevel) => {ask, bid}|null`
  * @param {Function} [lookups.vendorOf] - `(hrid) => number`
  * @param {Function} [lookups.listedOf] - `(hrid, enhancementLevel) => {listed, unclaimed}`
- * @param {Function} [lookups.afterTax] - `(price) => number`, what a market sale at `price`
- *   actually pays out. The vendor floor and `totalBid` use this net figure, since a
+ * @param {Function} [lookups.afterTax] - `(price, hrid) => number`, what one unit sold on the
+ *   market at `price` actually pays out (item-aware: the cowbell bag's own rate, per-unit floored). The vendor floor and `totalBid` use this net figure, since a
  *   bid is only worth what you keep of it; the vendor sale is untaxed. Defaults to
  *   the identity, which is a gross comparison.
  * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
@@ -325,7 +325,7 @@ export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, liste
         // The bid is compared and totalled net of the market tax: a bid between
         // the vendor price and vendor / (1 - tax) pays less than the vendor does
         const grossBid = Number(prices.bid) || 0;
-        const netBid = grossBid > 0 && afterTax ? Number(afterTax(grossBid)) || 0 : grossBid;
+        const netBid = grossBid > 0 && afterTax ? Number(afterTax(grossBid, entry.hrid)) || 0 : grossBid;
         const floor = vendorFloor(netBid, vendorOf?.(entry.hrid));
 
         return {

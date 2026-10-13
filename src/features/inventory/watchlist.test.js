@@ -189,6 +189,7 @@ const itemDetailMap = {
     '/items/rare_hat': { name: 'Rare Hat', sellPrice: 5000 },
     '/items/trainee_charm': { name: 'Trainee Charm', sellPrice: 250000 },
     '/items/purples_gift': { name: "Purple's Gift", sellPrice: 100 },
+    '/items/bag_of_10_cowbells': { name: 'Bag of 10 Cowbells', sellPrice: 85 },
 };
 
 beforeEach(() => {
@@ -222,6 +223,7 @@ beforeEach(() => {
         '/items/cheese': { ask: 100, bid: 90 },
         '/items/rare_hat': { ask: 20000, bid: 400 },
         '/items/trainee_charm': { ask: 0, bid: 0 },
+        '/items/bag_of_10_cowbells': { ask: 120, bid: 100 },
     };
 });
 
@@ -410,14 +412,24 @@ describe('the rows', () => {
     });
 
     test('Total Bid is what the bids pay after the market tax', () => {
-        // Cheese bids 90 each; 10 held keep 864 of 900 after 4%, and the unit
+        // Cheese bids 90 each; one sale keeps floor(86.4) = 86, so 10 held keep 860, and the unit
         // column keeps showing the market bid itself
         watchItem('/items/cheese');
         game.inventory = [{ itemHrid: '/items/cheese', count: 10 }];
 
         const row = watchlistRows()[0];
         expect(row.bid).toBe(90);
-        expect(row.totalBid).toBeCloseTo(864, 6);
+        expect(row.totalBid).toBe(860);
+    });
+
+    test('a cowbell bag is judged at its own 18% market tax', () => {
+        // A 100 bid pays floor(82) after the bag's tax, below the 85 vendor price
+        watchItem('/items/bag_of_10_cowbells');
+        game.inventory = [{ itemHrid: '/items/bag_of_10_cowbells', count: 1 }];
+
+        const row = watchlistRows()[0];
+        expect(row.flag).toBe('below-vendor');
+        expect(row.totalBid).toBe(85);
     });
 
     test('an item with no market at all reports what the vendor pays', () => {

@@ -40,7 +40,7 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -351,7 +351,8 @@ export function watchlistRows() {
         pricesFor: (hrid, level) => getItemPrices(hrid, level),
         vendorOf: vendorPriceOf,
         listedOf: (hrid, level) => listed[watchlistKey(hrid, level)],
-        afterTax: calculatePriceAfterTax,
+        // The payout the game-facing market code uses: the cowbell bag's own rate, floored per unit
+        afterTax: (price, hrid) => Math.floor(price * (1 - (hrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX))),
     });
     return sortRows(rows, state.sortBy, state.direction);
 }
