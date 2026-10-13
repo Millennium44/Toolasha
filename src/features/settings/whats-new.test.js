@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => ({
     // The saved-settings read: {readable, ids}.
     idsRead: { readable: true, ids: null },
     saved: [],
+    // Whether config's settings map was read from storage this load.
+    settingsLoaded: true,
 }));
 
 vi.mock('../../utils/choice-dialog.js', () => ({
@@ -59,6 +61,9 @@ vi.mock('../../core/config.js', () => ({
             mocks.written.push([id, value]);
         },
         getSetting: () => false,
+        get characterSettingsLoaded() {
+            return mocks.settingsLoaded;
+        },
         getSettingValue: () => 0,
         Z_FLOATING_PANEL: 1000,
         charactersWithSettings: async () => mocks.candidates,
@@ -174,6 +179,7 @@ beforeEach(() => {
     mocks.stateRead = { found: false, value: null };
     mocks.idsRead = { readable: true, ids: null };
     mocks.saved = [];
+    mocks.settingsLoaded = true;
     whatsNew._pending = null;
     virtualChangelog.text = '';
     delete whatsNew._pickSourceCharacter; // restore the real method if a test replaced it
@@ -754,5 +760,16 @@ describe('applyPolicy when storage does not answer', () => {
         expect(mocks.lastChoiceOptions).toBeNull();
         expect(whatsNew._pending.newIds).toEqual(['newFeatureA']);
         expect(mocks.saved.length).toBe(1);
+    });
+
+    test('a load whose settings fell back to defaults reconciles nothing and saves no state', async () => {
+        defineSchema(['newFeatureA']);
+        mocks.stateRead = { found: true, value: { fork: 'Toolasha', version: '0.0.1', knownIds: [] } };
+        mocks.settingsLoaded = false;
+        await whatsNew.applyPolicy();
+        expect(mocks.lastChoiceOptions).toBeNull();
+        expect(mocks.written).toEqual([]);
+        expect(mocks.saved).toEqual([]);
+        expect(whatsNew._pending).toBeNull();
     });
 });
