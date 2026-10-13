@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat task estimates: live updates and percentile figures
+
+- An open combat task estimate now updates as the task progresses (no new sim), and zone fight estimates quote the 90th-percentile kill count and time by default, with the median on hover (setting: Combat estimate percentile, 50/80/90/95); the Go pre-fill keeps its own padding on the mean, so the two never stack. Ported from upstream.
+
 <!-- shipped in 3.68.0 -->
 
 ### Sync keeps a setting you turned on; safer startup log
