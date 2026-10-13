@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Bulk sell finds the vendor Sell For button by the coin figure on it instead of its English label, so vendor steps work with the game in Chinese.
 
+### Custom Tabs toolbar fits narrow inventories
+
+- The Custom Tabs toolbar no longer pushes the inventory panel into a sideways scroll: Export, Import, Import Categories and Clear All moved into a "⋯" menu beside + Tab, expand and collapse, and the row wraps if it is still too wide.
+
 ### Instead of buying: clearer figures
 
 - The tooltip's Instead of buying line now follows your Buy and Sell pricing settings instead of always buying at ask, says its hourly figure is per hour of alchemy at the rate you would use the item, shows what making and selling it instead would net after tax, reads "gains" when the by-products are worth more than the input, names the outputs it counts at your buy price, and says so when no alchemy route beats buying rather than showing nothing.
