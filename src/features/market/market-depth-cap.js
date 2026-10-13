@@ -191,33 +191,49 @@ class MarketDepthCap {
 
         const result = calculateDepthCap({
             bids,
-            costPerAction: depthContext.costPerAction,
+            // A multi-output action (chest, transmute) charges each drop only its share of the
+            // cost; single-output modes (enhancement) carry no share and use the whole cost
+            costPerAction: item.costShare ?? depthContext.costPerAction,
             quantityPerAction: item.quantityPerAction,
         });
 
-        this.renderDepthCap(buttonContainer, result);
+        this.renderDepthCap(buttonContainer, result, bids[0]?.price);
     }
 
-    renderDepthCap(buttonContainer, result) {
+    renderDepthCap(buttonContainer, result, bestBidPrice) {
         const existing = buttonContainer.querySelector('.mwi-depth-cap');
         if (existing) existing.remove();
-        if (result.nstar <= 0) return;
+
+        // Nothing to say when there is no threshold, or when the best bid clears it but the book
+        // is too thin to absorb one action (no "below break-even" claim to make there)
+        const belowBreakEven = result.thresholdPrice != null && bestBidPrice < result.thresholdPrice;
+        if (result.nstar <= 0 && !belowBreakEven) return;
 
         const el = document.createElement('div');
         el.classList.add('mwi-depth-cap');
         el.style.fontSize = '0.95rem';
         el.style.textAlign = 'center';
-        el.style.color = '#60a5fa';
 
-        const prefix = result.hitBookEnd ? 'at least ' : '~';
-        el.textContent = `Sell depth: ${prefix}${formatWithSeparator(result.nstar)} actions`;
-        el.title =
-            (result.hitBookEnd
-                ? 'Every visible resting bid still clears cost — the true cap may be higher than shown. '
-                : 'Estimated number of actions worth of this item the visible order book can absorb before the ' +
-                  'marginal sale price drops below cost. ') +
-            "Ignores the marketplace's tradable range floor (not exposed in game data), so a large sell-off " +
-            'may hit that floor and queue with a delay before this estimate suggests.';
+        if (result.nstar <= 0) {
+            // Muted note rather than silence, so "this drop cannot recoup its cost share here" reads
+            // differently from the feature being broken
+            el.style.color = config.COLOR_TEXT_SECONDARY || '#888888';
+            el.style.fontStyle = 'italic';
+            el.textContent =
+                `Sell depth: not applicable — best bid ${formatWithSeparator(Math.round(bestBidPrice))} is below ` +
+                `the ${formatWithSeparator(Math.round(result.thresholdPrice))} break-even price`;
+        } else {
+            el.style.color = '#60a5fa';
+            const prefix = result.hitBookEnd ? 'at least ' : '~';
+            el.textContent = `Sell depth: ${prefix}${formatWithSeparator(result.nstar)} actions`;
+            el.title =
+                (result.hitBookEnd
+                    ? 'Every visible resting bid still clears cost — the true cap may be higher than shown. '
+                    : 'Estimated number of actions worth of this item the visible order book can absorb before the ' +
+                      'marginal sale price drops below cost. ') +
+                "Ignores the marketplace's tradable range floor (not exposed in game data), so a large sell-off " +
+                'may hit that floor and queue with a delay before this estimate suggests.';
+        }
 
         buttonContainer.insertBefore(el, buttonContainer.lastChild);
     }

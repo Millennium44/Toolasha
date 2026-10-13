@@ -208,4 +208,61 @@ describe('the widget under the button belongs to the item on screen', () => {
             cleanup();
         }
     });
+    test('charges a drop its costShare, not the whole action cost, when the context carries one', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            bridge.context = {
+                costPerAction: 999999, // would fail every bid if it were used
+                items: [{ itemHrid: '/items/cheese', quantityPerAction: 1, costShare: 50 }],
+            };
+            marketDepthCap.orderBooksCache = {
+                '/items/cheese': { data: { orderBooks: [{ bids: [{ price: 1000, quantity: 10 }] }] } },
+            };
+            marketDepthCap.processOrderBook();
+
+            expect(buttons.querySelector('.mwi-depth-cap').textContent).toContain('10');
+            expect(buttons.querySelector('.mwi-depth-cap').textContent).not.toContain('not applicable');
+        } finally {
+            cleanup();
+        }
+    });
+
+    test('says "not applicable" instead of nothing when the best bid is below break-even', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            bridge.context = {
+                costPerAction: 100,
+                items: [{ itemHrid: '/items/cheese', quantityPerAction: 1, costShare: 100000 }],
+            };
+            marketDepthCap.orderBooksCache = {
+                '/items/cheese': { data: { orderBooks: [{ bids: [{ price: 1000, quantity: 10 }] }] } },
+            };
+            marketDepthCap.processOrderBook();
+
+            const label = buttons.querySelector('.mwi-depth-cap');
+            expect(label.textContent).toContain('not applicable');
+            expect(label.textContent).toContain('1,000');
+            expect(label.style.fontStyle).toBe('italic');
+        } finally {
+            cleanup();
+        }
+    });
+
+    test('stays silent, with no false break-even claim, when the best bid clears cost but the book is too thin', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            bridge.context = {
+                costPerAction: 100,
+                items: [{ itemHrid: '/items/cheese', quantityPerAction: 5 }],
+            };
+            marketDepthCap.orderBooksCache = {
+                '/items/cheese': { data: { orderBooks: [{ bids: [{ price: 1000, quantity: 2 }] }] } },
+            };
+            marketDepthCap.processOrderBook();
+
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+        } finally {
+            cleanup();
+        }
+    });
 });

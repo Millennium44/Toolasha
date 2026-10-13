@@ -497,3 +497,49 @@ describe('RiskOfRuinUI enhancement with incomplete input prices', () => {
         );
     });
 });
+
+describe('depth-cap cost attribution', () => {
+    test('chest mode splits the cost across priced drops by their share of expected value', () => {
+        const items = riskOfRuinUI._chestDepthCapItems(
+            [
+                { itemHrid: '/items/a', dropRate: 0.5, avgCount: 2, expectedValue: 300, hasPriceData: true },
+                { itemHrid: '/items/b', dropRate: 0.1, avgCount: 1, expectedValue: 100, hasPriceData: true },
+                { itemHrid: '/items/c', dropRate: 0.2, avgCount: 1, expectedValue: 0, hasPriceData: false },
+            ],
+            1000
+        );
+
+        expect(items).toEqual([
+            { itemHrid: '/items/a', quantityPerAction: 1, costShare: 750 },
+            { itemHrid: '/items/b', quantityPerAction: 0.1, costShare: 250 },
+        ]);
+    });
+
+    test('a single tracked chest drop is charged the whole cost', () => {
+        const items = riskOfRuinUI._chestDepthCapItems(
+            [{ itemHrid: '/items/a', dropRate: 1, avgCount: 1, expectedValue: 50, hasPriceData: true }],
+            400
+        );
+        expect(items[0].costShare).toBe(400);
+    });
+
+    test('alchemy mode attributes cost by per-action EV across main branches and bonus drops', () => {
+        const items = riskOfRuinUI._alchemyDepthCapItems(
+            {
+                successRate: 0.5,
+                mainBranches: [
+                    { itemHrid: '/items/x', dropRate: 1, count: 1, payout: 600, isSelfReturn: false },
+                    { itemHrid: '/items/self', dropRate: 1, count: 1, payout: 600, isSelfReturn: true },
+                ],
+                bonusDrops: [{ itemHrid: '/items/ess', dropRate: 0.1, count: 2, payout: 1000 }],
+            },
+            800
+        );
+
+        // EV: x = 600*0.5 = 300, ess = 1000*0.1 = 100 -> shares 3/4 and 1/4
+        expect(items).toEqual([
+            { itemHrid: '/items/x', quantityPerAction: 0.5, costShare: 600 },
+            { itemHrid: '/items/ess', quantityPerAction: 0.2, costShare: 200 },
+        ]);
+    });
+});
