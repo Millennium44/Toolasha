@@ -31,6 +31,7 @@ import {
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
+import { currentPricingSideChoice } from '../../utils/pricing-side-select.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -127,13 +128,24 @@ const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
 function insteadTitle() {
     const outputs =
         getMarkMeaning() === 'sell'
-            ? 'every other output kept and valued at its ask (or sold at its bid after tax when marked with K)'
-            : 'every other output sold at its bid after tax (or valued at its ask when marked "Keep for self-use")';
+            ? 'every other output kept and valued at your buy price (or sold at your sell price after tax when marked with K)'
+            : 'every other output sold at your sell price after tax (or valued at your buy price when marked "Keep for self-use")';
     return (
-        'Instead of buying: the source bought at its ask and decomposed or transmuted, the catalyst and tea at ' +
-        `their asks, ${outputs}, divided by the expected units of this item per action. Estimated prices are ` +
+        'Instead of buying: the source bought at your buy price and decomposed or transmuted, the catalyst and tea at ' +
+        `your buy price, ${outputs}, divided by the expected units of this item per action. Estimated prices are ` +
         'left out. With a gold rate set, the alchemy time is charged at that rate.'
     );
+}
+
+/**
+ * What the player's buy price is called on the "Instead of buying" detail line: the book side
+ * their Buy setting prices at, and "+1" when it is a patient tick.
+ * @returns {string} "ask", "bid" or "bid +1"
+ */
+function buySideWord() {
+    const choice = currentPricingSideChoice('buy');
+    if (choice === 'patientTick') return 'bid +1';
+    return choice === 'patient' ? 'bid' : 'ask';
 }
 
 /**
@@ -967,7 +979,7 @@ class TooltipPrices {
                 alt.costPerUnit < 0
                     ? `gains ${atLeast}${formatKMB(-alt.costPerUnit)}/unit`
                     : `${formatKMB(alt.costPerUnit)}/unit`;
-            const parts = [`${costText} vs ${formatKMB(targetAsk)} ask`];
+            const parts = [`${costText} vs ${formatKMB(targetAsk)} ${buySideWord()}`];
             if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
             parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
             // Making it to sell rather than to use: the bid after tax against the same cost and time
@@ -977,7 +989,7 @@ class TooltipPrices {
             if (alt.kept.length > 0) {
                 // Kept outputs are valued at their ask; K flips them, whichever way the marks are read
                 const hint = getMarkMeaning() === 'sell' ? 'K to sell' : 'K to unmark';
-                parts.push(`counts ${alt.kept.map(nameOf).join(', ')} at ask (${hint})`);
+                parts.push(`counts ${alt.kept.map(nameOf).join(', ')} at ${buySideWord()} (${hint})`);
             }
             if (alt.partlyUnpriced) parts.push('an output unpriced');
             html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;

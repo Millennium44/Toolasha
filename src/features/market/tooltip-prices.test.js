@@ -19,6 +19,7 @@ const settings = vi.hoisted(() => ({
     goldRate: 0,
     patientTickBuy: false,
     patientTickSell: false,
+    pricingMode: undefined,
 }));
 const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
@@ -46,6 +47,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
             if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
             if (id === 'selfUse_markMeaning') return settings.markMeaning;
+            if (id === 'profitCalc_pricingMode') return settings.pricingMode ?? fallback;
             return fallback;
         },
         onSettingChange: (id, cb) => {
@@ -181,7 +183,16 @@ vi.mock('../actions/gathering-profit.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     // Book prices by mode, for the instead-of-buying lines: `{hrid: {ask, bid}}`
     getItemPriceInfo: (hrid, options) => {
-        const price = priceState.info[hrid]?.[options?.mode];
+        // Profit context with no mode: the player's mode picks the book side, a buy-side tick adds 1
+        const sides = { optimistic: ['bid', 'ask'], patientBuy: ['bid', 'bid'], hybrid: ['ask', 'ask'] }[
+            settings.pricingMode
+        ] ?? ['ask', 'bid'];
+        const side = options?.mode ?? sides[options?.side === 'buy' ? 0 : 1];
+        const base = priceState.info[hrid]?.[side];
+        const price =
+            base != null && !options?.mode && options?.side === 'buy' && side === 'bid' && settings.patientTickBuy
+                ? base + 1
+                : base;
         return price == null
             ? { price: null, source: null, estimated: false }
             : { price, source: 'book', estimated: false };
@@ -294,6 +305,8 @@ beforeEach(async () => {
     settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
     settings.goldRate = 0;
+    settings.pricingMode = undefined;
+    settings.patientTickBuy = false;
     alchemyState.profits = {};
     alchemyState.candidates = {};
     alchemyState.decompose = {};
@@ -1509,7 +1522,14 @@ describe('instead of buying', () => {
             expect(detail({ costPerUnit: 4 })).toContain('4/unit vs 10 ask');
         });
 
-        test('kept outputs say they are counted at ask, with the K hint for the mode', () => {
+        test('the buy side is named by the pricing settings, not always ask', () => {
+            expect(detail({})).toContain('vs 10 ask');
+            settings.pricingMode = 'optimistic';
+            expect(detail({})).toContain('vs 10 bid');
+            settings.patientTickBuy = true;
+            expect(detail({})).toContain('vs 10 bid +1');
+        });
+        test('kept outputs say they are counted at the buy side, with the K hint for the mode', () => {
             const kept = ['/items/cheese', '/items/cheese_sword'];
             settings.markMeaning = 'sell';
             expect(detail({ kept })).toContain('at ask (K to sell)');
@@ -1525,12 +1545,12 @@ describe('instead of buying', () => {
         const sellTitle = (await hoverCheese()).querySelector(
             '.mwi-alchemy-instead [title^="Instead of buying"]'
         ).title;
-        expect(sellTitle).toContain('every other output kept and valued at its ask');
+        expect(sellTitle).toContain('every other output kept and valued at your buy price');
         settings.markMeaning = 'keep';
         const keepTitle = (await hoverCheese()).querySelector(
             '.mwi-alchemy-instead [title^="Instead of buying"]'
         ).title;
-        expect(keepTitle).toContain('every other output sold at its bid after tax');
+        expect(keepTitle).toContain('every other output sold at your sell price after tax');
     });
 
     describe('an item with many sources', () => {

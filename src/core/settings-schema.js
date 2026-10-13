@@ -901,7 +901,7 @@ export const settingsGroups = {
                 label: 'Show cheaper alchemy routes instead of buying',
                 type: 'checkbox',
                 default: false,
-                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than its ask, and how much each saves per unit. The source, catalyst and tea are bought at their asks; every other output is sold at its bid after tax, or valued at its ask when kept for self-use (see "What a K mark means"). Estimated prices are left out. Nothing is shown when buying is cheapest. Alchemy time is charged at "Your time value (gold/hr)".',
+                help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than buying it, and how much each saves per unit. Prices follow your Buy and Sell pricing: the item, source, catalyst and tea are bought at your buy price; every other output is sold at your sell price after tax, or valued at your buy price when kept for self-use (see "What a K mark means"). Estimated prices are left out. Alchemy time is charged at "Your time value (gold/hr)". Nothing is shown when buying is cheapest. Alchemy time is charged at "Your time value (gold/hr)".',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
