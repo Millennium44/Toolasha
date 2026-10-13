@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Savings, watchlist and combat level ETA corrections
+
+- Savings goals now credit your worn piece at its after-tax sale value, the watchlist flags a bid below the vendor price after market tax and totals bids net of tax (matching bulk sell), and the time to a combat level waits for skills to complete whole levels, as the game counts them, instead of reading early.
+
 ### Labyrinth: Recommend by Time
 
 - Beside Recommend by Win %, the labyrinth panel can recommend the highest room level whose expected time per clear (failed runs included) fits a target time you set, defaulting to 300 seconds; adapted from the Labyrinth Win Rate Calculator 1.6.0.
