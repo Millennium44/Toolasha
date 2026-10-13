@@ -588,7 +588,9 @@ class InventoryBadgeManager {
                 let book = ironCowBook(itemHrid, 0);
                 if (!book) {
                     const raw = priceCache.get(`${itemHrid}:0`) ?? { ask: null, bid: null };
-                    book = reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, 0);
+                    book = reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, 0, {
+                        foreign: marketAPI.liveSourced === true,
+                    });
                 }
                 const marketAsk = book.ask > 0 ? book.ask : 0;
                 const marketBid = book.bid > 0 ? book.bid : 0;

@@ -125,7 +125,8 @@ export function getItemPriceInfo(itemHrid, options = {}) {
         priceData?.ask ?? null,
         priceData?.bid ?? null,
         itemHrid,
-        enhancementLevel
+        enhancementLevel,
+        { foreign: marketAPI.liveSourced === true }
     );
 
     if (ask === null && bid === null) {
@@ -243,7 +244,9 @@ export function getRawMarketAskPrice(itemHrid, enhancementLevel = 0) {
     }
     refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
-    const { ask } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
+    const { ask } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel, {
+        foreign: marketAPI.liveSourced === true,
+    });
     return typeof ask === 'number' && ask >= 0 ? ask : null;
 }
 
@@ -284,7 +287,8 @@ export function getItemPrices(itemHrid, enhancementLevel = 0) {
         priceData?.ask ?? null,
         priceData?.bid ?? null,
         itemHrid,
-        enhancementLevel
+        enhancementLevel,
+        { foreign: marketAPI.liveSourced === true }
     );
 
     if (ask === null && bid === null) {

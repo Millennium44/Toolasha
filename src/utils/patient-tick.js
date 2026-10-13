@@ -14,6 +14,7 @@
  */
 
 import config from '../core/config.js';
+import marketAPI from '../api/marketplace.js';
 import { nextPriceUp, nextPriceDown, clampToBand } from './market-values.js';
 
 /** The setting that ticks patient buys up from the bid. */
@@ -104,7 +105,8 @@ export function patientTickPrice(price, side, basis, book = {}) {
     }
 
     if (itemHrid) {
-        improved = clampToBand(improved, itemHrid, enhancementLevel);
+        // Every caller prices a MarketAPI snapshot, which may be another server's (live-sourced) book
+        improved = clampToBand(improved, itemHrid, enhancementLevel, { foreign: marketAPI.liveSourced === true });
     }
     return improved;
 }

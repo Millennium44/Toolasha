@@ -85,30 +85,25 @@ export function refreshMarketValues(now = Date.now()) {
 }
 
 /**
- * Set while market prices come from another server's feed (the test server's optional
- * live-server prices). The value map and the tradable bands this module holds are the page
- * server's own, so applying them to another server's book would clamp its prices into the
- * wrong range (a live 43K Moonstone read as the test server's 416K floor) and fill empty
- * sides with the wrong server's values.
+ * Per-call context for the price helpers below.
+ *
+ * @typedef {Object} BookOptions
+ * @property {boolean} [foreign] - The price comes from another server's market (the test server's
+ *   optional live-server prices). The value map and tradable bands this module holds are the page
+ *   server's own, so applying them would clamp that price into the wrong range (a live 43K
+ *   Moonstone read as the test server's 416K floor) and fill empty sides with the wrong server's
+ *   values. Only snapshot consumers pass it; the page's own order books keep the page's rules.
  */
-let foreignBook = false;
-
-/**
- * Turn the page server's value map and bands off (or back on) for a foreign price feed.
- * @param {boolean} on - Whether prices come from another server's market
- */
-export function setForeignBook(on) {
-    foreignBook = Boolean(on);
-}
 
 /**
  * The official value of one item at one enhancement level, from cache.
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level
+ * @param {BookOptions} [options] - `foreign` yields no value (the map is the page server's)
  * @returns {number|null}
  */
-export function marketValueFor(itemHrid, enhancementLevel = 0) {
-    if (foreignBook) return null;
+export function marketValueFor(itemHrid, enhancementLevel = 0, options = {}) {
+    if (options?.foreign) return null;
     const value = cache.values?.[itemHrid]?.[String(enhancementLevel)];
     return typeof value === 'number' && value > 0 ? value : null;
 }
@@ -315,10 +310,11 @@ function vendorPriceOf(itemHrid) {
  * fresh, else the band computed from the value (memoised per value map).
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level
+ * @param {BookOptions} [options] - `foreign` yields no band (the bands are the page server's)
  * @returns {{min:number, max:number}|null}
  */
-function bandFor(itemHrid, enhancementLevel) {
-    if (foreignBook) return null;
+function bandFor(itemHrid, enhancementLevel, options = {}) {
+    if (options?.foreign) return null;
     const wire = wireBandFor(itemHrid, enhancementLevel);
     if (wire) return wire;
     let perLevel = bandCache.get(itemHrid);
@@ -346,9 +342,10 @@ function bandFor(itemHrid, enhancementLevel) {
  * @param {number|null} price - A raw ask or bid
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level
+ * @param {BookOptions} [options] - `foreign` skips the band (another server's price)
  * @returns {number|null} The price, banded when a band is known
  */
-export function clampToBand(price, itemHrid, enhancementLevel = 0) {
+export function clampToBand(price, itemHrid, enhancementLevel = 0, options = {}) {
     if (typeof price !== 'number') return price ?? null;
     // A non-positive price is never a real quote: 0 falls below the
     // marketplace's price grid (whose minimum step snaps anything at or below
@@ -361,7 +358,7 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
     // through getPrice, and a clamp against an empty cache would be a no-op.
     // The refresh is throttled and version-guarded, so this is cheap.
     refreshMarketValues();
-    const band = bandFor(itemHrid, enhancementLevel);
+    const band = bandFor(itemHrid, enhancementLevel, options);
     if (!band) return price;
     return Math.min(Math.max(price, band.min), band.max);
 }
@@ -381,6 +378,7 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
  * @param {number|null} bid - Raw best bid
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level
+ * @param {BookOptions} [options] - `foreign` passes the book through untouched (another server's prices)
  * @returns {{ask:number|null, bid:number|null, askSource:string|null, bidSource:string|null}}
  *   Each `*Source` is `'book'` when the side came from the live order book (clamped or not),
  *   `'value'` when it was filled in from the official value map, and `null` when there is no
@@ -388,14 +386,14 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
  *   without them a value-filled side is indistinguishable from a genuine listing, and every
  *   "no market data" signal downstream silently stops firing.
  */
-export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
+export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0, options = {}) {
     // A side of exactly 0 is never a real quote (see clampToBand), so it is
     // treated the same as a missing side throughout — sourced as 'value' below
     // rather than clamped up to band.min, which would fabricate a price no
     // order ever offered.
     const sourceOf = (x) => (typeof x === 'number' && x > 0 ? 'book' : null);
-    const value = marketValueFor(itemHrid, enhancementLevel);
-    const band = bandFor(itemHrid, enhancementLevel);
+    const value = marketValueFor(itemHrid, enhancementLevel, options);
+    const band = bandFor(itemHrid, enhancementLevel, options);
     if (!band) return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     const clamp = (x) => (typeof x === 'number' && x > 0 ? Math.min(Math.max(x, band.min), band.max) : null);
     const askIsBook = typeof ask === 'number' && ask > 0;

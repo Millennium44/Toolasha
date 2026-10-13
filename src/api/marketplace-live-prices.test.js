@@ -65,26 +65,20 @@ describe('MarketAPI live-server prices on the test server', () => {
         expect(marketAPI.getPrice('/items/cheese').ask).toBe(500);
     });
 
-    test("the test server's own price bands are switched off while live-sourced", async () => {
+    test("the test server's price bands are skipped for the live snapshot only", async () => {
         store.set(MIRROR_KEY, true);
-        const setForeignBook = vi.fn();
+        const clampToBand = vi.fn((price, _hrid, _level, options) =>
+            options?.foreign ? price : Math.max(price, 1000)
+        );
         // A band that would pull every price up to 1000, as the test server's value map does
         globalThis.window = {
-            Toolasha: {
-                Utils: {
-                    marketValues: {
-                        setForeignBook,
-                        refreshMarketValues: () => {},
-                        clampToBand: (price) => Math.max(price, 1000),
-                    },
-                },
-            },
+            Toolasha: { Utils: { marketValues: { refreshMarketValues: () => {}, clampToBand } } },
         };
         try {
             const marketAPI = await load('https://test.milkywayidle.com');
             await marketAPI.fetch(true);
-            marketAPI.getPrice('/items/cheese');
-            expect(setForeignBook).toHaveBeenLastCalledWith(true);
+            expect(marketAPI.getPrice('/items/cheese').ask).toBe(500);
+            expect(clampToBand).toHaveBeenLastCalledWith(499, '/items/cheese', 0, { foreign: true });
         } finally {
             delete globalThis.window;
         }

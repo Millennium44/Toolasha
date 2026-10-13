@@ -155,14 +155,16 @@ function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
     refreshMarketValues();
     const valueSource = config.getSettingValue('networth_valueSource') || 'orderBook';
     if (valueSource === 'officialValue') {
-        const official = marketValueFor(itemHrid, enhancementLevel);
+        const official = marketValueFor(itemHrid, enhancementLevel, { foreign: marketAPI.liveSourced === true });
         if (official !== null) {
             return { ask: official, bid: official, average: official };
         }
     }
 
     if (raw && typeof raw === 'object') {
-        const { ask, bid } = reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, enhancementLevel);
+        const { ask, bid } = reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, enhancementLevel, {
+            foreign: marketAPI.liveSourced === true,
+        });
         if (ask === null && bid === null) {
             return null;
         }
@@ -412,7 +414,7 @@ function calculateCurrencyValue(itemHrid) {
         let bagPrice = 0;
         if (valueSource === 'officialValue') {
             refreshMarketValues();
-            bagPrice = marketValueFor('/items/bag_of_10_cowbells', 0) || 0;
+            bagPrice = marketValueFor('/items/bag_of_10_cowbells', 0, { foreign: marketAPI.liveSourced === true }) || 0;
         }
         if (bagPrice <= 0) {
             const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';

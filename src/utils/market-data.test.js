@@ -336,7 +336,7 @@ describe('patient +1 tick', () => {
         const { clampToBand } = await import('./market-values.js');
         clampToBand.mockImplementationOnce(() => 405);
         expect(getItemPrice('/items/cheese', { enhancementLevel: 2, context: 'profit', side: 'buy' })).toBe(405);
-        expect(clampToBand).toHaveBeenCalledWith(410, '/items/cheese', 2);
+        expect(clampToBand).toHaveBeenCalledWith(410, '/items/cheese', 2, { foreign: false });
     });
 });
 

@@ -6,6 +6,7 @@
  */
 
 import config from '../core/config.js';
+import marketAPI from '../api/marketplace.js';
 import { ironCowBook } from './ironcow-valuation.js';
 import { refreshMarketValues, marketValueFor } from './market-values.js';
 
@@ -22,6 +23,6 @@ export function officialValueOverride(itemHrid, enhancementLevel) {
     if ((config.getSettingValue('networth_valueSource') || 'orderBook') !== 'officialValue') return null;
     if (ironCowBook(itemHrid, enhancementLevel)) return null;
     refreshMarketValues();
-    const official = marketValueFor(itemHrid, enhancementLevel);
+    const official = marketValueFor(itemHrid, enhancementLevel, { foreign: marketAPI.liveSourced === true });
     return official !== null && official > 0 ? official : null;
 }
