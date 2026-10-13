@@ -257,6 +257,22 @@ describe('the plan record', () => {
         expect(reloaded.text()).toBe('');
     });
 
+    test('refresh adopts a plan a sync pull stored since it was read, and reports no change otherwise', async () => {
+        const plan = new GuildTrialPlan();
+        await plan.initialize('Pulled');
+        await plan.setText('Alice: Fierce Aura');
+        expect(await plan.refresh()).toBe(false);
+
+        // A pull stores a newer plan under the running page
+        disk.keys['guildTrialAbilityPlan_Pulled'] = { text: 'Bob: Aqua Aura', savedAt: Date.now() + 60_000 };
+
+        expect(plan.text()).toBe('Alice: Fierce Aura');
+        expect(await plan.refresh()).toBe(true);
+        expect(plan.text()).toBe('Bob: Aqua Aura');
+        expect(plan.parsed(ABILITIES).lines[0].player).toBe('Bob');
+        expect(await plan.refresh()).toBe(false);
+    });
+
     test('clearing the box clears the plan rather than resurrecting it', async () => {
         const plan = new GuildTrialPlan();
         await plan.initialize('Wolves');

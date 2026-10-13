@@ -39,6 +39,7 @@
  * a connection.
  */
 
+import storage from '../../core/storage.js';
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
@@ -102,6 +103,9 @@ registerSyncMerge({
     prefix: `${PLAN_KEY_PREFIX}_`,
     merge: mergePlanRecords,
     label: 'Guild trial ability plan',
+    // The only writer is `setText`, a deliberate whole-plan edit stamped now, so the last edit wins. A pulled plan
+    // is adopted when the panel opens (`refresh`); until then a stale read is display only
+    liveSafe: true,
 });
 
 /**
@@ -685,6 +689,30 @@ class GuildTrialPlan {
         this.cache = null;
         this._makeRecord();
         return this.record.load();
+    }
+
+    /**
+     * Take the plan that is stored now, for a panel that has just been opened.
+     *
+     * A sync pull stores a newer plan under a running page without asking for a reload, and this record
+     * trusts memory once loaded, so it would go on showing (and saving over) the plan it read at start-up.
+     * An authoritative load adopts the stored plan unless an edit landed while it read; an edit still on its
+     * way to storage is let land first, so it is never read back over.
+     * @returns {Promise<boolean>} Whether the plan in hand changed
+     */
+    async refresh() {
+        if (!this.record) return false;
+        const before = this.record.get();
+        await this.record.flushed();
+        // Only a plan that is there to be adopted: an absent key means nothing was saved, not that the plan was
+        // cleared elsewhere (clearing the box saves an empty plan), so the plan in hand stands
+        const stored = await storage.tryGet(planStorageKey(this.guildName), PLAN_STORE);
+        if (!stored?.found) return false;
+        if (!(await this.record.load({ authoritative: true }))) return false;
+        const after = this.record.get();
+        if (after?.text === before?.text && after?.savedAt === before?.savedAt) return false;
+        this.cache = null;
+        return true;
     }
 
     /** @returns {string} The plan as written */
