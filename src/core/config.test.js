@@ -1334,6 +1334,19 @@ describe('startupRecovery_autoReload has to be mirrored, not read', () => {
         expect(dataManagerMock.mirrored).toEqual([]);
     });
 
+    test('a reset to defaults mirrors the default, so a stale copy cannot outlive it', async () => {
+        settingsStorageMock.loadSettings.mockImplementation(() =>
+            Promise.resolve({ [KEY]: { id: KEY, isTrue: true } })
+        );
+        await config.loadSettings();
+        dataManagerMock.mirrored = [];
+        settingsStorageMock.buildDefaults.mockImplementation(() => ({ [KEY]: { id: KEY, isTrue: false } }));
+
+        await config.resetToDefaults();
+
+        expect(dataManagerMock.mirrored).toEqual([false]);
+    });
+
     test('flipping the switch mirrors it immediately, without waiting for a reload', async () => {
         settingsStorageMock.loadSettings.mockImplementation(() =>
             Promise.resolve({ [KEY]: { id: KEY, isTrue: true } })
