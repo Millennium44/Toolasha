@@ -255,14 +255,29 @@ describe('LootLogStats: rows drawn before the expected-value calculator finished
         expect(processSpy).toHaveBeenCalledTimes(1);
     });
 
-    test('does nothing when only history is on, and cleanup withdraws the listener', async () => {
+    test('with both on, redraws the native rows and the historical entries', async () => {
+        config.getSetting.mockImplementation((key) => key === 'lootLogStats' || key === 'lootLogHistory');
+        await stats.initialize();
+        const processSpy = vi.spyOn(stats, 'processLootLogElement').mockImplementation(() => {});
+        const renderSpy = vi.spyOn(stats, 'renderHistoricalEntries').mockImplementation(async () => {});
+
+        evHandler()();
+
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        expect(renderSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('with only history on, rebuilds the historical entries and leaves native rows alone; cleanup withdraws the listener', async () => {
         await stats.initialize();
         const handler = evHandler();
         const processSpy = vi.spyOn(stats, 'processLootLogElement').mockImplementation(() => {});
+        const renderSpy = vi.spyOn(stats, 'renderHistoricalEntries').mockImplementation(async () => {});
 
         config.getSetting.mockImplementation((key) => key === 'lootLogHistory');
+        stats.syncParts();
         handler();
         expect(processSpy).not.toHaveBeenCalled();
+        expect(renderSpy).toHaveBeenCalledTimes(1);
 
         stats.cleanup();
         expect(dataManager.off).toHaveBeenCalledWith('expected_value_initialized', handler);

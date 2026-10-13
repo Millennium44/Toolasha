@@ -387,11 +387,15 @@ class LootLogStats {
      * they were drawn with may have been missing.
      */
     repriceStampedRows() {
-        if (!config.getSetting('lootLogStats')) return;
-        document.querySelectorAll('.LootLogPanel_actionLoot__32gl_').forEach((row) => {
-            delete row.dataset.mwiLootLogStamp;
-        });
-        this.processVisibleRows();
+        if (config.getSetting('lootLogStats')) {
+            document.querySelectorAll('.LootLogPanel_actionLoot__32gl_').forEach((row) => {
+                delete row.dataset.mwiLootLogStamp;
+            });
+            this.processVisibleRows();
+        }
+        // The historical entries total their rows from the same prices, and are not stamped, so
+        // they are rebuilt whole
+        if (this.historyEnabled && this.unregisterHistoryObserver) this.renderHistoricalEntries();
     }
 
     /**
