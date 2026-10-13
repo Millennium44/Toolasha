@@ -29,9 +29,12 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value, store = 'settings') => {
+        set: vi.fn(async (key, value, store = 'settings', _immediate = false, options = {}) => {
             if (storageMock.unavailable) return false;
-            storeFor(store).set(key, structuredClone(value));
+            const map = storeFor(store);
+            // A fold runs against what is stored at the moment the write lands, as real storage does
+            const folded = options?.fold ? options.fold(map.get(key), value) : undefined;
+            storeFor(store).set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -218,6 +221,36 @@ describe('load', () => {
 });
 
 describe('save', () => {
+    test('a write held across a restore folds against what the restore wrote, not the probe from before it', async () => {
+        // storage holds a debounced write that fires mid-restore and flushes it at endRestore. The probe
+        // behind it predates the import, so the write has to fold again where it lands.
+        const record = byId();
+        record.set([{ id: 2 }]);
+        storageMock.set.mockImplementationOnce(async (key, value, store, _immediate, options) => {
+            // The restore lands between the probe and the write
+            const map = storageMock.storeFor(store);
+            map.set(key, [{ id: 1 }]);
+            map.set(key, options?.fold ? options.fold(map.get(key), value) : value);
+            return true;
+        });
+
+        await record.save();
+
+        expect(stored()).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+
+    test('a clear states its value outright and carries no fold', async () => {
+        const record = byId();
+        record.set([{ id: 1 }]);
+        await record.save();
+        storageMock.set.mockClear();
+
+        await record.clear();
+
+        expect(storageMock.set.mock.calls[0][4]?.fold).toBeUndefined();
+        expect(stored()).toEqual([]);
+    });
+
     test('the global flush waits for a fire-and-forget save still preparing its storage write', async () => {
         const record = byId();
         let releaseProbe;

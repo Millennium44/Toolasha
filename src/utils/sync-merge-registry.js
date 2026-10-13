@@ -64,6 +64,8 @@
  * @property {string} label - For logging and for the apply summary
  * @property {boolean} capsLocally - This device keeps the history shorter by its own setting, so a push
  *   that replaces the gist can cut entries the gist holds. Only such a registration can report a trim
+ * @property {boolean} liveSafe - The record's readers and writers re-read storage and fold it under what they
+ *   hold, so a pulled copy is adopted without a reload and the write latch leaves its keys open
  * @property {((key: string, value: *) => Record<string, *>|null)|null} split - For a retired key whose
  *   owner moves its entries into other keys on first read: the keys and values it would move them into
  */
@@ -110,6 +112,10 @@ export function scopedKeyMatcher(base) {
  * @param {string} [options.label] - Name for logs and the apply summary
  * @param {boolean} [options.capsLocally] - The fold caps the history by a setting of this device (and keeps
  *   everything for `forUpload`). Opt-in: only a flagged registration can make a pressed Push warn about a trim
+ * @param {boolean} [options.liveSafe] - Every reader and writer of the record re-reads storage and folds it under
+ *   what it holds in memory (a persisted record with the same `merge`), so a pull may replace the stored copy
+ *   under a running page: the keys are not latched and the pull asks for no reload on their account. Opt-in,
+ *   and only for a record whose in-memory copy is never written back over storage unfolded
  * @param {(key: string, value: *) => Record<string, *>|null} [options.split] - A retired key its owner migrates
  *   into other keys and then deletes: given the key and a value, the keys (each owned by a registered merge) and
  *   values the migration would write, or null when it cannot say. Sync then carries those instead of the retired
@@ -127,6 +133,7 @@ export function registerSyncMerge({
     pull,
     label,
     capsLocally = false,
+    liveSafe = false,
     split,
 }) {
     if (!store) throw new Error('[SyncMergeRegistry] registerSyncMerge needs a store');
@@ -166,6 +173,7 @@ export function registerSyncMerge({
                   : merge,
         label: label || key || base || prefix || store,
         capsLocally: capsLocally === true,
+        liveSafe: liveSafe === true,
         split: typeof split === 'function' ? split : null,
         claim,
     };
@@ -245,6 +253,16 @@ export function mergeForKey(store, key) {
         break;
     }
     return found;
+}
+
+/**
+ * Whether a key's registered merge declared it live-safe (see `registerSyncMerge`'s `liveSafe`).
+ * @param {string} store - Object store name
+ * @param {string} key - Storage key
+ * @returns {boolean} True when a pull may replace the key under a running page without a reload
+ */
+export function isLiveSafeKey(store, key) {
+    return mergeForKey(store, key)?.liveSafe === true;
 }
 
 /**

@@ -192,7 +192,13 @@ describe('flush', () => {
 
         marketPriceStore.dirty = true;
         await marketPriceStore.flush();
-        expect(storageMock.set).toHaveBeenCalledWith('mooketPrices', marketPriceStore.entries, 'marketListings', false);
+        expect(storageMock.set).toHaveBeenCalledWith(
+            'mooketPrices',
+            marketPriceStore.entries,
+            'marketListings',
+            false,
+            expect.objectContaining({ fold: expect.any(Function) })
+        );
         expect(marketPriceStore.dirty).toBe(false);
     });
 });

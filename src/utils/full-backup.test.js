@@ -195,6 +195,7 @@ describe('exportEverythingJSON', () => {
             failed: [],
             complete: true,
             writtenKeys: {},
+            latched: 0,
         });
     });
 
@@ -517,6 +518,61 @@ describe('importEverything reports what did not land', () => {
         const keys = storage.finishRestore.mock.calls[0][0].get('settings');
         expect(keys.has('enhancementTracker_sessions_abc')).toBe(true);
         expect(keys.has('enhancementTracker_sessionTombstones_abc')).toBe(true);
+    });
+
+    test('a live-safe record is written but not latched, and a restore of only those latches nothing', async () => {
+        const { registerSyncMerge } = await import('./sync-merge-registry.js');
+        const unregister = registerSyncMerge({
+            store: 'liveStore',
+            base: 'liveRec',
+            merge: (a) => a,
+            label: 'Live rec',
+            liveSafe: true,
+        });
+        try {
+            const storage = (await import('../core/storage.js')).default;
+            const payload = await exportEverything();
+            payload.stores = { liveStore: { liveRec_1: [1] } };
+            db.set('liveStore', new Map());
+
+            const result = await importEverything(payload, { liveSafeMerge: true });
+
+            expect(db.get('liveStore').get('liveRec_1')).toEqual([1]);
+            expect(result.latched).toBe(0);
+            expect(storage.finishRestore).not.toHaveBeenCalled();
+
+            payload.stores = { liveStore: { liveRec_1: [1], other: 2 } };
+            const mixed = await importEverything(payload, { liveSafeMerge: true });
+            expect(mixed.latched).toBe(1);
+            const keys = storage.finishRestore.mock.calls[0][0].get('liveStore');
+            expect(Array.from(keys)).toEqual(['other']);
+        } finally {
+            unregister();
+        }
+    });
+
+    test('a backup restore latches a live-safe record too, so the rollback is not folded back', async () => {
+        const { registerSyncMerge } = await import('./sync-merge-registry.js');
+        const unregister = registerSyncMerge({
+            store: 'liveStore',
+            base: 'liveRec',
+            merge: (a) => a,
+            label: 'Live rec',
+            liveSafe: true,
+        });
+        try {
+            const storage = (await import('../core/storage.js')).default;
+            const payload = await exportEverything();
+            payload.stores = { liveStore: { liveRec_1: [1] } };
+            db.set('liveStore', new Map());
+
+            const result = await importEverything(payload);
+
+            expect(result.latched).toBe(1);
+            expect(Array.from(storage.finishRestore.mock.calls[0][0].get('liveStore'))).toEqual(['liveRec_1']);
+        } finally {
+            unregister();
+        }
     });
 
     test('reports every key it wrote, including a tombstone companion the reconciliation added', async () => {

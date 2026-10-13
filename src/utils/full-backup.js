@@ -9,6 +9,7 @@
 
 import storage from '../core/storage.js';
 import { flushPersistedRecords } from './persisted-record.js';
+import { isLiveSafeKey } from './sync-merge-registry.js';
 
 const FORMAT_VERSION = 1;
 
@@ -303,9 +304,12 @@ export async function exportEverything() {
  * through the debounced path would mean hundreds of pending per-key timers.
  * @param {{formatVersion: number, stores: Record<string, Record<string, *>>}} payload - Backup payload,
  *   as produced by `exportEverything()`
- * @param {{storeNames?: Array<string>}} [options] - Restore options
+ * @param {{storeNames?: Array<string>, liveSafeMerge?: boolean}} [options] - Restore options
  * @param {Array<string>} [options.storeNames] - Restrict restore to these store names.
  *   Defaults to every store present in the payload.
+ * @param {boolean} [options.liveSafeMerge] - The payload is a sync pull's merge, so records
+ *   registered live-safe are written without being latched. A backup restore leaves this off
+ *   and latches everything it wrote.
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<{store: string, expected: number, written: number}>, complete: boolean}>}
  *   What landed, what was meant to, and whether every store wrote its full count
@@ -395,13 +399,17 @@ export async function importEverything(payload, options = {}) {
             } else if (want > 0) {
                 const latch = new Set();
                 for (const key of Object.keys(entries)) {
+                    // A record whose readers fold storage under memory takes the write and is not latched
+                    // Only a sync pull's merge may leave it writable: a backup restore is a rollback,
+                    // and an unlatched record would fold the pre-restore memory straight back in
+                    if (options.liveSafeMerge && isLiveSafeKey(storeName, key)) continue;
                     latch.add(key);
                     // A record and its tombstones are one unit: latching only one
                     // lets a pre-restore write to the other undo the pairing
                     const companion = latchCompanionKey(storeName, key);
                     if (companion) latch.add(companion);
                 }
-                written.set(storeName, latch);
+                if (latch.size > 0) written.set(storeName, latch);
             }
         }
     } finally {
@@ -416,7 +424,10 @@ export async function importEverything(payload, options = {}) {
         }
     }
 
-    return { restored, expected, failed, complete: failed.length === 0, writtenKeys };
+    // How many keys now refuse writes until a reload; a restore that latched none asks for none
+    let latched = 0;
+    for (const keys of written.values()) latched += keys.size;
+    return { restored, expected, failed, complete: failed.length === 0, writtenKeys, latched };
 }
 
 export default {

@@ -1725,6 +1725,24 @@ describe('Storage restore quiescing', () => {
         expect(dataByStore.get('settings').has('watchlist')).toBe(false);
     });
 
+    test('a folding write held through a restore lands folded over what the restore wrote', async () => {
+        const union = (stored, value) => [...new Set([...(stored || []), ...value])];
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+
+        await storage.beginRestore();
+        const held = storage.set('history', ['new session'], 'settings', false, { fold: union });
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+        expect(dataByStore.get('settings').has('history')).toBe(false);
+
+        // The pull's import lands without latching the key (a live-safe record)
+        await storage.putAll('settings', { history: ['imported'] }, { bypassRestoreLatch: true });
+        await storage.endRestore();
+
+        expect(await held).toBe(true);
+        expect(dataByStore.get('settings').get('history')).toEqual(['imported', 'new session']);
+    });
+
     test('a write already in flight when a restore lands is dropped, not requeued past the latch', async () => {
         // The hole `finishRestore`'s queue purge cannot see: a timer that has
         // already fired took its entry OUT of `pendingWrites` before awaiting

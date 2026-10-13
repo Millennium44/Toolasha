@@ -637,7 +637,20 @@ export function createPersistedRecord({
                     // Resolved before the call: `set` queues the value synchronously
                     // when the database is open, ahead of any flush this wakes.
                     handOff();
-                    return await storage.set(writeKey, memory, store, immediate);
+                    // The fold rides with the value: the probe above is only as fresh as the moment it ran, and
+                    // a debounced write can be held for a sync restore's whole window (storage holds timers that
+                    // fire mid-restore, then flushes them at its end). Folding again inside the transaction that
+                    // lands the write keeps what the restore wrote; an overwrite (clear) states its value outright.
+                    return await storage.set(
+                        writeKey,
+                        memory,
+                        store,
+                        immediate,
+                        // A merge that needs an awaited `prepare` cannot run inside a transaction
+                        overwrite || prepare
+                            ? {}
+                            : { fold: (stored, held) => (stored === undefined ? held : merge(stored, held)) }
+                    );
                 } catch (error) {
                     console.error(`[${label}] Saving ${base} failed:`, error);
                     return false;

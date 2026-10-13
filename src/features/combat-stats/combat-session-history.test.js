@@ -411,6 +411,39 @@ describe('two observers of one run', () => {
     });
 });
 
+describe('a pulled merge is adopted live', () => {
+    const KEY = 'combatSessionHistory_char1';
+    const stored = () => storageMock.storeFor('combatStats').get(KEY);
+
+    beforeEach(() => {
+        storageMock.reset();
+        game.characterId = 'char1';
+    });
+
+    test('is registered live-safe, so a pull neither latches it nor asks for a reload', () => {
+        expect(mergeForKey('combatStats', KEY)?.liveSafe).toBe(true);
+    });
+
+    test('a session a pull wrote under a running page is read, and the next archive keeps it', async () => {
+        const mine = { ...session('2026-08-03T01:00:00Z'), archivedAt: 1 };
+        const theirs = { ...session('2026-08-02T01:00:00Z'), archivedAt: 1 };
+        await archiveSession(mine);
+        // The pull: storage now holds the combined list, this page's memory still the pre-pull one
+        storageMock
+            .storeFor('combatStats')
+            .set(KEY, mergeSessionHistory(stored(), [{ ...theirs, key: sessionKey(theirs) }]));
+
+        expect((await loadSessions()).map((s) => s.combatStartTime)).toContain('2026-08-02T01:00:00Z');
+
+        await archiveSession({ ...session('2026-08-04T01:00:00Z') });
+        expect(entriesOf(stored()).map((s) => s.combatStartTime)).toEqual([
+            '2026-08-04T01:00:00Z',
+            '2026-08-03T01:00:00Z',
+            '2026-08-02T01:00:00Z',
+        ]);
+    });
+});
+
 describe('Clear survives a sync pull', () => {
     const KEY = 'combatSessionHistory_char1';
     const stamped = (start, seen) => ({ ...session(start), timestamp: seen, key: sessionKey(session(start)) });
