@@ -1456,6 +1456,18 @@ describe('instead of buying', () => {
         expect(text).not.toContain('if you use');
     });
 
+    test('the detail line shows what making it to sell nets, and omits it without a bid', async () => {
+        settings.insteadOfBuying = true;
+        // 50 / (18 × 0.6) = 4.63 a cheese; a bid of 2 pays less than that after tax
+        priceState.info['/items/cheese'] = { ask: 10, bid: 2 };
+        const detail = (await hoverCheese()).querySelector('.mwi-alchemy-instead').textContent;
+        expect(detail).toMatch(/selling instead: -[\d.]+\/unit/);
+        clearInsteadCache();
+        priceState.info['/items/cheese'] = { ask: 10 };
+        const none = (await hoverCheese()).querySelector('.mwi-alchemy-instead').textContent;
+        expect(none).not.toContain('selling instead');
+    });
+
     test('the hover text describes outputs the way the K marks mean them', async () => {
         settings.insteadOfBuying = true;
         settings.markMeaning = 'sell';

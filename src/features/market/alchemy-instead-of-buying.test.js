@@ -118,6 +118,26 @@ describe('findAlchemyAlternatives', () => {
         expect(alternatives[0].secondsPerUnit).toBeCloseTo(7.2);
     });
 
+    test('selling the made item instead nets its bid after tax less the same cost and time', () => {
+        // Essence bid 200 → 180 after the 10% test tax; Boomstick costs 140 an essence
+        const prices = { [ESSENCE]: { ask: 300, bid: 200 }, [BOOMSTICK]: { ask: 600 } };
+        const free = findAlchemyAlternatives(ESSENCE, depsFor(prices));
+        expect(free.alternatives[0].sellingPerUnit).toBeCloseTo(40);
+        // 7.2 s an essence at 2,000/hr is 4 of time: 180 − (140 + 4)
+        const timed = findAlchemyAlternatives(ESSENCE, depsFor(prices, { goldPerHour: 2000 }));
+        expect(timed.alternatives[0].sellingPerUnit).toBeCloseTo(36);
+        // The saving against the ask is unchanged by the bid
+        expect(free.alternatives[0].saving).toBeCloseTo(160);
+    });
+
+    test('without a real bid there is no selling figure', () => {
+        const { alternatives } = findAlchemyAlternatives(
+            ESSENCE,
+            depsFor({ [ESSENCE]: { ask: 300 }, [BOOMSTICK]: { ask: 600 } })
+        );
+        expect(alternatives[0].sellingPerUnit).toBeNull();
+    });
+
     test('other outputs are credited at their bid after tax', () => {
         // Shooter: 1 leather per action at 200 × 0.9 = 180; (1000 + 100 − 180) / 5 = 184
         const { alternatives } = findAlchemyAlternatives(

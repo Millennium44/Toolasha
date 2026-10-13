@@ -265,9 +265,11 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
  * @param {Function} [deps.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @param {number} [deps.goldPerHour=0] - The player's gold rate; 0 leaves time free
  * @param {number} [deps.limit=MAX_ALTERNATIVES]
- * @returns {{targetAsk: number|null, alternatives: Array<Object>}} Alternatives cheapest first, each
- *   `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving, savingPerHour,
- *   secondsPerUnit, partlyUnpriced, kept, result}`; empty when buying is cheapest
+ * @returns {{targetAsk: number|null, alternatives: Array<Object>}} Alternatives
+ *   cheapest first, each `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving,
+ *   savingPerHour, sellingPerUnit, secondsPerUnit, partlyUnpriced, kept, result}`; empty when buying is
+ *   cheapest. `sellingPerUnit` is what making the target and selling it (bid after tax) nets per unit
+ *   after the same cost and time, null without a real bid.
  */
 export function findAlchemyAlternatives(targetHrid, deps) {
     const { sources, getItemDetails, askOf, sellOf, candidatesOf, isWanted, containerValue, sellContainerValue } = deps;
@@ -275,6 +277,8 @@ export function findAlchemyAlternatives(targetHrid, deps) {
     const limit = deps.limit ?? MAX_ALTERNATIVES;
     const targetAsk = askOf(targetHrid);
     if (targetAsk === null || !(targetAsk > 0)) return { targetAsk: null, alternatives: [] };
+    // The bid after tax of the target itself: what selling it instead of using it pays
+    const targetSell = typeof sellOf === 'function' ? sellOf(targetHrid) : null;
 
     // Without a keep list nothing is kept: every other output is sold
     const pricing = {
@@ -322,6 +326,8 @@ export function findAlchemyAlternatives(targetHrid, deps) {
             saving,
             // Per hour of alchemy: the saving rate, over and above the gold rate when one is set
             savingPerHour: evaluation.secondsPerUnit > 0 ? (saving * 3600) / evaluation.secondsPerUnit : null,
+            // Selling the made item instead of using it: bid after tax against the same cost and time
+            sellingPerUnit: targetSell === null || targetSell === undefined ? null : targetSell - effectiveCost,
             secondsPerUnit: evaluation.secondsPerUnit,
             partlyUnpriced: evaluation.partlyUnpriced,
             kept: evaluation.kept,
