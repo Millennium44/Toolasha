@@ -179,6 +179,16 @@ class ProfitCalculator {
             }
         }
 
+        // The levels an enhanced upgrade output can land on and how likely each is. Exposed on
+        // the result so the liquidity cap measures the book each variant actually sells into
+        // rather than the +0 one (see sellsFromProfitData).
+        const outputVariants =
+            upgradeLevel > 0
+                ? upgradeOutputLevels(upgradeLevel, { retainAll: Boolean(actionDetails.retainAllEnhancement) }).map(
+                      ({ level, weight }) => ({ itemHrid, enhancementLevel: level, weight })
+                  )
+                : null;
+
         // Actions per hour (base rate without efficiency)
         const actionsPerHour = calculateActionsPerHour(effectiveActionTime);
 
@@ -304,6 +314,7 @@ class ProfitCalculator {
             totalItemsPerHour, // Items/hour including Gourmet bonus
             gourmetBonusItems, // Extra items from Gourmet
             outputAmount,
+            outputVariants, // Enhanced upgrade output: [{itemHrid, enhancementLevel, weight}], else null
             materialCosts,
             totalMaterialCost,
             materialCostPerHour, // Material costs per hour (with efficiency)

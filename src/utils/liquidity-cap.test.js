@@ -473,6 +473,24 @@ describe('sellsFromProfitData — the three calculator shapes', () => {
         expect(sells).toEqual([{ itemHrid: '/items/donut', name: null, unitsPerHour: 100 }]);
     });
 
+    test('production: an enhanced upgrade output sells per variant, split by weight', () => {
+        const sells = sellsFromProfitData({
+            itemHrid: '/items/rainbow',
+            itemName: 'Rainbow',
+            itemsPerHour: 90,
+            gourmetBonusItems: 10,
+            outputVariants: [
+                { itemHrid: '/items/rainbow', enhancementLevel: 3, weight: 0.25 },
+                { itemHrid: '/items/rainbow', enhancementLevel: 4, weight: 0.75 },
+            ],
+        });
+
+        expect(sells).toEqual([
+            { itemHrid: '/items/rainbow', name: 'Rainbow', enhancementLevel: 3, unitsPerHour: 25 },
+            { itemHrid: '/items/rainbow', name: 'Rainbow', enhancementLevel: 4, unitsPerHour: 75 },
+        ]);
+    });
+
     test('nothing, zero rates and missing hrids yield nothing rather than guesses', () => {
         expect(sellsFromProfitData(null)).toEqual([]);
         expect(sellsFromProfitData({})).toEqual([]);

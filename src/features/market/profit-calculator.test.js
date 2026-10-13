@@ -756,6 +756,18 @@ describe('calculateProfit — enhancement carried through an upgrade craft', () 
         expect(result.outputPrice).toBeCloseTo(3000, 6);
     });
 
+    test('an enhanced output exposes its weighted floor/ceil variants for the liquidity cap', async () => {
+        setup();
+        const enhanced = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+        expect(enhanced.outputVariants).toEqual([
+            { itemHrid: '/items/upgraded', enhancementLevel: 3, weight: 0.5 },
+            { itemHrid: '/items/upgraded', enhancementLevel: 4, weight: 0.5 },
+        ]);
+
+        const plain = await profitCalculator.calculateProfit('/items/upgraded');
+        expect(plain.outputVariants).toBeNull();
+    });
+
     test('a recipe that retains enhancement carries the whole level', async () => {
         setup({ retainAll: true });
         const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
