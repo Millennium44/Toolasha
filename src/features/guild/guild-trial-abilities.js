@@ -525,9 +525,6 @@ registerSyncMerge({
     prefix: `${SESSION_KEY_PREFIX}_`,
     merge: mergeStoredSessions,
     label: 'Guild trial ability session',
-    // The only writer is `_persist`, which folds inside the write's own transaction; its `replace` writes start a
-    // new trial's session on purpose
-    liveSafe: true,
 });
 
 class GuildTrialAbilities {

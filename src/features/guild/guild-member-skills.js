@@ -277,8 +277,6 @@ registerSyncMerge({
     prefix: `${KEY_PREFIX}_`,
     merge: mergeMemberSkillCaptures,
     label: 'Guild member skills',
-    // The only writer is `this.record`, a persisted record whose every save, a prune included, folds stored under memory
-    liveSafe: true,
 });
 
 /**
@@ -472,26 +470,14 @@ class GuildMemberSkills {
     _recordForGuild() {
         const key = memberSkillsStorageKey(this.guildName);
         if (!this.record || this.recordKey !== key) {
-            // Names pruned as an in-game rename's dead entries. The fold below keeps every stored key memory lacks,
-            // which would read a pruned name straight back; this set is what it is told to leave out instead, so a
-            // prune saves through the ordinary folding path and a copy a pull stored meanwhile is kept
-            const pruned = new Set();
-            const foldMaps = mergeMaps();
             this.record = createPersistedRecord({
                 base: key,
                 store: STORE_NAME,
                 scoped: false,
                 empty: () => ({}),
-                merge: (stored, memory) => {
-                    const folded = foldMaps(stored, memory);
-                    for (const name of pruned) {
-                        if (!(memory && typeof memory === 'object' && name in memory)) delete folded[name];
-                    }
-                    return folded;
-                },
+                merge: mergeMaps(),
                 label: 'GuildMemberSkills',
             });
-            this.prunedNames = pruned;
             this.recordKey = key;
         }
         return this.record;
@@ -599,17 +585,14 @@ class GuildMemberSkills {
      * a different member (in this guild or, since captures are stored one
      * guild at a time, any other) is ever at risk.
      *
-     * A prune cannot lean on the ordinary fold alone. This record's merge
+     * A prune has to be saved with `overwrite: true`. This record's merge
      * (`mergeMaps()`) folds stored keys under memory but keeps any stored key
      * memory does not have — exactly right for two tabs each capturing a
      * different member, and exactly wrong for a deletion: the ordinary
      * `save()` would read the old name straight back out of storage on this
      * very write, since memory no longer naming it looks identical to memory
-     * never having touched it. So the pruned names are remembered
-     * (`prunedNames`) and the record's merge leaves them out of the fold. The
-     * save stays a folding one rather than `overwrite: true`, which wrote
-     * memory as it stood and threw away whatever a sync pull had stored
-     * since it was read.
+     * never having touched it. `leaderboard-xp-tracker.js`'s stale-series purge
+     * takes the same `overwrite: true` for the same reason.
      *
      * @param {Object} message - `profile_shared`
      */
@@ -620,13 +603,11 @@ class GuildMemberSkills {
 
             const key = capture.name.toLowerCase();
             const pruned = pruneRenamedEntries(this.captures, capture, key);
-            const before = this.captures;
+            const renamed = pruned !== this.captures;
             this.captures = { ...pruned, [key]: capture };
-            if (pruned !== before) {
-                for (const name of Object.keys(before)) if (!(name in pruned)) this.prunedNames.add(name);
-            }
             this._notifyChanged();
-            this.record.save().catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
+            const saved = renamed ? this.record.save({ overwrite: true }) : this.record.save();
+            saved.catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
         } catch (error) {
             console.error('[GuildMemberSkills] Reading an opened profile failed:', error);
         }

@@ -282,24 +282,18 @@ registerSyncMerge({
     base: RECORDS_BASE,
     merge: mergeRecords,
     label: 'Trade ledger fills',
-    // Written only while the split could not be made (`saveRecords`'s legacy branch), which folds in its write
-    liveSafe: true,
 });
 registerSyncMerge({
     store: LEDGER_STORE,
     prefix: `${RECORD_PREFIX}_`,
     merge: mergeRecords,
     label: 'Trade ledger fills (daily)',
-    // `saveRecords` probes each day record and writes it with a fold, so a pulled copy is merged, not written over
-    liveSafe: true,
 });
 registerSyncMerge({
     store: LEDGER_STORE,
     base: STATE_BASE,
     merge: mergeStates,
     label: 'Trade ledger baselines',
-    // The only writer is `saveStates`, which probes, folds and writes with the same fold inside the transaction
-    liveSafe: true,
 });
 
 /*

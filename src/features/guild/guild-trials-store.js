@@ -1202,9 +1202,6 @@ registerSyncMerge({
     prefix: `${KEY_PREFIX}_`,
     merge: mergeTrialRecords,
     label: 'Guild trial records',
-    // The only writer is `saveTrialRecord`, whose write folds inside its own transaction. Its overwrites are the
-    // cycle archive and the load-time junk-tile heal, which mean to lose tiles
-    liveSafe: true,
 });
 
 /**

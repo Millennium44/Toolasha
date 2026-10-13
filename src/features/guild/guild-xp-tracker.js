@@ -560,9 +560,6 @@ registerSyncMerge({
     merge: mergeXPHistoriesForSync,
     pull: pullXPHistories,
     label: 'Guild XP history',
-    // Every write goes through `_persist`, which folds inside the write's own transaction; its overwrites are the
-    // login heal/prune, the migration and the member reset, which mean to lose entries
-    liveSafe: true,
 });
 registerSyncMerge({
     store: STORE_NAME,
@@ -570,8 +567,6 @@ registerSyncMerge({
     merge: mergeXPHistoriesForSync,
     pull: pullMemberXPHistories,
     label: 'Guild member XP',
-    // As the guild XP history above
-    liveSafe: true,
 });
 registerSyncMerge({
     store: STORE_NAME,
@@ -579,8 +574,6 @@ registerSyncMerge({
     merge: mergeXPHistoriesForSync,
     pull: pullXPHistories,
     label: 'Guild leaderboard XP',
-    // As the guild XP history above
-    liveSafe: true,
 });
 
 class GuildXPTracker {

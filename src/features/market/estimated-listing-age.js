@@ -2411,10 +2411,6 @@ registerSyncMerge({
     base: LISTINGS_BASE,
     merge: mergeListingLogsForSync,
     label: 'Market listing log',
-    // The only writer is `saveHistoricalData`, which probes the stored log and the stored tombstones and folds both
-    // under memory before an immediate write. Its overwrites are a delete (which re-syncs from storage first) and
-    // the user's Clear
-    liveSafe: true,
 });
 
 /*
@@ -2428,9 +2424,6 @@ registerSyncMerge({
     key: ANCHORS_KEY,
     merge: mergeAnchorPools,
     label: 'Market listing anchors',
-    // Writers: `_persistAnchors` folds inside the write's own transaction; `loadAnchors` writes only a pool it just
-    // built from a read of the same key, at load
-    liveSafe: true,
 });
 
 /*

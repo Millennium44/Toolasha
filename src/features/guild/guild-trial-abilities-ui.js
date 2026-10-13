@@ -1838,13 +1838,6 @@ export const guildTrialAbilitiesPanel = createPanel({
  */
 export function openTrialAbilitiesPanel() {
     guildTrialAbilitiesPanel.show();
-    // A sync pull can have stored a newer plan since this tab read it; take it and redraw if so
-    guildTrialPlan
-        .refresh()
-        .then((changed) => {
-            if (changed) guildTrialAbilitiesPanel.render();
-        })
-        .catch((error) => console.error('[GuildTrialAbilitiesUI] Refreshing the plan failed:', error));
 }
 
 /**

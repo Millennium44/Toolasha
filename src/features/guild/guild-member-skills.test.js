@@ -395,23 +395,6 @@ describe('an in-game rename does not leave dead storage under the old name', () 
         expect(stored).toHaveProperty('ada');
         expect(stored).not.toHaveProperty('adalina');
     });
-
-    test('a prune keeps a capture a sync pull stored since this device last read the map', async () => {
-        game.wsHandlers.profile_shared(profile('Adalina', undefined, 'char-1'));
-        await vi.advanceTimersByTimeAsync(0);
-
-        // A pull lands another device's capture under the key, which this tab has never read
-        const key = memberSkillsStorageKey('Milky Way');
-        game.store[key] = { ...game.store[key], zed: { name: 'Zed', characterId: 'zed-id', skills: {}, at: 5 } };
-
-        game.wsHandlers.profile_shared(profile('Ada', undefined, 'char-1'));
-        await vi.advanceTimersByTimeAsync(0);
-
-        const stored = game.store[key];
-        expect(stored).toHaveProperty('ada');
-        expect(stored).toHaveProperty('zed');
-        expect(stored).not.toHaveProperty('adalina');
-    });
 });
 
 describe('per guild, and forgotten with the character', () => {
