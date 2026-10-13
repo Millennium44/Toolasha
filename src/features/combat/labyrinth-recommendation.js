@@ -365,9 +365,11 @@ export const recommendationMethods = {
                 // while the rooms after it kept writing, so the run finished
                 // with only its tail on screen. In a live labyrinth this fires
                 // mid-run whenever the lab swaps loadouts or a level comes in.
-                // The run re-searches its skilling rooms at the end instead,
-                // and keeps the combat rooms it got through.
+                // The run re-searches, at the end, every room settled before
+                // the latest change: the skilling rooms, and the combat rooms
+                // whose search started before it.
                 this._recommendInputsChangedMidRun = true;
+                this._recommendChangeSerial = (this._recommendChangeSerial || 0) + 1;
             } else {
                 this.recommendations.clear();
             }
@@ -447,6 +449,9 @@ export const recommendationMethods = {
         this._recommendBasis = bySeconds ? 'seconds' : 'winRate';
 
         this._recommendInputsChangedMidRun = false;
+        this._recommendChangeSerial = 0;
+        /** combat room -> the change serial its search started under */
+        const combatSearchedAt = new Map();
 
         const secondsRecord = (found) => ({
             threshold: found ? found.threshold : null,
@@ -472,6 +477,27 @@ export const recommendationMethods = {
             });
         };
 
+        // One combat room's search; false when the batch was cancelled or torn down
+        const searchCombatRoom = async (roomHrid) => {
+            combatSearchedAt.set(roomHrid, this._recommendChangeSerial);
+            if (bySeconds) {
+                const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
+                if (this.simCancelled() || this.simEpoch() !== epoch) return false;
+                // An interrupted combat room reports nothing, as win-rate does
+                if (found) this.recommendations.set(roomHrid, secondsRecord(found));
+                return true;
+            }
+            const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
+            if (this.simCancelled() || this.simEpoch() !== epoch) return false;
+            this.recommendations.set(roomHrid, {
+                threshold,
+                basis: 'winRate',
+                basisKey,
+                target: this._recommendTargetPct,
+            });
+            return true;
+        };
+
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
         const rooms = [];
 
@@ -494,36 +520,27 @@ export const recommendationMethods = {
                 if (this.simCancelled() || this.simEpoch() !== epoch) break;
                 if (isSkill) {
                     await searchSkillRoom(roomHrid);
-                } else if (bySeconds) {
-                    this.refreshAutomationRunningState(completed + 1, totalRooms);
-                    const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
-                    if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                    // An interrupted combat room reports nothing, as win-rate does
-                    if (!found) {
-                        completed++;
-                        continue;
-                    }
-                    this.recommendations.set(roomHrid, secondsRecord(found));
                 } else {
                     this.refreshAutomationRunningState(completed + 1, totalRooms);
-                    const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
-                    if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                    this.recommendations.set(roomHrid, {
-                        threshold,
-                        basis: 'winRate',
-                        basisKey,
-                        target: this._recommendTargetPct,
-                    });
+                    if (!(await searchCombatRoom(roomHrid))) break;
                 }
                 completed++;
             }
-            // The inputs moved under the run. Its skilling rooms were settled in
-            // its first instant and are closed-form, so they are searched again
-            // against what is current now; the combat rooms keep what they got.
+            // The inputs moved under the run. Every room settled before the latest
+            // change answers for the old inputs: the skilling rooms (closed-form,
+            // settled in the first instant) and the combat rooms whose search
+            // started before it are searched again against what is current now,
+            // so one run never mixes thresholds from two sets of gear.
             if (this._recommendInputsChangedMidRun && !this.simCancelled() && this.simEpoch() === epoch) {
+                const latest = this._recommendChangeSerial;
                 for (const { roomHrid, isSkill } of rooms) {
-                    if (isSkill && this.recommendations.has(roomHrid)) await searchSkillRoom(roomHrid);
-                    if (this.simEpoch() !== epoch) break;
+                    if (this.simCancelled() || this.simEpoch() !== epoch) break;
+                    if (isSkill) {
+                        if (this.recommendations.has(roomHrid)) await searchSkillRoom(roomHrid);
+                    } else if (combatSearchedAt.has(roomHrid) && combatSearchedAt.get(roomHrid) < latest) {
+                        this.refreshAutomationRunningState(completed, totalRooms);
+                        if (!(await searchCombatRoom(roomHrid))) break;
+                    }
                 }
             }
         } finally {

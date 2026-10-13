@@ -194,6 +194,29 @@ describe('Recommend run over skilling and combat rooms', () => {
         expect(panel._recommendInputsChangedMidRun).toBe(false);
     });
 
+    test('combat rooms searched before a mid-run change are searched again, so no run mixes two sets of gear', async () => {
+        buildTable();
+        vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);
+        let gearLevel = 6;
+        const calls = [];
+        vi.spyOn(panel, 'findRecommendedThresholdCombat').mockImplementation(async (hrid) => {
+            calls.push(hrid);
+            const answer = gearLevel;
+            // The gear changes while the second combat room is being searched
+            if (calls.length === 2) {
+                gearLevel = 9;
+                inputsChange('gear-b');
+            }
+            return answer;
+        });
+
+        await panel.runRecommendations();
+
+        for (const hrid of MONSTERS) expect(panel.recommendations.get(hrid).threshold).toBe(9);
+        // The room searched wholly after the change is not searched twice
+        expect(calls.filter((hrid) => hrid === MONSTERS[2])).toHaveLength(1);
+    });
+
     test('a change between runs still drops the recommendations it made stale', async () => {
         buildTable();
         vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);
