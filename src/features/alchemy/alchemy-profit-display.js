@@ -99,6 +99,14 @@ class AlchemyProfitDisplay {
             ...PATIENT_TICK_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
             config.onSettingsLoaded(onPricingChange),
+            // The two section switches are read only when the panel is built, so a change
+            // has to force a rebuild of a panel already on screen
+            ...['actionPanel_showSpeedTime', 'actionPanel_showLevelProgress'].map((key) =>
+                config.onSettingChange(key, () => {
+                    this.lastFingerprint = null;
+                    if (this.isActive) this.checkAndUpdateDisplay();
+                })
+            ),
         ];
 
         this.isActive = true;

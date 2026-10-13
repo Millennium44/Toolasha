@@ -9,13 +9,17 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ initClientData: null, skills: [] }));
 const settings = vi.hoisted(() => ({}));
+const settingHandlers = vi.hoisted(() => new Map());
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => (key in settings ? settings[key] : true),
         getSettingValue: (key, def) => (key === 'profitCalc_pricingMode' ? 'optimistic' : def),
         getPricingModeDisplayLabel: (mode) => `label:${mode}`,
-        onSettingChange: () => () => {},
+        onSettingChange: (key, fn) => {
+            settingHandlers.set(key, fn);
+            return () => settingHandlers.delete(key);
+        },
         onSettingsLoaded: () => () => {},
         COLOR_TEXT_PRIMARY: '#fff',
         COLOR_TEXT_SECONDARY: '#888',
@@ -23,7 +27,7 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: () => () => {}, register: () => () => {} },
+    default: { onClass: () => () => {}, register: () => () => {}, onReady: () => () => {} },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -138,6 +142,23 @@ describe('Alchemy panel honors the action-panel section settings', () => {
         const { container } = mountPanel();
         display.createDisplay(container, profitData(), 'coinify', ITEM, 0);
         expect(display.displayElement?.parentNode).toBe(container);
+    });
+});
+
+describe('a change to a section switch rebuilds a panel already on screen', () => {
+    test('both section settings force a rebuild through checkAndUpdateDisplay', () => {
+        settingHandlers.clear();
+        display.isInitialized = false;
+        display.initialize();
+        const rebuild = vi.spyOn(display, 'checkAndUpdateDisplay').mockImplementation(() => {});
+        display.lastFingerprint = 'stale';
+        settingHandlers.get('actionPanel_showSpeedTime')();
+        expect(display.lastFingerprint).toBeNull();
+        expect(rebuild).toHaveBeenCalledTimes(1);
+        settingHandlers.get('actionPanel_showLevelProgress')();
+        expect(rebuild).toHaveBeenCalledTimes(2);
+        rebuild.mockRestore();
+        display.disable?.();
     });
 });
 
