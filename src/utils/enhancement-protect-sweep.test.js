@@ -14,6 +14,7 @@ import {
     sweepProtectFromMemo,
     clearProtectSweepMemo,
     chooseProtectionOptions,
+    protectionCandidates,
     expectedRunXp,
     cheapestProtectPlan,
     protectFromLevels,
@@ -671,5 +672,74 @@ describe('stock split is E[min(stock, N)], not min(stock, E[N])', () => {
                 expect(exact).toBeCloseTo(walk({ ...args, jump }), 8);
             }
         }
+    });
+});
+
+describe('protectionCandidates and a picked protection item', () => {
+    const details = {
+        protectionItemHrids: ['/items/cape_a', '/items/cape_b', '/items/philosophers_mirror'],
+    };
+    const table = { '/items/cape': 9_000, '/items/mirror_of_protection': 20_000, '/items/cape_a': 3_000 };
+    const priceOf = (hrid) => table[hrid] || 0;
+    const base = { itemHrid: '/items/cape', itemDetails: details, priceOf };
+
+    test("lists the item, the Mirror of Protection and every protection hrid, never the Philosopher's Mirror", () => {
+        const list = protectionCandidates(base);
+        expect(list.map((c) => c.itemHrid)).toEqual([
+            '/items/cape',
+            '/items/mirror_of_protection',
+            '/items/cape_a',
+            '/items/cape_b',
+        ]);
+    });
+
+    test('an item with no market price is unpriced, not free', () => {
+        const unpriced = protectionCandidates(base).find((c) => c.itemHrid === '/items/cape_b');
+        expect(unpriced).toMatchObject({ price: 0, priced: false });
+    });
+
+    test('auto leaves the cheapest alternative; a pick replaces it, priced even when dearer', () => {
+        const auto = chooseProtectionOptions({ ...base, selectedHrid: '/items/cape' });
+        expect(auto.options.map((o) => o.itemHrid)).toEqual(['/items/cape', '/items/cape_a']);
+
+        const picked = chooseProtectionOptions({
+            ...base,
+            selectedHrid: '/items/cape',
+            pickedHrid: '/items/mirror_of_protection',
+        });
+        expect(picked.options.map((o) => [o.itemHrid, o.role, o.price])).toEqual([
+            ['/items/cape', undefined, 9_000],
+            ['/items/mirror_of_protection', 'picked', 20_000],
+        ]);
+    });
+
+    test("a pick that is the Philosopher's Mirror or not a candidate is ignored", () => {
+        for (const pickedHrid of ['/items/philosophers_mirror', '/items/cheese']) {
+            const { options } = chooseProtectionOptions({ ...base, selectedHrid: null, pickedHrid });
+            expect(options.map((o) => o.itemHrid)).toEqual(['/items/cape_a']);
+        }
+    });
+
+    test('an unpriced pick is flagged and its rows are not swept as a free route', () => {
+        const { options } = chooseProtectionOptions({ ...base, selectedHrid: null, pickedHrid: '/items/cape_b' });
+        expect(options).toHaveLength(1);
+        expect(options[0]).toMatchObject({ itemHrid: '/items/cape_b', role: 'picked', buyPriceUnknown: true });
+        const sweep = sweepProtectFrom({ chain, targetLevel: 6, protectionOptions: options });
+        expect(sweep.rows.filter((row) => row.itemHrid && row.protections > 0)).toEqual([]);
+    });
+
+    test('the sweep prices protected rows with the picked item', () => {
+        const run = (pickedHrid) => {
+            const { options } = chooseProtectionOptions({ ...base, selectedHrid: null, pickedHrid });
+            return sweepProtectFrom({ chain, targetLevel: 6, protectionOptions: options });
+        };
+        const mirror = run('/items/mirror_of_protection');
+        const rows = mirror.rows.filter((row) => row.itemHrid);
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((row) => row.itemHrid === '/items/mirror_of_protection')).toBe(true);
+        expect(rows.every((row) => row.protectionPrice === 20_000)).toBe(true);
+        const cheap = run('/items/cape_a').rows.find((row) => row.protectFrom === 2 && row.itemHrid);
+        const dear = mirror.rows.find((row) => row.protectFrom === 2 && row.itemHrid);
+        expect(dear.expectedCost).toBeGreaterThan(cheap.expectedCost);
     });
 });

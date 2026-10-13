@@ -20,7 +20,11 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { calculatePriceAfterTax, resolveItemPrice } from '../../utils/profit-helpers.js';
-import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
+import {
+    chooseProtectionOptions,
+    protectionCandidates,
+    sweepProtectFromMemo,
+} from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { effectiveInventory } from '../../utils/inventory-reservations.js';
@@ -176,6 +180,17 @@ export async function displayEnhancementStats(panel, itemHrid) {
             speedBreakdown
         );
         injectDisplay(panel, html);
+
+        // The sweep's protection picker lives in the container injectDisplay just rebuilt, so its
+        // listener goes with that node on the next render
+        const pick = panel.querySelector('.mwi-protsweep-pick');
+        if (pick) {
+            pick.addEventListener('change', () => {
+                if (pick.value) protectPicks.set(itemHrid, pick.value);
+                else protectPicks.delete(itemHrid);
+                displayEnhancementStats(panel, itemHrid);
+            });
+        }
 
         // Attach mode toggle button handler
         const modeToggleBtn = panel.querySelector('#mwi-enhance-mode-toggle');
@@ -928,6 +943,14 @@ export function mirrorSummaryLine(summary, coins) {
 }
 
 /**
+ * The protection item the player chose to price the sweep with, per enhanced item, for the
+ * session. Absent means auto (the slot plus the cheapest alternative). Only the sweep and its
+ * picker read it; the game's protection slot is never touched.
+ * @type {Map<string, string>}
+ */
+const protectPicks = new Map();
+
+/**
  * The protect-from sweep: every protect-from level from 2 to the panel's
  * target, plus no protection, each priced with the protection item in the slot
  * and with the cheapest other item that would work — so the protect-from box
@@ -950,6 +973,8 @@ export function mirrorSummaryLine(summary, coins) {
  * @param {number} args.perActionTime - Seconds per attempt from the buff maps
  * @param {number|null} [args.currentLevel] - The item's current enhancement level, null when unknown
  * @param {Object|null} [args.mirrorSummary] - The Philosopher's Mirror route from the costs table
+ * @param {string|null} [args.pickedHrid] - Protection item to price instead of the cheapest alternative;
+ *   defaults to the session's choice for this item
  * @returns {string} HTML, or '' when there is nothing to sweep
  */
 export function protectSweepHTML({
@@ -962,6 +987,7 @@ export function protectSweepHTML({
     perActionTime,
     currentLevel = null,
     mirrorSummary = null,
+    pickedHrid = undefined,
 }) {
     try {
         if (!itemDetails?.hrid || !targetLevel || targetLevel < 1) return '';
@@ -977,10 +1003,18 @@ export function protectSweepHTML({
             const held = effectiveInventory(hrid, 0);
             return hrid === itemDetails.hrid && benchAtZero ? Math.max(0, held - 1) : held;
         };
+        const candidates = protectionCandidates({
+            itemHrid: itemDetails.hrid,
+            itemDetails,
+            priceOf: sweepBuyPrice,
+            nameOf,
+        });
+        const chosen = pickedHrid === undefined ? protectPicks.get(itemDetails.hrid) || null : pickedHrid;
         const { options, selectedIsMirror } = chooseProtectionOptions({
             itemHrid: itemDetails.hrid,
             itemDetails,
             selectedHrid: protectionItemHrid,
+            pickedHrid: chosen,
             priceOf: sweepBuyPrice,
             nameOf,
             ...(stockSettings.enabled
@@ -1022,6 +1056,7 @@ export function protectSweepHTML({
         });
 
         const selectedHrid = options.find((option) => option.selected)?.itemHrid || null;
+        const pickedOption = options.find((option) => option.role === 'picked') || null;
         const currentProtect = protectFromLevel >= 2 ? protectFromLevel : 0;
         const isCurrentRow = (row) =>
             row.protectFrom === currentProtect && (currentProtect === 0 || row.itemHrid === selectedHrid);
@@ -1035,7 +1070,10 @@ export function protectSweepHTML({
         sweep.rows.forEach((row, index) => {
             if (row.itemHrid !== lastItem && row.itemHrid) {
                 const option = optionOf.get(row.itemHrid);
-                const label = row.selected ? 'in the slot' : option?.role === 'held' ? 'held' : 'cheapest alternative';
+                let label = 'cheapest alternative';
+                if (row.selected) label = 'in the slot';
+                else if (option?.role === 'held') label = 'held';
+                else if (option?.role === 'picked') label = 'your pick';
                 let priceNote = row.protectionPrice > 0 ? `@${coins(row.protectionPrice)}` : 'no price';
                 if (option?.stock > 0) {
                     const buyNote =
@@ -1109,8 +1147,13 @@ export function protectSweepHTML({
             notes.push(
                 "The slot holds a Philosopher's Mirror, which guarantees the attempt rather than softening the fall — the sweep prices the cheapest protect-from item instead."
             );
-        } else if (!selectedHrid) {
+        } else if (!selectedHrid && !pickedOption) {
             notes.push('Nothing in the protection slot — priced with the cheapest item that would work.');
+        }
+        if (pickedOption?.buyPriceUnknown && !(pickedOption.stock > 0)) {
+            notes.push(
+                `${pickedOption.name} has no market price, so rows that would need to buy it are left out; pick another item.`
+            );
         }
         if (stockSettings.enabled) {
             notes.push(
@@ -1125,12 +1168,27 @@ export function protectSweepHTML({
                 "protection is used. ★ cheapest expected, ✦ best gold per XP, ◂ the panel's current setting. From +0."
         );
 
+        const pickerHTML =
+            '<div style="margin:4px 0; font-size:0.85em; color:#aaa;">' +
+            `<label>Price with <select class="mwi-protsweep-pick" data-item="${itemDetails.hrid}" ` +
+            'style="background:#222; color:#ccc; border:1px solid #555; border-radius:3px; font-size:1em;">' +
+            `<option value=""${pickedOption ? '' : ' selected'}>Auto (slot + cheapest)</option>` +
+            candidates
+                .map(
+                    (candidate) =>
+                        `<option value="${candidate.itemHrid}"${pickedOption?.itemHrid === candidate.itemHrid ? ' selected' : ''}>` +
+                        `${candidate.name} — ${candidate.priced ? coins(candidate.price) : 'no price'}</option>`
+                )
+                .join('') +
+            '</select></label></div>';
+
         return (
             '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
             '<div class="mwi-enh-toggle" data-target="mwi-enh-protsweep" style="color: #9bd; font-weight: bold; font-size: 0.95em; cursor: pointer;">' +
             `Protect-from sweep to +${targetLevel} <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>` +
             mirrorSummaryLine(mirrorSummary, coins) +
             '<div id="mwi-enh-protsweep" style="display: none;">' +
+            pickerHTML +
             `<div style="color:#888; font-size:0.8em; margin:4px 0;">${notes.join(' ')}</div>` +
             '<div style="overflow-x:auto;"><table id="mwi-protsweep-table" style="font-size:0.85em; border-collapse:collapse; width:100%;">' +
             `<tr style="border-bottom:1px solid #444;">${th('Protect from', 'left')}${th('Expected cost')}${th('p10 – p90 (approx.)', 'right', SPREAD_APPROX_NOTE)}${th('Attempts')}${th('Protections')}${th('Time')}${th('XP')}${th('Gold/XP')}${th('', 'left')}</tr>` +

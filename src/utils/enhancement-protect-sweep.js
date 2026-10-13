@@ -208,6 +208,34 @@ export function expectedProtectionsFromStock({
 }
 
 /**
+ * Every item that can protect an enhancement of `itemHrid`, owned or not: the item itself, the
+ * Mirror of Protection, and the item's own `protectionItemHrids`. The Philosopher's Mirror is
+ * never one — it guarantees the attempt rather than softening the fall.
+ *
+ * @param {Object} args - Inputs
+ * @param {string} args.itemHrid - The item being enhanced
+ * @param {Object} [args.itemDetails] - Its game data, for `protectionItemHrids`
+ * @param {function(string): number} args.priceOf - Buy price for an item hrid, 0 when unknown
+ * @param {function(string): string} [args.nameOf] - Display name for an item hrid
+ * @returns {Array<{itemHrid: string, name: string, price: number, priced: boolean}>} Candidates in
+ *   game order, `priced` false when there is no buy quote (price is then 0, not a free item)
+ */
+export function protectionCandidates({ itemHrid, itemDetails, priceOf, nameOf }) {
+    const hrids = [itemHrid, MIRROR_OF_PROTECTION_HRID, ...(itemDetails?.protectionItemHrids || [])];
+    return [...new Set(hrids)]
+        .filter((hrid) => hrid && hrid !== PHILOSOPHERS_MIRROR_HRID)
+        .map((hrid) => {
+            const price = Number(priceOf(hrid)) || 0;
+            return {
+                itemHrid: hrid,
+                name: (typeof nameOf === 'function' ? nameOf(hrid) : null) || hrid,
+                price: price > 0 ? price : 0,
+                priced: price > 0,
+            };
+        });
+}
+
+/**
  * The protection items worth pricing for an item: what is in the slot, and the cheapest other
  * thing that would work. The Philosopher's Mirror is not among them — it guarantees the attempt
  * instead of softening the fall, so the protect-from chain says nothing about it.
@@ -230,6 +258,10 @@ export function expectedProtectionsFromStock({
  * @param {number} [args.reserve=0] - Copies of each protection item to keep
  * @param {function(string): number} [args.sellPriceOf] - What one copy would sell for, 0 when
  *   unknown; falls back to the buy price, and never exceeds it
+ * @param {string|null} [args.pickedHrid] - A protection item the player chose to price instead of
+ *   the cheapest alternative (role 'picked'), owned or not; null for auto. Ignored when it is not
+ *   a valid candidate or is the slot item. With no buy quote it is kept but flagged
+ *   `buyPriceUnknown`, so the sweep never treats it as free
  * @returns {{options: Array<{itemHrid: string, name: string, price: number, selected: boolean,
  *   role?: string, held?: number, reserve?: number, stock?: number, stockPrice?: number}>,
  *   selectedIsMirror: boolean}} The selected one first, then the cheapest alternative, then any
@@ -245,6 +277,7 @@ export function chooseProtectionOptions({
     holdingsOf,
     reserve = 0,
     sellPriceOf,
+    pickedHrid = null,
 }) {
     const name = (hrid) => (typeof nameOf === 'function' ? nameOf(hrid) : null) || hrid;
     const selectedIsMirror = selectedHrid === PHILOSOPHERS_MIRROR_HRID;
@@ -294,11 +327,25 @@ export function chooseProtectionOptions({
         }
     }
 
+    // A chosen item takes the cheapest alternative's place, priced whether or not it is owned
+    const picked =
+        pickedHrid &&
+        pickedHrid !== selected &&
+        pickedHrid !== PHILOSOPHERS_MIRROR_HRID &&
+        candidates.includes(pickedHrid)
+            ? pickedHrid
+            : null;
+    if (picked) {
+        const price = priceOf(picked) || 0;
+        const pickedOption = withStock({ itemHrid: picked, name: name(picked), price, selected: false }, 'picked');
+        options.push({ ...pickedOption, role: 'picked', ...(price > 0 ? {} : { buyPriceUnknown: true }) });
+    }
+
     let cheapest = null;
     const priced = [];
     const unpricedHeld = [];
     for (const hrid of new Set(candidates)) {
-        if (!hrid || hrid === selected || hrid === PHILOSOPHERS_MIRROR_HRID) continue;
+        if (!hrid || hrid === selected || hrid === picked || hrid === PHILOSOPHERS_MIRROR_HRID) continue;
         const price = priceOf(hrid) || 0;
         const option = { itemHrid: hrid, name: name(hrid), price, selected: false };
         if (price > 0) {
@@ -312,7 +359,7 @@ export function chooseProtectionOptions({
     // The alternative earns its column when there is nothing selected, the selected item has
     // no price, or it is genuinely cheaper than what is in the slot
     const showCheapest = Boolean(
-        cheapest && (!selected || !(options[0]?.price > 0) || cheapest.price < options[0].price)
+        !picked && cheapest && (!selected || !(options[0]?.price > 0) || cheapest.price < options[0].price)
     );
     if (showCheapest) options.push(withStock(cheapest, 'cheapest'));
 
