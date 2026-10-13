@@ -136,6 +136,16 @@ function insteadTitle() {
     );
 }
 
+/**
+ * Units per hour for the "Instead of buying" rate wording: whole numbers, one decimal under 10.
+ * @param {number} unitsPerHour
+ * @returns {string}
+ */
+function formatInsteadUnitsPerHour(unitsPerHour) {
+    if (unitsPerHour < 10) return unitsPerHour.toFixed(1);
+    return unitsPerHour >= 1000 ? formatKMB(unitsPerHour) : String(Math.round(unitsPerHour));
+}
+
 /** Most kept outputs a self-use label names before summarizing the rest */
 const SELF_USE_KEEP_NAMES = 2;
 
@@ -923,11 +933,13 @@ class TooltipPrices {
             const verb = ['decompose', 'coinify'].includes(alt.actionType) ? alt.actionType : 'transmute';
             const atLeast = alt.partlyUnpriced ? '≥' : '';
             let rate = '';
-            if (alt.savingPerHour !== null) {
+            if (alt.savingPerHour !== null && alt.secondsPerUnit > 0) {
+                // A saving per hour spent on alchemy: it only applies if that many units are used
+                const units = formatInsteadUnitsPerHour(3600 / alt.secondsPerUnit);
                 rate =
                     alt.timeCostPerUnit > 0
-                        ? ` (+${formatKMB(alt.savingPerHour)}/hr over your gold rate)`
-                        : ` (${formatKMB(alt.savingPerHour)}/hr of alchemy)`;
+                        ? ` — +${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
+                        : ` — ${formatKMB(alt.savingPerHour)} per hour of alchemy if you use ~${units}/hr`;
             }
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
             html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;

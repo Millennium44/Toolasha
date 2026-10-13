@@ -16,6 +16,7 @@ const settings = vi.hoisted(() => ({
     keepChip: true,
     markMeaning: 'keep',
     insteadOfBuying: false,
+    goldRate: 0,
     patientTickBuy: false,
     patientTickSell: false,
 }));
@@ -38,7 +39,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
             if (id === 'itemTooltip_selfUseKeepChip') return settings.keepChip;
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
-            if (id === 'itemTooltip_alchemyInsteadGoldPerHour') return 0;
+            if (id === 'itemTooltip_alchemyInsteadGoldPerHour') return settings.goldRate;
             return true;
         },
         getSettingValue: (id, fallback) => {
@@ -292,6 +293,7 @@ beforeEach(async () => {
     settings.keepChip = true;
     settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
+    settings.goldRate = 0;
     alchemyState.profits = {};
     alchemyState.candidates = {};
     alchemyState.decompose = {};
@@ -1440,7 +1442,18 @@ describe('instead of buying', () => {
         expect(section).not.toBeNull();
         // 50 / (18 × 0.6) = 4.63 a cheese against an ask of 10: 5.37 saved, 1,080 cheese an hour
         expect(section.textContent).toContain('Instead of buying: decompose Cheese Sword — saves 5/unit');
-        expect(section.textContent).toContain('5.8K/hr of alchemy');
+        // 100 actions an hour at 60% × 18 cheese: 1,080 cheese an hour
+        expect(section.textContent).toContain('5.8K per hour of alchemy if you use ~1.1K/hr');
+        expect(section.textContent).not.toContain('gold rate');
+    });
+
+    test('a gold rate says the hourly figure is over it, with the units an hour', async () => {
+        settings.insteadOfBuying = true;
+        settings.goldRate = 100;
+        const el = await hoverCheese();
+        const text = el.querySelector('.mwi-alchemy-instead').textContent;
+        expect(text).toMatch(/\+[\d.]+K?\/hr of alchemy over your gold rate, using ~1\.1K\/hr/);
+        expect(text).not.toContain('if you use');
     });
 
     test('the hover text describes outputs the way the K marks mean them', async () => {
