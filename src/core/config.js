@@ -1347,6 +1347,9 @@ class Config {
         // set was holding is now moot — the reset covers those ids too.
         this._dirtyKeys = new Set();
         await settingsStorage.saveSettings(this.settingsMap, settingsStorage.SAVE_ALL_KEYS);
+        // The device copy decides on every load, so a reset that left it behind would flip the
+        // switch back on at the next reload
+        this._mirrorLivePricesSetting(this.getSetting(LIVE_PRICES_SETTING_KEY));
         this.applyColorSettings();
     }
 
