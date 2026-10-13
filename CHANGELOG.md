@@ -10,6 +10,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A sync pull that only changes labyrinth logs, replay checks, XP history, calibrations, leaderboards, treasure tally, guild loadouts, self-use marks or personal trade prices no longer asks you to reload; guild trial, guild XP, trade ledger and trade price saves now merge with what a pull just stored instead of overwriting it.
 
+### Sync: no reload after a character switch with nothing locked
+
+- A sync pull cut short by a character switch asks you to reload only when it actually locked a record, matching the normal pull.
+
+### Settings: a stuck database no longer looks like a fresh install
+
+- When the browser's storage stops answering, Toolasha no longer greets a returning player with the first-run preset dialog, so a preset click can't overwrite real settings; the next good load reconciles as usual.
+
+### Price calculator starts once
+
+- The expected-value calculator now shares one start between every feature that asks for it, so the loot log, task profits and tooltips no longer run duplicate calculations and redraws when they ask at once.
+
 ### Custom Tabs toolbar fits narrow inventories
 
 - The Custom Tabs toolbar no longer pushes the inventory panel into a sideways scroll: Export, Import, Import Categories and Clear All moved into a "⋯" menu beside + Tab, expand and collapse, and the row wraps if it is still too wide.

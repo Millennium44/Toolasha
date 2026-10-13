@@ -656,6 +656,21 @@ class SettingsStorage {
     }
 
     /**
+     * Like `storedSettingIds`, but says whether the read itself worked. A
+     * timed-out or failed read answers `{ readable: false }`, never an empty
+     * list: callers that treat "nothing saved" as a fresh install must not be
+     * handed a storage outage as one.
+     * @returns {Promise<{readable: boolean, ids: Array<string>|null}>}
+     */
+    async tryStoredSettingIds() {
+        const key = this.getCharacterStorageKey();
+        const probed = await storage.tryGet(key, this.storageArea);
+        if (probed === null) return { readable: false, ids: null };
+        const saved = probed.found ? storage.parseJSON(probed.value, key, null) : null;
+        return { readable: true, ids: saved ? Object.keys(saved) : null };
+    }
+
+    /**
      * Load all settings from storage
      * Merges saved values with defaults from settings-schema
      * @returns {Promise<Object>} Settings map
