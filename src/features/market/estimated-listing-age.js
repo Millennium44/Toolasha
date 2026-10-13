@@ -1241,15 +1241,21 @@ class EstimatedListingAge {
      */
     async importListings(listings) {
         const owner = this._owner();
-        this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
-        this.rebuildEstimationPoints();
-        // An import is the user saying these rows belong in the log: their tombstones are taken back
-        // first, or the save's fold buries them again
         const ids = (Array.isArray(listings) ? listings : [])
             .map((listing) => listing?.id)
             .filter((id) => typeof id === 'number');
-        await this._restoreGraves(ids, owner);
-        if (!this._ownsMemory(owner)) return;
+        // On the save chain, and the rows into memory only once their tombstones are taken back: a save
+        // already holding the old tombstones would otherwise strip the imported rows from memory
+        const run = async () => {
+            if (!this._ownsMemory(owner)) return false;
+            await this._restoreGraves(ids, owner);
+            if (!this._ownsMemory(owner)) return false;
+            this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
+            this.rebuildEstimationPoints();
+            return true;
+        };
+        this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
+        if (!(await this._saveChain)) return;
         await this.saveHistoricalData({ owner });
     }
 
