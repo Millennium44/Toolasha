@@ -1145,7 +1145,10 @@ export function protectSweepHTML({
         const notes = [];
         if (selectedIsMirror) {
             notes.push(
-                "The slot holds a Philosopher's Mirror, which guarantees the attempt rather than softening the fall — the sweep prices the cheapest protect-from item instead."
+                "The slot holds a Philosopher's Mirror, which guarantees the attempt rather than softening the fall — the sweep prices " +
+                    (pickedOption
+                        ? `${pickedOption.name}, your pick, instead.`
+                        : 'the cheapest protect-from item instead.')
             );
         } else if (!selectedHrid && !pickedOption) {
             notes.push('Nothing in the protection slot — priced with the cheapest item that would work.');
