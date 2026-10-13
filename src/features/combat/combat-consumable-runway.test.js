@@ -75,6 +75,7 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
 }));
 
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
+    valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
     calculatePlayerStats: (player) => ({ consumableBreakdown: player.breakdown }),
 }));
 

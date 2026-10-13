@@ -56,6 +56,7 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => game.latest },
 }));
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
+    valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
     // The breakdown is whatever the player entry carries, for the test's convenience
     calculatePlayerStats: (player) => ({ consumableBreakdown: player.breakdown || [] }),
 }));

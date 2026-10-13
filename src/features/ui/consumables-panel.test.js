@@ -114,6 +114,7 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => game.latest },
 }));
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
+    valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
     calculatePlayerStats: (player) => game.statsByName[player.name] || {},
 }));
 

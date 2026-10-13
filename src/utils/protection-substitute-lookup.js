@@ -7,6 +7,7 @@
 
 import dataManager from '../core/data-manager.js';
 import expectedValueCalculator from '../features/market/expected-value-calculator.js';
+import { calculatePriceAfterTax } from './profit-helpers.js';
 
 /**
  * Always a valid protection sacrifice for ANY equipment, per its own item description
@@ -55,5 +56,9 @@ export function suggestProtectionSubstituteProxyPrice(itemHrid) {
     const priceInfo = expectedValueCalculator.getDropPriceInfo(UNIVERSAL_PROTECTION_ITEM_HRID);
     if (priceInfo.value === null) return null;
 
-    return { price: priceInfo.value, viaItemHrid: UNIVERSAL_PROTECTION_ITEM_HRID };
+    // The saved override is read as a pre-tax price, but the EV calculator only taxes a
+    // tradable drop; an untradeable substitute would keep the Mirror's gross quote, so net it here
+    const substituteTradable = dataManager.getItemDetails(itemHrid)?.isTradable !== false;
+    const price = priceInfo.needsTax && !substituteTradable ? calculatePriceAfterTax(priceInfo.value) : priceInfo.value;
+    return { price, viaItemHrid: UNIVERSAL_PROTECTION_ITEM_HRID };
 }
