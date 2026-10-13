@@ -1423,7 +1423,7 @@ class EstimatedListingAge {
                         }
                     }
                     if (patches.length > 0) {
-                        marketAPI.updatePrices(patches);
+                        marketAPI.updatePrices(patches, { pageOrderBook: true });
                     }
                 }
 

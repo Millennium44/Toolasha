@@ -626,3 +626,24 @@ describe('books that mix old-grid and new-grid prices', () => {
         expect(reconcileBook(1005, 995, '/items/cheese')).toMatchObject({ ask: 1005, bid: 995 });
     });
 });
+
+describe('a foreign price feed', () => {
+    test("the page server's bands and values stand down for a call marked foreign", () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        const foreign = { foreign: true };
+        // A live price far below this server's band is not pulled up into it
+        expect(clampToBand(43, '/items/cheese', 0, foreign)).toBe(43);
+        expect(marketValueFor('/items/cheese', 0, foreign)).toBeNull();
+        // and an empty side is not filled with this server's value
+        expect(reconcileBook(43, null, '/items/cheese', 0, foreign)).toMatchObject({ ask: 43, bid: null });
+    });
+
+    test("an unmarked (page order book) call keeps the page server's band", () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        expect(clampToBand(43, '/items/cheese')).toBe(904);
+        expect(clampToBand(43, '/items/cheese', 0, { foreign: false })).toBe(904);
+        expect(marketValueFor('/items/cheese')).toBe(1000);
+    });
+});

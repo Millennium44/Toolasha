@@ -16,7 +16,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const disk = vi.hoisted(() => ({ store: {}, failNextRead: false, reads: 0 }));
 const server = vi.hoisted(() => ({ test: false }));
 
-vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test }));
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test, liveGameOrigin: (o) => o }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {

@@ -50,6 +50,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/game-server.js', () => ({
     isTestServer: () => game.testServer === true,
     gameOrigin: () => 'https://www.milkywayidle.com',
+    liveGameOrigin: (o) => o,
 }));
 vi.mock('./guild-trials-store.js', () => ({
     archiveEarlierCycles: (record) => record,
