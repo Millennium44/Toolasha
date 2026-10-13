@@ -8,7 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Instead of buying: clearer figures
 
-- The tooltip's Instead of buying line now says its hourly figure is per hour of alchemy at the rate you would use the item, shows what making and selling it instead would net after tax, and says so when no alchemy route beats buying rather than showing nothing.
+- The tooltip's Instead of buying line now follows your Buy and Sell pricing settings instead of always buying at ask, says its hourly figure is per hour of alchemy at the rate you would use the item, shows what making and selling it instead would net after tax, reads "gains" when the by-products are worth more than the input, names the outputs it counts at your buy price, and says so when no alchemy route beats buying rather than showing nothing.
+- The crafting plan's gold/hr and the alchemy routes' gold rate are now one "Your time value (gold/hr)" setting that accepts 3m, 500k or 1.5b (it used to save 0 for "3m"); an alchemy rate you had set moves over.
 
 ### Labyrinth: loadout swaps keep the sim cache
 
