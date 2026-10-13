@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Price calculator starts once
+
+- The expected-value calculator now shares one start between every feature that asks for it, so the loot log, task profits and tooltips no longer run duplicate calculations and redraws when they ask at once.
+
 ### Custom Tabs toolbar fits narrow inventories
 
 - The Custom Tabs toolbar wraps onto a second line instead of pushing the inventory panel into a sideways scroll on a narrow layout.
