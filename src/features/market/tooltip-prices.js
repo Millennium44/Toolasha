@@ -851,7 +851,8 @@ class TooltipPrices {
 
     /**
      * The "Instead of buying" lines: the best alchemy routes to this item that beat its ask.
-     * Draws nothing when buying is cheapest.
+     * When sources exist but none beat the ask, one dim line says so; an item with no source, no real ask
+     * or no source that could be costed draws nothing.
      *
      * An item with many alchemy sources is worked out in the background rather than on the
      * hover: its section is placed now, empty and hidden, so the line keeps its place among
@@ -881,13 +882,15 @@ class TooltipPrices {
                 this.fillInsteadLater(tooltipElement, placeholder, itemHrid, itemName, wanted);
                 return;
             }
-            if (!found.alternatives.length) return;
+            if (!found.alternatives.length && !found.noCheaperRoute) return;
             const div = dom.createStyledDiv(
                 { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
                 '',
                 INSTEAD_SECTION_CLASS
             );
-            div.innerHTML = this.buildInsteadOfBuyingHTML(found.targetAsk, found.alternatives);
+            div.innerHTML = found.alternatives.length
+                ? this.buildInsteadOfBuyingHTML(found.targetAsk, found.alternatives)
+                : this.buildNoCheaperRouteHTML();
             tooltipText.appendChild(div);
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
@@ -905,19 +908,33 @@ class TooltipPrices {
      */
     async fillInsteadLater(tooltipElement, section, itemHrid, itemName, wanted) {
         try {
-            const { targetAsk, alternatives } = await settleAlternatives(itemHrid, wanted);
+            const { targetAsk, alternatives, noCheaperRoute } = await settleAlternatives(itemHrid, wanted);
             // A stale section is removed when the tooltip moves to another item
             if (!section.isConnected || tooltipElement.dataset.pricesProcessedItem !== itemName) return;
-            if (!alternatives.length) {
+            if (!alternatives.length && !noCheaperRoute) {
                 section.remove();
                 return;
             }
-            section.innerHTML = this.buildInsteadOfBuyingHTML(targetAsk, alternatives);
+            section.innerHTML = alternatives.length
+                ? this.buildInsteadOfBuyingHTML(targetAsk, alternatives)
+                : this.buildNoCheaperRouteHTML();
             section.style.display = '';
             dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
         }
+    }
+
+    /**
+     * The dim line for an item that has alchemy sources, none of which beat its ask.
+     * @returns {string}
+     */
+    buildNoCheaperRouteHTML() {
+        return (
+            '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' +
+            `<div style="color: ${config.COLOR_TOOLTIP_INFO}; opacity: 0.7;" title="${insteadTitle()}">` +
+            'Instead of buying: no alchemy route beats the ask</div></div>'
+        );
     }
 
     /**

@@ -1541,22 +1541,49 @@ describe('instead of buying', () => {
             expect(placed.isConnected && placed.style.display === '').toBe(false);
         });
 
-        test('a placed section with no route behind it is removed', async () => {
+        test('a placed section with only dearer routes becomes the dim no-route line', async () => {
             for (const i of [1, 2, 3, 4, 5, 6]) priceState.info[knife(i)] = { ask: 5000, bid: 1 };
             const el = itemTooltip('Curd');
             observerState.handler(el);
             for (let i = 0; i < 40; i++) await Promise.resolve();
-            expect(el.querySelector('.mwi-alchemy-instead')).not.toBeNull();
+            const placed = el.querySelector('.mwi-alchemy-instead');
+            expect(placed).not.toBeNull();
+            await settleJob();
+            const section = el.querySelector('.mwi-alchemy-instead');
+            expect(section).toBe(placed);
+            expect(section.style.display).toBe('');
+            expect(section.textContent).toBe('Instead of buying: no alchemy route beats the ask');
+        });
+
+        test('sources that cannot be priced draw nothing', async () => {
+            for (const i of [1, 2, 3, 4, 5, 6]) delete priceState.info[knife(i)];
+            const el = itemTooltip('Curd');
+            observerState.handler(el);
+            for (let i = 0; i < 40; i++) await Promise.resolve();
             await settleJob();
             expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
         });
     });
 
-    test('the setting on draws nothing when buying is cheaper', async () => {
+    test('the setting on says no route beats the ask when buying is cheaper', async () => {
         settings.insteadOfBuying = true;
         priceState.info['/items/cheese_sword'] = { ask: 500, bid: 450 };
         const el = await hoverCheese();
         expect(el.dataset.pricesProcessedItem).toBe('Cheese');
-        expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
+        expect(el.querySelector('.mwi-alchemy-instead').textContent).toBe(
+            'Instead of buying: no alchemy route beats the ask'
+        );
+    });
+
+    test('no line at all for an item with no real ask, or no alchemy source', async () => {
+        settings.insteadOfBuying = true;
+        priceState.info['/items/cheese'] = { bid: 9 };
+        priceState.info['/items/cheese_sword'] = { ask: 500, bid: 450 };
+        expect((await hoverCheese()).querySelector('.mwi-alchemy-instead')).toBeNull();
+        const apple = itemTooltip('Apple');
+        observerState.handler(apple);
+        for (let i = 0; i < 40; i++) await Promise.resolve();
+        expect(apple.dataset.pricesProcessedItem).toBe('Apple');
+        expect(apple.querySelector('.mwi-alchemy-instead')).toBeNull();
     });
 });

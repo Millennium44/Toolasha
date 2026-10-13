@@ -197,11 +197,40 @@ describe('findAlchemyAlternatives', () => {
     });
 
     test('nothing when buying is cheapest', () => {
-        const { alternatives } = findAlchemyAlternatives(
+        const { alternatives, noCheaperRoute } = findAlchemyAlternatives(
             ESSENCE,
-            depsFor({ [ESSENCE]: { ask: 100 }, [SHOOTER]: { ask: 1000 }, [BOOMSTICK]: { ask: 600 } })
+            depsFor({
+                [ESSENCE]: { ask: 100 },
+                [SHOOTER]: { ask: 1000 },
+                [BOOMSTICK]: { ask: 600 },
+                [LEATHER]: { ask: 250, bid: 200 },
+            })
         );
         expect(alternatives).toEqual([]);
+        // Sources were costed and lost: that is a message, not silence
+        expect(noCheaperRoute).toBe(true);
+    });
+
+    test('no "no cheaper route" without a real ask, without sources, or with nothing costed', () => {
+        const prices = { [ESSENCE]: { ask: 100 }, [BOOMSTICK]: { ask: 600 } };
+        expect(findAlchemyAlternatives(ESSENCE, depsFor({ [BOOMSTICK]: { ask: 600 } })).noCheaperRoute).toBe(false);
+        expect(findAlchemyAlternatives(ESSENCE, depsFor(prices, { sources: [] })).noCheaperRoute).toBe(false);
+        // The only source has no real ask, so no route was costed
+        const unpriced = findAlchemyAlternatives(ESSENCE, depsFor({ [ESSENCE]: { ask: 100 } }));
+        expect(unpriced.noCheaperRoute).toBe(false);
+        // A winning route is no miss
+        const wins = findAlchemyAlternatives(ESSENCE, depsFor({ [ESSENCE]: { ask: 300 }, [BOOMSTICK]: { ask: 600 } }));
+        expect(wins.noCheaperRoute).toBe(false);
+    });
+
+    test('a miss on a route with an unpriced output is not proof that none is cheaper', () => {
+        // Shooter's leather has no price: its cost is an upper bound of 1100 / 5 = 220, over the 100 ask
+        const { alternatives, noCheaperRoute } = findAlchemyAlternatives(
+            ESSENCE,
+            depsFor({ [ESSENCE]: { ask: 100 }, [SHOOTER]: { ask: 1000 } })
+        );
+        expect(alternatives).toEqual([]);
+        expect(noCheaperRoute).toBe(false);
     });
 
     test('the setup is chosen on cost per unit, a dearer catalyst winning when its success pays', () => {

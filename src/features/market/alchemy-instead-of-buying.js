@@ -265,18 +265,20 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
  * @param {Function} [deps.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @param {number} [deps.goldPerHour=0] - The player's gold rate; 0 leaves time free
  * @param {number} [deps.limit=MAX_ALTERNATIVES]
- * @returns {{targetAsk: number|null, alternatives: Array<Object>}} Alternatives
- *   cheapest first, each `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving,
+ * @returns {{targetAsk: number|null, alternatives: Array<Object>, noCheaperRoute: boolean}}
+ *   Alternatives cheapest first, each `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving,
  *   savingPerHour, sellingPerUnit, secondsPerUnit, partlyUnpriced, kept, result}`; empty when buying is
  *   cheapest. `sellingPerUnit` is what making the target and selling it (bid after tax) nets per unit
- *   after the same cost and time, null without a real bid.
+ *   after the same cost and time, null without a real bid. `noCheaperRoute` is true
+ *   only when sources were costed and none beat the ask, with no costing left uncertain by an unpriced
+ *   output; false when nothing could be costed, there is no real ask, or there are no sources.
  */
 export function findAlchemyAlternatives(targetHrid, deps) {
     const { sources, getItemDetails, askOf, sellOf, candidatesOf, isWanted, containerValue, sellContainerValue } = deps;
     const goldPerHour = Math.max(0, Number(deps.goldPerHour) || 0);
     const limit = deps.limit ?? MAX_ALTERNATIVES;
     const targetAsk = askOf(targetHrid);
-    if (targetAsk === null || !(targetAsk > 0)) return { targetAsk: null, alternatives: [] };
+    if (targetAsk === null || !(targetAsk > 0)) return { targetAsk: null, alternatives: [], noCheaperRoute: false };
     // The bid after tax of the target itself: what selling it instead of using it pays
     const targetSell = typeof sellOf === 'function' ? sellOf(targetHrid) : null;
 
@@ -289,6 +291,9 @@ export function findAlchemyAlternatives(targetHrid, deps) {
         sellContainerValue,
     };
     const alternatives = [];
+    // Sources whose cost came out, and whether a miss among them could still be a win
+    let costed = 0;
+    let uncertain = false;
     for (const { sourceHrid, actionType } of sources || []) {
         const inputPrice = askOf(sourceHrid);
         if (inputPrice === null) continue;
@@ -313,10 +318,15 @@ export function findAlchemyAlternatives(targetHrid, deps) {
         );
         const evaluation = pick?.evaluation;
         if (!evaluation) continue;
+        costed += 1;
         const timeCostPerUnit = timeCost(evaluation);
         const effectiveCost = evaluation.costPerUnit + timeCostPerUnit;
         const saving = targetAsk - effectiveCost;
-        if (!(saving > 0)) continue;
+        if (!(saving > 0)) {
+            // An output left unpriced makes the cost an upper bound, so a miss on it proves nothing
+            if (evaluation.partlyUnpriced) uncertain = true;
+            continue;
+        }
         alternatives.push({
             sourceHrid,
             actionType,
@@ -335,7 +345,11 @@ export function findAlchemyAlternatives(targetHrid, deps) {
         });
     }
     alternatives.sort((a, b) => a.effectiveCost - b.effectiveCost);
-    return { targetAsk, alternatives: alternatives.slice(0, limit) };
+    return {
+        targetAsk,
+        alternatives: alternatives.slice(0, limit),
+        noCheaperRoute: costed > 0 && !uncertain && alternatives.length === 0,
+    };
 }
 
 // ---- Live wiring: the market, the calculator and the keep list ----
@@ -936,7 +950,7 @@ function computeAlternatives(targetHrid, wanted) {
         bonusRanks.set(targetHrid, topRanked(scored));
     }
     const { sources } = lookupSources(targetHrid);
-    let found = { targetAsk: null, alternatives: [] };
+    let found = { targetAsk: null, alternatives: [], noCheaperRoute: false };
     if (sources.length > 0) {
         const askOf = (hrid) => realPrice(hrid, 'ask');
         const sellOf = (hrid) => {
