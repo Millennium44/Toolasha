@@ -1487,6 +1487,38 @@ describe('instead of buying', () => {
         expect(priced).not.toContain('≥');
     });
 
+    describe('the detail line', () => {
+        const base = {
+            sourceHrid: '/items/cheese_sword',
+            actionType: 'decompose',
+            costPerUnit: 4,
+            timeCostPerUnit: 0,
+            saving: 6,
+            savingPerHour: null,
+            sellingPerUnit: null,
+            secondsPerUnit: 10,
+            partlyUnpriced: false,
+            kept: [],
+        };
+        const detail = (alt) => tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...base, ...alt }]);
+
+        test('a negative cost reads as a gain, a lower bound when an output is unpriced', () => {
+            expect(detail({ costPerUnit: -44200 })).toContain('gains 44.2K/unit vs 10 ask');
+            expect(detail({ costPerUnit: -44200 })).not.toContain('-44.2K');
+            expect(detail({ costPerUnit: -44200, partlyUnpriced: true })).toContain('gains ≥44.2K/unit');
+            expect(detail({ costPerUnit: 4 })).toContain('4/unit vs 10 ask');
+        });
+
+        test('kept outputs say they are counted at ask, with the K hint for the mode', () => {
+            const kept = ['/items/cheese', '/items/cheese_sword'];
+            settings.markMeaning = 'sell';
+            expect(detail({ kept })).toContain('at ask (K to sell)');
+            expect(detail({ kept })).not.toContain('keeps');
+            settings.markMeaning = 'keep';
+            expect(detail({ kept })).toContain('at ask (K to unmark)');
+        });
+    });
+
     test('the hover text describes outputs the way the K marks mean them', async () => {
         settings.insteadOfBuying = true;
         settings.markMeaning = 'sell';

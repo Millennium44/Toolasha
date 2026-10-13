@@ -961,14 +961,24 @@ class TooltipPrices {
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
             html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
             html += '</div>';
-            const parts = [`${formatKMB(alt.costPerUnit)}/unit vs ${formatKMB(targetAsk)} ask`];
+            // By-products worth more than the input make the route pay to run: say gain, not a minus sign.
+            // An unpriced output makes the cost an upper bound, so the gain is a lower bound
+            const costText =
+                alt.costPerUnit < 0
+                    ? `gains ${atLeast}${formatKMB(-alt.costPerUnit)}/unit`
+                    : `${formatKMB(alt.costPerUnit)}/unit`;
+            const parts = [`${costText} vs ${formatKMB(targetAsk)} ask`];
             if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
             parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
             // Making it to sell rather than to use: the bid after tax against the same cost and time
             if (alt.sellingPerUnit !== null && alt.sellingPerUnit !== undefined) {
                 parts.push(`selling instead: ${atLeast}${formatKMB(alt.sellingPerUnit)}/unit`);
             }
-            if (alt.kept.length > 0) parts.push(`keeps ${alt.kept.map(nameOf).join(', ')}`);
+            if (alt.kept.length > 0) {
+                // Kept outputs are valued at their ask; K flips them, whichever way the marks are read
+                const hint = getMarkMeaning() === 'sell' ? 'K to sell' : 'K to unmark';
+                parts.push(`counts ${alt.kept.map(nameOf).join(', ')} at ask (${hint})`);
+            }
             if (alt.partlyUnpriced) parts.push('an output unpriced');
             html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;
         }
