@@ -788,8 +788,10 @@ class TaskStatistics {
     /**
      * The fight count to pre-fill for a zone row: the expected count padded for kill-count variance
      * with the same `taskCombatGoBuffer` / `combatFightConfidence` settings the task Go flow uses.
-     * Padded from the mean (`zone.fightsNeeded`), never from the percentile figure the row shows,
-     * so the two coverages do not compound.
+     * Padded from the means, never from the percentile figure the row shows, so the two coverages
+     * do not compound. Each task monster (`zone.monsterThresholds`) is padded on its own and the
+     * largest wins, because the monster that needs the most fights at the chosen confidence need not
+     * be the mean bottleneck. Rows without per-monster inputs pad the mean bottleneck alone.
      * @param {Object} zone - Row from computeAllZoneProgress
      * @returns {number} Fights to enter
      */
@@ -798,6 +800,20 @@ class TaskStatistics {
         const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
         const confidenceDefault = getSettingDefinition('combatFightConfidence')?.default ?? 90;
         const confidencePercent = config.getSettingValue('combatFightConfidence', confidenceDefault);
+        if (Array.isArray(zone.monsterThresholds) && zone.monsterThresholds.length > 0) {
+            let best = Math.ceil(Number(zone.fightsNeeded) || 0);
+            for (const monster of zone.monsterThresholds) {
+                if (!Number.isFinite(monster.meanFights)) continue;
+                const { fights } = padFightCount({
+                    unpaddedFights: monster.meanFights,
+                    thresholds: Number.isFinite(monster.killsPerFight) ? [monster] : [],
+                    confidencePercent,
+                    floorPercent: monster.deterministic ? 0 : bufferPercent,
+                });
+                best = Math.max(best, fights);
+            }
+            return best;
+        }
         const { fights } = padFightCount({
             unpaddedFights: zone.fightsNeeded,
             thresholds: Number.isFinite(zone.killsPerFight)

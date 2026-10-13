@@ -17,7 +17,7 @@ import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { TASK_DAMAGE_PER_MONSTER } from '../combat-sim/engine/task-damage-mode.js';
 import { lastUsedTierForZone } from '../../utils/combat-actions.js';
 import { characterIdentityChanged } from '../../utils/combat-zone-open.js';
-import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
+import { computeZoneBottleneck, fightsPerHour, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
 import { getZoneEstimatePercent, zoneBottleneckEstimate } from './task-zone-estimate-percentile.js';
 
 /**
@@ -171,6 +171,20 @@ export async function computeAllZoneProgress({
                     gameData.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount
                 ) || null;
             const deterministic = Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid));
+            // Every task monster's own inputs, so a click can pad each one and take the largest: the
+            // mean bottleneck is not always the monster that needs the most fights at the chosen coverage
+            const fph = fightsPerHour(simResult, ZONE_SIM_HOURS);
+            const monsterThresholds = entries.map((entry) => {
+                const killsPerHour = (simResult?.deaths?.[entry.hrid] ?? 0) / ZONE_SIM_HOURS;
+                return {
+                    hrid: entry.hrid,
+                    meanFights: killsPerHour > 0 ? Math.round((fph * entry.remaining) / killsPerHour) : Infinity,
+                    killsNeeded: entry.remaining,
+                    killsPerFight: fph > 0 && killsPerHour > 0 ? killsPerHour / fph : null,
+                    slotsPerFight,
+                    deterministic: Boolean(dataManager.isBossMonster?.(entry.hrid)),
+                };
+            });
             rows.push({
                 zoneHrid,
                 zoneName: gameData.actionDetailMap?.[zoneHrid]?.name || zoneHrid.split('/').pop(),
@@ -182,6 +196,7 @@ export async function computeAllZoneProgress({
                 killsPerFight: bottleneck.killsPerFight,
                 slotsPerFight,
                 deterministic,
+                monsterThresholds,
                 // What the row shows: the largest per-monster quantile of the fights needed, not the
                 // mean above (which stays the mean bottleneck's, for padding a click's pre-fill)
                 estimate: zoneBottleneckEstimate({

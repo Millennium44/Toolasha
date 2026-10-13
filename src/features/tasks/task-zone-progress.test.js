@@ -299,6 +299,28 @@ describe('computeAllZoneProgress', () => {
         expect(row.estimate).toMatchObject({ fightsNeeded: ooze, percent: 90, limiting: { name: 'Ooze' } });
     });
 
+    test('the row carries every task monster threshold inputs for a click to pad', async () => {
+        h.quests = [quest('/monsters/slime', 110), quest('/monsters/ooze', 10)];
+        h.runSimulation.mockResolvedValue({
+            deaths: { '/monsters/slime': 100, '/monsters/ooze': 10 },
+            encounters: 100,
+        });
+
+        const [row] = await computeAllZoneProgress({ percent: 90 });
+
+        expect(row.monsterThresholds).toHaveLength(2);
+        expect(row.monsterThresholds.find((m) => m.hrid === '/monsters/ooze')).toMatchObject({
+            meanFights: 100,
+            killsNeeded: 10,
+            killsPerFight: 0.1,
+        });
+        expect(row.monsterThresholds.find((m) => m.hrid === '/monsters/slime')).toMatchObject({
+            meanFights: 110,
+            killsNeeded: 110,
+            killsPerFight: 1,
+        });
+    });
+
     test('rows sort by the hours they show, not the mean', async () => {
         // Zone A: a rare ooze, 5h on average but much longer at 90%.
         // Zone B: an imp every fight, 5.2h and no luck in it.

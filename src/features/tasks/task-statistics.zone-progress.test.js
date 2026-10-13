@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { padFightCount } from '../../utils/fight-confidence.js';
 
 const h = vi.hoisted(() => ({
     enabled: true,
@@ -254,6 +255,49 @@ describe('Zone Task Progress section', () => {
         [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
 
         expect(h.openZone.mock.calls[0][2].count).toBe(plain);
+    });
+
+    test('the click pads every task monster and fills the largest, not just the mean bottleneck', async () => {
+        const common = {
+            hrid: '/monsters/slime',
+            meanFights: 110,
+            killsNeeded: 110,
+            killsPerFight: 1,
+            slotsPerFight: 3,
+            deterministic: false,
+        };
+        const rare = {
+            hrid: '/monsters/ooze',
+            meanFights: 100,
+            killsNeeded: 10,
+            killsPerFight: 0.1,
+            slotsPerFight: 3,
+            deterministic: false,
+        };
+        const padded = (m) =>
+            padFightCount({
+                unpaddedFights: m.meanFights,
+                thresholds: [m],
+                confidencePercent: 90,
+                floorPercent: 5,
+            }).fights;
+        expect(padded(rare)).toBeGreaterThan(padded(common));
+
+        // The row's mean fields are the common monster's, as computeAllZoneProgress reports them
+        h.compute.mockResolvedValue([
+            row({
+                fightsNeeded: 110,
+                killsNeeded: 110,
+                killsPerFight: 1,
+                slotsPerFight: 3,
+                monsterThresholds: [common, rare],
+            }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+
+        expect(h.openZone.mock.calls[0][2].count).toBe(padded(rare));
     });
 
     test('closing the popup mid-compute cancels the run and draws nothing afterwards', async () => {
