@@ -1857,7 +1857,9 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            await estimatedListingAge.importListings(existingListings);
+            if (!(await estimatedListingAge.importListings(existingListings))) {
+                throw new Error('the listing log could not be read or written, so the listings were not imported');
+            }
             await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
@@ -2039,7 +2041,9 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            await estimatedListingAge.importListings(existingListings);
+            if (!(await estimatedListingAge.importListings(existingListings))) {
+                throw new Error('the listing log could not be read or written, so the listings were not imported');
+            }
             await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message

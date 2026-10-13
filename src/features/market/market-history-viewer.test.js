@@ -80,7 +80,7 @@ const estimatedListingAgeMock = vi.hoisted(() => ({
     markActiveListings: vi.fn(async () => {}),
     deleteListing: vi.fn(async () => {}),
     clearPersonalListings: vi.fn(async () => {}),
-    importListings: vi.fn(async () => {}),
+    importListings: vi.fn(async () => true),
 }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
@@ -321,6 +321,28 @@ describe('rows an import cannot use', () => {
 
         const stored = estimatedListingAgeMock.importListings.mock.calls[0][0];
         expect(stored.map((listing) => listing.id)).toEqual([556]);
+    });
+});
+
+describe('an import the listing log refuses', () => {
+    test('a CSV import says it failed rather than complete', async () => {
+        dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
+        estimatedListingAgeMock.importListings.mockResolvedValueOnce(false);
+        const csv = [
+            'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
+            '2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,556',
+        ].join('\n');
+
+        await expect(marketHistoryViewer.importCSV(csv)).rejects.toThrow(/not imported/);
+        expect(estimatedListingAgeMock.addAnchors).not.toHaveBeenCalled();
+    });
+
+    test('an Edible Tools import says it failed rather than complete', async () => {
+        estimatedListingAgeMock.importListings.mockResolvedValueOnce(false);
+        const payload = JSON.stringify([{ id: 2, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a' }]);
+
+        await expect(marketHistoryViewer.importEdibleToolsData(payload)).rejects.toThrow(/not imported/);
+        expect(estimatedListingAgeMock.addAnchors).not.toHaveBeenCalled();
     });
 });
 

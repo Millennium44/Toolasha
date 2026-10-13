@@ -1245,6 +1245,8 @@ class EstimatedListingAge {
      * in-memory log as well as in storage — an import written around it used
      * to be overwritten by the next listing event's save.
      * @param {Array<Object>} listings - Full listing records, as the log stores them
+     * @returns {Promise<boolean>} Whether the rows were taken in and written. False adds nothing when their
+     *   tombstones could not be taken back, since the next save or load would bury them again
      */
     async importListings(listings) {
         const owner = this._owner();
@@ -1255,15 +1257,15 @@ class EstimatedListingAge {
         // already holding the old tombstones would otherwise strip the imported rows from memory
         const run = async () => {
             if (!this._ownsMemory(owner)) return false;
-            await this._restoreGraves(ids, owner);
+            if (!(await this._restoreGraves(ids, owner))) return false;
             if (!this._ownsMemory(owner)) return false;
             this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
             this.rebuildEstimationPoints();
             return true;
         };
         this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
-        if (!(await this._saveChain)) return;
-        await this.saveHistoricalData({ owner });
+        if (!(await this._saveChain)) return false;
+        return (await this.saveHistoricalData({ owner })) === true;
     }
 
     /**
