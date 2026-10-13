@@ -2441,12 +2441,20 @@ export default class CustomTabsUI {
             if (e.key === 'Escape') close();
         };
         const onResize = () => close();
+        // A fixed panel does not follow its button: close when the page, or a box holding the button, scrolls
+        const onScroll = (e) => {
+            const t = e.target;
+            if (panel.contains(t)) return;
+            const pageScrolled = t === document || t === document.documentElement || t === document.body;
+            if (pageScrolled || (t instanceof Node && t.contains(button))) close();
+        };
         let bound = false;
         const close = () => {
             panel.style.display = 'none';
             if (bound) {
                 document.removeEventListener('click', outsideClick, true);
                 document.removeEventListener('keydown', onKeydown, true);
+                document.removeEventListener('scroll', onScroll, true);
                 window.removeEventListener('resize', onResize);
                 bound = false;
             }
@@ -2482,6 +2490,7 @@ export default class CustomTabsUI {
             if (!bound) {
                 document.addEventListener('click', outsideClick, true);
                 document.addEventListener('keydown', onKeydown, true);
+                document.addEventListener('scroll', onScroll, true);
                 window.addEventListener('resize', onResize);
                 bound = true;
             }
