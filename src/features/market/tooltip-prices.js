@@ -938,14 +938,15 @@ class TooltipPrices {
     }
 
     /**
-     * The dim line for an item that has alchemy sources, none of which beat its ask.
+     * The dim line for an item that has alchemy sources, none of which beat its price on the
+     * player's buy side (the ask, bid or bid +1, as the routes were compared).
      * @returns {string}
      */
     buildNoCheaperRouteHTML() {
         return (
             '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' +
             `<div style="color: ${config.COLOR_TOOLTIP_INFO}; opacity: 0.7;" title="${insteadTitle()}">` +
-            'Instead of buying: no alchemy route beats the ask</div></div>'
+            `Instead of buying: no alchemy route beats the ${buySideWord()}</div></div>`
         );
     }
 

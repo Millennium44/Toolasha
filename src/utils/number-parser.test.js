@@ -7,6 +7,7 @@ import {
     gameNumberPattern,
     gameDigitsSource,
     _resetGameNumberSeparators,
+    parseShorthandAmount,
 } from './number-parser.js';
 
 describe('parseItemCount', () => {
@@ -387,5 +388,20 @@ describe('gameNumberPattern / gameDigitsSource', () => {
         expect(gameNumberPattern().group).toBe(',');
         localStorage.setItem('i18nextLng', 'de-DE'); // no cache reset — the getter must notice
         expect(gameNumberPattern().group).toBe('\\.');
+    });
+});
+
+describe('parseShorthandAmount', () => {
+    test('reads the magnitudes a person types', () => {
+        expect(parseShorthandAmount('3m')).toBe(3_000_000);
+        expect(parseShorthandAmount('500k')).toBe(500_000);
+        expect(parseShorthandAmount('1.5b')).toBe(1_500_000_000);
+        expect(parseShorthandAmount('3,000,000')).toBe(3_000_000);
+    });
+
+    test('refuses a suffix it does not know rather than reading the leading digits', () => {
+        expect(parseShorthandAmount('12bananas')).toBeNull();
+        expect(parseShorthandAmount('1mm')).toBeNull();
+        expect(parseShorthandAmount('abc')).toBeNull();
     });
 });

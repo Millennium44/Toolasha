@@ -1626,6 +1626,19 @@ describe('instead of buying', () => {
             expect(section.textContent).toBe('Instead of buying: no alchemy route beats the ask');
         });
 
+        test('the no-route line names the buy side the routes were compared against', () => {
+            settings.pricingMode = 'optimistic';
+            settings.patientTickBuy = true;
+            try {
+                const div = document.createElement('div');
+                div.innerHTML = tooltipPrices.buildNoCheaperRouteHTML();
+                expect(div.textContent).toBe('Instead of buying: no alchemy route beats the bid +1');
+            } finally {
+                settings.pricingMode = undefined;
+                settings.patientTickBuy = false;
+            }
+        });
+
         test('sources that cannot be priced draw nothing', async () => {
             for (const i of [1, 2, 3, 4, 5, 6]) delete priceState.info[knife(i)];
             const el = itemTooltip('Curd');
