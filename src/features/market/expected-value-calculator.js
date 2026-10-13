@@ -54,6 +54,11 @@ class ExpectedValueCalculator {
         // superseded — see initialize()/calculateNestedContainers().
         this.generation = 0;
 
+        // The start currently running, shared by every plain initialize() caller so
+        // they join one pass instead of each enqueueing their own. invalidateCache()
+        // replaces it; cleanup() clears it.
+        this._initPromise = null;
+
         // Coalesces a burst of setting changes / price ticks into one recompute
         this._invalidateTimer = null;
         this.INVALIDATE_DEBOUNCE_MS = 300;
@@ -117,11 +122,29 @@ class ExpectedValueCalculator {
      * Initialize the calculator
      * Pre-calculates all openable containers with nested convergence
      */
-    async initialize() {
+    initialize() {
         if (this.isInitialized) {
-            return true;
+            return Promise.resolve(true);
+        }
+        if (this._initPromise) {
+            return this._initPromise;
         }
 
+        const pass = this._runInitialize().finally(() => {
+            // Only clear our own slot: invalidateCache() may have installed a newer pass
+            if (this._initPromise === pass) {
+                this._initPromise = null;
+            }
+        });
+        this._initPromise = pass;
+        return pass;
+    }
+
+    /**
+     * One start pass; callers go through initialize(), which shares it.
+     * @returns {Promise<boolean>} True once the cache is built and published
+     */
+    async _runInitialize() {
         if (!dataManager.getInitClientData()) {
             // Init data not yet available - set up retry on next character update
             if (!this.retryHandler) {
@@ -808,6 +831,8 @@ class ExpectedValueCalculator {
         this.containerCache.clear();
         this.containerMissingCounts.clear();
         this.isInitialized = false;
+        // The running pass is superseded; the fresh one below must not join it
+        this._initPromise = null;
 
         // Re-initialize if data is available — recomputing with no game/market
         // data loaded yet would just produce an empty cache
@@ -824,6 +849,7 @@ class ExpectedValueCalculator {
         // cleanup set isInitialized again, so the re-initialize after a character
         // switch returned early and never re-registered the invalidation listeners.
         this.generation++;
+        this._initPromise = null;
 
         if (this.retryHandler) {
             dataManager.off('character_initialized', this.retryHandler);

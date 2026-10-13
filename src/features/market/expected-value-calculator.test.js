@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     /** marketAPI.on(cb) registrations */
     marketListeners: [],
     marketLoaded: true,
+    emitted: [],
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -54,7 +55,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => mocks.itemDetails[hrid] ?? null,
         on: () => {},
         off: () => {},
-        emit: () => {},
+        emit: (event) => mocks.emitted.push(event),
     },
 }));
 
@@ -125,6 +126,8 @@ beforeEach(() => {
     expectedValueCalculator.containerCache.clear();
     expectedValueCalculator.containerMissingCounts.clear();
     expectedValueCalculator.isInitialized = false;
+    expectedValueCalculator._initPromise = null;
+    mocks.emitted = [];
 });
 
 describe('getDropPrice', () => {
@@ -855,6 +858,73 @@ describe('cache invalidation on pricing changes', () => {
         expect(invalidateSpy).toHaveBeenCalledTimes(1);
 
         invalidateSpy.mockRestore();
+    });
+
+    test('concurrent initialize() calls share one pass and emit once', async () => {
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockClear();
+        mocks.emitted = [];
+
+        const first = expectedValueCalculator.initialize();
+        const second = expectedValueCalculator.initialize();
+
+        expect(second).toBe(first);
+        expect(await Promise.all([first, second])).toEqual([true, true]);
+        expect(mocks.emitted.filter((e) => e === 'expected_value_initialized')).toHaveLength(1);
+        const passes = calculateEVBatch.mock.calls.length;
+        expect(passes).toBeGreaterThan(0);
+
+        // Once settled the slot is free and a published calculator short-circuits
+        expect(expectedValueCalculator._initPromise).toBe(null);
+        expect(await expectedValueCalculator.initialize()).toBe(true);
+        expect(calculateEVBatch.mock.calls.length).toBe(passes);
+    });
+
+    test('invalidateCache during a pass supersedes it with a fresh shared pass', async () => {
+        let resolveFirst;
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockClear();
+        calculateEVBatch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+
+        const stale = expectedValueCalculator.initialize();
+        expectedValueCalculator.invalidateCache();
+        const fresh = expectedValueCalculator._initPromise;
+
+        expect(fresh).not.toBe(stale);
+        expect(expectedValueCalculator.initialize()).toBe(fresh);
+
+        resolveFirst([{ containerHrid: CHEST_HRID, ev: 111 }]);
+        expect(await stale).toBe(false);
+        expect(await fresh).toBe(true);
+        expect(expectedValueCalculator.isInitialized).toBe(true);
+        // The superseded pass finishing must not have cleared the newer pass's slot early
+        expect(expectedValueCalculator.containerCache.get(CHEST_HRID)).not.toBe(111);
+    });
+
+    test('cleanup then initialize starts a fresh pass', async () => {
+        let resolveFirst;
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+
+        const old = expectedValueCalculator.initialize();
+        expectedValueCalculator.cleanup();
+        expect(expectedValueCalculator._initPromise).toBe(null);
+
+        const fresh = expectedValueCalculator.initialize();
+        expect(fresh).not.toBe(old);
+        resolveFirst([{ containerHrid: CHEST_HRID, ev: 111 }]);
+        expect(await old).toBe(false);
+        expect(await fresh).toBe(true);
     });
 
     test('invalidateCache bumps the generation, clears the cache, and recomputes', async () => {
