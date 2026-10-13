@@ -568,3 +568,69 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
         ).toBe('');
     });
 });
+
+describe('protection picker in the sweep', () => {
+    const itemsOf = (panel) =>
+        new Set(Array.from(panel.querySelectorAll('.mwi-protsweep-row')).map((row) => row.dataset.item));
+    const pickerOf = (panel) => panel.querySelector('.mwi-protsweep-pick');
+    // The attribute, not select.value: happy-dom reads value off the first option of a parsed select
+    const shownPick = (panel) => pickerOf(panel).querySelector('option[selected]')?.value ?? '';
+    const choose = async (panel, value) => {
+        const select = pickerOf(panel);
+        select.value = value;
+        select.dispatchEvent(new Event('change'));
+        // The change handler re-renders through the async display path
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    test('lists every valid candidate with a price and defaults to auto', async () => {
+        const panel = buildPanel({ protection: 'cheese_sword_protector' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const select = pickerOf(panel);
+        expect(shownPick(panel)).toBe('');
+        expect(Array.from(select.options).map((o) => o.value)).toEqual([
+            '',
+            '/items/cheese_sword',
+            '/items/mirror_of_protection',
+            '/items/cheese_sword_protector',
+        ]);
+        expect(select.textContent).toContain('Mirror Of Protection');
+        // Auto: the slot item is cheapest, so the Mirror of Protection has no column
+        expect(itemsOf(panel).has('/items/mirror_of_protection')).toBe(false);
+    });
+
+    test('choosing an item prices a column with it and the choice survives re-renders', async () => {
+        const panel = buildPanel({ protection: 'cheese_sword_protector' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        await choose(panel, '/items/mirror_of_protection');
+
+        expect(itemsOf(panel).has('/items/mirror_of_protection')).toBe(true);
+        expect(panel.textContent).toContain('your pick');
+        expect(shownPick(panel)).toBe('/items/mirror_of_protection');
+        // Exactly one stats container and one picker: nothing stacks up across renders
+        expect(panel.querySelectorAll('#mwi-enhancement-stats')).toHaveLength(1);
+        expect(panel.querySelectorAll('.mwi-protsweep-pick')).toHaveLength(1);
+
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        expect(shownPick(panel)).toBe('/items/mirror_of_protection');
+        expect(itemsOf(panel).has('/items/mirror_of_protection')).toBe(true);
+
+        await choose(panel, '');
+        expect(itemsOf(panel).has('/items/mirror_of_protection')).toBe(false);
+    });
+
+    test('an unpriced item is listed as such and says so instead of pricing it as free', async () => {
+        delete state.prices['/items/cheese_sword_protector'];
+        const panel = buildPanel({ protection: null, protectFrom: 0 });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const option = Array.from(pickerOf(panel).options).find((o) => o.value === '/items/cheese_sword_protector');
+        expect(option.textContent).toContain('no price');
+        await choose(panel, '/items/cheese_sword_protector');
+        expect(panel.textContent).toContain('has no market price');
+        // Rows that would buy it are left out; only the ones that never spend a protection can remain
+        const rows = Array.from(panel.querySelectorAll('.mwi-protsweep-row')).filter(
+            (row) => row.dataset.item === '/items/cheese_sword_protector'
+        );
+        expect(rows.every((row) => row.children[4].textContent === '-')).toBe(true);
+    });
+});
