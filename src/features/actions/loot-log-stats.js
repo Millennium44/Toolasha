@@ -742,10 +742,11 @@ class LootLogStats {
             }
 
             // Cowbells and tokens have no order book — value them the way the rest of Toolasha does
-            const currencyValue = resolveCurrencyValue(baseHrid);
-            if (currencyValue !== null) {
-                askTotal += currencyValue * count;
-                bidTotal += currencyValue * count;
+            const askCurrency = resolveCurrencyValue(baseHrid, 'ask');
+            const bidCurrency = resolveCurrencyValue(baseHrid, 'bid');
+            if (askCurrency !== null || bidCurrency !== null) {
+                askTotal += (askCurrency ?? bidCurrency) * count;
+                bidTotal += (bidCurrency ?? askCurrency) * count;
                 continue;
             }
 
@@ -856,10 +857,11 @@ class LootLogStats {
                 continue;
             }
             // Cowbell and token values are already net of tax, like container EV
-            const currencyValue = resolveCurrencyValue(baseHrid);
-            if (currencyValue !== null) {
-                askRevenue += currencyValue * count;
-                bidRevenue += currencyValue * count;
+            const askCurrency = resolveCurrencyValue(baseHrid, 'ask');
+            const bidCurrency = resolveCurrencyValue(baseHrid, 'bid');
+            if (askCurrency !== null || bidCurrency !== null) {
+                askRevenue += (askCurrency ?? bidCurrency) * count;
+                bidRevenue += (bidCurrency ?? askCurrency) * count;
                 continue;
             }
             // Container EV already taxes its market contents and keeps coins at
@@ -979,8 +981,11 @@ class LootLogStats {
      * @returns {{ask: number, bid: number}|null} Null when nothing prices it
      */
     priceExpectedDrop(itemHrid, count) {
-        const currencyValue = resolveCurrencyValue(itemHrid);
-        if (currencyValue !== null) return { ask: currencyValue * count, bid: currencyValue * count };
+        const askCurrency = resolveCurrencyValue(itemHrid, 'ask');
+        const bidCurrency = resolveCurrencyValue(itemHrid, 'bid');
+        if (askCurrency !== null || bidCurrency !== null) {
+            return { ask: (askCurrency ?? bidCurrency) * count, bid: (bidCurrency ?? askCurrency) * count };
+        }
 
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
@@ -1206,7 +1211,7 @@ class LootLogStats {
     getModelPrice(itemHrid) {
         if (itemHrid === '/items/coin') return 1;
 
-        const currencyValue = resolveCurrencyValue(itemHrid);
+        const currencyValue = resolveCurrencyValue(itemHrid, 'ask');
         if (currencyValue !== null) return currencyValue;
 
         const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -1689,10 +1694,11 @@ class LootLogStats {
         let askPerItem = 0;
         let bidPerItem = 0;
 
-        const currencyValue = resolveCurrencyValue(baseHrid);
-        if (currencyValue !== null) {
-            askPerItem = currencyValue;
-            bidPerItem = currencyValue;
+        const askCurrency = resolveCurrencyValue(baseHrid, 'ask');
+        const bidCurrency = resolveCurrencyValue(baseHrid, 'bid');
+        if (askCurrency !== null || bidCurrency !== null) {
+            askPerItem = askCurrency ?? bidCurrency;
+            bidPerItem = bidCurrency ?? askCurrency;
         }
 
         // Check for openable containers — use expected value

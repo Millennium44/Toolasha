@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    resolveSellSideValue: vi.fn(),
+    dungeon: vi.fn(),
     labyrinth: vi.fn(),
     task: vi.fn(),
     getItemPrice: vi.fn(),
@@ -18,6 +18,7 @@ vi.mock('../../utils/token-valuation.js', () => ({
         '/items/enchanted_token',
         '/items/pirate_token',
     ]),
+    calculateDungeonTokenValue: mocks.dungeon,
     calculateLabyrinthTokenValueDetail: mocks.labyrinth,
 }));
 vi.mock('../tasks/task-profit-calculator.js', () => ({ calculateTaskTokenValue: mocks.task }));
@@ -32,26 +33,39 @@ describe('resolveCurrencyValue', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.ev.isInitialized = true;
-        mocks.ev.resolveSellSideValue = mocks.resolveSellSideValue;
     });
 
     test('a cowbell is a tenth of the bag after the bag 18% tax, whatever the EV toggle says', () => {
         mocks.getItemPrice.mockReturnValue(1_000_000);
-        // The EV chain would answer 0 with its "include cowbells" toggle off; it is not asked
-        mocks.resolveSellSideValue.mockReturnValue({ value: 0 });
-        expect(resolveCurrencyValue('/items/cowbell')).toBeCloseTo(82_000, 6);
-        expect(mocks.getItemPrice).toHaveBeenCalledWith('/items/bag_of_10_cowbells', {
-            context: 'profit',
-            side: 'sell',
-        });
-        expect(mocks.resolveSellSideValue).not.toHaveBeenCalled();
+        expect(resolveCurrencyValue('/items/cowbell', 'ask')).toBeCloseTo(82_000, 6);
+        expect(mocks.getItemPrice).toHaveBeenCalledWith('/items/bag_of_10_cowbells', { mode: 'ask' });
     });
 
-    test('a dungeon token is taxed when its valuation says a sale pays tax', () => {
-        mocks.resolveSellSideValue.mockReturnValue({ value: 1_500, needsTax: true });
-        expect(resolveCurrencyValue('/items/chimerical_token')).toBeCloseTo(1_440, 6);
-        mocks.resolveSellSideValue.mockReturnValue({ value: 1_500, needsTax: false });
-        expect(resolveCurrencyValue('/items/sinister_token')).toBe(1_500);
+    test('the ask and bid columns quote their own side of the book, whatever the pricing mode', () => {
+        // Each side is read as an exact book side; the book is richer at the ask
+        mocks.getItemPrice.mockImplementation((hrid, { mode }) => (mode === 'ask' ? 1_000_000 : 800_000));
+        expect(resolveCurrencyValue('/items/cowbell', 'ask')).toBeCloseTo(82_000, 6);
+        expect(resolveCurrencyValue('/items/cowbell', 'bid')).toBeCloseTo(65_600, 6);
+
+        mocks.dungeon.mockImplementation((hrid, a, b, side) => (side === 'ask' ? 1_500 : 1_200));
+        expect(resolveCurrencyValue('/items/chimerical_token', 'ask')).toBe(1_500);
+        expect(resolveCurrencyValue('/items/chimerical_token', 'bid')).toBe(1_200);
+
+        mocks.labyrinth.mockImplementation((a, b, side) => ({ value: side === 'ask' ? 2_000 : 1_000, itemHrid: 'x' }));
+        expect(resolveCurrencyValue('/items/labyrinth_token', 'ask')).toBeCloseTo(1_920, 6);
+        expect(resolveCurrencyValue('/items/labyrinth_token', 'bid')).toBeCloseTo(960, 6);
+    });
+
+    test('a task token has one valuation, so both sides share it', () => {
+        mocks.task.mockReturnValue({ tokenValue: 30_000 });
+        expect(resolveCurrencyValue('/items/task_token', 'ask')).toBe(30_000);
+        expect(resolveCurrencyValue('/items/task_token', 'bid')).toBe(30_000);
+    });
+
+    test('a dungeon token is its best shop line, untaxed as the expected-value chain has it', () => {
+        mocks.dungeon.mockReturnValue(1_500);
+        expect(resolveCurrencyValue('/items/sinister_token', 'ask')).toBe(1_500);
+        expect(mocks.dungeon).toHaveBeenCalledWith('/items/sinister_token', undefined, undefined, 'ask');
     });
 
     test('a labyrinth token is its best shop reward after market tax', () => {

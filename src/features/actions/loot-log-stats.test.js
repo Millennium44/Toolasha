@@ -440,7 +440,10 @@ describe('LootLogStats non-market currency valuation', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         expectedValueCalculator.isInitialized = false;
-        resolveCurrencyValue.mockImplementation((hrid) => values[hrid] ?? null);
+        // Side-aware like the real resolver: the bid column is 20% under the ask for these
+        resolveCurrencyValue.mockImplementation((hrid, side) =>
+            hrid in values ? values[hrid] * (side === 'bid' ? 0.8 : 1) : null
+        );
         dataManager.getActionDetails.mockReturnValue({ inputItems: null });
         dataManager.getItemDetails.mockReturnValue({});
         // The market has no listing for any of these currencies
@@ -451,7 +454,8 @@ describe('LootLogStats non-market currency valuation', () => {
     test('Total Value counts cowbells and tokens instead of valuing them at 0', () => {
         const drops = { '/items/cowbell': 2, '/items/chimerical_token': 10, '/items/labyrinth_token': 1 };
         const total = stats.calculateTotalValue(drops);
-        expect(total).toEqual({ askTotal: 180_000 + 15_000 + 2_000, bidTotal: 180_000 + 15_000 + 2_000 });
+        expect(total.askTotal).toBeCloseTo(180_000 + 15_000 + 2_000, 6);
+        expect(total.bidTotal).toBeCloseTo((180_000 + 15_000 + 2_000) * 0.8, 6);
     });
 
     test('Profit takes currency values as net, untaxed, while market drops still pay tax', () => {
@@ -462,16 +466,16 @@ describe('LootLogStats non-market currency valuation', () => {
         };
         const profit = stats.calculateProfit(entry);
         expect(profit.askProfit).toBeCloseTo(60_000 + 100 * (1 - MARKET_TAX), 10);
-        expect(profit.bidProfit).toBeCloseTo(60_000 + 80 * (1 - MARKET_TAX), 10);
+        expect(profit.bidProfit).toBeCloseTo(48_000 + 80 * (1 - MARKET_TAX), 10);
     });
 
-    test('the model price and the item breakdown use the same value', () => {
+    test('the model price and the item breakdown use the same value, each column on its own side', () => {
         expect(stats.getModelPrice('/items/cowbell')).toBe(90_000);
         expect(stats.resolveItemPricing('/items/chimerical_token')).toMatchObject({
             askPerItem: 1_500,
-            bidPerItem: 1_500,
+            bidPerItem: 1_200,
         });
-        expect(stats.priceExpectedDrop('/items/labyrinth_token', 3)).toEqual({ ask: 6_000, bid: 6_000 });
+        expect(stats.priceExpectedDrop('/items/labyrinth_token', 3)).toEqual({ ask: 6_000, bid: 4_800 });
     });
 });
 
