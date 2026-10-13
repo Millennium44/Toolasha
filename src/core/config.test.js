@@ -1372,6 +1372,16 @@ describe('Config - live prices are device-wide', () => {
         expect(storageMock.device.get(MIRROR)).toBe(true);
     });
 
+    test('a reset to defaults clears the device copy, so a reload does not turn it back on', async () => {
+        await load('char-1', true);
+        expect(storageMock.device.get(MIRROR)).toBe(true);
+        settingsStorageMock.buildDefaults.mockImplementation(() => ({
+            pricing_useLivePrices: { id: 'pricing_useLivePrices', isTrue: false },
+        }));
+        await config.resetToDefaults();
+        expect(storageMock.device.get(MIRROR)).toBe(false);
+    });
+
     test('turning it on writes the device copy', async () => {
         await load('char-1', false);
         config.setSetting('pricing_useLivePrices', true);
