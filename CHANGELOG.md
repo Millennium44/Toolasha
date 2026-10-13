@@ -14,6 +14,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When your saved settings could not be read at load, Toolasha no longer applies new settings' defaults (or offers the first-run presets) against the shipped defaults; it waits for a load that reads your real "New settings start turned off" choice.
 
+### Calibration badges, listing deletions and the labyrinth accuracy mark
+
+- Forecast calibration badges show again: since September they had read the calibration ledger in its old shape and found it empty.
+- A market listing deleted in another tab or on another device is no longer written back by this tab's next save.
+- The labyrinth accuracy mark's Forget now sticks, and a newer mark set on another device is no longer reverted by this one's next save.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
