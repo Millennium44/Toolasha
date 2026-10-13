@@ -211,14 +211,16 @@ export function buildSegmentsFromCharacterData(characterData, clientData, consum
             }
         }
 
-        // Format abilities: slots 2-5 are normal abilities, slot 1 is special
-        // But render-map expects them in order 1-8, so we need to rotate
+        // The sheet expects slots 1-4 normal and slot 5 special, so pad the normals to four
+        // (empty slots) before the special; otherwise it lands in a normal slot.
         const orderedAbilities = [...normalAbilities.slice(0, 4)];
-        if (specialAbility) {
-            orderedAbilities.push(specialAbility);
+        while (orderedAbilities.length < 4) {
+            orderedAbilities.push(null);
         }
+        orderedAbilities.push(specialAbility);
 
         orderedAbilities.forEach((ability, i) => {
+            if (!ability) return;
             const abilityId = ability.abilityHrid.replace('/abilities/', '');
             const level = ability.level || 1;
             abilitySlots[i] = `${abilityId}.${level}`;
