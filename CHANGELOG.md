@@ -19,6 +19,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A sync pull that only combines your combat-session history no longer asks you to reload: the combat log takes the merged sessions in place, and a quiet background pull with nothing else to apply shows no toast.
 
+### Bulk sell: vendor totals the game abbreviates
+
+- Bulk sell no longer refuses a vendor sale whose total the game shortens on its button (26,987 × 32 = 863,584 shows as "Sell For 863K"); the check accepts any total the shortened label could stand for and still stops on a real mismatch.
+
 ### Labyrinth: loadout swaps keep the sim cache
 
 - When every labyrinth combat room has its own loadout, the lab swapping loadouts between rooms no longer throws away cached combat sims and on-screen recommendations; the abilities you happen to have equipped only count while some room falls back to your worn gear. If every room already has a loadout, labyrinth sims re-run once after this update.
