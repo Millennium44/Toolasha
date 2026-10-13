@@ -966,7 +966,7 @@ class TooltipPrices {
             parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
             // Making it to sell rather than to use: the bid after tax against the same cost and time
             if (alt.sellingPerUnit !== null && alt.sellingPerUnit !== undefined) {
-                parts.push(`selling instead: ${formatKMB(alt.sellingPerUnit)}/unit`);
+                parts.push(`selling instead: ${atLeast}${formatKMB(alt.sellingPerUnit)}/unit`);
             }
             if (alt.kept.length > 0) parts.push(`keeps ${alt.kept.map(nameOf).join(', ')}`);
             if (alt.partlyUnpriced) parts.push('an output unpriced');

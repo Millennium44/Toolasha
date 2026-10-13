@@ -1468,6 +1468,25 @@ describe('instead of buying', () => {
         expect(none).not.toContain('selling instead');
     });
 
+    test('selling instead is a lower bound when an output is unpriced, exact when everything is priced', () => {
+        const alt = {
+            sourceHrid: '/items/cheese_sword',
+            actionType: 'decompose',
+            costPerUnit: 4,
+            timeCostPerUnit: 0,
+            saving: 6,
+            savingPerHour: null,
+            sellingPerUnit: 3,
+            secondsPerUnit: 10,
+            kept: [],
+        };
+        const partly = tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...alt, partlyUnpriced: true }]);
+        expect(partly).toContain('selling instead: ≥3/unit');
+        const priced = tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...alt, partlyUnpriced: false }]);
+        expect(priced).toContain('selling instead: 3/unit');
+        expect(priced).not.toContain('≥');
+    });
+
     test('the hover text describes outputs the way the K marks mean them', async () => {
         settings.insteadOfBuying = true;
         settings.markMeaning = 'sell';
