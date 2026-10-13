@@ -409,6 +409,17 @@ describe('the rows', () => {
         expect(text()).toContain('⚠');
     });
 
+    test('Total Bid is what the bids pay after the market tax', () => {
+        // Cheese bids 90 each; 10 held keep 864 of 900 after 4%, and the unit
+        // column keeps showing the market bid itself
+        watchItem('/items/cheese');
+        game.inventory = [{ itemHrid: '/items/cheese', count: 10 }];
+
+        const row = watchlistRows()[0];
+        expect(row.bid).toBe(90);
+        expect(row.totalBid).toBeCloseTo(864, 6);
+    });
+
     test('an item with no market at all reports what the vendor pays', () => {
         watchItem('/items/trainee_charm');
         game.inventory = [{ itemHrid: '/items/trainee_charm', count: 1 }];

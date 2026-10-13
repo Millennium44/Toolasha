@@ -40,6 +40,7 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -350,6 +351,7 @@ export function watchlistRows() {
         pricesFor: (hrid, level) => getItemPrices(hrid, level),
         vendorOf: vendorPriceOf,
         listedOf: (hrid, level) => listed[watchlistKey(hrid, level)],
+        afterTax: calculatePriceAfterTax,
     });
     return sortRows(rows, state.sortBy, state.direction);
 }
@@ -855,7 +857,7 @@ class WatchlistPanel {
 
         const value = this._cell(`${formatKMB(item.totalAsk)} · ${formatKMB(item.totalBid)}`);
         value.style.color = ROW_COLORS.gold;
-        value.title = `${formatWithSeparator(item.totalAsk)} at ask, ${formatWithSeparator(item.totalBid)} at bid.`;
+        value.title = `${formatWithSeparator(item.totalAsk)} at ask, ${formatWithSeparator(item.totalBid)} at bid after market tax.`;
 
         const remove = document.createElement('button');
         remove.textContent = '✕';

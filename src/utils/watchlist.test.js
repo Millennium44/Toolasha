@@ -171,6 +171,32 @@ describe('valueWatchlist', () => {
         expect(b.totalBid).toBe(60);
     });
 
+    test('the bid is compared and totalled net of the market tax', () => {
+        // Vendor pays 100 flat. A 102 bid nets 97.92 after 4%: the vendor wins
+        // even though the gross bid is above it.
+        const afterTax = (price) => price * 0.96;
+        const taxed = {
+            quantityOf: () => 10,
+            pricesFor: (hrid) => ({ '/items/a': { ask: 200, bid: 102 }, '/items/b': { ask: 200, bid: 200 } })[hrid],
+            vendorOf: () => 100,
+            afterTax,
+        };
+        const [a, b] = valueWatchlist(
+            [
+                { hrid: '/items/a', name: 'A' },
+                { hrid: '/items/b', name: 'B' },
+            ],
+            taxed
+        );
+        expect(a.flag).toBe('below-vendor');
+        expect(a.totalBid).toBe(1000);
+        // A bid that clears the vendor net keeps showing the market bid, and
+        // totals what the player would keep of it
+        expect(b.flag).toBeNull();
+        expect(b.bid).toBe(200);
+        expect(b.totalBid).toBeCloseTo(1920, 6);
+    });
+
     test('an item with no price and none held is zero rather than NaN', () => {
         const [row] = valueWatchlist([{ hrid: '/items/x', name: 'X' }], {
             quantityOf: () => undefined,
