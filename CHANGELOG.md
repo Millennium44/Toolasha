@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Test server: optional live prices
+
+- On the test server, a new Pricing & Profit setting (off by default) prices everything from the live server's market instead of the sparse test books; your own test listings are unaffected, and live and test prices are cached separately.
+
 ### Labyrinth: loadout swaps keep the sim cache
 
 - When every labyrinth combat room has its own loadout, the lab swapping loadouts between rooms no longer throws away cached combat sims and on-screen recommendations; the abilities you happen to have equipped only count while some room falls back to your worn gear. If every room already has a loadout, labyrinth sims re-run once after this update.
