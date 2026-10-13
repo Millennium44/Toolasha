@@ -2436,8 +2436,8 @@ registerSyncMerge({
     base: GRAVES_BASE,
     merge: (local, incoming) => mergeListingGraves(local, incoming),
     label: 'Market listing deletions',
-    // The only writer, `_recordGraves`, probes the stored map and folds it in before an immediate write
-    liveSafe: true,
+    // Not liveSafe: `_recordGraves` probes then writes in two steps, so a pull landing between them, or
+    // its own putAll landing after, could drop a tombstone and let a stale peer bring the listing back
 });
 
 export default estimatedListingAge;
