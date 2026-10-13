@@ -133,8 +133,8 @@ export function _resetDateFieldOrder(dayFirst) {
  */
 const LEADING_STAMP_RES = [
     { re: /^\s*\[(\d{1,2})\/(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: true },
-    { re: /^\s*\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/, ambiguousOrder: false },
-    { re: /^\s*\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\]/, ambiguousOrder: false },
+    { re: /^\s*\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: false },
+    { re: /^\s*\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: false },
 ];
 
 /**

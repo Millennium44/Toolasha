@@ -108,6 +108,17 @@ describe('the stamp a chat line opens with', () => {
         expect(leadingChatStampFields('[1.10. 19:42:44] Gil: hi')).toMatchObject({ ambiguousOrder: false });
     });
 
+    test('reads a period on the dash and dot layouts', () => {
+        expect(leadingChatStampFields('[01-10 7:42:44 PM] Gil: hi')).toMatchObject({
+            first: 1,
+            second: 10,
+            hour: 7,
+            period: 'PM',
+        });
+        expect(leadingChatStampFields('[1.10. 12:42:44 AM] Gil: hi')).toMatchObject({ hour: 12, period: 'AM' });
+        expect(leadingChatStampFields('[01-10 19:42:44] Gil: hi').period).toBeUndefined();
+    });
+
     test('ignores a stamp that is not at the start, and a line with none', () => {
         expect(leadingChatStampFields('Gil: see [10/1 7:42:44 AM]')).toBeNull();
         expect(leadingChatStampFields('no stamp')).toBeNull();

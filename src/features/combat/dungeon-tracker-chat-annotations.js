@@ -1082,13 +1082,13 @@ class DungeonTrackerChatAnnotations {
         if (!match) {
             // Try international format: [DD-M HH:MM:SS] (24-hour)
             // Use \s* to handle potential spacing variations in dungeon chat
-            match = text.match(/\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/);
+            match = text.match(/\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
             isAmerican = false;
         }
 
         if (!match) {
             // Try European dot format: [D.M. HH:MM:SS] (24-hour, trailing dot optional)
-            match = text.match(/\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\]/);
+            match = text.match(/\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
             isAmerican = false;
         }
 
