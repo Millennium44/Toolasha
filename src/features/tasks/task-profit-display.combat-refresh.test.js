@@ -12,11 +12,13 @@
 
 import { describe, test, expect, afterEach, vi } from 'vitest';
 import taskProfitDisplay from './task-profit-display.js';
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { buildAllPlayerDTOs, buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { timeReadable } from '../../utils/formatters.js';
+import { fightsForKillConfidence } from '../../utils/fight-confidence.js';
 
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runSimulation: vi.fn() }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
@@ -171,19 +173,50 @@ describe('an open combat estimate follows the task progress', () => {
         await taskProfitDisplay._runCombatSimEstimate(gobo.container, taskDataOf(gobo.card), '', 'zone');
         const summaryOf = () =>
             [...gobo.container.children].map((c) => c.textContent).find((t) => t.startsWith('Gobo Planet'));
-        // Ooze: 100 / 10 an hour = 10h, 400 fights
-        expect(summaryOf()).toContain('~400 fights');
+        // Ooze is the bottleneck: 100 kills at 10 an hour, a quarter of a kill a fight. The line
+        // quotes the 90% quantile of the fights that takes (the mean would be 400)
+        const before = fightsForKillConfidence({ killsNeeded: 100, killsPerFight: 0.25, confidencePercent: 90 });
+        expect(summaryOf()).toContain(`~${before} fights (90%)`);
+        expect(summaryOf()).toContain('bottleneck: Ooze');
 
         ooze.card.dataset.progress = '50';
         taskProfitDisplay._refreshOpenCombatEstimates();
-        // Gobo and Ooze both 5h now; 200 fights
-        expect(summaryOf()).toContain('~200 fights');
+        // Gobo and Ooze both 5h now; the first one, Gobo, is named: 100 kills at half a kill a fight
+        const after = fightsForKillConfidence({ killsNeeded: 100, killsPerFight: 0.5, confidencePercent: 90 });
+        expect(after).not.toBe(before);
+        expect(summaryOf()).toContain(`~${after} fights (90%)`);
+        expect(summaryOf()).toContain('bottleneck: Gobo');
 
         // A finished task is not part of the zone any more, so a single
         // task left in it is not a zone summary
         ooze.card.dataset.progress = '100';
         taskProfitDisplay._refreshOpenCombatEstimates();
         expect(summaryOf()).toBeUndefined();
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+    });
+
+    test('changing the zone estimate coverage redraws an open zone summary', async () => {
+        stubGame();
+        taskProfitDisplay.isInitialized = true;
+        runSimulation.mockResolvedValue({ deaths: { '/monsters/gobo': 20, '/monsters/ooze': 10 }, encounters: 40 });
+        const [gobo] = buildBoard([
+            ['Gobo', 100, 0],
+            ['Ooze', 100, 0],
+        ]);
+        await taskProfitDisplay._runCombatSimEstimate(gobo.container, taskDataOf(gobo.card), '', 'zone');
+        const summaryOf = () =>
+            [...gobo.container.children].map((c) => c.textContent).find((t) => t.startsWith('Gobo Planet'));
+        expect(summaryOf()).toContain('(90%)');
+
+        const real = config.getSettingValue.bind(config);
+        vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) =>
+            key === 'taskCombatEstimatePercentile' ? '95' : real(key, fallback)
+        );
+        // No progress moved, so a plain pass leaves it; the setting's forced pass redraws it
+        taskProfitDisplay._refreshOpenCombatEstimates();
+        expect(summaryOf()).toContain('(90%)');
+        taskProfitDisplay._refreshOpenCombatEstimates({ force: true });
+        expect(summaryOf()).toContain('(95%)');
         expect(runSimulation).toHaveBeenCalledTimes(1);
     });
 

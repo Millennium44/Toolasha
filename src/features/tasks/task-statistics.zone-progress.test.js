@@ -200,6 +200,62 @@ describe('Zone Task Progress section', () => {
         expect(count).toBeGreaterThan(200);
     });
 
+    test('a row shows its percentile estimate with the median on hover', async () => {
+        h.compute.mockResolvedValue([
+            row({
+                estimate: {
+                    fightsNeeded: 180,
+                    hoursNeeded: 3,
+                    percent: 90,
+                    medianFightsNeeded: 118,
+                    medianHoursNeeded: 1.5,
+                },
+            }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+
+        expect(popupText()).toContain('~180 fights (90%) | 3h 00m 00s (bottleneck: Ooze)');
+        const hint = document.querySelector('.mwi-zone-estimate-hint');
+        expect(hint.title).toBe('Planning for 90% confidence. Median (50%): ~118 fights | 1h 30m 00s');
+    });
+
+    test('a row without an estimate quotes the mean, unlabelled', async () => {
+        h.compute.mockResolvedValue([row()]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        expect(popupText()).toContain('~120 fights | 2h 00m 00s');
+        expect(document.querySelector('.mwi-zone-estimate-hint')).toBeNull();
+    });
+
+    test('the click pads the mean, not the percentile figure the row shows', async () => {
+        const stochastic = { fightsNeeded: 200, killsNeeded: 100, killsPerFight: 0.5, slotsPerFight: 1 };
+        h.compute.mockResolvedValue([row(stochastic)]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+        const plain = h.openZone.mock.calls[0][2].count;
+
+        h.openZone.mockClear();
+        h.compute.mockResolvedValue([
+            row({
+                ...stochastic,
+                estimate: {
+                    fightsNeeded: 240,
+                    hoursNeeded: 4,
+                    percent: 90,
+                    medianFightsNeeded: 200,
+                    medianHoursNeeded: 3.3,
+                },
+            }),
+        ]);
+        taskStatistics.createPopup(statsData);
+        await flush();
+        [...document.querySelectorAll('div')].find((d) => d.title === 'Open this zone').onclick();
+
+        expect(h.openZone.mock.calls[0][2].count).toBe(plain);
+    });
+
     test('closing the popup mid-compute cancels the run and draws nothing afterwards', async () => {
         let resolveRun;
         let isCancelled;

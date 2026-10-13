@@ -16,6 +16,12 @@ import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } fro
 import { calculateTaskProfit, calculateTaskRewardValue, formatTokenFigure } from './task-profit-calculator.js';
 import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
 import {
+    createMedianHint,
+    formatPercentSuffix,
+    getZoneEstimatePercent,
+    zoneFightEstimate,
+} from './task-zone-estimate-percentile.js';
+import {
     isCardInConfirmState,
     isConfirmPendingFor,
     armConfirmSettleWatch,
@@ -588,6 +594,14 @@ class TaskProfitDisplay {
         config.onSettingChange('taskEfficiencyRatingMode', () => {
             if (this.isInitialized) {
                 this.updateTaskProfits(true);
+            }
+        });
+
+        // An open zone result's summary quotes this coverage; redraw it from
+        // the cached sim, the same way a progress change does
+        config.onSettingChange('taskCombatEstimatePercentile', () => {
+            if (this.isInitialized) {
+                this._refreshOpenCombatEstimates({ force: true });
             }
         });
 
@@ -2034,9 +2048,12 @@ class TaskProfitDisplay {
      * A card's estimate is otherwise keyed on `description|quantity`, which a
      * kill does not change, so without this an open estimate kept the figures
      * from when Estimate was clicked for as long as it stayed open.
+     * @param {Object} [options]
+     * @param {boolean} [options.force] - Redraw zone-mode results even if no progress moved
+     *   (the zone estimate coverage setting changed)
      * @private
      */
-    _refreshOpenCombatEstimates() {
+    _refreshOpenCombatEstimates({ force = false } = {}) {
         if (!this.isInitialized) return;
         for (const container of document.querySelectorAll(`.${COMBAT_ESTIMATE_RESULT_CLASS}`)) {
             const cached = container._mwiCombatEstimate;
@@ -2050,7 +2067,8 @@ class TaskProfitDisplay {
             if (!taskData || taskData.description !== cached.description) continue;
 
             const signature = this._combatEstimateProgressSignature(taskData, cached.mode);
-            if (signature === container.dataset.progressSignature) continue;
+            const forced = force && cached.mode === 'zone';
+            if (!forced && signature === container.dataset.progressSignature) continue;
 
             const figures = this._deriveCombatEstimateFigures(
                 cached.simResult,
@@ -2361,8 +2379,24 @@ class TaskProfitDisplay {
                         ? `${bottleneck.bottleneckName} ×${bottleneck.bottleneckTaskCount}`
                         : bottleneck.bottleneckName;
                 if (Number.isFinite(bottleneck.hoursNeeded)) {
-                    const totalSeconds = Math.round(bottleneck.hoursNeeded * 3600);
-                    summary.textContent = `${zoneName}: ~${formatKMB(bottleneck.fightsNeeded)} fights | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
+                    // The quoted figure is a quantile of the fights needed, not
+                    // the mean (see task-zone-estimate-percentile.js); Go keeps
+                    // padding the mean on its own setting
+                    const zoneInfo = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+                    const estimate = zoneFightEstimate({
+                        meanFights: bottleneck.fightsNeeded,
+                        meanHours: bottleneck.hoursNeeded,
+                        fightsPerHour: bottleneck.fightsPerHour,
+                        killsNeeded: bottleneck.bottleneckRemaining,
+                        killsPerFight: bottleneck.killsPerFight,
+                        slotsPerFight: Number(zoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount) || null,
+                        deterministic: Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid)),
+                        percent: getZoneEstimatePercent(),
+                    });
+                    const totalSeconds = Math.round(estimate.hoursNeeded * 3600);
+                    summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
+                    const medianHint = createMedianHint(estimate);
+                    if (medianHint) summary.appendChild(medianHint);
                 } else {
                     summary.textContent = `${zoneName}: ??? (no kills for ${bottleneckLabel} in sim)`;
                 }

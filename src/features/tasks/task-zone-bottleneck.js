@@ -33,8 +33,8 @@ export function fightsPerHour(simResult, simHours = ZONE_SIM_HOURS) {
  * @param {Object} simResult - Sim result for this zone (`deaths`: monsterHrid -> kills over the run,
  *   optional `encounters`).
  * @param {number} [simHours] - Hours the sim covered
- * @returns {{hoursNeeded: number, fightsNeeded: number, bottleneckHrid: string, bottleneckName: string,
- *   bottleneckTaskCount: number}|null} Null when there are no entries. `hoursNeeded` and
+ * @returns {{hoursNeeded: number, fightsNeeded: number, fightsPerHour: number, bottleneckRemaining: number,
+ *   killsPerFight: number|null, bottleneckHrid: string, bottleneckName: string, bottleneckTaskCount: number}|null} Null when there are no entries. `hoursNeeded` and
  *   `fightsNeeded` are Infinity when the bottleneck monster was never killed in the sim.
  */
 export function computeZoneBottleneck(monsterEntries, simResult, simHours = ZONE_SIM_HOURS) {
@@ -62,6 +62,8 @@ export function computeZoneBottleneck(monsterEntries, simResult, simHours = ZONE
         killsPerFight: fph > 0 && bottleneckKillsPerHour > 0 ? bottleneckKillsPerHour / fph : null,
         hoursNeeded: bottleneckHours,
         fightsNeeded,
+        // So a caller can turn a different fight count (a percentile estimate) back into hours
+        fightsPerHour: fph,
         bottleneckHrid: bottleneck.hrid,
         bottleneckName: bottleneck.name,
         bottleneckTaskCount: bottleneck.taskCount ?? 1,
