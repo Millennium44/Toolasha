@@ -11,7 +11,7 @@
 import { describe, test, expect } from 'vitest';
 import { buildPlayerExtraBuffs, buildScrollBuffs } from './extra-buffs.js';
 
-const shared = [{ uniqueHrid: '/buff_uniques/experience_moo_pass_buff' }];
+const shared = [{ uniqueHrid: '/buff_uniques/experience_community_buff' }];
 const guild = [{ uniqueHrid: '/buff_uniques/guild_combat' }];
 const achievement = [{ uniqueHrid: '/buff_uniques/achievement_combat' }];
 
@@ -89,6 +89,21 @@ describe('buildPlayerExtraBuffs', () => {
             ratioBoost: 0.08,
             flatBoost: 0,
         });
+    });
+
+    test('Moo Pass wisdom reaches only the player whose DTO says they have it', () => {
+        const own = buildPlayerExtraBuffs(shared, { mooPass: true });
+        expect(own).toHaveLength(2);
+        expect(own[1]).toMatchObject({
+            uniqueHrid: '/buff_uniques/experience_moo_pass_buff',
+            typeHrid: '/buff_types/wisdom',
+            flatBoost: 0.05,
+        });
+
+        // A party member's Moo Pass is unknown: false, missing or junk is none
+        expect(buildPlayerExtraBuffs(shared, { mooPass: false })).toEqual(shared);
+        expect(buildPlayerExtraBuffs(shared, {})).toEqual(shared);
+        expect(buildPlayerExtraBuffs(shared, { mooPass: 'yes' })).toEqual(shared);
     });
 });
 

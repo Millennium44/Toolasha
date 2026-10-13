@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Savings goals now credit your worn piece at its after-tax sale value, the watchlist flags a bid below the vendor price after market tax and totals bids net of tax (matching bulk sell), and the time to a combat level waits for skills to complete whole levels, as the game counts them, instead of reading early.
 
+### Combat sim: wave swing timing, Moo Pass, blind
+
+- Every weapon now starts its first swing a full attack interval after a new wave appears, as measured in September (slow weapons such as crossbows, bulwarks, staffs, maces and bows were getting part of a swing free each wave), your Moo Pass Wisdom is no longer given to every party member in party sims, and a blinded unit can still cast abilities, as the game's blind only stops auto attacks.
+
 ### Labyrinth Recommend keeps every badge
 
 - A labyrinth Recommend run no longer loses the skilling rooms' and early combat rooms' recommendations when your gear or loadout changes partway through (the lab swapping loadouts between rooms did it); the skilling rooms are re-checked against the new gear at the end. A combat probe that could not run is no longer scored as a 0% clear.

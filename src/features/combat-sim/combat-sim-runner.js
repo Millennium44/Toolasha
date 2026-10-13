@@ -130,26 +130,19 @@ export function getWorkerURL() {
 }
 
 /**
- * Build extra buffs from community buffs, MooPass, and guild combat buffs.
- * @param {Object} communityBuffs - { mooPass, comExp, comDrop }
+ * Build the buffs every player in the sim shares: community buffs, and guild
+ * combat buffs when a caller passes them.
+ *
+ * Moo Pass is deliberately not here: it is one character's own subscription,
+ * so it rides on that player's DTO (`dto.mooPass`) and `buildPlayerExtraBuffs`
+ * grants it per player. A shared Moo Pass handed the current character's wisdom
+ * to every party member. `communityBuffs.mooPass` is ignored.
+ * @param {Object} communityBuffs - { comExp, comDrop }
  * @param {Array} [guildCombatBuffs] - Pre-computed guild buff objects for /action_types/combat
  * @returns {Array<Object>}
  */
 export function buildExtraBuffs(communityBuffs, guildCombatBuffs) {
     const extraBuffs = [];
-
-    if (communityBuffs?.mooPass) {
-        extraBuffs.push({
-            uniqueHrid: '/buff_uniques/experience_moo_pass_buff',
-            typeHrid: '/buff_types/wisdom',
-            ratioBoost: 0,
-            ratioBoostLevelBonus: 0,
-            flatBoost: 0.05,
-            flatBoostLevelBonus: 0,
-            startTime: '0001-01-01T00:00:00Z',
-            duration: 0,
-        });
-    }
 
     if (communityBuffs?.comExp > 0) {
         extraBuffs.push({

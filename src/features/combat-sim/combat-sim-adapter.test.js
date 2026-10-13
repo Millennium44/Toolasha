@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
     onProfileRead: null,
     /** Captures `view-loadout.js` is holding: `{characterId, context, hasLoadout, capturedAt, loadout}` */
     sharedLoadouts: [],
+    /** What dataManager.getMooPassBuffs() answers for the current character */
+    mooPassBuffs: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -44,6 +46,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getEquippedAbilities: () => mocks.equippedAbilities.map((entry) => ({ ...entry })),
         getCommunityBuffLevel: () => 0,
         getAchievementBuffs: () => [],
+        getMooPassBuffs: () => mocks.mooPassBuffs,
         getActiveTaskMonsterHrids: () => mocks.taskMonsters,
         getActiveTaskMonsterRemaining: () => mocks.taskMonsterRemaining,
         getPartyMembers: () => ({
@@ -880,6 +883,38 @@ describe('the scrolls a player DTO starts from', () => {
     test('are empty when the game never sent a scroll map', () => {
         mocks.personalActionTypeBuffsMap = null;
         expect(buildPlayerDTO().scrollBuffs).toEqual([]);
+    });
+});
+
+/**
+ * Moo Pass is the current character's own subscription, so it travels on that
+ * character's DTO alone. A party member's is not visible and reads as none.
+ */
+describe('the Moo Pass a player DTO carries', () => {
+    beforeEach(() => {
+        mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
+        mocks.characterData = { characterSkills: [] };
+    });
+
+    afterEach(() => {
+        mocks.mooPassBuffs = [];
+    });
+
+    test("is the current character's own", () => {
+        mocks.mooPassBuffs = [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.05 }];
+        expect(buildPlayerDTO().mooPass).toBe(true);
+
+        mocks.mooPassBuffs = [];
+        expect(buildPlayerDTO().mooPass).toBe(false);
+    });
+
+    test("is none for a party member, whatever the current character's", () => {
+        mocks.mooPassBuffs = [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.05 }];
+        const member = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: { characterSkills: [], wearableItemMap: {} },
+        });
+        expect(member.mooPass).toBe(false);
     });
 });
 
