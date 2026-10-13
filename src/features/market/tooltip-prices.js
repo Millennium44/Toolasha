@@ -982,7 +982,12 @@ class TooltipPrices {
                     : `${formatKMB(alt.costPerUnit)}/unit`;
             const parts = [`${costText} vs ${formatKMB(targetAsk)} ${buySideWord()}`];
             if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
-            parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
+            // Under 10 s one decimal, so a 0.3 s unit does not read "0s"; from 10 s on the usual format
+            const perUnit =
+                alt.secondsPerUnit > 0 && alt.secondsPerUnit < 9.95
+                    ? `${alt.secondsPerUnit.toFixed(1)}s`
+                    : timeReadable(alt.secondsPerUnit);
+            parts.push(`${perUnit}/unit`);
             // Making it to sell rather than to use: the bid after tax against the same cost and time
             if (alt.sellingPerUnit !== null && alt.sellingPerUnit !== undefined) {
                 parts.push(`selling instead: ${atLeast}${formatKMB(alt.sellingPerUnit)}/unit`);

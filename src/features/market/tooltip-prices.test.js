@@ -1515,6 +1515,13 @@ describe('instead of buying', () => {
         };
         const detail = (alt) => tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...base, ...alt }]);
 
+        test('seconds per unit keep a decimal under 10 s and the usual format from there', () => {
+            expect(detail({ secondsPerUnit: 0.3 })).toContain('0.3s/unit');
+            expect(detail({ secondsPerUnit: 9.97 })).not.toContain('10.0s');
+            expect(detail({ secondsPerUnit: 26 })).toContain('26s/unit');
+            expect(detail({ secondsPerUnit: 71 })).toContain('1m 11s/unit');
+        });
+
         test('a negative cost reads as a gain, a lower bound when an output is unpriced', () => {
             expect(detail({ costPerUnit: -44200 })).toContain('gains 44.2K/unit vs 10 ask');
             expect(detail({ costPerUnit: -44200 })).not.toContain('-44.2K');
