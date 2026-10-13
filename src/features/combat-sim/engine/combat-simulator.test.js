@@ -2273,6 +2273,76 @@ describe('stun stops every action, blind and silence stop one each', () => {
         expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
     });
 
+    test('a blinded unit casts an ability that comes off cooldown during the blind', () => {
+        // Nothing triggers at the moment the blind lands, so the unit falls
+        // through to the blind branch. Its ability comes ready a second later,
+        // well inside a ten-second blind. Driven through the real event loop:
+        // what is at stake is whether anything calls back in before the blind
+        // expires, not what addNextAttackEvent does when called.
+        const { sim, player } = soloFight();
+        const start = sim.simulationTime;
+        const readyAt = start + ONE_SECOND;
+        let casts = 0;
+        player.abilities = [
+            {
+                hrid: '/abilities/fixture',
+                manaCost: 0,
+                castDuration: 0,
+                lastUsed: 0,
+                shouldTrigger: (time) => casts === 0 && time >= readyAt,
+            },
+        ];
+        player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
+        player.isBlinded = true;
+        player.blindExpireTime = start + 10 * ONE_SECOND;
+        sim.eventQueue.addEvent(new BlindExpirationEvent(player.blindExpireTime, player));
+        const tryUseAbility = sim.tryUseAbility.bind(sim);
+        let castAt = null;
+        sim.tryUseAbility = (source, ability) => {
+            if (source === player) {
+                casts++;
+                castAt = sim.simulationTime;
+                return true;
+            }
+            return tryUseAbility(source, ability);
+        };
+        let swungWhileBlind = false;
+        const processAutoAttack = sim.processAutoAttackEvent.bind(sim);
+        sim.processAutoAttackEvent = (event) => {
+            if (event.source === player && player.isBlinded) swungWhileBlind = true;
+            processAutoAttack(event);
+        };
+
+        sim.addNextAttackEvent(player);
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+
+        while (sim.eventQueue.minHeap.data.length && sim.simulationTime < player.blindExpireTime) {
+            const event = sim.eventQueue.getNextEvent();
+            if (event.time >= player.blindExpireTime) break;
+            sim.simulationTime = event.time;
+            sim.processEvent(event);
+        }
+
+        expect(casts).toBe(1);
+        expect(castAt).toBeGreaterThanOrEqual(readyAt);
+        expect(castAt).toBeLessThan(player.blindExpireTime);
+        expect(swungWhileBlind).toBe(false);
+        expect(player.isOutOfMana).toBe(false);
+    });
+
+    test('a blinded unit with nothing to cast keeps one wake standing, never a swing', () => {
+        const { sim, player } = soloFight();
+        player.isBlinded = true;
+
+        sim.addNextAttackEvent(player);
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+        const wakes = queued(sim, AwaitCooldownEvent.type, player);
+        expect(wakes.length).toBe(1);
+        expect(wakes[0].time - sim.simulationTime).toBe(player.combatDetails.combatStats.attackInterval);
+    });
+
     test('a silenced unit still swings, because silence stops abilities only', () => {
         // No ability is given, because the stub above would cast through a
         // silence that the real `Ability.shouldTrigger` refuses. What is at

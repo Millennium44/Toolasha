@@ -761,8 +761,8 @@ class CombatSimulator {
                     // events exist to lower. Stand a player up still carrying
                     // one and there is no longer any event that could ever lift
                     // it: stunned or silenced, they never cast or eat again;
-                    // blinded, `addNextAttackEvent` queues them nothing at all
-                    // and they simply stop fighting for the rest of the run.
+                    // blinded, `addNextAttackEvent` never queues them a swing
+                    // again and they stop auto attacking for the rest of the run.
                     //
                     // Only for a player who was down. One still standing at the
                     // clear may be inside a stun that is doing exactly what it
@@ -1396,6 +1396,24 @@ class CombatSimulator {
             // gates the mana-restoration wakes and feeds the reported
             // exhaustion time, and raising it here made a merely blinded unit
             // read as mana-starved.
+            //
+            // But the unit's turn still comes round. With no swing queued and
+            // that flag down, nothing used to call back in until the blind
+            // expired, so an ability coming off cooldown (or a trigger turning
+            // true) during the blind could not be cast. A wake one attack
+            // interval out keeps the cadence a swing would have: the ability
+            // loop above runs again then, and an auto attack still never
+            // queues while the blind holds. One wake at a time; the blind's
+            // expiry re-arms the swing itself, and a wake that finds a swing or
+            // a cast already queued returns at the guard above.
+            if (!this.eventQueue.getByTypeAndSource(AwaitCooldownEvent.type, source)) {
+                this.eventQueue.addEvent(
+                    new AwaitCooldownEvent(
+                        this.simulationTime + source.combatDetails.combatStats.attackInterval,
+                        source
+                    )
+                );
+            }
             return;
         }
 
