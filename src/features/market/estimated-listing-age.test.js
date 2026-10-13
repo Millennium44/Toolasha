@@ -931,6 +931,41 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         expect(storedLog().map((l) => l.id)).toEqual([1, 9, 10]);
     });
 
+    test('an import brings back rows Clear History tombstoned, and they stay after a reload', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
+        knownAs([row(1), row(2)]);
+        await estimatedListingAge.clearPersonalListings();
+
+        // The user re-imports the export they took before clearing
+        await estimatedListingAge.importListings([row(1), row(2)]);
+        expect(storedLog().map((l) => l.id)).toEqual([1, 2]);
+
+        knownAs([]);
+        await estimatedListingAge.loadHistoricalData();
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1, 2]);
+    });
+
+    test('a peer still holding the old tombstone does not bury the imported row again; a later delete does', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        const deletedAt = Date.now() - 60_000;
+        storageMock.storeFor('marketListings').set(LOG_KEY, []);
+        storageMock.storeFor('marketListings').set(GRAVES_KEY, { removed: { 1: deletedAt }, clearedThrough: 0 });
+        knownAs([]);
+
+        await estimatedListingAge.importListings([row(1), row(2)]);
+
+        const { merge } = mergeForKey('marketListings', GRAVES_KEY);
+        const local = storageMock.storeFor('marketListings').get(GRAVES_KEY);
+        const peer = { removed: { 1: deletedAt }, clearedThrough: 0 };
+        const log = [row(1), row(2)];
+        expect(applyListingGraves(log, merge(local, peer)).map((l) => l.id)).toEqual([1, 2]);
+        expect(applyListingGraves(log, merge(peer, local)).map((l) => l.id)).toEqual([1, 2]);
+
+        // Deleted again after the import: the newer tombstone wins over the restore
+        const later = { removed: { 1: Date.now() + 1_000 }, clearedThrough: 0 };
+        expect(applyListingGraves(log, merge(local, later)).map((l) => l.id)).toEqual([2]);
+    });
+
     test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
         storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
         knownAs([row(1), row(2)]);

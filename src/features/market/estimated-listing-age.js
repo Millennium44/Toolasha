@@ -172,17 +172,42 @@ function mergeListingLogs(base, fresh) {
 }
 
 /**
- * The tombstone record's two halves, absent ones included.
+ * The tombstone record's parts, absent ones included.
  *
  * @param {*} record - A stored or downloaded tombstone record
- * @returns {{removed: Object<string, number>, clearedThrough: number}}
+ * @returns {{removed: Object<string, number>, restored: Object<string, number>, clearedThrough: number}}
  */
 function gravesOf(record) {
     const removed = record?.removed;
+    const restored = record?.restored;
     return {
         removed: removed && typeof removed === 'object' ? removed : {},
+        restored: restored && typeof restored === 'object' ? restored : {},
         clearedThrough: Number(record?.clearedThrough) || 0,
     };
+}
+
+/**
+ * Per id, the latest of two stamp maps, aged out and capped to the newest.
+ * @param {Array<Object<string, number>>} sources - Stamp maps
+ * @param {number} now - Clock
+ * @returns {Object<string, number>}
+ */
+function newestStamps(sources, now) {
+    const out = {};
+    for (const source of sources) {
+        for (const [id, at] of Object.entries(source)) {
+            const when = Number(at) || 0;
+            if (now - when >= TOMBSTONE_MAX_AGE_MS) continue;
+            if (!(id in out) || when > out[id]) out[id] = when;
+        }
+    }
+    const ids = Object.keys(out);
+    if (ids.length <= MAX_LISTING_TOMBSTONES) return out;
+    ids.sort((a, b) => out[b] - out[a]);
+    const capped = {};
+    for (const id of ids.slice(0, MAX_LISTING_TOMBSTONES)) capped[id] = out[id];
+    return capped;
 }
 
 /**
@@ -195,6 +220,12 @@ function gravesOf(record) {
  * A tombstone therefore needs no stamp comparison against the log — only an
  * age, so the map does not grow for ever.
  *
+ * The one thing that takes a deletion back is the user importing the row
+ * (`importListings`). That is stamped in `restored`, folded the same way, and
+ * cancels every tombstone of the id no newer than it, so a peer still holding
+ * the old tombstone cannot bury the import again; a delete made after the
+ * import is newer and stands. `restored` is written only when it holds an id.
+ *
  * @param {*} local - This device's record
  * @param {*} incoming - The downloaded record
  * @param {number} [now] - Clock, injectable for tests
@@ -204,24 +235,15 @@ function mergeListingGraves(local, incoming, now = Date.now()) {
     const ours = gravesOf(local);
     const theirs = gravesOf(incoming);
 
-    const removed = {};
-    for (const source of [ours.removed, theirs.removed]) {
-        for (const [id, at] of Object.entries(source)) {
-            const when = Number(at) || 0;
-            if (now - when >= TOMBSTONE_MAX_AGE_MS) continue;
-            if (!(id in removed) || when > removed[id]) removed[id] = when;
-        }
+    const restored = newestStamps([ours.restored, theirs.restored], now);
+    const removed = newestStamps([ours.removed, theirs.removed], now);
+    for (const [id, at] of Object.entries(restored)) {
+        if (id in removed && removed[id] <= at) delete removed[id];
     }
 
-    const ids = Object.keys(removed);
-    let capped = removed;
-    if (ids.length > MAX_LISTING_TOMBSTONES) {
-        ids.sort((a, b) => removed[b] - removed[a]);
-        capped = {};
-        for (const id of ids.slice(0, MAX_LISTING_TOMBSTONES)) capped[id] = removed[id];
-    }
-
-    return { removed: capped, clearedThrough: Math.max(ours.clearedThrough, theirs.clearedThrough) };
+    const folded = { removed, clearedThrough: Math.max(ours.clearedThrough, theirs.clearedThrough) };
+    if (Object.keys(restored).length > 0) folded.restored = restored;
+    return folded;
 }
 
 /**
@@ -607,6 +629,40 @@ class EstimatedListingAge {
             return await storage.set(key, this.listingGraves, LISTINGS_STORE, true);
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to record listing deletions:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Take back the tombstones of listing ids the user has imported, stamped so the
+     * fold cancels a peer's older copy of them too (see {@link mergeListingGraves}).
+     * Only ids a tombstone actually buries are stamped, so the map does not grow
+     * by every row an import carries.
+     * @param {Array<number>} ids - Listing ids being imported
+     * @param {{generation: number, charId: string}} owner - From {@link _owner}
+     * @returns {Promise<boolean>} Whether a write landed (true when nothing was buried)
+     */
+    async _restoreGraves(ids, owner) {
+        if (!ids.length) return true;
+        const now = Date.now();
+        const key = this._gravesKey(owner);
+        try {
+            const probe = await storage.tryGet(key, LISTINGS_STORE);
+            if (probe === null) {
+                console.warn('[EstimatedListingAge] Deletions not taken back: storage could not be read first');
+                return false;
+            }
+            if (!this._ownsMemory(owner)) return false;
+            const current = mergeListingGraves(probe.found ? probe.value : null, this.listingGraves, now);
+            const buried = ids.filter((id) => String(id) in current.removed);
+            this.listingGraves = current;
+            if (!buried.length) return true;
+            const restored = {};
+            for (const id of buried) restored[String(id)] = now;
+            this.listingGraves = mergeListingGraves(current, { removed: {}, restored, clearedThrough: 0 }, now);
+            return await storage.set(key, this.listingGraves, LISTINGS_STORE, true);
+        } catch (error) {
+            console.error('[EstimatedListingAge] Failed to take back listing deletions:', error);
             return false;
         }
     }
@@ -1128,9 +1184,17 @@ class EstimatedListingAge {
      * @param {Array<Object>} listings - Full listing records, as the log stores them
      */
     async importListings(listings) {
+        const owner = this._owner();
         this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
         this.rebuildEstimationPoints();
-        await this.saveHistoricalData();
+        // An import is the user saying these rows belong in the log: their tombstones are taken back
+        // first, or the save's fold buries them again
+        const ids = (Array.isArray(listings) ? listings : [])
+            .map((listing) => listing?.id)
+            .filter((id) => typeof id === 'number');
+        await this._restoreGraves(ids, owner);
+        if (!this._ownsMemory(owner)) return;
+        await this.saveHistoricalData({ owner });
     }
 
     /**
