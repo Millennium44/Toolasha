@@ -1206,11 +1206,14 @@ class BulkSellAssistant {
         const shown = parseKMB(amount);
         const expected = this.current.count * (this.decision?.price || 0);
         if (!Number.isFinite(shown) || !(expected > 0)) return { why: 'the Sell For amount cannot be read' };
-        // An abbreviated label ("400K") is only exact to its last printed digit:
-        // allow half a unit of that digit, and nothing more
+        // An abbreviated label ("863K") stands for a range, not a point: one unit of its last printed digit. The
+        // game truncates (863,584 reads "863K", measured live), though a rounded read ("864K") has been assumed
+        // before, so accept both: [shown - half a unit, shown + a unit). A label with no suffix is the exact total.
         const digits = amount.match(/^[\d,]*\.?(\d*)/)?.[1].length ?? 0;
-        const unit = shown / (parseFloat(amount.replace(/,/g, '')) || 1);
-        if (Math.abs(shown - expected) > (unit * 10 ** -digits) / 2) {
+        const mantissa = parseFloat(amount.replace(/,/g, '')) || 1;
+        const abbreviated = /[a-z]\s*$/i.test(amount);
+        const unit = abbreviated ? (shown / mantissa) * 10 ** -digits : 0;
+        if (abbreviated ? expected < shown - unit / 2 || expected >= shown + unit : shown !== expected) {
             return { why: `Sell For says ${amount}, not the queued ${formatKMB(expected)}` };
         }
         return { button, armed };

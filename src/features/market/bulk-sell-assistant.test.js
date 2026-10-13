@@ -1574,6 +1574,38 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(1);
         });
 
+        describe('the Sell For total is abbreviated by the game, not rounded to match ours', () => {
+            /** Queue `count` at `price`, open a menu showing `label`, and ask whether the button may be pressed */
+            const verdict = (count, price, label) => {
+                openMenu({ qty: count, label, armedLabel: label });
+                vendorRun();
+                bulkSell.current.count = count;
+                bulkSell.decision = { insta: false, vendor: true, price, reason: 'vendor' };
+                return bulkSell._vendorConfirmTarget();
+            };
+
+            test('26987 x 32 = 863,584 is accepted against the game’s truncated "863K"', () => {
+                expect(verdict(26987, 32, 'Sell For 863K Coins').why).toBeUndefined();
+            });
+
+            test.each([
+                ['K, truncated', 1000, 863.584, 'Sell For 863K Coins', true],
+                ['K, rounded up', 1000, 863.996, 'Sell For 864K Coins', true],
+                ['K, above the display range', 1000, 863.584, 'Sell For 865K Coins', false],
+                ['K, below the display range', 1000, 863.584, 'Sell For 861K Coins', false],
+                ['M, truncated', 1000, 4567.891, 'Sell For 4.56M Coins', true],
+                ['M, a different total', 1000, 4567.891, 'Sell For 4.7M Coins', false],
+                ['B, truncated', 1000, 2345678.901, 'Sell For 2.34B Coins', true],
+                ['B, a different total', 1000, 2345678.901, 'Sell For 2.4B Coins', false],
+                ['a small exact total', 30, 32, 'Sell For 960 Coins', true],
+                ['a small total off by one', 30, 32, 'Sell For 961 Coins', false],
+            ])('%s', (_name, count, price, label, accepted) => {
+                // 1000 x 863.584 etc.: the price may be fractional here only to build the exact total
+                const result = verdict(count, price, label);
+                expect(result.why === undefined).toBe(accepted);
+            });
+        });
+
         test('a relabel that shows a different amount is refused and sells nothing', async () => {
             openMenu({ armedLabel: 'Confirm Sell For 410K Coins' });
             vendorRun();
