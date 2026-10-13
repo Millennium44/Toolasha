@@ -192,6 +192,13 @@ describe('calibrationBadgeFor', () => {
         expect(calibrationBadgeFor('combat', { actionHrid: zone, difficultyTier: 2, exact: true })).toBeNull();
     });
 
+    it('reads the ledger in the shape the recorder stores it, `{clearedAt, entries}`', async () => {
+        store.ledger = { clearedAt: 1_600_000_000_000, entries: runs('/actions/milking/cow', 10, 0.88) };
+        await loadCalibrationBadges();
+
+        expect(calibrationBadgeFor('milking', { actionHrid: '/actions/milking/cow' })?.text).toBe('−12% over 10 runs');
+    });
+
     it('is silent when the setting is off', async () => {
         store.ledger = runs('/actions/milking/cow', 10, 0.5);
         await loadCalibrationBadges();

@@ -31,6 +31,7 @@ import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { summarizeCalibration, DEFAULT_MIN_SAMPLES } from '../features/insights/calibration-math.js';
+import { entriesOf } from './cleared-record.js';
 
 /** The setting that switches the badges off */
 export const BADGE_SETTING = 'insights_calibrationBadges';
@@ -243,7 +244,9 @@ export async function loadCalibrationBadges() {
     cache.loading = (async () => {
         try {
             const stored = await storage.get(`${KEY_BASE}_${charId}`, STORE_NAME, []);
-            const records = Array.isArray(stored) ? stored : [];
+            // The recorder stores `{clearedAt, entries}` since Clear began surviving a sync pull; a bare
+            // array is a ledger no save has rewritten since
+            const records = entriesOf(stored);
             // The character may have changed while the read was out
             if (cache.charId !== charId) return records;
             cache.records = records;
