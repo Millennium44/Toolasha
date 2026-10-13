@@ -40,6 +40,8 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -345,11 +347,18 @@ export function watchlistRows() {
         dataManager.getCharacterData?.()?.myMarketListings || dataManager.characterData?.myMarketListings
     );
 
+    const ironCow = isIronCowCharacter();
     const rows = valueWatchlist(state.entries, {
         quantityOf: heldCount,
         pricesFor: (hrid, level) => getItemPrices(hrid, level),
         vendorOf: vendorPriceOf,
         listedOf: (hrid, level) => listed[watchlistKey(hrid, level)],
+        // The payout the game-facing market code uses: the cowbell bag's own rate, floored per unit.
+        // An Iron Cow character never pays market tax (the same rule as profit-helpers' outputTaxRate,
+        // which is too heavy to import here), and its prices are untaxed vendor/coinify values, kept
+        // as they are: a coinify value is a fractional expected value, not a per-unit market sale
+        afterTax: (price, hrid) =>
+            ironCow ? price : Math.floor(price * (1 - (hrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX))),
     });
     return sortRows(rows, state.sortBy, state.direction);
 }
@@ -855,7 +864,7 @@ class WatchlistPanel {
 
         const value = this._cell(`${formatKMB(item.totalAsk)} · ${formatKMB(item.totalBid)}`);
         value.style.color = ROW_COLORS.gold;
-        value.title = `${formatWithSeparator(item.totalAsk)} at ask, ${formatWithSeparator(item.totalBid)} at bid.`;
+        value.title = `${formatWithSeparator(item.totalAsk)} at ask, ${formatWithSeparator(item.totalBid)} at bid after market tax.`;
 
         const remove = document.createElement('button');
         remove.textContent = '✕';

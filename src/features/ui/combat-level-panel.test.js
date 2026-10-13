@@ -751,6 +751,18 @@ describe('the combat level as a target', () => {
         expect(chosen.target).toBe(127);
     });
 
+    test('the default target is the next whole combat level even when part-levels already cross it', () => {
+        // Every skill nearly a level on: the fractional figure reads 127+, but
+        // the game still shows 126, and no whole level has been gained
+        character({ stamina: 0.99, intelligence: 0.99, attack: 0.99, defense: 0.99, melee: 0.99, ranged: 0.99 });
+        expect(combatProgress(combatSkillState()).partial.exact).toBeGreaterThanOrEqual(127);
+        select({ skill: 'combat' });
+        const chosen = selectedTarget();
+
+        expect(chosen.level).toBe(126);
+        expect(chosen.target).toBe(127);
+    });
+
     test('the time is the clock run forward until the formula crosses', () => {
         combatLevelPanel.show();
         train(5, { melee: 200000 });

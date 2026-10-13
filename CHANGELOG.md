@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When every labyrinth combat room has its own loadout, the lab swapping loadouts between rooms no longer throws away cached combat sims and on-screen recommendations; the abilities you happen to have equipped only count while some room falls back to your worn gear. If every room already has a loadout, labyrinth sims re-run once after this update.
 
+### Savings, watchlist and combat level ETA corrections
+
+- Savings goals now credit your worn piece at its after-tax sale value, the watchlist flags a bid below the vendor price after market tax and totals bids net of tax (matching bulk sell), and the time to a combat level waits for skills to complete whole levels, as the game counts them, instead of reading early.
+
 ### Labyrinth Recommend keeps every badge
 
 - A labyrinth Recommend run no longer loses the skilling rooms' and early combat rooms' recommendations when your gear or loadout changes partway through (the lab swapping loadouts between rooms did it); the skilling rooms are re-checked against the new gear at the end. A combat probe that could not run is no longer scored as a 0% clear.

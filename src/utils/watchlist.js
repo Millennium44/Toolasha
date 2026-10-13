@@ -300,11 +300,15 @@ export function listedCounts(listings) {
  * @param {Function} lookups.pricesFor - `(hrid, enhancementLevel) => {ask, bid}|null`
  * @param {Function} [lookups.vendorOf] - `(hrid) => number`
  * @param {Function} [lookups.listedOf] - `(hrid, enhancementLevel) => {listed, unclaimed}`
+ * @param {Function} [lookups.afterTax] - `(price, hrid) => number`, what one unit sold on the
+ *   market at `price` actually pays out (item-aware: the cowbell bag's own rate, per-unit floored). The vendor floor and `totalBid` use this net figure, since a
+ *   bid is only worth what you keep of it; the vendor sale is untaxed. Defaults to
+ *   the identity, which is a gross comparison.
  * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
  *   `ask`, `bid`, `flag`, `totalAsk`, `totalBid`. `quantity` is everything you
  *   own of the item wherever it is sitting; `held` is only the bag.
  */
-export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf }) {
+export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf, afterTax }) {
     return (entries || []).map((entry) => {
         // The level the row is about, which is what it must be counted and
         // priced at — a +5 row quoting the +0 ask is quoting a different item
@@ -318,7 +322,12 @@ export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, liste
 
         const prices = pricesFor?.(entry.hrid, level) || {};
         const ask = Number(prices.ask) || 0;
-        const floor = vendorFloor(prices.bid, vendorOf?.(entry.hrid));
+        // The bid is compared and totalled net of the market tax: a bid between
+        // the vendor price and vendor / (1 - tax) pays less than the vendor does
+        const grossBid = Number(prices.bid) || 0;
+        const netBid = grossBid > 0 && afterTax ? Number(afterTax(grossBid, entry.hrid)) || 0 : grossBid;
+        // The vendor takes only +0 items, so an enhanced row has no vendor floor
+        const floor = vendorFloor(netBid, level > 0 ? 0 : vendorOf?.(entry.hrid));
 
         return {
             ...entry,
@@ -327,7 +336,9 @@ export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, liste
             unclaimed,
             quantity,
             ask,
-            bid: floor.price,
+            // The unit column keeps showing the market bid itself when it stands;
+            // when the vendor wins it shows the vendor price (as before)
+            bid: floor.flag ? floor.price : grossBid,
             flag: floor.flag,
             totalAsk: ask * quantity,
             totalBid: floor.price * quantity,
