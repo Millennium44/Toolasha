@@ -5,9 +5,17 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 /** `{hrid: {ask, bid, source?}}` — source defaults to the order book */
-const world = vi.hoisted(() => ({ prices: {}, listeners: [], dataListeners: new Map() }));
+const world = vi.hoisted(() => ({
+    prices: {},
+    listeners: [],
+    dataListeners: new Map(),
+    /** The player's profit pricing settings */
+    pricing: {},
+}));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => 0 } }));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => 0, getSettingValue: (id, fallback) => world.pricing[id] ?? fallback },
+}));
 vi.mock('../../core/data-manager.js', () => {
     const itemDetailMap = {
         '/items/goblin_essence': { name: 'Goblin Essence' },
@@ -69,7 +77,15 @@ vi.mock('./expected-value-calculator.js', () => ({ default: {} }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: (hrid, options) => {
         const entry = world.prices[hrid];
-        const price = entry?.[options?.mode];
+        // Profit context, no mode: the buy side is the ask and the sell side the bid
+        // The player's mode picks the book side; a buy-side tick moves a bid quote up by one
+        const sides = world.pricing.profitCalc_pricingMode === 'optimistic' ? ['bid', 'ask'] : ['ask', 'bid'];
+        const bookSide = options?.mode ?? sides[options?.side === 'buy' ? 0 : 1];
+        const base = entry?.[bookSide];
+        const price =
+            base != null && !options?.mode && options?.side === 'buy' && bookSide === 'bid'
+                ? base + (world.pricing.profitCalc_patientTickBuy ? 1 : 0)
+                : base;
         if (price == null) return { price: null, source: null, estimated: false };
         const source = entry.source ?? 'book';
         return { price, source, estimated: source === 'value' };
@@ -90,6 +106,7 @@ const BOOMSTICK = '/items/gobo_boomstick';
 beforeEach(() => {
     clearInsteadCache();
     world.prices = { [ESSENCE]: { ask: 300, bid: 280 }, [BOOMSTICK]: { ask: 600, bid: 550 } };
+    world.pricing = {};
 });
 
 describe('tradable prices only', () => {
@@ -148,5 +165,29 @@ describe('the cache follows the market', () => {
         expect(world.listeners).toHaveLength(1);
         expect(world.dataListeners.get('market_item_values_updated')).toHaveLength(1);
         stopInsteadListeners();
+    });
+});
+
+describe("the player's pricing mode", () => {
+    test('the default mode prices the target and source at the ask', () => {
+        const found = liveAlternatives(ESSENCE, new Set());
+        expect(found.targetAsk).toBe(300);
+        expect(found.alternatives[0].costPerUnit).toBeCloseTo(120);
+    });
+
+    test('a patient +1 buy prices the target and source at the bid plus one tick', () => {
+        world.pricing = { profitCalc_pricingMode: 'optimistic', profitCalc_patientTickBuy: true };
+        const found = liveAlternatives(ESSENCE, new Set());
+        expect(found.targetAsk).toBe(281);
+        // 551 for the source over five essence
+        expect(found.alternatives[0].costPerUnit).toBeCloseTo(551 / 5);
+    });
+
+    test('changing the pricing mode misses the cache, with the market itself unmoved', () => {
+        expect(liveAlternatives(ESSENCE, new Set()).targetAsk).toBe(300);
+        world.pricing = { profitCalc_pricingMode: 'optimistic', profitCalc_patientTickBuy: true };
+        expect(liveAlternatives(ESSENCE, new Set()).targetAsk).toBe(281);
+        world.pricing = {};
+        expect(liveAlternatives(ESSENCE, new Set()).targetAsk).toBe(300);
     });
 });

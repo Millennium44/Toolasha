@@ -7,6 +7,7 @@ import {
     gameNumberPattern,
     gameDigitsSource,
     _resetGameNumberSeparators,
+    parseShorthandAmount,
 } from './number-parser.js';
 
 describe('parseItemCount', () => {
@@ -387,5 +388,52 @@ describe('gameNumberPattern / gameDigitsSource', () => {
         expect(gameNumberPattern().group).toBe(',');
         localStorage.setItem('i18nextLng', 'de-DE'); // no cache reset — the getter must notice
         expect(gameNumberPattern().group).toBe('\\.');
+    });
+});
+
+describe('parseShorthandAmount', () => {
+    test('reads the magnitudes a person types', () => {
+        expect(parseShorthandAmount('3m')).toBe(3_000_000);
+        expect(parseShorthandAmount('500k')).toBe(500_000);
+        expect(parseShorthandAmount('1.5b')).toBe(1_500_000_000);
+        expect(parseShorthandAmount('3,000,000')).toBe(3_000_000);
+    });
+
+    test('refuses a suffix it does not know rather than reading the leading digits', () => {
+        expect(parseShorthandAmount('12bananas')).toBeNull();
+        expect(parseShorthandAmount('1mm')).toBeNull();
+        expect(parseShorthandAmount('abc')).toBeNull();
+        // A cleared box is none, as a number box saved it
+        expect(parseShorthandAmount('')).toBe(0);
+        expect(parseShorthandAmount('   ')).toBe(0);
+        // A stray space is not grouping
+        expect(parseShorthandAmount('1 2b')).toBeNull();
+        expect(parseShorthandAmount('12 34 5')).toBeNull();
+        expect(parseShorthandAmount('3 000 000')).toBe(3_000_000);
+    });
+
+    test('every thousands group uses the same separator', () => {
+        expect(parseShorthandAmount('1,000 000')).toBeNull();
+        expect(parseShorthandAmount('1 000,000')).toBeNull();
+        expect(parseShorthandAmount('1,000,000')).toBe(1_000_000);
+        expect(parseShorthandAmount('1 000 000')).toBe(1_000_000);
+    });
+
+    test("reads the game's own number format as well as the en-US one", () => {
+        localStorage.setItem('i18nextLng', 'de-DE');
+        _resetGameNumberSeparators();
+        try {
+            expect(parseShorthandAmount('1,5m')).toBe(1_500_000);
+            expect(parseShorthandAmount('3.000.000')).toBe(3_000_000);
+            expect(parseShorthandAmount('1.5m')).toBe(1_500_000);
+            // One separator and three digits is grouping, whichever format it was typed in
+            expect(parseShorthandAmount('500,000')).toBe(500_000);
+            expect(parseShorthandAmount('500.000')).toBe(500_000);
+            expect(parseShorthandAmount('1.000,000')).toBe(1000);
+            expect(parseShorthandAmount('1.000 000')).toBeNull();
+        } finally {
+            localStorage.removeItem('i18nextLng');
+            _resetGameNumberSeparators();
+        }
     });
 });

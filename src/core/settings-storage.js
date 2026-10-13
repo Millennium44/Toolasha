@@ -227,6 +227,9 @@ const KEY_MIGRATIONS = [
     // it decides for itself which ids to write, because two of the survivors
     // are ids the user already has stored
     { once: 'labyrinthSimBudget', reconcile: deriveLabyrinthSimBudget },
+    // The alchemy "Instead of buying" gold rate and the crafting plan's gold/hr were
+    // two boxes for one number, what an hour of the player's time is worth
+    { once: 'timeValueGoldPerHour', reconcile: mergeTimeValueGoldPerHour },
     // Three switches answered one question — where to show listing age — and
     // nothing stopped a player setting them incoherently. The top-order-age
     // column is one of the two My Listings age columns, so it rides that side
@@ -259,6 +262,27 @@ const KEY_MIGRATIONS = [
         },
     },
 ];
+
+/**
+ * The alchemy gold rate folded into the crafting plan's gold/hr, which is now the one
+ * "time value" setting. The crafting value wins when both are set; the old key is
+ * dropped either way (a `null` entry deletes it).
+ *
+ * @param {Object} saved - The stored settings map (never null here)
+ * @returns {Object<string, Object|null>} Entries by id; null removes the id
+ */
+function mergeTimeValueGoldPerHour(saved) {
+    const OLD = 'itemTooltip_alchemyInsteadGoldPerHour';
+    const NEW = 'actionPanel_craftingPlanGoldPerHour';
+    if (!Object.hasOwn(saved, OLD)) return {};
+    const next = { [OLD]: null };
+    const oldValue = saved[OLD] ? Number(valueOf(saved[OLD])) : 0;
+    const newValue = saved[NEW] ? Number(valueOf(saved[NEW])) : 0;
+    if (oldValue > 0 && !(newValue > 0)) {
+        next[NEW] = { id: NEW, type: 'number', value: oldValue };
+    }
+    return next;
+}
 
 /**
  * The labyrinth sim budget: eleven settings reconciled into three.
@@ -1117,7 +1141,8 @@ class SettingsStorage {
                     if (!saved) continue;
                     for (const [id, entry] of Object.entries(reconcile(saved))) {
                         next = next === saved ? { ...saved } : next;
-                        next[id] = entry;
+                        if (entry === null) delete next[id];
+                        else next[id] = entry;
                     }
                     continue;
                 }

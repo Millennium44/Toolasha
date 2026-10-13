@@ -12,10 +12,10 @@
  * sources, picks each one's best catalyst/tea setup, prices them and compares
  * the result with T's ask.
  *
- * Prices are a real purchase's: S, T, catalysts and teas at the ask; other
- * outputs at the bid after the character's tax, or at the ask when the player
- * marked them "Keep for self-use". A value-map estimate is no ask anyone can buy
- * at, so an estimated S or T, or a setup that needs an estimated catalyst or tea,
+ * Prices follow the player's profit pricing (their Buy and Sell settings, patient ticks included):
+ * S, T, catalysts and teas at the buy side; other outputs at the sell side after the character's
+ * tax, or at the buy side, untaxed, when kept for self-use. A value-map estimate is no price anyone
+ * can trade at, so an estimated S or T, or a setup that needs an estimated catalyst or tea,
  * is left out — the same rule the marketplace's decompose-chain sort follows.
  *
  * With a gold rate set, the alchemy time is charged at that rate: the line then
@@ -34,7 +34,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { isKeptForSelfUse, keptSignature } from './self-use-wanted.js';
-import { getItemPriceInfo, withProfitPricingMode } from '../../utils/market-data.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
@@ -50,13 +50,10 @@ import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } fr
 /** The setting that draws the lines */
 export const INSTEAD_SETTING = 'itemTooltip_alchemyInsteadOfBuying';
 /** Your gold per hour; 0 leaves alchemy time free */
-export const GOLD_RATE_SETTING = 'itemTooltip_alchemyInsteadGoldPerHour';
+export const GOLD_RATE_SETTING = 'actionPanel_craftingPlanGoldPerHour';
 
 /** Most alternatives shown */
 export const MAX_ALTERNATIVES = 2;
-
-/** Ask in, bid out, for every calculator price read under this module */
-const PURCHASE_PRICING_MODE = 'conservative';
 
 /** How long a cached figure lives even without a price refresh (gear and skills move) */
 const CACHE_BUCKET_MS = 5 * 60 * 1000;
@@ -264,17 +261,27 @@ export function bonusRankCost(targetHrid, { sourceHrid, actionType }, { getItemD
  * @param {Function} [deps.containerValue] - A kept crate's opened value at the ask
  * @param {Function} [deps.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
  * @param {number} [deps.goldPerHour=0] - The player's gold rate; 0 leaves time free
+ * @param {boolean} [deps.truncated=false] - The source list was cut to the best-ranked few; a miss then
+ *   never sets `noCheaperRoute`
  * @param {number} [deps.limit=MAX_ALTERNATIVES]
- * @returns {{targetAsk: number|null, alternatives: Array<Object>}} Alternatives cheapest first, each
- *   `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving, savingPerHour,
- *   secondsPerUnit, partlyUnpriced, kept, result}`; empty when buying is cheapest
+ * @returns {{targetAsk: number|null, alternatives: Array<Object>, noCheaperRoute: boolean}}
+ *   Alternatives cheapest first, each `{sourceHrid, actionType, costPerUnit, timeCostPerUnit, effectiveCost, saving,
+ *   savingPerHour, sellingPerUnit, secondsPerUnit, partlyUnpriced, kept, result}`; empty when buying is
+ *   cheapest. `sellingPerUnit` is what making the target and selling it (bid after tax) nets per unit
+ *   after the same cost and time, null without a real bid. `noCheaperRoute` is true
+ *   only when sources were costed and none beat the ask, with no costing left uncertain by an unpriced
+ *   output; false when nothing could be costed, there is no real ask, or there are no sources.
  */
 export function findAlchemyAlternatives(targetHrid, deps) {
     const { sources, getItemDetails, askOf, sellOf, candidatesOf, isWanted, containerValue, sellContainerValue } = deps;
     const goldPerHour = Math.max(0, Number(deps.goldPerHour) || 0);
     const limit = deps.limit ?? MAX_ALTERNATIVES;
+    // The source list was cut to its best few, so a miss among them proves nothing
+    const truncated = Boolean(deps.truncated);
     const targetAsk = askOf(targetHrid);
-    if (targetAsk === null || !(targetAsk > 0)) return { targetAsk: null, alternatives: [] };
+    if (targetAsk === null || !(targetAsk > 0)) return { targetAsk: null, alternatives: [], noCheaperRoute: false };
+    // The bid after tax of the target itself: what selling it instead of using it pays
+    const targetSell = typeof sellOf === 'function' ? sellOf(targetHrid) : null;
 
     // Without a keep list nothing is kept: every other output is sold
     const pricing = {
@@ -285,6 +292,9 @@ export function findAlchemyAlternatives(targetHrid, deps) {
         sellContainerValue,
     };
     const alternatives = [];
+    // Sources whose cost came out, and whether a miss among them could still be a win
+    let costed = 0;
+    let uncertain = false;
     for (const { sourceHrid, actionType } of sources || []) {
         const inputPrice = askOf(sourceHrid);
         if (inputPrice === null) continue;
@@ -309,10 +319,15 @@ export function findAlchemyAlternatives(targetHrid, deps) {
         );
         const evaluation = pick?.evaluation;
         if (!evaluation) continue;
+        costed += 1;
         const timeCostPerUnit = timeCost(evaluation);
         const effectiveCost = evaluation.costPerUnit + timeCostPerUnit;
         const saving = targetAsk - effectiveCost;
-        if (!(saving > 0)) continue;
+        if (!(saving > 0)) {
+            // An output left unpriced makes the cost an upper bound, so a miss on it proves nothing
+            if (evaluation.partlyUnpriced) uncertain = true;
+            continue;
+        }
         alternatives.push({
             sourceHrid,
             actionType,
@@ -322,6 +337,8 @@ export function findAlchemyAlternatives(targetHrid, deps) {
             saving,
             // Per hour of alchemy: the saving rate, over and above the gold rate when one is set
             savingPerHour: evaluation.secondsPerUnit > 0 ? (saving * 3600) / evaluation.secondsPerUnit : null,
+            // Selling the made item instead of using it: bid after tax against the same cost and time
+            sellingPerUnit: targetSell === null || targetSell === undefined ? null : targetSell - effectiveCost,
             secondsPerUnit: evaluation.secondsPerUnit,
             partlyUnpriced: evaluation.partlyUnpriced,
             kept: evaluation.kept,
@@ -329,7 +346,15 @@ export function findAlchemyAlternatives(targetHrid, deps) {
         });
     }
     alternatives.sort((a, b) => a.effectiveCost - b.effectiveCost);
-    return { targetAsk, alternatives: alternatives.slice(0, limit) };
+    return {
+        targetAsk,
+        alternatives: alternatives.slice(0, limit),
+        // A losing route with an unpriced output is an upper-bound cost, so its miss is not proof;
+        // the line still says nothing won, marked so (noRouteUncertain) rather than staying silent
+        noCheaperRoute: costed > 0 && !truncated && alternatives.length === 0,
+        noRouteUncertain: uncertain,
+        truncated,
+    };
 }
 
 // ---- Live wiring: the market, the calculator and the keep list ----
@@ -425,6 +450,26 @@ export function stopInsteadListeners() {
 }
 
 /**
+ * The settings behind the player's profit pricing: the mode and each side's patient tick
+ * (the keys of `PRICING_SIDE_SETTING_KEYS`, repeated rather than imported because the modules that
+ * name them subscribe to market events on load).
+ */
+const PRICING_SETTINGS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
+
+/**
+ * The player's profit pricing: the mode and each side's patient tick. Every price this module
+ * reads, and every calculator run it caches, depends on it, so a change misses every cache.
+ * @returns {string}
+ */
+export function pricingSignature() {
+    try {
+        return PRICING_SETTINGS.map((key) => String(config.getSettingValue?.(key, ''))).join(',');
+    } catch {
+        return '';
+    }
+}
+
+/**
  * The price part of the snapshot: a fetch, a notification, a value-map push.
  * @returns {string}
  */
@@ -495,6 +540,7 @@ function syncStamps() {
         dataManager.currentCharacterId ?? '',
         Math.floor(Date.now() / CACHE_BUCKET_MS),
         characterSetupSignature(),
+        pricingSignature(),
     ].join('|');
     if (hard !== candidateStamp) {
         candidateCache.clear();
@@ -534,14 +580,14 @@ export function clearInsteadCache() {
  * estimate is no listing, and neither is a player's custom price override — a route
  * costed on either could not be bought at the figure shown.
  * @param {string} hrid
- * @param {'ask'|'bid'} mode
+ * @param {'buy'|'sell'} side - Which of the player's profit prices to read
  * @returns {number|null}
  */
-function realPrice(hrid, mode) {
-    // The override checked must be the one for this side: a buy-side override is what the
-    // calculator costs a catalyst or tea with, and a sell-side check would miss it.
-    const side = mode === 'ask' ? 'buy' : 'sell';
-    const info = getItemPriceInfo(hrid, { mode, side, marketQuote: true });
+function realPrice(hrid, side) {
+    // The player's profit pricing for this side (their mode and patient tick), the same
+    // read the Profits lines and self-use lines make. A buy-side override is what the
+    // calculator costs a catalyst or tea with, so the override checked is this side's.
+    const info = getItemPriceInfo(hrid, { context: 'profit', side, marketQuote: true });
     if (info.price === null || info.price === undefined || info.source !== 'book') return null;
     return info.price;
 }
@@ -554,7 +600,7 @@ function realPrice(hrid, mode) {
 function buyableSetup(result) {
     return ![result?.winningCatalystHrid, ...(result?.consumableCosts ?? []).map((c) => c?.itemHrid)]
         .filter(Boolean)
-        .some((hrid) => realPrice(hrid, 'ask') === null);
+        .some((hrid) => realPrice(hrid, 'buy') === null);
 }
 
 /**
@@ -594,10 +640,7 @@ function setupSignature(actionType, raw) {
     const hrids = [CATALYST_HRIDS[actionType], CATALYST_HRIDS.prime, ...[...drinks].sort()].filter(Boolean);
     const key = `${actionType}|${hrids.join(',')}`;
     if (!setupSignatures.has(key)) {
-        setupSignatures.set(
-            key,
-            withProfitPricingMode(PURCHASE_PRICING_MODE, () => hrids.map(calculatorBuyPrice).join(','))
-        );
+        setupSignatures.set(key, hrids.map(calculatorBuyPrice).join(','));
     }
     return setupSignatures.get(key);
 }
@@ -611,7 +654,7 @@ function setupSignature(actionType, raw) {
  * @returns {string}
  */
 function runSignature(actionType, hrid, raw) {
-    const own = withProfitPricingMode(PURCHASE_PRICING_MODE, () => calculatorBuyPrice(hrid));
+    const own = calculatorBuyPrice(hrid);
     return `${own}|${setupSignature(actionType, raw)}`;
 }
 
@@ -651,18 +694,14 @@ function liveCandidates(actionType, hrid) {
     if (!entry) {
         let raw = [];
         try {
-            withProfitPricingMode(PURCHASE_PRICING_MODE, () => {
-                raw = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
-                if (raw.length === 0) {
-                    let single = null;
-                    if (actionType === 'decompose') single = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0);
-                    else if (actionType === 'transmute')
-                        single = alchemyProfitCalculator.calculateTransmuteProfit(hrid);
-                    else if (actionType === 'coinify')
-                        single = alchemyProfitCalculator.calculateCoinifyProfit?.(hrid, 0);
-                    raw = [single].filter(Boolean);
-                }
-            });
+            raw = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
+            if (raw.length === 0) {
+                let single = null;
+                if (actionType === 'decompose') single = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0);
+                else if (actionType === 'transmute') single = alchemyProfitCalculator.calculateTransmuteProfit(hrid);
+                else if (actionType === 'coinify') single = alchemyProfitCalculator.calculateCoinifyProfit?.(hrid, 0);
+                raw = [single].filter(Boolean);
+            }
         } catch (error) {
             console.error('[AlchemyInstead] Candidate setups failed for', hrid, error);
             raw = [];
@@ -691,7 +730,7 @@ function sourcesToRun(sources) {
     return sources.filter(
         ({ sourceHrid, actionType }) =>
             !candidatesReady(actionType, sourceHrid) &&
-            realPrice(sourceHrid, 'ask') !== null &&
+            realPrice(sourceHrid, 'buy') !== null &&
             Boolean(dataManager.getItemDetails(sourceHrid))
     );
 }
@@ -721,7 +760,7 @@ export function makeRateChoices() {
         // A tea counts only when it can be bought, the same real-ask rule buyableSetup applies to the
         // candidates; without it the ranking scores the no-tea setup alone
         const teaHrids = (drinks || []).map((drink) => drink?.itemHrid).filter(Boolean);
-        const teaBuyable = teaHrids.length > 0 && teaHrids.every((hrid) => realPrice(hrid, 'ask') !== null);
+        const teaBuyable = teaHrids.length > 0 && teaHrids.every((hrid) => realPrice(hrid, 'buy') !== null);
         const teaSetups = [{ tea: 0, drinkSlots: [], teaCostPerHour: 0 }];
         if (teaBuyable) {
             // The same hourly drink spend the full costing charges (drinks per hour at the character's
@@ -730,7 +769,7 @@ export function makeRateChoices() {
                 drinkSlots: drinks,
                 drinkConcentration,
                 itemDetailMap,
-                getItemPrice: (hrid) => realPrice(hrid, 'ask'),
+                getItemPrice: (hrid) => realPrice(hrid, 'buy'),
             }).totalCostPerHour;
             teaSetups.push({
                 tea: calc.calculateSuccessRateBreakdown(1, 0).tea,
@@ -778,7 +817,7 @@ export function makeRateChoices() {
             if (!catalysts.has(actionType)) {
                 const list = [{ bonus: 0, price: 0 }];
                 for (const hrid of [CATALYST_HRIDS[actionType], CATALYST_HRIDS.prime]) {
-                    const price = hrid ? realPrice(hrid, 'ask') : null;
+                    const price = hrid ? realPrice(hrid, 'buy') : null;
                     if (price !== null) list.push({ bonus: calc.catalystSuccessBonus(hrid), price });
                 }
                 catalysts.set(actionType, list);
@@ -820,9 +859,9 @@ export function makeRateChoices() {
 function makeRankDeps() {
     return {
         getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
-        askOf: (hrid) => realPrice(hrid, 'ask'),
+        askOf: (hrid) => realPrice(hrid, 'buy'),
         sellOf: (hrid) => {
-            const bid = realPrice(hrid, 'bid');
+            const bid = realPrice(hrid, 'sell');
             return bid === null ? null : calculatePriceAfterTax(bid);
         },
         rateChoices: makeRateChoices(),
@@ -832,10 +871,11 @@ function makeRankDeps() {
 /**
  * Keep the {@link BONUS_SOURCE_LIMIT} cheapest of a ranking.
  * @param {Array<{source: Object, cost: number}>} scored
- * @returns {Array<{sourceHrid: string, actionType: string}>}
+ * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, truncated: boolean}} `truncated` is
+ *   true when the ranking held more sources than were kept
  */
 function topRanked(scored) {
-    return scored
+    const sources = scored
         .sort(
             (a, b) =>
                 a.cost - b.cost ||
@@ -844,6 +884,8 @@ function topRanked(scored) {
         )
         .slice(0, BONUS_SOURCE_LIMIT)
         .map(({ source }) => source);
+    // Sources past the limit were never costed in full, so one of them might still win
+    return { sources, truncated: scored.length > BONUS_SOURCE_LIMIT };
 }
 
 /**
@@ -888,17 +930,18 @@ async function rankBonusSources(targetHrid, epoch) {
  * Every source one lookup costs: the items whose base outputs include the target, and —
  * for a bonus drop — its best-ranked sources once they are ranked for this price snapshot.
  * @param {string} targetHrid
- * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, ranked: boolean}} `ranked` is
- *   false while a bonus drop still waits for its ranking
+ * @returns {{sources: Array<{sourceHrid: string, actionType: string}>, ranked: boolean, truncated: boolean}}
+ *   `ranked` is false while a bonus drop still waits for its ranking; `truncated` is true when the
+ *   ranking kept only the best of more sources
  */
 function lookupSources(targetHrid) {
     const base = sourcesOf(targetHrid);
-    if (bonusSourcesOf(targetHrid).length === 0) return { sources: base, ranked: true };
+    if (bonusSourcesOf(targetHrid).length === 0) return { sources: base, ranked: true, truncated: false };
     const best = bonusRanks.get(targetHrid);
-    if (!best) return { sources: base, ranked: false };
+    if (!best) return { sources: base, ranked: false, truncated: false };
     const seen = new Set(base.map(({ sourceHrid, actionType }) => `${actionType}|${sourceHrid}`));
-    const extra = best.filter(({ sourceHrid, actionType }) => !seen.has(`${actionType}|${sourceHrid}`));
-    return { sources: [...base, ...extra], ranked: true };
+    const extra = best.sources.filter(({ sourceHrid, actionType }) => !seen.has(`${actionType}|${sourceHrid}`));
+    return { sources: [...base, ...extra], ranked: true, truncated: best.truncated };
 }
 
 /**
@@ -911,7 +954,7 @@ function resultKey(targetHrid, wanted) {
     const goldPerHour = Math.max(0, Number(config.getSetting(GOLD_RATE_SETTING)) || 0);
     // The mark meaning is part of the key: the same marks keep and sell opposite outputs
     const keepKey = keptSignature(wanted);
-    return { key: `${targetHrid}|${goldPerHour}|${keepKey}`, goldPerHour };
+    return { key: `${targetHrid}|${goldPerHour}|${keepKey}|${pricingSignature()}`, goldPerHour };
 }
 
 /**
@@ -929,12 +972,12 @@ function computeAlternatives(targetHrid, wanted) {
         for (const source of bonusSourcesOf(targetHrid)) scoreBonusSource(targetHrid, source, scored, rankDeps);
         bonusRanks.set(targetHrid, topRanked(scored));
     }
-    const { sources } = lookupSources(targetHrid);
-    let found = { targetAsk: null, alternatives: [] };
+    const { sources, truncated } = lookupSources(targetHrid);
+    let found = { targetAsk: null, alternatives: [], noCheaperRoute: false, truncated: false };
     if (sources.length > 0) {
-        const askOf = (hrid) => realPrice(hrid, 'ask');
+        const askOf = (hrid) => realPrice(hrid, 'buy');
         const sellOf = (hrid) => {
-            const bid = realPrice(hrid, 'bid');
+            const bid = realPrice(hrid, 'sell');
             return bid === null ? null : calculatePriceAfterTax(bid);
         };
         const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
@@ -958,8 +1001,8 @@ function computeAlternatives(targetHrid, wanted) {
                     `s|${hrid}`,
                     untaxedContainerValue(hrid, {
                         containerDrops,
-                        // The book's bid after tax, like every other unwanted output: the profit mode's
-                        // sell-side resolution (the ask, under hybrid) and custom prices are no listing
+                        // The player's sell side after tax, like every other unwanted output; custom
+                        // prices and value-map estimates are no listing
                         priceOf: sellOf,
                     })
                 );
@@ -976,6 +1019,7 @@ function computeAlternatives(targetHrid, wanted) {
             containerValue,
             sellContainerValue,
             goldPerHour,
+            truncated,
         });
     }
     resultCache.set(key, found);
@@ -1040,7 +1084,7 @@ async function runJob(targetHrid, wanted, epoch) {
 function answerWithoutSources(targetHrid) {
     const none = { targetAsk: null, alternatives: [] };
     if (sourcesOf(targetHrid).length === 0 && bonusSourcesOf(targetHrid).length === 0) return none;
-    const targetAsk = realPrice(targetHrid, 'ask');
+    const targetAsk = realPrice(targetHrid, 'buy');
     return targetAsk === null || !(targetAsk > 0) ? none : null;
 }
 

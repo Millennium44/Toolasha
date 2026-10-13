@@ -79,7 +79,10 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPriceInfo: (hrid, { mode, side = 'sell' }) =>
         side === 'buy' && buyOverride[hrid] !== undefined
             ? { price: buyOverride[hrid], source: 'custom' }
-            : { price: book[hrid]?.[mode] ?? null, source: book[hrid] ? 'book' : null },
+            : {
+                  price: book[hrid]?.[mode ?? (side === 'buy' ? 'ask' : 'bid')] ?? null,
+                  source: book[hrid] ? 'book' : null,
+              },
     withProfitPricingMode: (_mode, fn) => fn(),
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({

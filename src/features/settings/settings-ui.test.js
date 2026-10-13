@@ -189,6 +189,14 @@ const schema = {
                 type: 'button',
                 buttonLabel: 'Reset to pro defaults',
             },
+            actionPanel_craftingPlanGoldPerHour: {
+                id: 'actionPanel_craftingPlanGoldPerHour',
+                label: 'Gold rate',
+                type: 'number',
+                shorthand: true,
+                default: 0,
+                min: 0,
+            },
             enhanceSim_enhancingLevel: {
                 id: 'enhanceSim_enhancingLevel',
                 label: 'Enhancing skill level',
@@ -2261,5 +2269,65 @@ describe('the self-use keep list review', () => {
         await settle();
         expect(mocks.store.get('selfUseWanted_char-1')).toEqual(rec([]));
         expect(document.querySelector('.toolasha-selfuse-keep-empty')).not.toBe(null);
+    });
+});
+
+describe('a shorthand number box (the alchemy gold rate)', () => {
+    const ID = 'actionPanel_craftingPlanGoldPerHour';
+
+    /**
+     * Type into the box and fire the change the browser would.
+     * @param {string} text - What was typed
+     * @returns {Promise<HTMLInputElement>} The input afterwards
+     */
+    async function typeRate(text) {
+        const input = document.getElementById(ID);
+        input.value = text;
+        await settingsUI.handleSettingChange({ target: input });
+        return input;
+    }
+
+    beforeEach(() => {
+        drawPanel();
+        mocks.settingsMap[ID] = { id: ID, type: 'number', value: 1000 };
+        mocks.written = [];
+    });
+
+    test('renders as a text box, not a number input that blanks 3m', () => {
+        const input = document.getElementById(ID);
+        expect(input.type).toBe('text');
+    });
+
+    test.each([
+        ['3m', 3000000],
+        ['1.5b', 1500000000],
+        ['500k', 500000],
+        ['3,000,000', 3000000],
+        ['250000', 250000],
+    ])('%s is saved as the number %d', async (text, expected) => {
+        await typeRate(text);
+        expect(mocks.written).toContainEqual([ID, expected]);
+        expect(typeof mocks.settingsMap[ID].value).toBe('number');
+        expect(mocks.settingsMap[ID].value).toBe(expected);
+    });
+
+    test('shows the parsed value back', async () => {
+        const input = await typeRate('3m');
+        expect(input.value).toBe('3000000');
+    });
+
+    test('text that is not an amount is refused and the previous value kept', async () => {
+        const input = await typeRate('abc');
+        expect(mocks.written.map(([id]) => id)).not.toContain(ID);
+        expect(mocks.settingsMap[ID].value).toBe(1000);
+        expect(input.classList.contains('toolasha-input-invalid')).toBe(true);
+        expect(input.title).toContain('K/M/B');
+    });
+
+    test('a valid entry after a bad one clears the mark', async () => {
+        await typeRate('abc');
+        const input = await typeRate('2k');
+        expect(input.classList.contains('toolasha-input-invalid')).toBe(false);
+        expect(mocks.settingsMap[ID].value).toBe(2000);
     });
 });

@@ -16,8 +16,10 @@ const settings = vi.hoisted(() => ({
     keepChip: true,
     markMeaning: 'keep',
     insteadOfBuying: false,
+    goldRate: 0,
     patientTickBuy: false,
     patientTickSell: false,
+    pricingMode: undefined,
 }));
 const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
@@ -38,13 +40,14 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
             if (id === 'itemTooltip_selfUseKeepChip') return settings.keepChip;
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
-            if (id === 'itemTooltip_alchemyInsteadGoldPerHour') return 0;
+            if (id === 'actionPanel_craftingPlanGoldPerHour') return settings.goldRate;
             return true;
         },
         getSettingValue: (id, fallback) => {
             if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
             if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
             if (id === 'selfUse_markMeaning') return settings.markMeaning;
+            if (id === 'profitCalc_pricingMode') return settings.pricingMode ?? fallback;
             return fallback;
         },
         onSettingChange: (id, cb) => {
@@ -180,7 +183,16 @@ vi.mock('../actions/gathering-profit.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     // Book prices by mode, for the instead-of-buying lines: `{hrid: {ask, bid}}`
     getItemPriceInfo: (hrid, options) => {
-        const price = priceState.info[hrid]?.[options?.mode];
+        // Profit context with no mode: the player's mode picks the book side, a buy-side tick adds 1
+        const sides = { optimistic: ['bid', 'ask'], patientBuy: ['bid', 'bid'], hybrid: ['ask', 'ask'] }[
+            settings.pricingMode
+        ] ?? ['ask', 'bid'];
+        const side = options?.mode ?? sides[options?.side === 'buy' ? 0 : 1];
+        const base = priceState.info[hrid]?.[side];
+        const price =
+            base != null && !options?.mode && options?.side === 'buy' && side === 'bid' && settings.patientTickBuy
+                ? base + 1
+                : base;
         return price == null
             ? { price: null, source: null, estimated: false }
             : { price, source: 'book', estimated: false };
@@ -292,6 +304,9 @@ beforeEach(async () => {
     settings.keepChip = true;
     settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
+    settings.goldRate = 0;
+    settings.pricingMode = undefined;
+    settings.patientTickBuy = false;
     alchemyState.profits = {};
     alchemyState.candidates = {};
     alchemyState.decompose = {};
@@ -1440,7 +1455,106 @@ describe('instead of buying', () => {
         expect(section).not.toBeNull();
         // 50 / (18 × 0.6) = 4.63 a cheese against an ask of 10: 5.37 saved, 1,080 cheese an hour
         expect(section.textContent).toContain('Instead of buying: decompose Cheese Sword — saves 5/unit');
-        expect(section.textContent).toContain('5.8K/hr of alchemy');
+        // 100 actions an hour at 60% × 18 cheese: 1,080 cheese an hour
+        expect(section.textContent).toContain('5.8K per hour of alchemy if you use ~1.1K/hr');
+        expect(section.textContent).not.toContain('gold rate');
+    });
+
+    test('a gold rate says the hourly figure is over it, with the units an hour', async () => {
+        settings.insteadOfBuying = true;
+        settings.goldRate = 100;
+        const el = await hoverCheese();
+        const text = el.querySelector('.mwi-alchemy-instead').textContent;
+        expect(text).toMatch(/\+[\d.]+K?\/hr of alchemy over your gold rate, using ~1\.1K\/hr/);
+        expect(text).not.toContain('if you use');
+    });
+
+    test('the detail line shows what making it to sell nets, and omits it without a bid', async () => {
+        settings.insteadOfBuying = true;
+        // 50 / (18 × 0.6) = 4.63 a cheese; a bid of 2 pays less than that after tax
+        priceState.info['/items/cheese'] = { ask: 10, bid: 2 };
+        const detail = (await hoverCheese()).querySelector('.mwi-alchemy-instead').textContent;
+        expect(detail).toMatch(/selling instead: -[\d.]+\/unit/);
+        clearInsteadCache();
+        priceState.info['/items/cheese'] = { ask: 10 };
+        const none = (await hoverCheese()).querySelector('.mwi-alchemy-instead').textContent;
+        expect(none).not.toContain('selling instead');
+    });
+
+    test('selling instead is a lower bound when an output is unpriced, exact when everything is priced', () => {
+        const alt = {
+            sourceHrid: '/items/cheese_sword',
+            actionType: 'decompose',
+            costPerUnit: 4,
+            timeCostPerUnit: 0,
+            saving: 6,
+            savingPerHour: null,
+            sellingPerUnit: 3,
+            secondsPerUnit: 10,
+            kept: [],
+        };
+        const partly = tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...alt, partlyUnpriced: true }]);
+        expect(partly).toContain('selling instead: ≥3/unit');
+        const priced = tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...alt, partlyUnpriced: false }]);
+        expect(priced).toContain('selling instead: 3/unit');
+        expect(priced).not.toContain('≥');
+    });
+
+    describe('the detail line', () => {
+        const base = {
+            sourceHrid: '/items/cheese_sword',
+            actionType: 'decompose',
+            costPerUnit: 4,
+            timeCostPerUnit: 0,
+            saving: 6,
+            savingPerHour: null,
+            sellingPerUnit: null,
+            secondsPerUnit: 10,
+            partlyUnpriced: false,
+            kept: [],
+        };
+        const detail = (alt) => tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...base, ...alt }]);
+
+        test('seconds per unit keep a decimal under 10 s and the usual format from there', () => {
+            expect(detail({ secondsPerUnit: 0.3 })).toContain('0.3s/unit');
+            expect(detail({ secondsPerUnit: 9.97 })).not.toContain('10.0s');
+            expect(detail({ secondsPerUnit: 26 })).toContain('26s/unit');
+            expect(detail({ secondsPerUnit: 71 })).toContain('1m 11s/unit');
+        });
+
+        test('an hourly rate is a lower bound when an output is unpriced', () => {
+            const withGold = { savingPerHour: 5000, timeCostPerUnit: 2 };
+            const noGold = { savingPerHour: 5000, timeCostPerUnit: 0 };
+            expect(detail({ ...withGold, partlyUnpriced: true })).toContain('— ≥5.0K/hr of alchemy');
+            expect(detail({ ...noGold, partlyUnpriced: true })).toContain('≥5.0K per hour of alchemy');
+            expect(detail(withGold)).toContain('+5.0K/hr of alchemy');
+            expect(detail(noGold)).toContain('— 5.0K per hour of alchemy');
+        });
+
+        test('a negative cost reads as a gain, a lower bound when an output is unpriced', () => {
+            expect(detail({ costPerUnit: -44200 })).toContain('gains 44.2K/unit vs 10 ask');
+            expect(detail({ costPerUnit: -44200 })).not.toContain('-44.2K');
+            expect(detail({ costPerUnit: -44200, partlyUnpriced: true })).toContain('gains ≥44.2K/unit');
+            expect(detail({ costPerUnit: 4 })).toContain('4/unit vs 10 ask');
+            // A positive cost missing an unpriced credit is an upper bound
+            expect(detail({ costPerUnit: 4, partlyUnpriced: true })).toContain('≤4/unit vs 10 ask');
+        });
+
+        test('the buy side is named by the pricing settings, not always ask', () => {
+            expect(detail({})).toContain('vs 10 ask');
+            settings.pricingMode = 'optimistic';
+            expect(detail({})).toContain('vs 10 bid');
+            settings.patientTickBuy = true;
+            expect(detail({})).toContain('vs 10 bid +1');
+        });
+        test('kept outputs say they are counted at the buy side, with the K hint for the mode', () => {
+            const kept = ['/items/cheese', '/items/cheese_sword'];
+            settings.markMeaning = 'sell';
+            expect(detail({ kept })).toContain('at ask (K to sell)');
+            expect(detail({ kept })).not.toContain('keeps');
+            settings.markMeaning = 'keep';
+            expect(detail({ kept })).toContain('at ask (K to unmark)');
+        });
     });
 
     test('the hover text describes outputs the way the K marks mean them', async () => {
@@ -1449,12 +1563,12 @@ describe('instead of buying', () => {
         const sellTitle = (await hoverCheese()).querySelector(
             '.mwi-alchemy-instead [title^="Instead of buying"]'
         ).title;
-        expect(sellTitle).toContain('every other output kept and valued at its ask');
+        expect(sellTitle).toContain('every other output kept and valued at your buy price');
         settings.markMeaning = 'keep';
         const keepTitle = (await hoverCheese()).querySelector(
             '.mwi-alchemy-instead [title^="Instead of buying"]'
         ).title;
-        expect(keepTitle).toContain('every other output sold at its bid after tax');
+        expect(keepTitle).toContain('every other output sold at your sell price after tax');
     });
 
     describe('an item with many sources', () => {
@@ -1516,22 +1630,68 @@ describe('instead of buying', () => {
             expect(placed.isConnected && placed.style.display === '').toBe(false);
         });
 
-        test('a placed section with no route behind it is removed', async () => {
+        test('a placed section with only dearer routes becomes the dim no-route line', async () => {
             for (const i of [1, 2, 3, 4, 5, 6]) priceState.info[knife(i)] = { ask: 5000, bid: 1 };
             const el = itemTooltip('Curd');
             observerState.handler(el);
             for (let i = 0; i < 40; i++) await Promise.resolve();
-            expect(el.querySelector('.mwi-alchemy-instead')).not.toBeNull();
+            const placed = el.querySelector('.mwi-alchemy-instead');
+            expect(placed).not.toBeNull();
+            await settleJob();
+            const section = el.querySelector('.mwi-alchemy-instead');
+            expect(section).toBe(placed);
+            expect(section.style.display).toBe('');
+            expect(section.textContent).toBe('Instead of buying: no alchemy route beats the ask');
+        });
+
+        test('the no-route line says so when a losing route had an unpriced output', () => {
+            const div = document.createElement('div');
+            div.innerHTML = tooltipPrices.buildNoCheaperRouteHTML(true);
+            expect(div.textContent).toBe('Instead of buying: no alchemy route beats the ask (some outputs unpriced)');
+        });
+
+        test('the no-route line names the buy side the routes were compared against', () => {
+            settings.pricingMode = 'optimistic';
+            settings.patientTickBuy = true;
+            try {
+                const div = document.createElement('div');
+                div.innerHTML = tooltipPrices.buildNoCheaperRouteHTML();
+                expect(div.textContent).toBe('Instead of buying: no alchemy route beats the bid +1');
+            } finally {
+                settings.pricingMode = undefined;
+                settings.patientTickBuy = false;
+            }
+        });
+
+        test('sources that cannot be priced draw nothing', async () => {
+            for (const i of [1, 2, 3, 4, 5, 6]) delete priceState.info[knife(i)];
+            const el = itemTooltip('Curd');
+            observerState.handler(el);
+            for (let i = 0; i < 40; i++) await Promise.resolve();
             await settleJob();
             expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
         });
     });
 
-    test('the setting on draws nothing when buying is cheaper', async () => {
+    test('the setting on says no route beats the ask when buying is cheaper', async () => {
         settings.insteadOfBuying = true;
         priceState.info['/items/cheese_sword'] = { ask: 500, bid: 450 };
         const el = await hoverCheese();
         expect(el.dataset.pricesProcessedItem).toBe('Cheese');
-        expect(el.querySelector('.mwi-alchemy-instead')).toBeNull();
+        expect(el.querySelector('.mwi-alchemy-instead').textContent).toBe(
+            'Instead of buying: no alchemy route beats the ask'
+        );
+    });
+
+    test('no line at all for an item with no real ask, or no alchemy source', async () => {
+        settings.insteadOfBuying = true;
+        priceState.info['/items/cheese'] = { bid: 9 };
+        priceState.info['/items/cheese_sword'] = { ask: 500, bid: 450 };
+        expect((await hoverCheese()).querySelector('.mwi-alchemy-instead')).toBeNull();
+        const apple = itemTooltip('Apple');
+        observerState.handler(apple);
+        for (let i = 0; i < 40; i++) await Promise.resolve();
+        expect(apple.dataset.pricesProcessedItem).toBe('Apple');
+        expect(apple.querySelector('.mwi-alchemy-instead')).toBeNull();
     });
 });

@@ -373,3 +373,41 @@ export function _resetGameNumberSeparators() {
     separatorCache = null;
     patternCache = null;
 }
+
+/**
+ * Read an amount a person typed into a settings box: 3m, 500k, 1.5b, 3,000,000,
+ * plain digits, in the game's number format ("1,5m" and "3.000.000" in a
+ * comma-decimal language) or the en-US one, which every player can type.
+ * Stricter than parseItemCount, which falls back to its default on anything and
+ * reads a number out of surrounding words: grouping must be one separator between
+ * three-digit runs, and the only suffixes are k, m and b.
+ *
+ * @param {string} text - What was typed
+ * @returns {number|null} The amount, or null when it is not one
+ */
+export function parseShorthandAmount(text) {
+    const trimmed = String(text ?? '')
+        .trim()
+        .toLowerCase();
+    // A cleared box means none, the same as the 0 a number box saved
+    if (trimmed === '') return 0;
+    // One separator then exactly three digits and nothing else ("500,000", "500.000") is
+    // grouping in every format: a gold amount is never typed to three decimal places
+    if (/^\d{1,3}[.,]\d{3}$/.test(trimmed)) return Number(trimmed.replace(/[.,]/, ''));
+    const { group, decimal } = gameNumberSeparators();
+    const forms = [
+        { group: /\s/.test(group || '') ? ' ' : group || ',', decimal: decimal || '.' },
+        { group: ',', decimal: '.' },
+        { group: ' ', decimal: '.' },
+    ];
+    for (const form of forms) {
+        const g = form.group === ' ' ? '\\s' : escapeRegExpChar(form.group);
+        const d = escapeRegExpChar(form.decimal);
+        const match = new RegExp(`^(\\d+|\\d{1,3}(?:${g}\\d{3})+)(?:${d}(\\d+))?([kmb])?$`).exec(trimmed);
+        if (!match) continue;
+        const whole = match[1].replace(/\D/g, '');
+        const n = Number(`${whole}.${match[2] || '0'}`) * (match[3] ? MAGNITUDE_SUFFIXES[match[3]] : 1);
+        if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return null;
+}

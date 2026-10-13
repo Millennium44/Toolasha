@@ -77,6 +77,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.prices[hrid] ?? null }));
 vi.mock('../../utils/number-parser.js', () => ({
     parseItemCount: (text) => parseInt(text, 10) || 0,
+    parseShorthandAmount: (text) => parseInt(text, 10) || null,
     MAGNITUDE_SUFFIXES: { k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15 },
 }));
 vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: mocks.chestKeys }));

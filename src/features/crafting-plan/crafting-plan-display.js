@@ -25,6 +25,7 @@ import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import { nextPricingMode } from '../../utils/pricing-mode.js';
 import { PRICING_SIDE_SETTING_KEYS } from '../../utils/pricing-side-select.js';
+import { parseShorthandAmount } from '../../utils/number-parser.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import {
     effectiveInventoryRows,
@@ -528,7 +529,9 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
     timeCostRow.appendChild(document.createTextNode('Factor in time cost'));
 
     const goldInput = document.createElement('input');
-    goldInput.type = 'number';
+    // Text, so 3m / 500k / 1.5b can be typed (the setting is shared with the alchemy routes)
+    goldInput.type = 'text';
+    goldInput.inputMode = 'decimal';
     goldInput.value = goldPerHour || '';
     goldInput.placeholder = '500000';
     goldInput.style.cssText = `
@@ -549,7 +552,17 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
         if (onToggle) onToggle();
     });
     goldInput.addEventListener('change', () => {
-        config.setSetting('actionPanel_craftingPlanGoldPerHour', parseInt(goldInput.value) || 0);
+        const raw = goldInput.value.trim();
+        const parsed = raw === '' ? 0 : parseShorthandAmount(raw);
+        if (parsed === null) {
+            goldInput.style.borderColor = '#e05252';
+            goldInput.title = 'Use digits or K/M/B, e.g. 3m';
+            return;
+        }
+        goldInput.style.borderColor = '';
+        goldInput.title = '';
+        goldInput.value = parsed || '';
+        config.setSetting('actionPanel_craftingPlanGoldPerHour', parsed);
         if (onToggle) onToggle();
     });
 

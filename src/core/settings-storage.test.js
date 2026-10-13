@@ -70,6 +70,7 @@ const ALL_MIGRATIONS = [
     'queueCompletionTimeStyleRename',
     'patientTickSides',
     'labyrinthSimBudget',
+    'timeValueGoldPerHour',
     'marketListingAge',
     'inventoryValueBadges',
 ];
@@ -2215,5 +2216,67 @@ describe('change stamps through the real save path, as sync merges them', () => 
         );
 
         expect(stored.get(`json:${STAMPS_KEY}`)).toBeUndefined();
+    });
+});
+
+describe('the alchemy gold rate folds into the crafting plan gold/hr', () => {
+    const KEY = 'script_settingsMap_alice';
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
+    const OLD = 'itemTooltip_alchemyInsteadGoldPerHour';
+    const NEW = 'actionPanel_craftingPlanGoldPerHour';
+    const num = (id, value) => ({ id, type: 'number', value });
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('only the old value set: copied over and the old key dropped', async () => {
+        stored.set(`json:${KEY}`, { [OLD]: num(OLD, 3000000) });
+        const settings = await settingsStorage.loadSettings();
+        expect(settings[NEW].value).toBe(3000000);
+        expect(stored.get(`json:${KEY}`)[OLD]).toBeUndefined();
+        expect(stored.get(`json:${KEY}`)[NEW].value).toBe(3000000);
+    });
+
+    test('both set: the crafting value is kept', async () => {
+        stored.set(`json:${KEY}`, { [OLD]: num(OLD, 3000000), [NEW]: num(NEW, 500000) });
+        const settings = await settingsStorage.loadSettings();
+        expect(settings[NEW].value).toBe(500000);
+        expect(stored.get(`json:${KEY}`)[OLD]).toBeUndefined();
+    });
+
+    test('neither set: stays 0', async () => {
+        stored.set(`json:${KEY}`, { [NEW]: num(NEW, 0) });
+        const settings = await settingsStorage.loadSettings();
+        expect(settings[NEW].value).toBe(0);
+        expect(stored.get(`json:${KEY}`)[OLD]).toBeUndefined();
+    });
+
+    test('crafting stored as 0 and the old set: copied', async () => {
+        stored.set(`json:${KEY}`, { [OLD]: num(OLD, 250000), [NEW]: num(NEW, 0) });
+        const settings = await settingsStorage.loadSettings();
+        expect(settings[NEW].value).toBe(250000);
+    });
+
+    test('runs once: a second load leaves a later choice alone', async () => {
+        stored.set(`json:${KEY}`, { [OLD]: num(OLD, 3000000) });
+        await settingsStorage.loadSettings();
+        expect(stored.get(STATE)).toContain('timeValueGoldPerHour');
+        const map = stored.get(`json:${KEY}`);
+        map[NEW] = num(NEW, 0);
+        map[OLD] = num(OLD, 9);
+        const settings = await settingsStorage.loadSettings();
+        expect(settings[NEW].value).toBe(0);
+    });
+
+    test('an old payload landing by import or sync is folded in on the next load', async () => {
+        stored.set(STATE, ['timeValueGoldPerHour']);
+        stored.set(`json:${KEY}`, { [OLD]: num(OLD, 750000) });
+        await settingsStorage.reconcileKeyMigrationState([KEY]);
+        const settings = await settingsStorage.loadSettings();
+        expect(settings[NEW].value).toBe(750000);
     });
 });

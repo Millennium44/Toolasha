@@ -31,6 +31,7 @@ import {
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
+import { currentPricingSideChoice } from '../../utils/pricing-side-select.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -127,13 +128,34 @@ const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
 function insteadTitle() {
     const outputs =
         getMarkMeaning() === 'sell'
-            ? 'every other output kept and valued at its ask (or sold at its bid after tax when marked with K)'
-            : 'every other output sold at its bid after tax (or valued at its ask when marked "Keep for self-use")';
+            ? 'every other output kept and valued at your buy price (or sold at your sell price after tax when marked with K)'
+            : 'every other output sold at your sell price after tax (or valued at your buy price when marked "Keep for self-use")';
     return (
-        'Instead of buying: the source bought at its ask and decomposed or transmuted, the catalyst and tea at ' +
-        `their asks, ${outputs}, divided by the expected units of this item per action. Estimated prices are ` +
+        'Instead of buying: the source bought at your buy price and decomposed or transmuted, the catalyst and tea at ' +
+        `your buy price, ${outputs}, divided by the expected units of this item per action. Estimated prices are ` +
         'left out. With a gold rate set, the alchemy time is charged at that rate.'
     );
+}
+
+/**
+ * What the player's buy price is called on the "Instead of buying" detail line: the book side
+ * their Buy setting prices at, and "+1" when it is a patient tick.
+ * @returns {string} "ask", "bid" or "bid +1"
+ */
+function buySideWord() {
+    const choice = currentPricingSideChoice('buy');
+    if (choice === 'patientTick') return 'bid +1';
+    return choice === 'patient' ? 'bid' : 'ask';
+}
+
+/**
+ * Units per hour for the "Instead of buying" rate wording: whole numbers, one decimal under 10.
+ * @param {number} unitsPerHour
+ * @returns {string}
+ */
+function formatInsteadUnitsPerHour(unitsPerHour) {
+    if (unitsPerHour < 10) return unitsPerHour.toFixed(1);
+    return unitsPerHour >= 1000 ? formatKMB(unitsPerHour) : String(Math.round(unitsPerHour));
 }
 
 /** Most kept outputs a self-use label names before summarizing the rest */
@@ -841,7 +863,8 @@ class TooltipPrices {
 
     /**
      * The "Instead of buying" lines: the best alchemy routes to this item that beat its ask.
-     * Draws nothing when buying is cheapest.
+     * When sources exist but none beat the ask, one dim line says so; an item with no source, no real ask
+     * or no source that could be costed draws nothing.
      *
      * An item with many alchemy sources is worked out in the background rather than on the
      * hover: its section is placed now, empty and hidden, so the line keeps its place among
@@ -871,13 +894,15 @@ class TooltipPrices {
                 this.fillInsteadLater(tooltipElement, placeholder, itemHrid, itemName, wanted);
                 return;
             }
-            if (!found.alternatives.length) return;
+            if (!found.alternatives.length && !found.noCheaperRoute) return;
             const div = dom.createStyledDiv(
                 { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
                 '',
                 INSTEAD_SECTION_CLASS
             );
-            div.innerHTML = this.buildInsteadOfBuyingHTML(found.targetAsk, found.alternatives);
+            div.innerHTML = found.alternatives.length
+                ? this.buildInsteadOfBuyingHTML(found.targetAsk, found.alternatives)
+                : this.buildNoCheaperRouteHTML(found.noRouteUncertain);
             tooltipText.appendChild(div);
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
@@ -895,19 +920,38 @@ class TooltipPrices {
      */
     async fillInsteadLater(tooltipElement, section, itemHrid, itemName, wanted) {
         try {
-            const { targetAsk, alternatives } = await settleAlternatives(itemHrid, wanted);
+            const { targetAsk, alternatives, noCheaperRoute, noRouteUncertain } = await settleAlternatives(
+                itemHrid,
+                wanted
+            );
             // A stale section is removed when the tooltip moves to another item
             if (!section.isConnected || tooltipElement.dataset.pricesProcessedItem !== itemName) return;
-            if (!alternatives.length) {
+            if (!alternatives.length && !noCheaperRoute) {
                 section.remove();
                 return;
             }
-            section.innerHTML = this.buildInsteadOfBuyingHTML(targetAsk, alternatives);
+            section.innerHTML = alternatives.length
+                ? this.buildInsteadOfBuyingHTML(targetAsk, alternatives)
+                : this.buildNoCheaperRouteHTML(noRouteUncertain);
             section.style.display = '';
             dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-buying lines failed:', error);
         }
+    }
+
+    /**
+     * The dim line for an item that has alchemy sources, none of which beat its price on the
+     * player's buy side (the ask, bid or bid +1, as the routes were compared).
+     * @param {boolean} [uncertain] - A losing route had an unpriced output, so pricing it could change the answer
+     * @returns {string}
+     */
+    buildNoCheaperRouteHTML(uncertain = false) {
+        return (
+            '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' +
+            `<div style="color: ${config.COLOR_TOOLTIP_INFO}; opacity: 0.7;" title="${insteadTitle()}">` +
+            `Instead of buying: no alchemy route beats the ${buySideWord()}${uncertain ? ' (some outputs unpriced)' : ''}</div></div>`
+        );
     }
 
     /**
@@ -923,19 +967,40 @@ class TooltipPrices {
             const verb = ['decompose', 'coinify'].includes(alt.actionType) ? alt.actionType : 'transmute';
             const atLeast = alt.partlyUnpriced ? '≥' : '';
             let rate = '';
-            if (alt.savingPerHour !== null) {
+            if (alt.savingPerHour !== null && alt.secondsPerUnit > 0) {
+                // A saving per hour spent on alchemy: it only applies if that many units are used
+                const units = formatInsteadUnitsPerHour(3600 / alt.secondsPerUnit);
                 rate =
                     alt.timeCostPerUnit > 0
-                        ? ` (+${formatKMB(alt.savingPerHour)}/hr over your gold rate)`
-                        : ` (${formatKMB(alt.savingPerHour)}/hr of alchemy)`;
+                        ? ` — ${atLeast || '+'}${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
+                        : ` — ${atLeast}${formatKMB(alt.savingPerHour)} per hour of alchemy if you use ~${units}/hr`;
             }
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
             html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
             html += '</div>';
-            const parts = [`${formatKMB(alt.costPerUnit)}/unit vs ${formatKMB(targetAsk)} ask`];
+            // By-products worth more than the input make the route pay to run: say gain, not a minus sign.
+            // An unpriced output makes the cost an upper bound, so the gain is a lower bound
+            const costText =
+                alt.costPerUnit < 0
+                    ? `gains ${atLeast}${formatKMB(-alt.costPerUnit)}/unit`
+                    : `${alt.partlyUnpriced ? '≤' : ''}${formatKMB(alt.costPerUnit)}/unit`;
+            const parts = [`${costText} vs ${formatKMB(targetAsk)} ${buySideWord()}`];
             if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
-            parts.push(`${timeReadable(alt.secondsPerUnit)}/unit`);
-            if (alt.kept.length > 0) parts.push(`keeps ${alt.kept.map(nameOf).join(', ')}`);
+            // Under 10 s one decimal, so a 0.3 s unit does not read "0s"; from 10 s on the usual format
+            const perUnit =
+                alt.secondsPerUnit > 0 && alt.secondsPerUnit < 9.95
+                    ? `${alt.secondsPerUnit.toFixed(1)}s`
+                    : timeReadable(alt.secondsPerUnit);
+            parts.push(`${perUnit}/unit`);
+            // Making it to sell rather than to use: the bid after tax against the same cost and time
+            if (alt.sellingPerUnit !== null && alt.sellingPerUnit !== undefined) {
+                parts.push(`selling instead: ${atLeast}${formatKMB(alt.sellingPerUnit)}/unit`);
+            }
+            if (alt.kept.length > 0) {
+                // Kept outputs are valued at their ask; K flips them, whichever way the marks are read
+                const hint = getMarkMeaning() === 'sell' ? 'K to sell' : 'K to unmark';
+                parts.push(`counts ${alt.kept.map(nameOf).join(', ')} at ${buySideWord()} (${hint})`);
+            }
             if (alt.partlyUnpriced) parts.push('an output unpriced');
             html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;
         }
