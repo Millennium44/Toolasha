@@ -13,9 +13,12 @@
  *
  * Version 2 hashed those seven levels alongside the gear, and left a gap it
  * named: abilities and house rooms move a sim too. Version 3 closes that gap.
- * Version 4 stops hashing the worn ability kit when no sim can read it (below).
+ * Version 3 also stops hashing the worn ability kit when no sim can read it (below) — a
+ * change in what is hashed, not in the format, so it keeps the version: a v3 value that
+ * still hashed the kit can never equal one that does not, and every other v3 value is
+ * byte-identical (bumping would strand calibration history that is still valid).
  * Each bump changes the value every stored record keys on, which is why the
- * value carries its version in the open: `v1`/`v2`/`v3`/`v4` fingerprints can never
+ * value carries its version in the open: `v1`/`v2`/`v3` fingerprints can never
  * be equal, so nothing pools across a change by accident, and a record made
  * under an older version stays stored, stays readable and stays counted —
  * apart, never merged.
@@ -90,7 +93,7 @@
  * change; every bump strands the previous version's records in their own
  * cohort rather than deleting them.
  */
-export const FINGERPRINT_VERSION = 4;
+export const FINGERPRINT_VERSION = 3;
 
 /** What a current-version fingerprint value starts with */
 export const FINGERPRINT_PREFIX = `v${FINGERPRINT_VERSION}:`;
@@ -101,12 +104,12 @@ export const FINGERPRINT_PREFIX = `v${FINGERPRINT_VERSION}:`;
  * documents it instead.
  */
 export const FINGERPRINT_SPEC =
-    'v4: djb2 over loadout snapshots (savedAt excluded) + worn itemHrid+enhancementLevel + the seven combat ' +
+    'v3: djb2 over loadout snapshots (savedAt excluded) + worn itemHrid+enhancementLevel + the seven combat ' +
     'skill levels the sim reads (stamina, intelligence, attack, defense, melee, ranged, magic) + the equipped ' +
     'ability slots (index, hrid, level, triggers; omitted while every combat room has its own loadout) and ' +
     'the learned levels of loadout-named abilities + house ' +
     'rooms at level above 0 (hrid, level); excludes skilling levels, buffs and consumables. ' +
-    'Value is prefixed "v4:".';
+    'Value is prefixed "v3:".';
 
 /**
  * The version a stored record was fingerprinted under.

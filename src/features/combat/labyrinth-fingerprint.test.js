@@ -60,16 +60,16 @@ describe('isCurrentFingerprintVersion', () => {
         expect(isCurrentFingerprintVersion({})).toBe(false);
     });
 
-    test('v1 to v4 are four cohorts, none poolable with another', () => {
+    test('v1, v2 and v3 are three cohorts, none poolable with another', () => {
         // Each bump changed what is hashed, so a record from an older version
         // describes a character the current sim is not simulating
-        expect(FINGERPRINT_VERSION).toBe(4);
-        for (const version of [1, 2, 3]) {
+        expect(FINGERPRINT_VERSION).toBe(3);
+        for (const version of [1, 2]) {
             expect(isCurrentFingerprintVersion({ fingerprintVersion: version })).toBe(false);
         }
         // And measured against each other, not just against the current one
-        expect(isCurrentFingerprintVersion({ fingerprintVersion: 3 }, 4)).toBe(false);
-        expect(isCurrentFingerprintVersion({ fingerprintVersion: 4 }, 3)).toBe(false);
+        expect(isCurrentFingerprintVersion({ fingerprintVersion: 2 }, 3)).toBe(false);
+        expect(isCurrentFingerprintVersion({ fingerprintVersion: 3 }, 2)).toBe(false);
         expect(isCurrentFingerprintVersion({}, 2)).toBe(false);
     });
 
