@@ -22,7 +22,10 @@ const game = vi.hoisted(() => ({
     testServer: false,
 }));
 
-vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer === true }));
+vi.mock('../../utils/game-server.js', () => ({
+    isTestServer: () => game.testServer === true,
+    liveGameOrigin: (o) => o,
+}));
 
 vi.mock('../../core/storage.js', () => ({
     default: {

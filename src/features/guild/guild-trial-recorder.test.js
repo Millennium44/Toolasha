@@ -41,7 +41,7 @@ function changeSetting(key, value) {
 
 const profileListeners = () => game.socketHandlers.filter((entry) => entry.type === 'profile_shared').length;
 
-vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer, liveGameOrigin: (o) => o }));
 
 vi.mock('../../core/config.js', () => ({
     default: {

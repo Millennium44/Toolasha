@@ -29,7 +29,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     guildXpTracker: () => game.tracker,
     guildMemberSkills: () => game.skills,
 }));
-vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer, liveGameOrigin: (o) => o }));
 vi.mock('../../utils/simple-panel.js', () => ({
     panelCard: (parent, text) => {
         const el = document.createElement('div');
