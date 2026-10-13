@@ -80,6 +80,21 @@ describe('resolveCurrencyValue', () => {
         expect(mocks.ev.initialize).toHaveBeenCalledTimes(1);
     });
 
+    test('many task-token valuations before the calculator is ready start it once, and a later one can retry', async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        mocks.ev.isInitialized = false;
+        mocks.ev.initialize.mockClear();
+        mocks.task.mockReturnValue({ tokenValue: 30_000 });
+        for (let i = 0; i < 5; i++) resolveCurrencyValue('/items/task_token');
+        expect(mocks.ev.initialize).toHaveBeenCalledTimes(1);
+
+        await Promise.resolve();
+        await Promise.resolve();
+        resolveCurrencyValue('/items/task_token');
+        expect(mocks.ev.initialize).toHaveBeenCalledTimes(2);
+    });
+
     test('an unpriceable currency is null so the caller falls back, and an ordinary item is not a currency', () => {
         mocks.task.mockReturnValue({ tokenValue: null });
         mocks.getItemPrice.mockReturnValue(null);

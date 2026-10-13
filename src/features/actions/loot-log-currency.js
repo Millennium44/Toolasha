@@ -45,6 +45,32 @@ export function isNonMarketCurrency(baseHrid) {
     );
 }
 
+/** The one calculator start in flight, so a burst of valuations enqueues a single worker pass */
+let evStartInFlight = false;
+
+/**
+ * Start the expected-value calculator if it is not running, at most once at a time. A loot log
+ * redraw values many task-token rows before the calculator finishes; without this each one
+ * enqueued another full pass and another completion event. The flag clears when the start
+ * settles, so a start that failed (no data yet) can be retried by a later valuation.
+ */
+function startExpectedValueCalculator() {
+    if (expectedValueCalculator.isInitialized || evStartInFlight) return;
+    evStartInFlight = true;
+    const clear = () => {
+        evStartInFlight = false;
+    };
+    try {
+        Promise.resolve(expectedValueCalculator.initialize?.()).then(clear, (error) => {
+            console.error('[LootLogCurrency] Expected value start failed:', error);
+            clear();
+        });
+    } catch (error) {
+        console.error('[LootLogCurrency] Expected value start failed:', error);
+        clear();
+    }
+}
+
 /**
  * Coins one unit of a non-market currency is worth, already net of any tax
  * (so callers must not tax it again).
@@ -67,7 +93,7 @@ export function resolveCurrencyValue(baseHrid, side = 'ask') {
         // Task tokens price through the expected-value calculator, which only the tooltip EV
         // feature starts; the loot log must not depend on that display being on. Its shop
         // valuation takes no side, so the ask and bid columns share the one figure
-        if (!expectedValueCalculator.isInitialized) expectedValueCalculator.initialize?.();
+        startExpectedValueCalculator();
         value = calculateTaskTokenValue()?.tokenValue;
     } else if (baseHrid === LABYRINTH_TOKEN_HRID) {
         // The best shop reward's market quote: a sale of it pays the market tax
