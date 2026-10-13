@@ -56,7 +56,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionChainTime: (hrid) => mocks.chainTimes[hrid] ?? 0,
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => mocks.marketPrices[hrid] ?? null,
+    getItemPrice: (hrid, options) =>
+        (options?.enhancementLevel > 0
+            ? mocks.marketPrices[`${hrid}:${options.enhancementLevel}`]
+            : mocks.marketPrices[hrid]) ?? null,
     getItemPrices: (hrid) => mocks.itemPrices?.[hrid] ?? null,
     getPricingMode: (context, side) => (side === 'buy' ? mocks.buyMode : 'ask'),
 }));
@@ -69,10 +72,12 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     calculateProfitPerDay: (perHour) => perHour * 24,
     calculateTeaCostsPerHour: () => ({ costs: [], totalCostPerHour: 0, hasMissingPrices: false }),
     createPriceCache: (fn) => fn,
-    resolveItemPrice: (hrid) =>
-        hrid in mocks.resolvedPrices
-            ? { price: mocks.resolvedPrices[hrid], custom: false, missing: false }
-            : { price: null, custom: false, missing: true },
+    resolveItemPrice: (hrid, options) => {
+        const key = options?.enhancementLevel > 0 ? `${hrid}:${options.enhancementLevel}` : hrid;
+        return key in mocks.resolvedPrices
+            ? { price: mocks.resolvedPrices[key], custom: false, missing: false }
+            : { price: null, custom: false, missing: true };
+    },
 }));
 
 const { default: profitCalculator } = await import('./profit-calculator.js');
@@ -693,5 +698,118 @@ describe('calculateMaterialCosts — provenance of a craft-substituted upgrade p
 
         expect(costs[0].isCrafted).toBe(true);
         expect(costs[0].estimatedPrice).toBe(true);
+    });
+});
+
+describe('calculateProfit — enhancement carried through an upgrade craft', () => {
+    function setup({ retainAll = false } = {}) {
+        mocks.efficiencyContext = {
+            equipment: [],
+            drinkSlots: [],
+            drinkConcentration: 0,
+            itemDetailMap: {},
+            actionTime: 20,
+            artisanBonus: 0,
+            gourmetBonus: 0,
+            processingBonus: 0,
+            equipmentEfficiency: 0,
+            equipmentEfficiencyItems: [],
+            houseEfficiency: 0,
+            teaEfficiency: 0,
+            achievementEfficiency: 0,
+            personalEfficiency: 0,
+            actionLevelBonus: 0,
+            teaSkillLevelBonus: 0,
+            baseRequirement: 1,
+            speedBonus: 0,
+            personalSpeedBonus: 0,
+            efficiencyBreakdown: { totalEfficiency: 0, levelEfficiency: 0, effectiveRequirement: 1 },
+            efficiencyMultiplier: 1,
+        };
+        mocks.skills = [{ skillHrid: '/skills/cheesesmithing', level: 50 }];
+        mocks.itemDetails['/items/upgraded'] = { name: 'Upgraded' };
+        mocks.itemDetails['/items/rune'] = { name: 'Rune' };
+        mocks.initData.actionDetailMap = {
+            '/actions/cheesesmithing/upgrade': {
+                type: '/action_types/cheesesmithing',
+                baseTimeCost: 20e9,
+                upgradeItemHrid: '/items/rune',
+                retainAllEnhancement: retainAll,
+                inputItems: [],
+                outputItems: [{ itemHrid: '/items/upgraded', count: 1 }],
+            },
+        };
+        mocks.resolvedPrices['/items/rune'] = 100;
+        mocks.resolvedPrices['/items/rune:5'] = 5000;
+        mocks.marketPrices['/items/upgraded'] = 1000;
+        mocks.marketPrices['/items/upgraded:3'] = 2000;
+        mocks.marketPrices['/items/upgraded:4'] = 4000;
+        mocks.marketPrices['/items/upgraded:5'] = 9000;
+    }
+
+    test('a +5 input is bought at +5 and the +3.5 output is a floor/ceil mix', async () => {
+        setup();
+        const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+
+        expect(result.materialCosts[0].askPrice).toBe(5000);
+        // 5 x 0.7 = 3.5: half +3, half +4
+        expect(result.outputPrice).toBeCloseTo(3000, 6);
+    });
+
+    test('an enhanced output exposes its weighted floor/ceil variants for the liquidity cap', async () => {
+        setup();
+        const enhanced = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+        expect(enhanced.outputVariants).toEqual([
+            { itemHrid: '/items/upgraded', enhancementLevel: 3, weight: 0.5 },
+            { itemHrid: '/items/upgraded', enhancementLevel: 4, weight: 0.5 },
+        ]);
+
+        const plain = await profitCalculator.calculateProfit('/items/upgraded');
+        expect(plain.outputVariants).toBeNull();
+    });
+
+    test('a recipe that retains enhancement carries the whole level', async () => {
+        setup({ retainAll: true });
+        const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+        expect(result.outputPrice).toBe(9000);
+    });
+
+    test('a ceil level nobody lists is priced at the floor level', async () => {
+        setup();
+        delete mocks.marketPrices['/items/upgraded:4'];
+        const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+        expect(result.outputPrice).toBeCloseTo(2000, 6);
+    });
+
+    test('an enhanced output with no listing at its floor level is left unpriced, not valued as a +0 craft', async () => {
+        setup();
+        delete mocks.marketPrices['/items/upgraded:3'];
+        mocks.marketPrices['/items/rune'] = 100; // so a +0 craft estimate would exist
+        const result = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+        expect(result.outputPriceMissing).toBe(true);
+        expect(result.outputPriceEstimated).toBe(false);
+        expect(result.outputPrice).toBe(0);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('an enhanced input is bought, so the +0 upgrade item chain time is not charged', async () => {
+        setup();
+        mocks.settings.profitCalc_craftUpgradeItems = true;
+        mocks.chainTimes['/items/rune'] = 30;
+        mocks.productionCosts['/items/rune'] = 400;
+        mocks.resolvedPrices['/items/rune'] = 1000; // crafting would win at +0
+
+        const plain = await profitCalculator.calculateProfit('/items/upgraded');
+        const enhanced = await profitCalculator.calculateProfit('/items/upgraded', { upgradeItemLevel: 5 });
+
+        expect(plain.actionTime).toBeCloseTo(50, 6);
+        expect(enhanced.actionTime).toBeCloseTo(20, 6);
+    });
+
+    test('no selected stack leaves the +0 valuation untouched', async () => {
+        setup();
+        const result = await profitCalculator.calculateProfit('/items/upgraded');
+        expect(result.materialCosts[0].askPrice).toBe(100);
+        expect(result.outputPrice).toBe(1000);
     });
 });

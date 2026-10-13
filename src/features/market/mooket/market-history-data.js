@@ -25,8 +25,11 @@
  * Pure: rows in, series out. No DOM, no fetching.
  */
 
-/** Ranges the chart offers, in days */
-export const HISTORY_RANGES = [1, 3, 7, 14, 30, 90, 180];
+/** Ranges the chart offers, in days (mooket II offers the same list, 365 included) */
+export const HISTORY_RANGES = [1, 3, 7, 14, 30, 90, 180, 365];
+
+/** An open chart is redrawn from fresh rows once its data is this old (mooket II's cadence) */
+export const AUTO_REFRESH_MS = 10 * 60 * 1000;
 
 /**
  * A shared-pool cool-down's remaining time, rounded to the minute a player

@@ -8,9 +8,10 @@
  * either of them moved the panel. These tests are about the split holding.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const character = vi.hoisted(() => ({ id: 'market123', mode: 'standard' }));
+const history = vi.hoisted(() => ({ rows: [], cooldownMs: 0 }));
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -97,7 +98,8 @@ vi.mock('./market-history-api.js', () => ({
     default: {
         connect: () => {},
         disconnect: () => {},
-        fetchHistory: async () => [],
+        fetchHistory: async () => history.rows,
+        cooldownRemainingMs: () => history.cooldownMs,
         currentSource: () => ({ key: 'mooket2', hasVolume: true, avgLabel: 'Avg' }),
     },
 }));
@@ -464,5 +466,75 @@ describe('ingestMarketSnapshot', () => {
         ingestMarketSnapshot(store, { marketData: {}, lastFetchTimestamp: null });
 
         expect(store.ingestSnapshot.mock.calls[0][1]).toBeGreaterThanOrEqual(before);
+    });
+});
+
+describe('autoRefresh of an open chart', () => {
+    const TEN_MINUTES = 10 * 60 * 1000;
+
+    afterEach(() => {
+        history.rows = [];
+        history.cooldownMs = 0;
+    });
+
+    beforeEach(() => {
+        panel.panel = {};
+        panel.current = { itemHrid: '/items/cheese', enhancementLevel: 0 };
+        panel.prefs.open = true;
+        panel.showItem = vi.fn();
+        panel.drawnAt = Date.now() - TEN_MINUTES - 1000;
+    });
+
+    test('redraws once the data is ten minutes old', () => {
+        expect(panel.autoRefresh()).toBe(true);
+        expect(panel.showItem).toHaveBeenCalledWith('/items/cheese', 0);
+        expect(panel.shown).toBeNull();
+    });
+
+    test('leaves fresh data, a closed panel and a hidden tab alone', () => {
+        panel.drawnAt = Date.now() - 60 * 1000;
+        expect(panel.autoRefresh()).toBe(false);
+
+        panel.drawnAt = Date.now() - TEN_MINUTES - 1000;
+        panel.prefs.open = false;
+        expect(panel.autoRefresh()).toBe(false);
+
+        panel.prefs.open = true;
+        vi.stubGlobal('document', { hidden: true });
+        try {
+            expect(panel.autoRefresh()).toBe(false);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+        expect(panel.showItem).not.toHaveBeenCalled();
+    });
+
+    test('a first request turned away by a cooldown is retried on the next tick, and not before it was turned away', async () => {
+        const realShowItem = Object.getPrototypeOf(panel).showItem;
+        panel.showItem = realShowItem.bind(panel);
+        panel.drawnAt = undefined;
+        panel.shown = null;
+        panel.title = { textContent: '' };
+        panel.showHistoryStatus = vi.fn();
+        panel.drawChart = vi.fn();
+        panel.drawAftermath = vi.fn();
+        panel.savePrefs = vi.fn();
+
+        // Nothing has been requested yet: nothing to retry
+        expect(panel.autoRefresh()).toBe(false);
+
+        history.rows = null;
+        history.cooldownMs = 30000;
+        await panel.showItem('/items/cheese', 0);
+        expect(panel.drawChart).not.toHaveBeenCalled();
+
+        history.rows = [];
+        history.cooldownMs = 0;
+        const retry = vi.spyOn(panel, 'showItem');
+        expect(panel.autoRefresh()).toBe(true);
+        expect(retry).toHaveBeenCalledWith('/items/cheese', 0);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(panel.drawChart).toHaveBeenCalled();
     });
 });

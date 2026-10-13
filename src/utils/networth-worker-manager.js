@@ -223,7 +223,11 @@ function calculateEnhancementCost(params) {
         mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, recipes);
     }
 
-    applyMirrorOptimization(targetCosts, mirrorPrice);
+    // A Blessed Tea mirror success can be +2; same chance the chain gives an ordinary success
+    const mirrorBlessedChance = (enhancementParams.teas?.blessed ?? enhancementParams.blessedTea)
+        ? Math.min(1, (enhancementParams.blessedTeaBonus ?? DEFAULT_BLESSED_TEA_CHANCE) * (enhancementParams.guzzlingBonus ?? 1))
+        : 0;
+    applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
 
     return targetCosts[targetLevel];
 }
@@ -244,7 +248,9 @@ function calculateStrategyRealCost(
     itemHrid,
     recipes
 ) {
-    const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
+    const { enhancingLevel, toolBonus, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
+    // getEnhancingParams() nests Blessed at teas.blessed; older callers pass a flat blessedTea
+    const blessedTea = Boolean(enhancementParams.teas?.blessed ?? enhancementParams.blessedTea);
 
     // Calculate success multiplier
     let totalBonus;

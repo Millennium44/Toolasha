@@ -89,7 +89,11 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateCumulativeCost: async () => null,
     getItemName: () => '',
 }));
-vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: () => null }));
+vi.mock('../../utils/enhancement-calculator.js', () => ({
+    calculateEnhancement: () => null,
+    blessedMirrorChance: () => 0,
+    mirrorLandingOdds: (usedMirror) => usedMirror.map(() => 1),
+}));
 vi.mock('../../utils/experience-calculator.js', () => ({
     calculateExpPerHour: () => ({ expPerHour: 1000, modifiedXP: 10, actionTime: 10, totalEfficiency: 0 }),
 }));

@@ -42,6 +42,8 @@ vi.mock('./enhancement-config.js', () => ({
 
 vi.mock('./enhancement-calculator.js', () => ({
     calculateEnhancement: () => state.enhancementResult,
+    blessedMirrorChance: () => 0,
+    mirrorLandingOdds: (usedMirror) => usedMirror.map(() => 1),
 }));
 
 /**

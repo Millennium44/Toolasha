@@ -458,7 +458,11 @@ vi.mock('../../utils/market-data.js', () => ({
         return raw;
     },
 }));
-vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: () => ({}) }));
+vi.mock('../../utils/enhancement-calculator.js', () => ({
+    calculateEnhancement: () => ({}),
+    blessedMirrorChance: () => 0,
+    mirrorLandingOdds: (usedMirror) => usedMirror.map(() => 1),
+}));
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: () => ({}),
     getAutoDetectedParams: () => ({}),

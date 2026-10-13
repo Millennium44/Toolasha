@@ -152,6 +152,8 @@ with Toolasha's own game data, the storage moved from `localStorage` to Toolasha
 IndexedDB layer, and the WebSocket interception dropped in favour of Toolasha's existing
 hook — but the market history API, the volume-split estimate, and the shape of the price
 panel are Q7's work.
+The 365-day range and the 10-minute auto-refresh of an open chart follow mooket II's `DAYS`
+list and `AUTO_REFRESH_INTERVAL`.
 
 <https://greasyfork.org/scripts/569362>
 
@@ -285,3 +287,13 @@ the upgrade advisor, and Toolasha emits JIGS-compatible markers/library exports 
 interoperability. Ideas only — no code was taken, which is why nothing is vendored here. The
 same applies to **Milkonomy** by hyhfish and the **Character Sheet** by Tib: Toolasha writes
 their export/URL formats for interoperability, taking no code.
+
+### Milkonomy - upgrade-craft enhancement carry-over
+
+The one exception to "no code" above: `src/utils/upgrade-enhancement.js` and its use in
+`src/features/market/profit-calculator.js` follow **Milkonomy** by luyh7
+(<https://github.com/luyh7/milkonomy>, MIT licence, Copyright (c) luyh7), `src/calculator/manufacture.ts`
+(`targetLevel` and `productList`): an upgrade craft outputs 70% of the input's enhancement level, the
+decimal being the chance of one extra level, and a recipe that retains enhancement keeps the whole
+level. The rule was also checked against the game client's own recipe panel text. The code is
+Toolasha's own rewrite of that rule.

@@ -10,6 +10,8 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { calculateProductionProfit } from './production-profit.js';
+import { parseItemHash } from '../../utils/item-hash.js';
+import { runningAction } from '../../utils/combat-actions.js';
 import { formatWithSeparator, formatPercentage, formatLargeNumber } from '../../utils/formatters.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { findActionInput, attachInputListeners } from '../../utils/action-panel-helper.js';
@@ -846,9 +848,31 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     }
 }
 
+/**
+ * Enhancement level of the upgrade stack the character's own queued copy of this action draws.
+ *
+ * Mirrors the action bar's `getProductionUpgradeLevel`: the action names its upgrade stack in
+ * `primaryItemHash`, and a hash naming some other item (or none) means the +0 stack. Of several
+ * queued copies of the action, the one the game runs first wins (`runningAction`, never `[0]`).
+ *
+ * @param {string} actionHrid - The panel's action
+ * @returns {number} Enhancement level, 0 when no queued copy selects an upgrade stack
+ */
+function queuedUpgradeLevel(actionHrid) {
+    const upgradeHrid = dataManager.getActionDetails(actionHrid)?.upgradeItemHrid;
+    if (!upgradeHrid) return 0;
+    const copies = (dataManager.getCurrentActions?.() || []).filter((a) => a?.actionHrid === actionHrid);
+    const action = runningAction(copies);
+    if (!action?.primaryItemHash) return 0;
+    const { itemHrid, level } = parseItemHash(action.primaryItemHash);
+    return itemHrid === upgradeHrid && Number.isFinite(level) && level > 0 ? level : 0;
+}
+
 async function renderProductionProfit(panel, actionHrid, dropTableSelector, productionActionType) {
     // Calculate profit
-    const profitData = await calculateProductionProfit(actionHrid);
+    const profitData = await calculateProductionProfit(actionHrid, {
+        upgradeItemLevel: queuedUpgradeLevel(actionHrid),
+    });
     if (!profitData) {
         console.error('❌ Production profit calculation failed for:', actionHrid);
         return;

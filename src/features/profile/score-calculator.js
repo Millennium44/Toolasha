@@ -13,7 +13,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
-import { applyMirrorOptimization } from '../../utils/enhancement-calculator.js';
+import { applyMirrorOptimization, blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
@@ -713,7 +713,11 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             }
             // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
             // cannot drift (it starts at +3: the game will not mirror an item below +2)
-            applyMirrorOptimization(targetCosts, getRealisticBaseItemPrice('/items/philosophers_mirror'));
+            applyMirrorOptimization(
+                targetCosts,
+                getRealisticBaseItemPrice('/items/philosophers_mirror'),
+                blessedMirrorChance(enhancementParams)
+            );
             itemCost = targetCosts[item.enhancementLevel];
         } else {
             // Use market price (already checked or not needed)

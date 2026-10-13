@@ -207,6 +207,19 @@ describe('calculateEnhancementPath', () => {
         }
     });
 
+    test('Blessed Tea cheapens a mirror plan and the line items still add up to the total', () => {
+        const blessedConfig = { ...enhancingConfig, blessedTeaBonus: 0.2, teas: { blessed: true } };
+        const plain = calculateEnhancementPath(ITEM, 8, { ...enhancingConfig, blessedTeaBonus: 0.2 });
+        const blessed = calculateEnhancementPath(ITEM, 8, blessedConfig);
+
+        expect(blessed.optimalStrategy.usedMirror).toBe(true);
+        const strategy = blessed.optimalStrategy;
+        const consumed = strategy.consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+        expect(consumed + strategy.philosopherMirrorCost).toBeCloseTo(strategy.totalCost, 6);
+        // Fewer mirror steps are run than without the tea, so the plan costs less than an unblessed one
+        expect(strategy.mirrorCount).toBeLessThan(plain.optimalStrategy.mirrorCount);
+    });
+
     test('a mirrored line item is priced at what one item at that level costs', () => {
         const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
 

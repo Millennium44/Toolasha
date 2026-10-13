@@ -56,6 +56,8 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/enhancement-calculator.js', () => ({
     calculateEnhancement: vi.fn(() => engineResult),
+    blessedMirrorChance: () => 0,
+    mirrorLandingOdds: (usedMirror) => usedMirror.map(() => 1),
 }));
 
 const xpCalls = vi.hoisted(() => []);

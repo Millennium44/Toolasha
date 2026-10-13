@@ -104,7 +104,8 @@ export function liquidityCapEnabled() {
  * - **alchemy** (`alchemy-profit-calculator`): `dropRevenues`, minus the
  *   self-returned copies of the input, which are not sold.
  * - **production** (`profit-calculator`): one output item at `itemsPerHour`,
- *   gourmet copies included since they are the same item.
+ *   gourmet copies included since they are the same item. An enhanced upgrade output is
+ *   split across its `outputVariants`, each sold at its own enhancement level.
  *
  * Essence and rare-find bonus drops (`bonusRevenue.bonusDrops`) are added for
  * any shape that has them.
@@ -116,13 +117,17 @@ export function sellsFromProfitData(profitData) {
     if (!profitData) return [];
 
     const sells = new Map();
-    const add = (itemHrid, name, unitsPerHour) => {
+    // A variant is its own book: +0 and +3 of one item are keyed apart, and only an enhanced
+    // variant carries an `enhancementLevel` (the +0 shape is unchanged).
+    const add = (itemHrid, name, unitsPerHour, enhancementLevel = 0) => {
         const units = Number(unitsPerHour) || 0;
         if (!itemHrid || units <= 0) return;
-        const entry = sells.get(itemHrid) || { itemHrid, name: name || null, unitsPerHour: 0 };
+        const key = enhancementLevel > 0 ? `${itemHrid}:${enhancementLevel}` : itemHrid;
+        const entry = sells.get(key) || { itemHrid, name: name || null, unitsPerHour: 0 };
+        if (enhancementLevel > 0) entry.enhancementLevel = enhancementLevel;
         entry.unitsPerHour += units;
         entry.name = entry.name || name || null;
-        sells.set(itemHrid, entry);
+        sells.set(key, entry);
     };
 
     if (Array.isArray(profitData.baseOutputs)) {
@@ -134,7 +139,20 @@ export function sellsFromProfitData(profitData) {
         }
     } else if (profitData.itemHrid) {
         const units = (Number(profitData.itemsPerHour) || 0) + (Number(profitData.gourmetBonusItems) || 0);
-        add(profitData.itemHrid, profitData.itemName || null, units);
+        const variants = Array.isArray(profitData.outputVariants) ? profitData.outputVariants : [];
+        if (variants.length) {
+            // An enhanced upgrade output sells at its floor/ceil levels, split by their weights
+            for (const variant of variants) {
+                add(
+                    variant.itemHrid || profitData.itemHrid,
+                    profitData.itemName || null,
+                    units * (Number(variant.weight) || 0),
+                    Number(variant.enhancementLevel) || 0
+                );
+            }
+        } else {
+            add(profitData.itemHrid, profitData.itemName || null, units);
+        }
     }
 
     for (const drop of profitData.bonusRevenue?.bonusDrops || []) {

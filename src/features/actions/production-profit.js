@@ -24,9 +24,11 @@ const PRODUCTION_TYPES = [
  * @param {string} actionHrid - Action HRID (e.g., "/actions/brewing/efficiency_tea")
  * @param {Object} [options]
  * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
+ * @param {number} [options.upgradeItemLevel=0] - Enhancement level of the upgrade item stack the
+ *   action draws, so an upgrade craft prices the +N input and its enhanced output
  * @returns {Object|null} Profit data or null if not applicable
  */
-export async function calculateProductionProfit(actionHrid, { keepSellTax = false } = {}) {
+export async function calculateProductionProfit(actionHrid, { keepSellTax = false, upgradeItemLevel = 0 } = {}) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData.actionDetailMap[actionHrid];
 
@@ -53,7 +55,11 @@ export async function calculateProductionProfit(actionHrid, { keepSellTax = fals
     // The action is named as well as the item: two recipes can yield the same output, and
     // without the name the calculator answers about whichever it finds first — so a caller
     // filing this margin against `actionHrid` could be filing the other recipe's number.
-    const profitData = await profitCalculator.calculateProfit(outputItemHrid, { actionHrid, keepSellTax });
+    const profitData = await profitCalculator.calculateProfit(outputItemHrid, {
+        actionHrid,
+        keepSellTax,
+        upgradeItemLevel,
+    });
 
     if (!profitData) {
         return null;

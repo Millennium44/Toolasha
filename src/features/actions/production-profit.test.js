@@ -144,12 +144,20 @@ describe('calculateProductionProfit sell-tax option', () => {
     test('names the recipe and passes keepSellTax through to the calculator', async () => {
         await calculateProductionProfit(BREW, { keepSellTax: true });
 
-        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: true }]);
+        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: true, upgradeItemLevel: 0 }]);
     });
 
     test('defaults to following the personal-use setting (keepSellTax false)', async () => {
         await calculateProductionProfit(BREW);
 
-        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: false }]);
+        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: false, upgradeItemLevel: 0 }]);
+    });
+});
+
+describe('calculateProductionProfit upgrade level', () => {
+    test('passes the selected upgrade stack level to the calculator', async () => {
+        await calculateProductionProfit(BREW, { upgradeItemLevel: 5 });
+
+        expect(calculator.requestedOptions).toEqual([{ actionHrid: BREW, keepSellTax: false, upgradeItemLevel: 5 }]);
     });
 });

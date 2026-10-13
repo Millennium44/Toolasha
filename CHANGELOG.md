@@ -22,6 +22,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Loot Log now values cowbells, dungeon tokens, labyrinth tokens and task tokens in its totals, daily output and profit instead of counting them as 0, Output Totals read drop rates and counts in the game's own number format (comma-decimal languages were off by up to about 4×), and the Character Sheet link puts the special ability in its own slot.
 
+### Mirror Blessed odds, longer price history, upgrade-craft levels
+
+- Enhancing mirror plans now account for Blessed Tea's chance of a +2 mirror step, the market price-history chart offers a 365-day range and refreshes an open chart every 10 minutes (from mooket II), and crafting an upgrade from an enhanced item values the output at the enhancement it inherits (70% of the input's level, with the fraction as a chance of one more; all of it for refined items), from Milkonomy and the game's own recipe text.
+
 ### Labyrinth Recommend keeps every badge
 
 - A labyrinth Recommend run no longer loses the skilling rooms' and early combat rooms' recommendations when your gear or loadout changes partway through (the lab swapping loadouts between rooms did it); the skilling rooms are re-checked against the new gear at the end. A combat probe that could not run is no longer scored as a 0% clear.
