@@ -38,7 +38,34 @@ const {
     terminateIdleWorkers,
     splitTaskRemaining,
     runWorkerChunk,
+    buildExtraBuffs,
 } = await import('./combat-sim-runner.js');
+const { buildPlayerExtraBuffs } = await import('./engine/extra-buffs.js');
+
+const MOO_PASS_HRID = '/buff_uniques/experience_moo_pass_buff';
+
+/**
+ * Moo Pass is one character's subscription. The current character's own Moo
+ * Pass used to sit in the shared buff list, so every party member in a party
+ * sim walked in with its wisdom; a party member's Moo Pass is unknown.
+ */
+describe('whose Moo Pass a party sim applies', () => {
+    test('the shared buffs carry no Moo Pass, even when the current character has one', () => {
+        const shared = buildExtraBuffs({ mooPass: true, comExp: 0, comDrop: 0 });
+        expect(shared.some((buff) => buff.uniqueHrid === MOO_PASS_HRID)).toBe(false);
+    });
+
+    test('only the player whose DTO owns it gets the wisdom', () => {
+        const shared = buildExtraBuffs({ mooPass: true, comExp: 3, comDrop: 0 });
+        const self = buildPlayerExtraBuffs(shared, { hrid: 'player1', mooPass: true });
+        const member = buildPlayerExtraBuffs(shared, { hrid: 'player2', mooPass: false });
+
+        expect(self.filter((buff) => buff.uniqueHrid === MOO_PASS_HRID)).toHaveLength(1);
+        expect(member.some((buff) => buff.uniqueHrid === MOO_PASS_HRID)).toBe(false);
+        // The community buff is still everyone's
+        expect(member.some((buff) => buff.uniqueHrid === '/buff_uniques/experience_community_buff')).toBe(true);
+    });
+});
 
 /** The bare shape mergeSimResults walks unconditionally */
 const EMPTY_SIM_RESULT = { encounters: 0, deaths: {}, experienceGained: {}, consumablesUsed: {} };

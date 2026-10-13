@@ -302,6 +302,7 @@ export function buildPlayerDTO() {
         achievementBuffsOff: [],
         guildShrineLevels: {},
         scrollBuffs: [],
+        mooPass: false,
     };
 
     // Levels as they are NOW, not as they were at login. `skills_updated`
@@ -353,6 +354,12 @@ export function buildPlayerDTO() {
     // Labyrinth scrolls the player is carrying — only the two that touch combat
     // (wisdom, rare find). The editor's Scrolls section starts from this.
     dto.scrollBuffs = readActiveCombatScrolls();
+
+    // Moo Pass is this character's own subscription, so it rides on this DTO
+    // and `buildPlayerExtraBuffs` grants its wisdom to this player alone. A
+    // party member's Moo Pass is not visible to us; their DTOs carry false.
+    const mooPassBuffs = dataManager.getMooPassBuffs?.();
+    dto.mooPass = Array.isArray(mooPassBuffs) && mooPassBuffs.length > 0;
 
     // Extract equipped items → keyed by equipment type
     // Prefer the always-current characterEquipment Map (updated on every items_updated WS message)
@@ -1194,6 +1201,8 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         achievementBuffsOff,
         achievementBuffsManual,
         achievementBuffsDerived,
+        // Unknown for anyone but the current character: no Moo Pass wisdom
+        mooPass: false,
     };
 
     // Extract skill levels
