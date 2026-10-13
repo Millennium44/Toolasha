@@ -1954,6 +1954,21 @@ describe('the tombstone record itself', () => {
         expect(folded.removed[0]).toBeUndefined();
     });
 
+    test('restored ids are cancelled before the cap, so an older valid tombstone is not capped away', () => {
+        const now = 1_000_000;
+        const removed = {};
+        // The newest MAX_LISTING_TOMBSTONES, all taken back by an import; one older tombstone below them
+        for (let i = 1; i <= MAX_LISTING_TOMBSTONES; i++) removed[i] = now - 100;
+        removed[99_999] = now - 500;
+        const ids = Object.keys(removed)
+            .map(Number)
+            .filter((id) => id !== 99_999);
+
+        const folded = mergeListingGraves({ removed }, { restored: [{ at: now - 50, ids }] }, now);
+
+        expect(folded.removed).toEqual({ 99999: now - 500 });
+    });
+
     test('a mass delete above the clear watermark is refused rather than applied', () => {
         const log = [1, 2, 3, 4, 5].map((id) => ({ id, timestamp: id * 1000, itemHrid: '/items/coin' }));
         const removed = {};

@@ -245,12 +245,14 @@ function mergeRestoreStamps(sources, now) {
 }
 
 /**
- * Per id, the latest of two stamp maps, aged out and capped to the newest.
+ * Per id, the latest of two stamp maps, aged out, less what `cancelled` takes back, and capped to the newest.
  * @param {Array<Object<string, number>>} sources - Stamp maps
  * @param {number} now - Clock
+ * @param {(id: string, at: number) => boolean} [cancelled] - Dropped before the cap, so a cancelled stamp
+ *   cannot push a live one out of it
  * @returns {Object<string, number>}
  */
-function newestStamps(sources, now) {
+function newestStamps(sources, now, cancelled = () => false) {
     const out = {};
     for (const source of sources) {
         for (const [id, at] of Object.entries(source)) {
@@ -258,6 +260,9 @@ function newestStamps(sources, now) {
             if (now - when >= TOMBSTONE_MAX_AGE_MS) continue;
             if (!(id in out) || when > out[id]) out[id] = when;
         }
+    }
+    for (const [id, at] of Object.entries(out)) {
+        if (cancelled(id, at)) delete out[id];
     }
     const ids = Object.keys(out);
     if (ids.length <= MAX_LISTING_TOMBSTONES) return out;
@@ -295,12 +300,14 @@ function mergeListingGraves(local, incoming, now = Date.now()) {
     const theirs = gravesOf(incoming);
 
     const restored = mergeRestoreStamps([ours.restored, theirs.restored], now);
-    const removed = newestStamps([ours.removed, theirs.removed], now);
+    /** id -> the newest restore stamp naming it */
+    const restoredAt = new Map();
     for (const { at, ids } of restored) {
         for (const id of ids) {
-            if (id in removed && removed[id] <= at) delete removed[id];
+            if (!(restoredAt.get(String(id)) >= at)) restoredAt.set(String(id), at);
         }
     }
+    const removed = newestStamps([ours.removed, theirs.removed], now, (id, at) => restoredAt.get(id) >= at);
 
     const folded = { removed, clearedThrough: Math.max(ours.clearedThrough, theirs.clearedThrough) };
     if (restored.length > 0) folded.restored = restored;
