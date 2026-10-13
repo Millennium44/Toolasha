@@ -14,6 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
+import { setReactInputValue } from '../../utils/react-input.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import { describeShopValue } from '../../utils/alchemy-shop-value.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
@@ -1197,7 +1198,12 @@ class AlchemyProfitDisplay {
 
         // Create Level Progress section (after action speed)
         if (config.getSetting('actionPanel_showLevelProgress') && actionType && itemHrid) {
-            const levelProgressSection = this.createLevelProgressSection(actionType, itemHrid, profitData);
+            const levelProgressSection = this.createLevelProgressSection(
+                actionType,
+                itemHrid,
+                profitData,
+                effectiveInputField
+            );
             if (levelProgressSection) {
                 levelProgressSection.id = 'mwi-alchemy-level-progress';
                 levelProgressSection.classList.add('mwi-alchemy-level-progress');
@@ -1429,9 +1435,10 @@ class AlchemyProfitDisplay {
      * @param {string} actionType - Alchemy action type
      * @param {string} itemHrid - Item HRID being processed
      * @param {Object} profitData - Profit data
+     * @param {HTMLInputElement} [repeatInput] - Repeat input to fill when the target level is edited
      * @returns {HTMLElement|null} Level Progress section element
      */
-    createLevelProgressSection(actionType, itemHrid, profitData) {
+    createLevelProgressSection(actionType, itemHrid, profitData, repeatInput) {
         try {
             const gameData = dataManager.getInitClientData();
             if (!gameData) return null;
@@ -1611,7 +1618,7 @@ class AlchemyProfitDisplay {
             const targetLevelResult = content.querySelector('#mwi-alchemy-target-level-result');
             const baseEfficiency = profitData.efficiency * 100; // efficiency is decimal, convert to %
 
-            const updateTargetLevel = () => {
+            const updateTargetLevel = (fillRepeat = false) => {
                 const targetLevelValue = parseInt(targetLevelInput.value);
                 this._alchemyTargetLevel = targetLevelValue;
                 if (targetLevelValue > currentLevel && targetLevelValue <= 200) {
@@ -1626,14 +1633,20 @@ class AlchemyProfitDisplay {
                     );
                     targetLevelResult.innerHTML = `${formatWithSeparator(result.actionsNeeded)} actions | ${timeReadable(result.timeNeeded)}`;
                     targetLevelResult.style.color = `var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY})`;
+
+                    // Only on user edits: a rebuild restoring a saved target must not overwrite a typed
+                    // repeat count. No focus steal - the player is still typing in the target box.
+                    if (fillRepeat && repeatInput) {
+                        setReactInputValue(repeatInput, result.actionsNeeded, { focus: false });
+                    }
                 } else {
                     targetLevelResult.textContent = 'Invalid level';
                     targetLevelResult.style.color = 'var(--color-error, #ff4444)';
                 }
             };
 
-            targetLevelInput.addEventListener('input', updateTargetLevel);
-            targetLevelInput.addEventListener('change', updateTargetLevel);
+            targetLevelInput.addEventListener('input', () => updateTargetLevel(true));
+            targetLevelInput.addEventListener('change', () => updateTargetLevel(true));
 
             if (initialTargetLevel !== nextLevel) {
                 updateTargetLevel();

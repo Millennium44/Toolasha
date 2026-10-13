@@ -140,3 +140,42 @@ describe('Alchemy panel honors the action-panel section settings', () => {
         expect(display.displayElement?.parentNode).toBe(container);
     });
 });
+
+describe('Level Progress target level fills Repeat', () => {
+    const targetInput = () => document.getElementById('mwi-alchemy-target-level-input');
+
+    test('a user edit fills the Repeat input with the actions needed', () => {
+        const { container, repeat } = mountPanel();
+        display.createDisplay(container, profitData(), 'coinify', ITEM, 0);
+
+        targetInput().value = '3';
+        targetInput().dispatchEvent(new Event('input', { bubbles: true }));
+
+        // coinify at item level 10 = 20 XP/action; 300 XP to level 3 => 15 actions
+        expect(repeat.value).toBe('15');
+    });
+
+    test('a rebuild restoring a saved target does not overwrite a typed repeat count', () => {
+        const { container, repeat } = mountPanel();
+        display.createDisplay(container, profitData(), 'coinify', ITEM, 0);
+        targetInput().value = '3';
+        targetInput().dispatchEvent(new Event('input', { bubbles: true }));
+        repeat.value = '7';
+
+        display.createDisplay(container, profitData(), 'coinify', ITEM, 0);
+
+        expect(targetInput().value).toBe('3');
+        expect(repeat.value).toBe('7');
+    });
+
+    test('an invalid target leaves the Repeat input alone', () => {
+        const { container, repeat } = mountPanel();
+        display.createDisplay(container, profitData(), 'coinify', ITEM, 0);
+        repeat.value = '7';
+
+        targetInput().value = '1';
+        targetInput().dispatchEvent(new Event('input', { bubbles: true }));
+
+        expect(repeat.value).toBe('7');
+    });
+});
