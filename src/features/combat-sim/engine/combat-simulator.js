@@ -1087,20 +1087,18 @@ class CombatSimulator {
         //    bails out entirely on `if (!enemies) return;`. Run it after
         //    `checkEncounterEnd` has set `this.enemies = null` and the swing is
         //    neither ability-selected nor queued at all.
-        // 2. A killing blow used to leave its owner un-armed until the next
-        //    wave's `startAttacks`, so the attacker's own clock restarted from
-        //    the respawn instead of from the blow. An ability killing blow never
-        //    had that gap; only the auto-attack path did. This is the ordering
-        //    inconsistency between the two call sites, not a new mechanic.
+        // 2. It matches `tryUseAbility`, which has always re-armed before
+        //    `checkEncounterEnd`, so the two call sites order alike.
+        //
+        // When this blow clears the wave, the swing queued here does not cross
+        // it: the wave-cleared branch clears every `AutoAttackEvent`, and the
+        // next spawn's `startAttacks` hands the killer, like everyone else, a
+        // full interval from the spawn. A wipe clears `AutoAttackEvent` by type
+        // too, and a labyrinth resolve or timeout clears the whole queue.
         //
         // A dead source is still never re-armed: `addNextAttackEvent` returns on
         // `currentHitpoints <= 0` and the guard below repeats it, so a source
-        // killed by thorns or retaliation on this same exchange stays down. The
-        // branches that must not carry a swing across still clear it after this
-        // point — a wipe clears `AutoAttackEvent` by type, a labyrinth resolve
-        // or timeout clears the whole queue — and the wave-cleared branch only
-        // retires the departing monsters' swings, which is the behavior being
-        // preserved here.
+        // killed by thorns or retaliation on this same exchange stays down.
         if (event.source.combatDetails.currentHitpoints > 0) {
             this.addNextAttackEvent(event.source);
         }
@@ -1149,27 +1147,29 @@ class CombatSimulator {
         const allPlayersDown = !this.players.some((player) => player.combatDetails.currentHitpoints > 0);
 
         if (this.enemies && !this.enemies.some((enemy) => enemy.combatDetails.currentHitpoints > 0)) {
-            // Only the departing monsters' swings are retired here. Clearing
-            // AutoAttackEvent by type used to take the players' queued swings
-            // with them, and startNewEncounter -> startAttacks then handed every
-            // player a fresh full attackInterval — so each of a dungeon run's
-            // ~10 waves shaved off part of a swing. The game keeps a player's
-            // attack rhythm running across a wave transition; only the newly
-            // spawned monsters start from zero. Observation from the
-            // metz-combat-simulator accuracy page
-            // (https://metzlii.github.io/metz-combat-simulator/).
+            // Every queued swing goes, the players' as well as the departing
+            // monsters'. A wave change resets every auto attack: the next
+            // spawn's startAttacks() hands each unit its first swing at the
+            // spawn plus its own full interval, whatever the weapon speed.
             //
-            // startAttacks() is safe to run over the survivors afterwards:
-            // addNextAttackEvent returns early for any unit that already has an
-            // AutoAttackEvent or an AbilityCastEndEvent queued, so nobody gets a
-            // second one. The branches that must NOT preserve player timers do
-            // their own clearing below — a labyrinth resolve and a labyrinth
-            // timeout call eventQueue.clear(), the dungeon wipe clears
-            // AutoAttackEvent by type before its restart, and an open-zone wipe
-            // does the same.
-            for (const enemy of this.enemies) {
-                this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, enemy);
-            }
+            // Measured, not assumed: on 2026-09-02 the server's own per-action
+            // delay field (`int`) was fitted against five rules for the first
+            // swing after a spawn, and this reset won on every axis with zero
+            // bias; free-running timers, pausing while no target stands, a
+            // swing queued at the spawn and a fixed lead were all strictly
+            // worse. It is also the rule shykai's MWI Combat Simulator uses.
+            //
+            // Retiring only the monsters' swings (2026-09-19, after the
+            // metz-combat-simulator) let a player's swing run on into the
+            // ~3.04 s gap. That split by weapon speed: a swing due inside the
+            // gap is dropped by processAutoAttackEvent's `if (!targets)` with no
+            // re-arm, so fast weapons reset anyway, while one slower than the
+            // gap (crossbow, bulwark, staff, mace, bow) carried and landed
+            // shortly after the spawn — a free fraction of a swing every wave.
+            //
+            // An in-progress cast is a separate rule and is untouched:
+            // startNewEncounter clears AbilityCastEndEvent and restarts it.
+            this.eventQueue.clearEventsOfType(AutoAttackEvent.type);
 
             if (!this.labyrinth && this.zone.isDungeon && allPlayersDown) {
                 // Wipe wins in a dungeon. A dungeon run ends the moment the
