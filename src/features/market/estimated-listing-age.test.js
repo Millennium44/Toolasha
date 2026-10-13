@@ -988,6 +988,51 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         expect(applyListingGraves(log, merge(local, later)).map((l) => l.id)).toEqual([2_500]);
     });
 
+    test('a save already reading the old tombstones does not strip the rows an import adds', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        storageMock.storeFor('marketListings').set(LOG_KEY, []);
+        storageMock
+            .storeFor('marketListings')
+            .set(GRAVES_KEY, { removed: { 1: Date.now() - 60_000 }, clearedThrough: 0 });
+        knownAs([]);
+
+        // The earlier save reads the tombstones as they are now and resumes once released; the next read
+        // (the import's) is held until the earlier save has finished
+        const held = () => {
+            let release;
+            const gate = new Promise((resolve) => {
+                release = resolve;
+            });
+            return { gate, release };
+        };
+        const first = held();
+        const second = held();
+        const realTryGet = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet
+            .mockImplementationOnce(realTryGet)
+            .mockImplementationOnce(async (key, store) => {
+                const value = await realTryGet(key, store);
+                await first.gate;
+                return value;
+            })
+            .mockImplementationOnce(async (key, store) => {
+                await second.gate;
+                return realTryGet(key, store);
+            });
+
+        const earlier = estimatedListingAge.saveHistoricalData();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const importing = estimatedListingAge.importListings([row(1)]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        first.release();
+        await earlier;
+        second.release();
+        await importing;
+
+        expect(storedLog().map((l) => l.id)).toEqual([1]);
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1]);
+    });
+
     test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
         storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
         knownAs([row(1), row(2)]);
