@@ -13,8 +13,9 @@
  *
  * Version 2 hashed those seven levels alongside the gear, and left a gap it
  * named: abilities and house rooms move a sim too. Version 3 closes that gap.
+ * Version 4 stops hashing the worn ability kit when no sim can read it (below).
  * Each bump changes the value every stored record keys on, which is why the
- * value carries its version in the open: `v1`/`v2`/`v3` fingerprints can never
+ * value carries its version in the open: `v1`/`v2`/`v3`/`v4` fingerprints can never
  * be equal, so nothing pools across a change by accident, and a record made
  * under an older version stays stored, stays readable and stays counted —
  * apart, never merged.
@@ -43,6 +44,14 @@
  * `characterData.characterAbilities`, which the snapshot does not carry. So the
  * learned level of every ability any loadout names is hashed too; without it a
  * levelled ability would move every loadout room's sim and move no fingerprint.
+ *
+ * The equipped kit is only an input while some combat room has no loadout
+ * assigned (that room falls back to the worn gear and abilities). When every
+ * combat room has its own loadout nothing reads the equipped kit, and hashing
+ * it made every loadout swap the lab does between rooms look like a build
+ * change, dropping the whole combat cache and every on-screen badge. In that
+ * case `equipped` is {@link LOADOUT_ONLY_ABILITIES} and the part reads
+ * `abilities=loadout-only`; the learned levels are still hashed.
  *
  * House rooms, by hrid and level, level 0 excluded. `Player.createFromDTO`
  * pushes a `HouseRoom` for every entry with `level > 0` and skips the rest, so
@@ -81,7 +90,7 @@
  * change; every bump strands the previous version's records in their own
  * cohort rather than deleting them.
  */
-export const FINGERPRINT_VERSION = 3;
+export const FINGERPRINT_VERSION = 4;
 
 /** What a current-version fingerprint value starts with */
 export const FINGERPRINT_PREFIX = `v${FINGERPRINT_VERSION}:`;
@@ -92,11 +101,12 @@ export const FINGERPRINT_PREFIX = `v${FINGERPRINT_VERSION}:`;
  * documents it instead.
  */
 export const FINGERPRINT_SPEC =
-    'v3: djb2 over loadout snapshots (savedAt excluded) + worn itemHrid+enhancementLevel + the seven combat ' +
+    'v4: djb2 over loadout snapshots (savedAt excluded) + worn itemHrid+enhancementLevel + the seven combat ' +
     'skill levels the sim reads (stamina, intelligence, attack, defense, melee, ranged, magic) + the equipped ' +
-    'ability slots (index, hrid, level, triggers) and the learned levels of loadout-named abilities + house ' +
+    'ability slots (index, hrid, level, triggers; omitted while every combat room has its own loadout) and ' +
+    'the learned levels of loadout-named abilities + house ' +
     'rooms at level above 0 (hrid, level); excludes skilling levels, buffs and consumables. ' +
-    'Value is prefixed "v3:".';
+    'Value is prefixed "v4:".';
 
 /**
  * The version a stored record was fingerprinted under.
@@ -159,6 +169,12 @@ export function combatLevelsPart(levels) {
 export const ABILITY_SLOTS = 5;
 
 /**
+ * Passed as `equipped` when every combat room has a loadout assigned, so the
+ * worn ability kit reaches no sim and must not reach the hash.
+ */
+export const LOADOUT_ONLY_ABILITIES = 'loadout-only';
+
+/**
  * One ability's trigger list, in the order `Ability.createFromDTO` passes it to
  * `Trigger.createFromDTO`. Order is significant to the string but not to the
  * sim (`shouldTrigger` ANDs them all); it is kept as given rather than sorted
@@ -198,17 +214,19 @@ function triggersPart(triggers) {
  * landed, so the placeholder is never mistaken for an empty kit.
  *
  * @param {Object|null} input
- * @param {Array<Object|null>} [input.equipped] - `dto.abilities`, 5 slots
+ * @param {Array<Object|null>|string} [input.equipped] - `dto.abilities`, 5 slots, or
+ *   {@link LOADOUT_ONLY_ABILITIES} when no sim reads the worn kit
  * @param {Object} [input.learned] - abilityHrid → learned level
  * @returns {string}
  */
 export function abilitiesPart(input) {
     if (!input || typeof input !== 'object') return 'abilities=unknown';
+    const loadoutOnly = input.equipped === LOADOUT_ONLY_ABILITIES;
     const equipped = Array.isArray(input.equipped) ? input.equipped : null;
-    if (!equipped) return 'abilities=unknown';
+    if (!equipped && !loadoutOnly) return 'abilities=unknown';
 
     const slots = [];
-    for (let i = 0; i < ABILITY_SLOTS; i++) {
+    for (let i = 0; i < ABILITY_SLOTS && equipped; i++) {
         const ability = equipped[i];
         if (!ability?.hrid) {
             slots.push(`${i}:-`);
@@ -223,7 +241,7 @@ export function abilitiesPart(input) {
         .sort()
         .map((hrid) => `${hrid}@${Math.max(0, Math.floor(Number(learned[hrid]) || 0))}`);
 
-    return `abilities=${slots.join(',')}|learned=${levels.join(',')}`;
+    return `abilities=${loadoutOnly ? LOADOUT_ONLY_ABILITIES : slots.join(',')}|learned=${levels.join(',')}`;
 }
 
 /**
@@ -287,6 +305,7 @@ export default {
     FINGERPRINT_SPEC,
     SIM_COMBAT_SKILLS,
     ABILITY_SLOTS,
+    LOADOUT_ONLY_ABILITIES,
     fingerprintVersionOf,
     isCurrentFingerprintVersion,
     combatLevelsPart,

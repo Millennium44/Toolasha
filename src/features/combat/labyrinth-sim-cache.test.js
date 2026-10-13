@@ -53,6 +53,7 @@ const simRuns = vi.hoisted(() => ({ list: [], result: {}, implementation: null }
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => adapter.gameData,
     buildPlayerDTO: () => adapter.playerDTO,
+    getLabyrinthMonsters: () => [],
     getCommunityBuffs: () => ({}),
 }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({

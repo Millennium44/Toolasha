@@ -12,6 +12,7 @@ import {
     buildPlayerDTO,
     buildGameDataPayload,
     applyLoadoutSnapshotToDTO,
+    getLabyrinthMonsters,
     getCommunityBuffs,
     getGuildBuffDetailMap,
     applyGuildBuffLevel,
@@ -22,6 +23,7 @@ import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { LOADOUT_ONLY_ABILITIES } from './labyrinth-fingerprint.js';
 import { hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, itemSpriteUrl } from '../../utils/overlay-format.js';
@@ -1697,6 +1699,28 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Whether every labyrinth combat room sims a saved loadout, so the worn
+     * ability kit reaches none of them.
+     *
+     * `buildLabyrinthPlayerDTO` replaces the abilities wholesale from the
+     * loadout snapshot, and only keeps the worn kit for a room with no
+     * assignment or whose assigned loadout the store does not hold. The lab
+     * swaps loadouts between rooms, so hashing the worn kit while every room
+     * has its own loadout threw the cache away on each swap. False (kit is an
+     * input) when the monster list is unreadable, as nothing can be ruled out.
+     * @private
+     * @returns {boolean}
+     */
+    _everyCombatRoomHasLoadout() {
+        const monsters = getLabyrinthMonsters();
+        if (!monsters.length) return false;
+        return monsters.every((monster) => {
+            const loadoutId = this.getLabyrinthLoadoutId(monster.hrid);
+            return loadoutId > 0 && Boolean(loadoutSnapshot.snapshots?.[loadoutId]);
+        });
+    }
+
+    /**
      * The ability kit and house rooms the sim would run, read off the DTO
      * builder rather than re-derived.
      *
@@ -1714,7 +1738,10 @@ class LabyrinthClearRate {
         const dto = buildPlayerDTO();
         if (!dto) return null;
         return {
-            abilities: { equipped: dto.abilities, learned: this._loadoutAbilityLevels() },
+            abilities: {
+                equipped: this._everyCombatRoomHasLoadout() ? LOADOUT_ONLY_ABILITIES : dto.abilities,
+                learned: this._loadoutAbilityLevels(),
+            },
             houseRooms: dto.houseRooms,
         };
     }

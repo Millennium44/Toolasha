@@ -15,6 +15,7 @@ import {
     ABILITY_SLOTS,
     combatLevelsPart,
     abilitiesPart,
+    LOADOUT_ONLY_ABILITIES,
     houseRoomsPart,
     fingerprintInput,
     tagFingerprint,
@@ -59,16 +60,16 @@ describe('isCurrentFingerprintVersion', () => {
         expect(isCurrentFingerprintVersion({})).toBe(false);
     });
 
-    test('v1, v2 and v3 are three cohorts, none poolable with another', () => {
+    test('v1 to v4 are four cohorts, none poolable with another', () => {
         // Each bump changed what is hashed, so a record from an older version
         // describes a character the current sim is not simulating
-        expect(FINGERPRINT_VERSION).toBe(3);
-        for (const version of [1, 2]) {
+        expect(FINGERPRINT_VERSION).toBe(4);
+        for (const version of [1, 2, 3]) {
             expect(isCurrentFingerprintVersion({ fingerprintVersion: version })).toBe(false);
         }
         // And measured against each other, not just against the current one
-        expect(isCurrentFingerprintVersion({ fingerprintVersion: 2 }, 3)).toBe(false);
-        expect(isCurrentFingerprintVersion({ fingerprintVersion: 3 }, 2)).toBe(false);
+        expect(isCurrentFingerprintVersion({ fingerprintVersion: 3 }, 4)).toBe(false);
+        expect(isCurrentFingerprintVersion({ fingerprintVersion: 4 }, 3)).toBe(false);
         expect(isCurrentFingerprintVersion({}, 2)).toBe(false);
     });
 
@@ -128,6 +129,15 @@ const kit = (over = {}) => ({
 const slots = (...abilities) => [...abilities, null, null, null, null, null].slice(0, 5);
 
 describe('abilitiesPart', () => {
+    test('loadout-only drops the worn kit but keeps the learned levels', () => {
+        const a = abilitiesPart(kit({ equipped: LOADOUT_ONLY_ABILITIES }));
+        const b = abilitiesPart(kit({ equipped: LOADOUT_ONLY_ABILITIES, learned: { '/abilities/berserk': 21 } }));
+        expect(a).toBe('abilities=loadout-only|learned=/abilities/berserk@20,/abilities/cleave@15');
+        expect(b).not.toBe(a);
+        expect(a).not.toBe(abilitiesPart(kit()));
+        expect(a).not.toBe('abilities=unknown');
+    });
+
     test('every slot is written, empty ones included, so a kit cannot shift under the hash', () => {
         const part = abilitiesPart(kit());
         expect(ABILITY_SLOTS).toBe(5);
