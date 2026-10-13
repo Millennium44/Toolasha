@@ -1320,6 +1320,36 @@ describe('per-character fight outcomes', () => {
         expect(labyrinthClearRate._outcomes).toEqual(written);
     });
 
+    test('Forget the mark clears a stored baseline, and a later fold does not bring it back', async () => {
+        await labyrinthClearRate.loadOutcomes();
+        await labyrinthClearRate.markOutcomeBaseline();
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').baseline).not.toBe(null);
+
+        await labyrinthClearRate.clearOutcomeBaseline();
+
+        expect(labyrinthClearRate._baseline).toBe(null);
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').baseline ?? null).toBe(null);
+        await labyrinthClearRate.saveOutcomes();
+        expect(labyrinthClearRate._baseline).toBe(null);
+    });
+
+    test('a newer baseline another device marked survives this tab holding an older one', async () => {
+        await labyrinthClearRate.loadOutcomes();
+        labyrinthClearRate._baseline = { at: 1_000, totals: {} };
+        // A sync pull stored the peer's later mark under the running page
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: {},
+            seen: {},
+            baseline: { at: 2_000, totals: {} },
+        });
+
+        await labyrinthClearRate.saveOutcomes();
+
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').baseline.at).toBe(2_000);
+        expect(labyrinthClearRate._baseline.at).toBe(2_000);
+    });
+
     test('once storage reads again the next save lands everything', async () => {
         db.unavailable = true;
         labyrinthClearRate._outcomes = { mine: { attempts: 1, clears: 0 } };
