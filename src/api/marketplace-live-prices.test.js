@@ -84,6 +84,20 @@ describe('MarketAPI live-server prices on the test server', () => {
         }
     });
 
+    test('a source switch followed by a failed fetch still notifies listeners', async () => {
+        const marketAPI = await load('https://test.milkywayidle.com');
+        await marketAPI.fetch(true);
+        const listener = vi.fn();
+        marketAPI.on(listener);
+        store.set(MIRROR_KEY, true);
+        fetchMock.mockImplementation(async () => {
+            throw new Error('offline');
+        });
+        await marketAPI.fetch(true);
+        expect(marketAPI.marketData).toBeNull();
+        expect(listener).toHaveBeenCalled();
+    });
+
     test('the CN test server reads the CN live copy', async () => {
         store.set(MIRROR_KEY, true);
         const marketAPI = await load('https://test.milkywayidlecn.com');

@@ -237,6 +237,8 @@ class MarketAPI {
         this.lastFetchTimestamp = null;
         this.pricePatchs = {};
         this._cacheExpiresAt = null;
+        // Whatever the new source then yields (or fails to), consumers must drop the old economy's figures
+        this.notifyListeners();
     }
 
     /** Stop the page-lifetime base-snapshot refresh interval. */
