@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loot log values tokens; Output Totals in every language
+
+- The Loot Log now values cowbells, dungeon tokens, labyrinth tokens and task tokens in its totals, daily output and profit instead of counting them as 0, Output Totals read drop rates and counts in the game's own number format (comma-decimal languages were off by up to about 4×), and the Character Sheet link puts the special ability in its own slot.
+
 ### Labyrinth: Recommend by Time
 
 - Beside Recommend by Win %, the labyrinth panel can recommend the highest room level whose expected time per clear (failed runs included) fits a target time you set, defaulting to 300 seconds; adapted from the Labyrinth Win Rate Calculator 1.6.0.
