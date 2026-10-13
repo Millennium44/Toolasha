@@ -391,6 +391,9 @@ export function parseShorthandAmount(text) {
         .toLowerCase();
     // A cleared box means none, the same as the 0 a number box saved
     if (trimmed === '') return 0;
+    // One separator then exactly three digits and nothing else ("500,000", "500.000") is
+    // grouping in every format: a gold amount is never typed to three decimal places
+    if (/^\d{1,3}[.,]\d{3}$/.test(trimmed)) return Number(trimmed.replace(/[.,]/, ''));
     const { group, decimal } = gameNumberSeparators();
     const forms = [
         { group: /\s/.test(group || '') ? ' ' : group || ',', decimal: decimal || '.' },

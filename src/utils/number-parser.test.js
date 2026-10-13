@@ -426,6 +426,9 @@ describe('parseShorthandAmount', () => {
             expect(parseShorthandAmount('1,5m')).toBe(1_500_000);
             expect(parseShorthandAmount('3.000.000')).toBe(3_000_000);
             expect(parseShorthandAmount('1.5m')).toBe(1_500_000);
+            // One separator and three digits is grouping, whichever format it was typed in
+            expect(parseShorthandAmount('500,000')).toBe(500_000);
+            expect(parseShorthandAmount('500.000')).toBe(500_000);
             expect(parseShorthandAmount('1.000,000')).toBe(1000);
             expect(parseShorthandAmount('1.000 000')).toBeNull();
         } finally {
