@@ -300,12 +300,21 @@ const FAILED = 'could not be drawn';
 
 describe('costing a target', () => {
     test('the piece it replaces is found through the slot, not the name', () => {
-        // 100M to buy, less 40M for the sword being worn
+        // 100M to buy, less 38.4M (40M bid after 4% tax) for the sword being worn
         watchTarget('/items/holy_sword');
         const [target] = watchedTargets();
 
         expect(target.worn?.itemHrid).toBe('/items/cheese_sword');
-        expect(target.cost).toBe(60_000_000);
+        expect(target.cost).toBe(61_600_000);
+    });
+
+    test('the trade-in is the worn piece bid after the market sell tax', () => {
+        watchTarget('/items/holy_sword');
+        const [target] = watchedTargets();
+
+        // 40M bid, 4% tax: 38.4M reaches the player, not 40M
+        expect(target.worn.bid).toBe(38_400_000);
+        expect(target.cost).toBe(100_000_000 - 38_400_000);
     });
 
     test('an empty slot has nothing to trade in', () => {
@@ -387,9 +396,9 @@ describe('the whole list', () => {
         watchTarget('/items/rough_boots');
 
         const plan = everything();
-        expect(plan.cost).toBe(65_000_000);
+        expect(plan.cost).toBe(66_600_000);
         expect(plan.affordable).toBe(false);
-        expect(plan.needed).toBe(5_000_000);
+        expect(plan.needed).toBe(6_600_000);
     });
 
     test('coins come off the character rather than out of net worth', () => {
@@ -837,7 +846,7 @@ describe('crafting rather than buying', () => {
             count: 1,
         });
         watchTarget('/items/refined_spear');
-        expect(watchedTargets()[0].cost).toBe(900_000_000 - 40_000_000);
+        expect(watchedTargets()[0].cost).toBe(900_000_000 - 38_400_000);
 
         toggleCrafting('/items/refined_spear');
         // 30 shards at 1M, less the 40M for the sword being replaced
@@ -848,8 +857,8 @@ describe('crafting rather than buying', () => {
         watchTarget('/items/refined_spear');
         toggleCrafting('/items/refined_spear');
 
-        // 30M of shards plus the 300M spear, less the 40M trade-in
-        expect(watchedTargets()[0].cost).toBe(330_000_000 - 40_000_000);
+        // 30M of shards plus the 300M spear, less the 40M bid after 4% tax (38.4M)
+        expect(watchedTargets()[0].cost).toBe(330_000_000 - 38_400_000);
     });
 
     test('the tea takes its cut off the materials', () => {
@@ -863,7 +872,7 @@ describe('crafting rather than buying', () => {
         // 30 shards less 11.1%, at 1M each, plus the 300M spear, less the 40M
         // trade-in
         const shards = 30 * (1 - 0.111) * 1_000_000;
-        expect(watchedTargets()[0].cost).toBeCloseTo(shards + 300_000_000 - 40_000_000, 0);
+        expect(watchedTargets()[0].cost).toBeCloseTo(shards + 300_000_000 - 38_400_000, 0);
     });
 
     test('the saving is shown, not just applied', () => {
@@ -915,7 +924,7 @@ describe('crafting rather than buying', () => {
 describe('selling per target', () => {
     test('a target follows the panel until it is told otherwise', () => {
         watchTarget('/items/holy_sword');
-        expect(watchedTargets()[0].cost).toBe(60_000_000);
+        expect(watchedTargets()[0].cost).toBe(61_600_000);
 
         setNoSell(true);
         expect(watchedTargets()[0].cost).toBe(100_000_000);
@@ -927,7 +936,7 @@ describe('selling per target', () => {
         cycleTargetNoSell('/items/holy_sword'); // always sells
 
         setNoSell(true);
-        expect(watchedTargets()[0].cost).toBe(60_000_000);
+        expect(watchedTargets()[0].cost).toBe(61_600_000);
     });
 
     test('cycling three times hands it back to the panel', () => {
@@ -2276,8 +2285,8 @@ describe('two levels of one piece are two targets', () => {
 
         const byLevel = Object.fromEntries(watchedTargets().map((target) => [target.enhancementLevel, target.cost]));
         // Each less the 40M the worn cheese sword trades in for
-        expect(byLevel[5]).toBe(160_000_000);
-        expect(byLevel[8]).toBe(460_000_000);
+        expect(byLevel[5]).toBe(161_600_000);
+        expect(byLevel[8]).toBe(461_600_000);
     });
 
     test('stopping one leaves the other', () => {
@@ -2330,7 +2339,7 @@ describe('the price the advisor quoted is the price the card shows', () => {
         const [target] = watchedTargets();
         expect(target.cost).toBe(44_000_000);
         // What this module would have said on its own is kept beside it
-        expect(target.derivedCost).toBe(60_000_000);
+        expect(target.derivedCost).toBe(61_600_000);
         expect(target.quotedFrom).toBe('market');
     });
 
@@ -2347,7 +2356,7 @@ describe('the price the advisor quoted is the price the card shows', () => {
         watchTarget('/items/holy_sword', 0);
 
         const [target] = watchedTargets();
-        expect(target.cost).toBe(60_000_000);
+        expect(target.cost).toBe(61_600_000);
         expect(target.quotedCost).toBeNull();
     });
 
@@ -2356,7 +2365,7 @@ describe('the price the advisor quoted is the price the card shows', () => {
 
         const [target] = watchedTargets();
         // Falls back to what this module can work out, rather than to zero
-        expect(target.cost).toBe(60_000_000);
+        expect(target.cost).toBe(61_600_000);
         expect(target.quotedCost).toBeNull();
     });
 });

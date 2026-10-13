@@ -65,6 +65,7 @@ import { findProducingAction } from '../../utils/production-index.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import {
     itemIcon,
     skillIcon,
@@ -1054,6 +1055,21 @@ function nameOf(itemHrid) {
 }
 
 /**
+ * What selling the worn piece would actually put in hand: its bid net of the
+ * market sell tax, since a trade-in is a sale. Zero when nothing is worn or
+ * nothing bids on it. (Equipment is never a cowbell bag, so the 18% bag rate
+ * cannot apply here.)
+ *
+ * @param {{itemHrid: string, enhancementLevel?: number}|null} worn - The worn item
+ * @returns {number} After-tax coins
+ */
+function wornTradeIn(worn) {
+    if (!worn) return 0;
+    const bid = getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0;
+    return bid > 0 ? calculatePriceAfterTax(bid) : 0;
+}
+
+/**
  * The piece currently in the slot this target would fill.
  *
  * By equipment type rather than by name, since that is what a target replaces —
@@ -1455,7 +1471,7 @@ function basePrice(itemHrid) {
 function costOf(itemHrid, enhancementLevel) {
     const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
     const worn = wornRivalOf(itemHrid);
-    const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+    const wornBid = wornTradeIn(worn);
     const noSell = targetNoSell(itemHrid, enhancementLevel);
 
     // Nobody is selling this one at this level — which is usually not a piece
@@ -1707,7 +1723,7 @@ function costEveryTarget() {
         } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
-        const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+        const wornBid = wornTradeIn(worn);
 
         // A figure the caller costed wins over one derived here. Not because it
         // is the better number — it is a different model — but because it is
@@ -2754,7 +2770,7 @@ function slotSection(slot, targets) {
     Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '3px' });
 
     const worn = dataManager.getEquipment?.()?.get?.(`/item_locations/${slot}`) || null;
-    const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+    const wornBid = wornTradeIn(worn);
 
     // The heading: what is in the slot and what selling it would put towards
     // the upgrade, which is half the cost of every target below it
