@@ -364,7 +364,10 @@ class MarketHistoryPanel {
         if (!this.prefs?.open || !this.current || !this.panel) return false;
         if (typeof document !== 'undefined' && document.hidden) return false;
         if (this.drawnAt && Date.now() - this.drawnAt < AUTO_REFRESH_MS) return false;
-        if (!this.drawnAt) return false;
+        // Nothing drawn yet is due too, but only when a request was turned away (another consumer
+        // had the shared server on cooldown): otherwise the first request is still in flight and
+        // a second one would double it.
+        if (!this.drawnAt && !this.awaitingHistory) return false;
 
         // The forced redraw of the same item showItem already does for a range change
         this.shown = null;
@@ -1108,11 +1111,15 @@ class MarketHistoryPanel {
             this.showHistoryStatus(
                 `the shared price-history server is busy; retrying in ${describeCooldown(cooldownMs)}`
             );
+            // This item has no chart yet, so an older item's draw time says nothing about it
+            this.drawnAt = null;
+            this.awaitingHistory = true;
             return;
         }
         this.showHistoryStatus(null);
 
         this.drawnAt = Date.now();
+        this.awaitingHistory = false;
         this.drawChart(buildHistorySeries(rows, this.prefs.days));
         this.drawAftermath(priceKey(itemHrid, level), rows);
     }
