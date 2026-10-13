@@ -1180,7 +1180,12 @@ class AlchemyProfitDisplay {
         }
 
         // Create Action Speed & Time section (after profitability)
-        if (effectiveInputField && profitData.actionTime && profitData.efficiencyBreakdown) {
+        if (
+            config.getSetting('actionPanel_showSpeedTime') &&
+            effectiveInputField &&
+            profitData.actionTime &&
+            profitData.efficiencyBreakdown
+        ) {
             const speedTimeSection = this.createActionSpeedTimeSection(profitData, effectiveInputField, estimateSpec);
             if (speedTimeSection) {
                 speedTimeSection.id = 'mwi-alchemy-speed-time';
@@ -1191,7 +1196,7 @@ class AlchemyProfitDisplay {
         }
 
         // Create Level Progress section (after action speed)
-        if (actionType && itemHrid) {
+        if (config.getSetting('actionPanel_showLevelProgress') && actionType && itemHrid) {
             const levelProgressSection = this.createLevelProgressSection(actionType, itemHrid, profitData);
             if (levelProgressSection) {
                 levelProgressSection.id = 'mwi-alchemy-level-progress';
