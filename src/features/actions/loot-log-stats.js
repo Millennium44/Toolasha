@@ -34,6 +34,7 @@ import {
 } from '../../utils/gathering-drop-model.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
+import { resolveCurrencyValue } from './loot-log-currency.js';
 import { lootEntryIdentity } from './loot-log-analytics.js';
 import { reconstructEnhancingRun, computeEnhancingSummary, mergeEnhancingSummaries } from './enhancing-loot-summary.js';
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
@@ -740,6 +741,14 @@ class LootLogStats {
                 continue;
             }
 
+            // Cowbells and tokens have no order book — value them the way the rest of Toolasha does
+            const currencyValue = resolveCurrencyValue(baseHrid);
+            if (currencyValue !== null) {
+                askTotal += currencyValue * count;
+                bidTotal += currencyValue * count;
+                continue;
+            }
+
             // Check for openable containers (caches, chests) — use expected value
             const itemDetails = dataManager.getItemDetails(baseHrid);
             if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
@@ -844,6 +853,13 @@ class LootLogStats {
             if (baseHrid === '/items/coin') {
                 askRevenue += count;
                 bidRevenue += count;
+                continue;
+            }
+            // Cowbell and token values are already net of tax, like container EV
+            const currencyValue = resolveCurrencyValue(baseHrid);
+            if (currencyValue !== null) {
+                askRevenue += currencyValue * count;
+                bidRevenue += currencyValue * count;
                 continue;
             }
             // Container EV already taxes its market contents and keeps coins at
@@ -963,6 +979,9 @@ class LootLogStats {
      * @returns {{ask: number, bid: number}|null} Null when nothing prices it
      */
     priceExpectedDrop(itemHrid, count) {
+        const currencyValue = resolveCurrencyValue(itemHrid);
+        if (currencyValue !== null) return { ask: currencyValue * count, bid: currencyValue * count };
+
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
             const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
@@ -1186,6 +1205,9 @@ class LootLogStats {
      */
     getModelPrice(itemHrid) {
         if (itemHrid === '/items/coin') return 1;
+
+        const currencyValue = resolveCurrencyValue(itemHrid);
+        if (currencyValue !== null) return currencyValue;
 
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
@@ -1667,8 +1689,14 @@ class LootLogStats {
         let askPerItem = 0;
         let bidPerItem = 0;
 
+        const currencyValue = resolveCurrencyValue(baseHrid);
+        if (currencyValue !== null) {
+            askPerItem = currencyValue;
+            bidPerItem = currencyValue;
+        }
+
         // Check for openable containers — use expected value
-        if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+        if (askPerItem === 0 && itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
             const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
             if (evData && evData.expectedValue > 0) {
                 askPerItem = evData.expectedValue;

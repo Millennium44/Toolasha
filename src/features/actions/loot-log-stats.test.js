@@ -14,6 +14,7 @@ import {
     LOOT_LOG_CSV_COLUMNS,
 } from './loot-log-stats.js';
 import lootLogHistory from './loot-log-history.js';
+import { resolveCurrencyValue } from './loot-log-currency.js';
 import { showToast } from '../../utils/toast.js';
 import { utf8Length } from '../../utils/chat-fill.js';
 
@@ -64,6 +65,8 @@ vi.mock('../market/expected-value-calculator.js', () => ({
         calculateExpectedValue: vi.fn(),
     },
 }));
+
+vi.mock('./loot-log-currency.js', () => ({ resolveCurrencyValue: vi.fn(() => null) }));
 
 vi.mock('./loot-log-history.js', () => ({
     default: {
@@ -422,6 +425,53 @@ describe('LootLogStats.calculateProfit container valuation', () => {
         const profit = stats.calculateProfit(entry);
         expect(profit.askProfit).toBeCloseTo(100 * (1 - MARKET_TAX), 10);
         expect(profit.bidProfit).toBeCloseTo(80 * (1 - MARKET_TAX), 10);
+    });
+});
+
+describe('LootLogStats non-market currency valuation', () => {
+    let stats;
+    const values = {
+        '/items/cowbell': 90_000,
+        '/items/chimerical_token': 1_500,
+        '/items/labyrinth_token': 2_000,
+        '/items/task_token': 30_000,
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        expectedValueCalculator.isInitialized = false;
+        resolveCurrencyValue.mockImplementation((hrid) => values[hrid] ?? null);
+        dataManager.getActionDetails.mockReturnValue({ inputItems: null });
+        dataManager.getItemDetails.mockReturnValue({});
+        // The market has no listing for any of these currencies
+        getItemPrices.mockImplementation((hrid) => (values[hrid] ? null : { ask: 100, bid: 80 }));
+        stats = new LootLogStats();
+    });
+
+    test('Total Value counts cowbells and tokens instead of valuing them at 0', () => {
+        const drops = { '/items/cowbell': 2, '/items/chimerical_token': 10, '/items/labyrinth_token': 1 };
+        const total = stats.calculateTotalValue(drops);
+        expect(total).toEqual({ askTotal: 180_000 + 15_000 + 2_000, bidTotal: 180_000 + 15_000 + 2_000 });
+    });
+
+    test('Profit takes currency values as net, untaxed, while market drops still pay tax', () => {
+        const entry = {
+            actionHrid: '/actions/combat/fly',
+            actionCount: 1,
+            drops: { '/items/task_token': 2, '/items/milk': 1 },
+        };
+        const profit = stats.calculateProfit(entry);
+        expect(profit.askProfit).toBeCloseTo(60_000 + 100 * (1 - MARKET_TAX), 10);
+        expect(profit.bidProfit).toBeCloseTo(60_000 + 80 * (1 - MARKET_TAX), 10);
+    });
+
+    test('the model price and the item breakdown use the same value', () => {
+        expect(stats.getModelPrice('/items/cowbell')).toBe(90_000);
+        expect(stats.resolveItemPricing('/items/chimerical_token')).toMatchObject({
+            askPerItem: 1_500,
+            bidPerItem: 1_500,
+        });
+        expect(stats.priceExpectedDrop('/items/labyrinth_token', 3)).toEqual({ ask: 6_000, bid: 6_000 });
     });
 });
 

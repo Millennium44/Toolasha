@@ -41,6 +41,8 @@ vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn() }));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: vi.fn() },
 }));
+vi.mock('./loot-log-currency.js', () => ({ resolveCurrencyValue: vi.fn(() => null) }));
+
 vi.mock('./loot-log-history.js', () => ({
     default: {
         mergeAndSave: vi.fn(),
