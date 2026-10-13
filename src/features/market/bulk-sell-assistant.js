@@ -50,7 +50,8 @@ import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createFloatingWidget } from '../../utils/floating-widget.js';
-import { formatKMB, parseKMB } from '../../utils/formatters.js';
+import { formatKMB } from '../../utils/formatters.js';
+import { MAGNITUDE_SUFFIXES, gameNumberSeparators, parseGameNumber } from '../../utils/number-parser.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -74,6 +75,25 @@ function vendorLabel(button) {
     const found = text.match(VENDOR_AMOUNT);
     if (!found) return null;
     return { amount: found[0].replace(/[.,]+$/, ''), shape: text.replace(found[0], '#').toLowerCase() };
+}
+
+/**
+ * Read a printed vendor total in the game's own number format ("4,56M" in de-DE, "4.56M" in en-US).
+ * @param {string} amount - The figure from {@link vendorLabel}
+ * @returns {{value: number, mantissa: number, places: number, abbreviated: boolean}} The total in coins, the
+ *   printed number before its magnitude letter, how many decimal places it was printed with, and whether it
+ *   carried a letter (so stands for a range, not a point). `value` is NaN when it is not a number
+ */
+function parseVendorAmount(amount) {
+    const text = String(amount ?? '').trim();
+    const letter = text.match(/[a-z]$/i)?.[0].toLowerCase() ?? '';
+    const printed = letter ? text.slice(0, -1) : text;
+    const { decimal } = gameNumberSeparators();
+    const at = printed.lastIndexOf(decimal);
+    const places = at >= 0 ? printed.length - at - 1 : 0;
+    const mantissa = parseGameNumber(printed);
+    const scale = letter ? MAGNITUDE_SUFFIXES[letter] : 1;
+    return { value: scale ? mantissa * scale : NaN, mantissa, places, abbreviated: !!letter };
 }
 
 /** Bound on waiting for the vendor button to relabel after its arming click */
@@ -1222,16 +1242,13 @@ class BulkSellAssistant {
         const armed = this._vendorButtonArmed(button);
 
         const amount = vendorLabel(button).amount;
-        const shown = parseKMB(amount);
+        const { value: shown, mantissa, places, abbreviated } = parseVendorAmount(amount);
         const expected = this.current.count * (this.decision?.price || 0);
         if (!Number.isFinite(shown) || !(expected > 0)) return { why: 'the Sell For amount cannot be read' };
         // An abbreviated label ("863K") stands for a range, not a point: one unit of its last printed digit. The
         // game truncates (863,584 reads "863K", measured live), though a rounded read ("864K") has been assumed
         // before, so accept both: [shown - half a unit, shown + a unit). A label with no suffix is the exact total.
-        const digits = amount.match(/^[\d,]*\.?(\d*)/)?.[1].length ?? 0;
-        const mantissa = parseFloat(amount.replace(/,/g, '')) || 1;
-        const abbreviated = /[a-z]\s*$/i.test(amount);
-        const unit = abbreviated ? (shown / mantissa) * 10 ** -digits : 0;
+        const unit = abbreviated ? (shown / (mantissa || 1)) * 10 ** -places : 0;
         if (abbreviated ? expected < shown - unit / 2 || expected >= shown + unit : shown !== expected) {
             return { why: `Sell For says ${amount}, not the queued ${formatKMB(expected)}` };
         }

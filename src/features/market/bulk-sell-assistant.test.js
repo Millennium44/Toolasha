@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
 const game = vi.hoisted(() => ({
     items: [],
@@ -1610,6 +1611,28 @@ describe('confirming from the strip', () => {
                 // 1000 x 863.584 etc.: the price may be fractional here only to build the exact total
                 const result = verdict(count, price, label);
                 expect(result.why === undefined).toBe(accepted);
+            });
+
+            describe('in a comma-decimal language (de-DE)', () => {
+                beforeEach(() => {
+                    localStorage.setItem('i18nextLng', 'de-DE');
+                    _resetGameNumberSeparators();
+                });
+                afterEach(() => {
+                    localStorage.removeItem('i18nextLng');
+                    _resetGameNumberSeparators();
+                });
+
+                test.each([
+                    ['M, truncated, comma decimal', 1000, 4567.891, 'Sell For 4,56M Coins', true],
+                    ['M, a different total', 1000, 4567.891, 'Sell For 4,7M Coins', false],
+                    ['an exact total grouped with periods', 18, 22222, 'Sell For 399.996 Coins', true],
+                    ['an exact total off by one', 18, 22222, 'Sell For 399.995 Coins', false],
+                    ['K, truncated', 1000, 863.584, 'Sell For 863K Coins', true],
+                ])('%s', (_name, count, price, label, accepted) => {
+                    const result = verdict(count, price, label);
+                    expect(result.why === undefined).toBe(accepted);
+                });
             });
         });
 
