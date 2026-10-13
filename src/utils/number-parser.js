@@ -358,7 +358,9 @@ export function gameNumberPattern() {
  */
 export function gameDigitsSource({ decimal = true } = {}) {
     const { group, decimal: decimalChar } = gameNumberPattern();
-    const base = `\\d[\\d${group}]*`;
+    // Whitespace only groups between exactly-three-digit runs ("1 234 567"); a
+    // loose `[\d\s]*` swallowed a neighbouring number in text like "1,5 7,29%".
+    const base = group === '\\s' ? '(?:\\d{1,3}(?:\\s\\d{3})+(?!\\d)|\\d+)' : `\\d[\\d${group}]*`;
     return decimal ? `${base}(?:${decimalChar}\\d+)?` : base;
 }
 
