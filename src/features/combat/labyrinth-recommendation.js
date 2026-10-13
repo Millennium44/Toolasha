@@ -289,9 +289,15 @@ export const recommendationMethods = {
      * value carries its version — `v3:<hash>` — so a record made under the
      * gear-only v1 or the gear+levels v2 can never match one made now, and
      * nothing pools across a change by accident.
+     *
+     * By default the worn ability kit drops out while every combat room is on a
+     * saved loadout (no labyrinth sim reads it). A caller whose sim does fight
+     * with the worn kit — a zone-context probe — passes `wornKit` so a swap of
+     * worn abilities still moves the value.
      * @private
+     * @param {{wornKit?: boolean}} [options]
      */
-    _snapshotContentFingerprint() {
+    _snapshotContentFingerprint({ wornKit = false } = {}) {
         try {
             const stored = JSON.stringify(loadoutSnapshot.snapshots || {}, (key, value) =>
                 key === 'savedAt' ? undefined : value
@@ -309,7 +315,7 @@ export const recommendationMethods = {
                 )
                 .join('|');
             const levels = this._combatLevelsFingerprintPart();
-            const build = this._simBuildInputs?.() ?? null;
+            const build = this._simBuildInputs?.({ wornKit }) ?? null;
             return tagFingerprint(
                 this._hashString(
                     fingerprintInput({

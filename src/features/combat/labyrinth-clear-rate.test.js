@@ -4833,6 +4833,18 @@ describe('the build fingerprint', () => {
                 expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(before);
             });
 
+            test('the worn-kit fingerprint a zone-context sim compares still sees that swap', () => {
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
+                const labBefore = labyrinthClearRate._snapshotContentFingerprint();
+                const wornBefore = labyrinthClearRate._snapshotContentFingerprint({ wornKit: true });
+                // Reading the worn kit is not the same value as ignoring it
+                expect(wornBefore).not.toBe(labBefore);
+
+                adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/cleave')));
+                expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(labBefore);
+                expect(labyrinthClearRate._snapshotContentFingerprint({ wornKit: true })).not.toBe(wornBefore);
+            });
+
             test('...and the lab swapping loadouts does not clear the combat cache or recommendations', () => {
                 adapterMock.buildPlayerDTO.mockReturnValue(dto(kit('/abilities/berserk')));
                 labyrinthClearRate._invalidateIfInputsChanged();

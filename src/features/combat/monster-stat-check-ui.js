@@ -729,7 +729,10 @@ class MonsterStatCheckPanel {
             // the fight recorder pools by. Ticks fought in other gear compared
             // against a sim of this gear read as findings that are really a
             // loadout change.
-            const fingerprint = labyrinthClearRate._snapshotContentFingerprint?.() || null;
+            // A zone-context probe fights with the abilities worn right now, so its fingerprint
+            // must see them; the labyrinth one deliberately does not while every room has a loadout
+            const fingerprint =
+                labyrinthClearRate._snapshotContentFingerprint?.({ wornKit: Boolean(probeContext(snap)) }) || null;
             // A capture is usable if it holds ticks and matches this monster,
             // this room level AND this build (unlabelled fields pass) —
             // comparing ticks from one context against a sim of another reads

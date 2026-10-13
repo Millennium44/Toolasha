@@ -1730,16 +1730,23 @@ class LabyrinthClearRate {
      * stop matching the build being simulated. Null when there is nothing to
      * read yet — `buildPlayerDTO` logs and returns null without character or
      * client data, so both are checked first rather than provoking it.
+     *
+     * With a saved loadout on every combat room no labyrinth sim reads the worn
+     * kit, so by default `equipped` is {@link LOADOUT_ONLY_ABILITIES} and a worn
+     * ability change is invisible. That reduction is for labyrinth consumers
+     * only: a zone-context sim (`probeSetup` with a zone) fights with the worn
+     * abilities, so it passes `wornKit` and gets the real slots.
      * @private
+     * @param {{wornKit?: boolean}} [options] - `wornKit` keeps the worn abilities in the result
      * @returns {{abilities: Object, houseRooms: Object}|null}
      */
-    _simBuildInputs() {
+    _simBuildInputs({ wornKit = false } = {}) {
         if (!dataManager.characterData || !dataManager.getInitClientData?.()) return null;
         const dto = buildPlayerDTO();
         if (!dto) return null;
         return {
             abilities: {
-                equipped: this._everyCombatRoomHasLoadout() ? LOADOUT_ONLY_ABILITIES : dto.abilities,
+                equipped: !wornKit && this._everyCombatRoomHasLoadout() ? LOADOUT_ONLY_ABILITIES : dto.abilities,
                 learned: this._loadoutAbilityLevels(),
             },
             houseRooms: dto.houseRooms,
