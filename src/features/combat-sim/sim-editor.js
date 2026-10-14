@@ -38,6 +38,7 @@ import {
     sharedProfileWarning,
 } from '../../utils/shared-profile-status.js';
 import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { addStyles } from '../../utils/dom.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
 
@@ -84,6 +85,25 @@ function escapeHtml(text) {
  * dropdown at all.
  */
 const LOADOUT_MEMORY_KEY = 'simEditorLoadoutName';
+
+const EDITOR_ROW_STYLE_ID = 'mwi-csim-editor-row-styles';
+const EDITOR_ROW_CSS = `
+.mwi-csim-row { padding: 2px 4px; border-radius: 3px; }
+.mwi-csim-row-alt { background: rgba(255, 255, 255, 0.035); }
+.mwi-csim-row:hover { background: rgba(74, 158, 255, 0.12); }
+`;
+
+/**
+ * Opening tag of an editor list row (equipment, abilities, food, drinks).
+ * Odd rows get the stripe class so the eye can follow a row across the gap
+ * between the name and its controls; the hover rule lives in the stylesheet.
+ * @param {number} index - Row position within its list
+ * @returns {string} HTML
+ */
+function editorRowOpen(index) {
+    const alt = index % 2 === 1 ? ' mwi-csim-row-alt' : '';
+    return `<div class="mwi-csim-row${alt}" style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
+}
 
 export class SimEditor {
     /**
@@ -1595,6 +1615,7 @@ export class SimEditor {
             html += this._renderCommunityBuffsSection(dto);
         }
 
+        addStyles(EDITOR_ROW_CSS, EDITOR_ROW_STYLE_ID);
         editorArea.innerHTML = html;
         this._wireEditorEvents(editorArea, dto);
     }
@@ -1635,6 +1656,7 @@ export class SimEditor {
             '/equipment_types/charm': 'Charm',
         };
 
+        let equipRow = 0;
         const equippedCount = slotOrder.filter((s) => dto.equipment[s]).length;
         let html = `<div style="margin-bottom:10px;">`;
         html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="equip-section">`;
@@ -1647,7 +1669,7 @@ export class SimEditor {
             const label = slotLabels[slotType] || slotType.split('/').pop();
 
             if (!equip) {
-                html += `<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">`;
+                html += editorRowOpen(equipRow++);
                 html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
                 html += `<span style="color:#555; flex:1; font-style:italic;">Empty</span>`;
                 html += `<button data-equipment-slot="${slotType}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">add</button>`;
@@ -1658,13 +1680,13 @@ export class SimEditor {
             const item = itemDetailMap[equip.hrid];
             const name = item?.name || equip.hrid.split('/').pop();
 
-            html += `<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">`;
+            html += editorRowOpen(equipRow++);
             html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
             html += `<span style="color:#666; font-size:11px;">+</span>`;
             html += `<input type="number" min="0" max="20" value="${equip.enhancementLevel}"
                 data-enhance-slot="${slotType}"
-                style="width:36px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:3.5em; box-sizing:content-box; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += `<button data-equipment-slot="${slotType}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
             html += '</div>';
@@ -1693,7 +1715,7 @@ export class SimEditor {
             const slotLabel = i === 0 ? 'Special' : `Slot ${i}`;
 
             if (!ability) {
-                html += `<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">`;
+                html += editorRowOpen(i);
                 html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
                 html += `<span style="color:#555; flex:1; font-style:italic;">Empty</span>`;
                 html += `<button data-ability-slot="${i}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">add</button>`;
@@ -1704,13 +1726,13 @@ export class SimEditor {
             const detail = abilityDetailMap[ability.hrid];
             const name = detail?.name || ability.hrid.split('/').pop();
 
-            html += `<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">`;
+            html += editorRowOpen(i);
             html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
             html += `<span style="color:#666; font-size:11px;">Lv</span>`;
             html += `<input type="number" min="1" max="200" value="${ability.level}"
                 data-ability-idx="${i}"
-                style="width:42px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:4em; box-sizing:content-box; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += this._renderTriggerButton('abilities', i, ability, gameData);
             html += `<button data-ability-slot="${i}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
@@ -1746,7 +1768,7 @@ export class SimEditor {
             const item = dto.food[i];
             const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
             const nameColor = item ? '#e0e0e0' : '#555';
-            html += '<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">';
+            html += editorRowOpen(i);
             html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
             html +=
                 '<span style="color:' +
@@ -1769,7 +1791,7 @@ export class SimEditor {
             const item = dto.drinks[i];
             const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
             const nameColor = item ? '#e0e0e0' : '#555';
-            html += '<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">';
+            html += editorRowOpen(i);
             html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
             html +=
                 '<span style="color:' +
