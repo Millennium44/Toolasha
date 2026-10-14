@@ -94,14 +94,16 @@ vi.mock('./direct-enhancement-cost.js', () => ({
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     // A cape base with no listing: the craft estimate the ordinary +0 path returns
-    resolveItemPrice: vi.fn((hrid) => ({
+    resolveItemPrice: vi.fn((hrid, opts) => ({
         price:
             hrid === CAPE
                 ? state.starPrice
                 : hrid === SHARD
                   ? 2_000_000
                   : hrid === BASE
-                    ? state.baseSell
+                    ? opts?.side === 'sell'
+                        ? state.baseSell
+                        : 300_000
                     : hrid === MIRROR
                       ? state.mirrorPrice
                       : 1,
@@ -297,6 +299,45 @@ describe('refined target priced from a held base', () => {
             expect(explainUpgradeCost(sword(2), gameData).buys[0].source).toBe('sim');
             state.mirrorPrice = 1_000_000_000;
             expect(explainUpgradeCost(sword(7), gameData).buys[0].source).toBe('sim');
+        });
+    });
+
+    describe('review follow-ups', () => {
+        beforeEach(() => {
+            state.climb = (from, to) => (2 ** to - 2 ** from) * 1_000_000;
+            state.mirrorPrice = 1_000_000;
+        });
+
+        test('one held copy is not both inputs of a mirror: a lone +4 cape to +5 enhances it', () => {
+            state.items = [stack(BASE, 4)];
+            const detail = explainUpgradeCost(tier(5, { upgradeHrid: BASE }), gameData);
+            expect(detail.buys[0]).toMatchObject({ source: 'enhance', price: 16_000_000 });
+        });
+
+        test('a worn and a spare base of the same level: the spare is the one refined', () => {
+            state.mirrorPrice = 1_000_000_000;
+            state.items = [stack(BASE, 7, '/item_locations/back'), stack(BASE, 7)];
+            const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+            const detail = explainUpgradeCost(candidate, gameData);
+            expect(detail.ladder).toMatchObject({ fromLevel: 7, fromEquipped: false });
+            expect(detail.credit).toBe(state.baseSell);
+        });
+
+        test('a mirrored base beats refining the worn one when the worn base sells for enough', () => {
+            // Worn refine: 200M shards, 300M with the 100M the base would sell for. A mirrored base:
+            // 200M shards + about 45M of copies.
+            state.baseSell = 100_000_000;
+            state.items = [stack(BASE, 7, '/item_locations/back')];
+            const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+            const detail = explainUpgradeCost(candidate, gameData);
+            expect(detail.ladder.refine.mirror).toBeTruthy();
+            expect(detail.credit).toBe(100_000_000);
+        });
+
+        test('a cheap worn base is still refined as it stands', () => {
+            state.items = [stack(BASE, 7, '/item_locations/back')];
+            const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+            expect(explainUpgradeCost(candidate, gameData).ladder.refine.mirror).toBeUndefined();
         });
     });
 });

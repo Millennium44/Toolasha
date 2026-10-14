@@ -2890,11 +2890,14 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
             target > copy.level ? calculateDirectEnhancementCost(itemHrid, copy.level, target, gameData) : 0;
         if (enhance == null) continue;
         const price = materials.cost + Math.max(0, enhance);
-        if (!best || price < best.price) best = { price, copy, enhance: Math.max(0, enhance) };
+        // Compared after resale: a worn base that is refined is not sold, so it costs what it would have
+        // fetched on top. That also settles a tie in favor of a spare of the same level.
+        const net = price + (copy.equipped ? sellValue(baseHrid, copy.level) : 0);
+        if (!best || net < best.net) best = { price, net, copy, enhance: Math.max(0, enhance) };
     }
 
-    const mirror = resolveMirrorBase(baseHrid, target, gameData, { isSelf, minLevel: MIN_REFINE_BASE_LEVEL });
-    if (mirror && (!best || materials.cost + mirror.baseCost < best.price)) {
+    const mirror = resolveMirrorBase(baseHrid, target, gameData, { minLevel: MIN_REFINE_BASE_LEVEL });
+    if (mirror && (!best || materials.cost + mirror.baseCost < best.net)) {
         return {
             price: materials.cost + mirror.baseCost,
             source: 'refine',
@@ -2959,24 +2962,36 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  * @param {number} level - Level of base wanted
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
- * @param {boolean} [options.isSelf=true] - Whether the live character's copies apply
  * @param {number} [options.minLevel] - Lowest level worth offering (a refine needs a +5 base)
  * @returns {{baseCost: number, mirrorPrice: number}|null} Null when no mirror route beats the ordinary one
  */
-function resolveMirrorBase(baseHrid, level, gameData, { isSelf = true, minLevel = MIRROR_FIRST_LEVEL } = {}) {
+function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL } = {}) {
     if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
     const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
     if (!(mirrorPrice > 0)) return null;
 
+    // Each input is priced as a fresh acquisition, as if no copy were held: the held copies are one
+    // physical stock, and pricing two inputs (and the result) from the same copy would count it
+    // several times, up to a mirror that costs nothing but the mirror itself
     const ordinary = [];
     for (let k = 0; k <= level; k++) {
-        ordinary[k] = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf }).price;
+        ordinary[k] = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false }).price;
     }
     const { best, mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice);
     const viaMirror = mirrorTotals[level];
     const viaOrdinary = Number.isFinite(ordinary[level]) ? ordinary[level] : Infinity;
     if (!Number.isFinite(viaMirror) || !(viaMirror < viaOrdinary)) return null;
     return { baseCost: best[level], mirrorPrice };
+}
+
+/**
+ * What a piece sells for, for weighing a route that gives that sale up.
+ * @param {string} hrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {number} Sale value, 0 when unpriced
+ */
+function sellValue(hrid, level) {
+    return resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }).price || 0;
 }
 
 /**
@@ -3022,8 +3037,10 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
     }
     // A refined target already weighs the mirror inside its refine route (on the unrefined base)
     if (itemHrid?.endsWith('_refined')) return chosen;
+    // Nothing to beat when the piece is already held at the level asked
+    if (chosen.price === 0) return chosen;
     const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
-    const mirror = resolveMirrorBase(itemHrid, level, gameData, options);
+    const mirror = resolveMirrorBase(itemHrid, level, gameData, { minLevel: MIRROR_FIRST_LEVEL });
     if (mirror && (chosen.price == null || mirror.baseCost < chosen.price)) {
         return {
             price: mirror.baseCost,
