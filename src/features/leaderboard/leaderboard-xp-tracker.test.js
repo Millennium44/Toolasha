@@ -41,6 +41,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 const { leaderboardXPTracker } = await import('./leaderboard-xp-tracker.js');
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 describe('leaderboard XP tracker', () => {
     beforeEach(async () => {
@@ -340,6 +341,29 @@ describe('leaderboard XP tracker', () => {
             game.unavailable = true;
             await leaderboardXPTracker.initialize();
             expect(leaderboardXPTracker.playerXPHistory.foraging_A.map((s) => s.xp)).toEqual([1000]);
+        });
+
+        test('a sync pull brings the other device readings in, keeping the ones held', async () => {
+            reading('A', 1000);
+            await leaderboardXPTracker.history.flushed();
+            vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+            reading('A', 2000);
+            game.saved.playerXP = {
+                foraging_A: [{ t: Date.parse('2025-12-31T23:00:00Z'), xp: 500 }, ...game.saved.playerXP.foraging_A],
+                foraging_B: [{ t: 5, xp: 70 }],
+            };
+
+            announceSyncPullApplied({ leaderboardHistory: ['playerXP'] });
+            await vi.waitFor(() => expect(leaderboardXPTracker.playerXPHistory.foraging_B).toBeDefined());
+
+            expect(leaderboardXPTracker.playerXPHistory.foraging_A.map((s) => s.xp)).toEqual([500, 1000, 2000]);
+        });
+
+        test('a pull of some other key changes nothing', async () => {
+            game.saved.playerXP = { foraging_B: [{ t: 5, xp: 70 }] };
+            announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(leaderboardXPTracker.playerXPHistory.foraging_B).toBeUndefined();
         });
 
         test('a save while storage is unreadable is skipped, and lands once it is back', async () => {

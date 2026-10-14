@@ -316,7 +316,10 @@ class LeaderboardXPTracker {
             empty: () => ({}),
             merge: mergePlayerXP,
             label: 'LeaderboardXPTracker',
+            onPulled: () => this._refreshFromPull(),
         });
+        /** The one-time legacy purge is between deleting series from memory and landing the overwrite */
+        this._purgePending = false;
         this.lastLeaderboardCategory = null;
         this.lastFilterKey = 'all';
         /** The trial the last message showed; the readers' default for the trial board */
@@ -327,6 +330,18 @@ class LeaderboardXPTracker {
     /** @returns {Object} `${category}_${playerName}` → [{t, xp}] — the live in-memory record */
     get playerXPHistory() {
         return this.history.get();
+    }
+
+    /**
+     * Take in readings a sync pull wrote under the running page: a bare load, which folds the stored record
+     * under memory (memory wins), because nothing holds a derived copy — every reader goes through the
+     * `playerXPHistory` getter and the board handler runs start to finish without an await. Held off while the
+     * legacy purge is landing, since folding the stored record in would bring the series it just dropped back.
+     * @returns {Promise<void>}
+     */
+    async _refreshFromPull() {
+        if (!this.initialized || this._purgePending) return;
+        await this.history.load();
     }
 
     async initialize() {
@@ -378,7 +393,10 @@ class LeaderboardXPTracker {
         // Detached: the writes are debounced (seconds), and this feature is not
         // concurrent in the entrypoint, so awaiting them would stall every later
         // feature and the websocket handler on the first load after an update.
-        if (purgeDue) void this._persistPurge(ticket, purged);
+        if (purgeDue) {
+            this._purgePending = true;
+            void this._persistPurge(ticket, purged);
+        }
     }
 
     /**
@@ -395,6 +413,8 @@ class LeaderboardXPTracker {
             if (cleanedWritten) await storage.set(LEGACY_PURGE_DONE_KEY, true, STORE_NAME);
         } catch (error) {
             console.error('[LeaderboardXPTracker] Legacy purge persistence failed:', error);
+        } finally {
+            this._purgePending = false;
         }
     }
 
