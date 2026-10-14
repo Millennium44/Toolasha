@@ -292,13 +292,22 @@ export function onSyncPullApplied(listener) {
  */
 export function announceSyncPullApplied(written) {
     for (const listener of [...pullListeners]) {
-        try {
-            Promise.resolve(listener(written || {})).catch((error) => {
-                console.error('[SyncMergeRegistry] A pull listener failed:', error);
-            });
-        } catch (error) {
-            console.error('[SyncMergeRegistry] A pull listener threw:', error);
-        }
+        // Fire and forget: one listener's failure must not hold up or break the others
+        runPullListener(listener, written || {});
+    }
+}
+
+/**
+ * Run one pull listener, isolating a throw or a rejection.
+ * @param {Function} listener - The subscriber
+ * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+ * @returns {Promise<void>}
+ */
+async function runPullListener(listener, written) {
+    try {
+        await listener(written);
+    } catch (error) {
+        console.error('[SyncMergeRegistry] A pull listener failed:', error);
     }
 }
 
