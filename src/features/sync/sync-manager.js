@@ -1754,15 +1754,14 @@ class SyncManager {
         // session still holds in memory is the pre-pull copy and writing it
         // back would undo the pull. Saying so is the difference between a
         // reload the player chooses and changes they lose without being told.
-        showToast(
-            `Synced from GitHub. ${formatPullSummaryLine(summary)}${notCombined}${heldBack} Reload now — ` +
-                'changes made before reloading will not be kept.',
-            {
-                duration: 0,
-                kind: notCombined || heldBack ? 'warn' : 'info',
-                action: { label: 'What changed?', onClick: () => openPullSummaryPanel() },
-            }
-        );
+        // Nothing latched when only a fold failed or a record was held back: no write is refused, so the
+        // reload sentence would be a false instruction. The warning is the whole message
+        const reloadAdvice = latched === 0 ? '' : ' Reload now — changes made before reloading will not be kept.';
+        showToast(`Synced from GitHub. ${formatPullSummaryLine(summary)}${notCombined}${heldBack}${reloadAdvice}`, {
+            duration: 0,
+            kind: notCombined || heldBack ? 'warn' : 'info',
+            action: { label: 'What changed?', onClick: () => openPullSummaryPanel() },
+        });
 
         // The union only exists on this device until it is sent up. Pushing it
         // now is what stops the other device pulling the pre-merge copy back
