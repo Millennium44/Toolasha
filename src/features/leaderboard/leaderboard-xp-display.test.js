@@ -14,6 +14,7 @@ vi.mock('./leaderboard-xp-tracker.js', () => ({
         getLatestValue: () => null,
         getPreviousRank: () => null,
         getLastLeaderboardCategory: () => null,
+        onPulledHistory: () => () => {},
     },
     isLevelBoard: (category) => category === 'total_level',
     isWeeklyBoard: (category) => typeof category === 'string' && category.includes('weekly'),

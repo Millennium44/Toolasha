@@ -22,6 +22,8 @@
  */
 
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
+import { characterKey } from '../../utils/character-key.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
@@ -1619,26 +1621,65 @@ class LabyrinthRoomLogs {
     }
 
     /**
-     * Take in rooms a sync pull wrote under the running page. `persist()` without the save: the held rooms
-     * (minus their in-flight snapshots) go back into the record so the load folds the stored log under them,
-     * then `adoptMerged()` keeps this tab's own room objects. A pulled Clear drops the rooms it covers, as it
-     * does on any fold. Redraws an open panel when the set of rooms changed.
+     * Take in rooms a sync pull wrote under the running page.
+     *
+     * The held rooms go back into the record so the load folds the stored log under them and no unsaved room
+     * is lost; but the fold lets the held copy of a shared room win whole, which would keep a stale local
+     * `xp`, `endedAt`, `actions` or `completed` over what the pull stored, and the next `persist()` would
+     * write that back. So the stored copy is read as well and folded the way a pull folds (stored wins a
+     * shared room, a pulled Clear applies), then each shared room takes the fresher copy by the rule
+     * {@link fresherRoom}. The tab's own object is kept either way, and a room still being played (the active
+     * session, the one waiting for its experience) keeps every local field, taking only the attempts union.
+     * Redraws an open panel when a room, its settled fields or its attempts changed.
      * @returns {Promise<void>}
      */
     async _refreshFromPull() {
         const ticket = captureOwner(this);
-        const held = this.sessions.map((session) => {
-            const copy = { ...session };
-            delete copy.lastSnapshot;
-            return copy;
-        });
-        this.record.set(roomRecord(held, clearedAtOf(this.record.get())));
-        if (!(await this.record.load()) || !stillOurs(ticket)) return;
+        const copies = () =>
+            this.sessions.map((session) => {
+                const copy = { ...session };
+                delete copy.lastSnapshot;
+                return copy;
+            });
+        this.record.set(roomRecord(copies(), clearedAtOf(this.record.get())));
+        const loaded = await this.record.load();
+        const probed = await storage.tryGet(characterKey(STORAGE_KEY), 'settings');
+        if (!loaded || !stillOurs(ticket)) return;
         const shape = () =>
-            this.sessions.map((session) => `${sessionIdentity(session)}:${session.attempts?.length ?? 0}`);
-        const before = shape().join();
-        this.adoptMerged();
-        if (shape().join() !== before) this.renderIfOpen({ fightRecord: true });
+            this.sessions
+                .map(
+                    (session) =>
+                        `${sessionIdentity(session)}:${session.endedAt}:${session.xp}:${session.completed}:` +
+                        `${(session.attempts || []).map((attempt) => attempt?.startedAt).join(',')}`
+                )
+                .join('|');
+        const before = shape();
+        if (probed?.found) {
+            const local = roomRecord(copies(), clearedAtOf(this.record.get()));
+            const settled = mergeRoomLogsCleared(local, probed.value, this.logSize());
+            const mine = new Map(this.sessions.map((session) => [sessionIdentity(session), session]));
+            this.sessions = settled.sessions
+                .map((incoming) => {
+                    const held = mine.get(sessionIdentity(incoming));
+                    if (!held) return incoming;
+                    const live = held === this.activeSession || held === this.pendingReport;
+                    if (!live && fresherRoom(incoming, held)) {
+                        const settledFields = { ...incoming };
+                        delete settledFields.lastSnapshot;
+                        Object.assign(held, settledFields);
+                    }
+                    if (Array.isArray(incoming.attempts) && incoming.attempts.length) {
+                        held.attempts = mergeAttempts(incoming.attempts, held.attempts);
+                    }
+                    return held;
+                })
+                .slice(0, this.logSize());
+        } else {
+            this.adoptMerged();
+        }
+        // So a save already queued writes what was just adopted, not the snapshot taken before the read
+        this.record.set(roomRecord(copies(), clearedAtOf(this.record.get())));
+        if (shape() !== before) this.renderIfOpen({ fightRecord: true });
     }
 
     clearLogs() {
@@ -4014,6 +4055,20 @@ function mergeRoomLogs(base, fresh, size) {
         return union.length ? { ...session, attempts: union } : session;
     });
     return { sessions: sessions.slice(0, size) };
+}
+
+/**
+ * Whether the pulled copy of a room is further along than the held one: it ended later, or ended at the same
+ * moment with more experience credited (the late credit that lands after a room closes).
+ * @param {Object} incoming - The stored or pulled copy
+ * @param {Object} held - The copy this tab holds
+ * @returns {boolean}
+ */
+function fresherRoom(incoming, held) {
+    const incomingEnd = Number(incoming?.endedAt) || 0;
+    const heldEnd = Number(held?.endedAt) || 0;
+    if (incomingEnd !== heldEnd) return incomingEnd > heldEnd;
+    return (Number(incoming?.xp) || 0) > (Number(held?.xp) || 0);
 }
 
 /**

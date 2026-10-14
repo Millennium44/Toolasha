@@ -24,6 +24,8 @@ const world = vi.hoisted(() => ({
     /** Held open to park initialize() inside labTickCapture.loadAutosave() */
     tickAutosaveGate: null,
     tickAutosaveResult: false,
+    /** Live subscriptions to the fight pool's pull notification */
+    poolListeners: 0,
 }));
 
 /** Every live websocket handler, by message type, so leaks are countable. */
@@ -86,6 +88,14 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 }));
 vi.mock('./labyrinth-fight-recorder.js', () => ({
     default: {
+        onPoolChanged: () => {
+            world.poolListeners += 1;
+            let live = true;
+            return () => {
+                if (live) world.poolListeners -= 1;
+                live = false;
+            };
+        },
         load: async () => {},
         forget: () => {},
         noteAttempt: () => {},
@@ -162,6 +172,14 @@ describe('a character switch landing inside the room log read', () => {
         world.gate = null;
         await pending;
     }
+
+    test('the pool and outcomes subscriptions are released on teardown, once per initialize', async () => {
+        world.poolListeners = 0;
+        await labyrinthRoomLogs.initialize();
+        expect(world.poolListeners).toBe(1);
+        await labyrinthRoomLogs.disable();
+        expect(world.poolListeners).toBe(0);
+    });
 
     test('an autosave recovery that resolves after teardown does not repaint the departed panel', async () => {
         let release;

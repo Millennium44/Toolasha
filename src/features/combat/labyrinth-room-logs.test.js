@@ -1704,6 +1704,46 @@ describe('the room log survives a failed read and a second tab', () => {
         render.mockRestore();
     });
 
+    test('a sync pull brings late XP and a later end into a settled room, but not into the live one', async () => {
+        const settled = roomAt(1, { xp: 100 });
+        const live = roomAt(5, { xp: 10 });
+        labyrinthRoomLogs.sessions = [live, settled];
+        labyrinthRoomLogs.activeSession = live;
+        await labyrinthRoomLogs.persist();
+        await labyrinthRoomLogs.record.load();
+        storageMock.storeFor('settings').set(LOG_KEY, {
+            sessions: [roomAt(5, { xp: 999 }), roomAt(1, { xp: 700, endedAt: settled.endedAt + 1000 })],
+        });
+
+        announceSyncPullApplied({ settings: [LOG_KEY] });
+        await vi.waitFor(() => expect(settled.xp).toBe(700));
+
+        expect(settled.endedAt).toBe(1 + 60_000 + 1000);
+        expect(live.xp).toBe(10);
+        expect(labyrinthRoomLogs.sessions[1]).toBe(settled);
+        labyrinthRoomLogs.activeSession = null;
+    });
+
+    test('a pull that rolls a room at the attempt cap forward redraws the open panel', async () => {
+        const attemptAt = (startedAt) => ({ startedAt, endedAt: startedAt + 1, actions: 1, successes: 1 });
+        const full = Array.from({ length: 100 }, (_, i) => attemptAt(i + 1));
+        const mine = roomAt(1, { attempts: full });
+        labyrinthRoomLogs.sessions = [mine];
+        await labyrinthRoomLogs.persist();
+        await labyrinthRoomLogs.record.load();
+        const render = vi.spyOn(labyrinthRoomLogs, 'renderIfOpen').mockImplementation(() => {});
+        storageMock.storeFor('settings').set(LOG_KEY, {
+            sessions: [roomAt(1, { attempts: [...full.slice(1), attemptAt(101)] })],
+        });
+
+        announceSyncPullApplied({ settings: [LOG_KEY] });
+        await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+
+        expect(mine.attempts).toHaveLength(100);
+        expect(mine.attempts[99].startedAt).toBe(101);
+        render.mockRestore();
+    });
+
     test('the tab keeps its own room objects through a merge', async () => {
         const mine = roomAt(1);
         labyrinthRoomLogs.sessions = [mine];
