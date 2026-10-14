@@ -445,6 +445,36 @@ describe('a sync pull that landed under the running page', () => {
     });
 });
 
+describe('a deletion a sync pull brought', () => {
+    afterEach(() => {
+        hoisted.loaded = null;
+        recorder.cleanup();
+    });
+
+    test('the days it removed leave the rows, and a fold that changes nothing is not announced', async () => {
+        hoisted.loaded = [
+            { d: '2026-09-26', keys: { '/items/key': 2 } },
+            { d: '2026-09-27', keys: { '/items/key': 1 } },
+        ];
+        hoisted.game.charId = 'me';
+        recorder.cleanup();
+        recorder._rows = [];
+        recorder._charId = null;
+        recorder._loading = null;
+        await recorder.initialize();
+        await recorder.load();
+        const heard = vi.fn();
+        recorder.onChange(heard);
+
+        recorder._adoptPulled('me', [{ d: '2026-09-27', keys: { '/items/key': 1 } }], []);
+        expect(heard).not.toHaveBeenCalled();
+
+        recorder._adoptPulled('me', [], [{ d: '2026-09-26' }]);
+        expect((await recorder.load()).map((row) => row.d)).toEqual(['2026-09-27']);
+        expect(heard).toHaveBeenCalled();
+    });
+});
+
 describe('onChange notifications', () => {
     beforeEach(async () => {
         hoisted.saved = [];

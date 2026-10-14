@@ -238,7 +238,7 @@ class DailyCheckpoints {
             liveSafe: true,
             label,
         });
-        this._store.onRefreshed?.((charId, entries) => this._adoptPulled(charId, entries));
+        this._store.onRefreshed?.((charId, entries, removed) => this._adoptPulled(charId, entries, removed));
 
         /** The entries as they stand, which is the truth between debounced writes */
         this._entries = [];
@@ -294,14 +294,20 @@ class DailyCheckpoints {
      * Take in the checkpoints a sync pull brought for this character, which the store has already adopted.
      * @param {string} charId - Whose checkpoints
      * @param {Array<Object>} entries - Entries the store did not hold
+     * @param {Array<Object>} [removed] - Entries a deletion the pull brought took out
      */
-    _adoptPulled(charId, entries) {
+    _adoptPulled(charId, entries, removed = []) {
         // A load in flight reads the pulled entries itself
         if (charId !== this._charId || this._loading) return;
-        const have = new Set(this._entries.map((entry) => `${entry?.d}|${entry?.k}`));
-        const added = entries.filter((entry) => entry && !have.has(`${entry.d}|${entry.k}`));
-        if (added.length === 0) return;
-        this._entries = this._entries.concat(added).sort(compareEntries);
+        const idOf = (entry) => `${entry?.d}|${entry?.k}`;
+        const gone = new Set(removed.map(idOf));
+        const have = new Set(this._entries.map(idOf));
+        const added = entries.filter((entry) => entry && !have.has(idOf(entry)));
+        if (added.length === 0 && gone.size === 0) return;
+        this._entries = this._entries
+            .filter((entry) => !gone.has(idOf(entry)))
+            .concat(added)
+            .sort(compareEntries);
     }
 
     /** @returns {Array<Object>} The entries in memory, without a read */

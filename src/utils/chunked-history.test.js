@@ -1746,9 +1746,13 @@ describe('a history that opts in takes a sync pull without a reload', () => {
     test('a pull lands: the store adopts what it wrote, tells the owner, and the next save keeps it', async () => {
         const history = buildLive('liveRefresh');
         const heard = [];
-        history.onRefreshed((charId, entries) => heard.push({ charId, entries }));
+        const owner = [at(2026, 8, 1)];
+        history.onRefreshed((charId, entries) => {
+            heard.push({ charId, entries });
+            owner.push(...entries);
+        });
         await history.load('a');
-        await history.save('a', [at(2026, 8, 1)]);
+        await history.save('a', owner);
         await settle();
 
         // What the pull wrote: its merge of the chunk, and a chunk this device never had
@@ -1761,8 +1765,9 @@ describe('a history that opts in takes a sync pull without a reload', () => {
         expect(heard[0].charId).toBe('a');
         expect(heard[0].entries.map((entry) => entry.v).sort()).toEqual(['2026-7-9', '2026-8-5']);
 
-        // The owner has not seen them yet and saves its own list; they are not read as deletions
-        await history.save('a', [at(2026, 8, 1), at(2026, 8, 20)]);
+        // The owner took them in and saves its list with a new point; none is read as a deletion
+        owner.push(at(2026, 8, 20));
+        await history.save('a', owner);
         await settle();
         expect(storageMock.store.get('liveRefresh_a_2026-08').map((entry) => entry.v)).toEqual([
             '2026-8-1',
@@ -1876,5 +1881,137 @@ describe('the one-time split folds into what a pull put there meanwhile', () => 
             '2026-8-2',
             '2026-8-3',
         ]);
+    });
+});
+
+describe('what a pull changes in a running live-safe history', () => {
+    const buildLive = (prefix, extra = {}) =>
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix,
+            legacyKey: (charId) => `legacy_${prefix}_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            liveSafe: true,
+            label: 'Live',
+            ...extra,
+        });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    /** The owner's own array, kept the way the recorders keep theirs */
+    const own = (history, list) => {
+        history.onRefreshed((_charId, fresh, removed) => {
+            const gone = new Set(removed.map((entry) => entry.v));
+            const kept = list.filter((entry) => !gone.has(entry.v));
+            list.length = 0;
+            list.push(...kept, ...fresh.filter((entry) => !kept.some((held) => held.v === entry.v)));
+            list.sort((a, b) => a.t - b.t);
+        });
+    };
+    const stoneFor = (history, entry) => ({ [JSON.stringify(entry)]: history._stoneFor(entry, Date.now(), false) });
+
+    test('a peer’s deletion pulled under the page removes the entry here, and the next save does not write it back', async () => {
+        const history = buildLive('livePeerDel');
+        const list = [at(2026, 8, 1), at(2026, 8, 2), at(2026, 8, 3)];
+        own(history, list);
+        await history.load('a');
+        await history.save('a', list);
+        await settle();
+
+        // Device B deleted the middle one; its stone arrives with the pull
+        storageMock.store.set('livePeerDelTomb_a', stoneFor(history, at(2026, 8, 2)));
+        announceSyncPullApplied({ testStore: ['livePeerDelTomb_a'] });
+        await settle();
+
+        expect(list.map((point) => point.v)).toEqual(['2026-8-1', '2026-8-3']);
+        expect(storageMock.store.get('livePeerDel_a_2026-08').map((point) => point.v)).toEqual([
+            '2026-8-1',
+            '2026-8-3',
+        ]);
+        expect((await history.load('a')).map((point) => point.v)).toEqual(['2026-8-1', '2026-8-3']);
+
+        list.push(at(2026, 8, 4));
+        await history.save('a', list);
+        await settle();
+        expect(storageMock.store.get('livePeerDel_a_2026-08').map((point) => point.v)).toEqual([
+            '2026-8-1',
+            '2026-8-3',
+            '2026-8-4',
+        ]);
+        // This device's own deletions are still written beside the peer's
+        expect(Object.keys(storageMock.store.get('livePeerDelTomb_a'))).toHaveLength(1);
+    });
+
+    test('an entry pulled together with the stone that covers it is not adopted', async () => {
+        const history = buildLive('liveWithStone');
+        const heard = [];
+        history.onRefreshed((_charId, fresh) => heard.push(...fresh));
+        await history.load('a');
+        await history.save('a', [at(2026, 8, 1)]);
+        await settle();
+
+        storageMock.store.set('liveWithStone_a_2026-08', [at(2026, 8, 1), at(2026, 8, 9)]);
+        storageMock.store.set('liveWithStoneTomb_a', stoneFor(history, at(2026, 8, 9)));
+        announceSyncPullApplied({ testStore: ['liveWithStone_a_2026-08', 'liveWithStoneTomb_a'] });
+        await settle();
+
+        expect(heard).toEqual([]);
+        // A later write does not bring it back from disk either
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 2)]);
+        await settle();
+        expect(storageMock.store.get('liveWithStone_a_2026-08').map((point) => point.v)).toEqual([
+            '2026-8-1',
+            '2026-8-2',
+        ]);
+    });
+
+    test('a point the pull brought, taken in by the owner and then deleted, stays deleted and is tombstoned', async () => {
+        const history = buildLive('liveDelPulled');
+        const list = [at(2026, 8, 1), at(2026, 8, 3)];
+        own(history, list);
+        await history.load('a');
+        await history.save('a', list);
+        await settle();
+
+        storageMock.store.set('liveDelPulled_a_2026-08', [at(2026, 8, 1), at(2026, 8, 2), at(2026, 8, 3)]);
+        announceSyncPullApplied({ testStore: ['liveDelPulled_a_2026-08'] });
+        await settle();
+        expect(list.map((point) => point.v)).toEqual(['2026-8-1', '2026-8-2', '2026-8-3']);
+
+        // The user deletes the pulled point before the owner ever reloads
+        const kept = list.filter((point) => point.v !== '2026-8-2');
+        await history.save('a', kept);
+        await settle();
+
+        expect(storageMock.store.get('liveDelPulled_a_2026-08').map((point) => point.v)).toEqual([
+            '2026-8-1',
+            '2026-8-3',
+        ]);
+        expect(Object.keys(storageMock.store.get('liveDelPulledTomb_a'))).toContain(JSON.stringify(at(2026, 8, 2)));
+    });
+
+    test('a copy that folds to the same content is not reported as news', async () => {
+        const row = (d, n) => ({ t: Date.UTC(2026, 7, d), d: String(d), n });
+        const history = buildLive('liveSameRow', {
+            identityOf: (entry) => entry.d,
+            // A new object every time, as the day rows' fold answers
+            mergeCopies: (a, b) => ({ ...a, n: Math.max(a.n, b.n) }),
+        });
+        const heard = [];
+        history.onRefreshed((_charId, fresh) => heard.push(fresh));
+        await history.load('a');
+        await history.save('a', [row(1, 5), row(2, 5)]);
+        await settle();
+
+        // The pull's copy of day 1 is the same; day 2 is further along
+        storageMock.store.set('liveSameRow_a_2026-08', [row(1, 5), row(2, 9)]);
+        announceSyncPullApplied({ testStore: ['liveSameRow_a_2026-08'] });
+        await settle();
+        expect(heard).toHaveLength(1);
+        expect(heard[0]).toEqual([row(2, 9)]);
+
+        // Nothing new: the owner is not told again
+        announceSyncPullApplied({ testStore: ['liveSameRow_a_2026-08'] });
+        await settle();
+        expect(heard).toHaveLength(1);
     });
 });

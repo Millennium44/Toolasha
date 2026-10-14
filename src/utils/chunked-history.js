@@ -1876,9 +1876,11 @@ class ChunkedHistory {
     }
 
     /**
-     * Be told when a pull brought entries this store did not hold.
-     * @param {(charId: string, entries: Array<Object>) => void} listener - Called with the loaded character's
-     *   id and the entries a pull added or advanced (a copy further along, folded by `mergeCopies`)
+     * Be told when a pull changed what this store holds.
+     * @param {(charId: string, entries: Array<Object>, removed: Array<Object>) => void} listener - Called with
+     *   the loaded character's id, the entries a pull added or advanced (a copy further along, folded by
+     *   `mergeCopies`), and the entries a deletion it brought removed. The owner merges the first into the
+     *   array it holds and drops the second from it; the store then treats the added entries as the owner's
      * @returns {() => void} Unsubscribe
      */
     onRefreshed(listener) {
@@ -1887,7 +1889,8 @@ class ChunkedHistory {
     }
 
     /**
-     * A pull has written keys: re-read this character's history if any of them is one of its records.
+     * A pull has written keys: re-read this character's history if any of them is one of its records or
+     * its deletions.
      * @param {Record<string, Array<string>>} written - The pull's keys, by store
      * @returns {Promise<void>}
      * @private
@@ -1897,35 +1900,52 @@ class ChunkedHistory {
         if (!this._loaded || !this._charId || !Array.isArray(keys)) return;
         const charId = this._charId;
         const mine = `${this.prefix}_${charId}_`;
-        if (!keys.some((key) => typeof key === 'string' && key.startsWith(mine))) return;
-        const fresh = await this.refresh(charId);
-        if (fresh.length === 0) return;
+        const tombs = this.tombKey(charId);
+        if (!keys.some((key) => typeof key === 'string' && (key.startsWith(mine) || key === tombs))) return;
+        const { fresh, removed } = await this.refresh(charId);
+        if (fresh.length === 0 && removed.length === 0) return;
+        if (this._refreshListeners.size === 0) return;
         for (const listener of [...this._refreshListeners]) {
             try {
-                listener(charId, fresh);
+                listener(charId, fresh, removed);
             } catch (error) {
                 console.error(`[${this.label}] A refresh listener threw:`, error);
             }
+        }
+        // The owners hold them now. Left in `_adopted`, a save would put back an entry the owner then deleted
+        for (const entry of fresh) {
+            const id = this._identity(entry);
+            if (id !== undefined && id !== null) this._adopted.delete(id);
         }
     }
 
     /**
      * Take into memory what a sync pull wrote to disk since this store last looked.
      *
-     * The pull folded its copy of each chunk into the stored one under a running page (the records are
-     * live-safe), so disk is ahead of memory. An entry on disk that memory lacks is news unless this store
-     * once held it and let it go (`_known`, or the chunk's last serialization) or a deletion covers it. News is
-     * put into `_entries` and `_adopted`, exactly as a chunk write that folds an entry in does, so the next
-     * `save()` carries it and does not read its absence from the caller's list as a deletion. A copy further
-     * along than the one held (by `mergeCopies`) replaces it. Nothing is written.
+     * The pull folded its copy of each chunk into the stored one under a running page (the records and the
+     * deletions are live-safe), so disk is ahead of memory.
+     *
+     * **Deletions first.** The stones on disk are merged into this store's own, in place (a write that is
+     * already queued judges by the same object), and applied to the entries held: a covered entry leaves
+     * memory, `_adopted` and its chunk, which is written back at once without it. Without this a peer's
+     * deletion would wait for a reload, and a save in the meantime would write the entry back and upload it.
+     *
+     * An entry on disk that memory lacks is news unless this store once held it and let it go (`_known`, or
+     * the chunk's last serialization) or a deletion covers it. News is put into `_entries` and `_adopted`,
+     * exactly as a chunk write that folds an entry in does, so the next `save()` carries it and does not
+     * read its absence from the caller's list as a deletion. A copy further along than the one held (by
+     * `mergeCopies`, and different in content) replaces it. The chunk's snapshot becomes the disk copy, which
+     * is what it is. Chunks are written only to take a deleted entry out.
      *
      * The comparison runs in one step after the read's await, so an entry the caller added in the meantime is
      * neither lost nor duplicated.
      * @param {string} charId - Whose history
-     * @returns {Promise<Array<Object>>} The entries added or advanced, empty when nothing changed
+     * @returns {Promise<{fresh: Array<Object>, removed: Array<Object>}>} The entries added or advanced, and
+     *   the ones a deletion removed; both empty when nothing changed
      */
     async refresh(charId) {
-        if (!charId || !this._loaded || this._charId !== charId || this._legacy) return [];
+        const none = { fresh: [], removed: [] };
+        if (!charId || !this._loaded || this._charId !== charId || this._legacy) return none;
         const token = this._loadToken;
         const state = { snapshot: new Map(), tombs: {}, tombsChanged: false };
         let disk;
@@ -1933,11 +1953,52 @@ class ChunkedHistory {
             disk = await this._readRecords(charId, state);
         } catch (error) {
             console.error(`[${this.label}] Re-reading after a pull failed:`, error);
-            return [];
+            return none;
         }
         // A read that could not be made says nothing; a store that moved on (a character switch, a forget)
         // describes somebody else now
-        if (disk === null || token !== this._loadToken || !this._loaded || this._charId !== charId) return [];
+        if (disk === null || token !== this._loadToken || !this._loaded || this._charId !== charId) return none;
+
+        // The deletions on disk, merged into the ones held. In place, and less the stones removed on purpose
+        const stonesBefore = JSON.stringify(this._tombs);
+        const mergedStones = mergeTombstones(this._tombs, state.tombs);
+        for (const [id, at] of this._revived) {
+            if (mergedStones[id] && mergedStones[id].at <= at) delete mergedStones[id];
+        }
+        for (const key of Object.keys(this._tombs)) {
+            if (!Object.hasOwn(mergedStones, key)) delete this._tombs[key];
+        }
+        Object.assign(this._tombs, mergedStones);
+
+        const removed = [];
+        if (JSON.stringify(this._tombs) !== stonesBefore) {
+            const applied = this._applyTombstones(this._entries, this._tombs);
+            for (const [key, at] of applied.revived) this._revived.set(key, at);
+            if (applied.changed) this._writeTombs(charId, this._tombs, this._revived);
+            if (applied.dropped.length > 0) {
+                const gone = new Set(applied.dropped);
+                this._entries = applied.entries;
+                const chunks = new Set();
+                for (const entry of gone) {
+                    removed.push(entry);
+                    const id = this._identity(entry);
+                    this._adopted.delete(id);
+                    try {
+                        const chunkId = String(this.groupOf(entry));
+                        chunks.add(chunkId);
+                        let known = this._known.get(chunkId);
+                        if (!known) {
+                            known = new Set();
+                            this._known.set(chunkId, known);
+                        }
+                        if (id !== undefined && id !== null) known.add(id);
+                    } catch {
+                        // A chunk id that cannot be derived is one the next save rewrites anyway
+                    }
+                }
+                this._writeChunks(charId, chunks);
+            }
+        }
 
         const present = new Map();
         for (const entry of this._entries) {
@@ -1964,9 +2025,17 @@ class ChunkedHistory {
             heldIds.set(chunkId, ids);
             return ids;
         };
+        const sameContent = (a, b) => {
+            try {
+                return JSON.stringify(a) === JSON.stringify(b);
+            } catch {
+                return false;
+            }
+        };
 
         const added = [];
         const advanced = [];
+        const touched = new Set();
         for (const entry of disk) {
             if (entry == null) continue;
             const id = this._identity(entry);
@@ -1975,10 +2044,11 @@ class ChunkedHistory {
             if (mine !== undefined) {
                 if (!this.mergeCopies) continue;
                 const folded = this._mergeCopies(mine, entry);
-                if (folded !== mine) advanced.push({ mine, folded });
+                // A fold that builds a new object each time is not a change; only different content is
+                if (folded !== mine && !sameContent(folded, mine)) advanced.push({ mine, folded });
                 continue;
             }
-            if (this._tombstoned(id, entry, this._tombs) || this._tombstoned(id, entry, state.tombs)) continue;
+            if (this._tombstoned(id, entry, this._tombs)) continue;
             let chunkId;
             try {
                 chunkId = String(this.groupOf(entry));
@@ -1987,17 +2057,33 @@ class ChunkedHistory {
             }
             if (held(chunkId).has(id)) continue;
             added.push({ id, entry });
+            touched.add(chunkId);
         }
-        if (added.length === 0 && advanced.length === 0) return [];
+        if (added.length === 0 && advanced.length === 0) return { fresh: [], removed };
 
         let next = this._entries;
         if (advanced.length > 0) {
             const replace = new Map(advanced.map(({ mine, folded }) => [mine, folded]));
             next = next.map((entry) => replace.get(entry) ?? entry);
+            for (const { folded } of advanced) {
+                try {
+                    touched.add(String(this.groupOf(folded)));
+                } catch {
+                    // See above
+                }
+            }
         }
         for (const { id, entry } of added) this._adopted.set(id, entry);
         this._entries = this._sorted([...next, ...added.map(({ entry }) => entry)]);
-        return [...added.map(({ entry }) => entry), ...advanced.map(({ folded }) => folded)];
+        // What is on disk for these chunks now, so a later removal from one is told apart from news
+        for (const chunkId of touched) {
+            const onDisk = state.snapshot.get(chunkId);
+            if (onDisk) this._snapshot.set(chunkId, onDisk);
+        }
+        return {
+            fresh: [...added.map(({ entry }) => entry), ...advanced.map(({ folded }) => folded)],
+            removed,
+        };
     }
 
     /**

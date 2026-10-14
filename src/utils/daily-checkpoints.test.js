@@ -312,3 +312,18 @@ describe('a sync pull that landed under the running page', () => {
         expect(checkpoints.peek()).toEqual([]);
     });
 });
+
+describe('a deletion a sync pull brought', () => {
+    test('the checkpoints it removed leave the list', async () => {
+        const checkpoints = build();
+        state.stored = [
+            { d: '2026-03-13', k: 'a', xp: 50, level: 1 },
+            { d: '2026-03-14', k: 'a', xp: 100, level: 1 },
+        ];
+        await checkpoints.load('char-1');
+
+        checkpoints._adoptPulled('char-1', [], [{ d: '2026-03-13', k: 'a', xp: 50, level: 1 }]);
+
+        expect(checkpoints.peek()).toEqual([{ d: '2026-03-14', k: 'a', xp: 100, level: 1 }]);
+    });
+});
