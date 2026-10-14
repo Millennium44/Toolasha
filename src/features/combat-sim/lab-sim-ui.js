@@ -3891,9 +3891,11 @@ class LabSimUI {
         if (!plan || !goalEl || !this.panel?.contains(goalEl) || this._skillingAnalysis !== context) return;
         goalEl.innerHTML = renderPlanHtml(plan, { goalText, showLevels });
         this._setStatus(
-            plan.reached
-                ? `Plan reached the goal in ${plan.steps.length} steps.`
-                : `Goal not reached (${plan.steps.length} steps taken).`
+            plan.aborted
+                ? `Plan stopped early (${plan.steps.length} steps taken).`
+                : plan.reached
+                  ? `Plan reached the goal in ${plan.steps.length} steps.`
+                  : `Goal not reached (${plan.steps.length} steps taken).`
         );
     }
 
