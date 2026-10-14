@@ -78,6 +78,7 @@ const ledger = vi.hoisted(() => ({
     delayReserveMs: 0,
 }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     reserve: async (ownerId, lines) => {
         ledger.reserveCalls += 1;
         if (ledger.reserveCalls === ledger.delayReserveCallNumber) {

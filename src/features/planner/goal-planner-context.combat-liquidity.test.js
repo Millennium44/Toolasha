@@ -79,6 +79,7 @@ vi.mock('../../utils/experience-calculator.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({ getPriceAgeString: () => 'a moment ago' }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     effectiveInventory: (_itemHrid, _level, { held } = {}) => held || 0,
     shortfallNote: () => '',
 }));

@@ -163,6 +163,7 @@ const ledger = vi.hoisted(() => ({
     simulateGating: false,
 }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     INVENTORY_LOCATION: '/item_locations/inventory',
     reservationsEnabled: () => ledger.enabled,
     heldInInventory: () => ledger.held,

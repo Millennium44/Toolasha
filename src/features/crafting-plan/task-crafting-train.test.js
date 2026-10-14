@@ -43,6 +43,7 @@ vi.mock('../tasks/task-card-quest.js', () => ({
 }));
 
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     INVENTORY_LOCATION: '/item_locations/inventory',
     effectiveInventoryRows: (rows) => rows,
     reserve: async (ownerId, lines, options) => {

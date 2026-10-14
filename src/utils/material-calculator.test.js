@@ -54,6 +54,7 @@ vi.mock('./enhancement-calculator.js', () => ({
  */
 const ledger = vi.hoisted(() => ({ claims: {} }));
 vi.mock('./inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     INVENTORY_LOCATION: '/item_locations/inventory',
     reservedElsewhere: (itemHrid, level, { excludeOwner } = {}) => {
         let total = 0;
