@@ -738,8 +738,8 @@ class AlchemyBestItems {
                   `${name}, valued as stock you hold (${formatWithSeparator(this.ownStock.get(itemHrid)?.held ?? 0)}).`,
                   `Item: ${money(chain.ownUseCost ?? 0)} own-use cost (the cheaper of making it and buying it)${toolCost}.`,
                   keptOutputs.length > 0
-                      ? `Outputs: ${lower}${money(chain.terminalValue)}, ${keptOutputs.join(', ')} kept at what you would ` +
-                        'pay and the rest at your sell pricing.'
+                      ? `Outputs: ${lower}${money(chain.terminalValue)} (${keptOutputs.join(', ')} kept at what you ` +
+                        'would pay, the rest at your sell pricing).'
                       : `Outputs: ${lower}${money(chain.terminalValue)} at your sell pricing.`,
               ]
             : [
