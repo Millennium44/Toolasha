@@ -1718,7 +1718,7 @@ describe('the Chain/hr (own stock) sort', () => {
         game.items['/items/frenzy'] = { name: 'Frenzy' };
         await open([row('a', 1)]);
         const title = cells()[0].title;
-        expect(title).toContain('Frenzy kept at what you would pay');
+        expect(title).toContain('(Frenzy kept at what you would pay, the rest at your sell pricing)');
         expect(title).toContain('the rest at your sell pricing');
     });
 
