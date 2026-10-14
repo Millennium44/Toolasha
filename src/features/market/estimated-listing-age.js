@@ -1201,10 +1201,12 @@ class EstimatedListingAge {
      *   the save stands down when the in-memory log has since been dropped for
      *   another character's, which is what stopped a delete or a clear from
      *   emptying the wrong character's log.
+     * @param {() => Promise<void>} [options.onFail] - Run inside this save's own chain step when the
+     *   write does not land, so it finishes before any save queued behind this one starts
      * @returns {Promise<boolean>} Whether a write landed
      */
-    async saveHistoricalData({ overwrite = false, owner = this._owner() } = {}) {
-        const run = async () => {
+    async saveHistoricalData({ overwrite = false, owner = this._owner(), onFail = null } = {}) {
+        const attempt = async () => {
             // The log in memory is no longer the one this save was about: a
             // switch has landed and `disable()` has emptied it. Writing it now
             // would put an empty (or the wrong character's) log under a key,
@@ -1257,6 +1259,17 @@ class EstimatedListingAge {
                 console.error('[EstimatedListingAge] Failed to save historical data:', error);
                 return false;
             }
+        };
+        const run = async () => {
+            const landed = await attempt();
+            if (landed !== true && onFail) {
+                try {
+                    await onFail();
+                } catch (error) {
+                    console.error('[EstimatedListingAge] Failed save cleanup failed:', error);
+                }
+            }
+            return landed;
         };
         // One save at a time, in order: two interleaved read-merge-writes could
         // each miss the other's entries
@@ -1318,9 +1331,9 @@ class EstimatedListingAge {
         };
         this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
         if (!(await this._saveChain)) return false;
-        if ((await this.saveHistoricalData({ owner })) === true) return true;
-        // The log did not land, so the import ends as if it never happened: rows, tombstone map and the
-        // stored stamp all go back. On the chain, behind any save already waiting, so none sees it half done
+        // The rollback runs inside the write's own chain step (`onFail`), not as a step queued after it: a
+        // save a listing event queued while the write was out would otherwise run first and persist the
+        // imported rows from memory before they were taken back
         const rollBack = async () => {
             if (this._ownsMemory(owner)) {
                 const imported = new Set(ids);
@@ -1336,11 +1349,8 @@ class EstimatedListingAge {
                 this.rebuildEstimationPoints();
             }
             await this._undoRestoreGraves(taken, owner);
-            return false;
         };
-        this._saveChain = (this._saveChain || Promise.resolve()).then(rollBack, rollBack);
-        await this._saveChain;
-        return false;
+        return (await this.saveHistoricalData({ owner, onFail: rollBack })) === true;
     }
 
     /**

@@ -1096,6 +1096,42 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         });
     });
 
+    test('a save queued while the import write is out cannot persist the rows the failed import drops', async () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1)]);
+        knownAs([row(1)]);
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        let writeOut = false;
+        const realSet = storageMock.set.getMockImplementation();
+        let failed = false;
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (key === LOG_KEY && !failed) {
+                failed = true;
+                writeOut = true;
+                await gate;
+                return false;
+            }
+            return realSet(key, ...rest);
+        });
+
+        const importing = estimatedListingAge.importListings([row(9)]);
+        for (let i = 0; i < 50 && !writeOut; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(writeOut).toBe(true);
+        // A listing event's save, queued behind the import's write
+        const later = estimatedListingAge.saveHistoricalData();
+        release();
+        expect(await importing).toBe(false);
+        await later;
+        storageMock.set.mockImplementation(realSet);
+
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1]);
+        expect(storedLog().map((l) => l.id)).toEqual([1]);
+        expect(storageMock.storeFor('marketListings').get(GRAVES_KEY)?.restored).toBeUndefined();
+    });
+
     test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
         storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
         knownAs([row(1), row(2)]);
