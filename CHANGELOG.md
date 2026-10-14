@@ -65,6 +65,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A merged enhancement session now shows Pred % per level and expected attempts, protections and cost rebuilt from each run's own forecast, weighted by the attempts each run made at each level, so its factors mean something; and with auto-resume on, a new run that continues the last one with a different protection item now joins it instead of starting a new session (Auto-combine across protection items, on by default).
 
+### Sim setup lists are easier to read
+
+- The Combat Sim and Lab Sim player-setup lists (equipment, abilities, food and drinks) have alternating row shading and a hover highlight so each slot lines up with its level box, and the level boxes are wide enough for two-digit enhancement levels and three-digit ability levels.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
