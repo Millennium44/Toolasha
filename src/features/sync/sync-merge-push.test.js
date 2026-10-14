@@ -749,8 +749,8 @@ describe('an automatic push merges a gist that moved past it', () => {
     test('a key the backup did not hold is merged as usual, not given the restore precedence', async () => {
         const { importEverything } = await import('../../utils/full-backup.js');
         const { a, b } = await syncedPair();
-        // Both devices hold K (panelSizeMemory) from before; the backup does not
-        a.db.settings.panelSizeMemory = 'old';
+        // Both devices hold K (charmPanelFolds) from before; the backup does not
+        a.db.settings.charmPanelFolds = 'old';
         await as(a, () => syncManager.push());
         await as(b, () => syncManager.pull());
         const backup = {
@@ -761,7 +761,7 @@ describe('an automatic push merges a gist that moved past it', () => {
 
         // The other device changes K and the panel position, and pushes
         await as(b, async () => {
-            b.db.settings.panelSizeMemory = 'b-newer';
+            b.db.settings.charmPanelFolds = 'b-newer';
             b.db.settings.playerColors = { from: 'b' };
             await auto.push();
         });
@@ -772,7 +772,7 @@ describe('an automatic push merges a gist that moved past it', () => {
         });
         await as(a, auto.push);
 
-        expect(gistStores().settings.panelSizeMemory).toBe('b-newer');
+        expect(gistStores().settings.charmPanelFolds).toBe('b-newer');
         expect(gistStores().settings.playerColors).toEqual({ from: 'backup' });
     });
 
@@ -865,20 +865,20 @@ describe('an automatic push merges a gist that moved past it', () => {
     test('a Settings-only merge that changes nothing but drops history stores still uploads', async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {
-            b.db.settings.panelSizeMemory = 1;
+            b.db.settings.charmPanelFolds = 1;
             b.db.xpHistory.testHistory_c1 = ['s1', 'b-sample'];
             await auto.push();
         });
         // A, now Settings only, recorded the very setting B pushed: its merge
         // adds nothing to the gist, but sheds the history stores it no longer syncs
         a.settings.sync_scope = 'settings';
-        a.db.settings.panelSizeMemory = 1;
+        a.db.settings.charmPanelFolds = 1;
         const result = await as(a, auto.push);
 
         expect(result.ok).toBe(true);
         expect(result.skipped).toBeFalsy();
         expect(Object.keys(gistStores())).toEqual(['settings']);
-        expect(gistStores().settings.panelSizeMemory).toBe(1);
+        expect(gistStores().settings.charmPanelFolds).toBe(1);
         // ...and the next tick, with nothing changed, writes nothing
         const writes = gist.writes;
         expect((await as(a, auto.push)).reason).toBe('unchanged');
@@ -889,8 +889,8 @@ describe('an automatic push merges a gist that moved past it', () => {
         const { a, b } = await syncedPair();
         // B re-pushes the same data under a newer counter
         await as(b, () => syncManager.push());
-        a.db.settings.panelSizeMemory = 1;
-        b.db.settings.panelSizeMemory = 1;
+        a.db.settings.charmPanelFolds = 1;
+        b.db.settings.charmPanelFolds = 1;
         await as(b, auto.push);
 
         // A recorded the same thing, so its merge adds nothing either way
@@ -994,11 +994,11 @@ describe('an automatic push that would cut a history the gist holds merges inste
         const { a, b } = await cappedAfterStartup();
         // Both devices set the same whole key; A's push finds the gist ahead and the merge adds nothing
         await as(b, async () => {
-            b.db.settings.panelSizeMemory = 1;
+            b.db.settings.charmPanelFolds = 1;
             await auto.push();
         });
         await as(a, async () => {
-            a.db.settings.panelSizeMemory = 1;
+            a.db.settings.charmPanelFolds = 1;
             expect((await auto.push()).reason).toBe('in-step');
         });
 
@@ -1301,7 +1301,7 @@ describe('mixed versions', () => {
         // An older build pushes A's own data plus a key this build keeps on the device
         const old = JSON.parse(gist.state.payload);
         old.exportedAt = new Date(BASE_MS + elapsed + 60 * 1000).toISOString();
-        old.stores.settings.panelSizeMemory = 1;
+        old.stores.settings.charmPanelFolds = 1;
         old.stores.settings.toolasha_local_whispers = ['private'];
         gist.state = {
             manifest: { toolashaSync: 1, exportedAt: old.exportedAt, chunks: 1 },
@@ -1309,7 +1309,7 @@ describe('mixed versions', () => {
         };
         gist.etag += 1;
         // A recorded the same setting, so its merge adds nothing to the gist
-        a.db.settings.panelSizeMemory = 1;
+        a.db.settings.charmPanelFolds = 1;
         const writes = gist.writes;
 
         const result = await as(a, auto.push);
@@ -1317,7 +1317,7 @@ describe('mixed versions', () => {
         expect(result.ok).toBe(true);
         expect(gist.writes).toBe(writes + 1);
         expect(gistStores().settings).not.toHaveProperty('toolasha_local_whispers');
-        expect(gistStores().settings.panelSizeMemory).toBe(1);
+        expect(gistStores().settings.charmPanelFolds).toBe(1);
     });
 
     test('the payload this build writes keeps the map in the shape an older build reads', async () => {

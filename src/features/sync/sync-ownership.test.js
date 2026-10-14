@@ -106,7 +106,7 @@ describe('ownsKey', () => {
 
 describe('partitionOwnedKeys', () => {
     test('hands back the same object when nothing is foreign', () => {
-        const entries = { panelGeometry: 1, panelSizeMemory: 2 };
+        const entries = { panelGeometry: 1, charmPanelFolds: 2 };
         const result = partitionOwnedKeys('settings', entries);
         expect(result.owned).toBe(entries);
         expect(result.foreignKeys).toBe(0);
