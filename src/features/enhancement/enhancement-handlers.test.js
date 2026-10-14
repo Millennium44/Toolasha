@@ -37,6 +37,7 @@ const trackerMock = vi.hoisted(() => {
         trackMaterialCost: async (...a) => state.costs.push(['mat', ...a]),
         saveSessions: async () => {},
         trackProtectionCost: vi.fn(async (...a) => state.calls.push(['prot', ...a])),
+        trackMirrorCost: vi.fn(async (...a) => state.calls.push(['mirror', ...a])),
         extendSessionTarget: vi.fn(async (sessionId, newTarget) => {
             state.calls.push(['extend', sessionId, newTarget]);
             state.current = {
@@ -741,7 +742,7 @@ describe('a Philosopher’s Mirror attempt', () => {
         await state.handlers.action_completed({ endCharacterAction: mirrorRow(9, 1) });
 
         expect(state.calls).toContainEqual(['success', 8, 9, false]);
-        expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
+        expect(state.calls).toContainEqual(['mirror', 90000]);
         // The +7 copy, priced at the item's vendor price with the market empty in this file
         expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
     });
@@ -857,7 +858,7 @@ describe('a mirror named only by the configured protection field', () => {
         await state.handlers.actions_updated({ endCharacterActions: [mirrorRow(8, 0)] });
         await state.handlers.action_completed({ endCharacterAction: mirrorRow(9, 1) });
 
-        expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
+        expect(state.calls).toContainEqual(['mirror', 90000]);
         expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
     });
 });
@@ -879,7 +880,7 @@ describe('a mirror attempt with no known start', () => {
     test('at +4 or above the mirror certainly applied and is charged', async () => {
         await state.handlers.action_completed({ endCharacterAction: row(9, 40) });
 
-        expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
+        expect(state.calls).toContainEqual(['mirror', 90000]);
         expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
     });
 

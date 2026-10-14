@@ -12,6 +12,7 @@ import {
     addMaterialCost,
     addCoinCost,
     addProtectionCost,
+    addMirrorCost,
     finalizeSession,
     canExtendSession,
     extendSession,
@@ -440,6 +441,20 @@ class EnhancementTracker {
         if (!session) return;
 
         addProtectionCost(session, protectionItemHrid, cost);
+        await saveSessions(this.sessions);
+    }
+
+    /**
+     * Track one consumed Philosopher's Mirror for the current session. It is a consumable cost of its
+     * own: it adds to the total cost but not to the protection count.
+     * @param {number} cost - Mirror cost
+     * @returns {Promise<void>}
+     */
+    async trackMirrorCost(cost) {
+        const session = this.getCurrentSession();
+        if (!session) return;
+
+        addMirrorCost(session, cost);
         await saveSessions(this.sessions);
     }
 
