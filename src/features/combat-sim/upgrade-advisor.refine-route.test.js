@@ -365,6 +365,22 @@ describe('refined target priced from a held base', () => {
                 expect(detail.buys[0].price).toBe(1_000_000);
             });
 
+            test('Blessed Tea: a worn lower input is spent only when the step runs, the rest is still sold', () => {
+                state.sweepParams = { teas: { blessed: true }, blessedTeaBonus: 0.5, guzzlingBonus: 1 };
+                state.swordSell = 2_000_000;
+                state.items = [wornSword(5)];
+                const swap = { ...sword(7), removedItems: [{ hrid: SWORD, enhancementLevel: 5 }] };
+                const { best, landing } = cheapestWithMirror(ordinary, 1_000_000, 0.5);
+                const share = landing[6];
+                expect(share).toBeLessThan(1);
+                const detail = explainUpgradeCost(swap, gameData);
+                expect(detail.buys[0].price).toBeCloseTo(best[6] + share * 1_000_000, 0);
+                // Only the share the step spends is forfeited; the remainder is credited
+                expect(detail.credit).toBeCloseTo((1 - share) * 2_000_000, 0);
+                expect(detail.credit).toBeGreaterThan(0);
+                expect(calculateUpgradeCost(swap, gameData)).toBeCloseTo(detail.net, 0);
+            });
+
             test('one spare serves one input: a lone +5 for a +7 still buys the +6', () => {
                 state.items = [stack(SWORD, 5)];
                 const detail = explainUpgradeCost(sword(7), gameData);
