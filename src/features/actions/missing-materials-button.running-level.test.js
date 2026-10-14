@@ -74,7 +74,11 @@ vi.mock('../../utils/tester-shop.js', () => ({
     testerGearPrice: () => null,
     MIRROR_HRID: '/items/philosophers_mirror',
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, missingMaterialsButton: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
+    guildMemberSkills: () => null,
+    missingMaterialsButton: () => null,
+}));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => ({ ask: -1, bid: -1 }), on: () => {} } }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: () => ({ price: 0, custom: false, missing: true }),

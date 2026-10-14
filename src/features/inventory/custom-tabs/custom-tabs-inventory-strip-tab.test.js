@@ -103,6 +103,7 @@ vi.mock('../inventory-badge-manager.js', () => ({
 }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
     guildMemberSkills: () => null,
     loadoutSnapshot: () => ({ onUpdate: () => {}, offUpdate: () => {} }),
 }));

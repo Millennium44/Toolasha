@@ -138,7 +138,11 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
         resolveEquipment: (snapshot) => snapshot.equipment || [],
     },
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, loadoutSnapshot: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
+    guildMemberSkills: () => null,
+    loadoutSnapshot: () => null,
+}));
 // Guild credits are never listed, so their gold value comes from conversions.
 // Priced here at a flat rate so the shrine arithmetic is the only thing under test.
 vi.mock('../../utils/guild-credit-pricing.js', () => ({

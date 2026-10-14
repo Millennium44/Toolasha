@@ -49,6 +49,18 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_marketListingUndercut';
 
+/** The overbid table is a second consumer of the same figures; it needs them gathered, not the toasts */
+const PANEL_SETTING = 'market_overbidPanel';
+
+/**
+ * Whether anything wants the price observations kept: the notification, or the overbid table.
+ * Delivering a notification stays gated on {@link MASTER_SETTING} alone.
+ * @returns {boolean}
+ */
+export function observationsWanted() {
+    return Boolean(config.getSetting(MASTER_SETTING) || config.getSetting(PANEL_SETTING));
+}
+
 /** Reading the pooled dataset is what authorises the fresher Mooket lookups */
 const POOLED_HISTORY_SETTING = 'market_pooledHistory';
 
@@ -89,7 +101,7 @@ class MarketUndercutAlerts {
             return;
         }
 
-        if (!config.getSetting(MASTER_SETTING)) {
+        if (!observationsWanted()) {
             return;
         }
 
@@ -155,7 +167,7 @@ class MarketUndercutAlerts {
      * @returns {Promise<void>}
      */
     async refreshMooketObservations() {
-        if (!config.getSetting(MASTER_SETTING)) return;
+        if (!observationsWanted()) return;
         if (!config.getSetting(POOLED_HISTORY_SETTING)) return;
         if (this.mooketRefreshInFlight) return;
 
@@ -164,9 +176,7 @@ class MarketUndercutAlerts {
 
         const generation = this.refreshGeneration;
         const isCurrent = () =>
-            generation === this.refreshGeneration &&
-            config.getSetting(MASTER_SETTING) &&
-            config.getSetting(POOLED_HISTORY_SETTING);
+            generation === this.refreshGeneration && observationsWanted() && config.getSetting(POOLED_HISTORY_SETTING);
         this.mooketRefreshInFlight = true;
         let learned = false;
         try {

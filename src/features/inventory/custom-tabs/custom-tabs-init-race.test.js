@@ -145,7 +145,11 @@ vi.mock('../inventory-badge-manager.js', () => ({
     default: { currentInventoryElem: null, onRepriced: () => () => {}, renderAllBadges: vi.fn(async () => {}) },
 }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: loadoutSnapshotMock }));
-vi.mock('../../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, loadoutSnapshot: () => null }));
+vi.mock('../../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
+    guildMemberSkills: () => null,
+    loadoutSnapshot: () => null,
+}));
 vi.mock('../../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async (id) => id,
     requestAdoptionConsent: () => Promise.resolve(null),

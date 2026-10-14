@@ -61,7 +61,11 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getSnapshotInfoForSkill: () => (game.snapshotName ? { name: game.snapshotName } : null) },
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, scrollSimulator: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
+    guildMemberSkills: () => null,
+    scrollSimulator: () => null,
+}));
 
 const scrollSimulator = (await import('../combat/scroll-simulator.js')).default;
 const { buildScrollChips, getApplicableScrollBuffs } = await import('./scroll-chips.js');

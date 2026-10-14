@@ -85,6 +85,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: () => ({ price: 0 }),
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
     guildMemberSkills: () => null,
     enhancementCalculator: () => null,
     enhancementConfig: () => null,

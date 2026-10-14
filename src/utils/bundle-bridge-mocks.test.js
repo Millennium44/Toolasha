@@ -48,4 +48,15 @@ describe('bundle-bridge mock factories', () => {
         }
         expect(missing).toEqual([]);
     });
+
+    test('stub marketUndercutAlerts or inherit it', () => {
+        const missing = [];
+        for (const file of testFiles(SRC)) {
+            for (const call of bridgeMocks(readFileSync(file, 'utf8'))) {
+                if (!/marketUndercutAlerts|importOriginal|importActual/.test(call))
+                    missing.push(relative(SRC, file).split(sep).join('/'));
+            }
+        }
+        expect(missing).toEqual([]);
+    });
 });
