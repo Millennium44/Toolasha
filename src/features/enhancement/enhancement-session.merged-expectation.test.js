@@ -325,13 +325,26 @@ describe('sessions recorded before this change', () => {
         expect(result.successRates[5].actualRate).toBeGreaterThan(0);
     });
 
-    test('a leg whose forecast is missing leaves the expectation unknown, but keeps the rates it can', () => {
+    test('a run without a forecast leaves the expectation unknown, though the other legs could cover the climb', () => {
         const merged = mergeFour();
-        merged.legPredictions[0].predictions = null;
-        merged.legPredictions[1].predictions = null;
+        const before = mergedExpectation(merged).expected;
+        expect(before).not.toBeNull();
+        // s3 (the third run) lost its forecast, e.g. its calculation failed on resume
+        merged.legPredictions[2].predictions = null;
         const result = mergedExpectation(merged);
         expect(result.expected).toBeNull();
+        // Rates stay only where every run that attempted the level had a forecast: +6 was s2 and s4
         expect(result.successRates[6]).toBeDefined();
+        expect(result.successRates[5]).toBeUndefined();
+        expect(result.successRates[4]).toBeUndefined();
+    });
+
+    test('attempts outside every recorded leg leave the expectation and rates unknown', () => {
+        const merged = mergeFour();
+        merged.totalAttempts += 2;
+        const result = mergedExpectation(merged);
+        expect(result.expected).toBeNull();
+        expect(result.successRates).toEqual({});
     });
 
     test('a session with no legs has no combined forecast', () => {
