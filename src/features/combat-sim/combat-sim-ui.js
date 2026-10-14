@@ -11789,7 +11789,7 @@ class CombatSimUI {
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
                 A scroll costs 30 Labyrinth Tokens for a 30-minute buff, kept up all run (2 per hour). Its price is what
                 those tokens would otherwise buy: the shop's best conversion, ${formatKMB(Math.floor(rate.value))}
-                gold/token as ${rate.itemName}. Net is the profit it adds per hour minus that cost; a loss means
+                gold/token after sale tax, as ${rate.itemName}. Net is the profit it adds per hour minus that cost; a loss means
                 buying ${rate.itemName} with the tokens beats the scroll. ΔProfit is a % of Profit/hr.
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">

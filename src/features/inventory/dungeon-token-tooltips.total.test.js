@@ -125,7 +125,7 @@ describe('held token total', () => {
         await Promise.resolve();
         // Essence: 900 × 10 / 1 = 9,000/token beats the lodestone's 6,800
         expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain(
-            'Your 100 tokens ≈ 900.0K as 100 × Labyrinth Essence'
+            'Your 100 tokens ≈ 900.0K as 1,000 × Labyrinth Essence'
         );
     });
 
@@ -179,8 +179,16 @@ describe('whole purchases', () => {
         await Promise.resolve();
         // Only the 1-token essence row is affordable: 999 x 1,000 = 999.0K, not ~6.8M
         const text = el.querySelector('.dungeon-token-shop-injected').textContent;
-        expect(text).toContain('Your 999 tokens ≈ 999.0K as 999 × Labyrinth Essence');
+        expect(text).toContain('Your 999 tokens ≈ 999.0K as 9,990 × Labyrinth Essence');
         expect(text).not.toContain('Pathseeker Lodestone (');
+    });
+
+    test('a row that hands over several items per token shows the item count', async () => {
+        const el = labyrinthTooltip('Amount: 5');
+        state.handler(el);
+        await Promise.resolve();
+        // 5 purchases of 10 essences each: 50 items, not 5
+        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain('as 50 × Labyrinth Essence');
     });
 
     test('an exact multiple spends everything on the best row', async () => {

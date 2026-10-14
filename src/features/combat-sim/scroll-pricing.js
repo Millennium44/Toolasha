@@ -12,12 +12,14 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { COWBELL_BAG_HRID, COWBELL_BAG_TAX, MARKET_TAX } from '../../utils/profit-constants.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateLabyrinthTokenValueDetail } from '../../utils/token-valuation.js';
 import { SCROLL_BUFF_MINUTES, SCROLL_TOKEN_COST, priceScrollByTokens } from '../../utils/token-worth.js';
 
 /**
- * What one Labyrinth Token is worth right now, and the shop item that sets it.
+ * What one Labyrinth Token is worth right now after sale tax, and the shop item that sets it.
  * Priced the way net worth and the dungeon tokens are, so the three agree.
  *
  * @returns {{value: number, itemHrid: string, itemName: string}|null} Null when nothing in the shop is priced
@@ -26,8 +28,12 @@ export function scrollTokenRate() {
     const detail = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null);
     if (!(detail?.value > 0)) return null;
     const name = dataManager.getInitClientData()?.itemDetailMap?.[detail.itemHrid]?.name;
+    // The sim's Profit/hr is net of the sale tax (`taxedDropValue` in the adapter), so the token's
+    // worth is what its best item sells for after tax too; calculatePriceAfterTax keeps the Iron Cow
+    // exemption. The shop's rewards are market-valued, so none of them is an already-net EV figure.
+    const taxRate = detail.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
     return {
-        value: detail.value,
+        value: calculatePriceAfterTax(detail.value, taxRate),
         itemHrid: detail.itemHrid,
         itemName: name || detail.itemHrid.split('/').pop().replace(/_/g, ' '),
     };
@@ -72,7 +78,7 @@ export function priceScrollRow(row, rate, baseline) {
         netPerScroll,
         // "30 tokens × 6.8K/token (Pathseeker Lodestone) = 204K per scroll"
         basis:
-            `${SCROLL_TOKEN_COST} tokens × ${formatKMB(Math.floor(rate.value))}/token (${rate.itemName}) = ` +
+            `${SCROLL_TOKEN_COST} tokens × ${formatKMB(Math.floor(rate.value))}/token (${rate.itemName}, after tax) = ` +
             `${formatKMB(priced.costPerScroll)} per scroll`,
         verdict: priced.worthIt
             ? `Net ${signed(priced.netPerHour)}/hr over the tokens' value`
