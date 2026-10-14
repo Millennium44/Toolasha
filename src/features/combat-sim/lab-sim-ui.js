@@ -3532,8 +3532,10 @@ class LabSimUI {
         const resultsEl = this.panel.querySelector('#mwi-labsim-skilling-swap-results');
 
         let measured = null;
-        await this._runSkillingTask(async (onProgress) => {
-            const abortSignal = () => this._skillingAborted;
+        let wasAborted = () => false;
+        await this._runSkillingTask(async (onProgress, isAborted) => {
+            wasAborted = isAborted;
+            const abortSignal = isAborted;
             measured = await evaluateSkillingSwaps({
                 swaps: queue,
                 baseSetup: context.baseSetup,
@@ -3556,7 +3558,7 @@ class LabSimUI {
                 abortSignal,
             });
         });
-        if (!measured || this._skillingAborted || !resultsEl || !this.panel?.contains(resultsEl)) return;
+        if (!measured || wasAborted() || !resultsEl || !this.panel?.contains(resultsEl)) return;
 
         const unreached = measured.unreached.map((swap) => describeCheckedSwap(swap, gameData));
         if (!measured.rows.length) {
@@ -4384,9 +4386,9 @@ class LabSimUI {
      * @param {Function} onProgress - `({ current, total, description })`
      * @private
      */
-    async _measureSkillingRoomLevels(context, onProgress) {
+    async _measureSkillingRoomLevels(context, onProgress, isAborted = () => this._skillingAborted) {
         const threshold = this._getSkillingTargetClear();
-        const abortSignal = () => this._skillingAborted;
+        const abortSignal = isAborted;
         const measure = createRowLevelMeasure({
             baseSetup: context.baseSetup,
             evaluate: context.evaluate,
@@ -4448,10 +4450,13 @@ class LabSimUI {
         this._skillingAborted = false;
         this._skillingRunning = true;
         const runToken = ++this._runStartToken;
+        // Stopped by the Stop button, or stale: a teardown bumps the token even when
+        // the same character's panel is rebuilt, and a new task resets the flag
+        const isAborted = () => this._skillingAborted || runToken !== this._runStartToken;
         const eta = createEtaTracker();
         try {
             await task(({ current, total, description }) => {
-                if (this._skillingAborted || !this.panel) return;
+                if (isAborted() || !this.panel) return;
                 const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
                 const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
                 const { text: remaining } = eta.update(total > 0 ? current / total : 0);
@@ -4459,10 +4464,10 @@ class LabSimUI {
                 if (text)
                     text.textContent =
                         `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
-            });
+            }, isAborted);
         } catch (error) {
             console.error('[LabSimUI] Skilling task failed:', error);
-            this._setStatus('Skilling task failed: ' + error.message);
+            if (runToken === this._runStartToken) this._setStatus('Skilling task failed: ' + error.message);
         } finally {
             if (runToken === this._runStartToken) this._skillingRunning = false;
             progressEl.style.display = 'none';
@@ -4495,8 +4500,8 @@ class LabSimUI {
                 : `${barText} at the analyzed room level`;
 
         let plan = null;
-        await this._runSkillingTask(async (onProgress) => {
-            const abortSignal = () => this._skillingAborted;
+        await this._runSkillingTask(async (onProgress, isAborted) => {
+            const abortSignal = isAborted;
             plan = await planSkillingGoal({
                 baseSetup: context.baseSetup,
                 rows: context.analysisResult.results,
@@ -4547,8 +4552,8 @@ class LabSimUI {
         const goalEl = this.panel.querySelector('#mwi-labsim-skilling-goal-results');
         const showLevels = this._getSkillingRoomLevelsOn();
         let combo = null;
-        await this._runSkillingTask(async () => {
-            const abortSignal = () => this._skillingAborted;
+        await this._runSkillingTask(async (_onProgress, isAborted) => {
+            const abortSignal = isAborted;
             combo = await simulateCombination({
                 rows: picks,
                 baseSetup: context.baseSetup,
@@ -6739,6 +6744,10 @@ class LabSimUI {
         stopBtn.style.display = 'inline-block';
         this._skillingAborted = false;
         this._skillingRunning = true;
+        // Stopped, or stale: a teardown bumps the token even when the same
+        // character's panel is rebuilt, and the new run resets the flag
+        const runToken = ++this._runStartToken;
+        const isAborted = () => this._skillingAborted || runToken !== this._runStartToken;
         // The previous run's rows are about to be replaced, so ticks and answers
         // made against them mean nothing to the new table
         this._skillingAnalysis = null;
@@ -6752,7 +6761,7 @@ class LabSimUI {
             const analysisResult = await runSkillingUpgradeAnalysis(
                 { editorDTO: dto, roomLevel, crateHrids, skillEquipmentMap, targetSkill },
                 ({ current, total, description }) => {
-                    if (this._skillingAborted) return;
+                    if (isAborted()) return;
                     const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
                     const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
                     const { text: remaining } = eta.update(total > 0 ? current / total : 0);
@@ -6762,7 +6771,7 @@ class LabSimUI {
                             `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
                     }
                 },
-                { abortSignal: () => this._skillingAborted }
+                { abortSignal: isAborted }
             );
 
             // Community buffs are an argument to the skilling calculation rather
@@ -6777,8 +6786,9 @@ class LabSimUI {
                 targetSkill,
                 gameData,
                 analysisResult,
+                isAborted,
                 onProgress: ({ current, total, description }) => {
-                    if (this._skillingAborted) return;
+                    if (isAborted()) return;
                     const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
                     const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
                     if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
@@ -6808,7 +6818,7 @@ class LabSimUI {
                 });
                 // One physical item that serves several rooms becomes one row,
                 // before anything ranks or measures the per-skill halves of it
-                if (analysisResult?.baseline && !this._skillingAborted) {
+                if (analysisResult?.baseline && !isAborted()) {
                     mergeMultiSkillGearRows({
                         analysisResult,
                         baseSetup: context.baseSetup,
@@ -6818,34 +6828,41 @@ class LabSimUI {
                         gameData,
                     });
                 }
-                if (analysisResult?.baseline && !this._skillingAborted) {
+                if (analysisResult?.baseline && !isAborted()) {
                     await annotateRoomsReached({
                         rows: analysisResult.results,
                         baseSetup: context.baseSetup,
                         evaluate: context.evaluate,
                         roomLevel,
                         targetSkill,
-                        abortSignal: () => this._skillingAborted,
+                        abortSignal: isAborted,
                     });
                 }
-                if (analysisResult?.baseline && this._getSkillingRoomLevelsOn() && !this._skillingAborted) {
-                    await this._measureSkillingRoomLevels(context, ({ current, total, description }) => {
-                        const fill = this.panel?.querySelector('#mwi-labsim-skilling-progress-fill');
-                        const text = this.panel?.querySelector('#mwi-labsim-skilling-progress-text');
-                        if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
-                        if (text) text.textContent = `Room levels ${current} / ${total}: ${description}`;
-                    });
+                if (analysisResult?.baseline && this._getSkillingRoomLevelsOn() && !isAborted()) {
+                    await this._measureSkillingRoomLevels(
+                        context,
+                        ({ current, total, description }) => {
+                            if (isAborted()) return;
+                            const fill = this.panel?.querySelector('#mwi-labsim-skilling-progress-fill');
+                            const text = this.panel?.querySelector('#mwi-labsim-skilling-progress-text');
+                            if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
+                            if (text) text.textContent = `Room levels ${current} / ${total}: ${description}`;
+                        },
+                        isAborted
+                    );
                 }
-                if (this.panel?.contains(resultsEl)) {
+                if (this.panel?.contains(resultsEl) && runToken === this._runStartToken) {
                     this._skillingAnalysis = analysisResult?.baseline ? context : null;
                     this._renderSkillingUpgradeResults(analysisResult, resultsEl);
                 }
             }
         } catch (error) {
             console.error('[LabSimUI] Skilling upgrade analysis failed:', error);
-            this._setStatus('Skilling upgrade analysis failed: ' + error.message);
+            if (runToken === this._runStartToken) {
+                this._setStatus('Skilling upgrade analysis failed: ' + error.message);
+            }
         } finally {
-            this._skillingRunning = false;
+            if (runToken === this._runStartToken) this._skillingRunning = false;
             progressEl.style.display = 'none';
             calcBtn.style.display = '';
             upgradeBtn.style.display = '';
@@ -6915,8 +6932,9 @@ class LabSimUI {
         gameData,
         analysisResult,
         onProgress,
+        isAborted = () => this._skillingAborted,
     }) {
-        if (!analysisResult || this._skillingAborted) return;
+        if (!analysisResult || isAborted()) return;
 
         const skills = targetSkill ? [targetSkill] : SKILLING_SKILL_HRIDS;
         const actionTypes = skills.map((hrid) => hrid.replace('/skills/', '/action_types/'));
@@ -6950,7 +6968,7 @@ class LabSimUI {
         for (const candidate of candidates) {
             // Yield so a Stop click and the progress paint can land between runs
             await new Promise((resolve) => setTimeout(resolve, 0));
-            if (this._skillingAborted) break;
+            if (isAborted()) break;
 
             onProgress?.({ current, total: candidates.length, description: candidate.description });
 
