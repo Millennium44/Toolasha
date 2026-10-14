@@ -27,10 +27,11 @@ export const MIRROR_FIRST_LEVEL = 3;
  *   next step of the chain, so the step into level n is only run when the chain stands on n-1: the
  *   same model as `applyMirrorOptimization`, `cost[n] = cost[n-1] + landing[n-1] * (cost[n-2] +
  *   mirrorPrice)`. 0 reduces to the plain `cost[n-1] + cost[n-2] + mirrorPrice`
- * @returns {{best: number[], mirrorTotals: Array<number|undefined>}} `best[L]` is the cheaper of the
+ * @returns {{best: number[], mirrorTotals: Array<number|undefined>, landing: number[]}} `best[L]` is the cheaper of the
  *   ordinary route and the mirror route (Infinity when neither exists). `mirrorTotals[L]` is the
  *   mirror route's all-in total for L >= {@link MIRROR_FIRST_LEVEL}, Infinity when a copy it needs has
- *   no route
+ *   no route. `landing[L]` is the chance the chain lands exactly on level L (1 for a level the mirror
+ *   does not build, and everywhere when `blessedChance` is 0)
  */
 export function cheapestWithMirror(ordinary, mirrorPrice, blessedChance = 0) {
     const best = [];
@@ -57,5 +58,5 @@ export function cheapestWithMirror(ordinary, mirrorPrice, blessedChance = 0) {
             }
         }
     }
-    return { best, mirrorTotals };
+    return { best, mirrorTotals, landing };
 }

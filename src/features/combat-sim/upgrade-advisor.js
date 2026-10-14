@@ -2611,7 +2611,7 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
  */
 export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     const cost = calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf);
-    const mirror = enhancementMirrorRoute(candidate, gameData);
+    const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     return mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
 }
 
@@ -2627,19 +2627,34 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
  *
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
- * @returns {{net: number, baseCost: number, credit: number, mirrorPrice: number}|null} Null when no
+ * @param {boolean} [isSelf=true] - Whether the row is the live character's, so their held copies serve as inputs
+ * @returns {{net: number, baseCost: number, credit: number, mirrorPrice: number, heldLevels: number[]}|null} Null when no
  *   mirror route beats the ordinary one for this row
  */
-function enhancementMirrorRoute(candidate, gameData) {
+function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
     if (candidate?.type !== 'enhancement' || !candidate.currentHrid) return null;
     if (candidate.currentHrid.endsWith('_refined')) return null;
     const level = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
-    const mirror = resolveMirrorBase(candidate.currentHrid, level, gameData);
+    const mirror = resolveMirrorBase(candidate.currentHrid, level, gameData, {
+        held: mirrorHeldInputs(candidate.currentHrid, { isSelf, candidate }),
+    });
     if (!mirror) return null;
-    const credit = isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
-        ? 0
-        : capEnhancementCredit(mirror.baseCost, sellValue(candidate.currentHrid, candidate.currentLevel || 0)).credit;
-    return { net: mirror.baseCost - credit, baseCost: mirror.baseCost, credit, mirrorPrice: mirror.mirrorPrice };
+    // A worn piece that went into the mirror is not also sold
+    const wornUsed = mirror.consumed.some(
+        (piece) => piece.hrid === candidate.currentHrid && piece.level === (candidate.currentLevel || 0)
+    );
+    const credit =
+        wornUsed || isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
+            ? 0
+            : capEnhancementCredit(mirror.baseCost, sellValue(candidate.currentHrid, candidate.currentLevel || 0))
+                  .credit;
+    return {
+        net: mirror.baseCost - credit,
+        baseCost: mirror.baseCost,
+        credit,
+        mirrorPrice: mirror.mirrorPrice,
+        heldLevels: mirror.heldLevels,
+    };
 }
 
 /**
@@ -2941,11 +2956,10 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
     // A worn copy is a base to refine only when this very row takes it off: a swap that replaces the
     // piece is exactly consuming it, and a row about some other slot must leave it on
     const replaced = candidate ? removedPieces(candidate) : [];
-    const copies = copiesForPricing(baseHrid, { isSelf }).filter(
-        (copy) =>
-            copy.level >= MIN_REFINE_BASE_LEVEL &&
-            (!copy.equipped || replaced.some((piece) => piece.hrid === baseHrid && piece.level === copy.level))
+    const usable = copiesForPricing(baseHrid, { isSelf }).filter(
+        (copy) => !copy.equipped || replaced.some((piece) => piece.hrid === baseHrid && piece.level === copy.level)
     );
+    const copies = usable.filter((copy) => copy.level >= MIN_REFINE_BASE_LEVEL);
 
     const materials = computeRefinementCraftCost(itemHrid, { includeBase: false });
     if (!materials) return null;
@@ -2962,9 +2976,14 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
         if (!best || net < best.net) best = { price, net, copy, enhance: Math.max(0, enhance) };
     }
 
-    const mirror = resolveMirrorBase(baseHrid, target, gameData, { minLevel: MIN_REFINE_BASE_LEVEL });
-    if (mirror && (!best || materials.cost + mirror.baseCost < best.net)) {
+    const mirror = resolveMirrorBase(baseHrid, target, gameData, {
+        minLevel: MIN_REFINE_BASE_LEVEL,
+        held: mirrorHeldInputs(baseHrid, { isSelf, candidate }),
+    });
+    if (mirror && (!best || materials.cost + mirror.baseCost + mirror.forfeited < best.net)) {
         return {
+            // A worn base that went into the mirror is not also sold
+            ...(mirror.consumed.length ? { consumed: mirror.consumed } : {}),
             price: materials.cost + mirror.baseCost,
             source: 'refine',
             enhanceSource: describeEnhancementSource(enhancementSweepParams(baseHrid)),
@@ -2981,7 +3000,11 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
                     materialCost: materials.cost,
                     enhanceCost: 0,
                     lines: materials.lines,
-                    mirror: { baseCost: mirror.baseCost, mirrorPrice: mirror.mirrorPrice },
+                    mirror: {
+                        baseCost: mirror.baseCost,
+                        mirrorPrice: mirror.mirrorPrice,
+                        heldLevels: mirror.heldLevels,
+                    },
                 },
             },
         };
@@ -3031,25 +3054,78 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  * @param {number} [options.minLevel] - Lowest level worth offering (a refine needs a +5 base)
  * @returns {{baseCost: number, mirrorPrice: number}|null} Null when no mirror route beats the ordinary one
  */
-function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL } = {}) {
+function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL, held = [] } = {}) {
     if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
     const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
     if (!(mirrorPrice > 0)) return null;
 
-    // Each input is priced as a fresh acquisition, as if no copy were held: the held copies are one
-    // physical stock, and pricing two inputs (and the result) from the same copy would count it
-    // several times, up to a mirror that costs nothing but the mirror itself
+    // Each input is priced as a fresh acquisition unless a held copy of exactly that level is offered
+    // below: pricing the inputs (and the result) from one held copy would count it several times, up to
+    // a mirror that costs nothing but the mirror itself
     const ordinary = [];
     for (let k = 0; k <= level; k++) {
         ordinary[k] = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false }).price;
     }
     // The mirror's own success can be +2 under Blessed Tea, which skips the next step of the chain
     const blessed = blessedMirrorChance(enhancementSweepParams(baseHrid));
-    const { best, mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice, blessed);
-    const viaMirror = mirrorTotals[level];
+    const { best, mirrorTotals, landing } = cheapestWithMirror(ordinary, mirrorPrice, blessed);
     const viaOrdinary = Number.isFinite(ordinary[level]) ? ordinary[level] : Infinity;
-    if (!Number.isFinite(viaMirror) || !(viaMirror < viaOrdinary)) return null;
-    return { baseCost: best[level], mirrorPrice };
+
+    // The two inputs of the final step are the +(L-1) and the +(L-2) copy. A held copy of exactly that
+    // level can supply one, and a copy has one level, so no copy serves both inputs, and none is the
+    // result (a copy at the result's level is the row's own held answer, priced elsewhere). A worn copy
+    // costs the resale it gives up. Inputs deeper in a built chain stay fresh.
+    const heldAt = (k) => held.filter((copy) => copy.level === k).sort((a, b) => a.forfeit - b.forfeit)[0] || null;
+    const upper = heldAt(level - 1);
+    const lower = heldAt(level - 2);
+    let plan = { pay: mirrorTotals[level], forfeit: 0, used: [] };
+    for (const [useUpper, useLower] of [
+        [true, false],
+        [false, true],
+        [true, true],
+    ]) {
+        if ((useUpper && !upper) || (useLower && !lower)) continue;
+        // A step the chain may skip (Blessed Tea) is only run, and its inputs only spent, some of the time
+        const stepOdds = useUpper ? 1 : landing[level - 1];
+        const lowerPay = useLower ? 0 : best[level - 2];
+        const pay = (useUpper ? 0 : best[level - 1]) + (stepOdds > 0 ? stepOdds * (lowerPay + mirrorPrice) : 0);
+        const forfeit = (useUpper ? upper.forfeit : 0) + (useLower ? stepOdds * lower.forfeit : 0);
+        if (!Number.isFinite(pay) || pay + forfeit >= plan.pay + plan.forfeit) continue;
+        plan = { pay, forfeit, used: [useUpper ? upper : null, useLower ? lower : null].filter(Boolean) };
+    }
+    if (!Number.isFinite(plan.pay) || !(plan.pay + plan.forfeit < viaOrdinary)) return null;
+    return {
+        baseCost: plan.pay,
+        forfeited: plan.forfeit,
+        consumed: plan.used.filter((copy) => copy.piece).map((copy) => copy.piece),
+        heldLevels: plan.used.map((copy) => copy.level),
+        mirrorPrice,
+    };
+}
+
+/**
+ * The held copies that may serve as a mirror's inputs: every spare, and a worn copy only when the row
+ * takes that very piece off (the rule the refine route uses for a worn base). A worn copy carries its
+ * resale as what using it forfeits, and the piece so the caller can leave it out of the credit.
+ * @param {string} itemHrid - The item being mirrored
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - False for a player other than the live character
+ * @param {Object|null} [options.candidate] - The row being priced
+ * @returns {Array<{level: number, forfeit: number, piece: {hrid: string, level: number}|null}>} Offered
+ *   copies; `piece` is set for a worn one
+ */
+function mirrorHeldInputs(itemHrid, { isSelf = true, candidate = null } = {}) {
+    if (!itemHrid) return [];
+    const replaced = candidate ? removedPieces(candidate) : [];
+    return copiesForPricing(itemHrid, { isSelf, candidate })
+        .filter(
+            (copy) => !copy.equipped || replaced.some((piece) => piece.hrid === itemHrid && piece.level === copy.level)
+        )
+        .map((copy) => ({
+            level: copy.level,
+            forfeit: copy.equipped ? sellValue(itemHrid, copy.level) : 0,
+            piece: copy.equipped ? { hrid: itemHrid, level: copy.level } : null,
+        }));
 }
 
 /**
@@ -3108,9 +3184,14 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
     // Nothing to beat when the piece is already held at the level asked
     if (chosen.price === 0) return chosen;
     const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
-    const mirror = resolveMirrorBase(itemHrid, level, gameData, { minLevel: MIRROR_FIRST_LEVEL });
-    if (mirror && (chosen.price == null || mirror.baseCost < chosen.price)) {
+    const mirror = resolveMirrorBase(itemHrid, level, gameData, {
+        minLevel: MIRROR_FIRST_LEVEL,
+        held: mirrorHeldInputs(itemHrid, { isSelf: options.isSelf !== false, candidate: options.candidate || null }),
+    });
+    if (mirror && (chosen.price == null || mirror.baseCost + mirror.forfeited < chosen.price)) {
         return {
+            // A worn piece that went into the mirror is not also sold
+            ...(mirror.consumed.length ? { consumed: mirror.consumed } : {}),
             price: mirror.baseCost,
             source: 'mirror',
             enhanceSource: describeEnhancementSource(enhancementSweepParams(itemHrid)),
@@ -3122,7 +3203,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
                 fromEquipped: false,
                 isSelf: options.isSelf !== false,
                 baseCost: 0,
-                mirror: { mirrorPrice: mirror.mirrorPrice },
+                mirror: { mirrorPrice: mirror.mirrorPrice, heldLevels: mirror.heldLevels },
             },
         };
     }
@@ -3450,7 +3531,7 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     const detail = explainUpgradeCostWithoutMirror(candidate, gameData, isSelf);
-    const mirror = enhancementMirrorRoute(candidate, gameData);
+    const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     if (!mirror || !(detail.net == null || mirror.net < detail.net)) return detail;
     const name = gameData?.itemDetailMap?.[candidate.currentHrid]?.name || candidate.currentHrid.split('/').pop();
     return {
@@ -3489,7 +3570,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
             fromEquipped: false,
             isSelf: Boolean(isSelf),
             baseCost: 0,
-            mirror: { mirrorPrice: mirror.mirrorPrice },
+            mirror: { mirrorPrice: mirror.mirrorPrice, heldLevels: mirror.heldLevels },
         },
     };
 }

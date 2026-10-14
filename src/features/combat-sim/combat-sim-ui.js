@@ -845,6 +845,16 @@ export function upgradeCostCell(result) {
 }
 
 /**
+ * The clause naming the held copies a mirror build uses as inputs instead of buying them.
+ * @param {number[]|undefined} heldLevels - Levels of the held copies used
+ * @returns {string} Plain text, empty when none are used
+ */
+function heldMirrorInputsNote(heldLevels) {
+    if (!Array.isArray(heldLevels) || heldLevels.length === 0) return '';
+    return `, using the ${heldLevels.map((level) => `+${level}`).join(' and ')} you hold`;
+}
+
+/**
  * The one-line account of a laddered price: which copy it enhances from, and
  * whether a fresh base is in the figure.
  * @param {Object} ladder - `costDetail.ladder` from the advisor
@@ -858,6 +868,7 @@ function ladderSentence(ladder, total = null) {
             `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} copy into a +${ladder.toLevel} with a ` +
             `${formatKMB(ladder.mirror.mirrorPrice)} Philosopher's Mirror` +
             (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '') +
+            heldMirrorInputsNote(ladder.mirror.heldLevels) +
             '.'
         );
     }
@@ -865,8 +876,8 @@ function ladderSentence(ladder, total = null) {
         return (
             `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} base copy into a +${ladder.toLevel} ` +
             `(${formatKMB(ladder.refine.mirror.baseCost)} with a ${formatKMB(ladder.refine.mirror.mirrorPrice)} ` +
-            `Philosopher's Mirror), then refine it: ${(ladder.refine.lines || []).join(' + ')} = ` +
-            `${formatKMB(ladder.refine.materialCost)}.`
+            `Philosopher's Mirror${heldMirrorInputsNote(ladder.refine.mirror.heldLevels)}), then refine it: ` +
+            `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}.`
         );
     }
     if (ladder.refine) {
