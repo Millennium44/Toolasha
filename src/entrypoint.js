@@ -991,6 +991,10 @@ function registerFeatures() {
             category: 'Market',
             module: Market.overbidPanel,
             async: false,
+            // Not a schema/feature key, so without this the registry treats it as always enabled and records
+            // it as started even when the setting is off
+            customCheck: () => config.getSetting('market_overbidPanel'),
+            liveStop: true,
         },
         {
             key: 'tradeHistoryDisplay',

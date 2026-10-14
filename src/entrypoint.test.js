@@ -1200,6 +1200,14 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(entry.liveStop).toBe(true);
     });
 
+    test('the overbid table is gated on its own setting and live-stopped', () => {
+        const entry = registered.find((e) => e.key === 'overbidPanel');
+
+        expect(entry, 'overbidPanel is no longer registered').toBeTruthy();
+        expect(typeof entry.customCheck).toBe('function');
+        expect(entry.liveStop).toBe(true);
+    });
+
     test('the Guild Trial Simulator is live-stopped, so clearing its setting removes its tab button and panel', () => {
         const entry = registered.find((e) => e.key === 'guildTrialSim');
 

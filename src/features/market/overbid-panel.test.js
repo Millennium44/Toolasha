@@ -9,6 +9,7 @@ const hoisted = vi.hoisted(() => ({
     navigate: vi.fn(),
     setting: true,
     pooled: false,
+    inFlight: false,
     mooket: new Map(),
     refresh: vi.fn(async () => {}),
 }));
@@ -56,6 +57,9 @@ vi.mock('../notifications/market-undercut-alerts.js', () => ({
                 });
             }
             return [...seen.values()];
+        },
+        get mooketRefreshInFlight() {
+            return hoisted.inFlight;
         },
         refreshMooketObservations: hoisted.refresh,
     },
@@ -153,6 +157,7 @@ describe('panel', () => {
         hoisted.marketHandlers = [];
         hoisted.navigate.mockClear();
         hoisted.pooled = false;
+        hoisted.inFlight = false;
         hoisted.mooket.clear();
         hoisted.refresh.mockClear();
         document.body.innerHTML = '';
@@ -295,6 +300,19 @@ describe('panel', () => {
         overbidPanel.disable();
         await vi.advanceTimersByTimeAsync(2500);
         expect(hoisted.refresh).not.toHaveBeenCalled();
+    });
+
+    it('retries a newly listed item after a refresh that was already in flight', async () => {
+        hoisted.pooled = true;
+        hoisted.inFlight = true;
+        hoisted.listings = [listing({ id: 1 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        // The running refresh cannot see the item, so nothing was started and the item is not written off
+        expect(hoisted.refresh).not.toHaveBeenCalled();
+        hoisted.inFlight = false;
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(1);
     });
 
     it('cleanup removes the panel and every subscription', () => {
