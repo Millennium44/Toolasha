@@ -2663,7 +2663,8 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
  * A refined piece cannot be bought at a level, but a mirror still builds one: the game consumes the
  * refined +(L-1) it runs on and an unrefined copy of its base item at +(L-2) (`baseItemHrids[0]`, as
  * `trackMirrorCosts` reads it). So the route is the worn piece enhanced to +(L-1) (nothing when it is
- * already there), plus the cheapest base copy at +(L-2), plus a mirror. The worn piece goes into the
+ * already there), plus the cheapest base copy at +(L-2), plus a mirror (the last two only when a Blessed
+ * Tea +2 did not already land the enhance on +L). The worn piece goes into the
  * mirror, so it is never also sold and the route carries no credit; the caller compares it with the
  * ordinary route's net.
  *
@@ -2701,7 +2702,12 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
         copyCost = built ? Math.min(built.baseCost, bought ?? Infinity) : bought;
         if (!Number.isFinite(copyCost)) return null;
     }
-    const total = Math.max(0, primary) + copyCost + mirrorPrice;
+    // Under Blessed Tea the enhance to +(L-1) can overshoot: its last step, run from +(L-2), is a +2 with
+    // the Blessed chance, and that lands on +L already, so the base copy and the mirror are never spent.
+    // The chain stands on +(L-2) unless an earlier +2 skipped it (when it starts there, it always does).
+    const blessed = blessedMirrorChance(enhancementSweepParams(refinedHrid));
+    const overshoot = level - 1 > from ? blessed * (level - 2 > from ? 1 - blessed : 1) : 0;
+    const total = Math.max(0, primary) + (1 - overshoot) * (copyCost + mirrorPrice);
     return {
         net: total,
         baseCost: total,
