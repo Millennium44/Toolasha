@@ -373,7 +373,8 @@ describe('buildPayloadJSON', () => {
             bulkSellPanelPosition: { left: 1, top: 2 },
             consumablesBuyWidgetPosition: { left: 1, top: 2 },
             taskRerollWalkPanelPosition: { left: 1, top: 2 },
-            panelSizeMemory: { kept: true },
+            panelSizeMemory: { sizes: { a: { width: '300px' } } },
+            overlayPanelV2: { kept: true },
         };
 
         const parsed = JSON.parse(await buildPayloadJSON('everything'));
@@ -381,7 +382,7 @@ describe('buildPayloadJSON', () => {
         expect(parsed.stores.actionProgress).toBeUndefined();
         expect(Object.keys(parsed.stores.combatStats)).toEqual(['combatHistory_603281']);
         expect(Object.keys(parsed.stores.combatExport)).toEqual(['combatExport_603281']);
-        expect(Object.keys(parsed.stores.settings)).toEqual(['panelSizeMemory']);
+        expect(Object.keys(parsed.stores.settings)).toEqual(['overlayPanelV2']);
     });
 });
 
@@ -554,7 +555,7 @@ describe('applyPayload', () => {
     test('tells the live-safe records which keys the pull wrote, once it has landed', async () => {
         const heard = [];
         const off = onSyncPullApplied((written) => heard.push({ written, imported: importedPayloads.length }));
-        importOutcome.writtenKeys = { xpHistory: ['xpHistory_1'], settings: ['panelSizeMemory'] };
+        importOutcome.writtenKeys = { xpHistory: ['xpHistory_1'], settings: ['charmPanelFolds'] };
         try {
             await applyPayload(JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { a: 1 } } }));
         } finally {
@@ -563,7 +564,7 @@ describe('applyPayload', () => {
 
         // After the import, with the keys the import reported
         expect(heard).toEqual([
-            { written: { xpHistory: ['xpHistory_1'], settings: ['panelSizeMemory'] }, imported: 1 },
+            { written: { xpHistory: ['xpHistory_1'], settings: ['charmPanelFolds'] }, imported: 1 },
         ]);
     });
 
@@ -575,7 +576,12 @@ describe('applyPayload', () => {
                 actionProgress: { 603281: { actionId: 1, currentCount: 2, unitStartTime: 5 } },
                 combatStats: { latestCombatRun_603281: { live: true }, combatHistory_603281: [1] },
                 combatExport: { spawnCensus: { rows: [] } },
-                settings: { panelGeometry: { a: 1 }, modalPositions3: { a: 1 }, panelSizeMemory: { kept: true } },
+                settings: {
+                    panelGeometry: { a: 1 },
+                    modalPositions3: { a: 1 },
+                    panelSizeMemory: { sizes: { a: { width: '300px' } } },
+                    overlayPanelV2: { kept: true },
+                },
             },
         });
 
@@ -585,7 +591,7 @@ describe('applyPayload', () => {
         expect(written.actionProgress).toBeUndefined();
         expect(Object.keys(written.combatStats || {})).toEqual(['combatHistory_603281']);
         expect(written.combatExport?.spawnCensus).toBeUndefined();
-        expect(Object.keys(written.settings)).toEqual(['panelSizeMemory']);
+        expect(Object.keys(written.settings)).toEqual(['overlayPanelV2']);
     });
 
     test('never restores sync bookkeeping from a payload', async () => {
@@ -670,7 +676,7 @@ describe('applyPayload and the key-migration carry', () => {
             stores: {
                 settings: {
                     script_settingsMap_abc: { chatCommands: { isTrue: false } },
-                    panelSizeMemory: 1,
+                    charmPanelFolds: 1,
                 },
             },
         });
@@ -679,7 +685,7 @@ describe('applyPayload and the key-migration carry', () => {
 
         expect(reconcileKeyMigrationState).toHaveBeenCalledTimes(1);
         const keys = reconcileKeyMigrationState.mock.calls[0][0];
-        expect([...keys]).toEqual(['script_settingsMap_abc', 'panelSizeMemory']);
+        expect([...keys]).toEqual(['script_settingsMap_abc', 'charmPanelFolds']);
     });
 
     test('a payload with no settings store never calls it', async () => {
@@ -1232,7 +1238,7 @@ describe('applyPayload writes only what it changes', () => {
         storeState.stores.settings[RECORD] = { s1: 1 };
         storeState.stores.settings[GRAVES] = { s1: 5 };
 
-        await applyPayload(payloadOf({ settings: { [GRAVES]: { s1: 5 }, panelSizeMemory: 1 } }));
+        await applyPayload(payloadOf({ settings: { [GRAVES]: { s1: 5 }, charmPanelFolds: 1 } }));
 
         expect(importedPayloads[0].stores.settings[GRAVES]).toBeUndefined();
     });
@@ -1243,7 +1249,7 @@ describe('applyPayload writes only what it changes', () => {
         storeState.stores.settings[RECORD] = { s1: 1 };
         storeState.stores.settings[GRAVES] = { s0: 5 };
 
-        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 }, panelSizeMemory: 1 } }));
+        await applyPayload(payloadOf({ settings: { [RECORD]: { s1: 1 }, charmPanelFolds: 1 } }));
 
         expect(Object.keys(importedPayloads[0].stores.settings)).not.toContain(RECORD);
     });
@@ -1253,11 +1259,11 @@ describe('applyPayload writes only what it changes', () => {
 
         await applyPayload(
             payloadOf({
-                settings: { script_settingsMap_abc: { chatCommands: { isTrue: true } }, panelSizeMemory: 1 },
+                settings: { script_settingsMap_abc: { chatCommands: { isTrue: true } }, charmPanelFolds: 1 },
             })
         );
 
-        expect([...reconcileKeyMigrationState.mock.calls.at(-1)[0]]).toEqual(['panelSizeMemory']);
+        expect([...reconcileKeyMigrationState.mock.calls.at(-1)[0]]).toEqual(['charmPanelFolds']);
     });
 });
 
@@ -1622,11 +1628,11 @@ describe('the whole-value baseline', () => {
     });
 
     test('a startup merge keeps a value this device moved while the gist did not', async () => {
-        const baseline = wholeKeyHashes(payloadOf({ settings: { playerColors: { x: 1 }, panelSizeMemory: 1 } }));
+        const baseline = wholeKeyHashes(payloadOf({ settings: { playerColors: { x: 1 }, charmPanelFolds: 1 } }));
         storeState.stores.settings.playerColors = { x: 2 }; // moved here
-        storeState.stores.settings.panelSizeMemory = 1; // not moved here
+        storeState.stores.settings.charmPanelFolds = 1; // not moved here
 
-        await applyPayload(payloadOf({ settings: { playerColors: { x: 1 }, panelSizeMemory: 7 } }), {
+        await applyPayload(payloadOf({ settings: { playerColors: { x: 1 }, charmPanelFolds: 7 } }), {
             mode: 'merge',
             baseline,
         });
@@ -1634,7 +1640,7 @@ describe('the whole-value baseline', () => {
         const landedSettings = importedPayloads.at(-1).stores.settings;
         // Not in the import, so the newer local value stays where it is
         expect(Object.hasOwn(landedSettings, 'playerColors')).toBe(false);
-        expect(landedSettings.panelSizeMemory).toBe(7);
+        expect(landedSettings.charmPanelFolds).toBe(7);
     });
 
     test('with both sides moved, or no baseline, the download is written as a pull always did', async () => {
@@ -1677,33 +1683,33 @@ describe('mergeForUpload, which writes nothing local', () => {
 
     test('folds a registered history with its merge, and keeps keys either side alone has', () => {
         const local = payloadOf({ settings: { treasureTally_abc: { chests: { a: 3 } }, playerColors: 1 } });
-        const remote = payloadOf({ settings: { treasureTally_abc: { chests: { a: 1, b: 2 } }, panelSizeMemory: 2 } });
+        const remote = payloadOf({ settings: { treasureTally_abc: { chests: { a: 1, b: 2 } }, charmPanelFolds: 2 } });
 
         const merged = JSON.parse(mergeForUpload(local, remote, null).text).stores.settings;
 
         expect(merged.playerColors).toBe(1);
-        expect(merged.panelSizeMemory).toBe(2);
+        expect(merged.charmPanelFolds).toBe(2);
         expect(merged.treasureTally_abc).toBeDefined();
     });
 
     test("a whole-value key keeps this device's value only when the gist's is still the one last exchanged", () => {
-        // playerColors moved here, panelSizeMemory moved there, panelOpenState
+        // playerColors moved here, charmPanelFolds moved there, panelOpenState
         // moved on both, whatsNew_state has no baseline at all
         const baseline = wholeKeyHashes(
-            payloadOf({ settings: { playerColors: 1, panelSizeMemory: 1, panelOpenState: 1 } })
+            payloadOf({ settings: { playerColors: 1, charmPanelFolds: 1, panelOpenState: 1 } })
         );
         const local = payloadOf({
-            settings: { playerColors: 2, panelSizeMemory: 1, panelOpenState: 2, whatsNew_state: 'mine' },
+            settings: { playerColors: 2, charmPanelFolds: 1, panelOpenState: 2, whatsNew_state: 'mine' },
         });
         const remote = payloadOf({
-            settings: { playerColors: 1, panelSizeMemory: 3, panelOpenState: 3, whatsNew_state: 'theirs' },
+            settings: { playerColors: 1, charmPanelFolds: 3, panelOpenState: 3, whatsNew_state: 'theirs' },
         });
 
         const merged = JSON.parse(mergeForUpload(local, remote, baseline).text).stores.settings;
 
         expect(merged).toMatchObject({
             playerColors: 2,
-            panelSizeMemory: 3,
+            charmPanelFolds: 3,
             panelOpenState: 3,
             whatsNew_state: 'theirs',
         });
@@ -1783,17 +1789,17 @@ describe('mergeForUpload, which writes nothing local', () => {
     });
 
     test('a restore marker gives precedence to the keys it lists; an older marker shape to none', () => {
-        const local = payloadOf({ settings: { playerColors: 'restored', panelSizeMemory: 'stale' } });
-        const remote = payloadOf({ settings: { playerColors: 'theirs', panelSizeMemory: 'theirs' } });
+        const local = payloadOf({ settings: { playerColors: 'restored', charmPanelFolds: 'stale' } });
+        const remote = payloadOf({ settings: { playerColors: 'theirs', charmPanelFolds: 'theirs' } });
         const merge = (marker) =>
             JSON.parse(mergeForUpload(local, remote, { [RESTORED_BASELINE]: marker }).text).stores.settings;
 
         expect(merge({ at: 1, keys: { settings: ['playerColors'] } })).toMatchObject({
             playerColors: 'restored',
-            panelSizeMemory: 'theirs',
+            charmPanelFolds: 'theirs',
         });
         for (const old of [123, { at: 1, stores: ['settings'] }]) {
-            expect(merge(old)).toMatchObject({ playerColors: 'theirs', panelSizeMemory: 'theirs' });
+            expect(merge(old)).toMatchObject({ playerColors: 'theirs', charmPanelFolds: 'theirs' });
         }
     });
 
@@ -1801,18 +1807,18 @@ describe('mergeForUpload, which writes nothing local', () => {
         const local = payloadOf({ settings: { playerColors: 1 } });
         expect(mergeForUpload(local, payloadOf({ settings: { playerColors: 1 } }), null).remoteAdds).toBe(false);
         expect(
-            mergeForUpload(local, payloadOf({ settings: { playerColors: 1, panelSizeMemory: 2 } }), null).remoteAdds
+            mergeForUpload(local, payloadOf({ settings: { playerColors: 1, charmPanelFolds: 2 } }), null).remoteAdds
         ).toBe(true);
     });
 
     test('says whether it left out stores the gist holds that this scope does not sync', () => {
-        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
-        const withHistory = payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: { h: [1] } });
+        const local = payloadOf({ settings: { charmPanelFolds: 1 } });
+        const withHistory = payloadOf({ settings: { charmPanelFolds: 1 }, xpHistory: { h: [1] } });
         expect(mergeForUpload(local, withHistory, null).dropsFromRemote).toBe(true);
         expect(
-            mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 }, xpHistory: {} }), null).dropsFromRemote
+            mergeForUpload(local, payloadOf({ settings: { charmPanelFolds: 1 }, xpHistory: {} }), null).dropsFromRemote
         ).toBe(false);
-        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+        expect(mergeForUpload(local, payloadOf({ settings: { charmPanelFolds: 1 } }), null).dropsFromRemote).toBe(
             false
         );
         const everything = JSON.stringify({ ...JSON.parse(local), syncScope: 'everything' });
@@ -1823,29 +1829,29 @@ describe('mergeForUpload, which writes nothing local', () => {
         // An older build uploaded a key this one keeps on the device; the
         // rest of the gist matches. The loop guard only asks about keys the
         // upload holds, so without the flag the gist kept the key for ever
-        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
-        const remote = payloadOf({ settings: { panelSizeMemory: 1, toolasha_local_whispers: ['private'] } });
+        const local = payloadOf({ settings: { charmPanelFolds: 1 } });
+        const remote = payloadOf({ settings: { charmPanelFolds: 1, toolasha_local_whispers: ['private'] } });
         const merged = mergeForUpload(local, remote, null);
 
         expect(addsToRemote(merged.text, remote)).toBe(false);
         expect(merged.dropsFromRemote).toBe(true);
         expect(JSON.parse(merged.text).stores.settings).not.toHaveProperty('toolasha_local_whispers');
         // And a gist with nothing to clean stays quiet
-        expect(mergeForUpload(local, payloadOf({ settings: { panelSizeMemory: 1 } }), null).dropsFromRemote).toBe(
+        expect(mergeForUpload(local, payloadOf({ settings: { charmPanelFolds: 1 } }), null).dropsFromRemote).toBe(
             false
         );
     });
 
     test('says so when it redacts a device-local setting out of a settings map the gist holds', () => {
         const MAP = 'script_settingsMap_abc';
-        const local = payloadOf({ settings: { panelSizeMemory: 1 } });
-        const remote = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { sync_token: { value: 'ghp_x' } } } });
+        const local = payloadOf({ settings: { charmPanelFolds: 1 } });
+        const remote = payloadOf({ settings: { charmPanelFolds: 1, [MAP]: { sync_token: { value: 'ghp_x' } } } });
         expect(mergeForUpload(local, remote, null).dropsFromRemote).toBe(true);
-        const clean = payloadOf({ settings: { panelSizeMemory: 1, [MAP]: { other: { value: 1 } } } });
+        const clean = payloadOf({ settings: { charmPanelFolds: 1, [MAP]: { other: { value: 1 } } } });
         expect(mergeForUpload(local, clean, null).dropsFromRemote).toBe(false);
         // The same map as text, in another layout, is not a removal
         const asText = payloadOf({
-            settings: { panelSizeMemory: 1, [MAP]: JSON.stringify({ other: { value: 1 } }, null, 2) },
+            settings: { charmPanelFolds: 1, [MAP]: JSON.stringify({ other: { value: 1 } }, null, 2) },
         });
         expect(mergeForUpload(local, asText, null).dropsFromRemote).toBe(false);
     });

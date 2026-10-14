@@ -137,7 +137,8 @@ const LOCAL_ONLY_SETTING_IDS = [...REDACTED_SETTING_IDS, ...DEVICE_LOCAL_SETTING
  * useless — a higher number arriving from another device would tell this one its
  * patches had already been cleared when they had not.
  *
- * `panelGeometry`, `modalPositions3` and the floating widgets' position keys
+ * `panelGeometry`, `modalPositions3`, `panelSizeMemory` (divider widths and
+ * heights the game wrote after a drag) and the floating widgets' position keys
  * (`bulkSellPanelPosition`, `consumablesBuyWidgetPosition`,
  * `taskRerollWalkPanelPosition`) are where this device's panels and modals
  * were left, in pixels of this device's window. A different screen clamps or
@@ -171,6 +172,7 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     'settings_shared_scope_conflicts',
     'panelGeometry',
     'modalPositions3',
+    'panelSizeMemory',
     'bulkSellPanelPosition',
     'consumablesBuyWidgetPosition',
     'taskRerollWalkPanelPosition',
