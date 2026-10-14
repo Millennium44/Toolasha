@@ -991,21 +991,37 @@ function expectedPath(session, legs) {
  */
 export function mergedExpectation(session) {
     if (!hasPredictionLegs(session)) return null;
-    const legs = legsOf(session).filter((leg) => leg.predictions);
+    const allLegs = legsOf(session);
+    const legs = allLegs.filter((leg) => leg.predictions);
     if (legs.length === 0) return null;
-    const path = expectedPath(session, legs);
-    let expected = path ? { ...path, basis: 'path' } : null;
-    if (!expected) {
-        const summed = summedLegPredictions(session);
-        if (summed) {
-            expected = {
-                expectedAttempts: summed.expectedAttempts,
-                expectedProtections: summed.expectedProtections,
-                basis: 'stretch',
-            };
+    // Every attempt the session made has to be under a leg that has a forecast; otherwise the
+    // figures would leave a run out and read the whole session against the rest
+    const covered = allLegs.reduce((sum, leg) => sum + (Number.isFinite(leg.attempts) ? leg.attempts : 0), 0);
+    const complete =
+        covered === (session.totalAttempts || 0) && allLegs.every((leg) => leg.predictions || !(leg.attempts > 0));
+    let expected = null;
+    if (complete) {
+        const path = expectedPath(session, legs);
+        expected = path ? { ...path, basis: 'path' } : null;
+        if (!expected) {
+            const summed = summedLegPredictions(session);
+            if (summed) {
+                expected = {
+                    expectedAttempts: summed.expectedAttempts,
+                    expectedProtections: summed.expectedProtections,
+                    basis: 'stretch',
+                };
+            }
         }
     }
-    return { legs: legs.length, successRates: weightedSuccessRates(legs), expected };
+    // A level's rate is shown only where every leg that made attempts there has a forecast; with
+    // attempts outside every leg's record nothing can be said of any level
+    const unforecast = allLegs.filter((leg) => !leg.predictions);
+    const successRates = covered === (session.totalAttempts || 0) ? weightedSuccessRates(legs) : {};
+    for (const level of Object.keys(successRates)) {
+        if (unforecast.some((leg) => legWeight(leg, Number(level)) > 0)) delete successRates[level];
+    }
+    return { legs: legs.length, successRates, expected };
 }
 
 /**
