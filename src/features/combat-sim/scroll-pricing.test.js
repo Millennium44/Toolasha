@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ shop: {}, prices: {} }));
+const game = vi.hoisted(() => ({ shop: {}, prices: {}, settings: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -14,11 +14,15 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSettingValue: (_key, fallback) => fallback },
+    default: { getSettingValue: (key, fallback) => game.settings[key] ?? fallback },
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => game.prices[hrid]?.ask ?? null,
-    getItemPriceInfo: (hrid) => ({ price: game.prices[hrid]?.ask ?? null, source: 'book', estimated: false }),
+    getItemPrice: (hrid, { mode = 'ask' } = {}) => game.prices[hrid]?.[mode] ?? null,
+    getItemPriceInfo: (hrid, { mode = 'ask' } = {}) => ({
+        price: game.prices[hrid]?.[mode] ?? null,
+        source: 'book',
+        estimated: false,
+    }),
     getItemPrices: (hrid) => game.prices[hrid] ?? null,
 }));
 
@@ -34,6 +38,7 @@ function scrollRow(profitGainPerHour, { measuresLoss = false } = {}) {
 }
 
 beforeEach(() => {
+    game.settings = {};
     // Real shop shape: Pathseeker Lodestone costs 1,000 tokens and sells for 6.8M, so 6.8K/token
     game.shop = {
         lodestone: {
@@ -106,5 +111,26 @@ describe('priceScrollRow', () => {
 describe('priceScrollByTokens', () => {
     test('a free gain of exactly the cost is not worth it', () => {
         expect(priceScrollByTokens({ tokenValue: 100, profitGainPerHour: 6000 }).worthIt).toBe(false);
+    });
+});
+
+describe('scrollTokenRate pricing side', () => {
+    test('follows profitCalc_pricingMode and ignores the dungeon-only respect toggle', async () => {
+        game.prices = {
+            '/items/pathseeker_lodestone': { ask: 6_800_000, bid: 5_000_000 },
+        };
+        game.settings = { expectedValue_respectPricingMode: false };
+        // Hybrid is the default mode: the ask, whatever the dungeon-token toggle says
+        expect(scrollTokenRate().value).toBe(6800);
+    });
+});
+
+describe('scrollTokenRate under a bid-side mode', () => {
+    test('conservative mode prices the bid, with the respect toggle off or on', () => {
+        game.prices = { '/items/pathseeker_lodestone': { ask: 6_800_000, bid: 5_000_000 } };
+        game.settings = { profitCalc_pricingMode: 'conservative', expectedValue_respectPricingMode: false };
+        expect(scrollTokenRate().value).toBe(5000);
+        game.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(scrollTokenRate().value).toBe(5000);
     });
 });
