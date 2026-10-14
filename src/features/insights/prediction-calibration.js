@@ -156,6 +156,7 @@ class PredictionCalibration {
             merge: mergeCalibrationRecords,
             migrate: 'discard',
             label: 'PredictionCalibration',
+            onPulled: () => this.refreshFromPull(),
         });
         /** Whose pairs the record in memory holds; a change means forget them first */
         this.owner = null;
@@ -241,6 +242,26 @@ class PredictionCalibration {
             this.records = this.records || [];
         }
         return this.records;
+    }
+
+    /**
+     * Take in pairs a sync pull wrote under the running page: `_load()` with a character guard around the
+     * await. The pairs in hand go back into the record so the load folds the stored ones under them. A pair
+     * added while the read was out would be lost by the adoption, so the adoption is skipped then; memory wins
+     * and the next `_save()` folds the stored record under it.
+     * @returns {Promise<void>}
+     */
+    async refreshFromPull() {
+        const held = this.records;
+        if (!held || !this._key()) return;
+        const store = this._store();
+        const owner = this.owner;
+        const heldLength = held.length;
+        store.set(clearedRecord(held));
+        if (!(await store.load())) return;
+        if (this.owner !== owner || this.store !== store || this._store() !== store) return;
+        if (this.records !== held || held.length !== heldLength) return;
+        this._sync();
     }
 
     /**

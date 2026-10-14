@@ -562,6 +562,27 @@ describe('the ledger survives a failed read and a second tab', () => {
         expect(storedEntries(KEY).map((r) => r.id)).toEqual(['a', 'b', 'c']);
     });
 
+    test('a sync pull brings the other device pairs in, keeping the ones held', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.addRecord(pair('a', 1));
+        await calibration.getRecords();
+        writeStoredEntries(KEY, [...storedEntries(KEY), pair('c', 3)]);
+
+        announceSyncPullApplied({ lootLogHistory: ['calibration_char-1'] });
+        await vi.waitFor(() => expect(calibration.records.map((r) => r.id)).toEqual(['a', 'c']));
+        // The pulled pair is known, so it is not accepted twice
+        expect(await calibration.addRecord(pair('c', 3))).toBe(false);
+    });
+
+    test('a pull of another character changes nothing', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.getRecords();
+        writeStoredEntries(KEY, [pair('c', 3)]);
+        announceSyncPullApplied({ lootLogHistory: ['calibration_char-2'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(calibration.records).toEqual([]);
+    });
+
     test('clearing is the one overwrite, and stamps what it writes', async () => {
         await calibration.addRecord(pair('a', 1));
 

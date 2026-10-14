@@ -235,6 +235,29 @@ describe('the observations survive a failed read and a second tab', () => {
         expect(ids(await calibration.getRecords())).toEqual(['session_1:5', 'session_2:5', 'theirs']);
     });
 
+    test('a sync pull brings the other device observations in, keeping the ones held', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.recordCompletion(completedSession({ endTime: 1 }));
+        writeStoredEntries(KEY, [...storedEntries(KEY), { id: 'theirs', t: 3 }]);
+
+        announceSyncPullApplied({ lootLogHistory: ['calibrationEnhancing_char-1'] });
+        await vi.waitFor(() => expect(ids(calibration.getCachedRecords())).toEqual(['session_1:5', 'theirs']));
+    });
+
+    test('a pull of another character, or before the first load, changes nothing', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        writeStoredEntries(KEY, [{ id: 'theirs', t: 3 }]);
+        announceSyncPullApplied({ lootLogHistory: ['calibrationEnhancing_char-1'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(calibration.getCachedRecords()).toBeNull();
+
+        await calibration.getRecords();
+        writeStoredEntries(KEY, []);
+        announceSyncPullApplied({ lootLogHistory: ['calibrationEnhancing_char-2'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(ids(calibration.getCachedRecords())).toEqual(['theirs']);
+    });
+
     test('once storage reads again the next save lands everything', async () => {
         game.unavailable = true;
         await calibration.recordCompletion(completedSession({ endTime: 1 }));
