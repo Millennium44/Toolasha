@@ -1045,6 +1045,57 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         expect(storedLog().map((l) => l.id)).toEqual([1]);
     });
 
+    describe('a failed import leaves nothing behind', () => {
+        const GRAVES_KEY = 'marketListingGraves_market123';
+        const failWriteOf = (failKey) => {
+            const realSet = storageMock.set.getMockImplementation();
+            storageMock.set.mockImplementation(async (key, ...rest) => {
+                if (key === failKey) return false;
+                return realSet(key, ...rest);
+            });
+            return () => storageMock.set.mockImplementation(realSet);
+        };
+
+        test('a tombstone write that fails leaves the in-memory map as it was', async () => {
+            const buriedAt = Date.now() - 60_000;
+            const graves = { removed: { 2: buriedAt }, clearedThrough: 0 };
+            storageMock.storeFor('marketListings').set(LOG_KEY, [row(1)]);
+            storageMock.storeFor('marketListings').set(GRAVES_KEY, graves);
+            knownAs([row(1)]);
+            estimatedListingAge.listingGraves = structuredClone(graves);
+            const heal = failWriteOf(GRAVES_KEY);
+
+            expect(await estimatedListingAge.importListings([row(2)])).toBe(false);
+            heal();
+
+            expect(estimatedListingAge.listingGraves.restored).toBeUndefined();
+            expect(estimatedListingAge.listingGraves.removed).toEqual({ 2: buriedAt });
+            expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1]);
+            expect(storageMock.storeFor('marketListings').get(GRAVES_KEY)).toEqual(graves);
+        });
+
+        test('a listing log write that fails takes rows, memory map and stored stamp back out', async () => {
+            const buriedAt = Date.now() - 60_000;
+            const graves = { removed: { 2: buriedAt }, clearedThrough: 0 };
+            storageMock.storeFor('marketListings').set(LOG_KEY, [row(1)]);
+            storageMock.storeFor('marketListings').set(GRAVES_KEY, graves);
+            knownAs([row(1)]);
+            estimatedListingAge.listingGraves = structuredClone(graves);
+            const heal = failWriteOf(LOG_KEY);
+
+            expect(await estimatedListingAge.importListings([row(2), row(9)])).toBe(false);
+            heal();
+
+            expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1]);
+            expect(estimatedListingAge.listingGraves.restored).toBeUndefined();
+            expect(estimatedListingAge.listingGraves.removed).toEqual({ 2: buriedAt });
+            const stored = storageMock.storeFor('marketListings').get(GRAVES_KEY);
+            expect(stored.restored).toBeUndefined();
+            expect(stored.removed).toEqual({ 2: buriedAt });
+            expect(storedLog().map((l) => l.id)).toEqual([1]);
+        });
+    });
+
     test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
         storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
         knownAs([row(1), row(2)]);
