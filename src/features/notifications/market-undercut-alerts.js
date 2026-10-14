@@ -270,10 +270,10 @@ class MarketUndercutAlerts {
 
     /**
      * Compare every active listing against the market, and say what changed.
+     * The per-listing state is kept current even while notifications are off (the overbid table can be the only
+     * consumer); only the delivery is gated on {@link MASTER_SETTING}.
      */
     check() {
-        if (!config.getSetting(MASTER_SETTING)) return;
-
         const listings = dataManager.getMarketListings().filter((listing) => listing?.status === ACTIVE_STATUS);
         const seen = new Set();
 
@@ -328,6 +328,13 @@ class MarketUndercutAlerts {
             maxPriceAgeMs: marketAPI.CACHE_DURATION,
         });
         if (!fire) {
+            state.armed = armed;
+            return;
+        }
+
+        // The overbid table keeps this running with notifications off. The state must still follow the market, or
+        // a listing that recovered and was beaten again meanwhile stays disarmed once notifications come back on
+        if (!config.getSetting(MASTER_SETTING)) {
             state.armed = armed;
             return;
         }

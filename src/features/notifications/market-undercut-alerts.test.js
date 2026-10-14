@@ -386,6 +386,25 @@ describe('market undercut alerts', () => {
         expect(game.notified).toHaveLength(0);
     });
 
+    test('keeps listing states current with notifications off, so a recovered listing is re-armed', () => {
+        game.listings = [listing()];
+        setPrice('/items/cheese', 0, 274000, 270000);
+        check();
+        expect(game.notified).toHaveLength(1);
+
+        // Notifications go off while the overbid table keeps this running; the listing becomes best again
+        game.settings = { [MASTER_SETTING]: false, market_overbidPanel: true };
+        setPrice('/items/cheese', 0, 290000, 270000);
+        check();
+        expect(game.notified).toHaveLength(1);
+
+        // Notifications come back on and it is beaten again: that is a new undercut and is announced
+        game.settings = { [MASTER_SETTING]: true };
+        setPrice('/items/cheese', 0, 274000, 270000);
+        check();
+        expect(game.notified).toHaveLength(2);
+    });
+
     test('a character switch tears the listeners down and forgets every listing', () => {
         game.listings = [listing()];
         setPrice('/items/cheese', 0, 274000, 270000);
