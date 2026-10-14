@@ -3,12 +3,17 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ gameData: null, fibers: new Map() }));
+const state = vi.hoisted(() => ({ gameData: null, fibers: new Map(), testerOn: false }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => state.gameData,
     },
+}));
+
+vi.mock('./tester-shop.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    testerShopEnabled: () => state.testerOn,
 }));
 
 // The fiber lookup walks the live React root; what is under test is what is read off the fiber
@@ -109,6 +114,35 @@ describe('getShopCoinOnlyCost', () => {
             costs: [{ itemHrid: '/items/coin', count: 500 }],
         };
         expect(getShopCoinOnlyCost('/items/bundle')).toEqual({ coins: 500, units: 5 });
+    });
+
+    test('a Tester-shop +10 equipment offer is not a +0 base price', () => {
+        state.testerOn = true;
+        state.gameData.itemDetailMap = { '/items/sword': { equipmentDetail: {} } };
+        state.gameData.shopItemDetailMap['/shop_items/tester_sword'] = {
+            itemHrid: '/items/sword',
+            category: 'tester',
+            costs: [{ itemHrid: '/items/coin', count: 1000 }],
+        };
+        state.gameData.shopItemDetailMap['/shop_items/tester_sword_plus3'] = {
+            itemHrid: '/items/sword3',
+            category: 'tester',
+            enhancementLevel: 3,
+            costs: [{ itemHrid: '/items/coin', count: 1000 }],
+        };
+        state.gameData.shopItemDetailMap['/shop_items/tester_cheese'] = {
+            itemHrid: '/items/cheese',
+            category: 'tester',
+            costs: [{ itemHrid: '/items/coin', count: 7 }],
+        };
+        try {
+            expect(getShopCoinOnlyCost('/items/sword').coins).toBe(0);
+            expect(getShopCoinOnlyCost('/items/sword3').coins).toBe(0);
+            // Materials are sold at +0
+            expect(getShopCoinOnlyCost('/items/cheese')).toEqual({ coins: 7, units: 1 });
+        } finally {
+            state.testerOn = false;
+        }
     });
 
     test('an offer that also asks for another currency is not a coin price', () => {
