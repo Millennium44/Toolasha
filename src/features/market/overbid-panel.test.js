@@ -11,6 +11,7 @@ const hoisted = vi.hoisted(() => ({
     pooled: false,
     inFlight: false,
     tabs: null,
+    settingCallbacks: {},
     mooket: new Map(),
     refresh: vi.fn(async () => {}),
 }));
@@ -18,7 +19,12 @@ const hoisted = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => (key === 'market_pooledHistory' ? hoisted.pooled : hoisted.setting),
-        onSettingChange: vi.fn(),
+        onSettingChange: (key, fn) => {
+            (hoisted.settingCallbacks[key] ||= []).push(fn);
+            return () => {
+                hoisted.settingCallbacks[key] = hoisted.settingCallbacks[key].filter((f) => f !== fn);
+            };
+        },
         Z_FLOATING_PANEL: 10000,
     },
 }));
@@ -442,6 +448,20 @@ describe('panel', () => {
             tab(container).click();
             expect(root().textContent).toMatch(/old or missing for 1 of your listings/);
             expect(seen()).toContain('Nothing is undercut or outbid right now');
+        });
+
+        it('is removed from every strip it was added to on disable', async () => {
+            const first = strip();
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            const second = strip();
+            document.body.appendChild(document.createElement('div'));
+            await vi.advanceTimersByTimeAsync(100);
+            expect(tab(first)).not.toBeNull();
+            expect(tab(second)).not.toBeNull();
+            overbidPanel.disable();
+            expect(tab(first)).toBeNull();
+            expect(tab(second)).toBeNull();
         });
 
         it('is removed on disable', async () => {
