@@ -1778,6 +1778,41 @@ describe('a history that opts in takes a sync pull without a reload', () => {
         expect(storageMock.store.has('liveRefreshTomb_a')).toBe(false);
     });
 
+    test('a pull that only moves the retention floor and deletes a chunk drops that chunk from memory', async () => {
+        const history = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'liveFloorRec',
+            legacyKey: (charId) => `legacy_liveFloorRec_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            liveSafe: true,
+            floorPrefix: 'liveFloorRecFloor',
+            label: 'Live',
+        });
+        const heard = [];
+        history.onRefreshed((charId, fresh, removed) => heard.push(removed.map((entry) => entry.v)));
+        await history.load('a');
+        await history.save('a', [at(2026, 7, 9), at(2026, 8, 1)]);
+        await settle();
+        expect(storageMock.store.has('liveFloorRec_a_2026-07')).toBe(true);
+
+        // The pull wrote the floor marker and its retention rule deleted the older chunk
+        storageMock.store.set('liveFloorRecFloor_a_2026-08', { floor: '2026-08' });
+        storageMock.store.delete('liveFloorRec_a_2026-07');
+        announceSyncPullApplied(
+            { testStore: ['liveFloorRecFloor_a_2026-08'] },
+            { testStore: ['liveFloorRec_a_2026-07'] }
+        );
+        await settle();
+
+        expect(heard).toEqual([['2026-7-9']]);
+        expect((await history.load('a')).map((entry) => entry.v)).toEqual(['2026-8-1']);
+        // The next save does not write the dropped chunk back
+        await history.save('a', await history.load('a'));
+        await settle();
+        expect(storageMock.store.has('liveFloorRec_a_2026-07')).toBe(false);
+    });
+
     test('an entry this store let go of is not taken back in', async () => {
         const history = buildLive('liveLetGo');
         const heard = [];

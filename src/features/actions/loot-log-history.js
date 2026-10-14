@@ -195,6 +195,8 @@ class LootLogHistory {
             // No copy of its own: every merge and read goes through the store's memory, which re-reads
             // what a pull wrote, and every write is folded, so a pull lands under the running page
             liveSafe: true,
+            // A pull that only moves the cap floor deletes older chunks; memory drops them too
+            floorPrefix: FLOOR_PREFIX,
             label: 'LootLogHistory',
         });
 

@@ -918,6 +918,8 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         const retry = [...pendingDisplacedDeletes.values()].filter(
             ({ store, key }) => !displaced.some((entry) => entry.store === store && entry.key === key)
         );
+        /** Displaced keys whose delete landed, by store, for the pull announcement */
+        const deletedKeys = {};
         for (const { store, key } of [...retry, ...displaced]) {
             if (landedShort.has(store)) continue;
             const deleted = await storage.delete(key, store, { bypassRestoreLatch: true });
@@ -929,6 +931,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
                 pendingDisplacedDeletes.set(`${store}\u0000${key}`, { store, key });
             } else {
                 pendingDisplacedDeletes.delete(`${store}\u0000${key}`);
+                (deletedKeys[store] ||= []).push(key);
             }
         }
         if (undeleted.length > 0) {
@@ -943,7 +946,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             await restoreMigrationRecords(migrationRecords);
         }
         // The records that took the pull under a running page re-read what it wrote
-        announceSyncPullApplied(imported.writtenKeys ?? payloadKeys);
+        announceSyncPullApplied(imported.writtenKeys ?? payloadKeys, deletedKeys);
         return {
             restored,
             expected,

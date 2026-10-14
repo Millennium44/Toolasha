@@ -402,6 +402,9 @@ export function maxRecordsPerCharacter(storeName, keys) {
  *   deletions key are registered live-safe, so the pull's keys are not latched, and the store re-reads what a
  *   pull wrote (`refresh`, `onRefreshed`). Only for a history whose every write already goes through the folding
  *   chunk write and whose deletions key is written folded (see `_writeTombs`); the default is the latch
+ * @param {string} [options.floorPrefix] - Key prefix of a per-character retention floor marker
+ *   (`<floorPrefix>_<charId>_...`) that sync's retention rule reads. A pull that writes one (or that deletes
+ *   chunks of this history) makes a live-safe store re-read, so entries retention removed leave memory too
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -424,6 +427,7 @@ class ChunkedHistory {
         legacyIdentitiesOf,
         revisionOf,
         liveSafe = false,
+        floorPrefix = null,
         label = 'ChunkedHistory',
     }) {
         this.storeName = storeName;
@@ -441,6 +445,7 @@ class ChunkedHistory {
         this.legacyIdentitiesOf = typeof legacyIdentitiesOf === 'function' ? legacyIdentitiesOf : null;
         this.revisionOf = typeof revisionOf === 'function' ? revisionOf : null;
         this.liveSafe = liveSafe === true;
+        this.floorPrefix = typeof floorPrefix === 'string' && floorPrefix ? floorPrefix : null;
         this.label = label;
 
         /** Whose records are in memory */
@@ -521,7 +526,7 @@ class ChunkedHistory {
 
         registerChunkedStore(storeName, prefix);
         this._registerSyncMerge();
-        if (this.liveSafe) onSyncPullApplied((written) => this._onPulled(written));
+        if (this.liveSafe) onSyncPullApplied((written, deleted) => this._onPulled(written, deleted));
     }
 
     /**
@@ -1889,25 +1894,37 @@ class ChunkedHistory {
     }
 
     /**
-     * A pull has written keys: re-read this character's history if any of them is one of its records or
-     * its deletions.
+     * A pull has written keys: re-read this character's history if any of them is one of its records,
+     * its deletions or its retention floor marker; and drop what a chunk the pull deleted held.
      * @param {Record<string, Array<string>>} written - The pull's keys, by store
+     * @param {Record<string, Array<string>>} [deleted] - Keys the pull's retention rule deleted, by store
      * @returns {Promise<void>}
      * @private
      */
-    async _onPulled(written) {
-        const keys = written?.[this.storeName];
-        if (!this._loaded || !this._charId || !Array.isArray(keys)) return;
+    async _onPulled(written, deleted) {
+        if (!this._loaded || !this._charId) return;
+        const keys = Array.isArray(written?.[this.storeName]) ? written[this.storeName] : [];
+        const gone = Array.isArray(deleted?.[this.storeName]) ? deleted[this.storeName] : [];
         const charId = this._charId;
         const mine = `${this.prefix}_${charId}_`;
         const tombs = this.tombKey(charId);
-        if (!keys.some((key) => typeof key === 'string' && (key.startsWith(mine) || key === tombs))) return;
-        const { fresh, removed } = await this.refresh(charId);
-        if (fresh.length === 0 && removed.length === 0) return;
+        const floor = this.floorPrefix ? `${this.floorPrefix}_${charId}_` : null;
+        const goneChunks = gone
+            .filter((key) => typeof key === 'string' && key.startsWith(mine))
+            .map((key) => key.slice(mine.length));
+        const touched = keys.some(
+            (key) =>
+                typeof key === 'string' && (key.startsWith(mine) || key === tombs || (floor && key.startsWith(floor)))
+        );
+        if (!touched && goneChunks.length === 0) return;
+        const dropped = goneChunks.length > 0 ? await this._dropDeletedChunks(charId, goneChunks) : [];
+        const { fresh, removed } = touched ? await this.refresh(charId) : { fresh: [], removed: [] };
+        const allRemoved = [...dropped, ...removed];
+        if (fresh.length === 0 && allRemoved.length === 0) return;
         if (this._refreshListeners.size === 0) return;
         for (const listener of [...this._refreshListeners]) {
             try {
-                listener(charId, fresh, removed);
+                listener(charId, fresh, allRemoved);
             } catch (error) {
                 console.error(`[${this.label}] A refresh listener threw:`, error);
             }
@@ -1917,6 +1934,52 @@ class ChunkedHistory {
             const id = this._identity(entry);
             if (id !== undefined && id !== null) this._adopted.delete(id);
         }
+    }
+
+    /**
+     * Take out of memory the entries of chunks a pull's retention rule deleted from disk. Only a chunk the
+     * store confirms is gone is dropped: a listing that cannot be made, or a key that is back, drops nothing.
+     * @param {string} charId - Whose history
+     * @param {Array<string>} chunkIds - Chunk ids whose keys the pull deleted
+     * @returns {Promise<Array<Object>>} The entries dropped
+     * @private
+     */
+    async _dropDeletedChunks(charId, chunkIds) {
+        const token = this._loadToken;
+        let listing;
+        try {
+            listing = await storage.tryGetAllKeys(this.storeName);
+        } catch (error) {
+            console.error(`[${this.label}] Listing keys after a pull failed:`, error);
+            return [];
+        }
+        if (!Array.isArray(listing) || token !== this._loadToken || !this._loaded || this._charId !== charId) return [];
+        const present = new Set(listing);
+        const gone = new Set(chunkIds.filter((chunkId) => !present.has(this.keyFor(charId, chunkId))));
+        if (gone.size === 0) return [];
+        const dropped = [];
+        const kept = [];
+        for (const entry of this._entries) {
+            let chunkId = null;
+            try {
+                chunkId = String(this.groupOf(entry));
+            } catch {
+                // An entry whose chunk cannot be derived stays
+            }
+            if (chunkId !== null && gone.has(chunkId)) dropped.push(entry);
+            else kept.push(entry);
+        }
+        for (const chunkId of gone) {
+            this._noteKnown(chunkId, [], this._snapshot.get(chunkId));
+            this._snapshot.delete(chunkId);
+        }
+        if (dropped.length === 0) return [];
+        this._entries = kept;
+        for (const entry of dropped) {
+            const id = this._identity(entry);
+            if (id !== undefined && id !== null) this._adopted.delete(id);
+        }
+        return dropped;
     }
 
     /**
