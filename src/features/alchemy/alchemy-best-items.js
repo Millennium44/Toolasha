@@ -39,6 +39,7 @@ import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
+import selfUseWanted from '../market/self-use-wanted.js';
 
 /** The setting that remembers which sort the table was last left on */
 const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
@@ -77,6 +78,12 @@ export const SORT_MODES = [
             'claimed by a goal or plan.',
     },
 ];
+
+/** The setting that decides whether a mark means keep or sell (self-use-wanted's MARK_MEANING_SETTING) */
+const MARK_MEANING_KEY = 'selfUse_markMeaning';
+
+/** How long inventory churn settles before the own-stock table redraws */
+const INVENTORY_REDRAW_MS = 400;
 
 /** The sort modes that rank by a whole decompose chain */
 const CHAIN_MODES = new Set(['decomposeChainPerHour', 'chainOwnStock']);
@@ -162,6 +169,8 @@ class AlchemyBestItems {
         this.ownStockSweep = 0;
         this.ownStockRunning = false;
         this.ownStockPromise = null;
+        this.inventoryTimer = null;
+        this._onInventoryChange = () => this.handleInventoryChange();
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -222,6 +231,14 @@ class AlchemyBestItems {
             config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
             // Cowbells inside a chain's bonus crates are valued by this setting
             config.onSettingChange('expectedValue_includeCowbells', () => this.handleMarketUpdate()),
+            // The own-stock figures were priced under the keep list and its meaning
+            selfUseWanted.onChange(() => this.handleKeepChange()),
+            config.onSettingChange(MARK_MEANING_KEY, () => this.handleKeepChange()),
+            // Held counts move as alchemy consumes and produces items
+            (() => {
+                dataManager.on('items_updated', this._onInventoryChange);
+                return () => dataManager.off('items_updated', this._onInventoryChange);
+            })(),
             // The auto-fill settings move only the dropdowns' tooltips: no re-rank
             ...PRICING_SIDE_TOOLTIP_SETTING_KEYS.map((key) =>
                 config.onSettingChange(key, () => this.updatePricingSelects())
@@ -253,6 +270,38 @@ class AlchemyBestItems {
             if (typeof unsubscribe === 'function') unsubscribe();
         }
         this.pricingUnsubscribers = [];
+        clearTimeout(this.inventoryTimer);
+        this.inventoryTimer = null;
+    }
+
+    /**
+     * The self-use keep list or its meaning changed: the own-stock figures were priced under the old
+     * one, so drop them and re-sweep (the redraw finds the missing rows and starts it).
+     */
+    handleKeepChange() {
+        try {
+            if (this.ownStock.size === 0 && !this.ownStockRunning) return;
+            this.ownStock.clear();
+            this.ownStockSweep += 1;
+            this.ownStockRunning = false;
+            this.ownStockPromise = null;
+            if (this.modal && this.modal.style.display !== 'none' && this.isOwnStockMode()) this.renderTable();
+        } catch (error) {
+            console.error('[AlchemyBestItems] Re-pricing after a keep-list change failed:', error);
+        }
+    }
+
+    /**
+     * The inventory moved: redraw the open own-stock table once the churn settles, so rows for used-up
+     * stock leave and new stock arrives (the redraw starts a sweep for it). Other sorts do not read it.
+     */
+    handleInventoryChange() {
+        if (!this.modal || this.modal.style.display === 'none' || !this.isOwnStockMode()) return;
+        clearTimeout(this.inventoryTimer);
+        this.inventoryTimer = setTimeout(() => {
+            this.inventoryTimer = null;
+            if (this.modal && this.modal.style.display !== 'none' && this.isOwnStockMode()) this.renderTable();
+        }, INVENTORY_REDRAW_MS);
     }
 
     /**
@@ -757,7 +806,7 @@ class AlchemyBestItems {
         const toolCost = chain.overheadCost > 0 ? `, plus ${money(chain.overheadCost)} of catalyst and tea` : '';
         const lines = own
             ? [
-                  `${name}, valued as stock you hold (${formatWithSeparator(this.ownStock.get(itemHrid)?.held ?? 0)}).`,
+                  `${name}, valued as stock you hold (${formatWithSeparator(this.heldCount(itemHrid))}).`,
                   `Item: ${money(chain.ownUseCost ?? 0)} own-use cost (the cheaper of making it and buying it)${toolCost}.`,
                   keptOutputs.length > 0
                       ? `Outputs: ${lower}${money(chain.terminalValue)} (${keptOutputs.join(', ')} kept at what you ` +
