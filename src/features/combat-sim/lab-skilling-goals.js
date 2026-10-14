@@ -62,7 +62,7 @@ const RATE_EPSILON = 1e-12;
  *
  * @param {SkillingSetup} setup - Not modified
  * @param {Object} candidate - A candidate from the Skilling analysis
- * @param {string|null} [targetSkill] - The skill being analysed, when only one
+ * @param {string|null} [targetSkill] - The skill being analyzed, when only one
  * @returns {SkillingSetup} A new setup
  */
 export function applySkillingCandidate(setup, candidate, targetSkill = null) {
@@ -420,21 +420,25 @@ export function mergeMultiSkillGearRows({
  */
 function priceMergedAcquisition(members, gameData) {
     const first = members[0].candidate;
-    const seen = new Set();
-    const removedItems = [];
-    const keptItems = [];
-    for (const { candidate: c } of members) {
-        const displaced =
-            c.removedItems || (c.currentHrid ? [{ hrid: c.currentHrid, enhancementLevel: c.currentLevel }] : []);
-        for (const item of displaced) {
-            const key = `${item.hrid}+${item.enhancementLevel || 0}`;
-            if (item?.hrid && !seen.has(key)) {
-                seen.add(key);
-                removedItems.push(item);
+    const displacedBy = (c) =>
+        c.removedItems || (c.currentHrid ? [{ hrid: c.currentHrid, enhancementLevel: c.currentLevel }] : []);
+    /** The distinct pieces a set of parts give up, minus any in `except` */
+    const distinct = (candidates, except = []) => {
+        const seen = new Set(except.map((item) => `${item.hrid}+${item.enhancementLevel || 0}`));
+        const out = [];
+        for (const c of candidates) {
+            for (const item of displacedBy(c)) {
+                const key = `${item?.hrid}+${item?.enhancementLevel || 0}`;
+                if (item?.hrid && !seen.has(key)) {
+                    seen.add(key);
+                    out.push(item);
+                }
             }
         }
-        for (const item of c.keptItems || []) keptItems.push(item);
-    }
+        return out;
+    };
+    const removedItems = distinct(members.map((r) => r.candidate));
+    const keptItems = members.flatMap((r) => r.candidate.keptItems || []);
     const buy = {
         ...first,
         type: 'skilling_gear',
@@ -462,9 +466,19 @@ function priceMergedAcquisition(members, gameData) {
             },
         });
     for (const row of members) {
-        if (row.candidate.type === 'enhancement' && Number.isFinite(row.cost)) {
-            routes.push({ cost: row.cost, detail: () => row.costDetail ?? null });
-        }
+        if (row.candidate.type !== 'enhancement' || !Number.isFinite(row.cost)) continue;
+        // Enhancing the copy already held still frees the other kits' pieces. They
+        // are credited by the same helper as on the buy route: the difference
+        // between pricing the purchase with and without them
+        const owned = displacedBy(row.candidate);
+        const others = distinct(
+            members.filter((m) => m !== row).map((m) => m.candidate),
+            owned
+        );
+        const without = calculateUpgradeCost({ ...buy, removedItems: [] }, gameData);
+        const withOthers = calculateUpgradeCost({ ...buy, removedItems: others }, gameData);
+        const credit = Number.isFinite(without) && Number.isFinite(withOthers) ? without - withOthers : 0;
+        routes.push({ cost: row.cost - credit, detail: () => row.costDetail ?? null });
     }
     if (!routes.length) return { cost: null, costDetail: null };
     const cheapest = routes.reduce((best, r) => (r.cost < best.cost ? r : best));

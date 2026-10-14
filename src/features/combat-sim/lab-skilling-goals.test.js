@@ -961,6 +961,27 @@ describe('pricing a merged multi-skill item once', () => {
         expect(result.results[0].cost).toBe(400);
     });
 
+    test('the owned-copy route also frees the other kits’ pieces', () => {
+        // Enhancing the held copy costs 400 on its own, but the foraging and woodcutting
+        // kits would each hand back a different piece, as on the buy route (100 each)
+        const price = vi
+            .spyOn(upgradeAdvisor, 'calculateUpgradeCost')
+            .mockImplementation((candidate) => 1000 - 100 * (candidate.removedItems?.length || 0));
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const owned = piece('/skills/milking', '/items/cape', {
+            cost: 400,
+            candidate: { type: 'enhancement', currentLevel: 2 },
+        });
+        const result = {
+            results: [owned, piece('/skills/foraging', '/items/c2'), piece('/skills/woodcutting', '/items/c3')],
+        };
+        mergeMultiSkillGearRows({ analysisResult: result, baseSetup: setup(), evaluate, roomLevel: 50, gameData: {} });
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results[0].cost).toBe(200);
+    });
+
     test('with no price anywhere the merged row is unpriced, not free', () => {
         const price = vi.spyOn(upgradeAdvisor, 'calculateUpgradeCost').mockReturnValue(null);
         const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
