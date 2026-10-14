@@ -1685,6 +1685,25 @@ describe('the room log survives a failed read and a second tab', () => {
         render.mockRestore();
     });
 
+    test('a sync pull merges a room attempts into the object the tab keeps', async () => {
+        const attemptAt = (startedAt) => ({ startedAt, endedAt: startedAt + 5, actions: 3, successes: 2 });
+        const mine = roomAt(1, { attempts: [attemptAt(10)] });
+        labyrinthRoomLogs.sessions = [mine];
+        await labyrinthRoomLogs.persist();
+        await labyrinthRoomLogs.record.load();
+        const render = vi.spyOn(labyrinthRoomLogs, 'renderIfOpen').mockImplementation(() => {});
+        storageMock
+            .storeFor('settings')
+            .set(LOG_KEY, { sessions: [roomAt(1, { attempts: [attemptAt(10), attemptAt(20)] })] });
+
+        announceSyncPullApplied({ settings: [LOG_KEY] });
+        await vi.waitFor(() => expect(mine.attempts.map((a) => a.startedAt)).toEqual([10, 20]));
+
+        expect(labyrinthRoomLogs.sessions[0]).toBe(mine);
+        expect(render).toHaveBeenCalledTimes(1);
+        render.mockRestore();
+    });
+
     test('the tab keeps its own room objects through a merge', async () => {
         const mine = roomAt(1);
         labyrinthRoomLogs.sessions = [mine];

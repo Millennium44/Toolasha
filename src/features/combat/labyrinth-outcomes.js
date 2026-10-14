@@ -188,6 +188,19 @@ function emptyOutcomeDocument() {
  */
 let outcomeOwner = null;
 
+/** Who wants to hear that a sync pull changed the totals (the room log's Accuracy view) */
+const outcomeListeners = new Set();
+
+/**
+ * Be told when a sync pull brought fight outcomes in.
+ * @param {() => void} listener - Called after the totals in memory changed
+ * @returns {() => void} Unsubscribe
+ */
+export function onOutcomesChanged(listener) {
+    outcomeListeners.add(listener);
+    return () => outcomeListeners.delete(listener);
+}
+
 /**
  * The record on disk, kept through the shared load/save discipline: an
  * unreadable probe keeps the totals in memory, and a save folds in what
@@ -299,7 +312,16 @@ export const outcomeMethods = {
             if (fields.some((value, at) => value !== [this._outcomes, this._outcomesSeen, this._baseline][at])) {
                 continue;
             }
+            const before = JSON.stringify(this._outcomeDocument());
             this._adoptOutcomeDocument(outcomeRecord.get());
+            if (JSON.stringify(this._outcomeDocument()) === before) return;
+            for (const listener of [...outcomeListeners]) {
+                try {
+                    listener();
+                } catch (error) {
+                    console.error('[LabyrinthClearRate] An outcomes listener threw:', error);
+                }
+            }
             return;
         }
     },

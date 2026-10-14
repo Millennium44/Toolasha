@@ -1274,6 +1274,27 @@ describe('per-character fight outcomes', () => {
         );
     });
 
+    test('listeners are told when a pull changed the totals, and not when it did not', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        const { onOutcomesChanged } = await import('./labyrinth-outcomes.js');
+        db.map.set('settings:labyrinthFightOutcomes_me', { version: 2, totals: { mine: { attempts: 1, clears: 1 } } });
+        await labyrinthClearRate.loadOutcomes();
+        const heard = vi.fn();
+        const off = onOutcomesChanged(heard);
+
+        announceSyncPullApplied({ settings: ['labyrinthFightOutcomes_me'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(heard).not.toHaveBeenCalled();
+
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { mine: { attempts: 1, clears: 1 }, theirs: { attempts: 5, clears: 1 } },
+        });
+        announceSyncPullApplied({ settings: ['labyrinthFightOutcomes_me'] });
+        await vi.waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+        off();
+    });
+
     test('a pull before the first load, or after a character switch, is left to the load', async () => {
         const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
         db.map.set('settings:labyrinthFightOutcomes_me', {

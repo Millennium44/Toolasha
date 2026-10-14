@@ -30,6 +30,7 @@ import { summarizePool, poolHygiene, nearMissRemainder } from './labyrinth-repla
 import { isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
 import { MIN_REPLAY_FIGHTS } from './labyrinth-replay-inputs.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
+import { onOutcomesChanged } from './labyrinth-outcomes.js';
 import {
     newAttributionState,
     noteActions,
@@ -416,7 +417,13 @@ class LabyrinthRoomLogs {
 
         // A sync pull that changes the fight pool redraws an open Pool view
         this.unlistenPool?.();
-        this.unlistenPool = labFightRecorder.onPoolChanged?.(() => this.renderIfOpen({ fightRecord: true })) ?? null;
+        const redraw = () => this.renderIfOpen({ fightRecord: true });
+        const offPool = labFightRecorder.onPoolChanged?.(redraw);
+        const offOutcomes = onOutcomesChanged(redraw);
+        this.unlistenPool = () => {
+            offPool?.();
+            offOutcomes();
+        };
 
         // Bring the accumulated calibration fights back into memory, so the pool
         // survives a reload rather than starting empty each session
@@ -1597,7 +1604,17 @@ class LabyrinthRoomLogs {
         const mine = new Map(this.sessions.map((session) => [sessionIdentity(session), session]));
         this.sessions = this.record
             .get()
-            .sessions.map((session) => mine.get(sessionIdentity(session)) || session)
+            .sessions.map((merged) => {
+                const local = mine.get(sessionIdentity(merged));
+                if (!local) return merged;
+                // The fold's one change to a room both sides have is the union of its skilling attempts. The
+                // local object stays (a room waiting for its experience is credited through it) and takes
+                // the union, local attempts winning a clash because they may have moved since the fold ran.
+                if (merged !== local && Array.isArray(merged.attempts) && merged.attempts.length) {
+                    local.attempts = mergeAttempts(merged.attempts, local.attempts);
+                }
+                return local;
+            })
             .slice(0, this.logSize());
     }
 
@@ -1617,9 +1634,11 @@ class LabyrinthRoomLogs {
         });
         this.record.set(roomRecord(held, clearedAtOf(this.record.get())));
         if (!(await this.record.load()) || !stillOurs(ticket)) return;
-        const before = this.sessions.map(sessionIdentity).join();
+        const shape = () =>
+            this.sessions.map((session) => `${sessionIdentity(session)}:${session.attempts?.length ?? 0}`);
+        const before = shape().join();
         this.adoptMerged();
-        if (this.sessions.map(sessionIdentity).join() !== before) this.renderIfOpen({ fightRecord: true });
+        if (shape().join() !== before) this.renderIfOpen({ fightRecord: true });
     }
 
     clearLogs() {
