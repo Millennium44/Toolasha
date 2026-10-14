@@ -4453,7 +4453,9 @@ describe('Check a swap', () => {
             release = resolve;
         });
         const results = combatAnalysis();
-        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis').mockImplementation(async () => {
+        let staleAbort;
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis').mockImplementation(async (...args) => {
+            staleAbort = args.at(-1)?.abortSignal;
             await gate;
             return results;
         });
@@ -4461,12 +4463,16 @@ describe('Check a swap', () => {
         ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
         const stale = ui._onCheckSwapsCombat();
         await settle();
+        expect(staleAbort()).toBe(false);
 
         // Same character, new panel; its status line says something of its own
         ui.destroy();
         ui.buildPanel();
         await settle();
         ui._setStatus('fresh panel status');
+        // A new run clears the shared flag; the stale analysis is still told to stop
+        ui._upgradeAborted = false;
+        expect(staleAbort()).toBe(true);
         release();
         await stale;
 
@@ -4571,6 +4577,39 @@ describe('Check a swap', () => {
         // The generated table keeps its budget box; the checked one has none
         expect(generated.querySelector('#mwi-labsim-budget')).toBeTruthy();
         expect(checked.querySelector('#mwi-labsim-budget')).toBeNull();
+    });
+
+    test('a checked skilling row says a kept piece is worn by a kit the swap does not reach', () => {
+        const container = document.createElement('div');
+        const row = {
+            candidate: {
+                description: 'Celestial Milking Tool +7 (milking)',
+                merged: true,
+                checkedSwap: true,
+                keptItems: [{ hrid: '/items/holy_milking_tool', enhancementLevel: 5 }],
+                keptUnreached: true,
+            },
+            costType: 'gold',
+            cost: 5_000_000,
+            clearRate: 0.5,
+            clearRateDelta: 0.004,
+            metricType: 'clearRate',
+            costDetail: {
+                buys: [{ name: 'Celestial Milking Tool', enhancementLevel: 7, price: 5_000_000 }],
+                credits: [],
+                unpriced: [],
+                kept: [{ name: 'Holy Milking Tool', enhancementLevel: 5, price: 2_000_000 }],
+                keptValue: 2_000_000,
+                gross: 5_000_000,
+                net: 5_000_000,
+            },
+        };
+        ui._renderSkillingUpgradeResults({ baseline: { clearRate: 0.496 }, results: [row] }, container, {
+            checked: true,
+        });
+
+        expect(container.innerHTML).toContain('a skill kit this swap does not reach still wears it');
+        expect(container.innerHTML).not.toContain('is combat gear you keep in a loadout');
     });
 
     test('the checked skilling table has the generated columns and the per-skill breakdown', () => {

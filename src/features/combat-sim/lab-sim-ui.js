@@ -331,6 +331,21 @@ const KEPT_REASON_SKILLING =
  */
 const KEPT_REASON_CHECKED = 'since a loadout this swap does not reach still wears it.';
 
+/** The same for a checked skilling swap: a skill kit the swap does not reach still wears the piece. */
+const KEPT_REASON_CHECKED_SKILLING = 'since a skill kit this swap does not reach still wears it.';
+
+/**
+ * Why a skilling row's kept pieces are kept: combat armor goes back in its
+ * loadout, and a checked swap leaves a piece another kit still wears.
+ * @param {Object} [candidate] - The row's candidate
+ * @returns {string} The reason, as the tail of a sentence
+ */
+function skillingKeptReason(candidate) {
+    if (!candidate?.keptUnreached) return KEPT_REASON_SKILLING;
+    if (!candidate.keptCombat) return KEPT_REASON_CHECKED_SKILLING;
+    return 'since it is combat gear you keep in a loadout, or a skill kit this swap does not reach still wears it.';
+}
+
 /**
  * The Cost cell of a gold row, in the wording the all-fights table uses.
  *
@@ -3453,7 +3468,7 @@ class LabSimUI {
                     extraCandidates: candidates,
                 },
                 ({ current, total, description }) => {
-                    if (this._upgradeAborted) return;
+                    if (!isCurrent() || this._upgradeAborted) return;
                     const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
                     const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
                     const { text: remaining } = eta.update(total > 0 ? current / total : 0);
@@ -3463,7 +3478,7 @@ class LabSimUI {
                             `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
                     }
                 },
-                { abortSignal: () => this._upgradeAborted }
+                { abortSignal: () => !isCurrent() || this._upgradeAborted }
             );
 
             if (!isCurrent() || this._upgradeAborted) return;
@@ -6091,7 +6106,7 @@ class LabSimUI {
         }
 
         if (candidate.pricingNote) parts.push(line(candidate.pricingNote, '#8ab4f8'));
-        parts.push(this._renderCostBreakdown(result.costDetail, { keptReason: KEPT_REASON_SKILLING }));
+        parts.push(this._renderCostBreakdown(result.costDetail, { keptReason: skillingKeptReason(candidate) }));
         return parts.join('');
     }
 
@@ -7137,14 +7152,21 @@ class LabSimUI {
                     : '\u2014',
                 triesDeltaColor: r.triesDelta < -1e-9 ? '#4caf50' : r.triesDelta > 1e-9 ? '#f44336' : '#888',
                 keptNote: kept.length
-                    ? `Costed as the new piece alone. ${kept
-                          .map(
-                              (item) =>
-                                  itemName(item.hrid) + (item.enhancementLevel ? ` +${item.enhancementLevel}` : '')
-                          )
-                          .join(
-                              ', '
-                          )} is combat gear you keep in a loadout, so its resale is deliberately not credited — selling it to fund skilling gear is not a trade anybody makes.`
+                    ? r.candidate?.keptUnreached
+                        ? `Costed as the new piece alone. ${kept
+                              .map(
+                                  (item) =>
+                                      itemName(item.hrid) + (item.enhancementLevel ? ` +${item.enhancementLevel}` : '')
+                              )
+                              .join(', ')}: resale deliberately not credited, ${skillingKeptReason(r.candidate)}`
+                        : `Costed as the new piece alone. ${kept
+                              .map(
+                                  (item) =>
+                                      itemName(item.hrid) + (item.enhancementLevel ? ` +${item.enhancementLevel}` : '')
+                              )
+                              .join(
+                                  ', '
+                              )} is combat gear you keep in a loadout, so its resale is deliberately not credited — selling it to fund skilling gear is not a trade anybody makes.`
                     : '',
                 // The same click-to-expand the combat tab's gold rows carry. A
                 // Cost column with no way to ask what is behind it is exactly
