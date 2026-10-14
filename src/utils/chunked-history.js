@@ -2107,7 +2107,14 @@ class ChunkedHistory {
         for (const chunkId of grouped.keys()) records[this.keyFor(charId, chunkId)] = merged.get(chunkId);
 
         const wanted = Object.keys(records).length;
-        const written = await storage.putAll(this.storeName, records);
+        // Folded into what is stored when each key lands: a sync pull can put a chunk there between the
+        // read above and this write, and an unfolded write would replace it with the pre-pull copy
+        const folds = {};
+        for (const key of Object.keys(records)) {
+            folds[key] = (stored, value) =>
+                Array.isArray(stored) && stored.length > 0 ? this._union(value, stored, state.tombs) : value;
+        }
+        const written = await storage.putAll(this.storeName, records, { folds });
         if (written !== wanted || storage.isQuotaExceeded()) {
             console.warn(
                 `[${this.label}] Splitting the stored history stalled (${written}/${wanted} chunks) — ` +
