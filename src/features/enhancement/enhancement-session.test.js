@@ -480,6 +480,14 @@ describe('foldSessions', () => {
         expect(merged.extensionBaseline).toBeNull();
     });
 
+    test('folding into a session not running clears an earlier live-merge marker', () => {
+        const { seven, eight } = spatulaRuns();
+        eight.mergedLiveLeg = true;
+        eight.predictions = null;
+        const merged = foldSessions([seven, eight]);
+        expect(merged.mergedLiveLeg).toBeUndefined();
+    });
+
     test('duration is the sum of active time, not the span from the first start', () => {
         const { seven, eight } = spatulaRuns();
         const merged = foldSessions([seven, eight]);

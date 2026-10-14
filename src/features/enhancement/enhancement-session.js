@@ -788,6 +788,8 @@ export function foldSessions(ordered) {
         newest.mergedLiveLeg = true;
     } else {
         newest.extensionBaseline = null;
+        // A marker from an earlier live merge would otherwise keep the next predicted leg out of calibration
+        delete newest.mergedLiveLeg;
     }
     if (mixedProtection) newest.mixedProtection = true;
     // No combined prediction: the legs ran on the stats the player had at the time, and one
