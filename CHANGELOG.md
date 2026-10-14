@@ -61,6 +61,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - After a sync pull that needs no reload, leaderboard rank badges, the treasure tally, labyrinth room logs, clear rates, best levels and fight pool, calibration records, self-use marks, leaderboard XP and replay checks now take in the other device's data straight away instead of after their own next save.
 
+### Enhancement tracker: merged sessions keep their forecast; auto-combine across protections
+
+- A merged enhancement session now shows Pred % per level and expected attempts, protections and cost rebuilt from each run's own forecast, weighted by the attempts each run made at each level, so its factors mean something; and with auto-resume on, a new run that continues the last one with a different protection item now joins it instead of starting a new session (Auto-combine across protection items, on by default).
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
