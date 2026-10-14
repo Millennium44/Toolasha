@@ -8,11 +8,14 @@ const hoisted = vi.hoisted(() => ({
     marketHandlers: [],
     navigate: vi.fn(),
     setting: true,
+    pooled: false,
+    mooket: new Map(),
+    refresh: vi.fn(async () => {}),
 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => hoisted.setting,
+        getSetting: (key) => (key === 'market_pooledHistory' ? hoisted.pooled : hoisted.setting),
         onSettingChange: vi.fn(),
         Z_FLOATING_PANEL: 10000,
     },
@@ -42,6 +45,19 @@ vi.mock('../notifications/market-undercut-alerts.js', () => ({
     default: {
         sideObservation: (hrid, level, isSell) =>
             hoisted.observations[`${hrid}:${level}:${isSell ? 'sell' : 'buy'}`] ?? null,
+        mooketObservations: hoisted.mooket,
+        distinctActiveItems: () => {
+            const seen = new Map();
+            for (const l of hoisted.listings) {
+                if (l.status !== '/market_listing_status/active') continue;
+                seen.set(`${l.itemHrid}:${l.enhancementLevel || 0}`, {
+                    itemHrid: l.itemHrid,
+                    enhancementLevel: l.enhancementLevel || 0,
+                });
+            }
+            return [...seen.values()];
+        },
+        refreshMooketObservations: hoisted.refresh,
     },
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: hoisted.navigate }));
@@ -136,6 +152,9 @@ describe('panel', () => {
         hoisted.handlers = {};
         hoisted.marketHandlers = [];
         hoisted.navigate.mockClear();
+        hoisted.pooled = false;
+        hoisted.mooket.clear();
+        hoisted.refresh.mockClear();
         document.body.innerHTML = '';
         vi.useFakeTimers();
         vi.setSystemTime(NOW);
@@ -224,6 +243,58 @@ describe('panel', () => {
         } finally {
             delete window.Toolasha;
         }
+    });
+
+    it('a dismissal survives a freshness gap but not fresh evidence of being competitive', () => {
+        hoisted.listings = [listing({ id: 1 })];
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        root().querySelector('.toolasha-minimize-btn').nextElementSibling.click();
+        expect(root()).toBeNull();
+        // The figure goes unknown, then the same beaten price comes back
+        delete hoisted.observations[`${CHEESE}:0:sell`];
+        fire();
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        expect(root()).toBeNull();
+        // Fresh evidence that it is competitive again makes the next beating news
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(100);
+        fire();
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        expect(root()).not.toBeNull();
+    });
+
+    it('asks the shared refresh for pooled sightings of a newly listed item, once and debounced', async () => {
+        hoisted.pooled = true;
+        hoisted.listings = [listing({ id: 1 })];
+        fire();
+        fire();
+        expect(hoisted.refresh).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+        // The same unknown item is not asked for again on later messages
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+        // A new item is
+        hoisted.listings = [listing({ id: 1 }), listing({ id: 2, enhancementLevel: 2 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(2);
+    });
+
+    it('asks for no sightings unless pooled history is on, or when disabled before the debounce ends', async () => {
+        hoisted.listings = [listing({ id: 1 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).not.toHaveBeenCalled();
+        hoisted.pooled = true;
+        hoisted.listings = [listing({ id: 5, enhancementLevel: 9 })];
+        fire();
+        overbidPanel.disable();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).not.toHaveBeenCalled();
     });
 
     it('cleanup removes the panel and every subscription', () => {

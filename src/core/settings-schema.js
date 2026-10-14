@@ -1815,7 +1815,7 @@ export const settingsGroups = {
                 label: 'Market: Show overbid table',
                 type: 'checkbox',
                 default: true,
-                help: 'Opens a small movable, minimizable table when a listing of yours is beaten (a sell listing with a cheaper ask in front of it, a buy order with a higher bid in front of it), listing only those items with the price that beats you and your own price. The item name opens its marketplace page. It uses the market data this script already holds, with the same freshness rule as the undercut notification (figures older than 15 minutes are ignored), makes no requests of its own, and closes when nothing is beaten. Separate from the notification.',
+                help: 'Opens a small movable, minimizable table when a listing of yours is beaten (a sell listing with a cheaper ask in front of it, a buy order with a higher bid in front of it), listing only those items with the price that beats you and your own price. The item name opens its marketplace page. It uses the market data this script already holds, with the same freshness rule as the undercut notification (figures older than 15 minutes are ignored), and closes when nothing is beaten. On its own it makes no requests. If \u201cMarket: Price history panel\u201d is on, it also uses the pooled market history from the mooket project at q7.nainai.eu.org to judge items whose game data is old, which asks that server about the items you have listed; that setting is the opt-in, and with it off nothing leaves your machine. Separate from the notification.',
             },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',

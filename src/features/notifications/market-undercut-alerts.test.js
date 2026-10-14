@@ -598,3 +598,14 @@ describe('settings schema backs the undercut alert', () => {
         expect(getSettingDefinition('notifications_marketListingUndercut_refreshMinutes')).toBeFalsy();
     });
 });
+
+describe('settings schema backs the overbid table', () => {
+    test('its help names the pooled-history opt-in and the host it talks to', () => {
+        const panel = getSettingDefinition('market_overbidPanel');
+        const pooled = getSettingDefinition('market_pooledHistory');
+        const host = /q7\.nainai\.eu\.org/.exec(pooled.help)[0];
+        expect(panel.help).toContain(host);
+        expect(panel.help).toContain(pooled.label.replace('Market: ', ''));
+        expect(panel.help).not.toMatch(/makes no requests of its own/);
+    });
+});
