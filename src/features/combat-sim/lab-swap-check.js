@@ -363,6 +363,7 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
     // together), so a copy already worn at this level in any loadout is owned
     if ((dtos || []).some((dto) => wornExactly(dto?.equipment?.[slot], swap))) {
         candidate.cost = 0;
+        candidate.noPurchase = true;
         candidate.pricingNote = OWNED_CAVEAT;
     } else {
         // A replaced piece that a loadout the swap does not reach still wears
@@ -475,6 +476,8 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         checkedSwap: true,
         isSelf,
         pricingNote: owned ? OWNED_CAVEAT : routeCaveat(route.route),
+        // Nothing to buy when an owned copy is moved: no Save/Watch/Market actions
+        noPurchase: owned,
         allLoadouts,
         cost,
         costDetail,

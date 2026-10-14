@@ -425,6 +425,9 @@ describe('combat: who a checked swap reaches', () => {
             expect(withOwned.pricingNote).toContain('already wear a copy');
             // It is still only applied where it is needed
             expect(withOwned.reach).toBe(1);
+            // Nothing to buy: the row offers no acquisition actions, a bought one does
+            expect(withOwned.noPurchase).toBe(true);
+            expect(alone.noPurchase).toBeFalsy();
         });
 
         test('the pricing context is a note, not a task caveat', () => {
@@ -491,12 +494,14 @@ describe('combat: who a checked swap reaches', () => {
             const candidate = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 7 }, context, gameData);
             expect(candidate.skillKeys).toEqual(['/skills/milking']);
             expect(candidate.cost).toBe(0);
+            expect(candidate.noPurchase).toBe(true);
             const bought = buildSkillingSwapCandidate(
                 { hrid: MILKING_TOOL, level: 7 },
                 { ...context, skills: ['/skills/milking'] },
                 gameData
             );
             expect(bought.cost).toBeGreaterThan(0);
+            expect(bought.noPurchase).toBeFalsy();
 
             // A kit wearing it higher is left alone but is not a copy to reuse
             context.skillEquipmentMap['/skills/foraging'][TOOL] = piece(MILKING_TOOL, 9);
