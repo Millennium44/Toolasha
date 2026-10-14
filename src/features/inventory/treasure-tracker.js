@@ -2066,7 +2066,10 @@ class TreasureTracker {
             event.stopPropagation();
             if (!window.confirm(`Forget all ${row.opened} ${itemName(row.chestHrid)} openings?`)) return;
             this.tally = resetTally(this.tally, row.chestHrid);
-            this._save({ replace: true });
+            // A fold, not a replace: memory can be behind storage after a sync pull that landed without a
+            // reload, and an overwrite would drop every OTHER chest's pulled counts. The reset bucket carries
+            // a fresh `since` stamp, so it still wins whole over a stale copy of itself
+            this._save();
             this._render();
         });
 
