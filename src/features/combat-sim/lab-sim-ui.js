@@ -104,7 +104,11 @@ import {
     includedSkills,
     planSkillingGoal,
     renderCombinationHtml,
+    annotateRoomsReached,
+    mergeMultiSkillGearRows,
     renderPlanHtml,
+    renderSkillBreakdownHtml,
+    skillBreakdown,
     shortlistSkillingForRoomLevels,
     simulateCombination,
     uniformRoomLevels,
@@ -5392,8 +5396,8 @@ class LabSimUI {
             if (candidate.skillKey) {
                 parts.push(
                     line(
-                        `Counted for ${String(candidate.skillKey).replace('/skills/', '')} alone — its stats do ` +
-                            'nothing in any other skill’s room.',
+                        `Applied to the ${String(candidate.skillKey).replace('/skills/', '')} kit only. A piece that ` +
+                            'serves several skills’ rooms is listed once, with the rooms it covers in its name.',
                         '#888'
                     )
                 );
@@ -5402,6 +5406,33 @@ class LabSimUI {
 
         parts.push(this._renderCostBreakdown(result.costDetail, { keptReason: KEPT_REASON_SKILLING }));
         return parts.join('');
+    }
+
+    /**
+     * Every room an analysed upgrade was weighed against: before to after, or
+     * "unaffected" where its stats do nothing in that room.
+     * @param {Object|undefined} result - A skilling result row
+     * @returns {string} HTML, empty when there is no analysis to measure against
+     * @private
+     */
+    _renderSkillBreakdown(result) {
+        const context = this._skillingAnalysis;
+        if (result?.breakdownLines) return renderSkillBreakdownHtml(result.breakdownLines);
+        if (!context || !result?.candidate) return '';
+        try {
+            return renderSkillBreakdownHtml(
+                skillBreakdown({
+                    baseSetup: context.baseSetup,
+                    candidate: result.candidate,
+                    evaluate: context.evaluate,
+                    roomLevel: context.roomLevel,
+                    targetSkill: context.targetSkill,
+                })
+            );
+        } catch (error) {
+            console.error('[LabSimUI] Skill breakdown failed:', error);
+            return '';
+        }
     }
 
     /**
@@ -6102,6 +6133,27 @@ class LabSimUI {
                     gameData,
                     analysisResult,
                 });
+                // One physical item that serves several rooms becomes one row,
+                // before anything ranks or measures the per-skill halves of it
+                if (analysisResult?.baseline && !this._skillingAborted) {
+                    mergeMultiSkillGearRows({
+                        analysisResult,
+                        baseSetup: context.baseSetup,
+                        evaluate: context.evaluate,
+                        roomLevel,
+                        targetSkill,
+                    });
+                }
+                if (analysisResult?.baseline && !this._skillingAborted) {
+                    await annotateRoomsReached({
+                        rows: analysisResult.results,
+                        baseSetup: context.baseSetup,
+                        evaluate: context.evaluate,
+                        roomLevel,
+                        targetSkill,
+                        abortSignal: () => this._skillingAborted,
+                    });
+                }
                 if (analysisResult?.baseline && this._getSkillingRoomLevelsOn() && !this._skillingAborted) {
                     await this._measureSkillingRoomLevels(context, ({ current, total, description }) => {
                         const fill = this.panel?.querySelector('#mwi-labsim-skilling-progress-fill');
@@ -6366,6 +6418,18 @@ class LabSimUI {
                 // ones the combat Upgrade tab's gear rows carry, since a
                 // skilling tool is bought in exactly the same marketplace
                 actions: combatSimUI.upgradeRowActionsHtml(r),
+                roomsAffected: r.rooms?.affected ?? -1,
+                roomsStr: r.rooms ? `${r.rooms.affected} / ${r.rooms.total}` : '\u2014',
+                roomsTitle: r.rooms
+                    ? `Moves ${r.rooms.affected} of the ${r.rooms.total} rooms in scope; the rest are unaffected.`
+                    : '',
+                tries: r.tries ?? Infinity,
+                triesStr: Number.isFinite(r.tries) ? r.tries.toFixed(1) : '\u2014',
+                triesDelta: r.triesDelta ?? 0,
+                triesDeltaStr: Number.isFinite(r.triesDelta)
+                    ? (r.triesDelta > 0 ? '+' : '') + r.triesDelta.toFixed(2)
+                    : '\u2014',
+                triesDeltaColor: r.triesDelta < -1e-9 ? '#4caf50' : r.triesDelta > 1e-9 ? '#f44336' : '#888',
                 keptNote: kept.length
                     ? `Costed as the new piece alone. ${kept
                           .map(
@@ -6646,6 +6710,9 @@ class LabSimUI {
                 ${th('Clear Rate', 'clearRate', 'right')}
                 ${th('Delta', 'deltaVal', 'right')}${roomLevels ? th('Levels', 'roomLevelDelta', 'right') + th('Floor', 'floorVal', 'right') : ''}
                 ${th('Gold/1%', 'goldPerPct', 'right')}
+                ${th('Rooms', 'roomsAffected', 'right')}
+                ${th('Tries', 'tries', 'right')}
+                ${th('\u0394Tries', 'triesDelta', 'right')}
             </tr></thead><tbody>`;
 
             goldRows.forEach((row, i) => {
@@ -6657,9 +6724,13 @@ class LabSimUI {
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
+                    <td style="${tdStyle} color:${row.roomsAffected < 0 ? '#666' : '#8ab4f8'};" title="${escapeHtmlAttribute(row.roomsTitle)}">${row.roomsStr}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.triesStr}</td>
+                    <td style="${tdStyle} color:${row.triesDeltaColor};">${row.triesDeltaStr}</td>
                 </tr>
                 <tr data-skilling-gold-detail="${i}" style="display:none;">
-                    <td colspan="${6 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    <td colspan="${9 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                        <div data-skill-breakdown style="margin-bottom:4px; font-size:11px;"></div>
                         ${row.detailHtml}
                     </td>
                 </tr>`;
@@ -6749,7 +6820,18 @@ class LabSimUI {
                 const detail = container.querySelector(
                     `[data-skilling-gold-detail="${expandable.dataset.skillingGoldRow}"]`
                 );
-                if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                if (detail) {
+                    detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                    // Worked out on first look: it is a few room evaluations per
+                    // row, which nobody pays for the rows they never open
+                    const slot = detail.querySelector('[data-skill-breakdown]');
+                    if (slot && !slot.dataset.filled) {
+                        slot.dataset.filled = '1';
+                        slot.innerHTML = this._renderSkillBreakdown(
+                            goldRows[Number(expandable.dataset.skillingGoldRow)]?.result
+                        );
+                    }
+                }
                 return;
             }
             const th = e.target.closest('th[data-sort-key]');
