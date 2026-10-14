@@ -2002,86 +2002,8 @@ class TooltipPrices {
     async buildSelfUseAlchemyLines(itemHrid, alchemyProfits, craftProfitData) {
         const lines = [];
         try {
-            // A shop-only output (Labyrinth Tokens) has no market price; the calculator values it
-            // through a shop conversion, and the same figure stands in here. Untaxed: a shop
-            // conversion has no market tax.
-            // Shop-derived figures are named on the tooltip, not passed off as market prices
-            const shopSources = new Map();
-            const priceOf = (hrid) => {
-                const market = getItemPrice(hrid, { context: 'profit', side: 'buy' });
-                if (market != null) return market;
-                const shop = getAlchemyOutputShopValue(hrid, { side: 'buy' });
-                if (!shop) return null;
-                shopSources.set(hrid, shop);
-                return shop.valuePerUnit;
-            };
-            // A crate with no order book is worth its contents, untaxed at the buy side — the
-            // calculator's crate figure is the taxed container EV. Contents go through the
-            // buy-side resolver so coin, dungeon tokens and cowbells keep their special values.
-            const crateValues = new Map();
-            const containerValue = (hrid) => {
-                if (!crateValues.has(hrid)) {
-                    crateValues.set(
-                        hrid,
-                        untaxedContainerValue(hrid, {
-                            containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
-                            priceOf: (h) => expectedValueCalculator.resolveBuySideValue?.(h)?.value ?? priceOf(h),
-                        })
-                    );
-                }
-                return crateValues.get(hrid);
-            };
-
-            // An output not on the keep list is sold: the bid after the character-aware tax,
-            // the seller's figure every taxed line uses. A shop-only output is converted and
-            // the conversion sold, taxed like the calculator's own figure.
-            const sellOf = (hrid) => {
-                const market = getItemPrice(hrid, { context: 'profit', side: 'sell' });
-                if (market != null) return calculatePriceAfterTax(market);
-                const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
-                if (!shop) return null;
-                shopSources.set(hrid, shop);
-                return calculatePriceAfterTax(shop.valuePerUnit);
-            };
-            // An unwanted crate with no order book: its contents sold, each after its own tax
-            // (coin, dungeon tokens and cowbells through the sell-side resolver's special values)
-            const soldCrateValues = new Map();
-            const sellContainerValue = (hrid) => {
-                if (!soldCrateValues.has(hrid)) {
-                    soldCrateValues.set(
-                        hrid,
-                        untaxedContainerValue(hrid, {
-                            containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
-                            priceOf: (h) => {
-                                const resolved = expectedValueCalculator.resolveSellSideValue?.(h);
-                                if (resolved && Number.isFinite(resolved.value)) {
-                                    return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
-                                }
-                                return sellOf(h);
-                            },
-                        })
-                    );
-                }
-                return soldCrateValues.get(hrid);
-            };
-            // With nothing marked, nothing but a transmute's self-return is kept
-            const wanted = await selfUseWanted.getSet();
-            const pricing = {
-                priceOf,
-                containerValue,
-                isWanted: (hrid) => isKeptForSelfUse(hrid, wanted),
-                sellOf,
-                sellContainerValue,
-            };
-            const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
-            // "self-use, keep Frenzy" / "self-use, sell outputs": which outputs the figure keeps
-            const keepTag = (kept) => {
-                const list = Array.isArray(kept) ? kept : [];
-                if (list.length === 0) return 'self-use, sell outputs';
-                const names = list.slice(0, SELF_USE_KEEP_NAMES).map(nameOf).join(', ');
-                const more = list.length > SELF_USE_KEEP_NAMES ? ` +${list.length - SELF_USE_KEEP_NAMES} more` : '';
-                return `self-use, keep ${names}${more}`;
-            };
+            const env = await this.buildSelfUseEnv();
+            const { shopSources, pricing, keepTag, candidatesFor } = env;
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const decompose = alchemyProfits?.decompose;
             const lineColor = (value) => (value >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS);
@@ -2090,22 +2012,8 @@ class TooltipPrices {
                 return optimized ? ', partly unpriced' : ', partly unpriced, setup not optimized';
             };
 
-            // The calculator picks its catalyst/tea for the taxed sell-side profit. Each self-use
-            // line scores every candidate it weighs on its own objective instead; the seller's
-            // result stands in only when the calculator offers no candidate list.
-            // Cached per tooltip, since the chain can reach the same gear by more than one branch.
-            const candidateCache = new Map();
-            const candidatesFor = (actionType, hrid, sellerPick) => {
-                const key = `${actionType}|${hrid}`;
-                if (!candidateCache.has(key)) {
-                    const listed = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
-                    candidateCache.set(key, listed.length > 0 ? listed : [sellerPick()].filter(Boolean));
-                }
-                return candidateCache.get(key);
-            };
-
             if (decompose && itemDetails) {
-                const ownUseCost = await this.selfUseOwnUseCost(itemHrid, decompose, craftProfitData);
+                const { ownUseCost, chain } = await this.computeSelfUseChain(itemHrid, env, decompose, craftProfitData);
 
                 const stepPick = bestSelfUseCandidate(
                     candidatesFor('decompose', itemHrid, () => decompose),
@@ -2122,54 +2030,6 @@ class TooltipPrices {
                     });
                 }
 
-                // Each chain step picks its own candidate, scored by what the chain below it is
-                // worth: the gear a step yields is decomposed further, never kept, so its market
-                // price would be the wrong objective. Children are settled first (memoized), and
-                // a step is scored per item reaching it with its input cost left at 0, the same
-                // under every candidate. A step whose sub-chain cannot be priced falls back to
-                // scoring its own outputs.
-                const chainDeps = {
-                    getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
-                    isChainable: (hrid) => {
-                        const details = dataManager.getItemDetails(hrid);
-                        return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
-                    },
-                    ...pricing,
-                };
-                const chainSteps = new Map();
-                const bestChainStep = (hrid) => {
-                    if (!chainSteps.has(hrid)) {
-                        // Placeholder first, so a cycle back to this step reads as unknown, not a loop
-                        chainSteps.set(hrid, null);
-                        const details = dataManager.getItemDetails(hrid);
-                        const candidates = candidatesFor('decompose', hrid, () =>
-                            hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid)
-                        );
-                        const pick =
-                            bestSelfUseCandidate(
-                                candidates,
-                                (result) =>
-                                    selfUseDecomposeChain(hrid, {
-                                        ...chainDeps,
-                                        getDecompose: (h) => (h === hrid ? result : bestChainStep(h)),
-                                        ownUseCost: 0,
-                                    }),
-                                'net'
-                            ) ??
-                            bestSelfUseCandidate(
-                                candidates,
-                                (result) => selfUseDecompose(result, details, { ...pricing, ownUseCost: 0 }),
-                                'netPerAction'
-                            );
-                        chainSteps.set(hrid, pick?.result ?? null);
-                    }
-                    return chainSteps.get(hrid);
-                };
-                const chain = selfUseDecomposeChain(itemHrid, {
-                    ...chainDeps,
-                    getDecompose: bestChainStep,
-                    ownUseCost,
-                });
                 // A chain that yields no gear is the one-step line again; say it once
                 if (chain && chain.collected.length > 0) {
                     const names = chain.collected
@@ -2229,6 +2089,200 @@ class TooltipPrices {
             console.error('[TooltipPrices] Self-use alchemy lines failed:', error);
         }
         return lines;
+    }
+
+    /**
+     * The pricing every self-use alchemy figure shares: output buy and sell resolvers, the keep list,
+     * the candidate-setup lookup, and the tag naming what a figure keeps. Built once per tooltip.
+     * @returns {Promise<{shopSources: Map, pricing: Object, keepTag: Function, candidatesFor: Function}>}
+     */
+    async buildSelfUseEnv() {
+        // A shop-only output (Labyrinth Tokens) has no market price; the calculator values it
+        // through a shop conversion, and the same figure stands in here. Untaxed: a shop
+        // conversion has no market tax.
+        // Shop-derived figures are named on the tooltip, not passed off as market prices
+        const shopSources = new Map();
+        const priceOf = (hrid) => {
+            const market = getItemPrice(hrid, { context: 'profit', side: 'buy' });
+            if (market != null) return market;
+            const shop = getAlchemyOutputShopValue(hrid, { side: 'buy' });
+            if (!shop) return null;
+            shopSources.set(hrid, shop);
+            return shop.valuePerUnit;
+        };
+        // A crate with no order book is worth its contents, untaxed at the buy side — the
+        // calculator's crate figure is the taxed container EV. Contents go through the
+        // buy-side resolver so coin, dungeon tokens and cowbells keep their special values.
+        const crateValues = new Map();
+        const containerValue = (hrid) => {
+            if (!crateValues.has(hrid)) {
+                crateValues.set(
+                    hrid,
+                    untaxedContainerValue(hrid, {
+                        containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
+                        priceOf: (h) => expectedValueCalculator.resolveBuySideValue?.(h)?.value ?? priceOf(h),
+                    })
+                );
+            }
+            return crateValues.get(hrid);
+        };
+
+        // An output not on the keep list is sold: the bid after the character-aware tax,
+        // the seller's figure every taxed line uses. A shop-only output is converted and
+        // the conversion sold, taxed like the calculator's own figure.
+        const sellOf = (hrid) => {
+            const market = getItemPrice(hrid, { context: 'profit', side: 'sell' });
+            if (market != null) return calculatePriceAfterTax(market);
+            const shop = getAlchemyOutputShopValue(hrid, { side: 'sell' });
+            if (!shop) return null;
+            shopSources.set(hrid, shop);
+            return calculatePriceAfterTax(shop.valuePerUnit);
+        };
+        // An unwanted crate with no order book: its contents sold, each after its own tax
+        // (coin, dungeon tokens and cowbells through the sell-side resolver's special values)
+        const soldCrateValues = new Map();
+        const sellContainerValue = (hrid) => {
+            if (!soldCrateValues.has(hrid)) {
+                soldCrateValues.set(
+                    hrid,
+                    untaxedContainerValue(hrid, {
+                        containerDrops: (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null,
+                        priceOf: (h) => {
+                            const resolved = expectedValueCalculator.resolveSellSideValue?.(h);
+                            if (resolved && Number.isFinite(resolved.value)) {
+                                return resolved.needsTax ? calculatePriceAfterTax(resolved.value) : resolved.value;
+                            }
+                            return sellOf(h);
+                        },
+                    })
+                );
+            }
+            return soldCrateValues.get(hrid);
+        };
+        // With nothing marked, nothing but a transmute's self-return is kept
+        const wanted = await selfUseWanted.getSet();
+        const pricing = {
+            priceOf,
+            containerValue,
+            isWanted: (hrid) => isKeptForSelfUse(hrid, wanted),
+            sellOf,
+            sellContainerValue,
+        };
+        const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop();
+        // "self-use, keep Frenzy" / "self-use, sell outputs": which outputs the figure keeps
+        const keepTag = (kept) => {
+            const list = Array.isArray(kept) ? kept : [];
+            if (list.length === 0) return 'self-use, sell outputs';
+            const names = list.slice(0, SELF_USE_KEEP_NAMES).map(nameOf).join(', ');
+            const more = list.length > SELF_USE_KEEP_NAMES ? ` +${list.length - SELF_USE_KEEP_NAMES} more` : '';
+            return `self-use, keep ${names}${more}`;
+        };
+
+        // The calculator picks its catalyst/tea for the taxed sell-side profit. Each self-use
+        // line scores every candidate it weighs on its own objective instead; the seller's
+        // result stands in only when the calculator offers no candidate list.
+        // Cached per tooltip, since the chain can reach the same gear by more than one branch.
+        const candidateCache = new Map();
+        const candidatesFor = (actionType, hrid, sellerPick) => {
+            const key = `${actionType}|${hrid}`;
+            if (!candidateCache.has(key)) {
+                const listed = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
+                candidateCache.set(key, listed.length > 0 ? listed : [sellerPick()].filter(Boolean));
+            }
+            return candidateCache.get(key);
+        };
+        return { shopSources, pricing, keepTag, candidatesFor };
+    }
+
+    /**
+     * The tooltip's full decompose chain for one base item: each chain step on the setup best for the
+     * chain below it, the top item charged at its own-use cost, outputs valued under the self-use
+     * pricing. The one place that arithmetic lives; the tooltip line and the Best Items own-stock sort both read it.
+     * @param {string} itemHrid
+     * @param {Object} env - From {@link buildSelfUseEnv}
+     * @param {Object} decompose - The item's decompose calculator result
+     * @param {Object|null|undefined} craftProfitData - Craft profit already computed, if any
+     * @returns {Promise<{ownUseCost: number|null, chain: Object|null, topStep: Object|null}>} `chain` is
+     *   selfUseDecomposeChain's result; `topStep` the calculator result the item's own step runs on
+     */
+    async computeSelfUseChain(itemHrid, env, decompose, craftProfitData) {
+        const { pricing, candidatesFor } = env;
+        const ownUseCost = await this.selfUseOwnUseCost(itemHrid, decompose, craftProfitData);
+        // Each chain step picks its own candidate, scored by what the chain below it is
+        // worth: the gear a step yields is decomposed further, never kept, so its market
+        // price would be the wrong objective. Children are settled first (memoized), and
+        // a step is scored per item reaching it with its input cost left at 0, the same
+        // under every candidate. A step whose sub-chain cannot be priced falls back to
+        // scoring its own outputs.
+        const chainDeps = {
+            getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
+            isChainable: (hrid) => {
+                const details = dataManager.getItemDetails(hrid);
+                return Boolean(details?.equipmentDetail && details.alchemyDetail?.decomposeItems?.length);
+            },
+            ...pricing,
+        };
+        const chainSteps = new Map();
+        const bestChainStep = (hrid) => {
+            if (!chainSteps.has(hrid)) {
+                // Placeholder first, so a cycle back to this step reads as unknown, not a loop
+                chainSteps.set(hrid, null);
+                const details = dataManager.getItemDetails(hrid);
+                const candidates = candidatesFor('decompose', hrid, () =>
+                    hrid === itemHrid ? decompose : alchemyProfitCalculator.calculateDecomposeProfit(hrid)
+                );
+                const pick =
+                    bestSelfUseCandidate(
+                        candidates,
+                        (result) =>
+                            selfUseDecomposeChain(hrid, {
+                                ...chainDeps,
+                                getDecompose: (h) => (h === hrid ? result : bestChainStep(h)),
+                                ownUseCost: 0,
+                            }),
+                        'net'
+                    ) ??
+                    bestSelfUseCandidate(
+                        candidates,
+                        (result) => selfUseDecompose(result, details, { ...pricing, ownUseCost: 0 }),
+                        'netPerAction'
+                    );
+                chainSteps.set(hrid, pick?.result ?? null);
+            }
+            return chainSteps.get(hrid);
+        };
+        const chain = selfUseDecomposeChain(itemHrid, {
+            ...chainDeps,
+            getDecompose: bestChainStep,
+            ownUseCost,
+        });
+        // The setup the top step settled on, for a caller that shows its catalyst
+        return { ownUseCost, chain, topStep: chainSteps.get(itemHrid) ?? null };
+    }
+
+    /**
+     * The tooltip's decompose chain for an item, standalone: what the item tooltip would print for a base
+     * copy you hold. Null when the item cannot be decomposed.
+     * @param {string} itemHrid
+     * @param {Object} [env] - A shared {@link buildSelfUseEnv}; built when omitted
+     * @returns {Promise<Object|null>} selfUseDecomposeChain's result plus `topStep`, or null
+     */
+    async selfUseChainFor(itemHrid, env) {
+        try {
+            const alchemyProfits = alchemyProfitCalculator.calculateAllProfits(itemHrid, 0);
+            const decompose = alchemyProfits?.decompose;
+            if (!decompose || !dataManager.getItemDetails(itemHrid)) return null;
+            const { chain, topStep } = await this.computeSelfUseChain(
+                itemHrid,
+                env ?? (await this.buildSelfUseEnv()),
+                decompose,
+                undefined
+            );
+            return chain ? { ...chain, topStep } : null;
+        } catch (error) {
+            console.error('[TooltipPrices] Own-use chain failed for', itemHrid, error);
+            return null;
+        }
     }
 
     /**

@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { formatKMB, timeReadable } from '../../utils/formatters.js';
 
 const game = vi.hoisted(() => ({
     initClientData: null,
@@ -150,6 +151,23 @@ vi.mock('../../utils/market-data.js', () => ({
     withProfitPricingMode: (mode, fn) => fn(),
 }));
 
+/** What the item tooltip's own functions answer, and what the bag holds, for the own-stock sort */
+const tooltip = vi.hoisted(() => ({ held: {}, chains: {}, calls: [] }));
+
+vi.mock('../market/tooltip-prices.js', () => ({
+    default: {
+        buildSelfUseEnv: async () => ({ env: true }),
+        selfUseChainFor: async (hrid, env) => {
+            tooltip.calls.push({ hrid, env });
+            return tooltip.chains[hrid] ?? null;
+        },
+    },
+}));
+
+vi.mock('../../utils/inventory-reservations.js', () => ({
+    effectiveInventory: (hrid) => tooltip.held[hrid] ?? 0,
+}));
+
 vi.mock('../../utils/asset-manifest.js', () => ({
     default: { getSpriteUrl: async () => 'sprite.svg' },
 }));
@@ -279,6 +297,10 @@ afterEach(() => {
     bestItems.cachedRankings = {};
     bestItems.sortMode = 'profit';
     bestItems.chainValues.clear();
+    bestItems.ownStock.clear();
+    tooltip.held = {};
+    tooltip.chains = {};
+    tooltip.calls = [];
     bestItems.currentType = 'coinify';
     bestItems.profitableOnly = false;
     bestItems.searchQuery = '';
@@ -1221,7 +1243,7 @@ describe('the Decompose chain/hr sort', () => {
     test('the mode is offered as a button', () => {
         bestItems.createModal();
         const labels = Array.from(bestItems.modal.querySelectorAll('[data-mwi-sort-btn]')).map((b) => b.textContent);
-        expect(labels).toEqual(['Profit/hr', 'XP/hr', 'Decompose chain/hr']);
+        expect(labels).toEqual(['Profit/hr', 'XP/hr', 'Decompose chain/hr', 'Chain/hr (own stock)']);
     });
 
     test('ranks by the same chain value the marketplace sort computes, whatever the profit column says', () => {
@@ -1531,6 +1553,143 @@ describe('the Max level filter and level preview', () => {
         expect(names()).toHaveLength(2);
         const pricedHrids = new Set(chain.mock.calls.map(([hrid]) => hrid));
         expect(pricedHrids.has('/items/high')).toBe(false);
+        chain.mockRestore();
+    });
+});
+
+describe('the Chain/hr hover', () => {
+    const gear = (outputs) => ({
+        equipmentDetail: {},
+        alchemyDetail: { decomposeItems: outputs.map(([itemHrid, count]) => ({ itemHrid, count })) },
+    });
+
+    test('says what the root costs, what the outputs net, per item, per chain and per hour', () => {
+        bestItems.invalidateCache();
+        game.items = {
+            '/items/item_a': { ...gear([['/items/mid_b', 1]]), name: 'Item A' },
+            '/items/mid_b': gear([['/items/term_c', 2]]),
+            '/items/term_c': { alchemyDetail: null },
+        };
+        const step = (ask, actionsPerHour) => ({
+            actionsPerHour,
+            successRate: 1,
+            requirementCosts: [{ itemHrid: '/items/x', count: 1, price: ask }],
+            dropRevenues: [],
+        });
+        market.candidates = { '/items/item_a': [step(500, 3600)], '/items/mid_b': [step(300, 1800)] };
+        market.bids = { '/items/term_c': 1000 };
+        bestItems.sortMode = 'decomposeChainPerHour';
+        bestItems.createModal();
+        bestItems.currentType = 'decompose';
+        bestItems.cachedRankings.decompose = [
+            { itemHrid: '/items/item_a', name: 'Item A', itemLevel: 10, itemPrice: 0, profitPerHour: 1, xpPerHour: 0 },
+        ];
+        bestItems.renderTable();
+
+        const hover = bestItems.modal.querySelector('[data-mwi-chain]').title;
+        // 2 x 1,000 at bid after the 4% tax = 1,920 against a 500 ask: 1,420 a chain, 3 s, 1.704M an hour
+        expect(hover).toContain(`Bought at ask ${formatKMB(500)}`);
+        expect(hover).toContain(`Outputs: ${formatKMB(1920)}, sold at bid after market tax`);
+        expect(hover).toContain(`Net per item: ${formatKMB(1420)}, over ${timeReadable(3)} per chain`);
+        expect(hover).toContain(`${formatKMB(1_704_000)}/hr`);
+        expect(hover).toContain('buy at the ask now and sell outputs at bid');
+        expect(hover).toContain('whatever the Buy/Sell dropdowns say');
+    });
+});
+
+describe('the Chain/hr (own stock) sort', () => {
+    const row = (name, profitPerHour) => ({
+        itemHrid: `/items/${name}`,
+        name,
+        itemLevel: 10,
+        itemPrice: 0,
+        profitPerHour,
+        xpPerHour: 0,
+        catalyst: null,
+        profitData: null,
+    });
+    /** What selfUseDecomposeChain hands back, cut to what the panel reads */
+    const chain = (netPerHour, extra = {}) => ({
+        net: netPerHour / 360,
+        netPerHour,
+        terminalValue: 5_000_000,
+        ownUseCost: 4_800_000,
+        overheadCost: 0,
+        seconds: 10,
+        partial: false,
+        partialItems: [],
+        unpriced: [],
+        topStep: { winningCatalystHrid: '/items/prime_catalyst' },
+        ...extra,
+    });
+    const names = () =>
+        Array.from(bestItems.modal.querySelectorAll('tbody tr')).map((tr) => tr.children[1]?.firstChild?.textContent);
+    const cells = () => Array.from(bestItems.modal.querySelectorAll('[data-mwi-chain]'));
+
+    async function open(rows) {
+        bestItems.createModal();
+        bestItems.currentType = 'decompose';
+        bestItems.cachedRankings.decompose = rows;
+        bestItems.sortMode = 'chainOwnStock';
+        await bestItems.refreshOwnStock();
+        bestItems.renderTable();
+    }
+
+    test('ranks only items the player holds, with the count beside the name', async () => {
+        tooltip.held = { '/items/redwood_shield': 3, '/items/oak_bow': 12 };
+        tooltip.chains = {
+            '/items/redwood_shield': chain(5_500_000),
+            '/items/oak_bow': chain(900_000),
+            '/items/pine_staff': chain(99_000_000),
+        };
+        // The unheld staff has the best chain of all and must not appear
+        await open([row('pine_staff', 5), row('oak_bow', 9), row('redwood_shield', 1)]);
+        expect(names()).toEqual(['redwood_shield', 'oak_bow']);
+        const held = Array.from(bestItems.modal.querySelectorAll('[data-mwi-held]')).map((el) => el.textContent.trim());
+        expect(held).toEqual(['×3', '×12']);
+        expect(tooltip.calls.map((c) => c.hrid).sort()).toEqual(['/items/oak_bow', '/items/redwood_shield']);
+    });
+
+    test('shows exactly the figure the item tooltip functions return, and says how it is valued', async () => {
+        tooltip.held = { '/items/redwood_shield': 1 };
+        tooltip.chains = { '/items/redwood_shield': chain(5_512_345) };
+        await open([row('redwood_shield', 1)]);
+        const cell = cells()[0];
+        expect(cell.textContent).toBe(formatKMB(5_512_345));
+        expect(cell.title).toContain('valued as stock you hold');
+        expect(cell.title).toContain('own-use cost');
+        expect(cell.title).toContain('at your sell pricing');
+        expect(cell.title).toContain(`${formatKMB(5_512_345)}/hr`);
+        // The catalyst shown is the one the tooltip's chain settled on
+        expect(bestItems.chainView(row('redwood_shield', 1)).catalyst).toBe('/items/prime_catalyst');
+    });
+
+    test('profitable-only judges the own-stock figure', async () => {
+        tooltip.held = { '/items/a': 1, '/items/b': 1 };
+        tooltip.chains = { '/items/a': chain(-4000), '/items/b': chain(2000) };
+        bestItems.profitableOnly = true;
+        await open([row('a', 900), row('b', 1)]);
+        expect(names()).toEqual(['b']);
+    });
+
+    test('an unpriced held chain sorts last with a dash, and an item with none left is not held', async () => {
+        tooltip.held = { '/items/a': 1, '/items/b': 2, '/items/c': 0 };
+        tooltip.chains = { '/items/b': chain(10) };
+        await open([row('a', 1), row('b', 1), row('c', 1)]);
+        expect(names()).toEqual(['b', 'a']);
+        expect(cells()[1].textContent).toBe('—');
+    });
+
+    test('is remembered like the other sorts, and falls back to profit off the Decompose tab', () => {
+        bestItems.createModal();
+        bestItems.chooseSortMode('chainOwnStock');
+        expect(settings.values.alchemy_bestItems_sortMode).toBe('chainOwnStock');
+        expect(bestItems.effectiveSortMode()).toBe('profit');
+        bestItems.currentType = 'decompose';
+        expect(bestItems.effectiveSortMode()).toBe('chainOwnStock');
+        settings.values.alchemy_bestItems_sortMode = 'profit';
+        bestItems.handleSortSettingChange();
+        expect(bestItems.sortMode).toBe('profit');
     });
 });
 

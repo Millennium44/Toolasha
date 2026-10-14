@@ -13,7 +13,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -37,6 +37,8 @@ import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
+import { effectiveInventory } from '../../utils/inventory-reservations.js';
+import tooltipPrices from '../market/tooltip-prices.js';
 
 /** The setting that remembers which sort the table was last left on */
 const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
@@ -63,7 +65,21 @@ export const SORT_MODES = [
             '(ask in, taxed bid out), whatever the Buy/Sell price dropdowns say, so it can differ from the ' +
             'item tooltip. A leading ≥ marks a figure with some output or bonus crate content unpriced, counted at zero.',
     },
+    {
+        value: 'chainOwnStock',
+        label: 'Chain/hr (own stock)',
+        decomposeOnly: true,
+        title:
+            'Only items you hold. Each is valued the way its item tooltip values it: the item at your own-use ' +
+            'cost (the cheaper of making it and buying it, under your pricing mode), the chain it yields ' +
+            'decomposed on the best setup, and the outputs at your own-use pricing. The figure matches the ' +
+            "tooltip's Full decompose chain line. The count beside the name is the copies you hold, less any " +
+            'claimed by a goal or plan.',
+    },
 ];
+
+/** The sort modes that rank by a whole decompose chain */
+const CHAIN_MODES = new Set(['decomposeChainPerHour', 'chainOwnStock']);
 
 /**
  * Look up a stored sort mode, falling back to profit for anything unknown.
@@ -138,6 +154,12 @@ class AlchemyBestItems {
         this.chainTops = new Map();
         // Why a chain is partial or unpriced, by item hrid: {partial: string[], unpriced: string[]}
         this.chainNotes = new Map();
+        // Everything the chain hover explains, by item hrid
+        this.chainDetails = new Map();
+        // The own-stock sort's figures, per item hrid: {value, top, note, detail, held}. Worked out
+        // asynchronously through the item tooltip's own functions, so a missing key means "not yet"
+        this.ownStock = new Map();
+        this.ownStockSweep = 0;
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -172,16 +194,10 @@ class AlchemyBestItems {
      */
     handleMarketUpdate() {
         try {
-            this.chainValues.clear();
-            this.chainTops.clear();
-            this.chainNotes.clear();
-            clearDecomposeChainCaches();
-            if (
-                this.modal &&
-                this.modal.style.display !== 'none' &&
-                this.effectiveSortMode() === 'decomposeChainPerHour'
-            ) {
+            this.clearChainCaches();
+            if (this.modal && this.modal.style.display !== 'none' && this.isChainMode()) {
                 this.renderTable();
+                this.refreshOwnStock();
             }
         } catch (error) {
             console.error('[AlchemyBestItems] Re-pricing after a market update failed:', error);
@@ -224,7 +240,10 @@ class AlchemyBestItems {
         const next = normalizeSortMode(config.getSettingValue(SORT_MODE_SETTING, 'profit'));
         if (next === this.sortMode) return;
         this.sortMode = next;
-        if (this.modal && this.modal.style.display !== 'none') this.renderTable();
+        if (this.modal && this.modal.style.display !== 'none') {
+            this.renderTable();
+            this.refreshOwnStock();
+        }
     }
 
     unsubscribePricingChanges() {
@@ -486,14 +505,12 @@ class AlchemyBestItems {
      */
     loadRankings(alchemyType) {
         // Tea, gear and prices may have moved since the chains were last worked out
-        this.chainValues.clear();
-        this.chainTops.clear();
-        this.chainNotes.clear();
-        clearDecomposeChainCaches();
+        this.clearChainCaches();
         const raw = this.calculateRankings(alchemyType);
         const pending = raw.map((entry) => ({ ...entry, capPending: true }));
         this.cachedRankings[alchemyType] = pending;
         this.renderTable();
+        this.refreshOwnStock();
 
         return this.withLiquidityCaps(raw)
             .then((bounded) => {
@@ -553,10 +570,45 @@ class AlchemyBestItems {
      */
     invalidateCache() {
         this.cachedRankings = {};
+        this.clearChainCaches();
+    }
+
+    /**
+     * Drop every memoised chain figure, in both chain sorts, and abandon any own-stock sweep in flight.
+     */
+    clearChainCaches() {
         this.chainValues.clear();
         this.chainTops.clear();
         this.chainNotes.clear();
+        this.chainDetails.clear();
+        this.ownStock.clear();
+        this.ownStockSweep += 1;
         clearDecomposeChainCaches();
+    }
+
+    /**
+     * Whether the table is ranking by a whole decompose chain (either sort).
+     * @returns {boolean}
+     */
+    isChainMode() {
+        return CHAIN_MODES.has(this.effectiveSortMode());
+    }
+
+    /**
+     * Whether the table is ranking only the stock the player holds.
+     * @returns {boolean}
+     */
+    isOwnStockMode() {
+        return this.effectiveSortMode() === 'chainOwnStock';
+    }
+
+    /**
+     * Copies of an item the player may plan against: the bag, less claims by a goal or plan.
+     * @param {string} itemHrid
+     * @returns {number}
+     */
+    heldCount(itemHrid) {
+        return effectiveInventory(itemHrid, 0);
     }
 
     /**
@@ -578,6 +630,40 @@ class AlchemyBestItems {
         this.sortMode = normalizeSortMode(value);
         config.setSettingValue(SORT_MODE_SETTING, this.sortMode);
         this.renderTable();
+        this.refreshOwnStock();
+    }
+
+    /**
+     * Work out the own-stock sort's figures: every held decompose item's chain through the item
+     * tooltip's own functions (tooltipPrices.selfUseChainFor), so a row and a tooltip cannot
+     * disagree. Asynchronous because the tooltip's own-use cost is; the table repaints when it lands.
+     * A no-op outside the own-stock sort. A newer sweep (or a cache clear) abandons an older one.
+     * @returns {Promise<void>}
+     */
+    async refreshOwnStock() {
+        if (!this.modal || !this.isOwnStockMode() || this.currentType !== 'decompose') return;
+        const sweep = ++this.ownStockSweep;
+        try {
+            const held = (this.cachedRankings.decompose || [])
+                .map((row) => ({ row, count: this.heldCount(row.itemHrid) }))
+                .filter(({ count }) => count > 0);
+            const env = await tooltipPrices.buildSelfUseEnv();
+            for (const { row, count } of held) {
+                const chain = await tooltipPrices.selfUseChainFor(row.itemHrid, env);
+                if (sweep !== this.ownStockSweep) return;
+                const value = chain && Number.isFinite(chain.netPerHour) ? chain.netPerHour : null;
+                this.ownStock.set(row.itemHrid, {
+                    value,
+                    top: chain?.topStep ?? null,
+                    note: { partial: chain?.partialItems ?? [], unpriced: chain?.unpriced ?? [] },
+                    detail: chain,
+                    held: count,
+                });
+            }
+            if (sweep === this.ownStockSweep && this.modal.style.display !== 'none') this.renderTable();
+        } catch (error) {
+            console.error('[AlchemyBestItems] Own-stock chains failed:', error);
+        }
     }
 
     /**
@@ -588,9 +674,9 @@ class AlchemyBestItems {
      * @returns {Object} The row, with the chain's setup where there is one
      */
     chainView(item) {
-        if (this.effectiveSortMode() !== 'decomposeChainPerHour') return item;
+        if (!this.isChainMode()) return item;
         this.chainPerHour(item.itemHrid);
-        const top = this.chainTops.get(item.itemHrid);
+        const top = this.isOwnStockMode() ? this.ownStock.get(item.itemHrid)?.top : this.chainTops.get(item.itemHrid);
         if (!top) return item;
         return { ...item, catalyst: top.winningCatalystHrid || null, profitData: top };
     }
@@ -603,14 +689,63 @@ class AlchemyBestItems {
      * @returns {number|null} Gold per hour, or null when any step is unpriced
      */
     chainPerHour(itemHrid) {
+        // The own-stock sort reads what the tooltip's functions produced; absent means not yet
+        if (this.isOwnStockMode()) return this.ownStock.get(itemHrid)?.value ?? null;
         if (this.chainValues.has(itemHrid)) return this.chainValues.get(itemHrid);
         const chain = decomposeChain(itemHrid);
+        this.chainDetails.set(itemHrid, chain);
         this.chainTops.set(itemHrid, chain?.topStep ?? null);
         this.chainNotes.set(itemHrid, { partial: chain?.partialItems ?? [], unpriced: chain?.unpriced ?? [] });
         const value = chain?.netPerHour;
         const figure = Number.isFinite(value) ? value : null;
         this.chainValues.set(itemHrid, figure);
         return figure;
+    }
+
+    /**
+     * The partial/unpriced item lists behind an item's chain figure, in the active chain sort.
+     * @param {string} itemHrid
+     * @returns {{partial: string[], unpriced: string[]}|undefined}
+     */
+    chainNoteFor(itemHrid) {
+        return this.isOwnStockMode() ? this.ownStock.get(itemHrid)?.note : this.chainNotes.get(itemHrid);
+    }
+
+    /**
+     * What a Chain/hr cell says on hover: the maths behind the figure and what it assumes.
+     * @param {string} itemHrid
+     * @returns {string} Empty when there is no chain to explain
+     */
+    chainHover(itemHrid) {
+        const own = this.isOwnStockMode();
+        const chain = own ? this.ownStock.get(itemHrid)?.detail : this.chainDetails.get(itemHrid);
+        if (!chain || !Number.isFinite(chain.net)) return '';
+        const name = dataManager.getItemDetails(itemHrid)?.name || itemHrid;
+        const money = (value) => formatKMB(Math.round(value));
+        const lower = chain.partial ? '≥' : '';
+        const toolCost = chain.overheadCost > 0 ? `, plus ${money(chain.overheadCost)} of catalyst and tea` : '';
+        const lines = own
+            ? [
+                  `${name}, valued as stock you hold (${formatWithSeparator(this.ownStock.get(itemHrid)?.held ?? 0)}).`,
+                  `Item: ${money(chain.ownUseCost ?? 0)} own-use cost (the cheaper of making it and buying it)${toolCost}.`,
+                  `Outputs: ${lower}${money(chain.terminalValue)} at your sell pricing.`,
+              ]
+            : [
+                  `${name}, bought at the ask now and decomposed all the way down.`,
+                  `Bought at ask ${money(chain.ownUseCost ?? 0)}${toolCost}.`,
+                  `Outputs: ${lower}${money(chain.terminalValue)}, sold at bid after market tax.`,
+              ];
+        lines.push(
+            `Net per item: ${lower}${money(chain.net)}, over ${timeReadable(chain.seconds)} per chain = ` +
+                `${lower}${money(chain.netPerHour)}/hr.`
+        );
+        lines.push(
+            own
+                ? 'Matches the item tooltip. The other chain sort assumes you buy at the ask instead.'
+                : 'Assumes you buy at the ask now and sell outputs at bid, whatever the Buy/Sell dropdowns say. ' +
+                      'For stock you hold, use Chain/hr (own stock).'
+        );
+        return lines.join('\n');
     }
 
     /**
@@ -936,7 +1071,8 @@ class AlchemyBestItems {
         const rankings = this.cachedRankings[this.currentType] || [];
 
         const sortMode = this.effectiveSortMode();
-        const chainMode = sortMode === 'decomposeChainPerHour';
+        const chainMode = CHAIN_MODES.has(sortMode);
+        const ownMode = sortMode === 'chainOwnStock';
         // The range filters the figure the chain sort ranks on, so name it
         if (this.profitFilterLabel) this.profitFilterLabel.textContent = chainMode ? 'Chain/hr:' : 'Profit/hr:';
         // The figure the profit filters work on
@@ -945,6 +1081,8 @@ class AlchemyBestItems {
 
         // Filter
         let filtered = rankings;
+        // Own stock ranks only what is held, spare after any claims on it
+        if (ownMode) filtered = filtered.filter((r) => this.heldCount(r.itemHrid) > 0);
         if (this.searchQuery) {
             filtered = filtered.filter((r) => r.name.toLowerCase().includes(this.searchQuery));
         }
@@ -1039,6 +1177,9 @@ class AlchemyBestItems {
             const th = document.createElement('th');
             th.textContent = col;
             if (col === 'Chain/hr') th.title = SORT_MODES.find((m) => m.value === sortMode).title;
+            if (col === 'Item' && ownMode) {
+                th.title = 'The number beside a name is the copies you hold, less any claimed by a plan';
+            }
             th.style.cssText = 'padding: 6px 8px; text-align: left; color: #aaa; font-weight: 500;';
             if (col === '#' || col === 'Lvl') th.style.textAlign = 'center';
             if (col === 'Profit/hr' || col === 'XP/hr' || col === 'Chain/hr') th.style.textAlign = 'right';
@@ -1082,7 +1223,8 @@ class AlchemyBestItems {
                 navigateToMarketplace(item.itemHrid);
             });
             nameTd.appendChild(nameLink);
-            if (item.shopPriced) {
+            // The own-stock figure is the tooltip's own-use cost, not this row's single-step price
+            if (item.shopPriced && !ownMode) {
                 const tag = document.createElement('span');
                 tag.textContent = 'shop';
                 tag.setAttribute('data-mwi-shop-tag', 'true');
@@ -1096,6 +1238,13 @@ class AlchemyBestItems {
                     'margin-left: 6px; padding: 0 4px; border-radius: 3px; font-size: 0.65rem; ' +
                     'background: #3b4a2f; color: #bef264;';
                 nameTd.appendChild(tag);
+            }
+            if (ownMode) {
+                const heldTag = document.createElement('span');
+                heldTag.setAttribute('data-mwi-held', 'true');
+                heldTag.textContent = ` \u00d7${formatWithSeparator(this.heldCount(item.itemHrid))}`;
+                heldTag.style.cssText = 'color: #888; margin-left: 2px;';
+                nameTd.appendChild(heldTag);
             }
             row.appendChild(nameTd);
 
@@ -1136,18 +1285,20 @@ class AlchemyBestItems {
                 const chainValue = this.chainPerHour(item.itemHrid);
                 chainTd.setAttribute('data-mwi-chain', 'true');
                 if (chainValue === null) {
-                    chainTd.textContent = '\u2014';
-                    const unpricedNames = this.chainItemNames(this.chainNotes.get(item.itemHrid)?.unpriced);
-                    chainTd.title = unpricedNames
-                        ? `No figure: no real ask or bid for ${unpricedNames}`
-                        : 'Part of this chain has no real ask or bid, so it has no figure';
+                    const working = ownMode && !this.ownStock.has(item.itemHrid);
+                    chainTd.textContent = working ? '\u2026' : '\u2014';
+                    const unpricedNames = this.chainItemNames(this.chainNoteFor(item.itemHrid)?.unpriced);
+                    if (working) chainTd.title = 'Working this out the way the item tooltip does';
+                    else if (unpricedNames) chainTd.title = `No figure: no real ask or bid for ${unpricedNames}`;
+                    else chainTd.title = 'Part of this chain has no real ask or bid, so it has no figure';
                     chainTd.style.cssText = 'padding: 4px 8px; text-align: right; color: #555;';
                 } else {
-                    const partialNames = this.chainItemNames(this.chainNotes.get(item.itemHrid)?.partial);
+                    const partialNames = this.chainItemNames(this.chainNoteFor(item.itemHrid)?.partial);
                     chainTd.textContent = `${partialNames ? '≥' : ''}${formatKMB(Math.round(chainValue))}`;
-                    if (partialNames) {
-                        chainTd.title = `A lower bound: no real bid for ${partialNames}, counted at zero`;
-                    }
+                    const hover = this.chainHover(item.itemHrid);
+                    chainTd.title = partialNames
+                        ? `${hover ? `${hover}\n` : ''}A lower bound: no real bid for ${partialNames}, counted at zero`
+                        : hover;
                     chainTd.style.cssText = `padding: 4px 8px; text-align: right; color: ${chainValue >= 0 ? '#4ade80' : '#f87171'};`;
                 }
                 row.appendChild(chainTd);
@@ -1226,7 +1377,7 @@ class AlchemyBestItems {
         const expansionRow = document.createElement('tr');
         expansionRow.classList.add('mwi-best-items-breakdown');
         const td = document.createElement('td');
-        td.setAttribute('colspan', this.effectiveSortMode() === 'decomposeChainPerHour' ? '7' : '6');
+        td.setAttribute('colspan', this.isChainMode() ? '7' : '6');
         td.style.cssText = 'padding: 8px 16px; background: #1e1e1e; font-size: 0.75rem;';
         td.appendChild(this.renderBreakdownContent(this.chainView(item)));
         expansionRow.appendChild(td);

@@ -509,6 +509,7 @@ export const settingsGroups = {
                     { value: 'profit', label: 'Profit per hour' },
                     { value: 'xp', label: 'XP per hour' },
                     { value: 'decomposeChainPerHour', label: 'Full decompose chain per hour (Decompose tab)' },
+                    { value: 'chainOwnStock', label: 'Full decompose chain per hour, items you hold (Decompose tab)' },
                 ],
                 help: 'Which figure the best items table ranks by. The chain mode buys the item at its ask, decomposes it and everything it yields, and sells what is left at bid after tax; the buttons in the table change this too.',
             },
