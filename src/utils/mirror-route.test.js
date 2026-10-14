@@ -16,6 +16,17 @@ describe('cheapestWithMirror', () => {
         expect(best[5]).toBe(best[4] + best[3] + 1);
     });
 
+    test('Blessed Tea: a +2 success means the next step is only run some of the time', () => {
+        // Plain: level 4 = 7 + 4 + 1. With a 50% chance the +3 step skipped to +4, the +4 step is
+        // run half the time: cost[4] = cost[3] + landing[3] * (cost[2] + price), landing[3] = 0.5
+        const ordinary = [1, 2, 4, 8, 16, 32];
+        const { best } = cheapestWithMirror(ordinary, 1, 0.5);
+        expect(best[3]).toBe(7);
+        expect(best[4]).toBe(7 + 0.5 * (4 + 1));
+        expect(cheapestWithMirror(ordinary, 1, 0).best).toEqual(cheapestWithMirror(ordinary, 1).best);
+        expect(cheapestWithMirror(ordinary, 1, 1).best[4]).toBe(7);
+    });
+
     test('an unpriced level is not a free copy', () => {
         const { best, mirrorTotals } = cheapestWithMirror([1, null, 4, 8], 1);
         expect(best[1]).toBe(Infinity);

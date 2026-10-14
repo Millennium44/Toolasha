@@ -7,6 +7,8 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const state = vi.hoisted(() => ({
     /** `characterItems`, inventory and equipped together, as init_character_data sends them */
     items: [],
+    /** The enhancing parameters the advisor's bench has (Blessed Tea on or off) */
+    sweepParams: {},
     /** Enhancement sweeps the advisor asked for */
     sweeps: [],
     /** Extra init_client_data maps (shops) */
@@ -91,7 +93,7 @@ vi.mock('./direct-enhancement-cost.js', () => ({
         state.sweeps.push({ itemHrid, from, to });
         return state.climb(from, to);
     },
-    enhancementSweepParams: () => ({}),
+    enhancementSweepParams: () => state.sweepParams,
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
 vi.mock('../../utils/profit-helpers.js', () => ({
@@ -147,6 +149,7 @@ const tier = (level, extra = {}) => ({
 describe('refined target priced from a held base', () => {
     beforeEach(() => {
         state.items = [];
+        state.sweepParams = {};
         state.sweeps = [];
         state.shops = {};
         state.mirrorPrice = 1_000_000_000;
@@ -293,6 +296,17 @@ describe('refined target priced from a held base', () => {
             expect(detail.buys[0]).toMatchObject({ source: 'mirror' });
             expect(detail.buys[0].price).toBeCloseTo(best[7], 0);
             expect(detail.ladder.mirror).toBeTruthy();
+        });
+
+        test('Blessed Tea shortens the mirror chain: a +2 success skips the next step', () => {
+            const ordinary = Array.from({ length: 8 }, (_, k) => 1 + (2 ** k - 1) * 1e6);
+            const plain = explainUpgradeCost(sword(7), gameData).buys[0].price;
+            expect(plain).toBeCloseTo(cheapestWithMirror(ordinary, 1_000_000).best[7], 0);
+
+            state.sweepParams = { teas: { blessed: true }, blessedTeaBonus: 0.3, guzzlingBonus: 1 };
+            const blessed = explainUpgradeCost(sword(7), gameData).buys[0].price;
+            expect(blessed).toBeCloseTo(cheapestWithMirror(ordinary, 1_000_000, 0.3).best[7], 0);
+            expect(blessed).toBeLessThan(plain);
         });
 
         test('a self-enhanced cape +7 is mirrored too', () => {

@@ -56,6 +56,15 @@ describe('mirrorCostColumn', () => {
         expect(mirrorStartLevel).toBe(3);
     });
 
+    test('Blessed Tea discounts the later mirror steps of the chain', () => {
+        const plain = mirrorCostColumn(steep, 10, 100);
+        const blessed = mirrorCostColumn(steep, 10, 100, 20, 0.5);
+        // +3 is the first mirror level, so nothing before it can skip; +4 is run half the time
+        expect(blessed.levels[2].mirrorCost).toBe(plain.levels[2].mirrorCost);
+        expect(blessed.levels[3].mirrorCost).toBe(3110 + 0.5 * (2000 + 10 + 100));
+        expect(blessed.levels[3].mirrorCost).toBeLessThan(plain.levels[3].mirrorCost);
+    });
+
     test('an unmirrorable climb saves nothing', () => {
         const flat = Array.from({ length: 20 }, (_, i) => i + 1);
         const column = mirrorCostColumn(flat, 1000, 1000);

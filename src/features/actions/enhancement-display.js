@@ -12,6 +12,7 @@ import {
     calculateEnhancement,
     calculateSuccessMultiplier,
     BASE_SUCCESS_RATES,
+    blessedMirrorChance,
 } from '../../utils/enhancement-calculator.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
@@ -226,6 +227,7 @@ export async function displayEnhancementStats(panel, itemHrid) {
  * @param {number} basePrice - What one base item costs
  * @param {number} mirrorPrice - What one Philosopher's Mirror costs
  * @param {number} [toLevel] - Level the summary is taken to (default: the last level in `costs`)
+ * @param {number} [blessedChance=0] - Chance a mirror success is +2 (Blessed Tea), see `cheapestWithMirror`
  * @returns {{levels: Array<{mirrorCost: number|null, isMirrorCheaper: boolean}|undefined>,
  *   mirrorStartLevel: number|null, totalSavings: number, toLevel: number,
  *   savingsLevel: number|null}} `levels` is indexed like `costs`; `mirrorCost` is on the Total
@@ -234,7 +236,7 @@ export async function displayEnhancementStats(panel, itemHrid) {
  *   worse than no quote. `mirrorStartLevel` and `totalSavings` cover levels up to `toLevel` only;
  *   `totalSavings` is the saving at `savingsLevel`, the highest mirror-cheaper level up to it
  */
-export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.length) {
+export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.length, blessedChance = 0) {
     const cap = Number.isFinite(toLevel) ? Math.max(1, Math.min(costs.length, Math.floor(toLevel))) : costs.length;
     const levels = new Array(costs.length);
     if (!(basePrice > 0) || !(mirrorPrice > 0)) {
@@ -248,7 +250,7 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.
     for (let level = 1; level <= costs.length; level++) {
         ordinary[level] = basePrice + costs[level - 1];
     }
-    const { mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice);
+    const { mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice, blessedChance);
 
     let mirrorStartLevel = null;
     for (let level = 3; level <= costs.length; level++) {
@@ -448,7 +450,8 @@ function generateCostsByLevelTable(
         costData.map((data) => data.mirrorFootingCost),
         basePrice,
         mirrorPrice,
-        summaryTo
+        summaryTo,
+        blessedMirrorChance(params)
     );
     if (isPhilosopherMirror) {
         column.levels.forEach((entry, index) => {

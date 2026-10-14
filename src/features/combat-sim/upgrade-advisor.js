@@ -31,6 +31,7 @@ import { describeEnhancementSource } from '../enhancement/enhancement-params-sou
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
 import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID, cheapestWithMirror } from '../../utils/mirror-route.js';
+import { blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
@@ -3042,7 +3043,9 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     for (let k = 0; k <= level; k++) {
         ordinary[k] = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false }).price;
     }
-    const { best, mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice);
+    // The mirror's own success can be +2 under Blessed Tea, which skips the next step of the chain
+    const blessed = blessedMirrorChance(enhancementSweepParams(baseHrid));
+    const { best, mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice, blessed);
     const viaMirror = mirrorTotals[level];
     const viaOrdinary = Number.isFinite(ordinary[level]) ? ordinary[level] : Infinity;
     if (!Number.isFinite(viaMirror) || !(viaMirror < viaOrdinary)) return null;
