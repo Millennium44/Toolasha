@@ -55,7 +55,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Upgrade finder: refined gear priced by refining what you hold
 
-- The combat sim's upgrade finder now prices a ★ refined upgrade by refining the copy you wear or a spare you hold (refinement shards, plus enhancing only above the level you already have) instead of enhancing a fresh copy from +0, so a worn Sinister Cape +7 → ★ +7 costs about the shards rather than three times that.
+- The combat sim's upgrade finder now prices a ★ refined upgrade by refining the copy you wear or a spare you hold (refinement shards, plus enhancing only above the level you already have) instead of enhancing a fresh copy from +0, so a worn Sinister Cape +7 → ★ +7 costs about the shards rather than three times that; lab sim upgrades get the same pricing, listed copies no longer count as held, and a Philosopher's Mirror build (a +L−1 and a +L−2 copy) is used when it is cheaper, for refined and ordinary gear alike.
 
 <!-- shipped in 3.69.0 -->
 
