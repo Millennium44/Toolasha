@@ -271,7 +271,8 @@ class OverbidPanel {
         this.manual = false;
         /** Active listings with no usable figure, as of the last update */
         this.unknown = 0;
-        this.openButton = null;
+        /** Every Overbid tab injected, one per tab strip: the popout and the full page can each mount one */
+        this.openButtons = new Set();
         this.isInitialized = false;
         this.generation = 0;
         this.sightingTimer = null;
@@ -503,14 +504,14 @@ class OverbidPanel {
                 this.toggleFromTab();
             });
             insertTabInOrder(container, tab);
-            this.openButton = tab;
+            this.openButtons.add(tab);
         };
 
         const unwatch = createMutationWatcher(document.body, ensure, { childList: true, subtree: true });
         this.cleanup.registerCleanup(() => {
             unwatch();
-            this.openButton?.remove();
-            this.openButton = null;
+            for (const injected of this.openButtons) injected.remove();
+            this.openButtons.clear();
         });
         ensure();
     }
