@@ -5478,6 +5478,8 @@ class LabSimUI {
             );
         }
         if (result.candidate?.caveat) notes.push(result.candidate.caveat);
+        // How a hand-checked swap was priced: context, not a task caveat
+        if (result.candidate?.pricingNote) notes.push(result.candidate.pricingNote);
         if (!notes.length) return '';
         return notes
             .map(
@@ -6069,6 +6071,7 @@ class LabSimUI {
             }
         }
 
+        if (candidate.pricingNote) parts.push(line(candidate.pricingNote, '#8ab4f8'));
         parts.push(this._renderCostBreakdown(result.costDetail, { keptReason: KEPT_REASON_SKILLING }));
         return parts.join('');
     }

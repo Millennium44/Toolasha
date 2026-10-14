@@ -4054,6 +4054,31 @@ describe('upgrade row handoff', () => {
         expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/cheese_sword', enhancementLevel: 5 }]);
     });
 
+    test('a hand-checked swap’s pricing note draws no "on task" badge, a real task caveat still does', () => {
+        const checked = upgradeRowNotesHtml({
+            cost: 1,
+            candidate: {
+                description: 'Cape',
+                upgradeHrid: '/items/cape',
+                upgradeLevel: 7,
+                type: 'enhancement',
+                pricingNote: 'Checked by hand.',
+            },
+        });
+        expect(checked).not.toContain('on task');
+        const task = upgradeRowNotesHtml({
+            cost: 1,
+            candidate: {
+                description: 'Trinket',
+                upgradeHrid: '/items/trinket',
+                upgradeLevel: 7,
+                type: 'tier',
+                caveat: 'Task damage only.',
+            },
+        });
+        expect(task).toContain('on task');
+    });
+
     test('Watch also pins the item on the price panel, targeted at the row’s own cost', () => {
         // Watching an item you were just quoted a price for almost always means
         // "tell me when it costs that"; retyping the figure would be the reader

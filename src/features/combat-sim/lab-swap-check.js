@@ -354,14 +354,14 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
         type: route.type,
         checkedSwap: true,
         allLoadouts,
-        caveat: routeCaveat(route.route),
+        pricingNote: routeCaveat(route.route),
         reach: reached.length,
     };
     // One physical piece serves every loadout (they are alternatives, not worn
     // together), so a copy already worn at this level in any loadout is owned
     if ((dtos || []).some((dto) => wornExactly(dto?.equipment?.[slot], swap))) {
         candidate.cost = 0;
-        candidate.caveat = OWNED_CAVEAT;
+        candidate.pricingNote = OWNED_CAVEAT;
     } else {
         // A replaced piece that a loadout the swap does not reach still wears
         // cannot be sold to fund it
@@ -372,7 +372,7 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
         if (kept) {
             candidate.keptItems = kept;
             candidate.removedItems = [];
-            candidate.caveat += KEPT_CAVEAT;
+            candidate.pricingNote += KEPT_CAVEAT;
         }
         candidate.cost = calculateUpgradeCost(candidate, gameData, isSelf);
     }
@@ -471,7 +471,7 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         members,
         merged: true,
         checkedSwap: true,
-        caveat: owned ? OWNED_CAVEAT : routeCaveat(route.route),
+        pricingNote: owned ? OWNED_CAVEAT : routeCaveat(route.route),
         allLoadouts,
         cost,
         costDetail,
