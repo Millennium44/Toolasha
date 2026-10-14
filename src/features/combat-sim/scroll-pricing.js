@@ -23,7 +23,7 @@ import { SCROLL_BUFF_MINUTES, SCROLL_TOKEN_COST, priceScrollByTokens } from '../
  * @returns {{value: number, itemHrid: string, itemName: string}|null} Null when nothing in the shop is priced
  */
 export function scrollTokenRate() {
-    const detail = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', 'expectedValue_respectPricingMode');
+    const detail = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', null);
     if (!(detail?.value > 0)) return null;
     const name = dataManager.getInitClientData()?.itemDetailMap?.[detail.itemHrid]?.name;
     return {

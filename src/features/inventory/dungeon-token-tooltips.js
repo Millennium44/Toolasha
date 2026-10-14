@@ -326,6 +326,7 @@ class DungeonTokenTooltips {
 
                 let itemValue = 0;
                 let valueSource = '';
+                let isPartial = false;
 
                 // Try market price first (tradeable items like Task Crystal)
                 const prices = getItemPrices(shopItem.itemHrid, 0);
@@ -341,6 +342,7 @@ class DungeonTokenTooltips {
                         if (evData.expectedValue > itemValue) {
                             itemValue = evData.expectedValue;
                             valueSource = 'EV';
+                            isPartial = Boolean(evData.isPartial);
                         }
                     }
                 }
@@ -353,6 +355,7 @@ class DungeonTokenTooltips {
                     askPrice: itemValue,
                     goldPerToken: itemValue / tokenCost,
                     valueSource,
+                    isPartial,
                 };
             })
             .filter(Boolean)
@@ -451,20 +454,46 @@ class DungeonTokenTooltips {
         // The stack held, from the inventory so a non-English client works; the tooltip's own
         // "Amount:" line is only a fallback (read before this block is appended).
         const amount = (tokenHrid && ownedTokenCount(tokenHrid)) || this._heldAmount(tooltipText.textContent);
-        const held = heldTokensWorth(amount, shopItems[0]);
+        const held = heldTokensWorth(amount, shopItems);
         if (held) {
-            const title =
-                "At the table's best row, ask price before tax, assuming the whole stack goes into that one item. " +
-                'The shop may cap how many can be bought, and selling that many would move the market, so treat it ' +
-                'as an upper bound. Net worth values tokens by its own rules and can differ.';
-            html +=
-                `<div style="margin-top: 4px;" title="${title}">Your ${formatWithSeparator(amount)} tokens ` +
-                `≈ <strong>${formatKMB(held.total)}</strong> as ${shopItems[0].name} ` +
-                `(${formatKMB(held.perToken)}/token)</div>`;
+            html += this._heldTotalHtml(amount, held, shopItems[0]);
         }
 
         shopDiv.innerHTML = html;
         tooltipText.appendChild(shopDiv);
+    }
+
+    /**
+     * The "Your N tokens ≈ X" line under the table.
+     * @param {number} amount - Tokens held
+     * @param {Object} held - From {@link heldTokensWorth}
+     * @param {Object} best - The table's best row, which sets the wording of the price basis
+     * @returns {string} HTML
+     */
+    _heldTotalHtml(amount, held, best) {
+        // Say what the best row is priced from: a task row can be an openable's expected value
+        const basis =
+            best.valueSource === 'EV'
+                ? `the expected value of its contents${best.isPartial ? ' (a lower bound, some drops are unpriced)' : ''}`
+                : 'the ask price before tax';
+        const title =
+            `Whole shop purchases: the best row first, then what is left on the best row it can still afford. ` +
+            `Valued at ${basis}. The shop may cap how many can be bought, and selling that many would move the ` +
+            `market, so treat it as an upper bound. Net worth values tokens by its own rules and can differ.`;
+        const [first, ...rest] = held.parts;
+        const spent = (part) => `${formatWithSeparator(part.purchases)} × ${part.name}`;
+        let what = spent(first);
+        if (rest.length === 1) {
+            what += ` + ${formatWithSeparator(rest[0].tokens)} tokens as ${rest[0].name}`;
+        } else if (rest.length > 1) {
+            const tokens = rest.reduce((sum, part) => sum + part.tokens, 0);
+            what += ` + ${formatWithSeparator(tokens)} tokens as ${rest.map((part) => part.name).join(', ')}`;
+        }
+        if (held.unspent > 0) what += ` (${formatWithSeparator(held.unspent)} unspent)`;
+        return (
+            `<div style="margin-top: 4px;" title="${title}">Your ${formatWithSeparator(amount)} tokens ` +
+            `≈ <strong>${formatKMB(held.total)}</strong> as ${what}</div>`
+        );
     }
 
     /**
