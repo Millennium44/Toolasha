@@ -196,6 +196,7 @@ import {
     recordTileSample,
     saveTrialRecord,
     saveWorkBases,
+    scrubWaveObservations,
     tileKey,
     tilePersonalStats,
 } from './guild-trials-store.js';
@@ -336,17 +337,25 @@ const DEFAULT_WORK_BASES = {
  * Every combat boss reading the sampler files says what it summed: `source`
  * is `pool` for the spectator stream's wave grafted onto a barless card, or
  * `cards` for the DOM's own bars (two same-named Badger cards are folded into
- * one by `mergeWaveTiles`), and `slots` is how many monsters went into it. A
- * reading filed before the tag existed is `card`, one scale of its own.
+ * one by `mergeWaveTiles`), and `slots` is how many monsters went into it.
+ *
+ * A reading filed before the tag existed was always a DOM bar, never a graft,
+ * so on a single-monster encounter — or one whose wave count nothing has
+ * stated — it is the same one-card scale as `cards:1`, and the rate history
+ * survives the upgrade. On a known multi-monster wave it is `card`, a scale of
+ * its own: it may be one Badger or both, and nothing can say which.
  *
  * `pool:2` and `cards:2` are the same wave from two clocks — the stream per
  * tick, the DOM per redraw — and are kept apart for that reason.
  *
  * @param {Object|null} reading - A stored reading
+ * @param {number|null} [waveCount] - The encounter's monster count, where known
  * @returns {string} `card`, or `<source>:<slots>`
  */
-export function readingScale(reading) {
-    if (typeof reading?.source !== 'string') return 'card';
+export function readingScale(reading, waveCount = null) {
+    if (typeof reading?.source !== 'string') {
+        return Number.isFinite(waveCount) && waveCount > 1 ? 'card' : 'cards:1';
+    }
     return `${reading.source}:${Number.isFinite(reading.slots) ? reading.slots : ''}`;
 }
 
@@ -650,6 +659,11 @@ export function analyseTrial(
     // nothing at all.
     const tierKnown = Number.isFinite(tier);
     const tiersClearedSoFar = bankedTiers;
+    // Whether the tier was stated *for the bar in hand*: the socket's own
+    // statement with this pool as its target. The stream's floor is fresh but
+    // not tied to the bar — at a tier clear it moves on a moment before the DOM
+    // bar does — so it does not count.
+    const tierMatchesBar = freshSocket !== null && tier === freshSocket;
     const pointsByTier = record?.pointsByTier && typeof record.pointsByTier === 'object' ? record.pointsByTier : {};
 
     const base = {
@@ -677,6 +691,7 @@ export function analyseTrial(
         rateNote: null,
         level: Number.isFinite(record?.level) ? record.level : null,
         tiersClearedSoFar,
+        tierMatchesBar,
         rate: null,
         remaining: null,
         total: null,
@@ -741,10 +756,16 @@ export function analyseTrial(
         // whole wave's graft land on the same record, and a pace walked from
         // the newest reading's remaining health needs a rate on that scale —
         // paired across the two, every tab switch was a phantom tier clear
-        const latestScale = readingScale(latest);
+        // The wave's size, from whichever reading has said it
+        const statedWave = samples
+            .map((sample) => sample?.readings?.[index]?.waveCount)
+            .reverse()
+            .find((count) => Number.isFinite(count));
+        const scaleOf = (reading) => readingScale(reading, statedWave ?? null);
+        const latestScale = scaleOf(latest);
         const measured = combatDamageRate(
             samples
-                .filter((sample) => readingScale(sample?.readings?.[index]) === latestScale)
+                .filter((sample) => scaleOf(sample?.readings?.[index]) === latestScale)
                 .map((sample) => ({
                     t: sample?.t,
                     current: sample?.readings?.[index]?.current,
@@ -3033,7 +3054,24 @@ class GuildTrials {
             return;
         }
         this.recordUnread = false;
-        this.record = mergeTrialRecords(stored, this.record);
+        this.record = this._scrubRecord(mergeTrialRecords(stored, this.record));
+    }
+
+    /**
+     * Drop the old bug's untagged tier observations from multi-monster waves.
+     * Run on every load and inside every save's merge, so the stored copy is
+     * cleaned on the first write rather than merged back. See
+     * `scrubWaveObservations`.
+     * @param {Object|null} record - A trial record
+     * @returns {Object|null} The record, scrubbed
+     */
+    _scrubRecord(record) {
+        try {
+            return scrubWaveObservations(record, (name) => (this._waveCount(name) ?? 1) > 1);
+        } catch (error) {
+            console.error('[GuildTrials] Scrubbing tier observations failed:', error);
+            return record;
+        }
     }
 
     /**
@@ -3067,7 +3105,11 @@ class GuildTrials {
                 if (this.recordUnread) return false;
             }
             if (this.characterId !== characterId || this.guildName !== guildName || !this.record) return false;
-            return await saveTrialRecord(guildName, this.record, characterId, { guildId, overwrite });
+            return await saveTrialRecord(guildName, this.record, characterId, {
+                guildId,
+                overwrite,
+                scrub: (record) => this._scrubRecord(record),
+            });
         } catch (error) {
             console.error('[GuildTrials] Saving the trial record failed:', error);
             return false;
@@ -3597,7 +3639,13 @@ class GuildTrials {
                     // The stream flowing this render states the tier too, on
                     // the In Progress tab where the card keeps its own bar and
                     // nothing is grafted; a derived tier only fills the gap
-                    const streamTier = this._liveTierFloor(withPersonal);
+                    // — but only when the stream is reading the same bar: at a
+                    // tier clear it names T+1 a moment before the DOM bar
+                    // leaves T's pool, and filing that pair is a wrong ladder
+                    const streamTier =
+                        this.watchedPool?.max === withPersonal.readings[0]?.max
+                            ? this._liveTierFloor(withPersonal)
+                            : null;
                     if (Number.isFinite(withPersonal.socketTier)) readingTier = withPersonal.socketTier;
                     else if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
                     else if (Number.isFinite(streamTier)) readingTier = streamTier;
@@ -5508,7 +5556,13 @@ class GuildTrials {
             const heldTier = Number.isFinite(held)
                 ? tierFromWorkTarget({ target, baseWork: held, participants: scaledBy, kind })
                 : null;
-            if (heldTier !== null && (analysis.tierSource !== 'socket' || heldTier === analysis.tier)) return;
+            // Only a tier stated for this very bar may overrule a held base: the
+            // socket's statement for this pool, or the graft (stream reading
+            // and tier from one message). The stream's floor alone is not —
+            // at a tier clear it names T+1 while the DOM bar still shows T's
+            // pool, and relearning off that pair is a base ~9% wrong
+            const statedForBar = analysis.tierMatchesBar === true || bossReading?.source === 'pool';
+            if (heldTier !== null && (!statedForBar || heldTier === analysis.tier)) return;
 
             const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: target }], scaledBy, kind);
             if (!Number.isFinite(baseWork) || baseWork <= 0) return;

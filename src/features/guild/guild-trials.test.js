@@ -4006,6 +4006,105 @@ describe('the panel, end to end', () => {
             expect(guildTrials.workBases['trial badger'].learnedAt).toBe(now);
         });
 
+        test('a tier clear seen first by the stream neither relearns the base nor files a wrong observation', () => {
+            // Trial Chameleon, 4 in, held base 550,000. The stream's new_battle
+            // has moved to T2 (624,000) while the DOM bar still shows T1's
+            // 572,000 — both inside the learn window
+            game.clientData = TRIAL_GAME_DATA;
+            guildTrials.workBases = {
+                'trial chameleon': { baseWork: 550_000, scale: 'monster', version: 2, learnedAt: 1 },
+            };
+            const tile = { name: 'Trial Chameleon', kind: 'combat' };
+            const record = {
+                ...tile,
+                tier: null,
+                samples: [
+                    {
+                        t: now,
+                        readings: [{ current: 500_000, max: 572_000, source: 'cards', slots: 1, waveCount: 1 }],
+                    },
+                ],
+                tiers: [],
+            };
+            const analysis = analyseTrial(record, {
+                participants: 4,
+                phase: 'live',
+                workBase: 550_000,
+                liveTierFloor: 2,
+                now,
+            });
+            expect(analysis.tier).toBe(2);
+
+            guildTrials._learnWorkBase(tile, record, analysis, 4, now);
+            expect(guildTrials.workBases['trial chameleon']).toMatchObject({ baseWork: 550_000, learnedAt: 1 });
+
+            // And the sampler files the bar under the tier its own pool bar
+            // names, not the stream's T2
+            game.breakdown = {
+                pool: { current: 620_000, max: 624_000, slots: 1, tier: 2, at: Date.now(), encounter: 'chameleon' },
+            };
+            const root = buildTab([{ name: 'Trial Chameleon', level: 100, bar: '500,000 / 572,000' }]);
+            const poolBar = document.createElement('div');
+            poolBar.className = 'ProgressBar_text__f';
+            poolBar.textContent = '547,970 / 550,000';
+            root.querySelector('.GuildPanel_tile__c').appendChild(poolBar);
+            fire(root);
+
+            const tiers = guildTrials.record.tiles['combat::trial chameleon'].tiers;
+            expect(tiers.some((entry) => entry.tier === 2)).toBe(false);
+            expect(tiers.some((entry) => entry.tier === 1 && entry.total === 572_000)).toBe(true);
+        });
+
+        test('old untagged tier observations on a multi-monster wave are dropped on load and on disk', async () => {
+            const weekStart = trialWeekStart(now);
+            const poisoned = {
+                weekStart,
+                tiles: {
+                    'combat::trial badger': {
+                        name: 'Trial Badger',
+                        kind: 'combat',
+                        samples: [],
+                        tiers: [
+                            { tier: 12, total: 971_520 },
+                            { tier: 1, total: 971_520, source: 'pool' },
+                        ],
+                    },
+                    'combat::trial chameleon': {
+                        name: 'Trial Chameleon',
+                        kind: 'combat',
+                        samples: [],
+                        tiers: [{ tier: 2, total: 618_000 }],
+                    },
+                    'skilling::alchemy': {
+                        name: 'Alchemy',
+                        kind: 'skilling',
+                        samples: [],
+                        tiers: [{ tier: 7, total: 65_280 }],
+                    },
+                },
+            };
+            // Stored under the key this session's saves use
+            await saveTrialRecord(guildTrials.guildName, structuredClone(poisoned), guildTrials.characterId, {
+                guildId: guildTrials._guildId(),
+            });
+            const keysBefore = Object.keys(game.store);
+            guildTrials.record = null;
+            guildTrials._adoptStored(structuredClone(poisoned));
+
+            const tiles = guildTrials.record.tiles;
+            expect(tiles['combat::trial badger'].tiers).toEqual([{ tier: 1, total: 971_520, source: 'pool' }]);
+            expect(tiles['combat::trial chameleon'].tiers).toEqual([{ tier: 2, total: 618_000 }]);
+            expect(tiles['skilling::alchemy'].tiers).toEqual([{ tier: 7, total: 65_280 }]);
+
+            await guildTrials._persistRecord();
+            const holding = Object.keys(game.store).filter((key) => game.store[key]?.tiles?.['combat::trial badger']);
+            expect(holding).toHaveLength(1);
+            expect(keysBefore).toContain(holding[0]);
+            const stored = game.store[holding[0]];
+            expect(stored.tiles['combat::trial badger'].tiers).toEqual([{ tier: 1, total: 971_520, source: 'pool' }]);
+            expect(stored.tiles['combat::trial chameleon'].tiers).toEqual([{ tier: 2, total: 618_000 }]);
+        });
+
         test('an untagged base on a multi-monster wave is dropped on load, a single boss’s is kept', async () => {
             trialsFeature.cleanup();
             game.store = {
@@ -5570,6 +5669,29 @@ describe('a two-Badger wave on one Badger’s base', () => {
 
         expect(analysis.tier).toBe(1);
         expect(analysis.tiersClearedSoFar).toBe(0);
+    });
+
+    test('a single boss keeps its rate history across the upgrade that tagged its readings', () => {
+        // Readings filed before the tag carry none; the first one after it says
+        // `cards:1`. On a one-monster encounter they are the same bar
+        const old = (t, current) => ({ t, readings: [{ current, max: 572_000 }] });
+        const record = {
+            name: 'Trial Chameleon',
+            kind: 'combat',
+            tier: null,
+            samples: [
+                old(now - 20_000, 500_000),
+                old(now - 10_000, 490_000),
+                {
+                    t: now,
+                    readings: [{ current: 480_000, max: 572_000, source: 'cards', slots: 1, waveCount: 1 }],
+                },
+            ],
+            tiers: [],
+        };
+        const analysis = analyseTrial(record, { participants: 4, phase: 'live', workBase: 550_000, now });
+
+        expect(analysis.rate * 1000).toBeCloseTo(1_000, 6);
     });
 
     test('a reading of part of the wave identifies no tier', () => {
