@@ -65,6 +65,7 @@ class LabyrinthTracker {
             migrate: 'discard',
             immediate: true,
             label: 'LabyrinthTracker',
+            onPulled: () => this.refreshFromPull(),
         });
         this.handlers = {};
         this.isInitialized = false;
@@ -227,6 +228,21 @@ class LabyrinthTracker {
         } catch (error) {
             console.error('[LabyrinthTracker] Failed to load data:', error);
         }
+    }
+
+    /**
+     * Take in best levels a sync pull wrote under the running page. The held levels go back into the record
+     * so the load folds the stored ones under them (the higher level wins per monster), and the listeners are
+     * told when any level moved. A best recorded while the read was out is folded back, not dropped.
+     * @returns {Promise<void>}
+     */
+    async refreshFromPull() {
+        const ticket = captureOwner(this);
+        this.record.set(this.monsterBestLevels);
+        if (!(await this.record.load()) || !stillOurs(ticket)) return;
+        const before = JSON.stringify(this.monsterBestLevels);
+        this.monsterBestLevels = mergeBestLevels(this.record.get(), this.monsterBestLevels);
+        if (JSON.stringify(this.monsterBestLevels) !== before) this.notifyListeners();
     }
 
     /**
