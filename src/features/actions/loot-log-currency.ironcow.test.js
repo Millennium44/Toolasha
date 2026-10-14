@@ -18,7 +18,14 @@ vi.mock('../../utils/token-valuation.js', () => ({
     calculateDungeonTokenValue: mocks.dungeon,
     calculateLabyrinthTokenValueDetail: mocks.labyrinth,
 }));
-vi.mock('../tasks/task-profit-calculator.js', () => ({ calculateTaskTokenValue: vi.fn() }));
+vi.mock('../tasks/task-profit-calculator.js', () => ({
+    calculateTaskTokenValue: vi.fn(),
+    // Mirrors the real valueTaskRewards (covered in task-profit-calculator.test.js)
+    valueTaskRewards: (data, { tokens = 0 } = {}) =>
+        !data || data.error || !Number.isFinite(data.tokenValue)
+            ? null
+            : tokens * data.tokenValue + tokens * (Number.isFinite(data.giftPerTaskPoint) ? data.giftPerTaskPoint : 0),
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: mocks.getItemPrice }));
 
 import { resolveCurrencyValue } from './loot-log-currency.js';

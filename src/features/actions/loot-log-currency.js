@@ -9,7 +9,7 @@
  * - cowbell: the bag's sell price after the bag's 18% tax, over 10
  * - dungeon tokens: the best token-shop line's quote after market tax
  * - labyrinth tokens: the best labyrinth shop line's quote after market tax
- * - task tokens: the best Task Shop line (`calculateTaskTokenValue`)
+ * - task tokens: the best Task Shop line plus the Task Point it grants (`valueTaskRewards`, as task profit)
  *
  * The loot log keeps ask and bid totals side by side, so every figure here is asked for one
  * side of the book. Task tokens are the exception: their valuation goes through the expected
@@ -17,7 +17,7 @@
  */
 
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
+import { calculateTaskTokenValue, valueTaskRewards } from '../tasks/task-profit-calculator.js';
 import {
     calculateDungeonTokenValue,
     calculateLabyrinthTokenValueDetail,
@@ -83,7 +83,9 @@ export function resolveCurrencyValue(baseHrid, side = 'ask') {
         // feature starts; the loot log must not depend on that display being on. Its shop
         // valuation takes no side, so the ask and bid columns share the one figure
         startExpectedValueCalculator();
-        value = calculateTaskTokenValue()?.tokenValue;
+        // The same valuation task profit uses (`valueTaskRewards`): each token rewarded also earns a Task
+        // Point toward Purple's Gift, so one token is its shop value plus the gift share
+        value = valueTaskRewards(calculateTaskTokenValue(), { tokens: 1 });
     } else if (baseHrid === LABYRINTH_TOKEN_HRID) {
         // The best shop reward's market quote: a sale of it pays the market tax
         const quote = calculateLabyrinthTokenValueDetail(undefined, undefined, bookSide)?.value;
