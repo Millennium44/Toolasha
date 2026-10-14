@@ -97,6 +97,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A community buff restarted with no more than the warning window on it no longer sends a "running out" alert; one topped up past the window still warns as it counts back down. The Lab Sim's checked-swap table now uses the panel's full height instead of stopping at 45%. A Clear button empties the checked swaps (your queued items stay), and the generated Upgrades section collapses from its header on both tabs.
 
+### Guild trials: two-monster waves
+
+- Combat trials with more than one monster per wave (Badger, Swarm) no longer read the first tier as tier 12 with 11 banked, and switching between the fight view and the Trials tab no longer inflates Party DPS; saved estimates from the old bug are dropped on load.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
