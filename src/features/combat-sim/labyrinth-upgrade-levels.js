@@ -65,13 +65,16 @@ export function shortlistForRoomLevels(results, size = ROOM_LEVEL_SHORTLIST_SIZE
  *   the level search for one row, or for the unmodified character when passed
  *   null. Resolves to a `findMaxLabyrinthLevel` result
  * @param {number} [options.shortlistSize=ROOM_LEVEL_SHORTLIST_SIZE]
+ * @param {function(Array<Object>, number): Array<Object>} [options.select] - Picks
+ *   the rows worth a search; defaults to the win-rate shortlist. The Skilling tab
+ *   ranks on clear rate and passes its own.
  * @param {Function} [options.abortSignal] - Polled before every search
  * @param {Function} [options.onProgress] - `({ current, total, description })`
  * @returns {Promise<Object>} `{ baselineLevel, baselineFloor, baselineCleared,
  *   measured, aborted, shortlistSize }`
  */
 export async function measureRoomLevelGains(results, options = {}) {
-    const { measure, shortlistSize = ROOM_LEVEL_SHORTLIST_SIZE, abortSignal, onProgress } = options;
+    const { measure, shortlistSize = ROOM_LEVEL_SHORTLIST_SIZE, abortSignal, onProgress, select } = options;
     const rows = Array.isArray(results) ? results : [];
     for (const row of rows) {
         row.roomLevelDelta = 0;
@@ -90,7 +93,7 @@ export async function measureRoomLevelGains(results, options = {}) {
     };
     if (typeof measure !== 'function') return summary;
 
-    const shortlist = shortlistForRoomLevels(rows, summary.shortlistSize);
+    const shortlist = (typeof select === 'function' ? select : shortlistForRoomLevels)(rows, summary.shortlistSize);
     const total = shortlist.length + 1;
 
     if (abortSignal?.()) {
