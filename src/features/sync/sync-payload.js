@@ -1474,6 +1474,26 @@ export function restampRestoredSettings(payload, now = Date.now()) {
 }
 
 /**
+ * This device's copy of a key as the fold of a download would leave it, for the "already the same" test.
+ *
+ * A settings map's stamps keep the stamps of the device-local settings (the token, the thread counts) on the
+ * device that changed them, and the fold leaves those stamps out of what it produces. Compared as stored, a
+ * stamps record holding one never equals its own fold, so the first pull after such a change rewrote the record
+ * and asked for a reload once. Compared without them, a pull that changes nothing else writes nothing.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @param {*} value - This device's stored value
+ * @returns {*} The value to compare the fold's result against
+ */
+function comparableLocalValue(storeName, key, value) {
+    if (storeName !== SETTINGS_STORE || !key.startsWith(SETTING_STAMPS_PREFIX)) return value;
+    const stamps = readStamps(value);
+    if (!stamps) return value;
+    for (const settingId of LOCAL_ONLY_SETTING_IDS) delete stamps[settingId];
+    return stamps;
+}
+
+/**
  * Weigh a download against this device's stores, one store read at a time, so
  * no more than one store's local copy is held at once.
  *
@@ -1596,7 +1616,9 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
             Object.keys(entries).filter(
                 (key) =>
                     foldsSame.has(baselineId(storeName, key)) ||
-                    (Object.hasOwn(local, key) && stableStringify(local[key]) === stableStringify(entries[key]))
+                    (Object.hasOwn(local, key) &&
+                        stableStringify(comparableLocalValue(storeName, key, local[key])) ===
+                            stableStringify(entries[key]))
             )
         );
         for (const key of Object.keys(entries)) {
