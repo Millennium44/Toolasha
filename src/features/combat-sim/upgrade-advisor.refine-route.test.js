@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
     mirrorPrice: 1_000_000_000,
     /** No market listing at any level */
     noAsk: false,
+    /** Ask by item and level when a test wants listings at some levels only; null for the flat default */
+    askFor: null,
     /** What the sword sells for */
     swordSell: 1,
     /** What the star item is worth as a craft estimate, and what the base sells for */
@@ -118,7 +120,10 @@ vi.mock('../../utils/profit-helpers.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     // Every level of everything has an ask; a cape must never use one
-    getItemPrices: vi.fn(() => (state.noAsk ? null : { ask: 999_000_000, bid: 1 })),
+    getItemPrices: vi.fn((hrid, level) => {
+        if (state.noAsk) return null;
+        return { ask: state.askFor ? state.askFor(hrid, level) : 999_000_000, bid: 1 };
+    }),
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
@@ -155,6 +160,7 @@ describe('refined target priced from a held base', () => {
         state.shops = {};
         state.mirrorPrice = 1_000_000_000;
         state.noAsk = false;
+        state.askFor = null;
         state.swordSell = 1;
         state.starPrice = 500_000_000;
         state.baseSell = 300_000;
@@ -447,6 +453,29 @@ describe('refined target priced from a held base', () => {
             expect(detail.buys[0].source).toBe('mirror');
             expect(detail.net).toBeGreaterThanOrEqual(0);
             expect(calculateUpgradeCost(swap, gameData)).toBeGreaterThanOrEqual(0);
+        });
+
+        test('a tier swap keeps a quoted buy when its resale makes the quote the cheaper net', () => {
+            // Only the +7 is listed, at 210M; the lower levels are climbed. A mirror build is about 41M
+            // gross, but the +6 being replaced sells for 300M: a quote keeps that whole credit (net
+            // -90M) while a build's credit is capped at its spend (net 0).
+            state.noAsk = false;
+            state.askFor = (hrid, level) => (hrid === SWORD && level === 7 ? 210_000_000 : 0);
+            state.swordSell = 300_000_000;
+            const swap = {
+                type: 'tier',
+                upgradeHrid: SWORD,
+                upgradeLevel: 7,
+                removedItems: [{ hrid: SWORD, enhancementLevel: 6 }],
+            };
+            const detail = explainUpgradeCost(swap, gameData);
+            expect(detail.buys[0]).toMatchObject({ source: 'market', price: 210_000_000 });
+            expect(detail.net).toBe(-90_000_000);
+            expect(calculateUpgradeCost(swap, gameData)).toBe(-90_000_000);
+
+            // Sold for little, the same build is the cheaper net
+            state.swordSell = 1_000_000;
+            expect(explainUpgradeCost(swap, gameData).buys[0].source).toBe('mirror');
         });
 
         test('below +3 a mirror cannot run, and a dear mirror changes nothing', () => {
