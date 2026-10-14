@@ -223,7 +223,7 @@ import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
-import { clearRecord, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
+import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { stableStringify } from '../../utils/stable-stringify.js';
 import { isTestServer } from '../../utils/game-server.js';
@@ -2382,7 +2382,9 @@ class ReplayCheck {
         const owner = this._owner();
         for (let round = 0; round < 3; round++) {
             const held = this[which];
-            record.set(clearedRecord(held));
+            // The clear epoch the record holds rides along: rebuilding it at 0 would let a Forget made during
+            // the read be folded back in by the next round's probe
+            record.set(clearedRecord(held, clearedAtOf(record.get())));
             if (!(await record.load()) || !this._stillOurs(owner)) return;
             if (this[which] !== held) continue;
             const stored = entriesOf(record.get());

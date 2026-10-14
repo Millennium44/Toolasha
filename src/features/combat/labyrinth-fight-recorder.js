@@ -553,7 +553,8 @@ async function refreshFromPull() {
     for (let round = 0; round < 3; round++) {
         const held = attempts;
         const heldLength = held.length;
-        record.set(storedRecord(internReplayBuilds(held)));
+        // The clear epoch the record holds rides along, so a Clear made during the read is not folded back in
+        record.set(storedRecord(internReplayBuilds(held), clearedAtOf(record.get())));
         if (!(await record.load()) || started !== poolGeneration) return;
         if (attempts !== held || attempts.length !== heldLength) continue;
         attempts = entriesOf(readStored(record.get()));

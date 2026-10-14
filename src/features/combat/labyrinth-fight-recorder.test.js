@@ -517,6 +517,23 @@ describe('the pool survives a failed read and a second tab', () => {
         expect(recorder.recordedAttempts().some((a) => a.recordId === 'other-device')).toBe(true);
     });
 
+    test('a pull does not bring back what Clear removed, when the Clear write has not landed yet', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        recorder.noteAttempt(attempt());
+        await settle();
+        await recorder.load();
+        const before = raw();
+        recorder.clearRecording();
+        await settle();
+        // The stored copy is the pre-Clear one again, as when the cleared write is still waiting
+        storageMock.storeFor('labyrinth').set('labyrinthFightRecorder_char1', before);
+
+        announceSyncPullApplied({ labyrinth: ['labyrinthFightRecorder_char1'] });
+        await settle();
+
+        expect(recorder.recordingStatus().total).toBe(0);
+    });
+
     test('a pull of another character changes nothing', async () => {
         const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
         await recorder.load();

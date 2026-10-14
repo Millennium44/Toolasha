@@ -33,7 +33,7 @@
 import config from '../../core/config.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
-import { clearRecord, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
+import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -252,12 +252,14 @@ class PredictionCalibration {
      * @returns {Promise<void>}
      */
     async refreshFromPull() {
-        const held = this.records;
-        if (!held || !this._key()) return;
+        if (!this._key()) return;
+        // First: a character switch is noticed here, and drops the departing records
         const store = this._store();
+        const held = this.records;
+        if (!held) return;
         const owner = this.owner;
         const heldLength = held.length;
-        store.set(clearedRecord(held));
+        store.set(clearedRecord(held, clearedAtOf(store.get())));
         if (!(await store.load())) return;
         if (this.owner !== owner || this.store !== store || this._store() !== store) return;
         if (this.records !== held || held.length !== heldLength) return;

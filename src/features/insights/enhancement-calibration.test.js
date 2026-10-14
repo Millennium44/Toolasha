@@ -258,6 +258,30 @@ describe('the observations survive a failed read and a second tab', () => {
         expect(ids(calibration.getCachedRecords())).toEqual(['theirs']);
     });
 
+    test('a pull does not bring back what Clear removed, when the Clear write has not landed yet', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.recordCompletion(completedSession({ endTime: 1 }));
+        const before = structuredClone(game.stored[KEY]);
+        await calibration.clear();
+        await calibration.getRecords();
+        game.stored[KEY] = before;
+
+        announceSyncPullApplied({ lootLogHistory: ['calibrationEnhancing_char-1'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(calibration.getCachedRecords()).toEqual([]);
+    });
+
+    test('a pull after a character switch does not carry the departing records into the new one', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.recordCompletion(completedSession({ endTime: 1 }));
+        game.characterId = 'char-2';
+        announceSyncPullApplied({ lootLogHistory: ['calibrationEnhancing_char-1'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(calibration.store.get().entries).toEqual([]);
+        expect(calibration.records).toBeNull();
+    });
+
     test('once storage reads again the next save lands everything', async () => {
         game.unavailable = true;
         await calibration.recordCompletion(completedSession({ endTime: 1 }));

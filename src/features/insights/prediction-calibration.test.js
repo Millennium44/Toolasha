@@ -583,6 +583,30 @@ describe('the ledger survives a failed read and a second tab', () => {
         expect(calibration.records).toEqual([]);
     });
 
+    test('a pull does not bring back what Clear removed, when the Clear write has not landed yet', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.addRecord(pair('a', 1));
+        const before = structuredClone(game.stored[KEY]);
+        await calibration.clear();
+        await calibration.getRecords();
+        game.stored[KEY] = before;
+
+        announceSyncPullApplied({ lootLogHistory: ['calibration_char-1'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(calibration.records).toEqual([]);
+    });
+
+    test('a pull after a character switch does not carry the departing pairs into the new one', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await calibration.addRecord(pair('a', 1));
+        await calibration.getRecords();
+        game.characterId = 'char-2';
+        announceSyncPullApplied({ lootLogHistory: ['calibration_char-2'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(calibration.store.get().entries).toEqual([]);
+    });
+
     test('clearing is the one overwrite, and stamps what it writes', async () => {
         await calibration.addRecord(pair('a', 1));
 
