@@ -1594,6 +1594,11 @@ describe('the Chain/hr hover', () => {
         expect(hover).toContain(`${formatKMB(1_704_000)}/hr`);
         expect(hover).toContain('buy at the ask now and sell outputs at bid');
         expect(hover).toContain('whatever the Buy/Sell dropdowns say');
+        expect(hover).not.toContain('shop price');
+        // A row whose single-step price came from the NPC shop is told the chain does not use it
+        bestItems.cachedRankings.decompose[0].shopPriced = true;
+        bestItems.renderTable();
+        expect(bestItems.modal.querySelector('[data-mwi-chain]').title).toContain('shop price is not used here');
     });
 });
 
@@ -1678,6 +1683,15 @@ describe('the Chain/hr (own stock) sort', () => {
         await open([row('a', 1), row('b', 1), row('c', 1)]);
         expect(names()).toEqual(['b', 'a']);
         expect(cells()[1].textContent).toBe('—');
+    });
+
+    test('a shop-priced row gets no shop tag in own-stock mode', async () => {
+        tooltip.held = { '/items/a': 1 };
+        tooltip.chains = { '/items/a': chain(100) };
+        const shopRow = { ...row('a', 1), shopPriced: true, shopPrice: 50, marketPrice: 80 };
+        await open([shopRow]);
+        expect(bestItems.modal.querySelector('[data-mwi-shop-tag]')).toBeNull();
+        expect(cells()[0].title).not.toContain('shop price');
     });
 
     test('stock gained while the table is open gets its figure instead of a permanent ellipsis', async () => {
