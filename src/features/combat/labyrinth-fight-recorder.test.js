@@ -534,6 +534,27 @@ describe('the pool survives a failed read and a second tab', () => {
         expect(recorder.recordingStatus().total).toBe(0);
     });
 
+    test('listeners are told when a pull changed the pool, and not when it did not', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        recorder.noteAttempt(attempt());
+        await settle();
+        await recorder.load();
+        const heard = vi.fn();
+        const off = recorder.onPoolChanged(heard);
+
+        announceSyncPullApplied({ labyrinth: ['labyrinthFightRecorder_char1'] });
+        await settle();
+        expect(heard).not.toHaveBeenCalled();
+
+        const theirs = { ...stored()[0], recordId: 'other-device', seconds: 77 };
+        storageMock
+            .storeFor('labyrinth')
+            .set('labyrinthFightRecorder_char1', { clearedAt: 0, entries: [...stored(), theirs] });
+        announceSyncPullApplied({ labyrinth: ['labyrinthFightRecorder_char1'] });
+        await vi.waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+        off();
+    });
+
     test('a pull of another character changes nothing', async () => {
         const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
         await recorder.load();
