@@ -9,7 +9,7 @@ import {
     SessionState,
     getSessionDuration,
     getCurrentLegCounters,
-    summedLegPredictions,
+    mergedExpectation,
     hasPredictionLegs,
     getProtectionBreakdown,
     mergeSessions,
@@ -143,8 +143,11 @@ export function enhancementSessionText(
 
     // Cost against the prediction, at this run's own leg — the same comparison
     // the panel draws underneath the per-level table, just in words.
-    if (session.predictions) {
-        const cost = costVsExpected(session, getCurrentLegCounters(session));
+    const legForecast = hasPredictionLegs(session) ? mergedExpectation(session)?.expected : null;
+    if (session.predictions || legForecast) {
+        const cost = legForecast
+            ? costVsExpected(session, null, legForecast)
+            : costVsExpected(session, getCurrentLegCounters(session));
         if (cost) {
             const word = cost.diff >= 0 ? 'below' : 'above';
             lines.push(
@@ -1155,16 +1158,25 @@ class EnhancementUI {
     }
 
     /**
-     * Expected figures for a session that ran in several legs: the sum of each leg's own
-     * prediction against all of the session's attempts and protections. No percentile — a sum of
-     * different distributions has no single spread to read the outcome against. The cost
-     * comparison uses the summed expectation.
+     * Expected figures for a session that ran in several legs: the combined forecast rebuilt from
+     * each leg's own prediction (see mergedExpectation) against all of the session's attempts and
+     * protections. No percentile — a combination of different distributions has no single spread
+     * to read the outcome against. The cost comparison uses the combined expectation.
      * @param {Object} session - Session object
-     * @param {{expectedAttempts: number, expectedProtections: number}} summed - From summedLegPredictions
+     * @param {{expectedAttempts: number, expectedProtections: number, basis?: string, fromLevel?: number,
+     *   toLevel?: number}} summed - From mergedExpectation
      * @returns {string} HTML
      */
     generateSummedPredictionHTML(session, summed) {
         const { expectedAttempts: expAtt, expectedProtections: expProt } = summed;
+        const how =
+            summed.basis === 'path'
+                ? `Rebuilt from each run's own prediction (made on the stats you had at the time): the expected climb ` +
+                  `+${summed.fromLevel} to +${summed.toLevel}, one step at a time. Each step is the average of the runs ` +
+                  `that forecast it, weighted by how many attempts each run made at that step's starting level. ` +
+                  `Expected cost uses this session's own average price per attempt and per protection.`
+                : `Summed from each run's own prediction (made on the stats you had at the time), counting each run ` +
+                  `only over the stretch it covered.`;
         const factor = (actual, expected) => {
             if (!(expected > 0)) return '—';
             const val = actual / expected;
@@ -1186,7 +1198,7 @@ class EnhancementUI {
             </div>`;
         }
         return `
-            <div class="enh-summed-predictions" title="Summed from each run's own prediction, made on the stats you had at the time">
+            <div class="enh-summed-predictions" title="${how}">
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px;">
                 <div style="color: ${color};"><span>Expected Attempts:</span><span> ${expAtt}</span></div>
                 <div style="color: ${color};"><span>Expected Prots:</span><span> ${expProt}</span></div>
@@ -1261,19 +1273,19 @@ class EnhancementUI {
             </div>`;
 
         // A session that ran in several legs (merged, or resumed under changed stats) is read
-        // against the sum of its legs' own predictions, and against all of its attempts
-        const summed = summedLegPredictions(session);
+        // against the forecast rebuilt from its legs' own predictions, and against all of its attempts
+        const summed = mergedExpectation(session)?.expected || null;
 
         // Predictions (if available)
         if (hasPredictionLegs(session)) {
-            // Legs whose sum cannot be read honestly (one has no prediction, or the record is
-            // from before every leg was kept) show a dash rather than a wrong figure
+            // Legs whose forecast cannot be combined honestly (one has no prediction, or the record
+            // is from before every leg was kept) show a dash rather than a wrong figure
             html += summed
                 ? this.generateSummedPredictionHTML(session, summed)
                 : `
             <div class="enh-merged-runs" style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
                 <span>Expected Attempts:</span>
-                <span title="This session's runs have no complete set of predictions to sum">—</span>
+                <span title="This session's runs have no complete set of predictions to combine">—</span>
             </div>`;
         } else if (session.predictions) {
             const predictions = session.predictions;
@@ -1471,12 +1483,16 @@ class EnhancementUI {
             message += `\n\nThey do not share one target and protection setup; the merged session keeps the most recent one's (+${newest.targetLevel}, ${protect}).`;
         }
         message +=
-            "\n\nThe merged session's expected attempts and protections are summed from each run's own " +
-            'prediction, made on the stats you had at the time, and are not used for prediction calibration.';
+            "\n\nThe merged session's forecast is rebuilt from each run's own prediction, made on the stats you " +
+            'had at the time: the predicted success rate at each level is averaged over the runs, weighted by ' +
+            'the attempts each made at that level, and the expected attempts, protections and cost are the ' +
+            "expected climb from the first run's start level to the target, one step at a time, weighted the " +
+            'same way. It is not used for prediction calibration.';
         if (plan.protectionItemsDiffer) {
             message +=
                 '\n\nThey used different protection items. The merged session lists the protection used ' +
-                'per item, and a later auto-resume matches only the most recent one.';
+                'per item. A later auto-resume continues it with a different protection item only while the ' +
+                '"different protection item" auto-resume setting is on.';
         }
         if (newest.state === SessionState.TRACKING) {
             message += '\n\nThe most recent one is still in progress and keeps receiving attempts.';
@@ -1741,7 +1757,10 @@ class EnhancementUI {
         // Predicted rate per level, so the observed column has something to be read against.
         // successRates[i] is the chance of going from +i to +i+1, which is how the attempt
         // rows are keyed.
-        const predictedRates = session.predictions?.successRates || null;
+        // A session that ran in several predicted legs has none of its own: the rate per level is
+        // each leg's predicted rate, weighted by the attempts that leg made at the level
+        const mergedRates = session.predictions ? null : mergedExpectation(session)?.successRates || null;
+        const predictedRates = session.predictions?.successRates || mergedRates || null;
 
         let rows = '';
         for (const level of levels) {
@@ -1782,7 +1801,11 @@ class EnhancementUI {
                         <th style="${compactHeaderStyle}">Success</th>
                         <th style="${compactHeaderStyle}">Fail</th>
                         <th style="${compactHeaderStyle}">%</th>
-                        <th style="${compactHeaderStyle}">Pred %</th>
+                        <th style="${compactHeaderStyle}"${
+                            mergedRates
+                                ? ` title="Each run's predicted rate at this level, weighted by the attempts that run made at it"`
+                                : ''
+                        }>Pred %</th>
                     </tr>
                 </thead>
                 <tbody>

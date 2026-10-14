@@ -439,21 +439,55 @@ function startNewSegment(session, now) {
 }
 
 /**
+ * The attempts the session's current leg made at each level, from the session's per-level
+ * tally less what its already banked legs made. Null when that cannot be known: a banked leg
+ * predates the tally, or the result does not add up to the leg's attempts (an unbanked leg's
+ * attempts are in the tally).
+ * @param {Object} session - Session object
+ * @param {number} legAttempts - Attempts the current leg made
+ * @returns {Object<string, number>|null} `{ level: attempts }`
+ */
+function currentLegLevelAttempts(session, legAttempts) {
+    const banked = Array.isArray(session.legPredictions) ? session.legPredictions : [];
+    if (banked.some((leg) => !leg.levelAttempts)) return null;
+    const tally = {};
+    for (const [level, data] of Object.entries(session.attemptsPerLevel || {})) {
+        tally[level] = (data.success || 0) + (data.fail || 0);
+    }
+    for (const leg of banked) {
+        for (const [level, count] of Object.entries(leg.levelAttempts)) tally[level] = (tally[level] || 0) - count;
+    }
+    let total = 0;
+    for (const [level, count] of Object.entries(tally)) {
+        if (count < 0) return null;
+        if (count === 0) delete tally[level];
+        else total += count;
+    }
+    return total === legAttempts ? tally : null;
+}
+
+/**
  * The leg a session is in, as `legPredictions` keeps it: where it began, where it was headed, its
  * own prediction, and how many attempts it made (so the legs can be checked to cover every
- * attempt the session made).
+ * attempt the session made). `levelAttempts` (optional; absent on legs recorded before it
+ * existed) is how many of those attempts were made at each level, which is what weights the leg
+ * when merged runs' forecasts are combined (see {@link mergedExpectation}).
  * @param {Object} session - Session object
  * @returns {Object}
  */
 function currentLegRecord(session) {
-    return {
+    const attempts = Math.max(0, (session.totalAttempts || 0) - (session.extensionBaseline?.totalAttempts || 0));
+    const record = {
         sessionId: session.id,
         startLevel: Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel,
         targetLevel: session.targetLevel,
         protectFrom: session.protectFrom || 0,
         predictions: session.predictions || null,
-        attempts: Math.max(0, (session.totalAttempts || 0) - (session.extensionBaseline?.totalAttempts || 0)),
+        attempts,
     };
+    const levelAttempts = currentLegLevelAttempts(session, attempts);
+    if (levelAttempts) record.levelAttempts = levelAttempts;
+    return record;
 }
 
 /**
@@ -620,9 +654,10 @@ export function planSessionMerge(sessions, { labelOf = (session) => session.id }
  * counter, cost, per-level tally and XP; the start level and start time of the session that
  * started first; and every session's active stretches (not the wall-clock span between them).
  * Its own target, protection, state, current level and last attempt are kept. Protection is kept
- * per item when the runs used different ones. The merged session carries no combined
- * prediction — each run's own is kept in `legPredictions` — and is not calibrated (see
- * calibrationObservation); the extension baseline is cleared.
+ * per item when the runs used different ones. The merged session stores no combined prediction —
+ * each run's own is kept in `legPredictions`, with the attempts it made per level, and the panel
+ * rebuilds the combined forecast from them ({@link mergedExpectation}) — and is not calibrated
+ * (see calibrationObservation); the extension baseline is cleared.
  *
  * @param {Array<Object>} ordered - Sessions by last activity, from {@link planSessionMerge}
  * @returns {Object} The latest session, now the merged one
@@ -794,6 +829,180 @@ export function summedLegPredictions(session) {
         }
     }
     return { legs: legs.length, expectedAttempts: Math.round(attempts), expectedProtections: Math.round(protections) };
+}
+
+/**
+ * The legs of a multi-leg session as records, the live leg (one with a prediction still open on
+ * the session) last.
+ * @param {Object} session - Session object
+ * @returns {Array<Object>}
+ */
+function legsOf(session) {
+    const legs = (Array.isArray(session.legPredictions) ? session.legPredictions : []).map((leg) => ({ ...leg }));
+    if (session.predictions) legs.push(currentLegRecord(session));
+    return legs;
+}
+
+/**
+ * How much a leg counts when forecasts are averaged at a level: the attempts it made there. A leg
+ * recorded before per-level tallies were kept is weighted by its total attempts spread evenly over
+ * the levels it was headed through, the best that can be said of it.
+ * @param {Object} leg - Leg record
+ * @param {number} level - Level the attempts started from
+ * @returns {number}
+ */
+function legWeight(leg, level) {
+    if (leg.levelAttempts) return leg.levelAttempts[level] || 0;
+    if (!(level >= leg.startLevel && level < leg.targetLevel)) return 0;
+    return (leg.attempts || 0) / Math.max(1, leg.targetLevel - leg.startLevel);
+}
+
+/**
+ * What a leg's own forecast expected it to take to climb from its start level to `level`:
+ * `[attempts, protections]`, or null when its prediction does not say (a level outside the leg,
+ * or a prediction stored without per-level expectations).
+ * @param {Object} leg - Leg record with a prediction
+ * @param {number} level - Level to reach
+ * @returns {number[]|null}
+ */
+function legReach(leg, level) {
+    const p = leg.predictions;
+    if (level === leg.startLevel) return [0, 0];
+    if (level === leg.targetLevel) {
+        const attempts = Number.isFinite(p.expectedAttemptsExact) ? p.expectedAttemptsExact : p.expectedAttempts;
+        const protections = Number.isFinite(p.expectedProtectionsExact)
+            ? p.expectedProtectionsExact
+            : p.expectedProtections || 0;
+        return Number.isFinite(attempts) ? [attempts, protections] : null;
+    }
+    if (level > leg.startLevel && level < leg.targetLevel) {
+        const part = p.levelExpectations?.[level];
+        return Array.isArray(part) && Number.isFinite(part[0]) ? [part[0], part[1] || 0] : null;
+    }
+    return null;
+}
+
+/**
+ * The furthest level a session's climb got to: where it stands, or one past the highest level it
+ * ever succeeded from (a failure can reset it below that).
+ * @param {Object} session - Session object
+ * @returns {number}
+ */
+function furthestLevel(session) {
+    let peak = Number.isFinite(session.currentLevel) ? session.currentLevel : 0;
+    for (const [level, data] of Object.entries(session.attemptsPerLevel || {})) {
+        if ((data.success || 0) > 0) peak = Math.max(peak, Number(level) + 1);
+    }
+    return peak;
+}
+
+/**
+ * Predicted success rate per level for a multi-leg session: each leg's own predicted rate at the
+ * level (made on the stats the player had for it), averaged with the attempts each leg made at that
+ * level as weights. A level no leg made attempts at takes the latest leg's rate.
+ * @param {Array<Object>} legs - Legs that carry a prediction
+ * @returns {Object<number, {actualRate: number, legs: number}>} Percent, keyed by the level the
+ *   attempt starts from (the shape the per-level table reads off a single prediction)
+ */
+function weightedSuccessRates(legs) {
+    const rates = {};
+    for (let level = 0; level < 20; level++) {
+        let weighted = 0;
+        let weight = 0;
+        let latest = null;
+        let count = 0;
+        for (const leg of legs) {
+            const rate = leg.predictions.successRates?.[level]?.actualRate;
+            if (!Number.isFinite(rate)) continue;
+            latest = rate;
+            const w = legWeight(leg, level);
+            if (w > 0) {
+                weighted += w * rate;
+                weight += w;
+                count++;
+            }
+        }
+        if (weight > 0) rates[level] = { actualRate: weighted / weight, legs: count };
+        else if (latest !== null) rates[level] = { actualRate: latest, legs: 0 };
+    }
+    return rates;
+}
+
+/**
+ * Expected attempts and protections to climb the merged session's path, built step by step. Each
+ * step (+L-1 to +L) is averaged over the legs whose forecast covers it, as that leg's expectation
+ * of reaching +L less its expectation of reaching +L-1 (first passages add), weighted by the
+ * attempts the leg made at +L-1. The path runs from the session's start level to its target, or
+ * to the furthest level it got to when it stopped short, so the actual attempts are read against
+ * the climb that was made.
+ * @param {Object} session - Session object
+ * @param {Array<Object>} legs - Legs that carry a prediction
+ * @returns {{expectedAttempts: number, expectedProtections: number, fromLevel: number,
+ *   toLevel: number}|null} Null when some step is covered by no leg's forecast
+ */
+function expectedPath(session, legs) {
+    const fromLevel = session.startLevel;
+    const toLevel = Math.min(session.targetLevel, furthestLevel(session));
+    if (!Number.isFinite(fromLevel) || !(toLevel > fromLevel)) return null;
+    let attempts = 0;
+    let protections = 0;
+    for (let level = fromLevel + 1; level <= toLevel; level++) {
+        const steps = [];
+        for (const leg of legs) {
+            const to = legReach(leg, level);
+            const from = legReach(leg, level - 1);
+            if (!to || !from) continue;
+            steps.push({
+                attempts: Math.max(0, to[0] - from[0]),
+                protections: Math.max(0, to[1] - from[1]),
+                weight: legWeight(leg, level - 1),
+            });
+        }
+        if (steps.length === 0) return null;
+        const totalWeight = steps.reduce((sum, step) => sum + step.weight, 0);
+        for (const step of steps) {
+            const share = totalWeight > 0 ? step.weight / totalWeight : 1 / steps.length;
+            attempts += step.attempts * share;
+            protections += step.protections * share;
+        }
+    }
+    return { expectedAttempts: Math.round(attempts), expectedProtections: Math.round(protections), fromLevel, toLevel };
+}
+
+/**
+ * The combined forecast of a session that ran in several predicted legs (merged, resumed under
+ * changed stats, or extended), rebuilt from what each leg recorded when it was predicted:
+ *
+ * - `successRates`: predicted success rate per level, each leg's rate weighted by the attempts it
+ *   made at that level.
+ * - `expected`: expected attempts and protections for the whole climb, from the start level to the
+ *   target (see `expectedPath`), else, for legs recorded without per-level expectations, the sum of
+ *   each leg over the stretch it covered ({@link summedLegPredictions}); null when neither can be
+ *   read honestly. `basis` says which.
+ *
+ * It is a display figure only: it is never stored and never used for calibration.
+ * @param {Object} session - Session object
+ * @returns {{legs: number, successRates: Object<number, {actualRate: number, legs: number}>,
+ *   expected: {expectedAttempts: number, expectedProtections: number, basis: string,
+ *   fromLevel?: number, toLevel?: number}|null}|null} Null for a session with no leg forecast
+ */
+export function mergedExpectation(session) {
+    if (!hasPredictionLegs(session)) return null;
+    const legs = legsOf(session).filter((leg) => leg.predictions);
+    if (legs.length === 0) return null;
+    const path = expectedPath(session, legs);
+    let expected = path ? { ...path, basis: 'path' } : null;
+    if (!expected) {
+        const summed = summedLegPredictions(session);
+        if (summed) {
+            expected = {
+                expectedAttempts: summed.expectedAttempts,
+                expectedProtections: summed.expectedProtections,
+                basis: 'stretch',
+            };
+        }
+    }
+    return { legs: legs.length, successRates: weightedSuccessRates(legs), expected };
 }
 
 /**
@@ -1086,7 +1295,7 @@ export function mergeSessions(sessions) {
 
         // The same figure the session's panel shows: a multi-leg session's legs summed (and
         // left out when that cannot be read), else its one prediction
-        const expected = hasPredictionLegs(session) ? summedLegPredictions(session) : session.predictions;
+        const expected = hasPredictionLegs(session) ? mergedExpectation(session)?.expected : session.predictions;
         if (expected) {
             agg.expectedAttempts += expected.expectedAttempts || 0;
             agg.expectedProtections += expected.expectedProtections || 0;

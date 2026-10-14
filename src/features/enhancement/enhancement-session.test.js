@@ -1016,6 +1016,8 @@ describe('a merged session carries no combined prediction', () => {
                 protectFrom: 5,
                 predictions: { expectedAttempts: 30 },
                 attempts: expect.any(Number),
+                // #8's tally adds up to its attempts, so it is kept; #7's fixture does not, so it is not
+                levelAttempts: { 0: 9, 3: 1 },
             },
         ]);
     });

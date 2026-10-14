@@ -258,14 +258,15 @@ describe('a merged session', () => {
         },
     ];
 
-    test('the confirmation says the figures are summed and not calibrated', async () => {
+    test('the confirmation says the forecast is rebuilt per level and not calibrated', async () => {
         const { seven, eight } = spatulaRuns();
         game.plan = { ok: true, ordered: [seven, eight], settingsDiffer: false, protectFromDiffers: false };
         const confirm = vi.fn(() => false);
         vi.stubGlobal('confirm', confirm);
         enhancementUI.mergeSelected = new Set(['session_7', 'session_8']);
         await enhancementUI.commitMerge();
-        expect(confirm.mock.calls[0][0]).toContain("summed from each run's own prediction");
+        expect(confirm.mock.calls[0][0]).toContain("rebuilt from each run's own prediction");
+        expect(confirm.mock.calls[0][0]).toContain('weighted by the attempts each made at that level');
         expect(confirm.mock.calls[0][0]).toContain('not used for prediction calibration');
         expect(confirm.mock.calls[0][0]).not.toContain('shows no expected');
     });
@@ -293,6 +294,58 @@ describe('a merged session', () => {
         expect(text).not.toContain('of runs take that many');
         expect(box.querySelector('.enh-merged-runs')).toBeNull();
         expect(text).not.toContain('(merged runs differ)');
+    });
+
+    test('shows a weighted Pred % per level and the rebuilt climb, with the weighting in the hover', () => {
+        const { eight } = spatulaRuns();
+        const rates = (a, b) => [{ actualRate: a }, { actualRate: b }];
+        const leg = (id, start, rateAt0, tally, exact, part) => ({
+            sessionId: id,
+            startLevel: start,
+            targetLevel: 2,
+            protectFrom: 0,
+            attempts: Object.values(tally).reduce((sum, n) => sum + n, 0),
+            levelAttempts: tally,
+            predictions: {
+                expectedAttempts: Math.round(exact),
+                expectedAttemptsExact: exact,
+                expectedProtections: 0,
+                levelExpectations: part,
+                successRates: rates(rateAt0, 50),
+            },
+        });
+        const merged = {
+            ...eight,
+            startLevel: 0,
+            targetLevel: 2,
+            currentLevel: 2,
+            state: SessionState.COMPLETED,
+            predictions: null,
+            mergedFrom: ['session_7'],
+            // +0 → +2: the first run forecast 10 attempts (4 to reach +1), the second 12 (6 to reach +1)
+            legPredictions: [
+                leg('a', 0, 40, { 0: 3, 1: 1 }, 10, { 1: [4, 0] }),
+                leg('b', 0, 20, { 0: 1, 1: 3 }, 12, { 1: [6, 0] }),
+            ],
+            totalAttempts: 8,
+            attemptsPerLevel: {
+                0: { success: 2, fail: 2, blessed: 0, successRate: 0.5 },
+                1: { success: 2, fail: 2, blessed: 0, successRate: 0.5 },
+            },
+        };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(merged);
+        const cells = [...box.querySelectorAll('tbody tr')].map((row) =>
+            [...row.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+        // Level 1 (top row) predicted 50% by both; level 0: (3 × 40 + 1 × 20) / 4 = 35%
+        expect(cells.find((row) => row[0] === '0')[4]).toBe('35.0%');
+        expect(cells.find((row) => row[0] === '1')[4]).toBe('50.0%');
+        // Step +0 → +1: (3 × 4 + 1 × 6) / 4 = 4.5; step +1 → +2: (1 × 6 + 3 × 6) / 4 = 6 → 10.5 → 11 (rounds up)
+        const text = box.textContent.replace(/\s+/g, ' ');
+        expect(text).toContain('Expected Attempts: 11');
+        expect(box.querySelector('.enh-summed-predictions').getAttribute('title')).toContain('+0 to +2');
+        expect(box.querySelector('th[title]').getAttribute('title')).toContain('weighted by the attempts');
     });
 
     test('a session stored before every leg was kept shows a dash, not a wrong sum', () => {
