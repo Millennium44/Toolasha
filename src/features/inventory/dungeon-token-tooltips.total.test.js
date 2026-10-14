@@ -274,4 +274,32 @@ describe('price basis wording follows the winning row', () => {
             expect(titleOf(el)).toContain('lower bound');
         });
     });
+
+    describe('task shop rows that hand over several items', () => {
+        test('a bulk row is valued per purchase for ranking, the total and the item count', async () => {
+            state.prices['/items/task_crystal'] = { ask: 300, bid: 250 };
+            state.prices['/items/large_treasure_chest'] = { ask: 1, bid: 1 };
+            state.ev['/items/large_treasure_chest'] = { expectedValue: 5000, isPartial: false };
+            state.extraTaskShop = {
+                // 5000 / 100 = 50 per token; the crystal is 300 / 10 = 30 per token per unit, but 150 for 5 units
+                chest: { itemHrid: '/items/large_treasure_chest', cost: { itemHrid: '/items/task_token', count: 100 } },
+                crystal: {
+                    itemHrid: '/items/task_crystal',
+                    cost: { itemHrid: '/items/task_token', count: 10 },
+                    outputCount: 5,
+                },
+            };
+            const el = labyrinthTooltip('Amount: 20', 'Task Token');
+            state.handler(el);
+            await Promise.resolve();
+
+            const text = el.querySelector('.dungeon-token-shop-injected').textContent;
+            // The bulk row leads the table: its Value is the 1,500 a purchase is worth, shown once
+            const rows = [...el.querySelectorAll('.dungeon-token-shop-injected tr')].slice(1);
+            expect(rows[0].textContent).toContain('Task Crystal ×5');
+            expect(rows[0].textContent).toContain('1.5K');
+            // 2 purchases = 10 crystals = 3,000
+            expect(text).toContain('Your 20 tokens ≈ 3.0K as 10 × Task Crystal');
+        });
+    });
 });

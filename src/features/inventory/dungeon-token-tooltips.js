@@ -349,11 +349,16 @@ class DungeonTokenTooltips {
 
                 if (itemValue <= 0) return null;
 
+                // One purchase can hand over several units; the row's value is per purchase
+                const outputCount = shopItem.outputCount > 0 ? shopItem.outputCount : 1;
+                const purchaseValue = itemValue * outputCount;
+
                 return {
                     name: itemDetails?.name || 'Unknown Item',
                     cost: tokenCost,
-                    askPrice: itemValue,
-                    goldPerToken: itemValue / tokenCost,
+                    askPrice: purchaseValue,
+                    goldPerToken: purchaseValue / tokenCost,
+                    outputCount,
                     valueSource,
                     isPartial,
                 };
