@@ -719,9 +719,10 @@ class AlchemyBestItems {
     /**
      * What a Chain/hr cell says on hover: the maths behind the figure and what it assumes.
      * @param {string} itemHrid
+     * @param {boolean} [shopPriced] - The row's single-step price is the NPC shop's (ask chain only)
      * @returns {string} Empty when there is no chain to explain
      */
-    chainHover(itemHrid) {
+    chainHover(itemHrid, shopPriced = false) {
         const own = this.isOwnStockMode();
         const chain = own ? this.ownStock.get(itemHrid)?.detail : this.chainDetails.get(itemHrid);
         if (!chain || !Number.isFinite(chain.net)) return '';
@@ -756,6 +757,8 @@ class AlchemyBestItems {
                 : 'Assumes you buy at the ask now and sell outputs at bid, whatever the Buy/Sell dropdowns say. ' +
                       'For stock you hold, use Chain/hr (own stock).'
         );
+        // The ask chain never takes the shop's price: say so on the rows whose other figure did
+        if (!own && shopPriced) lines.push("The row's shop price is not used here: the chain buys at the market ask.");
         return lines.join('\n');
     }
 
@@ -1312,7 +1315,7 @@ class AlchemyBestItems {
                 } else {
                     const partialNames = this.chainItemNames(this.chainNoteFor(item.itemHrid)?.partial);
                     chainTd.textContent = `${partialNames ? '≥' : ''}${formatKMB(Math.round(chainValue))}`;
-                    const hover = this.chainHover(item.itemHrid);
+                    const hover = this.chainHover(item.itemHrid, item.shopPriced);
                     chainTd.title = partialNames
                         ? `${hover ? `${hover}\n` : ''}A lower bound: no real bid for ${partialNames}, counted at zero`
                         : hover;
