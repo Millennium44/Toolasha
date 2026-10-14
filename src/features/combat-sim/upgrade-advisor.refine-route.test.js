@@ -440,6 +440,10 @@ describe('refined target priced from a held base', () => {
             state.swordSell = 312_000_000_000;
             const enhancement = breakpoint(SWORD, 6, 7);
             expect(explainUpgradeCost(enhancement, gameData).source).toBe('mirror');
+            // The cap is named, so the cell reads capped and not genuinely free
+            const capped = explainUpgradeCost(enhancement, gameData);
+            expect(capped).toMatchObject({ creditCapped: true, rawCredit: 312_000_000_000 });
+            expect(capped.credits[0]).toMatchObject({ price: capped.credit, rawPrice: 312_000_000_000 });
             expect(explainUpgradeCost(enhancement, gameData).net).toBeGreaterThanOrEqual(0);
             expect(calculateUpgradeCost(enhancement, gameData)).toBeGreaterThanOrEqual(0);
 
@@ -453,6 +457,8 @@ describe('refined target priced from a held base', () => {
             expect(detail.buys[0].source).toBe('mirror');
             expect(detail.net).toBeGreaterThanOrEqual(0);
             expect(calculateUpgradeCost(swap, gameData)).toBeGreaterThanOrEqual(0);
+            expect(detail).toMatchObject({ creditCapped: true, rawCredit: 312_000_000_000 });
+            expect(detail.credits[0]).toMatchObject({ price: detail.credit, rawPrice: 312_000_000_000 });
         });
 
         test('a tier swap keeps a quoted buy when its resale makes the quote the cheaper net', () => {
@@ -518,6 +524,24 @@ describe('refined target priced from a held base', () => {
             const detail = explainUpgradeCost(candidate, gameData);
             expect(detail.ladder.refine.mirror).toBeTruthy();
             expect(detail.credit).toBe(100_000_000);
+        });
+
+        test('a refined route whose credit is capped says so, not that it is free', () => {
+            state.swordSell = 312_000_000_000;
+            const swap = tier(7, { removedItems: [{ hrid: SWORD, enhancementLevel: 6 }] });
+            const detail = explainUpgradeCost(swap, gameData);
+            expect(detail.buys[0].source).toBe('refine');
+            expect(detail.net).toBe(0);
+            expect(detail).toMatchObject({ creditCapped: true, rawCredit: 312_000_000_000 });
+            expect(detail.credit).toBe(detail.gross);
+            expect(detail.credits[0]).toMatchObject({ price: detail.gross, rawPrice: 312_000_000_000 });
+        });
+
+        test('a quoted buy keeps its uncapped credit and sets no cap flag', () => {
+            state.swordSell = 5_000_000;
+            state.askFor = () => 1_000_000;
+            const swap = { type: 'tier', upgradeHrid: SWORD, upgradeLevel: 7, removedItems: [] };
+            expect(explainUpgradeCost(swap, gameData).creditCapped).toBeUndefined();
         });
 
         test('a cheap worn base is still refined as it stands', () => {
