@@ -182,6 +182,21 @@ describe('the change event', () => {
         expect(heard).toHaveBeenCalledTimes(4);
     });
 
+    test('a load that adopts stored claims announces once, and a load that finds nothing new does not', async () => {
+        mockStorage.storeFor('settings').set(KEY, {
+            'goal:a': { label: 'A', updatedAt: Date.now(), lines: [{ itemHrid: LOGS, enhancementLevel: 0, count: 5 }] },
+        });
+        _resetReservations();
+        const heard = vi.fn();
+        const off = onReservationsChanged(heard);
+        await ensureReservationsLoaded();
+        expect(heard).toHaveBeenCalledTimes(1);
+        expect(reservedElsewhere(LOGS)).toBe(5);
+        await loadReservations();
+        expect(heard).toHaveBeenCalledTimes(1);
+        off();
+    });
+
     test('a listener that throws does not stop the others', async () => {
         const heard = vi.fn();
         const offBad = onReservationsChanged(() => {

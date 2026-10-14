@@ -473,9 +473,13 @@ function sweepTombstones(ledger, now) {
 async function readLedger() {
     try {
         claim();
-        await record.load({ authoritative: true });
+        const before = JSON.stringify(ownersOnly(record.get()));
+        const loaded = await record.load({ authoritative: true });
         const ledger = record.get();
         if (sweepExpired(ledger, Date.now())) await record.save({ overwrite: true });
+        // Start-up, enabling the feature and a character switch adopt stored claims with no reserve() call;
+        // a table drawn against the empty ledger needs telling
+        if (loaded !== false && JSON.stringify(ownersOnly(ledger)) !== before) notifyChanged();
         return ledger;
     } catch (error) {
         console.error('[InventoryReservations] Loading the ledger failed:', error);
