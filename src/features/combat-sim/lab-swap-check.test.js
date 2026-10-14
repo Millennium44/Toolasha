@@ -417,6 +417,64 @@ describe('combat: who a checked swap reaches', () => {
         });
     });
 
+    describe('a replaced piece still worn outside the swap reach is kept, not sold', () => {
+        const PLAIN_CAPE = '/items/plain_cape';
+        beforeAll(() => {
+            ITEM_DETAIL_MAP[PLAIN_CAPE] = {
+                hrid: PLAIN_CAPE,
+                name: 'Plain Cape',
+                isTradable: true,
+                equipmentDetail: { type: BACK, combatStats: { armor: 2 } },
+            };
+        });
+
+        test('combat: a melee-only cape check does not credit selling a cape the magic loadout keeps', () => {
+            const melee = wearing({ [MAIN]: piece(SWORD, 3), [BACK]: piece(PLAIN_CAPE, 3) });
+            const magic = wearing({ [TWO]: piece(STAFF, 3), [BACK]: piece(PLAIN_CAPE, 3) });
+
+            const meleeOnly = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [melee], gameData);
+            const both = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [melee, magic], gameData);
+
+            expect(both.reach).toBe(1);
+            expect(meleeOnly.keptItems).toBeUndefined();
+            expect(both.keptItems).toEqual([{ hrid: PLAIN_CAPE, enhancementLevel: 3 }]);
+            expect(both.removedItems).toEqual([]);
+            expect(both.caveat).toContain('still worn by a loadout this swap does not reach');
+            // No resale credit: it costs more than when the cape could be sold
+            expect(both.cost).toBeGreaterThan(meleeOnly.cost);
+        });
+
+        test('combat: a different piece in the unreached loadout leaves the credit alone', () => {
+            const melee = wearing({ [MAIN]: piece(SWORD, 3), [BACK]: piece(PLAIN_CAPE, 3) });
+            const magic = wearing({ [TWO]: piece(STAFF, 3), [BACK]: piece(PLAIN_CAPE, 4) });
+            const both = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [melee, magic], gameData);
+            expect(both.keptItems).toBeUndefined();
+        });
+
+        test('skilling: a kit left out that wears the replaced piece keeps it', () => {
+            const TOOL = '/equipment_types/milking_tool';
+            ITEM_DETAIL_MAP['/items/old_milking_tool'] = {
+                hrid: '/items/old_milking_tool',
+                name: 'Old Milking Tool',
+                isTradable: true,
+                equipmentDetail: { type: TOOL, noncombatStats: { milkingSpeed: 0.1 } },
+            };
+            const worn = piece('/items/old_milking_tool', 3);
+            const context = {
+                dto: { equipment: {} },
+                skillEquipmentMap: {
+                    '/skills/milking': { [TOOL]: worn },
+                    '/skills/foraging': { [TOOL]: worn },
+                },
+                skills: ['/skills/milking', '/skills/foraging'],
+            };
+            // Only milking can feel a milking tool; foraging keeps wearing the old one
+            const candidate = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 7 }, context, gameData);
+            expect(candidate.skillKeys).toEqual(['/skills/milking']);
+            expect(candidate.keptItems).toEqual([{ hrid: '/items/old_milking_tool', enhancementLevel: 3 }]);
+        });
+    });
+
     describe('skilling: the item must have skilling stats, All loadouts or not', () => {
         test('a combat cape reaches no kit even with All loadouts, a tool for another skill does with it', () => {
             const TOOL = '/equipment_types/milking_tool';

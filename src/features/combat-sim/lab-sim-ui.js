@@ -3277,6 +3277,9 @@ class LabSimUI {
             return;
         }
         this._upgradeRunning = true;
+        // A teardown (character switch) bumps the token, after which this run is
+        // stale and must not clear a guard that now belongs to somebody else's run
+        const runToken = ++this._runStartToken;
         const ownerId = dataManager.getCurrentCharacterId();
         const resultsEl = this.panel.querySelector('#mwi-labsim-swap-results');
         const progressEl = this.panel.querySelector('#mwi-labsim-upgrade-progress');
@@ -3288,7 +3291,7 @@ class LabSimUI {
             if (runBtn) runBtn.style.display = '';
             if (stopBtn) stopBtn.style.display = 'none';
             if (checkBtn) checkBtn.disabled = false;
-            this._upgradeRunning = false;
+            if (runToken === this._runStartToken) this._upgradeRunning = false;
         };
 
         try {
@@ -4439,6 +4442,7 @@ class LabSimUI {
         stopBtn.style.display = 'inline-block';
         this._skillingAborted = false;
         this._skillingRunning = true;
+        const runToken = ++this._runStartToken;
         const eta = createEtaTracker();
         try {
             await task(({ current, total, description }) => {
@@ -4455,7 +4459,7 @@ class LabSimUI {
             console.error('[LabSimUI] Skilling task failed:', error);
             this._setStatus('Skilling task failed: ' + error.message);
         } finally {
-            this._skillingRunning = false;
+            if (runToken === this._runStartToken) this._skillingRunning = false;
             progressEl.style.display = 'none';
             for (const button of hidden) button.style.display = '';
             for (const button of busy) button.disabled = false;

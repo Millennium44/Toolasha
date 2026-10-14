@@ -4377,6 +4377,68 @@ describe('Check a swap', () => {
         game.monsters = [];
     });
 
+    test('a stale check finishing after a character switch does not clear the new run guard', async () => {
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = {};
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [] }];
+        game.editedDTOs = { p1: { hrid: 'p1', equipment: {}, abilities: [] } };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        ui.panel.querySelector('#mwi-labsim-level').value = '170';
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis').mockImplementation(async () => {
+            await gate;
+            return { baseline: null, results: [] };
+        });
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+
+        const stale = ui._onCheckSwapsCombat();
+        await settle();
+        expect(ui._upgradeRunning).toBe(true);
+
+        // The character switches; a run for the arriving character is under way
+        ui.destroy();
+        ui._upgradeRunning = true;
+        release();
+        await stale;
+
+        expect(ui._upgradeRunning).toBe(true);
+        ui._upgradeRunning = false;
+        allSpy.mockRestore();
+        game.editedDTOs = null;
+        game.players = [];
+        game.monsters = [];
+    });
+
+    test('the same for the Skilling task runner', async () => {
+        ui.buildPanel();
+        await settle();
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const stale = ui._runSkillingTask(async () => {
+            await gate;
+        });
+        expect(ui._skillingRunning).toBe(true);
+
+        ui.destroy();
+        ui._skillingRunning = true;
+        release();
+        await stale;
+
+        expect(ui._skillingRunning).toBe(true);
+        ui._skillingRunning = false;
+    });
+
     test('the checked combat table has the generated columns and a per-fight breakdown on click', () => {
         const container = document.createElement('div');
         ui._renderAllFightsResults(combatAnalysis(), container, { checked: true });

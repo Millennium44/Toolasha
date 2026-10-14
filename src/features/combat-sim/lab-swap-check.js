@@ -275,6 +275,23 @@ function routeCaveat(route) {
     return 'Checked by hand. Priced as buying it at this level; nothing in the slot is sold.';
 }
 
+const KEPT_CAVEAT =
+    ' The piece it replaces is still worn by a loadout this swap does not reach, so its resale is not credited.';
+
+/**
+ * The replaced piece, as a kept item, when something outside the swap's reach still wears it.
+ * @param {{route: string, currentHrid: string, currentLevel: number}} route - From `routeFor`
+ * @param {Array<Object|null|undefined>} unreachedPieces - What the loadouts left out wear in the slot
+ * @returns {Array<{hrid: string, enhancementLevel: number}>|null}
+ */
+function keptByUnreached(route, unreachedPieces) {
+    if (route.route !== 'swap') return null;
+    const stillWorn = unreachedPieces.some(
+        (piece) => piece?.hrid === route.currentHrid && (piece.enhancementLevel || 0) === route.currentLevel
+    );
+    return stillWorn ? [{ hrid: route.currentHrid, enhancementLevel: route.currentLevel }] : null;
+}
+
 const OWNED_CAVEAT =
     'Checked by hand. You already wear a copy at this level in another loadout, and the loadouts are ' +
     'alternatives, so the piece is moved and nothing is bought.';
@@ -334,6 +351,17 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
         candidate.cost = 0;
         candidate.caveat = OWNED_CAVEAT;
     } else {
+        // A replaced piece that a loadout the swap does not reach still wears
+        // cannot be sold to fund it
+        const kept = keptByUnreached(
+            route,
+            (dtos || []).filter((dto) => !reached.includes(dto)).map((dto) => dto?.equipment?.[slot])
+        );
+        if (kept) {
+            candidate.keptItems = kept;
+            candidate.removedItems = [];
+            candidate.caveat += KEPT_CAVEAT;
+        }
         candidate.cost = calculateUpgradeCost(candidate, gameData, isSelf);
     }
     return candidate;
@@ -411,7 +439,10 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         type: route.type,
     };
     const replaced = route.currentHrid && route.type === 'tier' ? gameData.itemDetailMap[route.currentHrid] : null;
-    if (replaced && isCombatOnlyItem(replaced)) {
+    const unreachedPieces = skills
+        .filter((skill) => !reached.some((entry) => entry.skill === skill))
+        .map((skill) => (skillEquipmentMap[skill] || dto?.equipment || {})[slot]);
+    if ((replaced && isCombatOnlyItem(replaced)) || keptByUnreached(route, unreachedPieces)) {
         priced.keptItems = [{ hrid: route.currentHrid, enhancementLevel: route.currentLevel }];
         priced.removedItems = [];
     }
