@@ -1332,6 +1332,18 @@ describe('confirming from the strip', () => {
             expect(reactClicks.calls[0].options).toEqual({ reactFirst: true });
         });
 
+        test('a disabled vendor button is never pressed, even through the game handler', async () => {
+            reactClicks.calls = [];
+            const menu = openMenu({ label: 'Confirm Sell For 400K Coins' });
+            menu.querySelector('.Button_sell__x').disabled = true;
+            vendorRun();
+
+            await pressAndSettle();
+            expect(reactClicks.calls).toHaveLength(0);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('disabled');
+        });
+
         test('a button the player armed a moment ago also stands before it is pressed', async () => {
             openMenu({ label: 'Confirm Sell For 400K Coins' });
             vendorRun();

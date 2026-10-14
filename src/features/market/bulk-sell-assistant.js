@@ -64,6 +64,20 @@ import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 
 /**
+ * Whether the game has disabled a button. The vendor press goes through the React handler, which does not
+ * look at `disabled`, so every press has to.
+ * @param {HTMLButtonElement} button - The button
+ * @returns {boolean}
+ */
+function isButtonDisabled(button) {
+    return !!(
+        button.disabled ||
+        button.hasAttribute?.('disabled') ||
+        button.getAttribute?.('aria-disabled') === 'true'
+    );
+}
+
+/**
  * The coin total printed on the item menu's vendor button, whatever language the game is in: the first number,
  * with its magnitude letter if it carries one ("863K"). The words around it are never read.
  */
@@ -1190,6 +1204,7 @@ class BulkSellAssistant {
 
         const button = this._findModalConfirmButton(modal);
         if (!button) return { why: "the modal's own confirm button was not found" };
+        if (isButtonDisabled(button)) return { why: "the modal's confirm button is disabled" };
         return { button };
     }
 
@@ -1247,6 +1262,8 @@ class BulkSellAssistant {
                 : found.find((btn) => String(btn.className || '').includes('Button_sell')) ||
                   found.find((btn) => /^(confirm\s+)?sell for\b/i.test(btn.textContent.trim()));
         if (!button) return { why: "the item menu's Sell For button was not found" };
+        // clickThroughReact calls the React handler directly, which would sail past a disabled button
+        if (isButtonDisabled(button)) return { why: "the item menu's Sell For button is disabled" };
         const armed = this._vendorButtonArmed(button);
 
         const amount = vendorLabel(button).amount;
@@ -1473,6 +1490,13 @@ class BulkSellAssistant {
 
     /** Mark the step sent and press the game's button — the one game action of this step */
     _pressConfirm(button) {
+        // Last line of defense for every route here: the button can be disabled between the target check and
+        // the press (the arming wait, the settle wait), and the React-handler press ignores `disabled`
+        if (isButtonDisabled(button)) {
+            this.confirmNote = 'the confirm button is disabled, so it pressed nothing';
+            this._render();
+            return;
+        }
         this.confirmNote = '';
         this._confirmedStep = this._stepKey();
         this._render();
