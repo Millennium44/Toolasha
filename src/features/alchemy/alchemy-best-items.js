@@ -160,6 +160,7 @@ class AlchemyBestItems {
         // asynchronously through the item tooltip's own functions, so a missing key means "not yet"
         this.ownStock = new Map();
         this.ownStockSweep = 0;
+        this.ownStockRunning = false;
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -583,6 +584,7 @@ class AlchemyBestItems {
         this.chainDetails.clear();
         this.ownStock.clear();
         this.ownStockSweep += 1;
+        this.ownStockRunning = false;
         clearDecomposeChainCaches();
     }
 
@@ -643,6 +645,7 @@ class AlchemyBestItems {
     async refreshOwnStock() {
         if (!this.modal || !this.isOwnStockMode() || this.currentType !== 'decompose') return;
         const sweep = ++this.ownStockSweep;
+        this.ownStockRunning = true;
         try {
             const held = (this.cachedRankings.decompose || [])
                 .map((row) => ({ row, count: this.heldCount(row.itemHrid) }))
@@ -663,6 +666,8 @@ class AlchemyBestItems {
             if (sweep === this.ownStockSweep && this.modal.style.display !== 'none') this.renderTable();
         } catch (error) {
             console.error('[AlchemyBestItems] Own-stock chains failed:', error);
+        } finally {
+            if (sweep === this.ownStockSweep) this.ownStockRunning = false;
         }
     }
 
@@ -723,12 +728,18 @@ class AlchemyBestItems {
         const name = dataManager.getItemDetails(itemHrid)?.name || itemHrid;
         const money = (value) => formatKMB(Math.round(value));
         const lower = chain.partial ? '≥' : '';
+        const keptOutputs = (Array.isArray(chain.kept) ? chain.kept : []).map(
+            (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop()
+        );
         const toolCost = chain.overheadCost > 0 ? `, plus ${money(chain.overheadCost)} of catalyst and tea` : '';
         const lines = own
             ? [
                   `${name}, valued as stock you hold (${formatWithSeparator(this.ownStock.get(itemHrid)?.held ?? 0)}).`,
                   `Item: ${money(chain.ownUseCost ?? 0)} own-use cost (the cheaper of making it and buying it)${toolCost}.`,
-                  `Outputs: ${lower}${money(chain.terminalValue)} at your sell pricing.`,
+                  keptOutputs.length > 0
+                      ? `Outputs: ${lower}${money(chain.terminalValue)}, ${keptOutputs.join(', ')} kept at what you would ` +
+                        'pay and the rest at your sell pricing.'
+                      : `Outputs: ${lower}${money(chain.terminalValue)} at your sell pricing.`,
               ]
             : [
                   `${name}, bought at the ask now and decomposed all the way down.`,
@@ -1082,7 +1093,13 @@ class AlchemyBestItems {
         // Filter
         let filtered = rankings;
         // Own stock ranks only what is held, spare after any claims on it
-        if (ownMode) filtered = filtered.filter((r) => this.heldCount(r.itemHrid) > 0);
+        if (ownMode) {
+            filtered = filtered.filter((r) => this.heldCount(r.itemHrid) > 0);
+            // Stock gained since the last sweep has no figure yet: fetch it (one sweep at a time)
+            if (!this.ownStockRunning && filtered.some((r) => !this.ownStock.has(r.itemHrid))) {
+                this.refreshOwnStock();
+            }
+        }
         if (this.searchQuery) {
             filtered = filtered.filter((r) => r.name.toLowerCase().includes(this.searchQuery));
         }
