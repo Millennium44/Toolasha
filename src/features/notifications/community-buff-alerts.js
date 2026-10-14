@@ -255,6 +255,12 @@ class CommunityBuffAlerts {
         // Already gone is not "about to go" — there is nothing left to save
         if (msLeft <= 0 || msLeft > leadMs) return;
 
+        // A buff started fresh with no more than the lead window on it was never "about to run out" —
+        // it began that short. Someone donating more later moves expireTime past the window, and the
+        // countdown back into it is a real warning.
+        const startedAt = Date.parse(buff.startTime ?? '');
+        if (Number.isFinite(startedAt) && expiresAt - startedAt <= leadMs) return;
+
         // Keyed on the expiry, not the buff: a donation that pushes expireTime
         // out is a different value here, which re-arms the alert by itself
         if (this.notifiedExpiry.get(buff.hrid) === buff.expireTime) return;

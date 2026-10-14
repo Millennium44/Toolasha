@@ -1198,11 +1198,11 @@ class LabSimUI {
         const swapResultsCombat = document.createElement('div');
         swapResultsCombat.id = 'mwi-labsim-swap-results';
         swapResultsCombat.style.cssText =
-            'display:none; flex-shrink:0; max-height:45%; overflow-y:auto; padding:10px 14px;';
+            'display:none; flex:0 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
 
         const upgradeResults = document.createElement('div');
         upgradeResults.id = 'mwi-labsim-upgrade-results';
-        upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+        upgradeResults.style.cssText = 'flex:1 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
 
         upgradeContent.appendChild(upgradeControls);
         upgradeContent.appendChild(upgradeScopeRow);

@@ -93,6 +93,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Lab Sim's Upgrade and Skilling tabs have a Check a swap row: queue any items at a level (Sinister Cape +7, Chimerical Quiver +5…), and Check puts each into every loadout or skill kit that uses that slot, prices it like the generated rows, and lists them side by side with the per-fight or per-skill breakdown.
 
+### Buff alerts and Check a swap height
+
+- A community buff restarted with no more than the warning window on it no longer sends a "running out" alert; one topped up past the window still warns as it counts back down. The Lab Sim's checked-swap table now uses the panel's full height instead of stopping at 45%.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language

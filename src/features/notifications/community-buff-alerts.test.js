@@ -114,6 +114,19 @@ describe('community buff expiry alerts', () => {
         expect(game.notified[0].options.title).toBe('Community buff expiring');
     });
 
+    test('a buff started fresh with no more than the lead window on it is not announced', () => {
+        const fresh = buff(EXPERIENCE, 10, { startTime: new Date(NOW).toISOString() });
+        game.wsHandlers.community_buffs_updated({ communityBuffs: [fresh] });
+        expect(game.notified).toHaveLength(0);
+
+        // Topped up past the window, it counts down into it like any other run
+        const toppedUp = buff(EXPERIENCE, 40, { startTime: fresh.startTime });
+        game.wsHandlers.community_buffs_updated({ communityBuffs: [toppedUp] });
+        vi.setSystemTime(NOW + 30 * 60 * 1000);
+        game.wsHandlers.community_buffs_updated({ communityBuffs: [toppedUp] });
+        expect(game.notified).toHaveLength(1);
+    });
+
     test('a buff still outside the lead window says nothing until it crosses in', () => {
         game.wsHandlers.community_buffs_updated({ communityBuffs: [buff(EXPERIENCE, 40)] });
         expect(game.notified).toHaveLength(0);
