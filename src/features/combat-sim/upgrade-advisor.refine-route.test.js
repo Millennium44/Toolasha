@@ -133,7 +133,7 @@ function stack(itemHrid, level, location = '/item_locations/inventory', count = 
 const gameData = { itemDetailMap: ITEM_DETAIL_MAP };
 const SHARDS = 100 * 2_000_000;
 const tier = (level, extra = {}) => ({
-    type: 'equipment',
+    type: 'tier',
     upgradeHrid: CAPE,
     upgradeLevel: level,
     removedItems: [],
@@ -277,7 +277,7 @@ describe('refined target priced from a held base', () => {
             state.mirrorPrice = 1_000_000;
             state.noAsk = true;
         });
-        const sword = (level) => ({ type: 'equipment', upgradeHrid: SWORD, upgradeLevel: level, removedItems: [] });
+        const sword = (level) => ({ type: 'tier', upgradeHrid: SWORD, upgradeLevel: level, removedItems: [] });
 
         test('a tradable +7 with no listing is built from a +6 and a +5 copy', () => {
             const detail = explainUpgradeCost(sword(7), gameData);
@@ -293,6 +293,36 @@ describe('refined target priced from a held base', () => {
         test('a self-enhanced cape +7 is mirrored too', () => {
             const detail = explainUpgradeCost(tier(7, { upgradeHrid: BASE }), gameData);
             expect(detail.buys[0].source).toBe('mirror');
+        });
+
+        // The generator's "next breakpoint" row: the worn piece, enhanced in place
+        const breakpoint = (hrid, from, to) => ({
+            type: 'enhancement',
+            currentHrid: hrid,
+            currentLevel: from,
+            upgradeHrid: hrid,
+            upgradeLevel: to,
+        });
+
+        test('an enhancement row on a tradable piece weighs a mirror build against the enhance', () => {
+            const candidate = breakpoint(SWORD, 6, 7);
+            const detail = explainUpgradeCost(candidate, gameData);
+            expect(detail.source).toBe('mirror');
+            expect(detail.net).toBeLessThan(64_000_000);
+            expect(calculateUpgradeCost(candidate, gameData)).toBe(detail.net);
+            expect(detail.ladder.mirror).toBeTruthy();
+        });
+
+        test('an enhancement row on a worn cape weighs a mirror build too', () => {
+            state.items = [stack(BASE, 6, '/item_locations/back')];
+            expect(explainUpgradeCost(breakpoint(BASE, 6, 7), gameData).source).toBe('mirror');
+        });
+
+        test('an enhancement row keeps the enhance when the mirror is dear or the step is small', () => {
+            expect(explainUpgradeCost(breakpoint(SWORD, 1, 2), gameData).source).toBe('sim');
+            state.mirrorPrice = 1_000_000_000;
+            expect(explainUpgradeCost(breakpoint(SWORD, 6, 7), gameData).source).toBe('sim');
+            expect(calculateUpgradeCost(breakpoint(SWORD, 6, 7), gameData)).toBe(64_000_000);
         });
 
         test('below +3 a mirror cannot run, and a dear mirror changes nothing', () => {
