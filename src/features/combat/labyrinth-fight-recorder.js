@@ -460,6 +460,7 @@ const record = createPersistedRecord({
     empty: () => storedRecord([]),
     merge: mergeAttempts,
     label: 'LabyrinthFightRecorder',
+    onPulled: () => refreshFromPull(),
 });
 
 /*
@@ -482,6 +483,8 @@ registerSyncMerge({
 // is interned; the two are converted at each boundary below.
 let attempts = entriesOf(readStored(record.get()));
 let loading = null;
+/** Bumped by `forget()`, so a pull's re-read that a character switch overtook stands down */
+let poolGeneration = 0;
 
 /**
  * The sim-model marker stamped on every attempt recorded from here on.
@@ -532,8 +535,30 @@ export async function load() {
  */
 export function forget() {
     record.reset();
+    poolGeneration += 1;
     attempts = entriesOf(readStored(record.get()));
     loading = null;
+}
+
+/**
+ * Take in fights a sync pull wrote under the running page: `load()` without its isLoaded short-circuit. The
+ * pool in hand goes back into the record interned, the load folds the stored pool under it, and the result is
+ * re-expanded (shared builds by reference) into memory. A fight noted while the read was out was pushed onto
+ * the list being replaced, so the round is repeated when the list moved; if it keeps moving the adoption is
+ * skipped, which loses nothing — memory wins and the next `persist()` folds the stored pool under it anyway.
+ * @returns {Promise<void>}
+ */
+async function refreshFromPull() {
+    const started = poolGeneration;
+    for (let round = 0; round < 3; round++) {
+        const held = attempts;
+        const heldLength = held.length;
+        record.set(storedRecord(internReplayBuilds(held)));
+        if (!(await record.load()) || started !== poolGeneration) return;
+        if (attempts !== held || attempts.length !== heldLength) continue;
+        attempts = entriesOf(readStored(record.get()));
+        return;
+    }
 }
 
 /**

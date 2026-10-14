@@ -500,6 +500,32 @@ describe('the pool survives a failed read and a second tab', () => {
         expect(stored()).toHaveLength(3);
     });
 
+    test('a sync pull brings the other device fights in, keeping the ones held', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        recorder.noteAttempt(attempt());
+        await settle();
+        await recorder.load();
+        recorder.noteAttempt(attempt({ seconds: 51 }));
+        const theirs = { ...stored()[0], recordId: 'other-device', seconds: 77 };
+        storageMock
+            .storeFor('labyrinth')
+            .set('labyrinthFightRecorder_char1', { clearedAt: 0, entries: [...stored(), theirs] });
+
+        announceSyncPullApplied({ labyrinth: ['labyrinthFightRecorder_char1'] });
+        await vi.waitFor(() => expect(recorder.recordingStatus().total).toBe(3));
+
+        expect(recorder.recordedAttempts().some((a) => a.recordId === 'other-device')).toBe(true);
+    });
+
+    test('a pull of another character changes nothing', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        await recorder.load();
+        seedStored({ clearedAt: 0, entries: [{ ...attempt(), recordId: 'x' }] });
+        announceSyncPullApplied({ labyrinth: ['labyrinthFightRecorder_other'] });
+        await settle();
+        expect(recorder.recordingStatus().total).toBe(0);
+    });
+
     test('attempts recorded before ids were minted are told apart by their measurements', () => {
         const legacy = { monsterHrid: '/monsters/a', roomLevel: 1, seconds: 10, outcome: 'death' };
         expect(attemptIdentity(legacy)).toBe(attemptIdentity({ ...legacy }));
