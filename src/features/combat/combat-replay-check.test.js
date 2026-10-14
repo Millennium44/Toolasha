@@ -1816,6 +1816,23 @@ describe('a sync pull', () => {
         });
     });
 
+    test('does not bring back what Forget removed, when the Forget write has not landed yet', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        const old = evenObservation({ recordedAt: 1_000 });
+        store.data.set(OBSERVATIONS_KEY, { clearedAt: 0, entries: [old] });
+        replayCheck.ensureWatching();
+        await settle();
+        expect(replayCheck.observations).toHaveLength(1);
+
+        await replayCheck.forget();
+        // The stored copy is the pre-Forget one again, as when the cleared write is still waiting
+        store.data.set(OBSERVATIONS_KEY, { clearedAt: 0, entries: [old] });
+        announceSyncPullApplied({ settings: [OBSERVATIONS_KEY] });
+        await settle();
+
+        expect(replayCheck.observations).toEqual([]);
+    });
+
     test('for another character, or before the first load, changes nothing', async () => {
         const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
         store.data.set(OBSERVATIONS_KEY, { clearedAt: 0, entries: [evenObservation({ recordedAt: 1_000 })] });

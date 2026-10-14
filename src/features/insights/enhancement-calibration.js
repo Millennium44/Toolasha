@@ -32,7 +32,7 @@
 import config from '../../core/config.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
-import { clearRecord, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
+import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import dataManager from '../../core/data-manager.js';
 import { SessionState, getCurrentLegCounters } from '../enhancement/enhancement-session.js';
 import { attemptTailProbability } from '../enhancement/attempt-percentile.js';
@@ -183,12 +183,14 @@ class EnhancementCalibration {
      * @returns {Promise<void>}
      */
     async refreshFromPull() {
-        const held = this.records;
-        if (!held || !this._key()) return;
+        if (!this._key()) return;
+        // First: a character switch is noticed here, and drops the departing records
         const store = this._store();
+        const held = this.records;
+        if (!held) return;
         const { owner, generation } = this;
         const heldLength = held.length;
-        store.set(clearedRecord(held));
+        store.set(clearedRecord(held, clearedAtOf(store.get())));
         if (!(await store.load()) || !this._isCurrent(owner, generation)) return;
         if (this.records !== held || held.length !== heldLength) return;
         this.records = entriesOf(store.get());
