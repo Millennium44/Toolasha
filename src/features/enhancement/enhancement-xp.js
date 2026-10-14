@@ -377,6 +377,8 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             // it was not played with. Additive: older sessions simply lack them,
             // and every reader treats that as "no distribution recorded".
             expectedAttemptsExact: result.attempts,
+            // Unrounded, so per-level expectations of merged legs add up without rounding drift
+            expectedProtectionsExact: result.protectionCount,
             levelExpectations,
             attemptsVariance: result.attemptsVariance,
             minAttempts: result.minAttempts,

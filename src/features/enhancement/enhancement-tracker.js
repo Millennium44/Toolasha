@@ -264,9 +264,10 @@ class EnhancementTracker {
      * is the run in progress it stays the current session and keeps receiving attempts. Only runs
      * that continue each other can merge (planSessionMerge).
      *
-     * No combined prediction is made: one computed now would use today's stats for attempts made
-     * on the stats the player had then. The merged session shows none and is not calibrated; each
-     * run's own prediction stays in `legPredictions`.
+     * No combined prediction is stored: one computed now would use today's stats for attempts made
+     * on the stats the player had then. The merged session is not calibrated; each run's own
+     * prediction stays in `legPredictions` and the panel rebuilds the combined forecast from them
+     * (mergedExpectation).
      * @param {string[]} sessionIds - Picked session IDs
      * @returns {Promise<{ok: boolean, reason?: string, id?: string}>}
      */
