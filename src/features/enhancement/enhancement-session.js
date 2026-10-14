@@ -499,6 +499,8 @@ function currentLegRecord(session) {
  */
 function bankCurrentLeg(session) {
     if (!session.predictions) return;
+    // A new leg starts after this: it is no longer the merge's live leg
+    delete session.mergedLiveLeg;
     session.legPredictions = [
         ...(Array.isArray(session.legPredictions) ? session.legPredictions : []),
         currentLegRecord(session),
@@ -677,8 +679,17 @@ export function foldSessions(ordered) {
     // leg it describes, in chain order. The panel sums them (summedLegPredictions); calibration
     // ignores them (calibrationObservation).
     // A run merged before already carries its legs.
+    // The survivor's own leg is left out when it is still running with a forecast: it keeps
+    // receiving attempts, so it stays the session's live leg (see below) rather than a record
+    // frozen at the attempts it had when the merge happened
+    const liveLeg = newest.state === SessionState.TRACKING && newest.predictions != null;
+    const liveBaseline = {
+        totalAttempts: newest.extensionBaseline?.totalAttempts || 0,
+        protectionCount: newest.extensionBaseline?.protectionCount || 0,
+    };
     const legPredictions = ordered.flatMap((session) => {
         const banked = Array.isArray(session.legPredictions) ? session.legPredictions : [];
+        if (liveLeg && session === newest) return banked;
         // A resumed run still holds its current leg's prediction. With banked legs and none
         // current, that leg's attempts are not covered by any record (see summedLegPredictions)
         if (banked.length > 0 && !session.predictions) return banked;
@@ -767,11 +778,22 @@ export function foldSessions(ordered) {
     newest.segmentStartTime = segmentStartTime;
     newest.segmentStartLevel = segmentStartLevel;
     newest.segmentStartCost = segmentStartCost;
-    newest.extensionBaseline = null;
+    if (liveLeg) {
+        // The live leg counts only its own attempts and protections: the counters just took in
+        // the folded runs, so the baseline sits at the totals those runs added
+        newest.extensionBaseline = {
+            totalAttempts: older.reduce((sum, s) => sum + (s.totalAttempts || 0), liveBaseline.totalAttempts),
+            protectionCount: older.reduce((sum, s) => sum + (s.protectionCount || 0), liveBaseline.protectionCount),
+        };
+        newest.mergedLiveLeg = true;
+    } else {
+        newest.extensionBaseline = null;
+    }
     if (mixedProtection) newest.mixedProtection = true;
     // No combined prediction: the legs ran on the stats the player had at the time, and one
-    // prediction from today's stats would describe none of them (the caller clears it)
-    newest.predictions = null;
+    // prediction from today's stats would describe none of them. A survivor still running keeps its
+    // own forecast, as its live leg (flagged so calibration still skips the merged session)
+    if (!liveLeg) newest.predictions = null;
     newest.legPredictions = legPredictions;
     newest.mergedFrom = [
         ...(newest.mergedFrom || []),
@@ -1041,7 +1063,7 @@ export function mergedExpectation(session) {
  */
 export function calibrationObservation(session) {
     if (!session) return null;
-    if (session.mergedFrom?.length > 0 && !session.extensionBaseline) return null;
+    if (session.mergedFrom?.length > 0 && (!session.extensionBaseline || session.mergedLiveLeg)) return null;
     return session;
 }
 

@@ -1015,6 +1015,7 @@ describe('a merged session carries no combined prediction', () => {
 
     test('each run keeps its own prediction, in chain order, and the merge has none', () => {
         const { seven, eight } = predictedRuns();
+        eight.state = SessionState.COMPLETED;
         const merged = foldSessions(planSessionMerge([seven, eight]).ordered);
         expect(merged.predictions).toBeNull();
         expect(merged.legPredictions).toEqual([
@@ -1070,6 +1071,7 @@ describe('a merged session carries no combined prediction', () => {
             startTime: 9_000_000,
             lastUpdateTime: 9_100_000,
             predictions: { expectedAttempts: 20 },
+            state: SessionState.COMPLETED,
             lastAttempt: { attemptNumber: 1, level: 5, timestamp: 9_100_000, actionId: 'a9', currentCount: 1 },
         });
         const twice = foldSessions(planSessionMerge([once, nine]).ordered);
