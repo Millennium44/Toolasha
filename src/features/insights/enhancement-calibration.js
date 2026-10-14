@@ -87,7 +87,7 @@ registerSyncMerge({
 });
 
 /** Keep a pending storage operation bound to the character that requested it. */
-function createCalibrationStore(owner) {
+function createCalibrationStore(owner, calibration) {
     return createPersistedRecord({
         base: `calibrationEnhancing_${owner || 'default'}`,
         scoped: false,
@@ -95,6 +95,7 @@ function createCalibrationStore(owner) {
         empty: () => clearedRecord(),
         merge: mergeEnhancementRecords,
         label: 'EnhancementCalibration',
+        onPulled: () => calibration.refreshFromPull(),
     });
 }
 
@@ -110,7 +111,7 @@ class EnhancementCalibration {
         // The key is fixed for this handle: a save queued inside the shared
         // helper must not resolve a different character when it starts running.
         // Legacy unscoped records were already discarded by this recorder.
-        this.store = createCalibrationStore(null);
+        this.store = createCalibrationStore(null, this);
         /** Whose observations the record in memory holds; a change means forget them first */
         this.owner = null;
         this.generation = 0;
@@ -126,7 +127,8 @@ class EnhancementCalibration {
         const owner = dataManager.getCurrentCharacterId() || null;
         if (owner !== this.owner) {
             this.store.reset();
-            this.store = createCalibrationStore(owner);
+            this.store.release();
+            this.store = createCalibrationStore(owner, this);
             if (this.owner !== null) this.records = null;
             this.generation += 1;
         }
@@ -171,6 +173,25 @@ class EnhancementCalibration {
             this.records = this.records || [];
         }
         return this.records;
+    }
+
+    /**
+     * Take in observations a sync pull wrote under the running page: `_load()` without its isLoaded
+     * short-circuit, keeping `_isCurrent`. The observations in hand go back into the record so the load folds
+     * the stored ones under them. An observation added while the read was out would be lost by the adoption,
+     * so the adoption is skipped then; memory wins and the next `_save()` folds the stored record under it.
+     * @returns {Promise<void>}
+     */
+    async refreshFromPull() {
+        const held = this.records;
+        if (!held || !this._key()) return;
+        const store = this._store();
+        const { owner, generation } = this;
+        const heldLength = held.length;
+        store.set(clearedRecord(held));
+        if (!(await store.load()) || !this._isCurrent(owner, generation)) return;
+        if (this.records !== held || held.length !== heldLength) return;
+        this.records = entriesOf(store.get());
     }
 
     /**
