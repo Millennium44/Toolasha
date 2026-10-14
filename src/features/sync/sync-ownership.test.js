@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
     SYNCED_STORES,
     FOREIGN_STORES,
+    DEVICE_ONLY_STORES,
     KEY_FILTERED_STORES,
     OWNED_KEY_PREFIXES,
     isSyncedStore,
@@ -30,12 +31,32 @@ describe('the declared store list', () => {
         }
 
         expect(created.size).toBeGreaterThan(10);
-        const declared = new Set([...SYNCED_STORES, ...FOREIGN_STORES]);
+        const declared = new Set([...SYNCED_STORES, ...FOREIGN_STORES, ...DEVICE_ONLY_STORES]);
         expect([...created].filter((name) => !declared.has(name))).toEqual([]);
     });
 
     test('no store is claimed and disclaimed at once', () => {
         expect(SYNCED_STORES.filter((name) => FOREIGN_STORES.includes(name))).toEqual([]);
+        expect(SYNCED_STORES.filter((name) => DEVICE_ONLY_STORES.includes(name))).toEqual([]);
+    });
+
+    test('a store that only holds this device’s own clock readings is not synced', () => {
+        // actionProgress is rewritten after every completed action with this
+        // the device’s Date.now(); carrying it latched a reload on every pull
+        expect(isSyncedStore('actionProgress')).toBe(false);
+        expect(ownsKey('actionProgress', '12345')).toBe(false);
+        expect(isSyncedStore('characterActivityStatus')).toBe(true);
+    });
+
+    test('device-only keys in a store that otherwise syncs whole are left out, silently', () => {
+        expect(ownsKey('combatStats', 'latestCombatRun_12345')).toBe(false);
+        expect(ownsKey('combatStats', 'someOtherCombatStatsKey')).toBe(true);
+        expect(ownsKey('combatExport', 'spawnCensus')).toBe(false);
+        const entries = { latestCombatRun_1: { a: 1 }, kept: 2 };
+        const result = partitionOwnedKeys('combatStats', entries);
+        expect(result.owned).toEqual({ kept: 2 });
+        expect(result.foreignKeys).toBe(0);
+        expect(entries.latestCombatRun_1).toEqual({ a: 1 });
     });
 
     test("another script's store is not synced", () => {

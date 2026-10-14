@@ -131,6 +131,14 @@ const LOCAL_ONLY_SETTING_IDS = [...REDACTED_SETTING_IDS, ...DEVICE_LOCAL_SETTING
  * migration version is bookkeeping for the patches, and alone it is worse than
  * useless — a higher number arriving from another device would tell this one its
  * patches had already been cleared when they had not.
+ *
+ * `panelGeometry`, `modalPositions3` and the floating widgets' position keys
+ * (`bulkSellPanelPosition`, `consumablesBuyWidgetPosition`,
+ * `taskRerollWalkPanelPosition`) are where this device's panels and modals
+ * were left, in pixels of this device's window. A different screen clamps or
+ * misplaces them, and each drag rewrites the key, so carrying them made every
+ * pull of another device's drag a change the page could not take without a
+ * reload.
  */
 export const LOCAL_ONLY_KEY_PREFIXES = [
     'toolasha_sync_',
@@ -156,6 +164,11 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // What this device's settings carry-over could not decide, waiting to be
     // shown once here. Another device's notice is not this one's to show
     'settings_shared_scope_conflicts',
+    'panelGeometry',
+    'modalPositions3',
+    'bulkSellPanelPosition',
+    'consumablesBuyWidgetPosition',
+    'taskRerollWalkPanelPosition',
 ];
 
 /**

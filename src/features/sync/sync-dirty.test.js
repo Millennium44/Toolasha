@@ -328,7 +328,7 @@ describe('the count follows what the scope carries', () => {
 
     test('a settings-only push ignores writes to stores only a full sync carries', async () => {
         await settingsScope();
-        write('actionProgress', ['char-A_progress'], 'remote');
+        write('characterActivityStatus', ['character_A'], 'remote');
         write('xpHistory', ['char-A_xp']);
         // A bulk write whose keys are not listed, outside the scope, too
         write('marketListings', null, 'remote');
@@ -337,9 +337,18 @@ describe('the count follows what the scope carries', () => {
     });
 
     test('a full-sync push counts them', async () => {
-        write('actionProgress', ['char-A_progress'], 'remote');
+        write('characterActivityStatus', ['character_A'], 'remote');
         await autoPush();
         expect(builds()).toBe(1);
+    });
+
+    test('a full-sync push does not count the device-only stores and keys', async () => {
+        write('actionProgress', ['char-A_progress'], 'remote');
+        write('combatStats', ['latestCombatRun_603281']);
+        write('combatExport', ['spawnCensus']);
+        write('settings', ['panelGeometry', 'modalPositions3', 'bulkSellPanelPosition']);
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(0);
     });
 
     test('a settings-only push still counts a setting', async () => {
