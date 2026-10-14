@@ -884,6 +884,34 @@ describe('the ledger survives a read that cannot be made', async () => {
         expect(stored()[CHEST].last.opened).toBe(1);
     });
 
+    test('the single-chest Reset button keeps other chests a sync pull added behind memory', async () => {
+        const OTHER = '/items/other_chest';
+        treasureTracker.settings = {
+            capeValue: 'token',
+            valueCowbells: true,
+            hiddenChests: [],
+            popupPinned: false,
+            sortMode: 'luck',
+            expandedChests: [],
+        };
+        treasureTracker.tally = { [CHEST]: { opened: 4, loot: { '/items/coin': 40 } } };
+        treasureTracker.ledger.set(treasureTracker.tally);
+        // A pull landed in storage without a reload: another chest, and a higher count for this one
+        storageMock.storeFor('settings').set(KEY, {
+            [CHEST]: { opened: 6, loot: { '/items/coin': 60 } },
+            [OTHER]: { opened: 9, loot: { '/items/coin': 90 } },
+        });
+        window.confirm = vi.fn(() => true);
+
+        const wrapper = treasureTracker._chestRow({ chestHrid: CHEST, opened: 4, perChestValue: 10, ratio: 1 });
+        [...wrapper.querySelectorAll('button')].find((button) => button.textContent === 'Reset').click();
+        await treasureTracker.ledger.flushed();
+
+        expect(stored()[OTHER].opened).toBe(9);
+        expect(stored()[CHEST].opened).toBe(0);
+        expect(stored()[CHEST].since).toBeGreaterThan(0);
+    });
+
     test('a reset is the write that means to lose counts, and does', async () => {
         storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 4, loot: { '/items/coin': 40 } } });
         treasureTracker.tally = {};
