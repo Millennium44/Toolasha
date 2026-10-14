@@ -326,6 +326,20 @@ describe('panel', () => {
         expect(hoisted.refresh).toHaveBeenCalledTimes(1);
     });
 
+    it('turning pooled history off and on again asks afresh for an item already requested', async () => {
+        hoisted.pooled = true;
+        hoisted.listings = [listing({ id: 1 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+        hoisted.pooled = false;
+        hoisted.settingCallbacks.market_pooledHistory.forEach((fn) => fn(false));
+        hoisted.pooled = true;
+        hoisted.settingCallbacks.market_pooledHistory.forEach((fn) => fn(true));
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(2);
+    });
+
     it('retries a newly listed item after a refresh that was already in flight', async () => {
         hoisted.pooled = true;
         hoisted.inFlight = true;

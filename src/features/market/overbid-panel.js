@@ -321,7 +321,11 @@ class OverbidPanel {
 
         // An observation ages out without any event announcing it; reading memory is cheap
         // Turning pooled history on mid-session should fetch the missing sightings without waiting for a listing event
-        const offPooled = config.onSettingChange(POOLED_SETTING, () => this.requestMissingSightings());
+        // Marks made under an earlier setting say nothing about the observations now held, so a change forgets them
+        const offPooled = config.onSettingChange(POOLED_SETTING, () => {
+            this.requestedSightings.clear();
+            this.requestMissingSightings();
+        });
         this.cleanup.registerCleanup(() => offPooled?.());
 
         this.cleanup.registerInterval(setInterval(handler, RECHECK_MS), 'overbidPanel:recheck');
