@@ -89,7 +89,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS, sessionIdentity } =
     await import('./labyrinth-room-logs.js');
 const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
-const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+const { mergeForKey, announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const { FINGERPRINT_VERSION } = await import('./labyrinth-fingerprint.js');
 
 const room = (over = {}) => ({
@@ -1663,6 +1663,26 @@ describe('the room log survives a failed read and a second tab', () => {
         await labyrinthRoomLogs.persist();
 
         expect(stored().map((s) => s.startedAt)).toEqual([3, 2, 1]);
+    });
+
+    test('a sync pull brings the other device rooms in, keeping the held room objects', async () => {
+        const mine = roomAt(1);
+        labyrinthRoomLogs.sessions = [mine];
+        await labyrinthRoomLogs.persist();
+        await labyrinthRoomLogs.record.load();
+        const render = vi.spyOn(labyrinthRoomLogs, 'renderIfOpen').mockImplementation(() => {});
+        storageMock.storeFor('settings').set(LOG_KEY, { sessions: [roomAt(3), roomAt(1)] });
+
+        announceSyncPullApplied({ settings: [LOG_KEY] });
+        await vi.waitFor(() => expect(labyrinthRoomLogs.sessions.map((s) => s.startedAt)).toEqual([3, 1]));
+
+        expect(labyrinthRoomLogs.sessions[1]).toBe(mine);
+        expect(render).toHaveBeenCalledTimes(1);
+        // Nothing new, nothing redrawn
+        announceSyncPullApplied({ settings: [LOG_KEY] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(render).toHaveBeenCalledTimes(1);
+        render.mockRestore();
     });
 
     test('the tab keeps its own room objects through a merge', async () => {

@@ -264,6 +264,7 @@ class LabyrinthRoomLogs {
             empty: () => ({ sessions: [] }),
             merge: (stored, memory) => mergeRoomLogsCleared(stored, memory, this.logSize()),
             label: 'LabyrinthRoomLogs',
+            onPulled: () => this._refreshFromPull(),
         });
         this.activeSession = null;
         this.labContext = null; // { runKey, roomKey, room }
@@ -1590,6 +1591,27 @@ class LabyrinthRoomLogs {
             .get()
             .sessions.map((session) => mine.get(sessionIdentity(session)) || session)
             .slice(0, this.logSize());
+    }
+
+    /**
+     * Take in rooms a sync pull wrote under the running page. `persist()` without the save: the held rooms
+     * (minus their in-flight snapshots) go back into the record so the load folds the stored log under them,
+     * then `adoptMerged()` keeps this tab's own room objects. A pulled Clear drops the rooms it covers, as it
+     * does on any fold. Redraws an open panel when the set of rooms changed.
+     * @returns {Promise<void>}
+     */
+    async _refreshFromPull() {
+        const ticket = captureOwner(this);
+        const held = this.sessions.map((session) => {
+            const copy = { ...session };
+            delete copy.lastSnapshot;
+            return copy;
+        });
+        this.record.set(roomRecord(held, clearedAtOf(this.record.get())));
+        if (!(await this.record.load()) || !stillOurs(ticket)) return;
+        const before = this.sessions.map(sessionIdentity).join();
+        this.adoptMerged();
+        if (this.sessions.map(sessionIdentity).join() !== before) this.renderIfOpen({ fightRecord: true });
     }
 
     clearLogs() {
