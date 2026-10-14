@@ -44,6 +44,11 @@ const market = vi.hoisted(() => ({
     sellResolved: {},
 }));
 
+const shop = vi.hoisted(() => ({
+    /** itemHrid -> {coins, units}: the coin-only offers getShopCoinOnlyCost reports (absent = not sold for coins) */
+    offers: {},
+}));
+
 const experience = vi.hoisted(() => ({ totalMultiplier: 1 }));
 
 /** A small live config: values, change listeners and settings-loaded listeners */
@@ -116,6 +121,11 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateTransmuteProfit: (...args) => calculator.transmute(...args),
         calculateCandidateResults: (action, itemHrid) => market.candidates[itemHrid] ?? [],
     },
+}));
+
+vi.mock('../../utils/game-lookups.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getShopCoinOnlyCost: (hrid) => shop.offers[hrid] ?? { coins: 0, units: 1 },
 }));
 
 vi.mock('../market/expected-value-calculator.js', () => ({
@@ -248,6 +258,8 @@ beforeEach(() => {
     market.bids = {};
     market.estimated = new Set();
     market.candidates = {};
+    shop.offers = {};
+    delete settings.values.alchemy_bestItems_shopPrices;
     settings.values.alchemy_bestItems_sortMode = 'profit';
     // The mock answers true for unknown keys; this one defaults off in the schema
     settings.values.alchemyBestItems_prefillLevelFilter = false;
@@ -1519,5 +1531,87 @@ describe('the Max level filter and level preview', () => {
         expect(names()).toHaveLength(2);
         const pricedHrids = new Set(chain.mock.calls.map(([hrid]) => hrid));
         expect(pricedHrids.has('/items/high')).toBe(false);
+    });
+});
+
+describe('Include shop prices', () => {
+    const KEY = 'alchemy_bestItems_shopPrices';
+
+    beforeEach(() => {
+        game.initClientData = {
+            itemDetailMap: {
+                '/items/cheese': { name: 'Cheese', itemLevel: 10, alchemyDetail: { isCoinifiable: true } },
+            },
+        };
+        market.prices['/items/cheese'] = 200;
+        shop.offers['/items/cheese'] = { coins: 80, units: 1 };
+        // The calculator pays whatever the ranking told it to; the stand-in reads the override as the real one does
+        calculator.coinify.mockImplementation((hrid) => {
+            const override = calculatorMock.inputBuyOverride?.(hrid);
+            return profit({ profitPerHour: 1000 - (override ?? 200) });
+        });
+    });
+
+    const calculatorMock = {
+        get inputBuyOverride() {
+            return calculatorRef.value?.inputBuyOverride;
+        },
+    };
+    const calculatorRef = { value: null };
+
+    test('is on by default: the cheaper shop price is the row price and carries the shop tag', async () => {
+        calculatorRef.value = (await import('../market/alchemy-profit-calculator.js')).default;
+        const [row] = bestItems.calculateRankings('coinify');
+
+        expect(row.itemPrice).toBe(80);
+        expect(row.shopPriced).toBe(true);
+        expect(row.profitPerHour).toBe(920);
+    });
+
+    test('off restores the market price and the old figures', async () => {
+        calculatorRef.value = (await import('../market/alchemy-profit-calculator.js')).default;
+        settings.values[KEY] = false;
+        const [row] = bestItems.calculateRankings('coinify');
+
+        expect(row.itemPrice).toBe(200);
+        expect(row.shopPriced).toBe(false);
+        expect(row.profitPerHour).toBe(800);
+    });
+
+    test('the item price filter and the Profitable only filter read the same shop price', () => {
+        bestItems.createModal();
+        bestItems.currentType = 'coinify';
+        bestItems.cachedRankings.coinify = bestItems.calculateRankings('coinify');
+        const names = () => [...bestItems.modal.querySelectorAll('tbody tr')].map((tr) => tr.children[1].textContent);
+
+        bestItems.filterPriceMax = 100;
+        bestItems.renderTable();
+        expect(names()).toEqual(['Cheeseshop']);
+
+        bestItems.filterPriceMax = null;
+        bestItems.filterPriceMin = 100;
+        bestItems.renderTable();
+        expect(names()).toEqual([]);
+    });
+
+    test('the table says "shop" beside a shop-priced row and offers the checkbox, which writes the setting', () => {
+        bestItems.createModal();
+        bestItems.modal.style.display = 'flex';
+        bestItems.currentType = 'coinify';
+        bestItems.subscribePricingChanges();
+        bestItems.cachedRankings.coinify = bestItems.calculateRankings('coinify');
+        bestItems.renderTable();
+
+        const tag = bestItems.modal.querySelector('[data-mwi-shop-tag]');
+        expect(tag.textContent).toBe('shop');
+        expect(tag.title).toContain('80');
+
+        const box = bestItems.modal.querySelector('[data-mwi-shop-prices]');
+        expect(box.checked).toBe(true);
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+
+        expect(settings.values[KEY]).toBe(false);
+        bestItems.unsubscribePricingChanges();
     });
 });

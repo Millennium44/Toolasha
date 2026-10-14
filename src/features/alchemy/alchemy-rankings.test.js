@@ -69,7 +69,7 @@ vi.mock('../../utils/tea-parser.js', () => ({
     parseTeaSkillLevelBonus: () => 0,
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice,
+    getItemPrice: (hrid) => (hrid in mocks.itemPrices ? mocks.itemPrices[hrid] : mocks.itemPrice),
     isPriceEstimated: () => false,
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => 0 }));
@@ -204,6 +204,127 @@ describe('isEligible', () => {
         expect(isEligible('transmute', items['/items/ore'])).toBe(true);
         expect(isEligible('coinify', items['/items/rock'])).toBe(false);
         expect(isEligible('coinify', null)).toBe(false);
+    });
+});
+
+/** A shop map in the game's shape: a cost list per offer, keyed by shop item hrid */
+function shopMap(offers) {
+    return Object.fromEntries(
+        offers.map(({ key, itemHrid, costs, outputCount }) => [
+            `/shop_items/${key}`,
+            { itemHrid, costs, ...(outputCount ? { outputCount } : {}) },
+        ])
+    );
+}
+
+const COIN = '/items/coin';
+
+describe('rankAlchemyType with shop prices', () => {
+    // Coinify cheese: 500 coins at 70% success, less what the cheese cost
+    const profitAt = (cost) => perHour(500 * 0.7 - cost);
+
+    beforeEach(() => {
+        mocks.initClientData.shopItemDetailMap = shopMap([
+            { key: 'cheese', itemHrid: '/items/cheese', costs: [{ itemHrid: COIN, count: 80 }] },
+        ]);
+    });
+
+    test('the shop price beats a higher market price, in the profit and the row price', () => {
+        const [row] = rankAlchemyType('coinify', { shopPrices: true });
+
+        expect(row.profitPerHour).toBeCloseTo(profitAt(80), 6);
+        expect(row.itemPrice).toBe(80);
+        expect(row.shopPriced).toBe(true);
+        expect(row.marketPrice).toBe(200);
+    });
+
+    test('the market price beats a higher shop price', () => {
+        mocks.itemPrices['/items/cheese'] = 50;
+        const [row] = rankAlchemyType('coinify', { shopPrices: true });
+
+        expect(row.profitPerHour).toBeCloseTo(profitAt(50), 6);
+        expect(row.itemPrice).toBe(50);
+        expect(row.shopPriced).toBe(false);
+    });
+
+    test('an offer that also costs tokens is ignored, and so is one paid only in tokens', () => {
+        mocks.initClientData.shopItemDetailMap = shopMap([
+            {
+                key: 'mixed',
+                itemHrid: '/items/cheese',
+                costs: [
+                    { itemHrid: COIN, count: 80 },
+                    { itemHrid: '/items/task_token', count: 3 },
+                ],
+            },
+        ]);
+        let [row] = rankAlchemyType('coinify', { shopPrices: true });
+        expect(row.profitPerHour).toBeCloseTo(profitAt(200), 6);
+        expect(row.shopPriced).toBe(false);
+
+        mocks.initClientData.shopItemDetailMap = shopMap([
+            { key: 'tokens', itemHrid: '/items/cheese', costs: [{ itemHrid: '/items/task_token', count: 3 }] },
+        ]);
+        [row] = rankAlchemyType('coinify', { shopPrices: true });
+        expect(row.profitPerHour).toBeCloseTo(profitAt(200), 6);
+        expect(row.shopPriced).toBe(false);
+    });
+
+    test('an item with no market price but a shop price is ranked instead of skipped', () => {
+        mocks.itemPrices['/items/cheese'] = null;
+        expect(rankAlchemyType('coinify')).toEqual([]);
+
+        const [row] = rankAlchemyType('coinify', { shopPrices: true });
+        expect(row.profitPerHour).toBeCloseTo(profitAt(80), 6);
+        expect(row.itemPrice).toBe(80);
+        expect(row.shopPriced).toBe(true);
+    });
+
+    test('a bundled offer is priced per unit', () => {
+        mocks.initClientData.shopItemDetailMap = shopMap([
+            { key: 'cheese', itemHrid: '/items/cheese', costs: [{ itemHrid: COIN, count: 500 }], outputCount: 5 },
+        ]);
+        const [row] = rankAlchemyType('coinify', { shopPrices: true });
+        expect(row.itemPrice).toBe(100);
+        expect(row.profitPerHour).toBeCloseTo(profitAt(100), 6);
+    });
+
+    test('with shop prices off the ranking is the old market-only one', () => {
+        const [row] = rankAlchemyType('coinify');
+
+        expect(row.profitPerHour).toBeCloseTo(profitAt(200), 6);
+        expect(row.itemPrice).toBe(200);
+        expect(row.shopPriced).toBe(false);
+    });
+
+    test('decompose and transmute inputs are shop-priced too, and the outputs never are', () => {
+        mocks.initClientData.shopItemDetailMap = shopMap([
+            { key: 'milk', itemHrid: '/items/milk', costs: [{ itemHrid: COIN, count: 10 }] },
+            { key: 'ore', itemHrid: '/items/ore', costs: [{ itemHrid: COIN, count: 1 }] },
+            // Selling whey and gems back would be the shop's sale price: it must not reach the outputs
+            { key: 'whey', itemHrid: '/items/whey', costs: [{ itemHrid: COIN, count: 1 }] },
+            { key: 'gem', itemHrid: '/items/gem', costs: [{ itemHrid: COIN, count: 1 }] },
+        ]);
+        const fee = (type, hrid) => getAlchemyCoinCost(mocks.initClientData.itemDetailMap[hrid], type);
+
+        const [milk] = rankAlchemyType('decompose', { shopPrices: true });
+        expect(milk.profitPerHour).toBeCloseTo(
+            perHour(calculatePriceAfterTax(200) * 2 * 0.6 - (10 + fee('decompose', '/items/milk'))),
+            6
+        );
+
+        const [ore] = rankAlchemyType('transmute', { shopPrices: true });
+        expect(ore.profitPerHour).toBeCloseTo(
+            perHour(calculatePriceAfterTax(900) * 0.5 - (1 + fee('transmute', '/items/ore'))),
+            6
+        );
+    });
+
+    test('the override does not outlive the sweep', async () => {
+        rankAlchemyType('coinify', { shopPrices: true });
+        const { default: calculator } = await import('../market/alchemy-profit-calculator.js');
+        expect(calculator.inputBuyOverride).toBeNull();
+        expect(calculator.calculateCoinifyProfit('/items/cheese', 0).materialCost).toBe(200);
     });
 });
 

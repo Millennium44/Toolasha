@@ -384,6 +384,28 @@ class AlchemyProfitCalculator {
         // _bestCatalystCombo to a single candidate. Null everywhere else, so every other
         // caller gets the full search.
         this._comboFilter = null;
+        // An alternative buy price for the item put into an action, or null for none. Set by the Best
+        // Items ranking for one synchronous sweep so a coin-priced NPC shop offer can stand in for a
+        // dearer or missing market price; null everywhere else, so every other caller prices the
+        // input at the market only.
+        this.inputBuyOverride = null;
+    }
+
+    /**
+     * The price of the item an alchemy action consumes, at the buy side.
+     * The market price, unless {@link inputBuyOverride} offers a cheaper one (or the market has none).
+     * Base items only: the shop sells nothing enhanced.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level of the input
+     * @returns {number|null} Price, or null when nobody prices it
+     */
+    _inputBuyPrice(itemHrid, enhancementLevel = 0) {
+        const market = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
+        if (!this.inputBuyOverride || enhancementLevel) return market;
+        const alternative = this.inputBuyOverride(itemHrid);
+        if (alternative === null || alternative === undefined || !(alternative >= 0)) return market;
+        if (market === null || !(market > 0) || alternative < market) return alternative;
+        return market;
     }
 
     /**
@@ -982,7 +1004,7 @@ class AlchemyProfitCalculator {
 
             // Calculate input cost (material cost)
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const pricePerItem = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
+            const pricePerItem = this._inputBuyPrice(itemHrid, enhancementLevel);
             if (pricePerItem === null) {
                 return null; // No market data
             }
@@ -1296,7 +1318,7 @@ class AlchemyProfitCalculator {
             // Some items (e.g. Holy Milk) consume multiple copies per action — bulkMultiplier
             // scales both the input consumed and the base decompose outputs received.
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const pricePerItem = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
+            const pricePerItem = this._inputBuyPrice(itemHrid, enhancementLevel);
             if (pricePerItem === null) {
                 return null; // No market data
             }
@@ -1709,11 +1731,7 @@ class AlchemyProfitCalculator {
             });
 
             // Get input cost (market price of the item being transmuted)
-            const inputPrice = getItemPrice(itemHrid, {
-                context: 'profit',
-                side: 'buy',
-                enhancementLevel,
-            });
+            const inputPrice = this._inputBuyPrice(itemHrid, enhancementLevel);
             if (inputPrice === null) {
                 return null; // No market data
             }

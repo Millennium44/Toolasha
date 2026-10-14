@@ -512,6 +512,13 @@ export const settingsGroups = {
                 ],
                 help: 'Which figure the best items table ranks by. The chain mode buys the item at its ask, decomposes it and everything it yields, and sells what is left at bid after tax; the buttons in the table change this too.',
             },
+            alchemy_bestItems_shopPrices: {
+                id: 'alchemy_bestItems_shopPrices',
+                label: 'Alchemy panel: Best Items include shop prices',
+                type: 'checkbox',
+                default: true,
+                help: 'Buys the item at the NPC shop price when that is below the market price, or when the market has no price at all. Only shop offers paid in coins count, only on the buy side, and only in Best Items. The same box sits in the table.',
+            },
             alchemyBestItems_prefillLevelFilter: {
                 id: 'alchemyBestItems_prefillLevelFilter',
                 label: 'Alchemy panel: Pre-fill Best Items max level from current skill level',
