@@ -707,25 +707,74 @@ class EstimatedListingAge {
      * reached this device yet (see {@link mergeListingGraves}).
      * @param {Array<number>} ids - Listing ids being imported
      * @param {{generation: number, charId: string}} owner - From {@link _owner}
-     * @returns {Promise<boolean>} Whether a write landed
+     * @returns {Promise<{at: number, prev: Object}|null>} The stamp's moment and the record as it stood before
+     *   it, for {@link _undoRestoreGraves}; null when no write landed. The in-memory map changes only once
+     *   the write has, so a failed write leaves the previous one standing
      */
     async _restoreGraves(ids, owner) {
-        if (!ids.length) return true;
+        if (!ids.length) return { at: 0, prev: null };
         const now = Date.now();
         const key = this._gravesKey(owner);
         try {
             const probe = await storage.tryGet(key, LISTINGS_STORE);
             if (probe === null) {
                 console.warn('[EstimatedListingAge] Deletions not taken back: storage could not be read first');
-                return false;
+                return null;
             }
-            if (!this._ownsMemory(owner)) return false;
+            if (!this._ownsMemory(owner)) return null;
             const current = mergeListingGraves(probe.found ? probe.value : null, this.listingGraves, now);
             const stamp = { removed: {}, restored: [{ at: now, ids }], clearedThrough: 0 };
-            this.listingGraves = mergeListingGraves(current, stamp, now);
-            return await storage.set(key, this.listingGraves, LISTINGS_STORE, true);
+            const next = mergeListingGraves(current, stamp, now);
+            if (!(await storage.set(key, next, LISTINGS_STORE, true))) return null;
+            if (!this._ownsMemory(owner)) return null;
+            this.listingGraves = next;
+            return { at: now, prev: current };
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to take back listing deletions:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Fold one restore stamp back out of a tombstone record, putting back the tombstones it cancelled.
+     * @param {*} record - The record carrying the stamp
+     * @param {number} at - The stamp's moment
+     * @param {*} prev - The record as it stood before the stamp
+     * @returns {Object} The record without the stamp
+     */
+    _withoutRestoreStamp(record, at, prev) {
+        const parts = gravesOf(record);
+        const withoutStamp = {
+            removed: parts.removed,
+            restored: parts.restored.filter((stamp) => stamp.at !== at),
+            clearedThrough: parts.clearedThrough,
+        };
+        return mergeListingGraves(withoutStamp, prev);
+    }
+
+    /**
+     * Undo {@link _restoreGraves}: the stamp leaves memory and the stored record, and the tombstones it
+     * cancelled stand again. The stored record is re-read, so a peer's deletions pulled in since survive.
+     * @param {{at: number, prev: Object}} taken - What _restoreGraves returned
+     * @param {{generation: number, charId: string}} owner - From {@link _owner}
+     * @returns {Promise<boolean>} Whether the stored record was put back
+     */
+    async _undoRestoreGraves(taken, owner) {
+        if (!taken?.prev) return true;
+        const key = this._gravesKey(owner);
+        try {
+            if (this._ownsMemory(owner)) {
+                this.listingGraves = this._withoutRestoreStamp(this.listingGraves, taken.at, taken.prev);
+            }
+            const probe = await storage.tryGet(key, LISTINGS_STORE);
+            if (probe === null) {
+                console.warn('[EstimatedListingAge] Import stamp not withdrawn: storage could not be read first');
+                return false;
+            }
+            const stored = this._withoutRestoreStamp(probe.found ? probe.value : null, taken.at, taken.prev);
+            return await storage.set(key, stored, LISTINGS_STORE, true);
+        } catch (error) {
+            console.error('[EstimatedListingAge] Failed to withdraw the import stamp:', error);
             return false;
         }
     }
@@ -1255,17 +1304,43 @@ class EstimatedListingAge {
             .filter((id) => typeof id === 'number');
         // On the save chain, and the rows into memory only once their tombstones are taken back: a save
         // already holding the old tombstones would otherwise strip the imported rows from memory
+        let taken = null;
+        let before = null;
         const run = async () => {
             if (!this._ownsMemory(owner)) return false;
-            if (!(await this._restoreGraves(ids, owner))) return false;
+            taken = await this._restoreGraves(ids, owner);
+            if (!taken) return false;
             if (!this._ownsMemory(owner)) return false;
+            before = this.knownListings;
             this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
             this.rebuildEstimationPoints();
             return true;
         };
         this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
         if (!(await this._saveChain)) return false;
-        return (await this.saveHistoricalData({ owner })) === true;
+        if ((await this.saveHistoricalData({ owner })) === true) return true;
+        // The log did not land, so the import ends as if it never happened: rows, tombstone map and the
+        // stored stamp all go back. On the chain, behind any save already waiting, so none sees it half done
+        const rollBack = async () => {
+            if (this._ownsMemory(owner)) {
+                const imported = new Set(ids);
+                const prior = new Map(before.map((listing) => [listing?.id, listing]));
+                const rows = new Map();
+                for (const listing of this.knownListings) {
+                    if (!imported.has(listing?.id)) rows.set(listing?.id, listing);
+                }
+                for (const [id, listing] of prior) {
+                    if (imported.has(id) || !rows.has(id)) rows.set(id, listing);
+                }
+                this.knownListings = [...rows.values()].sort((a, b) => a.id - b.id);
+                this.rebuildEstimationPoints();
+            }
+            await this._undoRestoreGraves(taken, owner);
+            return false;
+        };
+        this._saveChain = (this._saveChain || Promise.resolve()).then(rollBack, rollBack);
+        await this._saveChain;
+        return false;
     }
 
     /**
