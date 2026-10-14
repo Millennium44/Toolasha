@@ -21,7 +21,14 @@ vi.mock('../../utils/token-valuation.js', () => ({
     calculateDungeonTokenValue: mocks.dungeon,
     calculateLabyrinthTokenValueDetail: mocks.labyrinth,
 }));
-vi.mock('../tasks/task-profit-calculator.js', () => ({ calculateTaskTokenValue: mocks.task }));
+vi.mock('../tasks/task-profit-calculator.js', () => ({
+    calculateTaskTokenValue: mocks.task,
+    // Mirrors the real valueTaskRewards (covered in task-profit-calculator.test.js)
+    valueTaskRewards: (data, { tokens = 0 } = {}) =>
+        !data || data.error || !Number.isFinite(data.tokenValue)
+            ? null
+            : tokens * data.tokenValue + tokens * (Number.isFinite(data.giftPerTaskPoint) ? data.giftPerTaskPoint : 0),
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: mocks.getItemPrice }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate),
@@ -56,10 +63,10 @@ describe('resolveCurrencyValue', () => {
         expect(resolveCurrencyValue('/items/labyrinth_token', 'bid')).toBeCloseTo(960, 6);
     });
 
-    test('a task token has one valuation, so both sides share it', () => {
-        mocks.task.mockReturnValue({ tokenValue: 30_000 });
-        expect(resolveCurrencyValue('/items/task_token', 'ask')).toBe(30_000);
-        expect(resolveCurrencyValue('/items/task_token', 'bid')).toBe(30_000);
+    test('a task token has one valuation, so both sides share it, and it includes the Task Point gift share', () => {
+        mocks.task.mockReturnValue({ tokenValue: 30_000, giftPerTaskPoint: 1_500 });
+        expect(resolveCurrencyValue('/items/task_token', 'ask')).toBe(31_500);
+        expect(resolveCurrencyValue('/items/task_token', 'bid')).toBe(31_500);
     });
 
     test('a dungeon token is its best shop line after market tax, since turning it into coins is a sale', () => {
