@@ -1724,6 +1724,27 @@ describe('the room log survives a failed read and a second tab', () => {
         labyrinthRoomLogs.activeSession = null;
     });
 
+    test('a pull whose room-log read fails once still brings late XP into a settled room', async () => {
+        const settled = roomAt(1, { xp: 100 });
+        labyrinthRoomLogs.sessions = [settled];
+        await labyrinthRoomLogs.persist();
+        await labyrinthRoomLogs.record.load();
+        storageMock.storeFor('settings').set(LOG_KEY, {
+            sessions: [roomAt(1, { xp: 700, endedAt: settled.endedAt + 1000 })],
+        });
+        const realTryGet = storageMock.tryGet;
+        let calls = 0;
+        // The record's own load reads first; the refresh's probe then fails once
+        storageMock.tryGet = async (...args) => (++calls === 2 ? null : realTryGet(...args));
+        try {
+            announceSyncPullApplied({ settings: [LOG_KEY] });
+            await vi.waitFor(() => expect(settled.xp).toBe(700));
+        } finally {
+            storageMock.tryGet = realTryGet;
+        }
+        expect(labyrinthRoomLogs.sessions[0]).toBe(settled);
+    });
+
     test('a pull that rolls a room at the attempt cap forward redraws the open panel', async () => {
         const attemptAt = (startedAt) => ({ startedAt, endedAt: startedAt + 1, actions: 1, successes: 1 });
         const full = Array.from({ length: 100 }, (_, i) => attemptAt(i + 1));

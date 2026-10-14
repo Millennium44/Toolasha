@@ -1643,8 +1643,17 @@ class LabyrinthRoomLogs {
             });
         this.record.set(roomRecord(copies(), clearedAtOf(this.record.get())));
         const loaded = await this.record.load();
-        const probed = await storage.tryGet(characterKey(STORAGE_KEY), 'settings');
+        let probed = await storage.tryGet(characterKey(STORAGE_KEY), 'settings');
+        // An unreadable probe is not an absent key: the absent-key fallback keeps the held copy's stale
+        // fields, so read once more, and leave memory as it stands if the store still cannot answer
+        if (!probed) probed = await storage.tryGet(characterKey(STORAGE_KEY), 'settings');
         if (!loaded || !stillOurs(ticket)) return;
+        if (!probed) {
+            console.warn(
+                '[LabyrinthRoomLogs] Could not read the room log after a sync pull; keeping the rooms in hand'
+            );
+            return;
+        }
         const shape = () =>
             this.sessions
                 .map(
