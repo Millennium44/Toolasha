@@ -202,6 +202,30 @@ describe('panel', () => {
         expect(root()).not.toBeNull();
     });
 
+    it('drops a row once its figure ages past the freshness window, with no event', () => {
+        hoisted.listings = [listing()];
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        expect(root()).not.toBeNull();
+        vi.advanceTimersByTime(MAX + 10_000);
+        expect(root()).toBeNull();
+    });
+
+    it('reads the initialized alerts through the bundle namespace when it exists', () => {
+        hoisted.listings = [listing()];
+        // The bundled copy knows nothing; the namespace copy holds the sighting
+        window.Toolasha = {
+            UI: { marketUndercutAlerts: { sideObservation: () => ({ price: 50, timestamp: Date.now() - 1000 }) } },
+        };
+        try {
+            fire();
+            expect(root()).not.toBeNull();
+            expect(root().textContent).toContain('cheese');
+        } finally {
+            delete window.Toolasha;
+        }
+    });
+
     it('cleanup removes the panel and every subscription', () => {
         hoisted.listings = [listing()];
         hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
