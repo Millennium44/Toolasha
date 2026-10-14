@@ -2628,7 +2628,8 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
  * @param {boolean} [isSelf=true] - Whether the row is the live character's, so their held copies serve as inputs
- * @returns {{net: number, baseCost: number, credit: number, mirrorPrice: number, heldLevels: number[]}|null} Null when no
+ * @returns {{net: number, baseCost: number, credit: number, capped: boolean, rawCredit: number,
+ *   mirrorPrice: number, heldLevels: number[]}|null} Null when no
  *   mirror route beats the ordinary one for this row
  */
 function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
@@ -2643,15 +2644,17 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
     const wornUsed = mirror.consumed.some(
         (piece) => piece.hrid === candidate.currentHrid && piece.level === (candidate.currentLevel || 0)
     );
-    const credit =
+    const rawCredit =
         wornUsed || isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
             ? 0
-            : capEnhancementCredit(mirror.baseCost, sellValue(candidate.currentHrid, candidate.currentLevel || 0))
-                  .credit;
+            : sellValue(candidate.currentHrid, candidate.currentLevel || 0);
+    const { credit, capped } = capEnhancementCredit(mirror.baseCost, rawCredit);
     return {
         net: mirror.baseCost - credit,
         baseCost: mirror.baseCost,
         credit,
+        capped,
+        rawCredit,
         mirrorPrice: mirror.mirrorPrice,
         heldLevels: mirror.heldLevels,
     };
@@ -2702,7 +2705,15 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
         if (!Number.isFinite(copyCost)) return null;
     }
     const total = Math.max(0, primary) + copyCost + mirrorPrice;
-    return { net: total, baseCost: total, credit: 0, mirrorPrice, heldLevels: spare ? [copyLevel] : [] };
+    return {
+        net: total,
+        baseCost: total,
+        credit: 0,
+        capped: false,
+        rawCredit: 0,
+        mirrorPrice,
+        heldLevels: spare ? [copyLevel] : [],
+    };
 }
 
 /**
@@ -3618,6 +3629,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
                           name,
                           enhancementLevel: candidate.currentLevel || 0,
                           price: mirror.credit,
+                          rawPrice: mirror.rawCredit,
                       },
                   ]
                 : [],
@@ -3626,6 +3638,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
         net: mirror.net,
         unpriced: [],
         creditApplied: mirror.credit > 0,
+        ...(mirror.capped ? { creditCapped: true, rawCredit: mirror.rawCredit } : {}),
         source: 'mirror',
         enhanceSource: describeEnhancementSource(enhancementSweepParams(candidate.currentHrid)),
         ladder: {
@@ -3828,6 +3841,12 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                   gross,
                   buys.some((b) => isBuiltRoute(b.source))
               );
+    // A built route holds the resale to its spend. Say so the way the market route does, so a row cut
+    // to nothing reads as capped rather than as genuinely free, and each line shows its share of the cut
+    const creditCapped = credit < rawCredit;
+    const shownCredits = creditCapped
+        ? credits.map((entry) => ({ ...entry, price: (entry.price * credit) / rawCredit, rawPrice: entry.price }))
+        : credits;
 
     // Whose enhancing stats a sweep behind this figure ran on. A total is as
     // shaky as its shakiest part, so the first sweep found stands for the row
@@ -3836,9 +3855,10 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     return {
         buys,
-        credits,
+        credits: shownCredits,
         gross,
         credit,
+        ...(creditCapped ? { creditCapped, rawCredit } : {}),
         enhanceSource,
         // The ladder behind a single self-enhanced piece, so the row can say
         // "enhance from +X to +N" rather than "buys"
