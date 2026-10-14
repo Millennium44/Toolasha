@@ -69,6 +69,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Combat Sim and Lab Sim player-setup lists (equipment, abilities, food and drinks) have alternating row shading and a hover highlight so each slot lines up with its level box, and the level boxes are wide enough for two-digit enhancement levels and three-digit ability levels.
 
+### Upgrade finder: sharper mirror pricing
+
+- Mirror builds in the combat sim's upgrade finder now use a copy you wear or hold as one of the two inputs, count Blessed Tea's chance of a +2, cover refined gear you're wearing, are weighed against a market buy after what the replaced gear sells for, and rows whose resale credit is capped say so instead of showing as free.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
