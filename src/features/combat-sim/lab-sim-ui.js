@@ -3335,13 +3335,25 @@ class LabSimUI {
                 return;
             }
             let fights;
+            // Whose spare copies price the swap: the live character's, unless the
+            // Configure fight is a party member's (as the single-fight analysis reads it)
+            let isSelf = true;
             if (plan.kind === 'single') {
                 // The Configure fight is the edited player at the resolved room
                 // level, exactly as the single-fight analysis takes it, not the
                 // monster's assigned labyrinth loadout
                 const monsterHrid = plan.monsterHrids[0];
                 const edited = this._editor?.getEditedDTOs();
-                const playerDTOs = edited ? Object.values(edited) : (await buildAllPlayerDTOs()).players;
+                let playerDTOs;
+                let selfHrid = null;
+                if (edited) {
+                    playerDTOs = Object.values(edited);
+                    selfHrid = this._editor.getSelfHrid() ?? null;
+                } else {
+                    const loaded = await buildAllPlayerDTOs();
+                    playerDTOs = loaded.players;
+                    selfHrid = loaded.selfHrid ?? null;
+                }
                 const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
                 const dto = playerDTOs?.[playerIndex];
                 if (!dto) {
@@ -3366,6 +3378,7 @@ class LabSimUI {
                     );
                     return;
                 }
+                isSelf = selfHrid != null && dto.hrid === selfHrid;
                 const monster = getLabyrinthMonsters().find((entry) => entry.hrid === monsterHrid);
                 fights = [
                     {
@@ -3395,7 +3408,7 @@ class LabSimUI {
                     swap,
                     fights.map((fight) => fight.dto),
                     gameData,
-                    true,
+                    isSelf,
                     { allLoadouts: this._swapOptions.all.combat }
                 );
                 if (candidate && candidate.reach > 0) candidates.push(candidate);

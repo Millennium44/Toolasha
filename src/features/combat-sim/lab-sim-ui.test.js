@@ -4339,6 +4339,44 @@ describe('Check a swap', () => {
         game.monsters = [];
     });
 
+    test('a Configure fight that is a party member is priced without the live character spare copies', async () => {
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = {};
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [] }];
+        game.editedDTOs = {
+            p1: { hrid: 'p1', equipment: {}, abilities: [] },
+            p2: { hrid: 'p2', equipment: { [BACK]: { hrid: CAPE, enhancementLevel: 5 } }, abilities: [] },
+        };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        ui.panel.querySelector('#mwi-labsim-level').value = '170';
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        const select = ui.panel.querySelector('#mwi-labsim-upgrade-player');
+        select.innerHTML = '<option value="0">Me</option><option value="1">Friend</option>';
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis');
+        const costSpy = vi.spyOn(upgradeAdvisor, 'calculateUpgradeCost');
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+
+        select.value = '1';
+        await ui._onCheckSwapsCombat();
+        expect(costSpy.mock.calls.at(-1)[2]).toBe(false);
+
+        select.value = '0';
+        game.editedDTOs.p1.equipment = { [BACK]: { hrid: CAPE, enhancementLevel: 5 } };
+        await ui._onCheckSwapsCombat();
+        expect(costSpy.mock.calls.at(-1)[2]).toBe(true);
+
+        allSpy.mockRestore();
+        costSpy.mockRestore();
+        game.editedDTOs = null;
+        game.players = [];
+        game.monsters = [];
+    });
+
     test('the checked combat table has the generated columns and a per-fight breakdown on click', () => {
         const container = document.createElement('div');
         ui._renderAllFightsResults(combatAnalysis(), container, { checked: true });

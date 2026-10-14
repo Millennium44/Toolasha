@@ -345,6 +345,21 @@ describe('combat: who a checked swap reaches', () => {
             expect(reach(PLAIN, loadouts)).toEqual([true, true, true]);
         });
 
+        test('a two-hander needs both hands free: an occupied off hand is a conflict too', () => {
+            const OFF = '/equipment_types/off_hand';
+            ITEM_DETAIL_MAP['/items/cheese_shield'] = {
+                hrid: '/items/cheese_shield',
+                name: 'Cheese Shield',
+                equipmentDetail: { type: OFF, combatStats: { armor: 5 } },
+            };
+            const shieldOnly = wearing({ [OFF]: piece('/items/cheese_shield', 3) });
+            const mainOnly = wearing({ [MAIN]: piece(SWORD, 3) });
+            const bare = wearing({});
+            const dtos = [shieldOnly, mainOnly, bare];
+            expect(reach(STAFF, dtos)).toEqual([false, false, true]);
+            expect(reach(STAFF, dtos, { allLoadouts: true })).toEqual([false, false, true]);
+        });
+
         test('All loadouts does not override the hand rules or an item with no combat stats', () => {
             const bowLoadout = wearing({ [TWO]: piece(BOW, 3) });
             const options = { allLoadouts: true };

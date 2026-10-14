@@ -7550,7 +7550,8 @@ export function checkedSwapAppliesToDTO(candidate, dto, gameData) {
     const equipment = dto.equipment || {};
     const slot = candidate.slot;
     if (equipment[TWO_HAND_SLOT]?.hrid && (slot === MAIN_HAND_SLOT || slot === OFF_HAND_SLOT)) return false;
-    if (equipment[MAIN_HAND_SLOT]?.hrid && slot === TWO_HAND_SLOT) return false;
+    // A two-hander needs both hands free: either one-hand slot occupied is a conflict
+    if ((equipment[MAIN_HAND_SLOT]?.hrid || equipment[OFF_HAND_SLOT]?.hrid) && slot === TWO_HAND_SLOT) return false;
 
     const worn = equipment[slot];
     const details = gameData?.itemDetailMap;
