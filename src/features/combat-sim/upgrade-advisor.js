@@ -7559,7 +7559,19 @@ export function checkedSwapAppliesToDTO(candidate, dto, gameData) {
     // Stab, slash and smash are one family here: a loadout swinging a mace is
     // fair game for a sword, and it is the loadouts holding a staff or a bow
     // that a sword has no business in
+    //
+    // Only weapons and quivers are held to the loadout's style. Armor can carry
+    // magic or ranged stats (a Magician's Hat) and still goes on any body: the
+    // player asked for it, so even a downgrade is shown. What marks a piece as
+    // style-bound is that it sits in a hand slot or names combat styles.
     const family = (style) => (style === 'stab' || style === 'slash' || style === 'smash' ? 'melee' : style);
+    const styleBound =
+        slot === MAIN_HAND_SLOT ||
+        slot === OFF_HAND_SLOT ||
+        slot === TWO_HAND_SLOT ||
+        Boolean(upgrade.equipmentDetail?.combatStats?.combatStyleHrids?.length) ||
+        Boolean(upgrade.equipmentDetail?.combatStyleHrids?.length);
+    if (!styleBound) return true;
     const newStyle = family(getItemDamageStyle(upgrade.equipmentDetail?.combatStats));
     if (newStyle === 'unknown') return true;
     // What the loadout fights with decides, not the piece in the slot: a cape

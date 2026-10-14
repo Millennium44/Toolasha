@@ -40,7 +40,10 @@ const ITEM_DETAIL_MAP = {
         hrid: QUIVER,
         name: 'Chimerical Quiver',
         itemLevel: 80,
-        equipmentDetail: { type: BACK, combatStats: { rangedDamage: 0.1, rangedAccuracy: 0.1 } },
+        equipmentDetail: {
+            type: BACK,
+            combatStats: { rangedDamage: 0.1, rangedAccuracy: 0.1, combatStyleHrids: ['/combat_styles/ranged'] },
+        },
         enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }],
     },
     [SWORD]: {
@@ -272,6 +275,47 @@ describe('combat: who a checked swap reaches', () => {
             false,
         ]);
         expect(quiver.reach).toBe(1);
+    });
+
+    test('armor with another style’s stats still goes in the slot, as a downgrade if need be (Magician’s Hat)', () => {
+        // The shape the live game data gives it: head slot, magic stats, no combatStyleHrids
+        ITEM_DETAIL_MAP['/items/magicians_hat'] = {
+            hrid: '/items/magicians_hat',
+            name: 'Magician’s Hat',
+            itemLevel: 20,
+            equipmentDetail: {
+                type: '/equipment_types/head',
+                combatStats: { abilityDamage: 0.1, abilityHaste: 5, magicAccuracy: 0.05, magicDamage: 0.05 },
+            },
+        };
+        ITEM_DETAIL_MAP['/items/corsair_helmet_refined'] = {
+            hrid: '/items/corsair_helmet_refined',
+            name: 'Corsair Helmet ★',
+            itemLevel: 90,
+            equipmentDetail: { type: '/equipment_types/head', combatStats: { slashDamage: 0.1 } },
+        };
+        const melee = wearing({
+            '/equipment_types/head': piece('/items/corsair_helmet_refined', 20),
+            [MAIN]: piece(SWORD, 20),
+        });
+
+        const hat = buildCombatSwapCandidate({ hrid: '/items/magicians_hat', level: 10 }, [melee], gameData);
+
+        expect(hat.reach).toBe(1);
+        expect(advisor.candidateAppliesToDTO(hat, melee, gameData)).toBe(true);
+        expect(advisor.applyCandidateToDTO(melee, hat).equipment['/equipment_types/head']).toEqual({
+            hrid: '/items/magicians_hat',
+            enhancementLevel: 10,
+        });
+        // A magic weapon is still kept out of a melee loadout
+        ITEM_DETAIL_MAP['/items/magic_wand'] = {
+            hrid: '/items/magic_wand',
+            name: 'Magic Wand',
+            equipmentDetail: { type: MAIN, combatStats: { magicDamage: 5 } },
+        };
+        expect(buildCombatSwapCandidate({ hrid: '/items/magic_wand', level: 1 }, [melee], gameData).reach).toBe(0);
+        // A quiver names its style, so it is kept out too
+        expect(buildCombatSwapCandidate({ hrid: QUIVER, level: 10 }, [melee], gameData).reach).toBe(0);
     });
 
     test('a piece with no combat stats is in no loadout', () => {
