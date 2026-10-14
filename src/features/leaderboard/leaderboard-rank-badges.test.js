@@ -407,6 +407,21 @@ describe('leaderboard rank badges', () => {
         redraw.mockRestore();
     });
 
+    test('a pull that carries a future-stamped board stores the capped copy once', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        expect(game.saved.rankBoards).toBeUndefined();
+        const future = Date.now() + 3 * 86400000;
+        game.saved.rankBoards = { 'standard|milking': { at: future, source: 'local', rows: [['Old', 1]] } };
+        announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+        await flush();
+
+        expect(game.saved.rankBoards['standard|milking'].at).toBeLessThanOrEqual(Date.now());
+        expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Old', 1]]);
+    });
+
     test('a pull during a restart read does not discard a board that has not been saved yet', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();
