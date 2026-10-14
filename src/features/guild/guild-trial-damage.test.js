@@ -880,6 +880,19 @@ describe('the spectated trial fight', () => {
         const { pool } = guildTrialDamage.breakdown();
         expect(pool.current).toBe(745_376);
         expect(pool.max).toBe(1_181_280);
+        // And says how many monsters it summed, so the panel can tell the
+        // whole wave from the one slot a refresh mid-tier names first
+        expect(pool.slots).toBe(2);
+    });
+
+    test('a pool the stream has named only part of says so', () => {
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 9,
+            tier: 1,
+            pMap: {},
+            mMap: { 0: { cHP: 300_000, mHP: 590_640 } },
+        });
+        expect(guildTrialDamage.breakdown().pool).toMatchObject({ current: 300_000, max: 590_640, slots: 1 });
     });
 
     test('a tick carrying one monster of the wave does not re-price the pool as that monster', () => {

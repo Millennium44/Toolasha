@@ -1456,6 +1456,15 @@ describe('the record cannot be wiped by a failed read or a stale copy', () => {
     });
 });
 
+describe('saveWorkBases — retiring a learned base', () => {
+    test('a refused entry is dropped from storage too, not merged back from it', async () => {
+        game.unavailable = false;
+        game.store.guildTrialsWorkBases = { 'trial badger': { baseWork: 330_449 }, crafting: { baseWork: 40_000 } };
+        await saveWorkBases({ crafting: { baseWork: 40_000 } }, { keep: (key) => key !== 'trial badger' });
+        expect(await loadWorkBases()).toEqual({ crafting: { baseWork: 40_000 } });
+    });
+});
+
 describe('recordServerTiers — the guild payload’s tier clears on a tile', () => {
     const t0 = 1_790_715_740_155;
     const tile = (over = {}) => ({

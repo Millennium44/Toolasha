@@ -1530,6 +1530,13 @@ export function etaMs(remaining, rate) {
 const UNWATCHED_GAP_MS = 60_000;
 
 /**
+ * The most one combat tier can grow its boss over the last: the first step,
+ * Lv.110 → Lv.120. Every later step is smaller, so a rise past this (with the
+ * same slack the fitted check allows) is not one tier.
+ */
+const COMBAT_LARGEST_STEP = (TRIAL_START_LEVEL + 2 * TRIAL_LEVEL_STEP) / (TRIAL_START_LEVEL + TRIAL_LEVEL_STEP);
+
+/**
  * How much of a boss's health the party has taken off, per millisecond.
  *
  * Separate from {@link ratePerMs} because a combat trial's bar does not behave
@@ -1566,18 +1573,36 @@ const UNWATCHED_GAP_MS = 60_000;
  *
  * The exception is a pair more than `gapMs` apart: that is a stretch nobody was
  * reading (the fight view shut, the tab left), and a boundary across it that the
- * fitted growth shows to be several tiers — or a smaller boss, which is no step
- * up at all — hides whole bosses. Its damage is unknown rather than small, so the pair
- * is left out of both the damage and the time — counting it would spread the
- * watched minutes' damage over the unwatched ones — and counted in `unwatched`.
+ * fitted growth shows to be several tiers hides whole bosses. Its damage is
+ * unknown rather than small, so the pair is left out of both the damage and the
+ * time — counting it would spread the watched minutes' damage over the
+ * unwatched ones — and counted in `unwatched`.
  *
- * @param {Array<{t: number, current: number, max: number}>} samples - Boss health readings, any order
+ * ## A changed maximum is not always a clear
+ *
+ * A multi-monster wave (two Trial Badgers) is read two ways under one card:
+ * one Badger's own bar on the In Progress tab, and the spectator stream's sum
+ * of the wave grafted onto the Trials tab. Paired across a switch, 485,760 →
+ * 971,520 read as a boss cleared and added a whole wave of damage that nobody
+ * dealt, and the switch back added another; "Party DPS 1.8K" beside a split
+ * of 281. So:
+ *
+ * - A sample may carry a `scale` (the reading's source), and is only ever
+ *   paired with the previous sample **of the same scale**. Untagged samples
+ *   are all one scale, as before.
+ * - A **falling** maximum is never a clear, whatever the gap: tiers only
+ *   grow. The pair is left out and counted in `rescaled`.
+ * - With no fitted growth, a rise larger than the ladder's largest single
+ *   step (Lv.110 → Lv.120, with the fitted check's slack) is a change of
+ *   scale rather than a watched clear, and is left out the same way.
+ *
+ * @param {Array<{t: number, current: number, max: number, scale?: string}>} samples - Boss health readings, any order
  * @param {Object} [options] - Options
  * @param {number|null} [options.growthPerTier] - Fitted per-tier growth, for the single-step check
  * @param {number} [options.windowMs] - Ignore readings older than this before the newest
  * @param {number} [options.gapMs] - A pair further apart than this was not watched in between
  * @returns {{rate: number|null, damage: number, spanMs: number, boundaries: number, multiTier: boolean,
- *   unwatched: number, samples: number}} The measurement
+ *   unwatched: number, rescaled: number, samples: number}} The measurement
  */
 export function combatDamageRate(
     samples,
@@ -1599,6 +1624,7 @@ export function combatDamageRate(
         boundaries: 0,
         multiTier: false,
         unwatched: 0,
+        rescaled: 0,
         samples: window.length,
     };
     if (window.length < 2) return nothing;
@@ -1608,10 +1634,16 @@ export function combatDamageRate(
     let boundaries = 0;
     let multiTier = false;
     let unwatched = 0;
+    let rescaled = 0;
+    // The previous reading of each scale: a sample is only paired with one of
+    // its own kind, never with the other source's reading in between
+    const lastByScale = new Map();
 
-    for (let index = 1; index < window.length; index += 1) {
-        const before = window[index - 1];
-        const after = window[index];
+    for (const after of window) {
+        const scale = after.scale ?? null;
+        const before = lastByScale.get(scale);
+        lastByScale.set(scale, after);
+        if (!before) continue;
         const pairMs = after.t - before.t;
         // Each trial tier increases the boss's maximum HP. A rising current HP
         // with the same maximum is a heal, not a new tier; treating it as a
@@ -1625,14 +1657,20 @@ export function combatDamageRate(
         }
 
         // One step up the ladder, or several? Only a fitted growth factor can
-        // answer that, and a boss *smaller* than the last one is not a step at all
+        // answer that, and a boss *smaller* than the last one is not a step at
+        // all — tiers only grow, so a falling maximum is a reading of something
+        // else (one monster of a wave after the wave's sum), at any gap
         const ratio = after.max / before.max;
         const step = Number.isFinite(growthPerTier) && growthPerTier > 1 ? growthPerTier : null;
-        const pairMultiTier = ratio < 1 || !step || ratio > Math.pow(step, 1.5);
+        if (ratio < 1 || (!step && ratio > Math.pow(COMBAT_LARGEST_STEP, 1.5))) {
+            rescaled += 1;
+            continue;
+        }
+        const pairMultiTier = !step || ratio > Math.pow(step, 1.5);
         // Only a jump *shown* to be more than one step is dropped: with no fitted
         // growth a single tier cleared across the gap is as likely, and that pair
         // is exact — the recorded 414 s pair across T2 → T3 is one
-        const shownMultiTier = ratio < 1 || (step !== null && ratio > Math.pow(step, 1.5));
+        const shownMultiTier = step !== null && ratio > Math.pow(step, 1.5);
 
         if (shownMultiTier && Number.isFinite(gapMs) && pairMs > gapMs) {
             unwatched += 1;
@@ -1645,9 +1683,20 @@ export function combatDamageRate(
         if (pairMultiTier) multiTier = true;
     }
 
-    if (spanMs <= 0 || damage <= 0) return { ...nothing, damage, spanMs, boundaries, multiTier, unwatched };
+    if (spanMs <= 0 || damage <= 0) {
+        return { ...nothing, damage, spanMs, boundaries, multiTier, unwatched, rescaled };
+    }
 
-    return { rate: damage / spanMs, damage, spanMs, boundaries, multiTier, unwatched, samples: window.length };
+    return {
+        rate: damage / spanMs,
+        damage,
+        spanMs,
+        boundaries,
+        multiTier,
+        unwatched,
+        rescaled,
+        samples: window.length,
+    };
 }
 
 // ─── Pace ───────────────────────────────────────────────────────────────────

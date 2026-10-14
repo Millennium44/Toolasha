@@ -2904,17 +2904,20 @@ class GuildTrialDamage {
 
         let current = 0;
         let max = 0;
-        let seen = false;
+        let slots = 0;
         for (const slot of Object.values(this.poolSlots)) {
-            seen = true;
+            slots += 1;
             current += slot.current;
             max += slot.max;
         }
-        if (!seen) return;
+        if (!slots) return;
 
         // The encounter travels with the reading. A pool with no name on it
-        // is a pool no card may claim
-        this.pool = { current, max, tier, at, encounter: this.encounter, bossName: this.spectatedBossName };
+        // is a pool no card may claim. So does the number of slots summed: a
+        // wave the stream has only partly named (a refresh mid-tier, before
+        // the second Badger ticks) is a fraction of the wave, and the panel
+        // must be able to tell it from the whole one
+        this.pool = { current, max, slots, tier, at, encounter: this.encounter, bossName: this.spectatedBossName };
     }
 
     /**
