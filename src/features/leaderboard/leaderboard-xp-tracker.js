@@ -320,6 +320,8 @@ class LeaderboardXPTracker {
         });
         /** The one-time legacy purge is between deleting series from memory and landing the overwrite */
         this._purgePending = false;
+        /** Consumers drawing from the history, told when a pull changed it */
+        this._pullListeners = new Set();
         this.lastLeaderboardCategory = null;
         this.lastFilterKey = 'all';
         /** The trial the last message showed; the readers' default for the trial board */
@@ -341,7 +343,41 @@ class LeaderboardXPTracker {
      */
     async _refreshFromPull() {
         if (!this.initialized || this._purgePending) return;
-        await this.history.load();
+        const before = this._signature();
+        if (!(await this.history.load()) || this._signature() === before) return;
+        for (const listener of [...this._pullListeners]) {
+            try {
+                listener();
+            } catch (error) {
+                console.error('[LeaderboardXPTracker] A pull listener threw:', error);
+            }
+        }
+    }
+
+    /**
+     * Cheap fingerprint of the history (series, samples, newest times), to tell whether a load changed it.
+     * @returns {string}
+     */
+    _signature() {
+        let samples = 0;
+        let newest = 0;
+        const map = this.history.get();
+        for (const series of Object.values(map)) {
+            if (!Array.isArray(series)) continue;
+            samples += series.length;
+            newest += Number(series[series.length - 1]?.t ?? series[series.length - 1]?.at) || 0;
+        }
+        return `${Object.keys(map).length}|${samples}|${newest}`;
+    }
+
+    /**
+     * Be told when a sync pull brought readings in, so an open leaderboard or the cycle bar can redraw.
+     * @param {() => void} listener - Called after the history changed
+     * @returns {() => void} Unsubscribe
+     */
+    onPulledHistory(listener) {
+        this._pullListeners.add(listener);
+        return () => this._pullListeners.delete(listener);
     }
 
     async initialize() {

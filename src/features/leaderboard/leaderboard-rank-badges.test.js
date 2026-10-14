@@ -21,10 +21,20 @@ const game = vi.hoisted(() => ({
     spriteGate: null,
     // Steam board type -> {category: last recorded ms}, what the XP tracker reports
     recorded: {},
+    // Listeners for a sync pull that brought XP readings in
+    pullListeners: [],
 }));
 
 vi.mock('./leaderboard-xp-tracker.js', () => ({
-    leaderboardXPTracker: { getBoardRecordTimes: (type) => game.recorded[type] ?? {} },
+    leaderboardXPTracker: {
+        getBoardRecordTimes: (type) => game.recorded[type] ?? {},
+        onPulledHistory: (listener) => {
+            game.pullListeners.push(listener);
+            return () => {
+                game.pullListeners = game.pullListeners.filter((fn) => fn !== listener);
+            };
+        },
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -135,6 +145,7 @@ describe('leaderboard rank badges', () => {
         game.requests = [];
         game.spriteGate = null;
         game.recorded = {};
+        game.pullListeners = [];
         game.response = { status: 200, text: serverBody('standard', [{ characterName: 'Alice', rank: 3 }]) };
         document.body.innerHTML = '';
         document.head.innerHTML = '';
@@ -414,6 +425,17 @@ describe('leaderboard rank badges', () => {
         }
 
         expect(leaderboardRankBadges.boards['standard|milking'].rows).toEqual([['Alice', 7]]);
+    });
+
+    test('the cycle bar is redrawn when a pull brings XP readings in', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const redraw = vi.spyOn(leaderboardRankBadges, 'refreshCycleBars').mockImplementation(() => {});
+        game.pullListeners.forEach((listener) => listener());
+        expect(redraw).toHaveBeenCalledTimes(1);
+        redraw.mockRestore();
+        leaderboardRankBadges.cleanup();
+        expect(game.pullListeners).toHaveLength(0);
     });
 
     test('a pull of some other key, or with the feature off, changes nothing', async () => {
