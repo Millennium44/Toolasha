@@ -41,6 +41,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A Market History import that hits a storage failure now ends fully undone instead of half-applied; resetting one treasure chest no longer drops other chests' counts a sync pull brought in; bulk sell won't press a disabled vendor or confirm button; Tester-shop +10 equipment is no longer priced as a +0 alchemy base; and the loot log now values a task token with its Task Point gift share, matching the task profit display.
 
+### Alchemy Best Items: chain figures explained, and an own-stock chain sort
+
+- Hovering a Decompose chain/hr figure now shows what it assumes (buying at the ask now, selling outputs at bid) and how it adds up, and a new "Chain/hr (own stock)" sort ranks the items you hold the way their tooltips do, so a chain the tooltip calls profitable for your stock is no longer missing from the list.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
