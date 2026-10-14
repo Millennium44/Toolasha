@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
-import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
+import { onSyncPullApplied, registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 const STORE_NAME = 'networthHistory';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -411,6 +411,49 @@ class NetworthHistory {
     }
 
     /**
+     * Take in the detail snapshots a sync pull wrote for this character. The keys are live-safe, so the pull
+     * lands under the running page; this is what makes the 24h diff and the gold-sources window see them.
+     * Deduped by timestamp, kept sorted and held to the same window as a snapshot taken here. Read after an
+     * await, so the character is checked again before anything is merged.
+     * @param {Record<string, Array<string>>} written - The pull's keys, by store
+     * @returns {Promise<void>}
+     */
+    async _adoptPulledDetails(written) {
+        const characterId = this.characterId;
+        const keys = written?.[STORE_NAME];
+        if (!characterId || !Array.isArray(keys)) return;
+        const prefix = `${DETAIL_PREFIX}_${characterId}_`;
+        const mine = keys.filter((key) => typeof key === 'string' && key.startsWith(prefix));
+        if (mine.length === 0) return;
+        const generation = this._generation;
+        let records;
+        try {
+            records = await storage.getMany(mine, STORE_NAME);
+        } catch (error) {
+            console.error('[NetworthHistory] Reading pulled detail snapshots failed:', error);
+            return;
+        }
+        if (this._generation !== generation || this.characterId !== characterId) return;
+        const have = new Set(this.detailHistory.map((snapshot) => snapshot.t));
+        const added = [];
+        for (const key of mine) {
+            const snapshot = records.get(key);
+            if (snapshot && typeof snapshot.t === 'number' && !have.has(snapshot.t)) {
+                have.add(snapshot.t);
+                added.push(snapshot);
+            }
+        }
+        if (added.length === 0) return;
+        this.detailHistory = [...this.detailHistory, ...added].sort((a, b) => a.t - b.t);
+        if (this.detailHistory.length > MAX_DETAIL_SNAPSHOTS) {
+            const dropped = this.detailHistory.splice(0, this.detailHistory.length - MAX_DETAIL_SNAPSHOTS);
+            for (const old of dropped) {
+                storage.delete(this._detailKey(old.t), STORE_NAME);
+            }
+        }
+    }
+
+    /**
      * Take in the points a sync pull brought for this character, which the store has already adopted.
      * Merged into the array as it stands now, never swapped for a re-read one, so a point recorded since
      * the pull started is kept.
@@ -629,6 +672,7 @@ class NetworthHistory {
 }
 
 const networthHistory = new NetworthHistory();
+onSyncPullApplied((written) => networthHistory._adoptPulledDetails(written));
 seriesStore.onRefreshed?.((charId, points, removed) => networthHistory._adoptPulled(charId, points, removed));
 
 export default networthHistory;

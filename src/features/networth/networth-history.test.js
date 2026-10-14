@@ -36,7 +36,8 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/connection-state.js', () => ({ default: { isConnected: () => true } }));
 
 const { default: networthHistory, pruneHistory, seriesStore } = await import('./networth-history.js');
-const { retentionDrops, mergeForKey, isLiveSafeKey } = await import('../../utils/sync-merge-registry.js');
+const { retentionDrops, mergeForKey, isLiveSafeKey, announceSyncPullApplied } =
+    await import('../../utils/sync-merge-registry.js');
 
 const HOUR = 3_600_000;
 
@@ -648,5 +649,52 @@ describe('a deletion a sync pull brought', () => {
         networthHistory._adoptPulled('char-1', [], [gone]);
 
         expect(networthHistory.history).toEqual([keep]);
+    });
+});
+
+describe('detail snapshots a sync pull wrote', () => {
+    const snap = (t) => ({ t, items: { a: { count: 1, value: t } } });
+    const settle = () => vi.advanceTimersByTimeAsync(0);
+    const serve = (records) =>
+        storageMock.getMany.mockImplementation(async (keys) => new Map(keys.map((key) => [key, records[key] ?? null])));
+
+    test('join the window the 24h diff reads, deduped, sorted and held to the window', async () => {
+        networthHistory.detailHistory = [snap(10), snap(30)];
+        serve({ networthDetail_char1_20: snap(20), networthDetail_char1_30: snap(30) });
+        networthHistory.characterId = 'char1';
+
+        announceSyncPullApplied({ networthHistory: ['networthDetail_char1_20', 'networthDetail_char1_30'] });
+        await settle();
+
+        expect(networthHistory.detailWindow().map((entry) => entry.t)).toEqual([10, 20, 30]);
+        expect(networthHistory.getDetailSnapshot(19).t).toBe(20);
+    });
+
+    test('push the oldest out past the window and delete its key', async () => {
+        networthHistory.characterId = 'char1';
+        networthHistory.detailHistory = Array.from({ length: 25 }, (_, i) => snap(100 + i));
+        serve({ networthDetail_char1_500: snap(500) });
+
+        announceSyncPullApplied({ networthHistory: ['networthDetail_char1_500'] });
+        await settle();
+
+        expect(networthHistory.detailHistory).toHaveLength(25);
+        expect(networthHistory.detailHistory.at(-1).t).toBe(500);
+        expect(storageMock.delete).toHaveBeenCalledWith('networthDetail_char1_100', 'networthHistory');
+    });
+
+    test('are ignored for another character, and when the character left during the read', async () => {
+        networthHistory.characterId = 'char1';
+        networthHistory.detailHistory = [];
+        serve({ networthDetail_char2_5: snap(5), networthDetail_char1_6: snap(6) });
+
+        announceSyncPullApplied({ networthHistory: ['networthDetail_char2_5'] });
+        await settle();
+        expect(networthHistory.detailHistory).toEqual([]);
+
+        announceSyncPullApplied({ networthHistory: ['networthDetail_char1_6'] });
+        networthHistory.disable();
+        await settle();
+        expect(networthHistory.detailHistory).toEqual([]);
     });
 });
