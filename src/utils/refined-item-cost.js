@@ -102,6 +102,8 @@ function defaultPriceBase(itemHrid) {
  * @param {Function} [options.priceMaterial] - (hrid) => number|null, buy-side unit price of a material
  * @param {Function} [options.priceBase] - (hrid) => number|null, acquisition price of a tradable base
  * @param {Function} [options.getItemName] - (hrid) => string, for breakdown lines
+ * @param {boolean} [options.includeBase=true] - False when the caller already holds the base item, so
+ *   only the materials and coins are priced
  * @returns {{cost: number, baseNote: string|null, lines: string[]}|null} Craft cost, or null when not resolvable
  */
 export function computeRefinementCraftCost(itemHrid, options = {}) {
@@ -109,6 +111,7 @@ export function computeRefinementCraftCost(itemHrid, options = {}) {
         priceMaterial = defaultPriceMaterial,
         priceBase = defaultPriceBase,
         getItemName = defaultItemName,
+        includeBase = true,
     } = options;
 
     const action = findRefinementAction(itemHrid);
@@ -136,7 +139,7 @@ export function computeRefinementCraftCost(itemHrid, options = {}) {
     }
 
     let baseNote = null;
-    if (action.upgradeItemHrid) {
+    if (includeBase && action.upgradeItemHrid) {
         const baseDetails = dataManager.getInitClientData()?.itemDetailMap?.[action.upgradeItemHrid];
         if (baseDetails?.isTradable !== true) {
             // The capes' bases are vendor items you bring yourself — no

@@ -30,6 +30,7 @@ import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
+import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
@@ -2776,6 +2777,12 @@ export const COST_SOURCES = {
             'Cannot be bought at any level, so this is the expected cost of enhancing a copy you hold ' +
             'up to the target — an estimate over a random process, not a quote.',
     },
+    refine: {
+        label: 'refine',
+        title:
+            'Refine a copy you hold into the ★ version: the refinement materials at their buy price, plus ' +
+            'enhancing only from the held level to the target. Enhancement levels transfer.',
+    },
     craft: {
         label: 'craft',
         title: 'No market listing, so the price is what the materials to make it come to.',
@@ -2789,7 +2796,7 @@ export const COST_SOURCES = {
 };
 
 /** Cost bases in descending order of how much a reader should trust them */
-const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'sim', 'enhance', 'ongoing'];
+const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'refine', 'sim', 'enhance', 'ongoing'];
 
 /**
  * The weakest basis among several, since a total is only as solid as its
@@ -2804,6 +2811,99 @@ function weakestCostSource(sources) {
         if (worst === null || COST_SOURCE_RANK.indexOf(source) > COST_SOURCE_RANK.indexOf(worst)) worst = source;
     }
     return worst;
+}
+
+/**
+ * The lowest level at which a base item can be refined into its ★ version. The
+ * game's recipe data does not carry it (the crafting panel shows it as
+ * "Upgrades From <item> +5"), so it is a constant here; a held copy below it
+ * falls back to the ordinary price instead of a refine route.
+ */
+export const MIN_REFINE_BASE_LEVEL = 5;
+
+/**
+ * Price a ★ target by refining a copy of its base that the character holds.
+ *
+ * Refining keeps every enhancement level ("All enhancement levels transferred"),
+ * so a base at or above the target costs only the refinement materials, and a
+ * lower base costs those plus enhancing the ★ item from the base's level to the
+ * target. Every held base copy at or above {@link MIN_REFINE_BASE_LEVEL} is a
+ * candidate and the cheapest wins. The ordinary route (read by the ★ hrid) never
+ * sees these copies, which is why a held base used to be priced as "no spare
+ * copy, fresh base".
+ *
+ * @param {string} itemHrid - Refined (★) item HRID
+ * @param {number} targetLevel - Level the row asks for
+ * @param {Object} gameData - Game data payload
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the live character's copies apply
+ * @returns {{price: number, source: string, enhanceSource: Object|undefined, ladder: Object}|null}
+ *   The refine price, or null when no held base can be refined
+ */
+function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true } = {}) {
+    if (!isSelf || !itemHrid?.endsWith('_refined')) return null;
+    const baseHrid = findRefinementAction(itemHrid)?.upgradeItemHrid;
+    if (!baseHrid) return null;
+
+    const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
+    const copies = copiesForPricing(baseHrid, { isSelf }).filter(
+        (copy) => !copy.equipped && copy.level >= MIN_REFINE_BASE_LEVEL
+    );
+    if (!copies.length) return null;
+
+    const materials = computeRefinementCraftCost(itemHrid, { includeBase: false });
+    if (!materials) return null;
+
+    let best = null;
+    for (const copy of copies) {
+        const enhance =
+            target > copy.level ? calculateDirectEnhancementCost(itemHrid, copy.level, target, gameData) : 0;
+        if (enhance == null) continue;
+        const price = materials.cost + Math.max(0, enhance);
+        if (!best || price < best.price) best = { price, copy, enhance: Math.max(0, enhance) };
+    }
+    if (!best) return null;
+
+    const toLevel = Math.max(target, best.copy.level);
+    return {
+        price: best.price,
+        source: 'refine',
+        enhanceSource: best.enhance > 0 ? describeEnhancementSource(enhancementSweepParams(itemHrid)) : undefined,
+        ladder: {
+            fromLevel: best.copy.level,
+            toLevel,
+            fresh: false,
+            alreadyHeld: false,
+            fromEquipped: best.copy.equipped,
+            isSelf: true,
+            baseCost: 0,
+            refine: {
+                baseHrid,
+                materialCost: materials.cost,
+                enhanceCost: best.enhance,
+                lines: materials.lines,
+            },
+        },
+    };
+}
+
+/**
+ * Resolve the buy price of an item at a given enhancement level: the cheaper of
+ * refining a held base copy ({@link resolveRefineRoute}) and the ordinary route.
+ * See {@link resolveUpgradeBuyPriceDirect} for the ordinary route's rules.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Target enhancement level
+ * @param {Object} gameData - Game data payload
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the row is the live character's
+ * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined,
+ *   ladder: Object|undefined}} Buy price in gold, its basis, and the copy it was derived from
+ */
+function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = {}) {
+    const direct = resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, options);
+    const refine = resolveRefineRoute(itemHrid, enhancementLevel, gameData, options);
+    if (refine && (direct.price == null || refine.price < direct.price)) return refine;
+    return direct;
 }
 
 /**
@@ -2822,7 +2922,7 @@ function weakestCostSource(sources) {
  *   ladder: Object|undefined}} Buy price in gold, its basis, whose enhancing stats a sweep ran
  *   on, and for a self-enhanced item the copy it was laddered from
  */
-function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, { isSelf = true } = {}) {
+function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { isSelf = true } = {}) {
     // Tester shop first, when it is a price source: the shop copy at its
     // level, or that copy mirrored up — see tester-shop.js
     if (testerShopEnabled()) {

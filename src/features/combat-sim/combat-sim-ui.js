@@ -853,6 +853,18 @@ export function upgradeCostCell(result) {
  */
 function ladderSentence(ladder, total = null) {
     if (!ladder) return '';
+    if (ladder.refine) {
+        const where = ladder.fromEquipped ? 'the one you are wearing' : 'your spare';
+        const enhance =
+            ladder.refine.enhanceCost > 0
+                ? `, then enhance the star item +${ladder.fromLevel} to +${ladder.toLevel} for ` +
+                  `${formatKMB(ladder.refine.enhanceCost)}`
+                : '';
+        return (
+            `Refine ${where} +${ladder.fromLevel} (all levels transfer): ` +
+            `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}${enhance}.`
+        );
+    }
     if (ladder.alreadyHeld) {
         return `You already hold a spare at +${ladder.fromLevel}, which meets +${ladder.toLevel}.`;
     }
@@ -1875,7 +1887,8 @@ export function upgradeRowPurchase(result) {
             ? {
                   fromLevel: Number.isFinite(ladder?.fromLevel) ? ladder.fromLevel : null,
                   toLevel: targetLevel,
-                  isSelf: ladder?.isSelf !== false,
+                  // A refine is done at the crafting panel, not the Enhancing screen
+                  isSelf: ladder?.isSelf !== false && !ladder?.refine,
               }
             : null;
 
