@@ -66,6 +66,18 @@ import {
     describeTokenOverrides,
 } from './lab-token-buffs.js';
 import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
+import {
+    MAX_SWAP_LEVEL,
+    MAX_QUEUED_SWAPS,
+    buildCombatSwapCandidate,
+    checkedSwapKey,
+    clampSwapLevel,
+    describeCheckedSwap,
+    evaluateSkillingSwaps,
+    resolveEquipmentHrid,
+    sanitizeSwapQueues,
+    searchEquipmentItems,
+} from './lab-swap-check.js';
 import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } from './skilling-sim-helpers.js';
 // The upgrade-row vocabulary — what a row would have you buy, and the handoff
 // buttons for it — belongs to the combat sim panel; a labyrinth pick is the same
@@ -107,6 +119,7 @@ import {
     annotateRoomsReached,
     mergeMultiSkillGearRows,
     renderPlanHtml,
+    applySkillingCandidate,
     renderSkillBreakdownHtml,
     skillBreakdown,
     shortlistSkillingForRoomLevels,
@@ -141,6 +154,12 @@ const LAB_UPGRADE_RESULTS_KEY = 'labSimUpgradeResults-fullkit';
 /** Floor sizes the resize grips will not take the panel below. */
 const MIN_PANEL_WIDTH = 400;
 const MIN_PANEL_HEIGHT = 300;
+
+/**
+ * The swaps queued under "Check a swap", per tab: `{ combat: [{hrid, level}], skilling: [...] }`.
+ * Per character, since what is worth checking depends on what that character wears.
+ */
+const CHECKED_SWAPS_KEY = 'labSimCheckedSwaps';
 
 /** Which candidate sets the Upgrade tab has checked. */
 const UPGRADE_DIMENSIONS_KEY = 'labSimUpgradeDimensions';
@@ -683,6 +702,11 @@ class LabSimUI {
         this._skillingAnalysis = null;
         this._skillingChecked = [];
         this._skillingGoalKey = null;
+        // The "Check a swap" queues, one per tab, and the sort the checked combat
+        // table is in (kept apart from the generated table's)
+        this._checkedSwaps = { combat: [], skilling: [] };
+        this._checkedSwapSort = null;
+        this._skillingSwapSortHandler = null;
         this._skillLoadouts = {};
         /**
          * The scoped key `_skillLoadouts` was read from, i.e. whose loadout
@@ -1143,6 +1167,16 @@ class LabSimUI {
             </div>
         `;
 
+        // "Check a swap": a piece chosen by hand, run through the same analysis as
+        // the generated rows. Its table sits above theirs and is not cleared by
+        // an Analyze run, so a checked swap stays put while the generated list
+        // is re-run beside it.
+        const swapBarCombat = this._buildSwapBar('combat');
+        const swapResultsCombat = document.createElement('div');
+        swapResultsCombat.id = 'mwi-labsim-swap-results';
+        swapResultsCombat.style.cssText =
+            'display:none; flex-shrink:0; max-height:45%; overflow-y:auto; padding:10px 14px;';
+
         const upgradeResults = document.createElement('div');
         upgradeResults.id = 'mwi-labsim-upgrade-results';
         upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
@@ -1154,7 +1188,9 @@ class LabSimUI {
         upgradeContent.appendChild(labCombatTargets);
         upgradeContent.appendChild(labHouseTargets);
         upgradeContent.appendChild(labShrineTargets);
+        upgradeContent.appendChild(swapBarCombat);
         upgradeContent.appendChild(upgradeProgress);
+        upgradeContent.appendChild(swapResultsCombat);
         upgradeContent.appendChild(upgradeResults);
 
         // ── Skilling tab ──
@@ -1330,6 +1366,11 @@ class LabSimUI {
             </div>
         `;
 
+        const swapBarSkilling = this._buildSwapBar('skilling');
+        const swapResultsSkilling = document.createElement('div');
+        swapResultsSkilling.id = 'mwi-labsim-skilling-swap-results';
+        swapResultsSkilling.style.cssText = 'display:none; padding:10px 14px; flex-shrink:0;';
+
         const skillingResults = document.createElement('div');
         skillingResults.id = 'mwi-labsim-skilling-results';
         skillingResults.style.cssText = 'padding:10px 14px; flex-shrink:0;';
@@ -1344,7 +1385,9 @@ class LabSimUI {
         skillingContent.appendChild(skillingCrateRow);
         skillingContent.appendChild(skillingLoadoutArea);
         skillingContent.appendChild(skillingEditorSection);
+        skillingContent.appendChild(swapBarSkilling);
         skillingContent.appendChild(skillingProgress);
+        skillingContent.appendChild(swapResultsSkilling);
         skillingContent.appendChild(skillingResults);
         skillingContent.appendChild(skillingGoalResults);
 
@@ -1554,6 +1597,8 @@ class LabSimUI {
         void this._restoreUpgradeSelection();
         void this._restoreTokenBuffLevels();
         void this._restoreUpgradeResults();
+        this._wireSwapBars();
+        void this._restoreCheckedSwaps();
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -2943,6 +2988,459 @@ class LabSimUI {
             maxResult.cleared
                 ? `Max beatable level: ${maxResult.maxLevel} (${(maxResult.winRate * 100).toFixed(1)}% win rate).`
                 : `No room cleared at ${barPct}% between levels ${maxResult.minLevel} and ${maxResult.maxSearched}.`
+        );
+    }
+
+    /**
+     * The "Check a swap" row for one tab: an item box with suggestions, a level,
+     * Add, Check, and the chips of what is queued.
+     *
+     * The same row on both tabs, told apart by the suffix on its ids.
+     *
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @returns {HTMLElement}
+     * @private
+     */
+    _buildSwapBar(kind) {
+        const bar = document.createElement('div');
+        bar.id = `mwi-labsim-swap-bar-${kind}`;
+        bar.style.cssText = 'padding:6px 14px; border-bottom:1px solid #222; flex-shrink:0;';
+        const inputStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+        const buttonStyle =
+            'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; ' +
+            'padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;';
+        const what =
+            kind === 'combat'
+                ? 'Put any piece of equipment, at the level you choose, into every fight loadout that uses its slot, ' +
+                  'and see what it does. Owned or not. Add queues it; Check runs the queue with this tab’s ' +
+                  'precision, hours and target scope.'
+                : 'Put any piece of equipment, at the level you choose, into every skill kit that can feel it, and see ' +
+                  'what it does to the clear rate. Owned or not. Add queues it; Check runs the queue.';
+        bar.innerHTML = `
+            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;">
+                <span style="color:${ACCENT}; font-weight:700; font-size:12px;" title="${escapeHtmlAttribute(what)}">Check a swap</span>
+                <input id="mwi-labsim-swap-item-${kind}" list="mwi-labsim-swap-items-${kind}" type="text" autocomplete="off"
+                    placeholder="Item name, e.g. Sinister Cape" style="${inputStyle} width:210px; max-width:100%;">
+                <datalist id="mwi-labsim-swap-items-${kind}"></datalist>
+                <span style="color:#888; font-size:12px;">+</span>
+                <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${MAX_SWAP_LEVEL}" step="1"
+                    placeholder="Lv" title="Enhancement level to check" style="${inputStyle} width:46px; text-align:center;">
+                <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
+                <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
+                <span id="mwi-labsim-swap-note-${kind}" style="color:#666; font-size:11px;"></span>
+            </div>
+            <div id="mwi-labsim-swap-chips-${kind}" style="display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:4px;"></div>
+        `;
+        return bar;
+    }
+
+    /**
+     * Wire both "Check a swap" rows.
+     * @private
+     */
+    _wireSwapBars() {
+        for (const kind of ['combat', 'skilling']) {
+            const item = this.panel.querySelector(`#mwi-labsim-swap-item-${kind}`);
+            const level = this.panel.querySelector(`#mwi-labsim-swap-level-${kind}`);
+            item?.addEventListener('input', () => this._fillSwapSuggestions(kind));
+            for (const box of [item, level]) {
+                box?.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter') this._onAddSwap(kind);
+                });
+            }
+            this.panel
+                .querySelector(`#mwi-labsim-swap-add-${kind}`)
+                ?.addEventListener('click', () => this._onAddSwap(kind));
+            this.panel
+                .querySelector(`#mwi-labsim-swap-check-${kind}`)
+                ?.addEventListener('click', () =>
+                    kind === 'combat' ? this._onCheckSwapsCombat() : this._onCheckSwapsSkilling()
+                );
+            this.panel.querySelector(`#mwi-labsim-swap-chips-${kind}`)?.addEventListener('click', (event) => {
+                const remove = event.target.closest('[data-swap-remove]');
+                if (!remove) return;
+                this._checkedSwaps[kind] = this._checkedSwaps[kind].filter(
+                    (swap) => checkedSwapKey(swap) !== remove.dataset.swapRemove
+                );
+                this._renderSwapChips(kind);
+                void this._saveCheckedSwaps();
+            });
+        }
+    }
+
+    /**
+     * Say something beside a "Check a swap" row.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @param {string} text - The note, empty to clear it
+     * @param {boolean} [isError=false] - Draw it as a problem
+     * @private
+     */
+    _setSwapNote(kind, text, isError = false) {
+        const note = this.panel?.querySelector(`#mwi-labsim-swap-note-${kind}`);
+        if (!note) return;
+        note.textContent = text;
+        note.style.color = isError ? '#ff9800' : '#666';
+    }
+
+    /**
+     * Fill the item box's suggestion list from what has been typed.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @private
+     */
+    _fillSwapSuggestions(kind) {
+        const list = this.panel?.querySelector(`#mwi-labsim-swap-items-${kind}`);
+        const typed = this.panel?.querySelector(`#mwi-labsim-swap-item-${kind}`)?.value;
+        if (!list) return;
+        const gameData = buildGameDataPayload();
+        const matches = gameData ? searchEquipmentItems(gameData, typed, 30) : [];
+        list.innerHTML = matches
+            .map(
+                (item) =>
+                    `<option value="${escapeHtmlAttribute(item.name)}" label="${escapeHtmlAttribute(
+                        item.slot.replace('/equipment_types/', '').replace(/_/g, ' ')
+                    )}"></option>`
+            )
+            .join('');
+    }
+
+    /**
+     * Queue the typed swap.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @private
+     */
+    _onAddSwap(kind) {
+        const itemBox = this.panel?.querySelector(`#mwi-labsim-swap-item-${kind}`);
+        const levelBox = this.panel?.querySelector(`#mwi-labsim-swap-level-${kind}`);
+        if (!itemBox) return;
+        const gameData = buildGameDataPayload();
+        const hrid = gameData ? resolveEquipmentHrid(gameData, itemBox.value) : null;
+        if (!hrid) {
+            this._setSwapNote(
+                kind,
+                itemBox.value.trim()
+                    ? 'No single piece of equipment matches. Pick one from the suggestions.'
+                    : 'Type an item name first.',
+                true
+            );
+            return;
+        }
+        const swap = { hrid, level: clampSwapLevel(levelBox?.value) };
+        const queue = this._checkedSwaps[kind];
+        if (queue.some((queued) => checkedSwapKey(queued) === checkedSwapKey(swap))) {
+            this._setSwapNote(kind, 'Already queued.', true);
+            return;
+        }
+        if (queue.length >= MAX_QUEUED_SWAPS) {
+            this._setSwapNote(kind, `At most ${MAX_QUEUED_SWAPS} swaps at a time. Remove one first.`, true);
+            return;
+        }
+        queue.push(swap);
+        itemBox.value = '';
+        this._fillSwapSuggestions(kind);
+        this._setSwapNote(kind, '');
+        this._renderSwapChips(kind);
+        void this._saveCheckedSwaps();
+    }
+
+    /**
+     * Draw the queued swaps as removable chips.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @private
+     */
+    _renderSwapChips(kind) {
+        const box = this.panel?.querySelector(`#mwi-labsim-swap-chips-${kind}`);
+        if (!box) return;
+        const gameData = buildGameDataPayload();
+        box.innerHTML = this._checkedSwaps[kind]
+            .map(
+                (swap) =>
+                    `<span data-swap-chip="${escapeHtmlAttribute(checkedSwapKey(swap))}" style="display:inline-flex; ` +
+                    `align-items:center; gap:4px; padding:1px 6px; border:1px solid ${ACCENT_BTN_BORDER}; ` +
+                    `border-radius:10px; background:${ACCENT_BTN_BG}; color:${ACCENT}; font-size:11px;">` +
+                    `${escapeHtmlAttribute(describeCheckedSwap(swap, gameData))}` +
+                    `<button data-swap-remove="${escapeHtmlAttribute(checkedSwapKey(swap))}" title="Remove" ` +
+                    `style="background:transparent; border:none; color:${ACCENT}; cursor:pointer; padding:0 2px; ` +
+                    `font-size:12px; line-height:1;">×</button></span>`
+            )
+            .join('');
+    }
+
+    /**
+     * Remember the queues for this character.
+     * @private
+     */
+    async _saveCheckedSwaps() {
+        try {
+            await writeScoped(CHECKED_SWAPS_KEY, JSON.parse(JSON.stringify(this._checkedSwaps)), 'settings');
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save checked swaps:', error);
+        }
+    }
+
+    /**
+     * Bring this character's queues back, unless one has already been started by
+     * hand while the read was in flight.
+     * @private
+     */
+    async _restoreCheckedSwaps() {
+        const ownerId = dataManager.getCurrentCharacterId();
+        let saved = null;
+        try {
+            saved = await readScoped(CHECKED_SWAPS_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[LabSimUI] Failed to restore checked swaps:', error);
+            return;
+        }
+        if (!this.panel || !this._stillSameCharacter(ownerId)) return;
+        const restored = sanitizeSwapQueues(saved);
+        for (const kind of ['combat', 'skilling']) {
+            if (!this._checkedSwaps[kind].length) this._checkedSwaps[kind] = restored[kind];
+            this._renderSwapChips(kind);
+        }
+    }
+
+    /**
+     * Check the queued swaps against the Upgrade tab's fights.
+     *
+     * The same analysis the generated rows go through, over the same fights (the
+     * target scope the tab is set to), with the same precision, hours, crates and
+     * community buffs; the only difference is that the candidates are the queued
+     * swaps instead of generated ones, each reaching every loadout that has a use
+     * for its slot.
+     * @private
+     */
+    async _onCheckSwapsCombat() {
+        if (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning) return;
+        const queue = this._checkedSwaps.combat.slice();
+        if (!queue.length) {
+            this._setSwapNote('combat', 'Add a swap to check first.', true);
+            return;
+        }
+        this._upgradeRunning = true;
+        const ownerId = dataManager.getCurrentCharacterId();
+        const resultsEl = this.panel.querySelector('#mwi-labsim-swap-results');
+        const progressEl = this.panel.querySelector('#mwi-labsim-upgrade-progress');
+        const runBtn = this.panel.querySelector('#mwi-labsim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-labsim-upgrade-stop');
+        const checkBtn = this.panel.querySelector('#mwi-labsim-swap-check-combat');
+        const finish = () => {
+            if (progressEl) progressEl.style.display = 'none';
+            if (runBtn) runBtn.style.display = '';
+            if (stopBtn) stopBtn.style.display = 'none';
+            if (checkBtn) checkBtn.disabled = false;
+            this._upgradeRunning = false;
+        };
+
+        try {
+            const gameData = buildGameDataPayload();
+            if (!gameData) {
+                this._setStatus('No game data available.');
+                return;
+            }
+
+            // The fights the tab's scope names. `equipment` is only asked of the
+            // planner so it will name the fights; nothing is generated from it
+            const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+            const allFights = this._collectLabyrinthFights(useSkipLevels);
+            const plan = planLabUpgradeRun({
+                dimensions: ['equipment'],
+                scopeMode: this._getUpgradeScopeMode(),
+                chosenMonsters: this._getChosenTargets(),
+                allMonsters: allFights.map((fight) => fight.monsterHrid),
+                configureMonsterHrid: this.panel.querySelector('#mwi-labsim-monster')?.value || '',
+            });
+            if (plan.kind === 'none') {
+                this._setStatus(plan.error);
+                return;
+            }
+            const chosen = new Set(plan.monsterHrids);
+            const fights = allFights.filter((fight) => chosen.has(fight.monsterHrid));
+            if (!fights.length) {
+                this._setStatus(
+                    'No labyrinth fights found. Set combat skip levels in the game (or enter the labyrinth) so fights have room levels.'
+                );
+                return;
+            }
+
+            const candidates = [];
+            const unreached = [];
+            for (const swap of queue) {
+                const candidate = buildCombatSwapCandidate(
+                    swap,
+                    fights.map((fight) => fight.dto),
+                    gameData
+                );
+                if (candidate && candidate.reach > 0) candidates.push(candidate);
+                else unreached.push(swap);
+            }
+            if (!candidates.length) {
+                resultsEl.style.display = 'none';
+                this._setStatus(
+                    `Not in any loadout: ${unreached.map((swap) => describeCheckedSwap(swap, gameData)).join(', ')}.`
+                );
+                return;
+            }
+
+            // Stopping rules as the generated run reads them
+            const uncapped = this.panel.querySelector('#mwi-labsim-upgrade-uncapped')?.checked;
+            const maxHours = Math.max(
+                1,
+                parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || DEFAULT_LAB_SIM_MAX_HOURS
+            );
+            const precision = {
+                targetHalfWidth:
+                    Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1)))) / 100,
+                minTrials: 100,
+                maxTrials: uncapped ? Number.MAX_SAFE_INTEGER : LAB_SIM_MAX_FIGHTS,
+            };
+
+            if (progressEl) progressEl.style.display = 'block';
+            if (runBtn) runBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'inline-block';
+            if (checkBtn) checkBtn.disabled = true;
+            this._upgradeAborted = false;
+            const eta = createEtaTracker();
+            this._setStatus(
+                `Checking ${candidates.length} swap${candidates.length === 1 ? '' : 's'} across ${fights.length} fights. Stop cancels at any point.`
+            );
+
+            const analysisResult = await runLabyrinthAllFightsAnalysis(
+                {
+                    fights,
+                    crates: this.getSelectedCrates(),
+                    hours: uncapped ? 1e6 : maxHours,
+                    precision,
+                    communityBuffs: getCommunityBuffs(),
+                    labyrinthCombatBuffs: this._labyrinthCombatBuffs(),
+                    modes: [],
+                    extraCandidates: candidates,
+                },
+                ({ current, total, description }) => {
+                    if (this._upgradeAborted) return;
+                    const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
+                    const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
+                    const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+                    if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                    if (text) {
+                        text.textContent =
+                            `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                    }
+                },
+                { abortSignal: () => this._upgradeAborted }
+            );
+
+            if (!this.panel || this._upgradeAborted || !this._stillSameCharacter(ownerId)) return;
+            if (!analysisResult?.baseline || !analysisResult.results?.length) {
+                resultsEl.style.display = 'none';
+                this._setStatus('Checking the swaps produced no results.');
+                return;
+            }
+            resultsEl.style.display = 'block';
+            this._renderAllFightsResults(analysisResult, resultsEl, { checked: true });
+            this._setStatus(
+                `Checked ${analysisResult.results.length} swap${analysisResult.results.length === 1 ? '' : 's'} across ${fights.length} fights` +
+                    (unreached.length
+                        ? `. Not in any loadout: ${unreached.map((swap) => describeCheckedSwap(swap, gameData)).join(', ')}`
+                        : '') +
+                    '.'
+            );
+        } catch (error) {
+            if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
+                console.error('[LabSimUI] Checking swaps failed:', error);
+                this._setStatus('Checking swaps failed: ' + error.message);
+            }
+        } finally {
+            finish();
+        }
+    }
+
+    /**
+     * Check the queued swaps on the Skilling tab: each one written into every
+     * skill kit that can feel it, measured the way the generated rows are.
+     * @private
+     */
+    async _onCheckSwapsSkilling() {
+        if (this._skillingRunning || this._upgradeRunning || this._runStarting || this.isRunning) return;
+        const queue = this._checkedSwaps.skilling.slice();
+        if (!queue.length) {
+            this._setSwapNote('skilling', 'Add a swap to check first.', true);
+            return;
+        }
+        const roomLevel = this._getSkillingRoomLevels();
+        const gameData = buildGameDataPayload();
+        if (!gameData) {
+            this._setStatus('No game data available.');
+            return;
+        }
+        const editedDTOs = this._skillingEditor?.getEditedDTOs();
+        if (!editedDTOs) {
+            this._setStatus('No character data. Wait for editor to load.');
+            return;
+        }
+        const dto = editedDTOs[this._skillingEditor.getSelfHrid()] || Object.values(editedDTOs)[0];
+        if (!dto) {
+            this._setStatus('No player data available.');
+            return;
+        }
+        const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
+        const skillEquipmentMap = this._scopeSkillEquipmentMap(
+            this._buildSkillEquipmentMap(gameData),
+            dto,
+            targetSkill,
+            gameData
+        );
+        const context = this._buildSkillingContext({
+            dto,
+            roomLevel,
+            crateHrids: this._getSkillingCrates(),
+            skillEquipmentMap,
+            targetSkill,
+            gameData,
+            analysisResult: null,
+        });
+        const resultsEl = this.panel.querySelector('#mwi-labsim-skilling-swap-results');
+
+        let measured = null;
+        await this._runSkillingTask(async (onProgress) => {
+            const abortSignal = () => this._skillingAborted;
+            measured = await evaluateSkillingSwaps({
+                swaps: queue,
+                baseSetup: context.baseSetup,
+                evaluate: context.evaluate,
+                applySetup: (setup, candidate) => applySkillingCandidate(setup, candidate, targetSkill),
+                roomLevel,
+                skills: context.skills,
+                gameData,
+                abortSignal,
+                onProgress,
+            });
+            if (abortSignal()) return;
+            await annotateRoomsReached({
+                rows: measured.rows,
+                baseSetup: context.baseSetup,
+                evaluate: context.evaluate,
+                roomLevel,
+                targetSkill,
+                abortSignal,
+            });
+        });
+        if (!measured || this._skillingAborted || !resultsEl || !this.panel?.contains(resultsEl)) return;
+
+        const unreached = measured.unreached.map((swap) => describeCheckedSwap(swap, gameData));
+        if (!measured.rows.length) {
+            resultsEl.style.display = 'none';
+            this._setStatus(`Not in any kit: ${unreached.join(', ')}.`);
+            return;
+        }
+        resultsEl.style.display = 'block';
+        this._renderSkillingUpgradeResults({ baseline: measured.baseline, results: measured.rows }, resultsEl, {
+            checked: true,
+        });
+        this._setStatus(
+            `Checked ${measured.rows.length} swap${measured.rows.length === 1 ? '' : 's'}` +
+                (unreached.length ? `. Not in any kit: ${unreached.join(', ')}` : '') +
+                '.'
         );
     }
 
@@ -4484,19 +4982,26 @@ class LabSimUI {
      * failed rooms), with a per-fight breakdown on click.
      * @private
      */
-    _renderAllFightsResults(analysisResult, container) {
+    _renderAllFightsResults(analysisResult, container, options = {}) {
+        // The "Checked swaps" table above the generated one: the same columns,
+        // sorting and per-fight breakdown, but no budget plan, no token section
+        // and no CSV or status line, which belong to the generated run
+        const checked = Boolean(options.checked);
         const baseline = analysisResult?.baseline;
         const results = analysisResult?.results;
         if (!baseline || !results?.length) {
-            container.innerHTML =
-                '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
-            this._setStatus('All-fights analysis produced no results.');
+            container.innerHTML = checked
+                ? ''
+                : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
+            if (!checked) this._setStatus('All-fights analysis produced no results.');
             return;
         }
 
         // Kept so a header click can re-render without re-running the analysis
-        this._allFightsResult = analysisResult;
-        this._allFightsContainer = container;
+        if (!checked) {
+            this._allFightsResult = analysisResult;
+            this._allFightsContainer = container;
+        }
 
         // Two currencies, two sections — the same split the Configure fight's
         // table makes. A token buff has no coin price at all, so it cannot share
@@ -4541,7 +5046,7 @@ class LabSimUI {
             rooms: { get: (r) => r.appliedFights ?? r.fights.length, dir: 'desc' },
             avgWinDelta: { get: (r) => r.avgWinDelta, dir: 'desc' },
         };
-        const sort = this._allFightsSort;
+        const sort = checked ? this._checkedSwapSort : this._allFightsSort;
         const sorted = goldResults.slice();
         if (sort && SORTS[sort.key]) {
             const { get } = SORTS[sort.key];
@@ -4562,7 +5067,9 @@ class LabSimUI {
             `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
             `${label}${arrow(key)}</th>`;
 
-        let html = this._renderBudgetPlan(goldResults, baseline);
+        let html = checked
+            ? `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Checked swaps</div>`
+            : this._renderBudgetPlan(goldResults, baseline);
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
@@ -4652,42 +5159,43 @@ class LabSimUI {
         });
 
         html += '</tbody></table>';
-        html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
+        if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
         container.innerHTML = html;
 
-        this._addCsvExport(container, 'labsim-all-fights', () => ({
-            columns: [
-                { key: 'upgrade', label: 'Upgrade' },
-                { key: 'cost', label: 'Cost' },
-                { key: 'perMillion', label: 'Attempts saved per 1M' },
-                { key: 'attempts', label: 'Expected attempts' },
-                { key: 'attemptsDelta', label: 'Change in attempts' },
-                { key: 'attemptsNoise', label: 'Change std error' },
-                { key: 'measured', label: 'Above noise' },
-                { key: 'roomsApplied', label: 'Rooms reached' },
-                { key: 'roomsTotal', label: 'Rooms total' },
-                { key: 'avgWinDelta', label: 'Avg win rate change' },
-                { key: 'tokenCost', label: 'Token cost' },
-            ],
-            // Raw numbers rather than the formatted cells: a spreadsheet cannot
-            // sort "1.2B" or sum "+0.32%". Both sections, since a spreadsheet
-            // has no trouble holding two currencies in two columns.
-            rows: [...sorted, ...tokenResults].map((r) => ({
-                upgrade: r.candidate?.description || '',
-                cost: r.cost ?? null,
-                // Infinity does not survive a spreadsheet; the credit-funded
-                // row's value figure is its (negative) cost column
-                perMillion: r.attemptsSavedPerMillion === Infinity ? null : (r.attemptsSavedPerMillion ?? null),
-                attempts: r.expectedAttempts,
-                attemptsDelta: r.attemptsDelta,
-                attemptsNoise: r.attemptsDeltaNoise ?? null,
-                measured: r.significant !== false,
-                roomsApplied: r.appliedFights ?? r.fights.length,
-                roomsTotal: r.fights.length,
-                avgWinDelta: r.avgWinDelta,
-                tokenCost: r.tokenCost ?? null,
-            })),
-        }));
+        if (!checked)
+            this._addCsvExport(container, 'labsim-all-fights', () => ({
+                columns: [
+                    { key: 'upgrade', label: 'Upgrade' },
+                    { key: 'cost', label: 'Cost' },
+                    { key: 'perMillion', label: 'Attempts saved per 1M' },
+                    { key: 'attempts', label: 'Expected attempts' },
+                    { key: 'attemptsDelta', label: 'Change in attempts' },
+                    { key: 'attemptsNoise', label: 'Change std error' },
+                    { key: 'measured', label: 'Above noise' },
+                    { key: 'roomsApplied', label: 'Rooms reached' },
+                    { key: 'roomsTotal', label: 'Rooms total' },
+                    { key: 'avgWinDelta', label: 'Avg win rate change' },
+                    { key: 'tokenCost', label: 'Token cost' },
+                ],
+                // Raw numbers rather than the formatted cells: a spreadsheet cannot
+                // sort "1.2B" or sum "+0.32%". Both sections, since a spreadsheet
+                // has no trouble holding two currencies in two columns.
+                rows: [...sorted, ...tokenResults].map((r) => ({
+                    upgrade: r.candidate?.description || '',
+                    cost: r.cost ?? null,
+                    // Infinity does not survive a spreadsheet; the credit-funded
+                    // row's value figure is its (negative) cost column
+                    perMillion: r.attemptsSavedPerMillion === Infinity ? null : (r.attemptsSavedPerMillion ?? null),
+                    attempts: r.expectedAttempts,
+                    attemptsDelta: r.attemptsDelta,
+                    attemptsNoise: r.attemptsDeltaNoise ?? null,
+                    measured: r.significant !== false,
+                    roomsApplied: r.appliedFights ?? r.fights.length,
+                    roomsTotal: r.fights.length,
+                    avgWinDelta: r.avgWinDelta,
+                    tokenCost: r.tokenCost ?? null,
+                })),
+            }));
 
         container.querySelectorAll('[data-allfights-row]').forEach((row) => {
             row.addEventListener('click', () => {
@@ -4708,21 +5216,29 @@ class LabSimUI {
             });
         });
 
-        this._wireBudgetPlan(container, goldResults, baseline);
+        if (checked) {
+            combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
+        } else {
+            this._wireBudgetPlan(container, goldResults, baseline);
+        }
 
         container.querySelectorAll('[data-af-sort]').forEach((header) => {
             header.addEventListener('click', () => {
                 const key = header.dataset.afSort;
                 // Second click on the same column reverses it; a new column
                 // starts at whichever end of it is the good news
-                this._allFightsSort =
-                    this._allFightsSort?.key === key
-                        ? { key, dir: this._allFightsSort.dir === 'asc' ? 'desc' : 'asc' }
+                const standing = checked ? this._checkedSwapSort : this._allFightsSort;
+                const next =
+                    standing?.key === key
+                        ? { key, dir: standing.dir === 'asc' ? 'desc' : 'asc' }
                         : { key, dir: SORTS[key].dir };
-                this._renderAllFightsResults(this._allFightsResult, container);
+                if (checked) this._checkedSwapSort = next;
+                else this._allFightsSort = next;
+                this._renderAllFightsResults(checked ? analysisResult : this._allFightsResult, container, options);
             });
         });
 
+        if (checked) return;
         const budget = analysisResult.budget;
         this._setStatus(
             `All-fights analysis complete: ${results.length} upgrades across ${baseline.fights.length} fights` +
@@ -6332,12 +6848,17 @@ class LabSimUI {
     }
 
     /** @private */
-    _renderSkillingUpgradeResults(analysisResult, container) {
+    _renderSkillingUpgradeResults(analysisResult, container, options = {}) {
+        // The "Checked swaps" table above the generated one: the same columns and
+        // breakdown, with no pick boxes (Sim together and the planner work from
+        // the generated table's rows) and no status line of its own
+        const checked = Boolean(options.checked);
         const results = analysisResult?.results;
         if (!results || !results.length) {
-            container.innerHTML =
-                '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No upgrade candidates found.</div>';
-            this._setStatus('No skilling upgrade candidates found.');
+            container.innerHTML = checked
+                ? ''
+                : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No upgrade candidates found.</div>';
+            if (!checked) this._setStatus('No skilling upgrade candidates found.');
             return;
         }
 
@@ -6552,9 +7073,11 @@ class LabSimUI {
 
         const pickTh = '<th style="width:1%; border-bottom:1px solid #333;"></th>';
         const pickCellHtml = (row) =>
-            `<td style="padding:3px 4px; width:1%;"><input type="checkbox" data-skilling-pick="${row.pickIdx}"` +
-            `${this._skillingChecked.includes(row.pickIdx) ? ' checked' : ''} style="margin:0; cursor:pointer;" ` +
-            `title="Check to include in Sim together"></td>`;
+            checked
+                ? '<td style="padding:3px 4px; width:1%;"></td>'
+                : `<td style="padding:3px 4px; width:1%;"><input type="checkbox" data-skilling-pick="${row.pickIdx}"` +
+                  `${this._skillingChecked.includes(row.pickIdx) ? ' checked' : ''} style="margin:0; cursor:pointer;" ` +
+                  `title="Check to include in Sim together"></td>`;
         const roomLevelCellsHtml = (row) => {
             if (!roomLevels) return '';
             const floorColor = row.reachesTarget ? '#4caf50' : '#888';
@@ -6730,7 +7253,7 @@ class LabSimUI {
                 return `<th data-sort-key="${key}" data-table="gold" style="${style}">${label}${ind}</th>`;
             };
 
-            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gear Upgrades</div>`;
+            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">${checked ? 'Checked swaps' : 'Gear Upgrades'}</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
@@ -6796,45 +7319,48 @@ class LabSimUI {
 
         renderAll();
 
-        this._addCsvExport(container, 'labsim-skilling-upgrades', () => ({
-            columns: [
-                { key: 'upgrade', label: 'Upgrade' },
-                { key: 'skill', label: 'Skill' },
-                { key: 'paidIn', label: 'Paid in' },
-                { key: 'cost', label: 'Gold cost' },
-                { key: 'tokenCost', label: 'Token cost' },
-                { key: 'clearRate', label: 'Avg clear rate' },
-                { key: 'clearRateDelta', label: 'Clear rate change' },
-                { key: 'perPercent', label: 'Cost per +1%' },
-                { key: 'xpPerRoomDelta', label: 'XP/room change' },
-                { key: 'tokensPerXp', label: 'Tokens per +1 XP/room' },
-            ],
-            rows: results.map((r) => {
-                const paid = r.costType === 'token' ? r.tokenCost : r.cost;
-                const gain = (r.clearRateDelta || 0) * 100;
-                return {
-                    upgrade: r.candidate?.description || '',
-                    // Gear bought for one skill says which; an enhancement of
-                    // something worn everywhere has no one skill to name
-                    skill: (r.candidate?.skillKey || '').replace('/skills/', ''),
-                    paidIn: CSV_PAID_IN[r.costType] || 'gold',
-                    cost: r.costType === 'token' ? null : (r.cost ?? null),
-                    tokenCost: r.costType === 'gold' || r.costType === 'community' ? null : (r.tokenCost ?? null),
-                    clearRate: r.clearRate ?? null,
-                    clearRateDelta: r.clearRateDelta ?? null,
-                    perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
-                    xpPerRoomDelta: r.xpPerRoomDelta ?? null,
-                    tokensPerXp: Number.isFinite(r.tokensPerXp) ? Math.round(r.tokensPerXp) : null,
-                };
-            }),
-        }));
+        if (!checked)
+            this._addCsvExport(container, 'labsim-skilling-upgrades', () => ({
+                columns: [
+                    { key: 'upgrade', label: 'Upgrade' },
+                    { key: 'skill', label: 'Skill' },
+                    { key: 'paidIn', label: 'Paid in' },
+                    { key: 'cost', label: 'Gold cost' },
+                    { key: 'tokenCost', label: 'Token cost' },
+                    { key: 'clearRate', label: 'Avg clear rate' },
+                    { key: 'clearRateDelta', label: 'Clear rate change' },
+                    { key: 'perPercent', label: 'Cost per +1%' },
+                    { key: 'xpPerRoomDelta', label: 'XP/room change' },
+                    { key: 'tokensPerXp', label: 'Tokens per +1 XP/room' },
+                ],
+                rows: results.map((r) => {
+                    const paid = r.costType === 'token' ? r.tokenCost : r.cost;
+                    const gain = (r.clearRateDelta || 0) * 100;
+                    return {
+                        upgrade: r.candidate?.description || '',
+                        // Gear bought for one skill says which; an enhancement of
+                        // something worn everywhere has no one skill to name
+                        skill: (r.candidate?.skillKey || '').replace('/skills/', ''),
+                        paidIn: CSV_PAID_IN[r.costType] || 'gold',
+                        cost: r.costType === 'token' ? null : (r.cost ?? null),
+                        tokenCost: r.costType === 'gold' || r.costType === 'community' ? null : (r.tokenCost ?? null),
+                        clearRate: r.clearRate ?? null,
+                        clearRateDelta: r.clearRateDelta ?? null,
+                        perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
+                        xpPerRoomDelta: r.xpPerRoomDelta ?? null,
+                        tokensPerXp: Number.isFinite(r.tokensPerXp) ? Math.round(r.tokensPerXp) : null,
+                    };
+                }),
+            }));
 
         // The container persists across Analyze runs — replace the previous
         // sort handler instead of stacking a new one each analysis
-        if (this._skillingSortHandler) {
-            container.removeEventListener('click', this._skillingSortHandler);
+        // (the checked-swaps table keeps its own handler, on its own container)
+        const handlerField = checked ? '_skillingSwapSortHandler' : '_skillingSortHandler';
+        if (this[handlerField]) {
+            container.removeEventListener('click', this[handlerField]);
         }
-        this._skillingSortHandler = (e) => {
+        this[handlerField] = (e) => {
             // A pick box is a choice about the row, not a click on the row
             const pick = e.target.closest('input[data-skilling-pick]');
             if (pick) {
@@ -6875,8 +7401,9 @@ class LabSimUI {
             }
             renderAll();
         };
-        container.addEventListener('click', this._skillingSortHandler);
+        container.addEventListener('click', this[handlerField]);
 
+        if (checked) return;
         this._updateSkillingCheckedCount();
         this._setStatus(`${results.length} skilling upgrade candidates analyzed.`);
     }
@@ -7023,6 +7550,9 @@ class LabSimUI {
         this._skillingAnalysis = null;
         this._skillingChecked = [];
         this._skillingGoalKey = null;
+        // Queued swaps belong to the character being torn down; the arriving one
+        // reads its own back from storage
+        this._checkedSwaps = { combat: [], skilling: [] };
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
