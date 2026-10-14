@@ -300,6 +300,34 @@ registerSyncMerge({
     label: 'Inventory reservations',
 });
 
+/** @type {Set<() => void>} */
+const changeListeners = new Set();
+
+/**
+ * Be told when the held claims change: a reserve, a release, an orphan sweep or a reset.
+ * These emit no `items_updated`, so a table that shows spare stock redraws from this.
+ * @param {() => void} listener - Called after memory has changed; must not throw
+ * @returns {() => void} Unsubscribe
+ */
+export function onReservationsChanged(listener) {
+    changeListeners.add(listener);
+    return () => changeListeners.delete(listener);
+}
+
+/**
+ * Tell the subscribers the claims in memory changed. One listener's throw never reaches the others.
+ * @returns {void}
+ */
+function notifyChanged() {
+    for (const listener of [...changeListeners]) {
+        try {
+            listener();
+        } catch (error) {
+            console.error('[InventoryReservations] A change listener threw:', error);
+        }
+    }
+}
+
 /**
  * The ledger as stored, per character.
  *
@@ -563,6 +591,7 @@ export async function reserve(ownerId, lines, { label = '' } = {}) {
         const now = Date.now();
         sweepExpired(ledger, now);
         ledger[ownerId] = { label: String(label || ownerId), updatedAt: now, lines: clean };
+        notifyChanged();
         // The claim is stamped `now`, later than any tombstone the sweep just
         // left standing, so the fold would keep it either way — dropping the
         // entry is housekeeping, not correctness, and it is what keeps a
@@ -615,6 +644,7 @@ export async function release(ownerId) {
         // seen. See {@link RELEASED_KEY}.
         tombstone(ledger, ownerId, now);
         sweepTombstones(ledger, now);
+        notifyChanged();
         return await record.save({ overwrite: true });
     } catch (error) {
         console.error('[InventoryReservations] Releasing failed:', error);
@@ -654,6 +684,7 @@ export async function releaseMissing(prefix, liveIds) {
         }
         if (dropped) {
             sweepTombstones(ledger, now);
+            notifyChanged();
             await record.save({ overwrite: true });
         }
         return dropped;
@@ -853,6 +884,7 @@ export function _resetReservations() {
     record.reset();
     owner = null;
     loading = null;
+    notifyChanged();
 }
 
 /**
@@ -910,6 +942,7 @@ export default {
     RESERVATIONS_SETTING,
     RESERVATION_TTL_MS,
     RELEASED_KEY,
+    onReservationsChanged,
     reservationsEnabled,
     loadReservations,
     ensureReservationsLoaded,

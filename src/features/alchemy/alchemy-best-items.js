@@ -37,7 +37,7 @@ import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
-import { effectiveInventory } from '../../utils/inventory-reservations.js';
+import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
 import selfUseWanted from '../market/self-use-wanted.js';
 
@@ -241,6 +241,8 @@ class AlchemyBestItems {
                 dataManager.on('items_updated', this._onInventoryChange);
                 return () => dataManager.off('items_updated', this._onInventoryChange);
             })(),
+            // A claim made or released by a plan emits no items_updated, but changes the spare stock
+            onReservationsChanged(() => this.handleInventoryChange()),
             // The auto-fill settings move only the dropdowns' tooltips: no re-rank
             ...PRICING_SIDE_TOOLTIP_SETTING_KEYS.map((key) =>
                 config.onSettingChange(key, () => this.updatePricingSelects())

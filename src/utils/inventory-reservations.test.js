@@ -89,6 +89,7 @@ const {
     flushReservationWrites,
     ensureReservationsLoaded,
     _resetReservations,
+    onReservationsChanged,
 } = await import('./inventory-reservations.js');
 
 const LOGS = '/items/log';
@@ -159,6 +160,40 @@ describe('reserve, replace and release', () => {
             { itemHrid: LOGS, count: 7 },
         ]);
         expect(allReservations()['goal:a'].lines).toEqual([{ itemHrid: LOGS, enhancementLevel: 0, count: 7 }]);
+    });
+});
+
+describe('the change event', () => {
+    test('a reserve, a release and an orphan sweep each announce, and an unsubscribed listener hears nothing', async () => {
+        const heard = vi.fn();
+        const off = onReservationsChanged(heard);
+        await reserve('goal:a', [{ itemHrid: LOGS, count: 10 }]);
+        expect(heard).toHaveBeenCalledTimes(1);
+        await release('goal:a');
+        expect(heard).toHaveBeenCalledTimes(2);
+        await reserve('goal:b', [{ itemHrid: LOGS, count: 10 }]);
+        await releaseMissing('goal:', []);
+        expect(heard).toHaveBeenCalledTimes(4);
+        // Nothing to release is no change
+        await release('goal:never');
+        expect(heard).toHaveBeenCalledTimes(4);
+        off();
+        await reserve('goal:c', [{ itemHrid: LOGS, count: 10 }]);
+        expect(heard).toHaveBeenCalledTimes(4);
+    });
+
+    test('a listener that throws does not stop the others', async () => {
+        const heard = vi.fn();
+        const offBad = onReservationsChanged(() => {
+            throw new Error('boom');
+        });
+        const offGood = onReservationsChanged(heard);
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        await reserve('goal:a', [{ itemHrid: LOGS, count: 10 }]);
+        expect(heard).toHaveBeenCalledTimes(1);
+        offBad();
+        offGood();
+        log.mockRestore();
     });
 });
 
