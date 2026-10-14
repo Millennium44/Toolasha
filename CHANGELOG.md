@@ -49,6 +49,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Device-only data (action progress, the last combat run, the spawn census, panel positions) no longer syncs, and hourly networth snapshots, the networth chart, item flow, the loot log and daily checkpoints now take a pull without a reload and show the other device's entries straight away; the toast no longer says to reload when nothing was locked, or after you change a device-only setting such as the sync token.
 
+### Market: overbid table
+
+- A small, minimizable Overbid table pops up when one of your listings is undercut or outbid, listing just those items with the competing price and yours; click an item to open its market page. Off with Market: Show overbid table.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
