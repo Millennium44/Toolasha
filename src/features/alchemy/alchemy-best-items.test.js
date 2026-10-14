@@ -152,13 +152,17 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 /** What the item tooltip's own functions answer, and what the bag holds, for the own-stock sort */
-const tooltip = vi.hoisted(() => ({ held: {}, chains: {}, calls: [] }));
+const tooltip = vi.hoisted(() => ({ held: {}, chains: {}, calls: [], envCalls: 0, gate: null }));
 
 vi.mock('../market/tooltip-prices.js', () => ({
     default: {
-        buildSelfUseEnv: async () => ({ env: true }),
+        buildSelfUseEnv: async () => {
+            tooltip.envCalls += 1;
+            return { env: true };
+        },
         selfUseChainFor: async (hrid, env) => {
             tooltip.calls.push({ hrid, env });
+            if (tooltip.gate) await tooltip.gate;
             return tooltip.chains[hrid] ?? null;
         },
     },
@@ -301,6 +305,8 @@ afterEach(() => {
     tooltip.held = {};
     tooltip.chains = {};
     tooltip.calls = [];
+    tooltip.envCalls = 0;
+    tooltip.gate = null;
     bestItems.currentType = 'coinify';
     bestItems.profitableOnly = false;
     bestItems.searchQuery = '';
@@ -1710,6 +1716,40 @@ describe('the Chain/hr (own stock) sort', () => {
         const calls = tooltip.calls.length;
         bestItems.renderTable();
         expect(tooltip.calls.length).toBe(calls);
+    });
+
+    test('stock gained during a sweep is picked up by the next pass, not left as an ellipsis', async () => {
+        tooltip.held = { '/items/a': 1 };
+        tooltip.chains = { '/items/a': chain(100), '/items/b': chain(7000) };
+        let release;
+        tooltip.gate = new Promise((resolve) => (release = resolve));
+        bestItems.createModal();
+        bestItems.modal.style.display = 'flex';
+        bestItems.currentType = 'decompose';
+        bestItems.cachedRankings.decompose = [row('a', 1), row('b', 1)];
+        bestItems.sortMode = 'chainOwnStock';
+        const sweep = bestItems.refreshOwnStock();
+        // b arrives while a's chain is still being worked out
+        tooltip.held = { '/items/a': 1, '/items/b': 2 };
+        tooltip.gate = null;
+        release();
+        await sweep;
+        await vi.waitFor(() => expect(bestItems.ownStock.has('/items/b')).toBe(true));
+        expect(cells().map((c) => c.textContent)).not.toContain('…');
+    });
+
+    test('switching into own-stock mode runs one sweep, not two', async () => {
+        tooltip.held = { '/items/a': 1 };
+        tooltip.chains = { '/items/a': chain(100) };
+        bestItems.createModal();
+        bestItems.modal.style.display = 'flex';
+        bestItems.currentType = 'decompose';
+        bestItems.cachedRankings.decompose = [row('a', 1)];
+        bestItems.chooseSortMode('chainOwnStock');
+        await bestItems.refreshOwnStock();
+        await vi.waitFor(() => expect(bestItems.ownStock.has('/items/a')).toBe(true));
+        expect(tooltip.envCalls).toBe(1);
+        expect(tooltip.calls).toHaveLength(1);
     });
 
     test('the hover words kept outputs as valued at what you would pay', async () => {
