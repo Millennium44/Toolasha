@@ -10164,6 +10164,9 @@ class CombatSimUI {
             // measurement, and throwing them away meant a run stopped one short
             // of the end showed nothing at all
             const completed = results?.results?.length || 0;
+            // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
+            // remembered run restores with the rate its profit deltas were measured against, not today's.
+            if (results) results.scrollTokenRate = scrollTokenRate();
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
@@ -11726,7 +11729,7 @@ class CombatSimUI {
                 : r.candidate?.type === 'community_buff'
                   ? 'not a purchase — nobody buys a community buff level'
                   : r.candidate?.type === 'scroll'
-                    ? 'a per-run scroll cost the advisor does not price'
+                    ? 'token price not saved with this run: rerun to price the scroll'
                     : 'no price could be resolved';
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
@@ -12212,8 +12215,10 @@ class CombatSimUI {
         const goldRows = purchasable.filter((r) => r.cost != null);
         // A scroll is a recurring token spend, not a purchase: priced by its tokens'
         // value in its own table, because the cost/repay/budget columns above
-        // assume a one-off outlay. Without a token value it stays unpriced.
-        const tokenRate = scrollTokenRate();
+        // assume a one-off outlay. Without a token value it stays unpriced. The rate is the one stamped
+        // on the analysis when it ran; a remembered run saved before that existed has none (undefined)
+        // and its scrolls stay unpriced rather than mixing old deltas with today's token price.
+        const tokenRate = results.scrollTokenRate || null;
         const scrollRows = tokenRate ? purchasable.filter((r) => r.cost == null && r.candidate?.type === 'scroll') : [];
         const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r));
 

@@ -1071,6 +1071,28 @@ describe('the panel', () => {
         expect(mocks.cancelActiveCalls).toBe(1);
     });
 
+    test('a fresh run prices scrolls at the live token rate and stamps it on the analysis', async () => {
+        mocks.scrollRate = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [
+                {
+                    ...row('Add Scroll of Attack Speed (+15%)', { cost: null, type: 'scroll', profitGain: 1_200_000 }),
+                    cost: null,
+                },
+            ],
+            food: null,
+        };
+        selectZone();
+
+        await ui._onUpgradeAnalyze();
+        const rate = mocks.scrollRate;
+        mocks.scrollRate = null;
+
+        expect(ui._upgradeResultsData.scrollTokenRate).toEqual(rate);
+        expect(ui.panel.querySelector('[data-scroll-row]').textContent).toContain('= 204.0K per scroll');
+    });
+
     test('a cancelled analysis still shows the candidates that finished', async () => {
         mocks.upgradeResult = {
             baseline: BASELINE,
@@ -1659,9 +1681,8 @@ describe('the panel', () => {
             });
 
             test('are priced by their tokens in their own table, not left in the unpriced box', () => {
-                mocks.scrollRate = rate;
                 const rows = [scroll('Add Scroll of Attack Speed (+15%)', 1_200_000)];
-                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null, scrollTokenRate: rate });
 
                 const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
                 expect(container.textContent).toContain('Scrolls, priced by their tokens');
@@ -1672,9 +1693,8 @@ describe('the panel', () => {
             });
 
             test('a scroll that earns less than its tokens shows as a loss', () => {
-                mocks.scrollRate = rate;
                 const rows = [scroll('Add Scroll of Combat Drop (+15%)', 300_000)];
-                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null, scrollTokenRate: rate });
 
                 const cells = ui.panel.querySelector('[data-scroll-row]').textContent;
                 expect(cells).toContain('−108.0K loss');
@@ -2375,6 +2395,47 @@ describe('the remembered upgrade analysis across a character switch', () => {
         await ui._restoreUpgradeResults();
 
         expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('The alt’s own run');
+    });
+
+    describe('remembered scroll pricing', () => {
+        const stored = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
+        const scrollRow = {
+            ...row('Add Scroll of Attack Speed (+15%)', { cost: null, type: 'scroll', profitGain: 1_200_000 }),
+            cost: null,
+        };
+
+        async function restoreWith(extra) {
+            const { default: config } = await import('../../core/config.js');
+            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+                key === 'combatSim_rememberUpgradeResults' ? true : fallback
+            );
+            mocks.store.set('combatExport:combatSimUpgradeResults_char1', {
+                data: { baseline: BASELINE, results: [scrollRow], ...extra },
+                savedAt: 1,
+            });
+            ui.buildPanel();
+            await ui._restoreUpgradeResults();
+            return ui.panel.querySelector('#mwi-csim-upgrade-results');
+        }
+
+        test('a restored run uses the stored rate even when the live rate differs', async () => {
+            mocks.scrollRate = { ...stored, value: 1000, itemName: 'Something Else' };
+            const container = await restoreWith({ scrollTokenRate: stored });
+            mocks.scrollRate = null;
+
+            const line = container.querySelector('[data-scroll-row]').textContent;
+            expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone)');
+            expect(line).not.toContain('Something Else');
+        });
+
+        test('a legacy run with no stored rate leaves scrolls unpriced, whatever the live rate is', async () => {
+            mocks.scrollRate = stored;
+            const container = await restoreWith({});
+            mocks.scrollRate = null;
+
+            expect(container.querySelector('[data-scroll-row]')).toBeNull();
+            expect(container.querySelector('[data-unpriced-row]').textContent).toContain('Scroll of Attack Speed');
+        });
     });
 });
 
