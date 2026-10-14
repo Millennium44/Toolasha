@@ -375,6 +375,20 @@ describe('leaderboard XP tracker', () => {
             off();
         });
 
+        test('the display is told when a pull swaps a sample without changing the counts or the newest time', async () => {
+            leaderboardXPTracker.playerXPHistory.foraging_A = [
+                { t: 1, xp: 100 },
+                { t: 3, xp: 200 },
+            ];
+            const heard = vi.fn();
+            const off = leaderboardXPTracker.onPulledHistory(heard);
+            game.saved.playerXP = { foraging_A: [{ t: 2, xp: 50 }] };
+
+            announceSyncPullApplied({ leaderboardHistory: ['playerXP'] });
+            await vi.waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+            off();
+        });
+
         test('a pull of some other key changes nothing', async () => {
             game.saved.playerXP = { foraging_B: [{ t: 5, xp: 70 }] };
             announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });

@@ -355,19 +355,30 @@ class LeaderboardXPTracker {
     }
 
     /**
-     * Cheap fingerprint of the history (series, samples, newest times), to tell whether a load changed it.
+     * Fingerprint of the history, to tell whether a load changed it: a hash over every series key and every
+     * sample's time, value and rank, so a merge that swaps one sample for another (same counts, same newest
+     * time) still reads as a change.
      * @returns {string}
      */
     _signature() {
-        let samples = 0;
-        let newest = 0;
+        let hash = 0x811c9dc5;
+        const mix = (number) => {
+            hash = Math.imul(hash ^ (Number(number) | 0), 0x01000193);
+            hash = Math.imul(hash ^ Math.floor((Number(number) || 0) / 4294967296), 0x01000193);
+        };
         const map = this.history.get();
-        for (const series of Object.values(map)) {
-            if (!Array.isArray(series)) continue;
-            samples += series.length;
-            newest += Number(series[series.length - 1]?.t ?? series[series.length - 1]?.at) || 0;
+        let series = 0;
+        for (const [key, samples] of Object.entries(map)) {
+            series += 1;
+            for (let i = 0; i < key.length; i++) mix(key.charCodeAt(i));
+            if (!Array.isArray(samples)) continue;
+            mix(samples.length);
+            for (const sample of samples) {
+                mix(sample?.t);
+                mix(sample?.xp ?? sample?.r);
+            }
         }
-        return `${Object.keys(map).length}|${samples}|${newest}`;
+        return `${series}|${hash >>> 0}`;
     }
 
     /**
