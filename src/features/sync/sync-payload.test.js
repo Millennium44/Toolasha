@@ -1452,7 +1452,27 @@ describe('settings change stamps', () => {
         // The map folds back to this device's own, so it is left as it is rather than written
         expect(Object.hasOwn(landed(), MAP)).toBe(false);
         expect(storeState.stores.settings[MAP]).toEqual({ sync_token: { value: 'ghp_mine' } });
-        expect(landed()[STAMPS]).toEqual({});
+        // ...and so are the stamps: the fold leaves the token's out, which is the same as this device's less
+        // the token's, so writing them back would latch the record for a reload to change nothing
+        expect(Object.hasOwn(landed(), STAMPS)).toBe(false);
+        expect(storeState.stores.settings[STAMPS]).toEqual({ sync_token: { at: 1, seq: 1 } });
+    });
+
+    test('stamps that differ in more than the device-local ids are still written', async () => {
+        storeState.stores.settings[MAP] = { A: { isTrue: true }, sync_token: { value: 'ghp_mine' } };
+        storeState.stores.settings[STAMPS] = { A: { at: 1, seq: 1 }, sync_token: { at: 1, seq: 1 } };
+
+        await pull(
+            {
+                settings: {
+                    [MAP]: { A: { isTrue: false } },
+                    [STAMPS]: { A: { at: 9, seq: 9 } },
+                },
+            },
+            'merge'
+        );
+
+        expect(landed()[STAMPS]).toEqual({ A: { at: 9, seq: 9 } });
     });
 
     test('stamps travel, without the stamps of the settings that do not', () => {
