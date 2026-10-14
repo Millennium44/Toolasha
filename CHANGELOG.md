@@ -29,6 +29,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Enhancement Calculator's protect-from sweep has a "Price with" picker listing every protection item that works on the item, Mirror of Protection included, so you can price a protection you don't own yet even when something else is cheaper.
 
+### Instead of buying: the figure that matters, in green
+
+- The tooltip's Instead of buying line now shows its headline figure in green (red for a loss), and a new setting picks which figure leads: saving per unit (default), saving per hour over your time value, or plain alchemy gold/hr; the others stay on the detail line.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
