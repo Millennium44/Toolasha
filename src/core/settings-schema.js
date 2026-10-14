@@ -903,6 +903,19 @@ export const settingsGroups = {
                 default: false,
                 help: 'On an item you might buy (an essence before enhancing, say), names the best one or two items you could buy and decompose or transmute to get it for less than buying it, and how much each saves per unit. Prices follow your Buy and Sell pricing: the item, source, catalyst and tea are bought at your buy price; every other output is sold at your sell price after tax, or valued at your buy price when kept for self-use (see "What a K mark means"). Estimated prices are left out. Alchemy time is charged at "Your time value (gold/hr)". Nothing is shown when buying is cheapest. Alchemy time is charged at "Your time value (gold/hr)".',
             },
+            itemTooltip_alchemyInsteadHeadline: {
+                id: 'itemTooltip_alchemyInsteadHeadline',
+                label: 'Highlighted figure for cheaper alchemy routes',
+                type: 'select',
+                default: 'perUnit',
+                requires: 'itemTooltip_alchemyInsteadOfBuying',
+                options: [
+                    { value: 'perUnit', label: 'Saving per unit' },
+                    { value: 'perHour', label: 'Saving per hour over your time value' },
+                    { value: 'grossPerHour', label: 'Alchemy gold/hr' },
+                ],
+                help: 'Which figure the "Instead of buying" line shows first, in green. The other figures stay on the line and the detail line under it. Alchemy gold/hr is the hourly saving before your time value is taken off.',
+            },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',

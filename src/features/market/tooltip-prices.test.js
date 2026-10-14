@@ -16,6 +16,7 @@ const settings = vi.hoisted(() => ({
     keepChip: true,
     markMeaning: 'keep',
     insteadOfBuying: false,
+    insteadHeadline: undefined,
     goldRate: 0,
     patientTickBuy: false,
     patientTickSell: false,
@@ -47,6 +48,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
             if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
             if (id === 'selfUse_markMeaning') return settings.markMeaning;
+            if (id === 'itemTooltip_alchemyInsteadHeadline') return settings.insteadHeadline ?? fallback;
             if (id === 'profitCalc_pricingMode') return settings.pricingMode ?? fallback;
             return fallback;
         },
@@ -1529,6 +1531,62 @@ describe('instead of buying', () => {
             expect(detail({ ...noGold, partlyUnpriced: true })).toContain('≥5.0K per hour of alchemy');
             expect(detail(withGold)).toContain('+5.0K/hr of alchemy');
             expect(detail(noGold)).toContain('— 5.0K per hour of alchemy');
+        });
+
+        describe('the highlighted figure', () => {
+            // saving 6/unit at 10 s a unit with 2/unit of time value: 2160/hr over the rate, 2880/hr before it
+            const timed = { savingPerHour: 2160, timeCostPerUnit: 2 };
+            const green = (html, text) => expect(html).toContain(`color: #0f0; font-weight: bold;">${text}</span>`);
+
+            afterEach(() => {
+                settings.insteadHeadline = undefined;
+            });
+
+            test('the saving per unit is green by default, with the rate after it', () => {
+                const html = detail(timed);
+                green(html, '6/unit');
+                expect(html).toContain('+2.2K/hr of alchemy over your gold rate, using ~360/hr');
+                expect(html).toContain('alchemy 2.9K/hr before time value');
+            });
+
+            test('saving per hour over the time value leads and is green; the per-unit saving stays', () => {
+                settings.insteadHeadline = 'perHour';
+                const html = detail(timed);
+                green(html, '+2.2K/hr of alchemy over your gold rate');
+                expect(html).toContain('using ~360/hr · saves 6/unit');
+                expect(html).not.toContain('font-weight: bold;">6/unit');
+            });
+
+            test('alchemy gold/hr adds the time value back', () => {
+                settings.insteadHeadline = 'grossPerHour';
+                const html = detail(timed);
+                green(html, '2.9K/hr of alchemy');
+                expect(html).toContain('+2.2K/hr over your gold rate');
+                expect(html).toContain('saves 6/unit');
+            });
+
+            test('without a time value the gross figure equals the saving rate', () => {
+                settings.insteadHeadline = 'grossPerHour';
+                green(detail({ savingPerHour: 2160, timeCostPerUnit: 0 }), '2.2K/hr of alchemy');
+            });
+
+            test('lower-bound markers stay on the highlighted figure in every mode', () => {
+                const partly = { ...timed, partlyUnpriced: true };
+                green(detail(partly), '≥6/unit');
+                settings.insteadHeadline = 'perHour';
+                green(detail(partly), '≥2.2K/hr of alchemy over your gold rate');
+                settings.insteadHeadline = 'grossPerHour';
+                green(detail(partly), '≥2.9K/hr of alchemy');
+            });
+
+            test('an hourly mode falls back to the per-unit saving when there is no rate', () => {
+                settings.insteadHeadline = 'perHour';
+                green(detail({ savingPerHour: null }), '6/unit');
+            });
+
+            test('a negative figure takes the loss color', () => {
+                expect(detail({ saving: -3 })).toContain('color: #f00; font-weight: bold;">-3/unit');
+            });
         });
 
         test('a negative cost reads as a gain, a lower bound when an output is unpriced', () => {

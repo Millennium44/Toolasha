@@ -307,3 +307,11 @@ describe('selfUse_markMeaning setting', () => {
         expect(entry.options.map((o) => o.value)).toEqual(['sell', 'keep']);
     });
 });
+
+describe('instead-of-buying headline default', () => {
+    test('highlights the saving per unit unless the player picks another figure', () => {
+        const def = getSettingDefinition('itemTooltip_alchemyInsteadHeadline');
+        expect(def.default).toBe('perUnit');
+        expect(def.options.map((o) => o.value)).toEqual(['perUnit', 'perHour', 'grossPerHour']);
+    });
+});
