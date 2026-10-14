@@ -273,6 +273,13 @@ describe('refined target priced from a held base', () => {
             expect(detail.ladder.refine.mirror).toBeTruthy();
         });
 
+        test('spare +6 and +5 bases are the mirror inputs of a refined +7: shards plus the mirror', () => {
+            state.items = [stack(BASE, 6), stack(BASE, 5)];
+            const detail = explainUpgradeCost(tier(7), gameData);
+            expect(detail.buys[0]).toMatchObject({ source: 'refine', price: SHARDS + 1_000_000 });
+            expect(detail.ladder.refine.mirror.heldLevels).toEqual([6, 5]);
+        });
+
         test('a dear mirror leaves the ordinary route alone', () => {
             state.mirrorPrice = 1_000_000_000;
             expect(explainUpgradeCost(tier(7), gameData).buys[0].source).toBe('enhance');
@@ -307,6 +314,55 @@ describe('refined target priced from a held base', () => {
             const blessed = explainUpgradeCost(sword(7), gameData).buys[0].price;
             expect(blessed).toBeCloseTo(cheapestWithMirror(ordinary, 1_000_000, 0.3).best[7], 0);
             expect(blessed).toBeLessThan(plain);
+        });
+
+        describe('held copies supply mirror inputs', () => {
+            const ordinary = Array.from({ length: 9 }, (_, k) => 1 + (2 ** k - 1) * 1e6);
+            const { best } = cheapestWithMirror(ordinary, 1_000_000);
+            const wornSword = (level) => stack(SWORD, level, '/item_locations/main_hand');
+
+            test('a worn +6 is the +6 input of its own +7 row: mirror plus a fresh +5, no resale', () => {
+                state.swordSell = 5_000_000;
+                state.items = [wornSword(6)];
+                const detail = explainUpgradeCost(breakpoint(SWORD, 6, 7), gameData);
+                expect(detail.source).toBe('mirror');
+                expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                expect(detail.credit).toBe(0);
+                expect(detail.net).toBeCloseTo(best[5] + 1_000_000, 0);
+                expect(calculateUpgradeCost(breakpoint(SWORD, 6, 7), gameData)).toBeCloseTo(detail.net, 0);
+                expect(detail.ladder.mirror.heldLevels).toEqual([6]);
+                // Before: a fresh +6 and a fresh +5, less the 5M the worn +6 sells for
+                expect(best[6] + best[5] + 1_000_000 - 5_000_000).toBeGreaterThan(detail.net);
+            });
+
+            test('a worn copy the row does not take off is not an input', () => {
+                state.items = [wornSword(6)];
+                const detail = explainUpgradeCost(sword(7), gameData);
+                expect(detail.buys[0].price).toBeCloseTo(best[7], 0);
+                expect(detail.ladder.mirror.heldLevels).toEqual([]);
+            });
+
+            test('a worn copy a swap replaces is an input and is not also sold', () => {
+                state.swordSell = 5_000_000;
+                state.items = [wornSword(6)];
+                const swap = { ...sword(7), removedItems: [{ hrid: SWORD, enhancementLevel: 6 }] };
+                const detail = explainUpgradeCost(swap, gameData);
+                expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                expect(detail.credit).toBe(0);
+                expect(calculateUpgradeCost(swap, gameData)).toBeCloseTo(best[5] + 1_000_000, 0);
+            });
+
+            test('a spare +6 and a spare +5 together leave only the mirror to buy', () => {
+                state.items = [stack(SWORD, 6), stack(SWORD, 5)];
+                const detail = explainUpgradeCost(sword(7), gameData);
+                expect(detail.buys[0].price).toBe(1_000_000);
+            });
+
+            test('one spare serves one input: a lone +5 for a +7 still buys the +6', () => {
+                state.items = [stack(SWORD, 5)];
+                const detail = explainUpgradeCost(sword(7), gameData);
+                expect(detail.buys[0].price).toBeCloseTo(best[6] + 1_000_000, 0);
+            });
         });
 
         test('a self-enhanced cape +7 is mirrored too', () => {
@@ -376,10 +432,13 @@ describe('refined target priced from a held base', () => {
             state.mirrorPrice = 1_000_000;
         });
 
-        test('one held copy is not both inputs of a mirror: a lone +4 cape to +5 enhances it', () => {
+        test('one held copy is not both inputs of a mirror: a lone +4 cape to +5 supplies one input only', () => {
             state.items = [stack(BASE, 4)];
             const detail = explainUpgradeCost(tier(5, { upgradeHrid: BASE }), gameData);
-            expect(detail.buys[0]).toMatchObject({ source: 'enhance', price: 16_000_000 });
+            // The +4 is the +(L-1) input; the +3 is bought fresh (5.6M, itself mirrored from a +2 and a
+            // +1) with a 1M mirror. Counting the +4 for both inputs would have made this the mirror alone.
+            expect(detail.buys[0]).toMatchObject({ source: 'mirror', price: 6_600_000 });
+            expect(detail.buys[0].price).toBeGreaterThan(state.mirrorPrice);
         });
 
         test('a worn and a spare base of the same level: the spare is the one refined', () => {
