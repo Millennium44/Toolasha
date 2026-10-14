@@ -81,6 +81,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Enhancement Tracker lists Philosopher's Mirror use as its own cost instead of counting it as protections (it inflated Prot Factor; older sessions read correctly too); panel sizes stay on the device you set them on; and after a sync pull the rank-badge cycle bar redraws, a board stamped in the future by a fast-clock device is stored capped, loot-log entries trimmed by retention drop without a reload, and the Best Items own-stock table re-sweeps after a gear change and redraws when a plan reserves or releases stock.
 
+### Lab Sim skilling: room levels, a goal planner and combined upgrades
+
+- The Lab Sim's Skilling tab can measure how many room levels each top upgrade adds at a target clear % and which floor that finishes, plan the cheapest stack of upgrades to reach a floor, and sim any ticked upgrades together; items that help several skills (like a Gatherer Cape ★) are now one row applied to all of them, with a per-skill breakdown and Rooms and Tries columns.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
