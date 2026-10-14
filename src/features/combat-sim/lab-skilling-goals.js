@@ -298,7 +298,42 @@ export function createSetupLevelSearch({ evaluate, skills, allSkills, threshold,
  */
 export function createRowLevelMeasure({ baseSetup, targetSkill = null, ...search }) {
     const searchSetup = createSetupLevelSearch(search);
-    return (row) => searchSetup(row ? applySkillingCandidate(baseSetup, row.candidate, targetSkill) : baseSetup);
+    const measure = (row) =>
+        searchSetup(row ? applySkillingCandidate(baseSetup, row.candidate, targetSkill) : baseSetup);
+
+    // Which rows deserve a search. By the table's own deltas, unless every one of
+    // them is 0: the table was run at a level the character already clears
+    // outright (or an upgrade only matters past it), and a shortlist drawn from
+    // that is empty while the search would have found levels. Then each row is
+    // judged where the baseline stops clearing: one level above the deepest one
+    // that clears, which is where an upgrade can show. One simulation per row,
+    // reported on the summary as `frontierSims`.
+    measure.select = async (rows, size, summary = {}) => {
+        const eligible = (Array.isArray(rows) ? rows : []).filter((r) => r?.candidate && r.metricType !== 'xpPerRoom');
+        if (eligible.some((r) => (r.clearRateDelta || 0) > GAIN_EPSILON)) {
+            return shortlistSkillingForRoomLevels(rows, size);
+        }
+        const level = Math.min(SKILLING_ROOM_LEVEL_MAX, Math.max(1, Math.floor(summary.baselineLevel || 0) + 1));
+        const at = (setup) =>
+            search.evaluate(setup, uniformRoomLevels(level, search.skills, search.allSkills)).clearRate;
+        const base = at(baseSetup);
+        const gains = [];
+        let sims = 1;
+        for (const row of eligible) {
+            if (search.abortSignal?.()) break;
+            await (search.yieldFn || defaultYield)();
+            sims++;
+            gains.push({ row, gain: at(applySkillingCandidate(baseSetup, row.candidate, targetSkill)) - base });
+        }
+        summary.frontierLevel = level;
+        summary.frontierSims = sims;
+        return gains
+            .filter((g) => g.gain > GAIN_EPSILON)
+            .sort((a, b) => b.gain - a.gain)
+            .slice(0, Math.max(0, Math.floor(Number(size) || 0)))
+            .map((g) => g.row);
+    };
+    return measure;
 }
 
 // ─── One row per physical item ───────────────────────────────────────────────
@@ -755,13 +790,18 @@ function pickStep(trials, goalRate) {
     };
     if (finishers.length) {
         return [...finishers].sort(
-            (a, b) => compare(a, b, (t) => rankGold(t.cost)) || compare(a, b, (t) => t.cost.tokens) || b.rate - a.rate
+            (a, b) =>
+                compare(a, b, (t) => rankGold(t.cost)) ||
+                compare(a, b, (t) => t.cost.tokens) ||
+                compare(a, b, (t) => t.cost.cowbells) ||
+                b.rate - a.rate
         )[0];
     }
     return [...trials].sort(
         (a, b) =>
             compare(a, b, (t) => rankGold(t.cost) / t.gain) ||
             compare(a, b, (t) => t.cost.tokens / t.gain) ||
+            compare(a, b, (t) => t.cost.cowbells / t.gain) ||
             b.gain - a.gain
     )[0];
 }
@@ -1004,11 +1044,17 @@ export async function planSkillingGoal(params) {
 async function improvePlan({ chosen, unchosen, reaches, budget, abortSignal, yieldFn }) {
     const price = (set) => {
         const total = sumCosts(set.map(rowCost));
-        return { gold: total.unpriced ? Infinity : total.gold, tokens: total.tokens, n: set.length };
+        return {
+            gold: total.unpriced ? Infinity : total.gold,
+            tokens: total.tokens,
+            cowbells: total.cowbells,
+            n: set.length,
+        };
     };
     const cheaper = (a, b) => {
         if (a.gold !== b.gold) return a.gold < b.gold;
         if (a.tokens !== b.tokens) return a.tokens < b.tokens;
+        if (a.cowbells !== b.cowbells) return a.cowbells < b.cowbells;
         return a.n < b.n;
     };
     const compatible = (set) =>

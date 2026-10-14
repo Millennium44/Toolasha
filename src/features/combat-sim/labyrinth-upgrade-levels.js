@@ -65,9 +65,10 @@ export function shortlistForRoomLevels(results, size = ROOM_LEVEL_SHORTLIST_SIZE
  *   the level search for one row, or for the unmodified character when passed
  *   null. Resolves to a `findMaxLabyrinthLevel` result
  * @param {number} [options.shortlistSize=ROOM_LEVEL_SHORTLIST_SIZE]
- * @param {function(Array<Object>, number): Array<Object>} [options.select] - Picks
- *   the rows worth a search; defaults to the win-rate shortlist. The Skilling tab
- *   ranks on clear rate and passes its own.
+ * @param {function(Array<Object>, number, Object): (Array<Object>|Promise<Array<Object>>)} [options.select] -
+ *   Picks the rows worth a search; defaults to the win-rate shortlist. The Skilling
+ *   tab ranks on clear rate and passes its own. A `select` property on `measure`
+ *   takes precedence, and is called after the baseline with the summary so far.
  * @param {Function} [options.abortSignal] - Polled before every search
  * @param {Function} [options.onProgress] - `({ current, total, description })`
  * @returns {Promise<Object>} `{ baselineLevel, baselineFloor, baselineCleared,
@@ -93,8 +94,10 @@ export async function measureRoomLevelGains(results, options = {}) {
     };
     if (typeof measure !== 'function') return summary;
 
-    const shortlist = (typeof select === 'function' ? select : shortlistForRoomLevels)(rows, summary.shortlistSize);
-    const total = shortlist.length + 1;
+    // Chosen after the baseline when the measure brings its own `select`: a
+    // shortlist that has to simulate (to rank on a level other than the one the
+    // table was run at) needs the baseline's level first
+    let total = summary.shortlistSize + 1;
 
     if (abortSignal?.()) {
         summary.aborted = true;
@@ -111,6 +114,14 @@ export async function measureRoomLevelGains(results, options = {}) {
     // nothing is not a level of zero to subtract from — every row stays
     // unmeasured rather than being handed arithmetic on a non-answer.
     if (!summary.baselineCleared) return summary;
+
+    const chooser = typeof measure.select === 'function' ? measure.select : select;
+    const shortlist = await (typeof chooser === 'function' ? chooser : shortlistForRoomLevels)(
+        rows,
+        summary.shortlistSize,
+        summary
+    );
+    total = shortlist.length + 1;
 
     for (const row of shortlist) {
         if (summary.aborted || abortSignal?.()) {

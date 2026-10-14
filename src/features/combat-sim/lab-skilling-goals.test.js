@@ -242,6 +242,50 @@ describe('measuring an upgrade in room levels', () => {
         expect(rows.filter((r) => !r.roomLevelMeasured)).toHaveLength(3);
     });
 
+    test('when the table shows no gain anywhere, rows are ranked where the baseline stops clearing', async () => {
+        // The table was run at a level the character clears outright, so every delta is 0.
+        // The baseline clears through level 30 at 70%; at 31 the gear shows what it does
+        const rows = [
+            gearRow('/items/top_a', BODY, 5000, 0),
+            gearRow('/items/legs_a', '/equipment_types/legs', 100, 0, { currentHrid: '/items/old_legs' }),
+        ];
+        const setup = baseSetup();
+        setup.dto.equipment['/equipment_types/legs'] = { hrid: '/items/old_legs', enhancementLevel: 0 };
+        const measure = createRowLevelMeasure({
+            baseSetup: setup,
+            evaluate,
+            skills: ALL,
+            allSkills: ALL,
+            threshold: 0.7,
+            yieldFn: async () => {},
+        });
+        const summary = await measureRoomLevelGains(rows, { measure, shortlistSize: 6 });
+
+        expect(summary.baselineLevel).toBe(30);
+        expect(summary.frontierLevel).toBe(31);
+        // One baseline simulation and one per candidate
+        expect(summary.frontierSims).toBe(3);
+        expect(summary.measured).toBe(2);
+        expect(rows[0].maxRoomLevel).toBe(40);
+        expect(rows[1].maxRoomLevel).toBe(38);
+    });
+
+    test('rows with a real gain at the table’s level keep the table’s shortlist and cost no extra sims', async () => {
+        const rows = [gearRow('/items/top_a', BODY, 5000, 0.1)];
+        const measure = createRowLevelMeasure({
+            baseSetup: baseSetup(),
+            evaluate,
+            skills: ALL,
+            allSkills: ALL,
+            threshold: 0.7,
+            yieldFn: async () => {},
+        });
+        const summary = await measureRoomLevelGains(rows, { measure, shortlistSize: 6 });
+
+        expect(summary.frontierSims).toBeUndefined();
+        expect(summary.measured).toBe(1);
+    });
+
     test('a setup that clears no room has no level to move, so nothing is measured', async () => {
         const summary = await run([gearRow('/items/top_a', BODY, 1, 0.1)], { threshold: 2 });
 
@@ -1017,5 +1061,36 @@ describe('pricing a merged multi-skill item once', () => {
         explain.mockRestore();
 
         expect(result.results[0].cost).toBeNull();
+    });
+});
+
+describe('cowbells break a tie at no gold and no tokens', () => {
+    const buff = (key, cowbells) => ({
+        candidate: { type: 'community_buff', buffKey: key, upgradeLevel: 1, description: key },
+        costType: 'community',
+        cowbellCost: cowbells,
+        clearRateDelta: 0.1,
+        metricType: 'clearRate',
+    });
+    const evaluateBuffs = (setup) => {
+        const levels = setup.dto.communityBuffLevels || {};
+        return { clearRate: 0.5 + (levels.a ? 0.1 : 0) + (levels.b ? 0.1 : 0), xpPerRoom: 0 };
+    };
+    const run = (rows, extra = {}) =>
+        planSkillingGoal({
+            baseSetup: { dto: { communityBuffLevels: {} }, skillEquipmentMap: {} },
+            rows,
+            evaluate: evaluateBuffs,
+            goalRoomLevel: 50,
+            goalRate: 0.6,
+            yieldFn: async () => {},
+            ...extra,
+        });
+
+    test('the 10-cowbell buff is chosen over an equally sufficient 100-cowbell one', async () => {
+        const result = await run([buff('a', 100), buff('b', 10)]);
+
+        expect(result.steps.map((step) => step.row.candidate.buffKey)).toEqual(['b']);
+        expect(result.totals.cowbells).toBe(10);
     });
 });
