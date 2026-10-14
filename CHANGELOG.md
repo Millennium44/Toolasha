@@ -77,6 +77,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Overbid tab no longer lingers in the marketplace popout after you turn it off, turning on pooled price history fetches overbid prices straight away, undercut alerts keep tracking while notifications are off so they re-arm correctly, and the Overbid tab now appears when the game isn't in English (other market tabs still need a follow-up).
 
+### Enhancement tracker and sync: loose ends
+
+- The Enhancement Tracker lists Philosopher's Mirror use as its own cost instead of counting it as protections (it inflated Prot Factor; older sessions read correctly too); panel sizes stay on the device you set them on; and after a sync pull the rank-badge cycle bar redraws, a board stamped in the future by a fast-clock device is stored capped, loot-log entries trimmed by retention drop without a reload, and the Best Items own-stock table re-sweeps after a gear change and redraws when a plan reserves or releases stock.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
