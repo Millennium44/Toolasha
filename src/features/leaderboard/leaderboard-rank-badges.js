@@ -311,6 +311,7 @@ class LeaderboardRankBadges {
                 return mergeBoards(stored, memory);
             },
             label: 'LeaderboardRankBadges',
+            onPulled: () => this.refreshFromPull(),
         });
         // Set when a fold read a board stamped in the future; see restart()
         this.storedFuture = false;
@@ -709,6 +710,25 @@ class LeaderboardRankBadges {
     async persist() {
         const runId = this.runId;
         if (!(await this.record.save()) || runId !== this.runId) return;
+        const folded = this.record.get();
+        if (sameBoards(folded, this.boards)) return;
+        this.boards = folded;
+        this.rebuildIndex();
+        this.decorateAll(true);
+    }
+
+    /**
+     * Take in boards a sync pull wrote under the running page. Same fold as `persist()` without the save: the
+     * held boards are put back into the record first so the load folds stored UNDER them, then the result is
+     * adopted and the badges redrawn. A board stamped in the future is capped in memory by the fold and
+     * flagged in `storedFuture`; the repair stays restart()'s, which overwrites the stored copy once.
+     * @returns {Promise<void>}
+     */
+    async refreshFromPull() {
+        if (this.mode === 'off') return;
+        const runId = this.runId;
+        this.record.set(this.boards);
+        if (!(await this.record.load()) || runId !== this.runId) return;
         const folded = this.record.get();
         if (sameBoards(folded, this.boards)) return;
         this.boards = folded;
