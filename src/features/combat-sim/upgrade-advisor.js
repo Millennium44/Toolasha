@@ -17,12 +17,7 @@ import {
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
-import {
-    generateLabArmorCandidates,
-    getWeaponStyleFamily,
-    labelItemWithLevel,
-    styleFamilyOfStats,
-} from './lab-armor-candidates.js';
+import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
@@ -7527,6 +7522,35 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
 }
 
 /**
+ * Every style family an item has offensive stats in.
+ *
+ * `styleFamilyOfStats` collapses an item to its single strongest family, which
+ * misreads an all-style piece (a Philosopher's Necklace carries melee, ranged and
+ * magic stats alike). A family counts when its stats are at least a tenth of the
+ * strongest family's, so a stray trace of another style is not a second style.
+ *
+ * @param {Object|undefined} combatStats - `equipmentDetail.combatStats`
+ * @returns {Set<string>} Any of `melee`, `ranged`, `magic`; empty for a piece with no offensive stats
+ */
+function styleFamiliesOfStats(combatStats) {
+    const stats = combatStats || {};
+    const sum = (keys) => keys.reduce((total, key) => total + (stats[key] || 0), 0);
+    const amplify = sum(['fireAmplify', 'natureAmplify', 'waterAmplify']);
+    const totals = {
+        melee: sum(['stabDamage', 'slashDamage', 'smashDamage', 'stabAccuracy', 'slashAccuracy', 'smashAccuracy']),
+        ranged: sum(['rangedDamage', 'rangedAccuracy']),
+        magic: sum(['magicDamage', 'magicAccuracy']) + amplify,
+    };
+    const top = Math.max(...Object.values(totals));
+    if (!(top > 0)) return new Set();
+    return new Set(
+        Object.entries(totals)
+            .filter(([, total]) => total >= top * 0.1)
+            .map(([family]) => family)
+    );
+}
+
+/**
  * Whether a swap the player chose by hand reaches a loadout.
  *
  * The item goes into its own equipment slot in every loadout that has a use for
@@ -7571,10 +7595,14 @@ export function checkedSwapAppliesToDTO(candidate, dto, gameData) {
     // melee) goes only into loadouts of that style; one with no offensive stats
     // (armor or evasion only) goes everywhere, and so does any piece in a
     // loadout with no weapon to read a style from.
-    const itemStyle = styleFamilyOfStats(upgrade.equipmentDetail?.combatStats);
-    if (itemStyle === 'defensive') return true;
+    // The Philosopher's accessories are a strict superset in their slot (the
+    // maintainer's ruling that `candidateAppliesToDTO` already honors): never
+    // gated on style
+    if (candidate.upgradeHrid.startsWith(PHILO_HRID_PREFIX) && JEWELRY_SLOTS.has(slot)) return true;
+    const itemStyles = styleFamiliesOfStats(upgrade.equipmentDetail?.combatStats);
+    if (!itemStyles.size) return true;
     const loadoutStyle = getWeaponStyleFamily(dto, gameData);
-    return loadoutStyle === 'defensive' || loadoutStyle === itemStyle;
+    return loadoutStyle === 'defensive' || itemStyles.has(loadoutStyle);
 }
 
 /**

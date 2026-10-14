@@ -360,6 +360,38 @@ describe('combat: who a checked swap reaches', () => {
             expect(reach(STAFF, dtos, { allLoadouts: true })).toEqual([false, false, true]);
         });
 
+        test('an all-style piece (Philosopher Necklace) reaches ranged and magic loadouts with the override off', () => {
+            const NECK = '/equipment_types/neck';
+            const allStyles = {
+                stabDamage: 0.05,
+                slashDamage: 0.05,
+                smashDamage: 0.05,
+                rangedDamage: 0.05,
+                magicDamage: 0.05,
+            };
+            ITEM_DETAIL_MAP['/items/philosophers_necklace'] = {
+                hrid: '/items/philosophers_necklace',
+                name: 'Philosopher Necklace',
+                equipmentDetail: { type: NECK, combatStats: { ...allStyles, rangedAccuracy: 0.05 } },
+            };
+            // The same stats on a piece that is not exempt by name: reached through the family set
+            ITEM_DETAIL_MAP['/items/all_style_ring'] = {
+                hrid: '/items/all_style_ring',
+                name: 'All Style Ring',
+                equipmentDetail: { type: '/equipment_types/ring', combatStats: allStyles },
+            };
+            const loadouts = [melee(), ranged(), magic()];
+            expect(reach('/items/philosophers_necklace', loadouts)).toEqual([true, true, true]);
+            expect(reach('/items/all_style_ring', loadouts)).toEqual([true, true, true]);
+            // A trace of another style is noise, not a second style
+            ITEM_DETAIL_MAP['/items/mostly_melee_ring'] = {
+                hrid: '/items/mostly_melee_ring',
+                name: 'Mostly Melee Ring',
+                equipmentDetail: { type: '/equipment_types/ring', combatStats: { slashDamage: 1, rangedDamage: 0.01 } },
+            };
+            expect(reach('/items/mostly_melee_ring', loadouts)).toEqual([true, false, false]);
+        });
+
         test('All loadouts does not override the hand rules or an item with no combat stats', () => {
             const bowLoadout = wearing({ [TWO]: piece(BOW, 3) });
             const options = { allLoadouts: true };
@@ -390,9 +422,26 @@ describe('combat: who a checked swap reaches', () => {
 
             expect(alone.cost).toBeGreaterThan(0);
             expect(withOwned.cost).toBe(0);
-            expect(withOwned.caveat).toContain('already wear a copy');
+            expect(withOwned.pricingNote).toContain('already wear a copy');
             // It is still only applied where it is needed
             expect(withOwned.reach).toBe(1);
+        });
+
+        test('the pricing context is a note, not a task caveat', () => {
+            const candidate = buildCombatSwapCandidate(
+                { hrid: CAPE, level: 7 },
+                [wearing({ [BACK]: piece(CAPE, 5) })],
+                gameData
+            );
+            expect(candidate.caveat).toBeUndefined();
+            expect(candidate.pricingNote).toContain('Checked by hand');
+            const skilling = buildSkillingSwapCandidate(
+                { hrid: MILKING_TOOL, level: 7 },
+                { dto: { equipment: {} }, skillEquipmentMap: {}, skills: ['/skills/milking'] },
+                gameData
+            );
+            expect(skilling.caveat).toBeUndefined();
+            expect(skilling.pricingNote).toContain('Checked by hand');
         });
 
         test('combat: a copy worn higher than the level asked for is not reused', () => {
@@ -403,7 +452,7 @@ describe('combat: who a checked swap reaches', () => {
 
             expect(withHigher.cost).toBe(alone.cost);
             expect(withHigher.cost).toBeGreaterThan(0);
-            expect(withHigher.caveat).not.toContain('already wear a copy');
+            expect(withHigher.pricingNote).not.toContain('already wear a copy');
         });
 
         test('skilling: a kit already wearing it makes the others free', () => {
@@ -456,7 +505,7 @@ describe('combat: who a checked swap reaches', () => {
             expect(meleeOnly.keptItems).toBeUndefined();
             expect(both.keptItems).toEqual([{ hrid: PLAIN_CAPE, enhancementLevel: 3 }]);
             expect(both.removedItems).toEqual([]);
-            expect(both.caveat).toContain('still worn by a loadout this swap does not reach');
+            expect(both.pricingNote).toContain('still worn by a loadout this swap does not reach');
             // No resale credit: it costs more than when the cape could be sold
             expect(both.cost).toBeGreaterThan(meleeOnly.cost);
         });

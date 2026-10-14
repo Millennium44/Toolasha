@@ -4192,7 +4192,11 @@ describe('Check a swap', () => {
         },
         results: [
             {
-                candidate: { description: 'Sinister Cape +5 → +7', caveat: 'Checked by hand.', type: 'enhancement' },
+                candidate: {
+                    description: 'Sinister Cape +5 → +7',
+                    pricingNote: 'Checked by hand.',
+                    type: 'enhancement',
+                },
                 costType: 'gold',
                 cost: 12_000_000,
                 fights: [fightRow('Scorpion', true, 0.319, 0.0238), fightRow('Mimic', false, 0.6, 0)],
@@ -4456,6 +4460,8 @@ describe('Check a swap', () => {
         expect(detail.textContent).toContain('29.5% → 31.9%');
         expect(detail.textContent).toContain('not in this loadout — 60.0% unchanged');
         expect(detail.textContent).toContain('Checked by hand.');
+        // And it is a note, not the "on task" badge a task caveat draws
+        expect(row.textContent).not.toContain('on task');
     });
 
     test('drawing the checked table leaves the generated table’s state alone', () => {
