@@ -416,13 +416,17 @@ class NetworthHistory {
      * the pull started is kept.
      * @param {string} charId - Whose points
      * @param {Array<Object>} points - Points the store did not hold
+     * @param {Array<Object>} [removed] - Points a deletion the pull brought took out
      */
-    _adoptPulled(charId, points) {
+    _adoptPulled(charId, points, removed = []) {
         if (charId !== this.characterId) return;
+        const gone = new Set(removed.map((point) => point?.t));
         const have = new Set(this.history.map((point) => point.t));
         const added = points.filter((point) => point && typeof point.t === 'number' && !have.has(point.t));
-        if (added.length === 0) return;
-        this.history = pruneHistory([...this.history, ...added].sort((a, b) => a.t - b.t));
+        if (added.length === 0 && gone.size === 0) return;
+        this.history = pruneHistory(
+            [...this.history.filter((point) => !gone.has(point.t)), ...added].sort((a, b) => a.t - b.t)
+        );
     }
 
     /**
@@ -625,6 +629,6 @@ class NetworthHistory {
 }
 
 const networthHistory = new NetworthHistory();
-seriesStore.onRefreshed?.((charId, points) => networthHistory._adoptPulled(charId, points));
+seriesStore.onRefreshed?.((charId, points, removed) => networthHistory._adoptPulled(charId, points, removed));
 
 export default networthHistory;

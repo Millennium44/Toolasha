@@ -638,3 +638,15 @@ describe('a sync pull that landed under the running page', () => {
         expect(networthHistory.history).toHaveLength(1);
     });
 });
+
+describe('a deletion a sync pull brought', () => {
+    test('the points it removed leave the history', () => {
+        const keep = point(1, 100);
+        const gone = point(5, 50);
+        networthHistory.history = [gone, keep];
+
+        networthHistory._adoptPulled('char-1', [], [gone]);
+
+        expect(networthHistory.history).toEqual([keep]);
+    });
+});

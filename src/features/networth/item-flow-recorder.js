@@ -516,7 +516,7 @@ class ItemFlowRecorder {
             liveSafe: true,
             label: 'ItemFlow',
         });
-        this._store.onRefreshed?.((charId, rows) => this._adoptPulled(charId, rows));
+        this._store.onRefreshed?.((charId, rows, removed) => this._adoptPulled(charId, rows, removed));
 
         /** The rows as they stand, which is the truth between debounced writes */
         this._rows = [];
@@ -668,16 +668,32 @@ class ItemFlowRecorder {
      * into the rows as they stand now, so a fall recorded since the pull started is kept.
      * @param {string} charId - Whose rows
      * @param {Array<ItemFlowDay>} rows - Days the store did not hold, or held an older copy of
+     * @param {Array<ItemFlowDay>} [removed] - Days a deletion the pull brought took out
      */
-    _adoptPulled(charId, rows) {
+    _adoptPulled(charId, rows, removed = []) {
         // A load in flight reads the pulled rows itself
         if (charId !== this._charId || this._loading) return;
         let changed = false;
+        const gone = new Set(removed.map((row) => row?.d));
+        if (gone.size > 0) {
+            const kept = this._rows.filter((entry) => !gone.has(entry.d));
+            if (kept.length !== this._rows.length) {
+                this._rows = kept;
+                changed = true;
+            }
+        }
         for (const row of rows) {
             if (!row?.d) continue;
             const at = this._rows.findIndex((entry) => entry.d === row.d);
-            if (at === -1) this._rows.push(row);
-            else this._rows[at] = mergeDayRow(this._rows[at], row);
+            if (at === -1) {
+                this._rows.push(row);
+                changed = true;
+                continue;
+            }
+            // Only a fold that differs is news: mergeDayRow answers a new object every time
+            const folded = mergeDayRow(this._rows[at], row);
+            if (JSON.stringify(folded) === JSON.stringify(this._rows[at])) continue;
+            this._rows[at] = folded;
             changed = true;
         }
         if (!changed) return;
