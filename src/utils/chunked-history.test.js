@@ -108,8 +108,11 @@ beforeEach(() => {
         for (const key of keys) result.set(key, storageMock.store.has(key) ? storageMock.store.get(key) : null);
         return result;
     });
-    storageMock.putAll.mockImplementation(async (storeName, entries) => {
-        for (const [key, value] of Object.entries(entries)) storageMock.store.set(key, value);
+    storageMock.putAll.mockImplementation(async (storeName, entries, options) => {
+        for (const [key, value] of Object.entries(entries)) {
+            const fold = options?.folds?.[key];
+            storageMock.store.set(key, fold ? (fold(storageMock.store.get(key), value) ?? value) : value);
+        }
         return Object.keys(entries).length;
     });
 });
@@ -1844,5 +1847,34 @@ describe('a history that opts in takes a sync pull without a reload', () => {
         await settle();
 
         expect(storageMock.store.get('liveReviveTomb_a')).toEqual({});
+    });
+});
+
+describe('the one-time split folds into what a pull put there meanwhile', () => {
+    test('a chunk that lands between the split’s read and its write keeps its pulled entries', async () => {
+        const history = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'splitRec',
+            legacyKey: (charId) => `splitLegacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            label: 'Split',
+        });
+        storageMock.store.set('splitLegacy_a', [at(2026, 8, 3)]);
+        storageMock.store.set('splitRec_a_2026-08', [at(2026, 8, 1)]);
+        const plain = storageMock.putAll.getMockImplementation();
+        storageMock.putAll.mockImplementation(async (storeName, entries, options) => {
+            // The pull lands after the split read the chunk and before it writes
+            storageMock.store.set('splitRec_a_2026-08', [at(2026, 8, 1), at(2026, 8, 2)]);
+            return plain(storeName, entries, options);
+        });
+
+        await history.load('a');
+
+        expect(storageMock.store.get('splitRec_a_2026-08').map((point) => point.v)).toEqual([
+            '2026-8-1',
+            '2026-8-2',
+            '2026-8-3',
+        ]);
     });
 });
