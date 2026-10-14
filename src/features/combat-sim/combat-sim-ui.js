@@ -853,6 +853,14 @@ export function upgradeCostCell(result) {
  */
 function ladderSentence(ladder, total = null) {
     if (!ladder) return '';
+    if (ladder.mirror) {
+        return (
+            `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} copy into a +${ladder.toLevel} with a ` +
+            `${formatKMB(ladder.mirror.mirrorPrice)} Philosopher's Mirror` +
+            (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '') +
+            '.'
+        );
+    }
     if (ladder.refine?.mirror) {
         return (
             `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} base copy into a +${ladder.toLevel} ` +
@@ -1896,7 +1904,7 @@ export function upgradeRowPurchase(result) {
                   fromLevel: Number.isFinite(ladder?.fromLevel) ? ladder.fromLevel : null,
                   toLevel: targetLevel,
                   // A refine is done at the crafting panel, not the Enhancing screen
-                  isSelf: ladder?.isSelf !== false && !ladder?.refine,
+                  isSelf: ladder?.isSelf !== false && !ladder?.refine && !ladder?.mirror,
               }
             : null;
 

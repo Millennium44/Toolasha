@@ -13,6 +13,8 @@ const state = vi.hoisted(() => ({
     shops: {},
     /** Philosopher's Mirror buy price: dear by default, so a mirror route only shows when a test wants it */
     mirrorPrice: 1_000_000_000,
+    /** No market listing at any level */
+    noAsk: false,
     /** What the star item is worth as a craft estimate, and what the base sells for */
     starPrice: 500_000_000,
     baseSell: 300_000,
@@ -107,7 +109,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     // Every level of everything has an ask; a cape must never use one
-    getItemPrices: vi.fn(() => ({ ask: 999_000_000, bid: 1 })),
+    getItemPrices: vi.fn(() => (state.noAsk ? null : { ask: 999_000_000, bid: 1 })),
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
@@ -142,6 +144,7 @@ describe('refined target priced from a held base', () => {
         state.sweeps = [];
         state.shops = {};
         state.mirrorPrice = 1_000_000_000;
+        state.noAsk = false;
         state.starPrice = 500_000_000;
         state.baseSell = 300_000;
         state.climb = (from, to) => (to - from) * 1_000_000;
@@ -263,6 +266,37 @@ describe('refined target priced from a held base', () => {
         test('a dear mirror leaves the ordinary route alone', () => {
             state.mirrorPrice = 1_000_000_000;
             expect(explainUpgradeCost(tier(7), gameData).buys[0].source).toBe('enhance');
+        });
+    });
+
+    describe('Philosophers Mirror for an ordinary (unrefined) target', () => {
+        beforeEach(() => {
+            state.climb = (from, to) => (2 ** to - 2 ** from) * 1_000_000;
+            state.mirrorPrice = 1_000_000;
+            state.noAsk = true;
+        });
+        const sword = (level) => ({ type: 'equipment', upgradeHrid: SWORD, upgradeLevel: level, removedItems: [] });
+
+        test('a tradable +7 with no listing is built from a +6 and a +5 copy', () => {
+            const detail = explainUpgradeCost(sword(7), gameData);
+            // The base is a bare 1 gold here; a climb to +k adds (2^k - 1)M
+            const ordinary = Array.from({ length: 8 }, (_, k) => 1 + (2 ** k - 1) * 1e6);
+            const { best } = cheapestWithMirror(ordinary, 1_000_000);
+            expect(best[7]).toBeLessThan(ordinary[7]);
+            expect(detail.buys[0]).toMatchObject({ source: 'mirror' });
+            expect(detail.buys[0].price).toBeCloseTo(best[7], 0);
+            expect(detail.ladder.mirror).toBeTruthy();
+        });
+
+        test('a self-enhanced cape +7 is mirrored too', () => {
+            const detail = explainUpgradeCost(tier(7, { upgradeHrid: BASE }), gameData);
+            expect(detail.buys[0].source).toBe('mirror');
+        });
+
+        test('below +3 a mirror cannot run, and a dear mirror changes nothing', () => {
+            expect(explainUpgradeCost(sword(2), gameData).buys[0].source).toBe('sim');
+            state.mirrorPrice = 1_000_000_000;
+            expect(explainUpgradeCost(sword(7), gameData).buys[0].source).toBe('sim');
         });
     });
 });
