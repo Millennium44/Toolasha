@@ -444,6 +444,29 @@ describe('combat: who a checked swap reaches', () => {
             expect(skilling.pricingNote).toContain('Checked by hand');
         });
 
+        test('a party member’s checked swap is priced and explained without the live character’s spare copy', () => {
+            // The live character holds a spare Sinister Cape +4 in the bag, which a ladder starts from
+            state.items = [
+                {
+                    id: 2,
+                    characterID: CHAR,
+                    itemLocationHrid: '/item_locations/inventory',
+                    itemHrid: CAPE,
+                    enhancementLevel: 4,
+                    count: 1,
+                },
+            ];
+            const dto = wearing({ [BACK]: piece(CAPE, 5) });
+            const mine = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [dto], gameData, true);
+            const theirs = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [dto], gameData, false);
+
+            expect(theirs.cost).toBeGreaterThan(mine.cost);
+            expect(theirs.isSelf).toBe(false);
+            // The breakdown the all-fights run builds reads the same inventory as the Cost cell
+            expect(advisor.explainLabCandidateCost(theirs, gameData, theirs.isSelf).net).toBe(theirs.cost);
+            expect(advisor.explainLabCandidateCost(theirs, gameData).net).not.toBe(theirs.cost);
+        });
+
         test('combat: a copy worn higher than the level asked for is not reused', () => {
             const low = wearing({ [BACK]: piece(CAPE, 5) });
             const higher = wearing({ [BACK]: piece(CAPE, 8) });

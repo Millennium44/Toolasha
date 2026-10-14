@@ -6757,7 +6757,12 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             // rather than sold, so the row's coin figure is deliberately gross.
             // Pricing every row would put a market lookup per piece behind a
             // table that can run to hundreds of rows.
-            costDetail: candidate.keptItems?.length ? explainLabCandidateCost(candidate, gameData) : null,
+            // A hand-checked swap carries whose copies priced it, so its breakdown
+            // reads the same inventory as its Cost cell
+            costDetail:
+                candidate.keptItems?.length || candidate.checkedSwap
+                    ? explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false)
+                    : null,
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
