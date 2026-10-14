@@ -598,7 +598,11 @@ export function skillBreakdown({ baseSetup, candidate, evaluate, roomLevel, targ
 export function rowCost(row) {
     const type = row?.costType;
     if (type === 'token') return { gold: 0, tokens: row.tokenCost || 0, cowbells: 0 };
-    if (type === 'community') return { gold: 0, tokens: 0, cowbells: row.cowbellCost || 0 };
+    if (type === 'community') {
+        // A rate the game data could not supply is unpriced, not free: it must not win a cost comparison as zero
+        const known = Number.isFinite(row.cowbellCost);
+        return { gold: known ? 0 : null, tokens: 0, cowbells: known ? row.cowbellCost : 0 };
+    }
     const gold = Number.isFinite(row?.cost) ? row.cost : null;
     return { gold, tokens: type === 'guild' ? row.tokenCost || 0 : 0, cowbells: 0 };
 }
@@ -974,7 +978,9 @@ export async function planSkillingGoal(params) {
             abortSignal,
             yieldFn,
         });
-        if (better) {
+        // A Stop during the improvement pass is a stopped search, not a best plan
+        if (abortSignal?.()) aborted = true;
+        if (better && !aborted) {
             improved = true;
             chosen = better;
             // The steps are re-derived for the new set, in order, so each row's

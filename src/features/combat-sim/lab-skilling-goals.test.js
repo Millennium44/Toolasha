@@ -475,6 +475,8 @@ describe('the cost a row is paid in', () => {
         expect(rowCost({ costType: 'community', cowbellCost: 20 })).toEqual({ gold: 0, tokens: 0, cowbells: 20 });
         expect(rowCost({ costType: 'guild', cost: 900, tokenCost: 4 })).toEqual({ gold: 900, tokens: 4, cowbells: 0 });
         expect(rowCost({ costType: 'gold', cost: null }).gold).toBeNull();
+        // An unknown cowbell rate is unpriced, not free
+        expect(rowCost({ costType: 'community', cowbellCost: null }).gold).toBeNull();
     });
 });
 
@@ -907,6 +909,25 @@ describe('plan quality at the goal level', () => {
         const html = renderPlanHtml(result, { goalText: '50%' });
         expect(html).toContain('Best plan found');
         expect(html).toContain(`${result.sims} simulations`);
+    });
+
+    test('a Stop during the improvement pass reports a stopped search', async () => {
+        const rows = [swap('a', 4, 0.3), swap('b', 3, 0.2), swap('c', 3, 0.2)];
+        const params = { baseSetup: setup(), rows, goalRoomLevel: 90, goalRate: 0.5, yieldFn: async () => {} };
+        const full = await planSkillingGoal({ ...params, evaluate: evaluateBonus });
+        const greedySims = full.sims - full.improveSims;
+        let calls = 0;
+        const result = await planSkillingGoal({
+            ...params,
+            evaluate: (...args) => {
+                calls++;
+                return evaluateBonus(...args);
+            },
+            abortSignal: () => calls > greedySims,
+        });
+
+        expect(result.aborted).toBe(true);
+        expect(renderPlanHtml(result, { goalText: '50%' })).not.toContain('Best plan found');
     });
 
     test('the improvement pass is bounded', async () => {
