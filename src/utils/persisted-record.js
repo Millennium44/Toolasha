@@ -51,6 +51,7 @@
 
 import storage from '../core/storage.js';
 import { characterKey, readScoped } from './character-key.js';
+import { onSyncPullApplied } from './sync-merge-registry.js';
 
 /**
  * Record → handoff of its newest requested save, until that save has handed
@@ -77,6 +78,20 @@ const ATOMIC_DEPARTING_RETRIES = 5;
  */
 const atomicRecords = new Set();
 let atomicLifecycleHooked = false;
+
+/**
+ * Every record that asked to be told of a sync pull (`onPulled`). One subscriber to the sync serves them
+ * all; it is made when the first such record is created.
+ */
+const pulledRecords = new Set();
+let pullHooked = false;
+
+/** Subscribe to sync pulls once, on behalf of every record with an `onPulled`. */
+function hookPulls() {
+    if (pullHooked) return;
+    pullHooked = true;
+    onSyncPullApplied((written) => Promise.all([...pulledRecords].map((record) => record._pulled(written))));
+}
 
 /**
  * Land the waiting atomic saves when the tab is hidden (the last event a
@@ -212,6 +227,14 @@ export function mergeSeriesMaps(keyOf, sort = null) {
  *   or save down exactly as an unreadable probe does; a reset during it does the same.
  * @param {boolean} [options.atomic=false] - Fold and write in one `storage.update` transaction,
  *   delayed by {@link ATOMIC_DEFER_MS} unless `immediate` (see the module header)
+ * @param {(record: Object) => (void|Promise<void>)} [options.onPulled] - Called after a sync pull has
+ *   written this record's key under a running page and the record has been loaded, so the owner can
+ *   take the pulled data in. Not called for a pull of another character's key, nor before the first
+ *   readable load (the load will read it). The owner does `set(derived)` then `load()` then adopts
+ *   `get()` — a bare `load()` then `get()` drops unsaved in-memory changes, since the stored record is
+ *   folded UNDER memory and `get()` hands back whichever copy the owner last `set` — and guards its own
+ *   character and generation across the await. Never `load({authoritative: true})`: that prefers stored
+ *   over what the page holds. A throw is logged and swallowed.
  * @param {(stored: *, memory: *) => *} [options.mergeAfterReset] - The fold for an atomic write a
  *   `reset()` overtook: it lands the departing record under the departing key, so it must not
  *   touch state the arriving record owns. Defaults to `merge`
@@ -229,6 +252,7 @@ export function createPersistedRecord({
     prepare = null,
     atomic = false,
     mergeAfterReset = null,
+    onPulled = null,
 }) {
     if (typeof empty !== 'function') throw new Error(`[${label}] createPersistedRecord needs an empty() factory`);
     if (typeof merge !== 'function') throw new Error(`[${label}] createPersistedRecord needs a merge(stored, memory)`);
@@ -450,6 +474,21 @@ export function createPersistedRecord({
         set(value) {
             memory = value == null ? empty() : value;
             memoryVersion += 1;
+        },
+
+        /**
+         * Tell the owner a sync pull has written keys, when one of them is this record's.
+         * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+         * @returns {Promise<void>}
+         */
+        async _pulled(written) {
+            const keys = written?.[store];
+            if (!loaded || typeof onPulled !== 'function' || !Array.isArray(keys) || !keys.includes(key())) return;
+            try {
+                await onPulled(record);
+            } catch (error) {
+                console.error(`[${label}] Taking in a sync pull of ${base} failed:`, error);
+            }
         },
 
         /** @returns {boolean} Whether a readable load has completed */
@@ -733,6 +772,10 @@ export function createPersistedRecord({
         },
     };
 
+    if (typeof onPulled === 'function') {
+        pulledRecords.add(record);
+        hookPulls();
+    }
     if (atomic) {
         atomicRecords.add(record);
         hookAtomicLifecycle();

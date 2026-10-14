@@ -86,6 +86,8 @@ const {
     mergeSeriesMaps,
 } = await import('./persisted-record.js');
 
+const { announceSyncPullApplied } = await import('./sync-merge-registry.js');
+
 const LOG = 'log_char1';
 const stored = () => storageMock.storeFor('settings').get(LOG);
 const byId = () =>
@@ -891,5 +893,67 @@ describe('atomic record', () => {
         } finally {
             storageMock.update = update;
         }
+    });
+});
+
+describe('onPulled', () => {
+    const withHook = (onPulled) =>
+        createPersistedRecord({
+            base: 'log',
+            empty: () => [],
+            merge: mergeById((e) => e.id),
+            label: 'Test',
+            onPulled,
+        });
+
+    test('a pull of this record key calls the owner once the record has loaded', async () => {
+        const onPulled = vi.fn();
+        const record = withHook(onPulled);
+        await record.load();
+        announceSyncPullApplied({ settings: ['log_char1'] });
+        await Promise.resolve();
+        expect(onPulled).toHaveBeenCalledTimes(1);
+        expect(onPulled).toHaveBeenCalledWith(record);
+    });
+
+    test('a pull of another character, another store, or an unloaded record is a no-op', async () => {
+        const onPulled = vi.fn();
+        const record = withHook(onPulled);
+        announceSyncPullApplied({ settings: ['log_char1'] });
+        await record.load();
+        announceSyncPullApplied({ settings: ['log_char2'] });
+        announceSyncPullApplied({ other: ['log_char1'] });
+        announceSyncPullApplied({});
+        await Promise.resolve();
+        expect(onPulled).not.toHaveBeenCalled();
+    });
+
+    test('an owner that sets, loads and adopts keeps its unsaved entries and takes the pulled ones', async () => {
+        let adopted = [];
+        const record = withHook(async (rec) => {
+            rec.set([...rec.get()]);
+            await rec.load();
+            adopted = rec.get().map((e) => e.id);
+        });
+        await record.load();
+        record.get().push({ id: 1 });
+        storageMock.storeFor('settings').set(LOG, [{ id: 2 }]);
+        announceSyncPullApplied({ settings: [LOG] });
+        await vi.waitFor(() => expect(adopted.sort()).toEqual([1, 2]));
+    });
+
+    test('an owner that throws is logged and does not stop the other records', async () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const second = vi.fn();
+        const first = withHook(() => {
+            throw new Error('boom');
+        });
+        const other = withHook(second);
+        await first.load();
+        await other.load();
+        announceSyncPullApplied({ settings: [LOG] });
+        await vi.waitFor(() => expect(second).toHaveBeenCalled());
+        expect(error).toHaveBeenCalled();
+        error.mockRestore();
     });
 });
