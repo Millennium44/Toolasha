@@ -41,6 +41,9 @@ import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose
 /** The setting that remembers which sort the table was last left on */
 const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
 
+/** The setting for buying the input at the NPC shop's coin price when that beats the market (default on) */
+export const SHOP_PRICES_SETTING = 'alchemy_bestItems_shopPrices';
+
 /**
  * The table's sort modes, in button order. `decomposeOnly` modes rank the Decompose tab
  * alone: the whole chain only exists for a decompose, so on the other tabs the stored
@@ -208,6 +211,8 @@ class AlchemyBestItems {
             config.onSettingsLoaded(onPricingChange),
             // The sort is a setting too: a change made in Settings applies to the open table
             config.onSettingChange(SORT_MODE_SETTING, () => this.handleSortSettingChange()),
+            // Shop prices change what every row costs, so it re-ranks like a pricing change
+            config.onSettingChange(SHOP_PRICES_SETTING, () => this.handlePricingChange()),
         ];
     }
 
@@ -390,7 +395,15 @@ class AlchemyBestItems {
      * @returns {Array} Array of item results, in itemDetailMap order
      */
     calculateRankings(alchemyType) {
-        return rankAlchemyType(alchemyType);
+        return rankAlchemyType(alchemyType, { shopPrices: this.shopPricesOn() });
+    }
+
+    /**
+     * Whether the NPC shop's coin price counts as a way to buy the input (the "Include shop prices" option).
+     * @returns {boolean} True unless the player turned it off
+     */
+    shopPricesOn() {
+        return config.getSettingValue(SHOP_PRICES_SETTING, true) !== false;
     }
 
     /**
@@ -743,6 +756,25 @@ class AlchemyBestItems {
         });
         controls.appendChild(profitToggle);
 
+        // Include shop prices: persisted as a setting, so the Settings page and this box stay one switch
+        const shopLabel = document.createElement('label');
+        shopLabel.title =
+            'Buy the item at the NPC shop price when that is below the market price, or when the market has ' +
+            'none. Only shop offers paid in coins count, and only the buy side: the shop never buys it back.';
+        shopLabel.style.cssText =
+            'display: flex; align-items: center; gap: 3px; margin-left: 4px; font-size: 0.75rem; color: #ddd; cursor: pointer;';
+        const shopBox = document.createElement('input');
+        shopBox.type = 'checkbox';
+        shopBox.setAttribute('data-mwi-shop-prices', 'true');
+        shopBox.checked = this.shopPricesOn();
+        shopBox.addEventListener('change', () => {
+            // The setting listener re-ranks
+            config.setSettingValue(SHOP_PRICES_SETTING, shopBox.checked);
+        });
+        shopLabel.appendChild(shopBox);
+        shopLabel.appendChild(document.createTextNode('Include shop prices'));
+        controls.appendChild(shopLabel);
+
         content.appendChild(controls);
 
         // Search row
@@ -980,6 +1012,9 @@ class AlchemyBestItems {
             btn.style.display = onlyDecompose && this.currentType !== 'decompose' ? 'none' : '';
         });
 
+        const shopBox = this.modal.querySelector('[data-mwi-shop-prices]');
+        if (shopBox) shopBox.checked = this.shopPricesOn();
+
         // Update profitable toggle styling
         const profitToggle = this.modal.querySelector('[data-mwi-profit-toggle]');
         if (profitToggle) {
@@ -1047,6 +1082,21 @@ class AlchemyBestItems {
                 navigateToMarketplace(item.itemHrid);
             });
             nameTd.appendChild(nameLink);
+            if (item.shopPriced) {
+                const tag = document.createElement('span');
+                tag.textContent = 'shop';
+                tag.setAttribute('data-mwi-shop-tag', 'true');
+                tag.title =
+                    item.marketPrice > 0
+                        ? `Bought from the NPC shop at ${formatWithSeparator(Math.round(item.shopPrice))} coins, ` +
+                          `below the market price of ${formatWithSeparator(Math.round(item.marketPrice))}.`
+                        : `Bought from the NPC shop at ${formatWithSeparator(Math.round(item.shopPrice))} coins; ` +
+                          'the market has no price for it.';
+                tag.style.cssText =
+                    'margin-left: 6px; padding: 0 4px; border-radius: 3px; font-size: 0.65rem; ' +
+                    'background: #3b4a2f; color: #bef264;';
+                nameTd.appendChild(tag);
+            }
             row.appendChild(nameTd);
 
             // Level

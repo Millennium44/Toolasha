@@ -73,6 +73,7 @@ import dataManager from '../../core/data-manager.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
@@ -228,6 +229,28 @@ function actionUnlocked(type, gameData, level) {
 }
 
 /**
+ * What the NPC shop charges for one unit of an item, when it sells it for coins alone.
+ * An offer that also asks for another currency (tokens) is not a coin price and gives null.
+ * @param {string} itemHrid - Item HRID
+ * @returns {number|null} Coins per unit, or null when the shop does not sell it for coins
+ */
+export function shopUnitPrice(itemHrid) {
+    const { coins, units } = getShopCoinOnlyCost(itemHrid);
+    return coins > 0 ? coins / units : null;
+}
+
+/**
+ * Whether the shop's price is the one a buyer pays: it beats the market ask, or the market has none.
+ * @param {number|null} market - Market buy price, if any
+ * @param {number|null} shop - Shop price per unit, if any
+ * @returns {boolean}
+ */
+export function shopBeatsMarket(market, shop) {
+    if (shop === null || shop === undefined) return false;
+    return !(market > 0) || shop < market;
+}
+
+/**
  * Every item this alchemy action can be run on, costed through the real calculator.
  *
  * Unsorted and unfiltered, because the two callers want different orders: the
@@ -235,9 +258,14 @@ function actionUnlocked(type, gameData, level) {
  * while the planner only wants what pays.
  *
  * @param {string} type - 'coinify' | 'decompose' | 'transmute'
+ * @param {Object} [options]
+ * @param {boolean} [options.shopPrices] - Buy the input at the NPC shop's coin price when that is
+ *   cheaper than the market (or the market has none). Off by default, so the goal planner and every
+ *   other caller keep pricing at the market; Best Items turns it on. A row bought that way carries
+ *   `shopPriced: true` and its `itemPrice` is the shop price.
  * @returns {Array<Object>} One entry per eligible item
  */
-export function rankAlchemyType(type) {
+export function rankAlchemyType(type, { shopPrices = false } = {}) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.itemDetailMap) return [];
 
@@ -248,6 +276,27 @@ export function rankAlchemyType(type) {
     if (!method) return [];
 
     const results = [];
+    // The calculator prices the input through this for the length of the sweep only. Sell sides never
+    // see it: the shop does not buy at its sale price.
+    alchemyProfitCalculator.inputBuyOverride = shopPrices ? shopUnitPrice : null;
+    try {
+        collectRankings(type, method, gameData, level, shopPrices, results);
+    } finally {
+        alchemyProfitCalculator.inputBuyOverride = null;
+    }
+    return results;
+}
+
+/**
+ * The body of {@link rankAlchemyType}'s sweep, split out so the shop override is always cleared.
+ * @param {string} type
+ * @param {string} method - Calculator method name
+ * @param {Object} gameData
+ * @param {number} level - Character's alchemy level
+ * @param {boolean} shopPrices
+ * @param {Array<Object>} results - Appended to
+ */
+function collectRankings(type, method, gameData, level, shopPrices, results) {
     for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap)) {
         if (!isEligible(type, itemDetails)) continue;
 
@@ -267,13 +316,22 @@ export function rankAlchemyType(type) {
         // XP reads a level-less item at 0, as the action panel and the queue rows do
         const xpPerAction = calcXpPerAction(type, itemDetails.itemLevel || 0, profitData.successRate);
 
+        // The figure the price filters and the row's price read: the market buy price, or the shop's
+        // when that is what the calculator just paid
+        const marketPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
+        const shopPrice = shopPrices ? shopUnitPrice(itemHrid) : null;
+        const shopPriced = shopBeatsMarket(marketPrice, shopPrice);
+
         results.push({
             action: type,
             actionHrid: ACTION_HRID[type],
             itemHrid,
             name: itemDetails.name,
             itemLevel,
-            itemPrice: getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) || 0,
+            itemPrice: (shopPriced ? shopPrice : marketPrice) || 0,
+            shopPriced,
+            shopPrice: shopPrice ?? null,
+            marketPrice: marketPrice ?? null,
             profitPerHour: profitData.profitPerHour,
             xpPerHour: profitData.actionsPerHour * xpPerAction,
             catalyst: profitData.winningCatalystHrid || null,
@@ -283,8 +341,6 @@ export function rankAlchemyType(type) {
             profitData,
         });
     }
-
-    return results;
 }
 
 /**
