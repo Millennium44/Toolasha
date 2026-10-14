@@ -554,6 +554,44 @@ describe('visibleTabsContainer', () => {
         makeBar({ visible: true, text: 'Something Else' });
         expect(visibleTabsContainer('My Listings')).toBeNull();
     });
+
+    describe('on a client whose tabs carry no English label', () => {
+        function inPanel(bar) {
+            const panel = document.createElement('div');
+            panel.className = 'MarketplacePanel_marketplacePanel__abc';
+            document.body.appendChild(panel);
+            panel.appendChild(bar);
+            return bar;
+        }
+        function addTabs(bar, count) {
+            bar.innerHTML = '';
+            for (let i = 0; i < count; i++) {
+                const tab = document.createElement('button');
+                tab.setAttribute('role', 'tab');
+                tab.textContent = `标签${i}`;
+                bar.appendChild(tab);
+            }
+            return bar;
+        }
+
+        test('finds the strip by its place inside the marketplace panel', () => {
+            const bar = inPanel(addTabs(makeBar({ visible: true, text: 'x' }), 3));
+            expect(visibleTabsContainer()).toBe(bar);
+        });
+
+        test('does not take a strip outside the marketplace panel, or one with a single tab', () => {
+            addTabs(makeBar({ visible: true, text: 'x' }), 3);
+            inPanel(addTabs(makeBar({ visible: true, text: 'x' }), 1));
+            expect(visibleTabsContainer()).toBeNull();
+        });
+
+        test('skips a hidden marketplace strip and an explicit text request is not positional', () => {
+            inPanel(addTabs(makeBar({ visible: false, text: 'x' }), 3));
+            const visible = inPanel(addTabs(makeBar({ visible: true, text: 'x' }), 3));
+            expect(visibleTabsContainer()).toBe(visible);
+            expect(visibleTabsContainer('Flips')).toBeNull();
+        });
+    });
 });
 
 describe('removeMaterialTabs / removeShrineMarketTabs', () => {
