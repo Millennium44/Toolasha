@@ -124,6 +124,19 @@ export function marketHistoryPanel() {
 }
 
 /**
+ * The market undercut alerts — the initialized copy, whose Mooket sightings
+ * are what let a price count as fresh.
+ *
+ * Only the UI bundle's instance is initialized; a copy compiled into another
+ * bundle (the overbid panel lives in market) never fills its sightings.
+ *
+ * @returns {Object|null} The alerts singleton, or null when the UI bundle has not loaded
+ */
+export function marketUndercutAlerts() {
+    return toolashaRoot()?.UI?.marketUndercutAlerts || null;
+}
+
+/**
  * The Risk of Ruin panel, for its last depth-cap context.
  *
  * Reached through the global rather than imported: the panel is a ui-bundle

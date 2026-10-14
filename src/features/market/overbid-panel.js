@@ -34,7 +34,8 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import marketUndercutAlerts from '../notifications/market-undercut-alerts.js';
+import localMarketUndercutAlerts from '../notifications/market-undercut-alerts.js';
+import { marketUndercutAlerts as liveMarketUndercutAlerts } from '../../utils/bundle-bridge.js';
 import { listingBeaten } from '../notifications/notification-predicates.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -45,6 +46,8 @@ import { formatKMB3Digits } from '../../utils/formatters.js';
 export const SETTING = 'market_overbidPanel';
 
 const PANEL_ID = 'overbidPanel';
+/** How often the memory-only comparison is redone, so expired figures drop off */
+const RECHECK_MS = 5000;
 const ACTIVE_STATUS = '/market_listing_status/active';
 const ACCENT = '#ff8f6b';
 const MUTED = 'rgba(232, 236, 245, 0.55)';
@@ -114,7 +117,9 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
 export function currentBeatenListings() {
     return findBeatenListings(
         dataManager.getMarketListings(),
-        (itemHrid, level, isSell) => marketUndercutAlerts.sideObservation(itemHrid, level, isSell),
+        (itemHrid, level, isSell) =>
+            // The initialized copy lives in the UI bundle; this bundle's own import is only the dev-build fallback
+            (liveMarketUndercutAlerts() || localMarketUndercutAlerts).sideObservation(itemHrid, level, isSell),
         Date.now(),
         marketAPI.CACHE_DURATION
     );
@@ -236,6 +241,9 @@ class OverbidPanel {
             dataManager.off('market_listings_updated', handler);
             marketAPI.off(handler);
         });
+
+        // An observation ages out without any event announcing it; reading memory is cheap
+        this.cleanup.registerInterval(setInterval(handler, RECHECK_MS), 'overbidPanel:recheck');
 
         const switching = () => this.disable();
         dataManager.on('character_switching', switching);
