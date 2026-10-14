@@ -388,6 +388,25 @@ describe('leaderboard rank badges', () => {
         expect(Object.keys(leaderboardRankBadges.boards).sort()).toEqual(['standard|foraging', 'standard|milking']);
     });
 
+    test('a pull that adopts boards redraws the cycle bar, and one that changes nothing does not', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const redraw = vi.spyOn(leaderboardRankBadges, 'refreshCycleBars').mockImplementation(() => {});
+        game.saved.rankBoards = {
+            'standard|foraging': { at: Date.now() - 1000, source: 'local', rows: [['Bob', 4]] },
+        };
+        announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(redraw).toHaveBeenCalledTimes(1);
+
+        announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(redraw).toHaveBeenCalledTimes(1);
+        redraw.mockRestore();
+    });
+
     test('a pull during a restart read does not discard a board that has not been saved yet', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();
