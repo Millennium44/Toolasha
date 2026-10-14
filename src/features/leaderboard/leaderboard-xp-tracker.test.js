@@ -359,6 +359,22 @@ describe('leaderboard XP tracker', () => {
             expect(leaderboardXPTracker.playerXPHistory.foraging_A.map((s) => s.xp)).toEqual([500, 1000, 2000]);
         });
 
+        test('the display is told when a pull changed the history, and not when it did not', async () => {
+            reading('A', 1000);
+            await leaderboardXPTracker.history.flushed();
+            const heard = vi.fn();
+            const off = leaderboardXPTracker.onPulledHistory(heard);
+
+            announceSyncPullApplied({ leaderboardHistory: ['playerXP'] });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(heard).not.toHaveBeenCalled();
+
+            game.saved.playerXP = { ...game.saved.playerXP, foraging_B: [{ t: 5, xp: 70 }] };
+            announceSyncPullApplied({ leaderboardHistory: ['playerXP'] });
+            await vi.waitFor(() => expect(heard).toHaveBeenCalledTimes(1));
+            off();
+        });
+
         test('a pull of some other key changes nothing', async () => {
             game.saved.playerXP = { foraging_B: [{ t: 5, xp: 70 }] };
             announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });

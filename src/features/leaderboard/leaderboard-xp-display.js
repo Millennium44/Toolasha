@@ -329,6 +329,12 @@ class LeaderboardXPDisplay {
             this._refreshLeaderboardIfVisible(data?.leaderboardCategory);
         };
         webSocketHook.on('leaderboard_updated', this._boundRefreshLeaderboard);
+        // A sync pull brought readings in: rebuild the open board's rate columns from them
+        this.unregisterObservers.push(
+            leaderboardXPTracker.onPulledHistory(() =>
+                this._refreshLeaderboardIfVisible(leaderboardXPTracker.getLastLeaderboardCategory())
+            )
+        );
         this.unregisterObservers.push(() => webSocketHook.off('leaderboard_updated', this._boundRefreshLeaderboard));
 
         this.initialized = true;

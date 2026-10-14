@@ -437,6 +437,10 @@ class LeaderboardRankBadges {
         this.startingRun = 0;
         this.rebuildIndex();
 
+        // A sync pull brought XP readings in, which the cycle bar's board times come from
+        const unlistenPull = leaderboardXPTracker.onPulledHistory?.(() => this.refreshCycleBars());
+        if (unlistenPull) this.teardown.push(unlistenPull);
+
         const onBoard = (data) => this.onLocalBoard(data);
         webSocketHook.on('leaderboard_updated', onBoard);
         this.teardown.push(() => webSocketHook.off('leaderboard_updated', onBoard));
