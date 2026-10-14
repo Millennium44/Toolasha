@@ -2800,6 +2800,12 @@ export const COST_SOURCES = {
             'Refine a copy you hold into the ★ version: the refinement materials at their buy price, plus ' +
             'enhancing only from the held level to the target. Enhancement levels transfer.',
     },
+    mirror: {
+        label: 'mirror',
+        title:
+            "Built with a Philosopher's Mirror from a copy one level below and a copy two below, each priced " +
+            'at its own cheapest route. An estimate, not a quote.',
+    },
     craft: {
         label: 'craft',
         title: 'No market listing, so the price is what the materials to make it come to.',
@@ -2813,7 +2819,7 @@ export const COST_SOURCES = {
 };
 
 /** Cost bases in descending order of how much a reader should trust them */
-const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'refine', 'sim', 'enhance', 'ongoing'];
+const COST_SOURCE_RANK = ['market', 'books', 'guild', 'craft', 'refine', 'mirror', 'sim', 'enhance', 'ongoing'];
 
 /**
  * The weakest basis among several, since a total is only as solid as its
@@ -2887,7 +2893,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
         if (!best || price < best.price) best = { price, copy, enhance: Math.max(0, enhance) };
     }
 
-    const mirror = resolveMirrorBase(baseHrid, target, gameData, { isSelf });
+    const mirror = resolveMirrorBase(baseHrid, target, gameData, { isSelf, minLevel: MIN_REFINE_BASE_LEVEL });
     if (mirror && (!best || materials.cost + mirror.baseCost < best.price)) {
         return {
             price: materials.cost + mirror.baseCost,
@@ -2954,10 +2960,11 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
  * @param {boolean} [options.isSelf=true] - Whether the live character's copies apply
+ * @param {number} [options.minLevel] - Lowest level worth offering (a refine needs a +5 base)
  * @returns {{baseCost: number, mirrorPrice: number}|null} Null when no mirror route beats the ordinary one
  */
-function resolveMirrorBase(baseHrid, level, gameData, { isSelf = true } = {}) {
-    if (level < Math.max(MIRROR_FIRST_LEVEL, MIN_REFINE_BASE_LEVEL) || testerShopEnabled()) return null;
+function resolveMirrorBase(baseHrid, level, gameData, { isSelf = true, minLevel = MIRROR_FIRST_LEVEL } = {}) {
+    if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
     const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
     if (!(mirrorPrice > 0)) return null;
 
@@ -3003,15 +3010,38 @@ function removedPieces(candidate) {
 function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = {}) {
     const direct = resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, options);
     const refine = resolveRefineRoute(itemHrid, enhancementLevel, gameData, options);
-    if (!refine) return direct;
-    if (direct.price == null) return refine;
-    // Judged after resale: refining a worn base gives up what that base would have sold for
-    const forfeited = (refine.consumed || []).reduce(
-        (sum, piece) =>
-            sum + (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
-        0
-    );
-    return refine.price + forfeited < direct.price ? refine : direct;
+    let chosen = direct;
+    if (refine) {
+        // Judged after resale: refining a worn base gives up what that base would have sold for
+        const forfeited = (refine.consumed || []).reduce(
+            (sum, piece) =>
+                sum + (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
+            0
+        );
+        if (direct.price == null || refine.price + forfeited < direct.price) chosen = refine;
+    }
+    // A refined target already weighs the mirror inside its refine route (on the unrefined base)
+    if (itemHrid?.endsWith('_refined')) return chosen;
+    const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
+    const mirror = resolveMirrorBase(itemHrid, level, gameData, options);
+    if (mirror && (chosen.price == null || mirror.baseCost < chosen.price)) {
+        return {
+            price: mirror.baseCost,
+            source: 'mirror',
+            enhanceSource: describeEnhancementSource(enhancementSweepParams(itemHrid)),
+            ladder: {
+                fromLevel: level - 1,
+                toLevel: level,
+                fresh: false,
+                alreadyHeld: false,
+                fromEquipped: false,
+                isSelf: options.isSelf !== false,
+                baseCost: 0,
+                mirror: { mirrorPrice: mirror.mirrorPrice },
+            },
+        };
+    }
+    return chosen;
 }
 
 /**
