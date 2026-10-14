@@ -161,6 +161,7 @@ class AlchemyBestItems {
         this.ownStock = new Map();
         this.ownStockSweep = 0;
         this.ownStockRunning = false;
+        this.ownStockPromise = null;
         this.currentType = 'coinify';
         this.itemsSpriteUrl = null;
         this.profitableOnly = false;
@@ -585,6 +586,7 @@ class AlchemyBestItems {
         this.ownStock.clear();
         this.ownStockSweep += 1;
         this.ownStockRunning = false;
+        this.ownStockPromise = null;
         clearDecomposeChainCaches();
     }
 
@@ -642,10 +644,22 @@ class AlchemyBestItems {
      * A no-op outside the own-stock sort. A newer sweep (or a cache clear) abandons an older one.
      * @returns {Promise<void>}
      */
-    async refreshOwnStock() {
-        if (!this.modal || !this.isOwnStockMode() || this.currentType !== 'decompose') return;
+    refreshOwnStock() {
+        if (!this.modal || !this.isOwnStockMode() || this.currentType !== 'decompose') return Promise.resolve();
+        // One sweep at a time: a caller arriving mid-sweep shares it rather than superseding it
+        if (this.ownStockRunning && this.ownStockPromise) return this.ownStockPromise;
         const sweep = ++this.ownStockSweep;
         this.ownStockRunning = true;
+        this.ownStockPromise = this.runOwnStockSweep(sweep);
+        return this.ownStockPromise;
+    }
+
+    /**
+     * The body of one own-stock sweep; see {@link refreshOwnStock}.
+     * @param {number} sweep - This sweep's number, to notice being superseded
+     * @returns {Promise<void>}
+     */
+    async runOwnStockSweep(sweep) {
         try {
             const held = (this.cachedRankings.decompose || [])
                 .map((row) => ({ row, count: this.heldCount(row.itemHrid) }))
@@ -663,11 +677,19 @@ class AlchemyBestItems {
                     held: count,
                 });
             }
-            if (sweep === this.ownStockSweep && this.modal.style.display !== 'none') this.renderTable();
+            if (sweep === this.ownStockSweep) {
+                // Free the slot before drawing, so stock gained mid-sweep starts the next pass
+                this.ownStockRunning = false;
+                this.ownStockPromise = null;
+                if (this.modal.style.display !== 'none') this.renderTable();
+            }
         } catch (error) {
             console.error('[AlchemyBestItems] Own-stock chains failed:', error);
         } finally {
-            if (sweep === this.ownStockSweep) this.ownStockRunning = false;
+            if (sweep === this.ownStockSweep) {
+                this.ownStockRunning = false;
+                this.ownStockPromise = null;
+            }
         }
     }
 
