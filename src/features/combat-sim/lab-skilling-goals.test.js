@@ -1094,3 +1094,63 @@ describe('cowbells break a tie at no gold and no tokens', () => {
         expect(result.totals.cowbells).toBe(10);
     });
 });
+
+describe('a jewelry swap offered once per kit is one purchase', () => {
+    const NECK = '/equipment_types/neck';
+    const kits = ['/skills/milking', '/skills/foraging'];
+    const necklace = (hrid) => ({ [NECK]: { hrid, enhancementLevel: 0 } });
+    const setup = () => ({
+        dto: { equipment: necklace('/items/plain') },
+        skillEquipmentMap: { [kits[0]]: necklace('/items/n1'), [kits[1]]: necklace('/items/n2') },
+    });
+    const tierRow = (current) => ({
+        candidate: {
+            type: 'tier',
+            slot: NECK,
+            currentHrid: current,
+            currentLevel: 0,
+            upgradeHrid: '/items/philo',
+            upgradeLevel: 5,
+            description: `${current} → Philosopher's Necklace +5`,
+        },
+        costType: 'gold',
+        cost: 900,
+        clearRateDelta: 0.02,
+        metricType: 'clearRate',
+    });
+    /** Each kit's room gains 0.04 when its own kit wears the Philosopher's necklace. */
+    const evaluateKits = (s) => {
+        const perSkill = kits.map((skillHrid) => ({
+            skillHrid,
+            skillName: skillHrid,
+            roomLevel: 50,
+            clearChance: 0.5 + (s.skillEquipmentMap[skillHrid][NECK].hrid === '/items/philo' ? 0.04 : 0),
+        }));
+        return averageSkillingResults(perSkill.map((p) => ({ ...p, xpPerRoom: 0 })));
+    };
+
+    test('per-kit tier rows merge, are measured on every room, and are priced as one acquisition', () => {
+        const price = vi
+            .spyOn(upgradeAdvisor, 'calculateUpgradeCost')
+            .mockImplementation((candidate) => 1000 - 100 * (candidate.removedItems?.length || 0));
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const result = { results: [tierRow('/items/n1'), tierRow('/items/n2')] };
+        mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: setup(),
+            evaluate: evaluateKits,
+            roomLevel: 50,
+            gameData: {},
+        });
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results).toHaveLength(1);
+        const [merged] = result.results;
+        expect(merged.candidate.merged).toBe(true);
+        // Both rooms gain 0.04: 0.04 on the average, where each row alone showed 0.02
+        expect(merged.clearRateDelta).toBeCloseTo(0.04, 10);
+        // Bought once, two different necklaces sold back
+        expect(merged.cost).toBe(800);
+    });
+});
