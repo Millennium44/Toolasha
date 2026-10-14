@@ -478,7 +478,37 @@ function priceMergedAcquisition(members, gameData) {
         const without = calculateUpgradeCost({ ...buy, removedItems: [] }, gameData);
         const withOthers = calculateUpgradeCost({ ...buy, removedItems: others }, gameData);
         const credit = Number.isFinite(without) && Number.isFinite(withOthers) ? without - withOthers : 0;
-        routes.push({ cost: row.cost - credit, detail: () => row.costDetail ?? null });
+        routes.push({
+            cost: row.cost - credit,
+            detail: () => {
+                const base = row.costDetail;
+                if (!base || !(credit !== 0)) return base ?? null;
+                // The enhancement lines as priced, plus a sale line per freed piece. Each
+                // piece's credit is its own marginal effect on the purchase price; the last
+                // line takes the remainder so the lines total exactly what the row charged
+                const lines = others.map((item) => {
+                    const alone = calculateUpgradeCost({ ...buy, removedItems: [item] }, gameData);
+                    const marginal = Number.isFinite(alone) && Number.isFinite(without) ? without - alone : 0;
+                    const info = gameData?.itemDetailMap?.[item.hrid];
+                    return {
+                        hrid: item.hrid,
+                        name: info?.name || item.hrid.split('/').pop().replace(/_/g, ' '),
+                        enhancementLevel: item.enhancementLevel || 0,
+                        price: marginal,
+                    };
+                });
+                if (lines.length) {
+                    lines[lines.length - 1].price += credit - lines.reduce((sum, line) => sum + line.price, 0);
+                }
+                return {
+                    ...base,
+                    credits: [...(base.credits || []), ...lines],
+                    credit: (base.credit || 0) + credit,
+                    net: row.cost - credit,
+                    creditApplied: true,
+                };
+            },
+        });
     }
     if (!routes.length) return { cost: null, costDetail: null };
     const cheapest = routes.reduce((best, r) => (r.cost < best.cost ? r : best));
