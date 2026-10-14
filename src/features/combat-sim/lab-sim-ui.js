@@ -3718,6 +3718,7 @@ class LabSimUI {
             analysisResult,
             roomLevel,
             targetSkill,
+            gameData,
             baseSetup: { dto, skillEquipmentMap },
             evaluate: createSkillingEvaluator({
                 computeRates: computeSkillingClearRatesFromEditor,
@@ -6142,6 +6143,7 @@ class LabSimUI {
                         evaluate: context.evaluate,
                         roomLevel,
                         targetSkill,
+                        gameData,
                     });
                 }
                 if (analysisResult?.baseline && !this._skillingAborted) {

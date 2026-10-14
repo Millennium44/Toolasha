@@ -3856,7 +3856,9 @@ describe('the Skilling tab’s room levels, goal planner and Sim together', () =
             await ui._onSkillingPlan();
 
             expect(goalResults().querySelectorAll('[data-plan-step]').length).toBeGreaterThanOrEqual(1);
-            expect(goalResults().querySelector('[data-plan-verdict]').textContent).toMatch(/Goal reached at total/);
+            expect(goalResults().querySelector('[data-plan-verdict]').textContent).toMatch(
+                /Best plan found reaches the goal at total/
+            );
             expect(goalResults().innerHTML).toContain('Step cost');
         });
 

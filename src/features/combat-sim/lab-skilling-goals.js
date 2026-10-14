@@ -21,7 +21,7 @@
  */
 
 import { labyrinthFloorClearLevel, labyrinthFloorForLevel } from '../combat/labyrinth-formulas.js';
-import { applyCandidateToDTO, applyToEquipment } from './upgrade-advisor.js';
+import { applyCandidateToDTO, applyToEquipment, calculateUpgradeCost, explainUpgradeCost } from './upgrade-advisor.js';
 
 /** Lowest skilling room level the search will probe. */
 export const SKILLING_ROOM_LEVEL_MIN = 1;
@@ -317,8 +317,11 @@ export function createRowLevelMeasure({ baseSetup, targetSkill = null, ...search
  * measures it as a whole. The per-skill rows are removed: each is a part of the
  * merged gain, so leaving them in would rank every part as if it were the whole.
  *
- * Cost is the highest of the parts' costs: one copy is bought, and the parts
- * differ only in which piece each kit would give up.
+ * Cost is that of the single acquisition, through the advisor's own cost helpers:
+ * the piece is bought once and the distinct pieces the kits give up are credited
+ * once each (a kept combat piece, as on the parts, earns nothing). When a part
+ * enhances a copy already owned, that route competes and the cheaper one wins.
+ * Without `gameData` the dearest part's cost stands in.
  *
  * @param {Object} params
  * @param {Object} params.analysisResult - `{ results }`, modified in place
@@ -326,9 +329,17 @@ export function createRowLevelMeasure({ baseSetup, targetSkill = null, ...search
  * @param {function(SkillingSetup, number|Object): Object} params.evaluate
  * @param {number|Object} params.roomLevel - What the table was measured at
  * @param {string|null} [params.targetSkill]
+ * @param {Object} [params.gameData] - From `buildGameDataPayload`, for pricing the single acquisition
  * @returns {number} How many merged rows were added
  */
-export function mergeMultiSkillGearRows({ analysisResult, baseSetup, evaluate, roomLevel, targetSkill = null }) {
+export function mergeMultiSkillGearRows({
+    analysisResult,
+    baseSetup,
+    evaluate,
+    roomLevel,
+    targetSkill = null,
+    gameData = null,
+}) {
     const results = analysisResult?.results || [];
     const groups = new Map();
     for (const row of results) {
@@ -368,12 +379,17 @@ export function mergeMultiSkillGearRows({ analysisResult, baseSetup, evaluate, r
         };
         const after = evaluate(applySkillingCandidate(baseSetup, candidate, targetSkill), roomLevel);
         const clearRateDelta = after.clearRate - baseline.clearRate;
-        const cost = members.some((r) => r.cost === null || r.cost === undefined) ? null : pricey.cost;
+        const { cost, costDetail } = gameData
+            ? priceMergedAcquisition(members, gameData)
+            : {
+                  cost: members.some((r) => r.cost === null || r.cost === undefined) ? null : pricey.cost,
+                  costDetail: pricey.costDetail ?? null,
+              };
         const merged = {
             candidate,
             costType: 'gold',
             cost,
-            costDetail: pricey.costDetail ?? null,
+            costDetail,
             clearRate: after.clearRate,
             clearRateDelta,
             goldPerClearRate: clearRateDelta > GAIN_EPSILON && cost != null ? cost / (clearRateDelta * 100) : Infinity,
@@ -386,6 +402,73 @@ export function mergeMultiSkillGearRows({ analysisResult, baseSetup, evaluate, r
         added++;
     }
     return added;
+}
+
+/**
+ * One purchase serving several kits, priced once.
+ *
+ * Buy route: the target piece at its level, net of the resale of each distinct
+ * piece the kits give up, priced by `calculateUpgradeCost` on a single
+ * combined candidate. Pieces a part marks as kept (combat gear that stays in its
+ * loadout) are not sold. Own-copy route: a part that enhances a copy already held
+ * is priced by the advisor already, and one copy serves every kit, so the
+ * cheapest finite route wins. No finite route means no price.
+ *
+ * @param {Array<Object>} members - The rows being merged
+ * @param {Object} gameData
+ * @returns {{cost: number|null, costDetail: Object|null}}
+ */
+function priceMergedAcquisition(members, gameData) {
+    const first = members[0].candidate;
+    const seen = new Set();
+    const removedItems = [];
+    const keptItems = [];
+    for (const { candidate: c } of members) {
+        const displaced =
+            c.removedItems || (c.currentHrid ? [{ hrid: c.currentHrid, enhancementLevel: c.currentLevel }] : []);
+        for (const item of displaced) {
+            const key = `${item.hrid}+${item.enhancementLevel || 0}`;
+            if (item?.hrid && !seen.has(key)) {
+                seen.add(key);
+                removedItems.push(item);
+            }
+        }
+        for (const item of c.keptItems || []) keptItems.push(item);
+    }
+    const buy = {
+        ...first,
+        type: 'skilling_gear',
+        currentHrid: '',
+        currentLevel: 0,
+        removedItems,
+        keptItems,
+    };
+    const routes = [];
+    const bought = calculateUpgradeCost(buy, gameData);
+    if (Number.isFinite(bought))
+        routes.push({
+            cost: bought,
+            detail: () => {
+                const detail = explainUpgradeCost(buy, gameData);
+                const kept = members.flatMap((r) => r.costDetail?.kept || []);
+                if (kept.length) {
+                    detail.kept = kept.filter(
+                        (k, i) =>
+                            kept.findIndex((o) => o.hrid === k.hrid && o.enhancementLevel === k.enhancementLevel) === i
+                    );
+                    detail.keptValue = detail.kept.reduce((sum, entry) => sum + (entry.price || 0), 0);
+                }
+                return detail;
+            },
+        });
+    for (const row of members) {
+        if (row.candidate.type === 'enhancement' && Number.isFinite(row.cost)) {
+            routes.push({ cost: row.cost, detail: () => row.costDetail ?? null });
+        }
+    }
+    if (!routes.length) return { cost: null, costDetail: null };
+    const cheapest = routes.reduce((best, r) => (r.cost < best.cost ? r : best));
+    return { cost: cheapest.cost, costDetail: cheapest.detail() };
 }
 
 /**
@@ -587,19 +670,21 @@ export async function simulateCombination({ rows, baseSetup, evaluate, roomLevel
  *
  * @param {Array<Object>} rows - Skilling analysis rows
  * @param {number} [cap=PLAN_CANDIDATE_CAP] - Priced rows to keep
+ * @param {function(Object): number} [deltaOf] - The clear-rate gain to judge a row by; defaults to the
+ *   table's, which was measured at the analyzed room level
  * @returns {Array<Object>}
  */
-export function selectPlanPool(rows, cap = PLAN_CANDIDATE_CAP) {
+export function selectPlanPool(rows, cap = PLAN_CANDIDATE_CAP, deltaOf = (r) => r.clearRateDelta || 0) {
     const helpful = (Array.isArray(rows) ? rows : []).filter(
-        (r) => r?.candidate && r.metricType !== 'xpPerRoom' && (r.clearRateDelta || 0) > GAIN_EPSILON
+        (r) => r?.candidate && r.metricType !== 'xpPerRoom' && deltaOf(r) > GAIN_EPSILON
     );
     const unpriced = helpful.filter((r) => r.costType === 'token' || r.costType === 'community');
     const priced = helpful
         .filter((r) => !unpriced.includes(r))
-        .map((row) => ({ row, ratio: rankGold(rowCost(row)) / (row.clearRateDelta * 100) }))
+        .map((row) => ({ row, ratio: rankGold(rowCost(row)) / (deltaOf(row) * 100) }))
         .sort((a, b) => {
             if (a.ratio !== b.ratio) return a.ratio < b.ratio ? -1 : 1;
-            return (b.row.clearRateDelta || 0) - (a.row.clearRateDelta || 0);
+            return deltaOf(b.row) - deltaOf(a.row);
         })
         .slice(0, Math.max(0, Math.floor(Number(cap) || 0)))
         .map((entry) => entry.row);
@@ -637,14 +722,26 @@ function pickStep(trials, goalRate) {
     )[0];
 }
 
+/** Simulations the improvement pass may spend after the greedy plan. */
+export const PLAN_IMPROVE_SIM_BUDGET = 120;
+
 /**
- * Build the cheapest plan the candidates can make to a goal.
+ * Build a good plan from the candidates to a goal.
  *
- * Greedy, one upgrade at a time: every remaining candidate is simulated on top
- * of the ones already chosen (applied together to the setup and re-run, not
- * summed), the best value is taken, and the rest of that candidate's slot is
- * closed off. It stops when the average clear rate at the goal level meets the
- * bar, or when nothing left helps.
+ * Every candidate is first simulated alone at the goal level, so the pool is
+ * ranked on the gain that matters there (a row measured at an easier analyzed
+ * level can show no gain at all at the floor's exit room). Then, greedily, one
+ * upgrade at a time: every remaining candidate is simulated on top of the ones
+ * already chosen (applied together to the setup and re-run, not summed), the
+ * best value is taken, and the rest of that candidate's slot is closed off. It
+ * stops when the average clear rate at the goal level meets the bar, or when
+ * nothing left helps.
+ *
+ * Greedy by value is not guaranteed cheapest, so a plan that reaches the goal
+ * then gets a bounded improvement pass: drop any step, or swap a step for one or
+ * two unchosen candidates, re-simulating the combination, keeping any cheaper
+ * set that still meets the goal. The result is the best plan found, not a proof
+ * of the cheapest one.
  *
  * A candidate is only in the pool if it moved the clear rate on its own, so an
  * upgrade that helps only alongside another is never found; and slot closure
@@ -662,7 +759,8 @@ function pickStep(trials, goalRate) {
  * @param {function({current: number, total: number, description: string}): void} [params.onProgress]
  * @param {function(SkillingSetup): Promise<Object>} [params.measureMax] - Room-level search of a setup
  * @param {function(): Promise<void>} [params.yieldFn]
- * @returns {Promise<Object>} `{ steps, reached, aborted, baselineRate, finalRate, totals, poolSize, sims }`
+ * @returns {Promise<Object>} `{ steps, reached, aborted, baselineRate, finalRate, totals, poolSize, sims,
+ *   improved, improveSims }`
  */
 export async function planSkillingGoal(params) {
     const {
@@ -685,16 +783,38 @@ export async function planSkillingGoal(params) {
         return evaluate(setup, goalRoomLevel);
     };
 
-    const pool = selectPlanPool(rows, candidateCap);
     let setup = baseSetup;
     let current = run(setup);
     const baselineRate = current.clearRate;
     const applied = [];
     const steps = [];
-    let remaining = [...pool];
     let aborted = false;
 
-    while (current.clearRate < goalRate - RATE_EPSILON) {
+    // Rank on the gain at the goal level. One simulation per eligible row, once;
+    // skipped when there is nothing to buy.
+    let pool = [];
+    if (current.clearRate < goalRate - RATE_EPSILON) {
+        const eligible = (Array.isArray(rows) ? rows : []).filter((r) => r?.candidate && r.metricType !== 'xpPerRoom');
+        const goalDelta = new Map();
+        for (let i = 0; i < eligible.length; i++) {
+            if (abortSignal?.()) {
+                aborted = true;
+                break;
+            }
+            await yieldFn();
+            onProgress?.({
+                current: i,
+                total: eligible.length,
+                description: `Ranking at the goal: ${eligible[i].candidate.description || 'upgrade'}`,
+            });
+            const alone = run(applySkillingCandidate(baseSetup, eligible[i].candidate, targetSkill));
+            goalDelta.set(eligible[i], alone.clearRate - baselineRate);
+        }
+        if (!aborted) pool = selectPlanPool(eligible, candidateCap, (r) => goalDelta.get(r) || 0);
+    }
+    let remaining = [...pool];
+
+    while (!aborted && current.clearRate < goalRate - RATE_EPSILON) {
         // Closed off by what is already chosen: a slot is one choice
         remaining = remaining.filter(
             (row) => !applied.some((a) => skillingCandidatesConflict(a.candidate, row.candidate))
@@ -752,16 +872,136 @@ export async function planSkillingGoal(params) {
         if (aborted) break;
     }
 
+    const greedySims = sims;
+    let chosen = applied;
+    let improved = false;
+    if (!aborted && applied.length && current.clearRate >= goalRate - RATE_EPSILON) {
+        const better = await improvePlan({
+            chosen: applied,
+            unchosen: pool.filter((row) => !applied.includes(row)),
+            reaches: (set) => {
+                const setupOf = set.reduce(
+                    (acc, row) => applySkillingCandidate(acc, row.candidate, targetSkill),
+                    baseSetup
+                );
+                return run(setupOf).clearRate >= goalRate - RATE_EPSILON;
+            },
+            budget: () => PLAN_IMPROVE_SIM_BUDGET - (sims - greedySims),
+            abortSignal,
+            yieldFn,
+        });
+        if (better) {
+            improved = true;
+            chosen = better;
+            // The steps are re-derived for the new set, in order, so each row's
+            // clear rate is the one after that step and the ones before it
+            steps.length = 0;
+            let walk = baseSetup;
+            let before = baselineRate;
+            for (const row of chosen) {
+                walk = applySkillingCandidate(walk, row.candidate, targetSkill);
+                current = run(walk);
+                const step = {
+                    index: steps.length + 1,
+                    row,
+                    description: row.candidate?.description || 'Upgrade',
+                    cost: rowCost(row),
+                    cumulative: sumCosts(chosen.slice(0, steps.length + 1).map(rowCost)),
+                    clearRate: current.clearRate,
+                    gain: current.clearRate - before,
+                    maxRoomLevel: null,
+                    floor: null,
+                };
+                before = current.clearRate;
+                if (measureMax) {
+                    const found = await measureMax(walk);
+                    if (found?.aborted) aborted = true;
+                    else if (found?.cleared) {
+                        step.maxRoomLevel = found.maxLevel;
+                        step.floor = labyrinthFloorForLevel(found.maxLevel);
+                    }
+                }
+                steps.push(step);
+            }
+        }
+    }
+
     return {
         steps,
         reached: current.clearRate >= goalRate - RATE_EPSILON,
         aborted,
         baselineRate,
         finalRate: current.clearRate,
-        totals: sumCosts(applied.map(rowCost)),
+        totals: sumCosts(chosen.map(rowCost)),
         poolSize: pool.length,
         sims,
+        improved,
+        improveSims: sims - greedySims,
     };
+}
+
+/**
+ * Try to find a cheaper set than the greedy one that still reaches the goal.
+ *
+ * Moves, in order: drop a step; swap a step for one unchosen candidate; swap a
+ * step for two. A set is only simulated if it is cheaper than the best so far
+ * (gold, then tokens, then fewer upgrades), so most moves cost nothing. Takes
+ * the first improvement and starts over, within the simulation budget.
+ *
+ * @param {Object} params
+ * @param {Array<Object>} params.chosen - The greedy plan, in order
+ * @param {Array<Object>} params.unchosen - Pool rows not in it
+ * @param {function(Array<Object>): boolean} params.reaches - Simulates a set; true when it meets the goal
+ * @param {function(): number} params.budget - Simulations left
+ * @param {Function} [params.abortSignal]
+ * @param {function(): Promise<void>} params.yieldFn
+ * @returns {Promise<Array<Object>|null>} A cheaper set, or null when none was found
+ */
+async function improvePlan({ chosen, unchosen, reaches, budget, abortSignal, yieldFn }) {
+    const price = (set) => {
+        const total = sumCosts(set.map(rowCost));
+        return { gold: total.unpriced ? Infinity : total.gold, tokens: total.tokens, n: set.length };
+    };
+    const cheaper = (a, b) => {
+        if (a.gold !== b.gold) return a.gold < b.gold;
+        if (a.tokens !== b.tokens) return a.tokens < b.tokens;
+        return a.n < b.n;
+    };
+    const compatible = (set) =>
+        set.every((a, i) => set.every((b, j) => i >= j || !skillingCandidatesConflict(a.candidate, b.candidate)));
+
+    let best = chosen;
+    let found = false;
+    let progress = true;
+    while (progress) {
+        progress = false;
+        const current = best;
+        const others = unchosen.filter((row) => !current.includes(row));
+        const proposals = [];
+        for (let i = 0; i < best.length; i++) {
+            const rest = best.filter((_, k) => k !== i);
+            proposals.push(rest);
+            for (const u of others) proposals.push([...rest, u]);
+        }
+        for (let i = 0; i < best.length; i++) {
+            const rest = best.filter((_, k) => k !== i);
+            for (let a = 0; a < others.length; a++) {
+                for (let b = a + 1; b < others.length; b++) proposals.push([...rest, others[a], others[b]]);
+            }
+        }
+        for (const set of proposals) {
+            if (!set.length || !compatible(set) || !cheaper(price(set), price(best))) continue;
+            if (budget() <= 0 || abortSignal?.()) return found ? best : null;
+            await yieldFn();
+            if (reaches(set)) {
+                best = set;
+                found = true;
+                progress = true;
+                break;
+            }
+        }
+    }
+    return found ? best : null;
 }
 
 /**
@@ -821,7 +1061,7 @@ const TH_LEFT = 'text-align:left; padding:4px; color:#888; border-bottom:1px sol
  */
 export function renderPlanHtml(plan, { goalText, showLevels = false }) {
     let html = `<div style="color:#e0e0e0; font-weight:700; font-size:12px; margin-bottom:4px;">Plan to goal</div>`;
-    html += `<div style="color:#888; font-size:11px; margin-bottom:6px;">Goal: ${esc(goalText)}. Starts at ${pct(plan.baselineRate)}; ${plan.poolSize} candidates weighed per step.</div>`;
+    html += `<div style="color:#888; font-size:11px; margin-bottom:6px;">Goal: ${esc(goalText)}. Starts at ${pct(plan.baselineRate)}; ${plan.poolSize} candidates weighed per step, ${plan.sims} simulations${plan.improved ? ' (a cheaper set than the greedy one was found)' : ''}.</div>`;
     if (plan.steps.length) {
         html += '<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>';
         html += `<th style="${TH_LEFT}">#</th><th style="${TH_LEFT}">Upgrade</th><th style="${TH}">Step cost</th>`;
@@ -844,7 +1084,7 @@ export function renderPlanHtml(plan, { goalText, showLevels = false }) {
         verdict = `Stopped early at ${pct(plan.finalRate)} after ${plan.steps.length} steps.`;
     } else if (plan.reached) {
         verdict = plan.steps.length
-            ? `Goal reached at total ${describeCost(plan.totals)}.`
+            ? `Best plan found reaches the goal at total ${describeCost(plan.totals)}.`
             : `Already at the goal: ${pct(plan.finalRate)} without buying anything.`;
     } else {
         verdict = `Not reachable with these candidates (best reached ${pct(plan.finalRate)}).`;
