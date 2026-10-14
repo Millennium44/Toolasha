@@ -110,6 +110,24 @@ describe('readers of mirror state', () => {
         expect(merged.totalCost).toBe(272000 + 91000);
     });
 
+    test('mergeSessions names a lone real protection correctly after a legacy mirror-only session', () => {
+        const mirrorOnly = legacySession({
+            protectionItemHrid: PHILOSOPHERS_MIRROR_HRID,
+            protectionBreakdown: undefined,
+        });
+        mirrorOnly.protectionCount = 3;
+        mirrorOnly.protectionCost = 270000;
+        const real = createSession('/items/foo', 'Foo', 0, 10, 2);
+        addProtectionCost(real, BOOK, 1000);
+
+        const merged = mergeSessions([mirrorOnly, real]);
+
+        expect(merged.protectionCount).toBe(1);
+        expect(merged.mirrorCount).toBe(3);
+        expect(Object.keys(getProtectionUsage(merged).breakdown)).toEqual([BOOK]);
+        expect(getMirrorUsage(merged).count).toBe(3);
+    });
+
     test('foldSessions keeps new-format mirrors out of the protection count and in the total', () => {
         const a = createSession('/items/foo', 'Foo', 0, 10, 2);
         a.id = 'a';

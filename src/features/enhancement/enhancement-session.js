@@ -1426,7 +1426,15 @@ export function mergeSessions(sessions) {
     // Several items have no one level to mark.
     const present = sessions.filter(Boolean);
     agg.live = present.some((session) => session.state === SessionState.TRACKING);
-    if (Object.keys(protection).length > 1) agg.protectionBreakdown = protection;
+    // Kept whenever it is not all the one item agg.protectionItemHrid names (that item could be a
+    // legacy mirror), or the lone count would be synthesized under the wrong name
+    const protectionItems = Object.keys(protection);
+    if (
+        protectionItems.length > 1 ||
+        (protectionItems.length === 1 && protectionItems[0] !== (agg.protectionItemHrid || ''))
+    ) {
+        agg.protectionBreakdown = protection;
+    }
     if (agg.itemHrids.length === 1) {
         const activity = (s) =>
             Math.max(s.endTime || 0, s.lastAttempt?.timestamp || 0, s.lastUpdateTime || 0, s.startTime || 0);
