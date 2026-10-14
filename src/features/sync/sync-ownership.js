@@ -64,12 +64,62 @@ export const SYNCED_STORES = [
     'lootLogHistory',
     'leaderboardHistory',
     // Created for the upstream script this database is shared with, and since
-    // written by this one too (`core/data-manager.js`,
-    // `features/character-activity/character-activity-storage.js`), so they are
-    // ours to carry.
-    'actionProgress',
+    // written by this one too (`features/character-activity/character-activity-storage.js`),
+    // so it is ours to carry: another device's characters appear on this
+    // device's character-select screen.
     'characterActivityStatus',
 ];
+
+/**
+ * Object stores this script writes but keeps on the device that wrote them.
+ *
+ * `actionProgress` holds one record per character, `{actionId, currentCount,
+ * unitStartTime}`, rewritten after every completed base action
+ * (`core/data-manager.js`, `_persistActionUnitBoundary`). `unitStartTime` is
+ * this device's clock reading of when a unit began, trusted on load only while
+ * it still matches the live front action; another device's reading can never
+ * be that. Carrying it put a changed key into every sync and latched it for a
+ * reload on every pull. A store missing from {@link SYNCED_STORES},
+ * {@link FOREIGN_STORES} and this list fails `sync-ownership.test.js`, so the
+ * decision is still forced.
+ *
+ * Kept in backups: only the sync leaves it out, so a restore on the same
+ * device still has it.
+ */
+export const DEVICE_ONLY_STORES = ['actionProgress'];
+
+/**
+ * Key prefixes, by store, that the sync leaves out of stores it otherwise
+ * carries whole. The `settings` store has its own device-local list
+ * (`LOCAL_ONLY_KEY_PREFIXES` in `sync-payload.js`); this one is for this
+ * script's own object stores, which are not filtered key by key.
+ *
+ * - `combatStats` `latestCombatRun`: the live snapshot of the fight in
+ *   progress, rewritten every battle and meaningful only on the device that is
+ *   fighting (`features/combat-stats/combat-stats-data-collector.js`).
+ * - `combatExport` `spawnCensus`: this machine's running tally of wave
+ *   rosters. It is rewritten on every flush, and a pull replaces the key
+ *   whole, so the two devices' tallies would overwrite each other rather than
+ *   add. It has its own export for sharing.
+ *
+ * Applied on the way out and on the way in, so a payload written by an older
+ * build that still carries them cannot plant one. Backups are unaffected.
+ */
+export const DEVICE_ONLY_STORE_KEY_PREFIXES = {
+    combatStats: ['latestCombatRun'],
+    combatExport: ['spawnCensus'],
+};
+
+/**
+ * Whether a key in one of this script's own stores stays on the device.
+ * @param {string} storeName - Object store
+ * @param {string} key - Storage key
+ * @returns {boolean} True when the sync must neither upload nor apply it
+ */
+function isDeviceOnlyStoreKey(storeName, key) {
+    const prefixes = DEVICE_ONLY_STORE_KEY_PREFIXES[storeName];
+    return !!prefixes && prefixes.some((prefix) => String(key).startsWith(prefix));
+}
 
 /**
  * Object stores this script creates but does not own.
@@ -730,7 +780,8 @@ export function ownsKey(storeName, key) {
  * @returns {boolean} True when the key may be uploaded and restored
  */
 function ownsKeyWith(external, storeName, key) {
-    if (!KEY_FILTERED_STORES.includes(storeName)) return isSyncedStore(storeName);
+    if (!KEY_FILTERED_STORES.includes(storeName))
+        return isSyncedStore(storeName) && !isDeviceOnlyStoreKey(storeName, key);
     const name = String(key);
     if (OWNED_KEY_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
     if (OWNED_KEY_PATTERNS.some((pattern) => pattern.test(name))) return true;
@@ -755,7 +806,17 @@ function ownsKeyWith(external, storeName, key) {
 export function partitionOwnedKeys(storeName, entries, owns = ownsKey) {
     const source = entries || {};
     if (!KEY_FILTERED_STORES.includes(storeName)) {
-        return { owned: source, foreignKeys: 0, foreignBytes: 0 };
+        // Device-only keys are ours, not foreign: dropped without being counted
+        // in the "left out" summary, which is about other scripts' records
+        const prefixes = DEVICE_ONLY_STORE_KEY_PREFIXES[storeName];
+        if (!prefixes || !Object.keys(source).some((key) => isDeviceOnlyStoreKey(storeName, key))) {
+            return { owned: source, foreignKeys: 0, foreignBytes: 0 };
+        }
+        const kept = {};
+        for (const key of Object.keys(source)) {
+            if (!isDeviceOnlyStoreKey(storeName, key)) kept[key] = source[key];
+        }
+        return { owned: kept, foreignKeys: 0, foreignBytes: 0 };
     }
 
     const keys = Object.keys(source);
@@ -799,6 +860,8 @@ function weigh(value) {
 export default {
     SYNCED_STORES,
     FOREIGN_STORES,
+    DEVICE_ONLY_STORES,
+    DEVICE_ONLY_STORE_KEY_PREFIXES,
     KEY_FILTERED_STORES,
     OWNED_KEY_PREFIXES,
     OWNED_KEY_PATTERNS,

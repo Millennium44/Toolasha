@@ -501,9 +501,9 @@ describe('an automatic push merges a gist that moved past it', () => {
         const writes = gist.writes;
         // A's only change is one the gist already has: its history, re-recorded
         a.db.xpHistory.testHistory_c1 = ['s1'];
-        a.db.settings.panelGeometry = { x: 1 };
+        a.db.settings.playerColors = { x: 1 };
         await as(b, () => {
-            b.db.settings.panelGeometry = { x: 1 };
+            b.db.settings.playerColors = { x: 1 };
         });
         await as(b, auto.push);
         const afterB = gist.writes;
@@ -604,14 +604,14 @@ describe('an automatic push merges a gist that moved past it', () => {
                 settings: {
                     [MAP]: { X: { id: 'X', isTrue: false }, Y: { id: 'Y', isTrue: true } },
                     [STAMPS]: { X: { at: 1, seq: null } },
-                    panelGeometry: { from: 'backup' },
+                    playerColors: { from: 'backup' },
                 },
             },
         };
         // B changes X and a panel position, and pushes, after the backup was taken
         await as(b, async () => {
             changeSetting(b, 'X', true);
-            b.db.settings.panelGeometry = { from: 'b' };
+            b.db.settings.playerColors = { from: 'b' };
             await auto.push();
         });
 
@@ -625,7 +625,7 @@ describe('an automatic push merges a gist that moved past it', () => {
 
         const onGist = gistStores().settings;
         expect(onGist[MAP]).toMatchObject({ X: { isTrue: false }, Y: { isTrue: true } });
-        expect(onGist.panelGeometry).toEqual({ from: 'backup' });
+        expect(onGist.playerColors).toEqual({ from: 'backup' });
         // Histories still fold: nothing the other device recorded is dropped
         expect(onGist.xpHistory).toBeUndefined();
         expect(gistStores().xpHistory.testHistory_c1).toEqual(['s1']);
@@ -635,70 +635,70 @@ describe('an automatic push merges a gist that moved past it', () => {
         const { a, b } = await syncedPair();
         // Both move the panel position between the same two syncs; B pushes first
         await as(b, async () => {
-            b.db.settings.panelGeometry = { from: 'b' };
+            b.db.settings.playerColors = { from: 'b' };
             await auto.push();
         });
         await as(a, async () => {
-            a.db.settings.panelGeometry = { from: 'a1' };
+            a.db.settings.playerColors = { from: 'a1' };
             a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
             await auto.push();
         });
         // Both moved it: the gist's copy stands
-        expect(gistStores().settings.panelGeometry).toEqual({ from: 'b' });
+        expect(gistStores().settings.playerColors).toEqual({ from: 'b' });
 
         // A moves it again before reloading: that is a change made after the
         // merge, against a gist that has not moved since
         await as(a, async () => {
-            a.db.settings.panelGeometry = { from: 'a2' };
+            a.db.settings.playerColors = { from: 'a2' };
             await auto.push();
         });
-        expect(gistStores().settings.panelGeometry).toEqual({ from: 'a2' });
+        expect(gistStores().settings.playerColors).toEqual({ from: 'a2' });
 
         await as(a, auto.startup);
-        expect(a.db.settings.panelGeometry).toEqual({ from: 'a2' });
+        expect(a.db.settings.playerColors).toEqual({ from: 'a2' });
     });
 
     test("a startup pull that keeps a key this device moved leaves the next push sending this device's value", async () => {
         const { a, b } = await syncedPair();
         // The key is on the gist, and both devices hold that copy
         await as(a, async () => {
-            a.db.settings.panelGeometry = { from: 'base' };
+            a.db.settings.playerColors = { from: 'base' };
             await auto.push();
         });
         await as(b, auto.startup);
         // A moves it offline; B pushes something else, so the gist is newer but unmoved on this key
-        a.db.settings.panelGeometry = { from: 'a1' };
+        a.db.settings.playerColors = { from: 'a1' };
         await as(b, async () => {
             changeSetting(b, 'X', true);
             await auto.push();
         });
         await as(a, auto.startup);
-        expect(a.db.settings.panelGeometry).toEqual({ from: 'a1' });
+        expect(a.db.settings.playerColors).toEqual({ from: 'a1' });
 
         // The next automatic push carries the edit, not the gist's older copy
         await as(a, async () => {
             a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
             await auto.push();
         });
-        expect(gistStores().settings.panelGeometry).toEqual({ from: 'a1' });
+        expect(gistStores().settings.playerColors).toEqual({ from: 'a1' });
         await as(a, auto.startup);
-        expect(a.db.settings.panelGeometry).toEqual({ from: 'a1' });
+        expect(a.db.settings.playerColors).toEqual({ from: 'a1' });
     });
 
     test("a reload after a merge the gist won takes the gist's value when nothing was edited here since", async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {
-            b.db.settings.panelGeometry = { from: 'b' };
+            b.db.settings.playerColors = { from: 'b' };
             await auto.push();
         });
         await as(a, async () => {
-            a.db.settings.panelGeometry = { from: 'a1' };
+            a.db.settings.playerColors = { from: 'a1' };
             a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
             await auto.push();
         });
 
         await as(a, auto.startup);
-        expect(a.db.settings.panelGeometry).toEqual({ from: 'b' });
+        expect(a.db.settings.playerColors).toEqual({ from: 'b' });
     });
 
     test('a merge this device won outright leaves nothing for its next reload to apply', async () => {
@@ -725,15 +725,15 @@ describe('an automatic push merges a gist that moved past it', () => {
     test('a partial restore still protects the stores that landed, and only those', async () => {
         const { a, b } = await syncedPair();
         await as(b, async () => {
-            b.db.settings.panelGeometry = { from: 'b' };
+            b.db.settings.playerColors = { from: 'b' };
             b.db.xpHistory.otherKey = 'b';
             await auto.push();
         });
         // The settings store landed; xpHistory's transaction did not
         await as(a, async () => {
-            a.db.settings.panelGeometry = { from: 'backup' };
+            a.db.settings.playerColors = { from: 'backup' };
             const backup = {
-                stores: { settings: { panelGeometry: { from: 'backup' } }, xpHistory: { otherKey: 'stale-local' } },
+                stores: { settings: { playerColors: { from: 'backup' } }, xpHistory: { otherKey: 'stale-local' } },
             };
             await syncManager.noteFullRestore(backup, ['settings']);
             a.db.xpHistory.testHistory_c1 = ['s1', 'a-sample'];
@@ -741,7 +741,7 @@ describe('an automatic push merges a gist that moved past it', () => {
         });
         await as(a, auto.push);
 
-        expect(gistStores().settings.panelGeometry).toEqual({ from: 'backup' });
+        expect(gistStores().settings.playerColors).toEqual({ from: 'backup' });
         // Not restored, so not protected: both moved it, and the gist's stands
         expect(gistStores().xpHistory.otherKey).toBe('b');
     });
@@ -756,13 +756,13 @@ describe('an automatic push merges a gist that moved past it', () => {
         const backup = {
             formatVersion: 1,
             exportedAt: 'x',
-            stores: { settings: { panelGeometry: { from: 'backup' } } },
+            stores: { settings: { playerColors: { from: 'backup' } } },
         };
 
         // The other device changes K and the panel position, and pushes
         await as(b, async () => {
             b.db.settings.panelSizeMemory = 'b-newer';
-            b.db.settings.panelGeometry = { from: 'b' };
+            b.db.settings.playerColors = { from: 'b' };
             await auto.push();
         });
         // A restores the backup and its automatic push merges
@@ -773,7 +773,7 @@ describe('an automatic push merges a gist that moved past it', () => {
         await as(a, auto.push);
 
         expect(gistStores().settings.panelSizeMemory).toBe('b-newer');
-        expect(gistStores().settings.panelGeometry).toEqual({ from: 'backup' });
+        expect(gistStores().settings.playerColors).toEqual({ from: 'backup' });
     });
 
     test("a device keeping 20 sessions merges a gist holding 500 without cutting the other device's history", async () => {
@@ -1529,14 +1529,14 @@ describe('two devices writing at the same moment', () => {
             const error = vi.spyOn(console, 'error').mockImplementation(() => {});
             raceSixPushes((payload, i) => {
                 // Only an older readable push holds this: it is in the result only if the restore folded
-                if (i === 2) payload.stores.settings.panelGeometry = 'from-2';
+                if (i === 2) payload.stores.settings.playerColors = 'from-2';
                 shape(payload, i);
             });
             expect(await as(a, auto.push)).toEqual({ ok: false, reason: 'raced' });
             warn.mockRestore();
             error.mockRestore();
             const restored = JSON.parse(gist.state.payload);
-            expect(restored.stores.settings.panelGeometry).toBe('from-2');
+            expect(restored.stores.settings.playerColors).toBe('from-2');
             return restored;
         };
         const settingsOnly = (payload) => {

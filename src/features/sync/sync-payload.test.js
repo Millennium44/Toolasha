@@ -362,6 +362,27 @@ describe('buildPayloadJSON', () => {
 
         expect(Object.keys(parsed.stores.guildHistory)).toEqual(['guildTrials_MilkMaxxing']);
     });
+
+    test('never carries device-only data: action progress, the live combat run, the spawn census, panel positions', async () => {
+        storeState.stores.actionProgress = { 603281: { actionId: 1, currentCount: 2, unitStartTime: 5 } };
+        storeState.stores.combatStats = { latestCombatRun_603281: { live: true }, combatHistory_603281: [1] };
+        storeState.stores.combatExport = { spawnCensus: { rows: [] }, combatExport_603281: { kept: true } };
+        storeState.stores.settings = {
+            panelGeometry: { a: 1 },
+            modalPositions3: { a: 1 },
+            bulkSellPanelPosition: { left: 1, top: 2 },
+            consumablesBuyWidgetPosition: { left: 1, top: 2 },
+            taskRerollWalkPanelPosition: { left: 1, top: 2 },
+            panelSizeMemory: { kept: true },
+        };
+
+        const parsed = JSON.parse(await buildPayloadJSON('everything'));
+
+        expect(parsed.stores.actionProgress).toBeUndefined();
+        expect(Object.keys(parsed.stores.combatStats)).toEqual(['combatHistory_603281']);
+        expect(Object.keys(parsed.stores.combatExport)).toEqual(['combatExport_603281']);
+        expect(Object.keys(parsed.stores.settings)).toEqual(['panelSizeMemory']);
+    });
 });
 
 describe('applyPayload', () => {
@@ -530,17 +551,38 @@ describe('applyPayload', () => {
         expect(storeState.stores.settings.script_settingsMap_abc).toEqual({ chatCommands: { isTrue: true } });
     });
 
+    test('ignores device-only data an older build still uploaded', async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                actionProgress: { 603281: { actionId: 1, currentCount: 2, unitStartTime: 5 } },
+                combatStats: { latestCombatRun_603281: { live: true }, combatHistory_603281: [1] },
+                combatExport: { spawnCensus: { rows: [] } },
+                settings: { panelGeometry: { a: 1 }, modalPositions3: { a: 1 }, panelSizeMemory: { kept: true } },
+            },
+        });
+
+        await applyPayload(json);
+
+        const written = importedPayloads[0].stores;
+        expect(written.actionProgress).toBeUndefined();
+        expect(Object.keys(written.combatStats || {})).toEqual(['combatHistory_603281']);
+        expect(written.combatExport?.spawnCensus).toBeUndefined();
+        expect(Object.keys(written.settings)).toEqual(['panelSizeMemory']);
+    });
+
     test('never restores sync bookkeeping from a payload', async () => {
         const json = JSON.stringify({
             formatVersion: 1,
             exportedAt: '2026-01-01T00:00:00.000Z',
-            stores: { settings: { toolasha_sync_gistId: 'someone-elses-gist', panelGeometry: 1 } },
+            stores: { settings: { toolasha_sync_gistId: 'someone-elses-gist', playerColors: 1 } },
         });
 
         await applyPayload(json);
 
         expect(importedPayloads[0].stores.settings.toolasha_sync_gistId).toBeUndefined();
-        expect(importedPayloads[0].stores.settings.panelGeometry).toBe(1);
+        expect(importedPayloads[0].stores.settings.playerColors).toBe(1);
     });
 
     test('never plants another device’s update-check cache or presence heartbeat', async () => {
@@ -552,7 +594,7 @@ describe('applyPayload', () => {
                     updateCheckState: { checkedAt: Date.now(), latestVersion: '99.0.0' },
                     sessionBriefingLastAlive_603281: Date.now(),
                     script_settingsMap_shared: { updateCheckHours: { value: 1 } },
-                    panelGeometry: 1,
+                    playerColors: 1,
                 },
             },
         });
@@ -564,7 +606,7 @@ describe('applyPayload', () => {
         expect(writtenSettings.sessionBriefingLastAlive_603281).toBeUndefined();
         // The setting that paces the check still lands normally
         expect(writtenSettings.script_settingsMap_shared.updateCheckHours).toEqual({ value: 1 });
-        expect(writtenSettings.panelGeometry).toBe(1);
+        expect(writtenSettings.playerColors).toBe(1);
     });
 
     test('never plants another device’s market price cache', async () => {
@@ -577,7 +619,7 @@ describe('applyPayload', () => {
                     Toolasha_marketAPI_timestamp: 1700000000000,
                     Toolasha_marketAPI_patches: { '/items/cheese:0': { a: 5, b: 4, timestamp: 1 } },
                     Toolasha_marketAPI_migration_version: 1,
-                    panelGeometry: 1,
+                    playerColors: 1,
                 },
             },
         });
@@ -592,7 +634,7 @@ describe('applyPayload', () => {
         expect(writtenSettings.Toolasha_marketAPI_timestamp).toBeUndefined();
         expect(writtenSettings.Toolasha_marketAPI_patches).toBeUndefined();
         expect(writtenSettings.Toolasha_marketAPI_migration_version).toBeUndefined();
-        expect(writtenSettings.panelGeometry).toBe(1);
+        expect(writtenSettings.playerColors).toBe(1);
     });
 });
 
@@ -1219,7 +1261,7 @@ describe('what belongs to this script', () => {
         storeState.stores = {
             settings: {
                 script_settingsMap_abc: { chatCommands: { isTrue: true } },
-                panelGeometry: { left: 10 },
+                playerColors: { left: 10 },
                 'tradeLedgerRec_603281_2026-09-16': [{ id: 1 }],
                 someOtherScriptsRecord: 'x'.repeat(2000),
             },
@@ -1248,7 +1290,7 @@ describe('what belongs to this script', () => {
         // store of our own — the shapes a mistake here would break one at a time
         expect(payload.stores.settings.script_settingsMap_abc).toEqual({ chatCommands: { isTrue: true } });
         expect(payload.stores.settings['tradeLedgerRec_603281_2026-09-16']).toEqual([{ id: 1 }]);
-        expect(payload.stores.settings.panelGeometry).toEqual({ left: 10 });
+        expect(payload.stores.settings.playerColors).toEqual({ left: 10 });
         expect(payload.stores.dungeonRuns).toEqual({ run1: { kills: 3 } });
     });
 
@@ -1257,7 +1299,7 @@ describe('what belongs to this script', () => {
             formatVersion: 1,
             exportedAt: '2026-09-16T00:00:00.000Z',
             stores: {
-                settings: { panelGeometry: { left: 99 }, someOtherScriptsRecord: 'from another device' },
+                settings: { playerColors: { left: 99 }, someOtherScriptsRecord: 'from another device' },
                 openableAnalytics: { chest_history: 'from another device' },
             },
         });
@@ -1265,7 +1307,7 @@ describe('what belongs to this script', () => {
         await applyPayload(json);
 
         const written = importedPayloads[0].stores;
-        expect(written.settings.panelGeometry).toEqual({ left: 99 });
+        expect(written.settings.playerColors).toEqual({ left: 99 });
         expect(written.settings.someOtherScriptsRecord).toBeUndefined();
         expect(written.openableAnalytics).toBeUndefined();
         // Not written back, and not deleted: what this device holds stands
@@ -1280,7 +1322,7 @@ describe('what belongs to this script', () => {
             formatVersion: 1,
             exportedAt: '2026-01-01T00:00:00.000Z',
             stores: {
-                settings: { someOtherScriptsRecord: 'old', panelGeometry: { left: 1 } },
+                settings: { someOtherScriptsRecord: 'old', playerColors: { left: 1 } },
                 openableAnalytics: { chest_history: 'old' },
                 aStoreThatNoLongerExists: { whatever: 1 },
             },
@@ -1527,14 +1569,14 @@ describe('the whole-value baseline', () => {
         const hashes = wholeKeyHashes(
             payloadOf({
                 settings: {
-                    panelGeometry: { x: 1 },
+                    playerColors: { x: 1 },
                     script_settingsMap_abc: {},
                     settings_changedAt_script_settingsMap_abc: {},
                     treasureTally_abc: {},
                 },
             })
         );
-        expect(Object.keys(hashes).sort()).toEqual(['settings\u0000panelGeometry', 'settings\u0000treasureTally_abc']);
+        expect(Object.keys(hashes).sort()).toEqual(['settings\u0000playerColors', 'settings\u0000treasureTally_abc']);
     });
 
     test('ignores the order an object was written in', () => {
@@ -1544,36 +1586,36 @@ describe('the whole-value baseline', () => {
     });
 
     test('a startup merge keeps a value this device moved while the gist did not', async () => {
-        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 }, panelSizeMemory: 1 } }));
-        storeState.stores.settings.panelGeometry = { x: 2 }; // moved here
+        const baseline = wholeKeyHashes(payloadOf({ settings: { playerColors: { x: 1 }, panelSizeMemory: 1 } }));
+        storeState.stores.settings.playerColors = { x: 2 }; // moved here
         storeState.stores.settings.panelSizeMemory = 1; // not moved here
 
-        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 1 }, panelSizeMemory: 7 } }), {
+        await applyPayload(payloadOf({ settings: { playerColors: { x: 1 }, panelSizeMemory: 7 } }), {
             mode: 'merge',
             baseline,
         });
 
         const landedSettings = importedPayloads.at(-1).stores.settings;
         // Not in the import, so the newer local value stays where it is
-        expect(Object.hasOwn(landedSettings, 'panelGeometry')).toBe(false);
+        expect(Object.hasOwn(landedSettings, 'playerColors')).toBe(false);
         expect(landedSettings.panelSizeMemory).toBe(7);
     });
 
     test('with both sides moved, or no baseline, the download is written as a pull always did', async () => {
-        storeState.stores.settings.panelGeometry = { x: 2 };
-        const both = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
-        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 3 } } }), { mode: 'merge', baseline: both });
-        expect(importedPayloads.at(-1).stores.settings.panelGeometry).toEqual({ x: 3 });
+        storeState.stores.settings.playerColors = { x: 2 };
+        const both = wholeKeyHashes(payloadOf({ settings: { playerColors: { x: 1 } } }));
+        await applyPayload(payloadOf({ settings: { playerColors: { x: 3 } } }), { mode: 'merge', baseline: both });
+        expect(importedPayloads.at(-1).stores.settings.playerColors).toEqual({ x: 3 });
 
-        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 1 } } }), { mode: 'merge', baseline: null });
-        expect(importedPayloads.at(-1).stores.settings.panelGeometry).toEqual({ x: 1 });
+        await applyPayload(payloadOf({ settings: { playerColors: { x: 1 } } }), { mode: 'merge', baseline: null });
+        expect(importedPayloads.at(-1).stores.settings.playerColors).toEqual({ x: 1 });
     });
 
     test('a pull someone asked for ignores the baseline', async () => {
-        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
-        storeState.stores.settings.panelGeometry = { x: 2 };
-        await applyPayload(payloadOf({ settings: { panelGeometry: { x: 1 } } }), { baseline });
-        expect(importedPayloads.at(-1).stores.settings.panelGeometry).toEqual({ x: 1 });
+        const baseline = wholeKeyHashes(payloadOf({ settings: { playerColors: { x: 1 } } }));
+        storeState.stores.settings.playerColors = { x: 2 };
+        await applyPayload(payloadOf({ settings: { playerColors: { x: 1 } } }), { baseline });
+        expect(importedPayloads.at(-1).stores.settings.playerColors).toEqual({ x: 1 });
     });
 });
 
@@ -1598,33 +1640,33 @@ describe('mergeForUpload, which writes nothing local', () => {
     });
 
     test('folds a registered history with its merge, and keeps keys either side alone has', () => {
-        const local = payloadOf({ settings: { treasureTally_abc: { chests: { a: 3 } }, panelGeometry: 1 } });
+        const local = payloadOf({ settings: { treasureTally_abc: { chests: { a: 3 } }, playerColors: 1 } });
         const remote = payloadOf({ settings: { treasureTally_abc: { chests: { a: 1, b: 2 } }, panelSizeMemory: 2 } });
 
         const merged = JSON.parse(mergeForUpload(local, remote, null).text).stores.settings;
 
-        expect(merged.panelGeometry).toBe(1);
+        expect(merged.playerColors).toBe(1);
         expect(merged.panelSizeMemory).toBe(2);
         expect(merged.treasureTally_abc).toBeDefined();
     });
 
     test("a whole-value key keeps this device's value only when the gist's is still the one last exchanged", () => {
-        // panelGeometry moved here, panelSizeMemory moved there, panelOpenState
+        // playerColors moved here, panelSizeMemory moved there, panelOpenState
         // moved on both, whatsNew_state has no baseline at all
         const baseline = wholeKeyHashes(
-            payloadOf({ settings: { panelGeometry: 1, panelSizeMemory: 1, panelOpenState: 1 } })
+            payloadOf({ settings: { playerColors: 1, panelSizeMemory: 1, panelOpenState: 1 } })
         );
         const local = payloadOf({
-            settings: { panelGeometry: 2, panelSizeMemory: 1, panelOpenState: 2, whatsNew_state: 'mine' },
+            settings: { playerColors: 2, panelSizeMemory: 1, panelOpenState: 2, whatsNew_state: 'mine' },
         });
         const remote = payloadOf({
-            settings: { panelGeometry: 1, panelSizeMemory: 3, panelOpenState: 3, whatsNew_state: 'theirs' },
+            settings: { playerColors: 1, panelSizeMemory: 3, panelOpenState: 3, whatsNew_state: 'theirs' },
         });
 
         const merged = JSON.parse(mergeForUpload(local, remote, baseline).text).stores.settings;
 
         expect(merged).toMatchObject({
-            panelGeometry: 2,
+            playerColors: 2,
             panelSizeMemory: 3,
             panelOpenState: 3,
             whatsNew_state: 'theirs',
@@ -1705,25 +1747,25 @@ describe('mergeForUpload, which writes nothing local', () => {
     });
 
     test('a restore marker gives precedence to the keys it lists; an older marker shape to none', () => {
-        const local = payloadOf({ settings: { panelGeometry: 'restored', panelSizeMemory: 'stale' } });
-        const remote = payloadOf({ settings: { panelGeometry: 'theirs', panelSizeMemory: 'theirs' } });
+        const local = payloadOf({ settings: { playerColors: 'restored', panelSizeMemory: 'stale' } });
+        const remote = payloadOf({ settings: { playerColors: 'theirs', panelSizeMemory: 'theirs' } });
         const merge = (marker) =>
             JSON.parse(mergeForUpload(local, remote, { [RESTORED_BASELINE]: marker }).text).stores.settings;
 
-        expect(merge({ at: 1, keys: { settings: ['panelGeometry'] } })).toMatchObject({
-            panelGeometry: 'restored',
+        expect(merge({ at: 1, keys: { settings: ['playerColors'] } })).toMatchObject({
+            playerColors: 'restored',
             panelSizeMemory: 'theirs',
         });
         for (const old of [123, { at: 1, stores: ['settings'] }]) {
-            expect(merge(old)).toMatchObject({ panelGeometry: 'theirs', panelSizeMemory: 'theirs' });
+            expect(merge(old)).toMatchObject({ playerColors: 'theirs', panelSizeMemory: 'theirs' });
         }
     });
 
     test('says whether the gist held anything this device lacks', () => {
-        const local = payloadOf({ settings: { panelGeometry: 1 } });
-        expect(mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1 } }), null).remoteAdds).toBe(false);
+        const local = payloadOf({ settings: { playerColors: 1 } });
+        expect(mergeForUpload(local, payloadOf({ settings: { playerColors: 1 } }), null).remoteAdds).toBe(false);
         expect(
-            mergeForUpload(local, payloadOf({ settings: { panelGeometry: 1, panelSizeMemory: 2 } }), null).remoteAdds
+            mergeForUpload(local, payloadOf({ settings: { playerColors: 1, panelSizeMemory: 2 } }), null).remoteAdds
         ).toBe(true);
     });
 
@@ -1776,12 +1818,12 @@ describe('mergeForUpload, which writes nothing local', () => {
         // The gist's X is older than this device's, and its panel position is
         // the one this device last exchanged: this device wins both, so a
         // startup pull of the result would change nothing here
-        const baseline = wholeKeyHashes(payloadOf({ settings: { panelGeometry: { x: 1 } } }));
+        const baseline = wholeKeyHashes(payloadOf({ settings: { playerColors: { x: 1 } } }));
         const local = payloadOf({
-            settings: { [MAP]: { X: { v: 'new' } }, [STAMPS]: { X: { at: 20 } }, panelGeometry: { x: 2 } },
+            settings: { [MAP]: { X: { v: 'new' } }, [STAMPS]: { X: { at: 20 } }, playerColors: { x: 2 } },
         });
         const remote = payloadOf({
-            settings: { [MAP]: { X: { v: 'old' } }, [STAMPS]: { X: { at: 10 } }, panelGeometry: { x: 1 } },
+            settings: { [MAP]: { X: { v: 'old' } }, [STAMPS]: { X: { at: 10 } }, playerColors: { x: 1 } },
         });
 
         expect(mergeForUpload(local, remote, baseline).remoteAdds).toBe(false);
