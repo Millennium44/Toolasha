@@ -395,13 +395,24 @@ describe('combat: who a checked swap reaches', () => {
             expect(withOwned.reach).toBe(1);
         });
 
+        test('combat: a copy worn higher than the level asked for is not reused', () => {
+            const low = wearing({ [BACK]: piece(CAPE, 5) });
+            const higher = wearing({ [BACK]: piece(CAPE, 8) });
+            const alone = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [low], gameData);
+            const withHigher = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [low, higher], gameData);
+
+            expect(withHigher.cost).toBe(alone.cost);
+            expect(withHigher.cost).toBeGreaterThan(0);
+            expect(withHigher.caveat).not.toContain('already wear a copy');
+        });
+
         test('skilling: a kit already wearing it makes the others free', () => {
             const TOOL = '/equipment_types/milking_tool';
             const context = {
                 dto: { equipment: {} },
                 skillEquipmentMap: {
                     '/skills/milking': { [TOOL]: piece(MILKING_TOOL, 2) },
-                    '/skills/foraging': { [TOOL]: piece(MILKING_TOOL, 9) },
+                    '/skills/foraging': { [TOOL]: piece(MILKING_TOOL, 7) },
                 },
                 skills: ['/skills/milking', '/skills/foraging'],
             };
@@ -414,6 +425,12 @@ describe('combat: who a checked swap reaches', () => {
                 gameData
             );
             expect(bought.cost).toBeGreaterThan(0);
+
+            // A kit wearing it higher is left alone but is not a copy to reuse
+            context.skillEquipmentMap['/skills/foraging'][TOOL] = piece(MILKING_TOOL, 9);
+            const higher = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 7 }, context, gameData);
+            expect(higher.skillKeys).toEqual(['/skills/milking']);
+            expect(higher.cost).toBeGreaterThan(0);
         });
     });
 

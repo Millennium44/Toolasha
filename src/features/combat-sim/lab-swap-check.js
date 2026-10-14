@@ -293,7 +293,7 @@ function keptByUnreached(route, unreachedPieces) {
 }
 
 const OWNED_CAVEAT =
-    'Checked by hand. You already wear a copy at this level in another loadout, and the loadouts are ' +
+    'Checked by hand. You already wear a copy at exactly this level in another loadout, and the loadouts are ' +
     'alternatives, so the piece is moved and nothing is bought.';
 
 /**
@@ -304,6 +304,18 @@ const OWNED_CAVEAT =
  */
 function wornAtLeast(piece, swap) {
     return piece?.hrid === swap.hrid && (piece.enhancementLevel || 0) >= swap.level;
+}
+
+/**
+ * Whether a worn piece is this item at exactly the level asked for. Only such a copy
+ * can be reused as the checked piece: a higher one would be simulated as the lower
+ * level, which is a downgraded copy, so it is not treated as owned.
+ * @param {Object|null|undefined} piece - `{ hrid, enhancementLevel }`
+ * @param {{hrid: string, level: number}} swap
+ * @returns {boolean}
+ */
+function wornExactly(piece, swap) {
+    return piece?.hrid === swap.hrid && (piece.enhancementLevel || 0) === swap.level;
 }
 
 /**
@@ -347,7 +359,7 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
     };
     // One physical piece serves every loadout (they are alternatives, not worn
     // together), so a copy already worn at this level in any loadout is owned
-    if ((dtos || []).some((dto) => wornAtLeast(dto?.equipment?.[slot], swap))) {
+    if ((dtos || []).some((dto) => wornExactly(dto?.equipment?.[slot], swap))) {
         candidate.cost = 0;
         candidate.caveat = OWNED_CAVEAT;
     } else {
@@ -402,7 +414,8 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         const kit = skillEquipmentMap[skill] || dto?.equipment || {};
         const piece = kit[slot];
         if (wornAtLeast(piece, swap)) {
-            owned = true;
+            // Already that good here; only an exact-level copy can be moved to the others
+            if (wornExactly(piece, swap)) owned = true;
             continue;
         }
         if (!allLoadouts && !affectsSkill(detail, skill)) continue;
