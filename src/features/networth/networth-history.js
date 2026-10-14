@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
-import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
+import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
 const STORE_NAME = 'networthHistory';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -87,6 +87,26 @@ registerSyncRetention({
     // Dropped from a download and an upload, never deleted here by a pull: a device still holding the array
     // unmigrated must let `_loadDetailHistory` fold it into snapshot keys first
     keepLocal: (key) => /^networthDetail_[0-9a-zA-Z]+$/.test(key) && !/^networthDetail_.+_\d+$/.test(key),
+});
+
+/*
+ * A detail snapshot is written once, under a key that names its own timestamp, and
+ * never edited: two copies of one key are the same snapshot, so either is right and
+ * this device's wins. That makes a pull of a snapshot key safe under a running page —
+ * the only reader is the in-memory `detailHistory` (the 24h diff and the gold-sources
+ * window), which reads the keys again on the next load and is display only, every
+ * writer either sets a new key or deletes one (a delete of a key already gone is
+ * harmless), and nothing writes `detailHistory` back over storage. So these keys take
+ * a pull without a reload. The pre-split array key is not a snapshot key and stays
+ * unregistered: `_loadDetailHistory` migrates and deletes it, which a pull must not
+ * race.
+ */
+registerSyncMerge({
+    store: STORE_NAME,
+    match: (key) => parseDetailKey(key) !== null,
+    merge: (local, incoming) => local ?? incoming,
+    label: 'Networth detail snapshots',
+    liveSafe: true,
 });
 
 /** Beyond this age, the history is thinned rather than kept point for point */

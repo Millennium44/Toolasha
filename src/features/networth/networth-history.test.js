@@ -36,7 +36,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/connection-state.js', () => ({ default: { isConnected: () => true } }));
 
 const { default: networthHistory, pruneHistory, seriesStore } = await import('./networth-history.js');
-const { retentionDrops, mergeForKey } = await import('../../utils/sync-merge-registry.js');
+const { retentionDrops, mergeForKey, isLiveSafeKey } = await import('../../utils/sync-merge-registry.js');
 
 const HOUR = 3_600_000;
 
@@ -582,5 +582,23 @@ describe('a sync fold of a series month does not bring back thinned points', () 
         const registration = mergeForKey('networthHistory', 'networthSeries_char-1_2026-08');
         const folded = registration.mergeForPull([{ t: now - HOUR, total: 1 }], [{ t: now - 2 * HOUR, total: 2 }]);
         expect(folded).toHaveLength(2);
+    });
+});
+
+describe('detail snapshots take a pull without a reload', () => {
+    test('a snapshot key is live-safe and keeps this device’s copy when both exist', () => {
+        const key = 'networthDetail_char-1_1780000000000';
+        expect(isLiveSafeKey('networthHistory', key)).toBe(true);
+        const registration = mergeForKey('networthHistory', key);
+        const mine = { t: 1780000000000, items: { a: { count: 1, value: 1 } } };
+        const theirs = { t: 1780000000000, items: {} };
+        expect(registration.mergeForPull(mine, theirs)).toBe(mine);
+        expect(registration.merge(mine, theirs)).toBe(mine);
+        expect(registration.merge(null, theirs)).toBe(theirs);
+    });
+
+    test('the pre-split array key, which the next load migrates and deletes, is not', () => {
+        expect(isLiveSafeKey('networthHistory', 'networthDetail_char-1')).toBe(false);
+        expect(isLiveSafeKey('networthHistory', 'networthDetail_12345')).toBe(false);
     });
 });
