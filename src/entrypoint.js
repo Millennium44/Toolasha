@@ -2573,6 +2573,10 @@ function registerFeatures() {
             // The overbid table reads the same observations, so it keeps the module running too
             customCheck: () =>
                 config.getSetting('notifications_marketListingUndercut') || config.getSetting('market_overbidPanel'),
+            // Both consumers (the notification and the overbid table) can be switched off mid-session; once
+            // neither wants the price observations the module must stop gathering them, not wait for a reload.
+            // Switching either on is already a live start: the gate opens and the registry initializes it.
+            liveStop: true,
         },
         {
             key: 'savingsGoalAlerts',

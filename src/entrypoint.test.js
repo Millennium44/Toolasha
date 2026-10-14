@@ -1193,6 +1193,13 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(entry.liveStop).toBe(true);
     });
 
+    test('the undercut alerts are live-stopped, so clearing both of its consumers stops the sightings', () => {
+        const entry = registered.find((e) => e.key === 'marketUndercutAlerts');
+
+        expect(entry, 'marketUndercutAlerts is no longer registered').toBeTruthy();
+        expect(entry.liveStop).toBe(true);
+    });
+
     test('the Guild Trial Simulator is live-stopped, so clearing its setting removes its tab button and panel', () => {
         const entry = registered.find((e) => e.key === 'guildTrialSim');
 
