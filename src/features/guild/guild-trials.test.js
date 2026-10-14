@@ -5549,6 +5549,29 @@ describe('a two-Badger wave on one Badger’s base', () => {
         expect(analyseTrial(cards, { participants: 47, phase: 'live', workBase: 330_000, now }).tier).toBe(3);
     });
 
+    test('a folded wave’s summed second bar is no single-boss pool anchor', () => {
+        // Both Badger cards folded: health 971,520 (T1 with 47 in) and the two
+        // mana bars summed. Read against one Badger's base with no participant
+        // factor, a summed second bar of 420,000 lands exactly on T4
+        const folded = (current) => [
+            { current, max: 971_520, source: 'cards', slots: 2, waveCount: 2 },
+            { current: 1, max: 420_000 },
+        ];
+        const record = {
+            ...badgerFight(),
+            liveTier: null,
+            liveTierTarget: null,
+            samples: [
+                { t: now - 10_000, readings: folded(900_000) },
+                { t: now, readings: folded(899_000) },
+            ],
+        };
+        const analysis = analyseTrial(record, { participants: 47, phase: 'live', workBase: 330_000, now });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.tiersClearedSoFar).toBe(0);
+    });
+
     test('a reading of part of the wave identifies no tier', () => {
         // One Badger card mounted, or one stream slot named after a refresh
         const lone = (current) => ({ current, max: 485_760, source: 'cards', slots: 1, waveCount: 2 });
