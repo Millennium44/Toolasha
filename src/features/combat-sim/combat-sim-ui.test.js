@@ -2539,6 +2539,28 @@ describe('the remembered upgrade analysis across a character switch', () => {
             expect(restored).toEqual(fresh);
         });
 
+        test('a scroll already carried shows and sorts what it adds, not the loss of dropping it', async () => {
+            const carried = {
+                ...scrollRow,
+                profitGain: -1_200_000,
+                candidate: { ...scrollRow.candidate, description: 'Carried', measuresLoss: true },
+                deltas: { dps: -5, xp: -4, profit: -3, deaths: 0, encounters: 0 },
+            };
+            const added = {
+                ...scrollRow,
+                candidate: { ...scrollRow.candidate, description: 'Added' },
+                deltas: { dps: 2, xp: 2, profit: 1, deaths: 0, encounters: 0 },
+            };
+            const container = await restoreWith({ scrollTokenRate: stored }, [added, carried]);
+            ui._scrollSort = { key: 'dps', asc: true };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+
+            const rows = [...container.querySelectorAll('[data-scroll-row]')];
+            expect(rows[0].textContent).toContain('Carried');
+            expect(rows[0].textContent).toContain('+5.00%');
+            expect(rows[0].textContent).not.toContain('-5.00%');
+        });
+
         test('a legacy run with no stored rate leaves scrolls unpriced, whatever the live rate is', async () => {
             mocks.scrollRate = stored;
             const container = await restoreWith({});

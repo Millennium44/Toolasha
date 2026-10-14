@@ -103,9 +103,7 @@ describe('held token total', () => {
         await Promise.resolve();
         const text = el.querySelector('.dungeon-token-shop-injected').textContent;
         // 22,657 × 6,800 = 154,067,600; the essence row (1,000/token) loses
-        expect(text).toContain(
-            'Your 22,657 tokens ≈ 150.3M as 22 × Pathseeker Lodestone + 657 tokens as Labyrinth Essence'
-        );
+        expect(text).toContain('Your 22,657 tokens ≈ 150.3M as 22 × Pathseeker Lodestone + 6,570 × Labyrinth Essence');
     });
 
     test('names the cap and market caveat in a title', async () => {
