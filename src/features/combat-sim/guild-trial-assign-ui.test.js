@@ -26,6 +26,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
     guildXpTracker: () => game.tracker,
     guildMemberSkills: () => game.skills,
 }));

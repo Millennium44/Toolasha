@@ -2570,7 +2570,9 @@ function registerFeatures() {
             category: 'Notifications',
             module: UI.marketUndercutAlerts,
             async: true,
-            customCheck: () => config.getSetting('notifications_marketListingUndercut'),
+            // The overbid table reads the same observations, so it keeps the module running too
+            customCheck: () =>
+                config.getSetting('notifications_marketListingUndercut') || config.getSetting('market_overbidPanel'),
         },
         {
             key: 'savingsGoalAlerts',

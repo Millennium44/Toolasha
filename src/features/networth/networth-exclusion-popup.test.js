@@ -40,7 +40,11 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
             })),
     },
 }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ guildMemberSkills: () => null, loadoutSnapshot: () => null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
+    guildMemberSkills: () => null,
+    loadoutSnapshot: () => null,
+}));
 
 const state = vi.hoisted(() => ({ exclusions: [{ type: 'item', value: '/items/coin' }] }));
 vi.mock('./networth-exclusions.js', () => ({

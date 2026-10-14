@@ -55,6 +55,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getSnapshotInfoForSkill: () => null },
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
     guildMemberSkills: () => null,
     loadoutSnapshot: () => null,
     scrollSimulator: () => null,

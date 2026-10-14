@@ -404,6 +404,20 @@ describe('market undercut alerts', () => {
     describe('Mooket-backed freshness', () => {
         const POOLED = 'market_pooledHistory';
 
+        test('gathers sightings for the overbid table with the notification off, and says nothing', async () => {
+            marketUndercutAlerts.disable();
+            game.settings = { [MASTER_SETTING]: false, market_overbidPanel: true, [POOLED]: true };
+            game.listings = [listing()];
+            game.mooketRows['/items/cheese:0'] = [{ a: 274000, b: 270000, time: NOW / 1000 }];
+
+            await marketUndercutAlerts.initialize();
+            await marketUndercutAlerts.refreshMooketObservations();
+
+            expect(marketUndercutAlerts.sideObservation('/items/cheese', 0, true)).toMatchObject({ price: 274000 });
+            check();
+            expect(game.notified).toHaveLength(0);
+        });
+
         test('a character switch discards pending sightings and stops queued lookups', async () => {
             game.settings[POOLED] = true;
             let resolveHistory;

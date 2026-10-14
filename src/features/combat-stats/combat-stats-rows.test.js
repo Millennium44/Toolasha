@@ -62,6 +62,7 @@ vi.mock('./combat-stats-calculator.js', () => ({
 }));
 
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
     guildMemberSkills: () => null,
     combatProfitView: () => game.profitView,
     profitPanel: () => null,
