@@ -106,6 +106,12 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/token-worth.js',
+        // Two constants and two pure arithmetic functions, no imports and no module state. The token
+        // tooltip (market bundle) totals a held stack with it and the combat sim (sim bundle) prices scrolls.
+        'stateless token arithmetic; no module state to share',
+    ],
+    [
         'src/utils/xp-series-sync.js',
         // One pure fold over two XP series maps, no imports and no module state.
         // The combat bundle (guild XP tracker) and the ui bundle (skill XP
