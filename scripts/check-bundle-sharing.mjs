@@ -216,6 +216,13 @@ const ALLOWLIST = new Map([
         'stateless attribute stamp; no module state to share',
     ],
     [
+        'src/utils/mirror-route.js',
+        // Two constants and one pure function over its arguments (the Philosopher's Mirror
+        // ladder arithmetic): no module state, so the enhancement panel's copy and the
+        // upgrade advisor's copy compute the same thing.
+        'stateless mirror-ladder arithmetic; no module state to share',
+    ],
+    [
         'src/utils/async-pool.js',
         // One exported function over its own arguments, no module state; the
         // politeness bound it enforces is per call site, so two copies bound
