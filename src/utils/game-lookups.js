@@ -7,7 +7,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import { isTesterShopEntry, testerShopEnabled } from './tester-shop.js';
+import { DEFAULT_SHOP_GEAR_LEVEL, isTesterShopEntry, testerShopEnabled } from './tester-shop.js';
 import { fiberFor } from './react-click.js';
 
 /*
@@ -237,6 +237,7 @@ export function getItemHridFromName(itemName) {
  * it is not sold there or the offer also asks for another currency, which a coin figure would
  * understate. An offer handing over several units (`outputCount`) is bought whole, so `coins` is
  * the price of one purchase and `units` what that purchase delivers.
+ * Offers that sell an enhanced copy (the Tester tab's +10 equipment) are skipped: the price is not a +0 base's.
  * @param {string} itemHrid
  * @returns {{coins: number, units: number}} Coins per purchase and units per purchase
  */
@@ -248,6 +249,14 @@ export function getShopCoinOnlyCost(itemHrid) {
     for (const [key, shopItem] of Object.entries(gameData.shopItemDetailMap)) {
         if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
         if (shopItem.itemHrid !== itemHrid || !shopItem.costs?.length) continue;
+        // A price for an enhanced copy is not the price of the +0 base the callers cost. The Tester tab sells
+        // equipment at +10 unless the entry says otherwise (see tester-shop.js)
+        const soldLevel = Number.isFinite(Number(shopItem.enhancementLevel))
+            ? Number(shopItem.enhancementLevel)
+            : isTesterShopEntry(shopItem, key) && gameData.itemDetailMap?.[itemHrid]?.equipmentDetail
+              ? DEFAULT_SHOP_GEAR_LEVEL
+              : 0;
+        if (soldLevel > 0) continue;
         if (shopItem.costs.every((cost) => cost.itemHrid === '/items/coin')) {
             const coins = shopItem.costs.reduce((sum, cost) => sum + (Number(cost.count) || 0), 0);
             const units = Number(shopItem.outputCount) > 0 ? Number(shopItem.outputCount) : 1;
