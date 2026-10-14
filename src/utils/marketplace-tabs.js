@@ -552,20 +552,36 @@ export function insertTabInOrder(container, tab, key) {
  *
  * Every candidate is checked and the displayed one wins.
  *
+ * The strip is found by the label first and, failing that (a game client in
+ * another language), by sitting inside the marketplace panel with at least two tabs.
+ *
  * @param {string} [contains] - Text a tab must contain, to tell a marketplace bar
- *   from any other tab strip on the page
+ *   from any other tab strip on the page. The positional fallback applies only to the default
  * @returns {HTMLElement|null} The visible tab bar
  */
 export function visibleTabsContainer(contains = 'My Listings') {
-    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
-        if (contains && !Array.from(container.children).some((tab) => tab.textContent.includes(contains))) continue;
-
+    const strips = Array.from(document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]'));
+    const onScreen = (container) => {
         // `offsetParent` is null under any `display: none` ancestor, which is how
         // the game parks the panel you are not looking at
-        if (container.offsetParent === null) continue;
-        if (!container.getBoundingClientRect().width) continue;
+        if (container.offsetParent === null) return false;
+        return Boolean(container.getBoundingClientRect().width);
+    };
 
-        return container;
+    // The English label is the exact match and goes first
+    for (const container of strips) {
+        if (contains && !Array.from(container.children).some((tab) => tab.textContent.includes(contains))) continue;
+        if (onScreen(container)) return container;
+    }
+
+    // A game client in another language has no such label, so fall back to where the strip sits: the marketplace's
+    // own tab strip is inside its panel (the class every marketplace feature already keys on) and holds several tabs
+    if (contains === 'My Listings') {
+        for (const container of strips) {
+            if (!container.closest(GAME.MARKETPLACE_PANEL)) continue;
+            if (Array.from(container.children).filter((tab) => tab.getAttribute('role') === 'tab').length < 2) continue;
+            if (onScreen(container)) return container;
+        }
     }
     return null;
 }
