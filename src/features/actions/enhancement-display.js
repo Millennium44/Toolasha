@@ -31,6 +31,7 @@ import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
+import { cheapestWithMirror } from '../../utils/mirror-route.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -243,20 +244,18 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.
         return { levels, mirrorStartLevel: null, totalSavings: 0, toLevel: cap };
     }
     // best[L]: the cheapest way to hold a +L, its base item included
-    const best = [basePrice];
+    const ordinary = [basePrice];
     for (let level = 1; level <= costs.length; level++) {
-        best[level] = basePrice + costs[level - 1];
+        ordinary[level] = basePrice + costs[level - 1];
     }
+    const { mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice);
 
     let mirrorStartLevel = null;
     for (let level = 3; level <= costs.length; level++) {
-        const mirrorCost = best[level - 1] + best[level - 2] + mirrorPrice - basePrice;
+        const mirrorCost = mirrorTotals[level] - basePrice;
         const isMirrorCheaper = mirrorCost < costs[level - 1];
         levels[level - 1] = { mirrorCost, isMirrorCheaper };
-        if (isMirrorCheaper) {
-            best[level] = mirrorCost + basePrice;
-            if (mirrorStartLevel === null && level <= cap) mirrorStartLevel = level;
-        }
+        if (isMirrorCheaper && mirrorStartLevel === null && level <= cap) mirrorStartLevel = level;
     }
 
     // Quoted at the highest mirror-cheaper level up to the cap. At the cap itself the mirror may be
