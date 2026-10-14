@@ -341,10 +341,14 @@ describe('the compact series is stored one record per month', () => {
         const loaded = await seriesStore.load('char-1');
 
         expect(loaded).toEqual(legacy);
-        expect(storageMock.putAll).toHaveBeenCalledWith('networthHistory', {
-            'networthSeries_char-1_2026-06': [legacy[0]],
-            'networthSeries_char-1_2026-07': [legacy[1]],
-        });
+        expect(storageMock.putAll).toHaveBeenCalledWith(
+            'networthHistory',
+            {
+                'networthSeries_char-1_2026-06': [legacy[0]],
+                'networthSeries_char-1_2026-07': [legacy[1]],
+            },
+            expect.anything()
+        );
         expect(storageMock.delete).toHaveBeenCalledWith('networth_char-1', 'networthHistory');
     });
 
