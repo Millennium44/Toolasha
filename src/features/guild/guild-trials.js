@@ -566,8 +566,12 @@ export function analyseTrial(
     // boss health (first bar) carries the 1%-per-participant scale and backs
     // out the *same* base, so it still identifies the tier when the second bar
     // is absent, at the cost of needing the participant count.
+    // Only a single monster's second bar: on a folded wave it is every
+    // monster's mana summed, which no one-monster base describes
     const combatPoolTarget =
-        kind === 'combat' && Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
+        kind === 'combat' &&
+        readingMonsters(latest) === 1 &&
+        Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
             ? samples[samples.length - 1].readings[1].max
             : null;
     // The base is one monster's; the bar may be the whole wave's. Two Trial
@@ -5410,7 +5414,10 @@ class GuildTrials {
         // A combat card's second bar is the tier's own level-scaled pool and
         // needs no participant count; the first bar (boss health, participant-
         // scaled) is the fallback anchor, as in `analyseTrial`
-        const poolTarget = kind === 'combat' && Number.isFinite(tile.readings?.[1]?.max) ? tile.readings[1].max : null;
+        const poolTarget =
+            kind === 'combat' && readingMonsters(tile.readings?.[0]) === 1 && Number.isFinite(tile.readings?.[1]?.max)
+                ? tile.readings[1].max
+                : null;
         const fromPool =
             poolTarget !== null ? tierFromWorkTarget({ target: poolTarget, baseWork, participants: 0, kind }) : null;
         // A grafted wave is read against the whole wave's base, as in
@@ -5461,7 +5468,11 @@ class GuildTrials {
             // A combat card's second bar teaches with no participant count at
             // all — it is the tier's level-scaled pool. The first bar (or a
             // skilling bar) is participant-scaled and needs the count.
-            const poolTarget = kind === 'combat' ? Number(lastSample?.readings?.[1]?.max) : NaN;
+            // A folded wave's second bar is every monster's summed, and teaches nothing
+            const poolTarget =
+                kind === 'combat' && readingMonsters(lastSample?.readings?.[0]) === 1
+                    ? Number(lastSample?.readings?.[1]?.max)
+                    : NaN;
             const usingPool = Number.isFinite(poolTarget) && poolTarget > 0;
             const key = String(tile.name || '')
                 .trim()
