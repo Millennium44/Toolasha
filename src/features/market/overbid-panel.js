@@ -320,13 +320,28 @@ class OverbidPanel {
             return !alerts.mooketObservations.has(key) && !this.requestedSightings.has(key);
         });
         if (!missing.length || this.sightingTimer !== null) return;
-        for (const item of missing) this.requestedSightings.add(`${item.itemHrid}:${item.enhancementLevel}`);
+        this.scheduleSightingRefresh(this.generation);
+    }
 
-        const generation = this.generation;
+    /**
+     * Schedule the debounced refresh. An item counts as requested only once a refresh that includes it has
+     * actually started: a refresh already in flight captured its item list earlier and would skip a newer
+     * item, so the call waits for it to settle and goes again.
+     * @param {number} generation - The session this was scheduled in
+     */
+    scheduleSightingRefresh(generation) {
         this.sightingTimer = this.cleanup.scheduleTimeout(
             async () => {
                 this.sightingTimer = null;
                 if (generation !== this.generation) return;
+                const alerts = undercutAlerts();
+                if (alerts.mooketRefreshInFlight) {
+                    this.scheduleSightingRefresh(generation);
+                    return;
+                }
+                for (const item of alerts.distinctActiveItems()) {
+                    this.requestedSightings.add(`${item.itemHrid}:${item.enhancementLevel}`);
+                }
                 try {
                     await alerts.refreshMooketObservations();
                 } catch (error) {
