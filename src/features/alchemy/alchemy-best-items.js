@@ -169,6 +169,8 @@ class AlchemyBestItems {
         this.ownStockSweep = 0;
         this.ownStockRunning = false;
         this.ownStockPromise = null;
+        // The worn-gear signature the own-stock figures were worked out under; null before any sweep
+        this.ownStockGear = null;
         this.inventoryTimer = null;
         this._onInventoryChange = () => this.handleInventoryChange();
         this.currentType = 'coinify';
@@ -296,12 +298,46 @@ class AlchemyBestItems {
      * stock leave and new stock arrives (the redraw starts a sweep for it). Other sorts do not read it.
      */
     handleInventoryChange() {
+        // `items_updated` also fires on equip and unequip, which changes every chain's rates
+        this.dropOwnStockIfGearChanged();
         if (!this.modal || this.modal.style.display === 'none' || !this.isOwnStockMode()) return;
         clearTimeout(this.inventoryTimer);
         this.inventoryTimer = setTimeout(() => {
             this.inventoryTimer = null;
             if (this.modal && this.modal.style.display !== 'none' && this.isOwnStockMode()) this.renderTable();
         }, INVENTORY_REDRAW_MS);
+    }
+
+    /**
+     * A signature of what is worn: slot, item and enhancement level, sorted. Plain inventory changes leave it
+     * alone, so they do not cost a full re-sweep.
+     * @returns {string} The signature
+     */
+    equipmentSignature() {
+        const worn = dataManager.getEquipment?.();
+        if (!worn) return '';
+        return [...worn.entries()]
+            .map(([slot, item]) => `${slot}:${item?.itemHrid ?? ''}:${item?.enhancementLevel ?? 0}`)
+            .sort()
+            .join('|');
+    }
+
+    /**
+     * Gear changed since the own-stock figures were worked out: they were computed with the old gear's
+     * alchemy rates, so drop them and abandon any sweep in flight. The redraw that follows (or the next
+     * switch into the sort) finds the rows missing and sweeps again.
+     */
+    dropOwnStockIfGearChanged() {
+        try {
+            if (this.ownStockGear === null || this.equipmentSignature() === this.ownStockGear) return;
+            this.ownStockGear = null;
+            this.ownStock.clear();
+            this.ownStockSweep += 1;
+            this.ownStockRunning = false;
+            this.ownStockPromise = null;
+        } catch (error) {
+            console.error('[AlchemyBestItems] Re-pricing after a gear change failed:', error);
+        }
     }
 
     /**
@@ -636,6 +672,7 @@ class AlchemyBestItems {
         this.ownStockSweep += 1;
         this.ownStockRunning = false;
         this.ownStockPromise = null;
+        this.ownStockGear = null;
         clearDecomposeChainCaches();
     }
 
@@ -710,6 +747,7 @@ class AlchemyBestItems {
      */
     async runOwnStockSweep(sweep) {
         try {
+            this.ownStockGear = this.equipmentSignature();
             const held = (this.cachedRankings.decompose || [])
                 .map((row) => ({ row, count: this.heldCount(row.itemHrid) }))
                 .filter(({ count }) => count > 0);

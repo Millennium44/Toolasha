@@ -112,6 +112,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => game.initClientData,
         getItemDetails: (hrid) => game.items[hrid] || null,
         getSkills: () => game.skills,
+        getEquipment: () => new Map(Object.entries(tooltip.worn)),
         on: (event, cb) => event === 'items_updated' && tooltip.inventoryListeners.push(cb),
         off: (event, cb) => {
             tooltip.inventoryListeners = tooltip.inventoryListeners.filter((c) => c !== cb);
@@ -164,6 +165,7 @@ const tooltip = vi.hoisted(() => ({
     gate: null,
     keepListeners: [],
     inventoryListeners: [],
+    worn: {},
 }));
 
 vi.mock('../market/tooltip-prices.js', () => ({
@@ -1811,6 +1813,40 @@ describe('the Chain/hr (own stock) sort', () => {
             await vi.advanceTimersByTimeAsync(0);
             expect(names()).toEqual(['b']);
             expect(cells()[0].textContent).toBe(formatKMB(7000));
+            bestItems.unsubscribePricingChanges();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('an equipment change re-sweeps the open own-stock table; a plain inventory change does not', async () => {
+        vi.useFakeTimers();
+        try {
+            tooltip.worn = { '/item_locations/main_hand': { itemHrid: '/items/hammer', enhancementLevel: 3 } };
+            tooltip.held = { '/items/a': 1 };
+            tooltip.chains = { '/items/a': chain(100) };
+            await open([row('a', 1)]);
+            bestItems.modal.style.display = 'flex';
+            bestItems.subscribePricingChanges();
+            expect(cells()[0].textContent).toBe(formatKMB(100));
+            const sweeps = tooltip.envCalls;
+
+            // Bag moved, gear did not: the figures stand
+            tooltip.held = { '/items/a': 2 };
+            for (const cb of tooltip.inventoryListeners) cb();
+            await vi.advanceTimersByTimeAsync(500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(tooltip.envCalls).toBe(sweeps);
+
+            // The hammer was enhanced: every chain is worked out again under the new gear
+            tooltip.worn = { '/item_locations/main_hand': { itemHrid: '/items/hammer', enhancementLevel: 4 } };
+            tooltip.chains = { '/items/a': chain(900) };
+            for (const cb of tooltip.inventoryListeners) cb();
+            await vi.advanceTimersByTimeAsync(500);
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(tooltip.envCalls).toBe(sweeps + 1);
+            expect(cells()[0].textContent).toBe(formatKMB(900));
             bestItems.unsubscribePricingChanges();
         } finally {
             vi.useRealTimers();
