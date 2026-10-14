@@ -11,6 +11,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readScoped } from '../../utils/character-key.js';
 
 const mocks = vi.hoisted(() => ({
+    /** What the scroll table reads as the best gold/token; null means the shop prices nothing */
+    scrollRate: null,
     upgradeResult: { baseline: null, results: [], food: null },
     onRun: null,
     /** What `confirmUpgradeBudgetPlan` resolves with; null means "not called yet" */
@@ -582,6 +584,10 @@ vi.mock('./sim-editor.js', () => ({
     },
 }));
 
+vi.mock('./scroll-pricing.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, scrollTokenRate: () => mocks.scrollRate };
+});
 vi.mock('./upgrade-advisor.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
@@ -1639,6 +1645,52 @@ describe('the panel', () => {
 
             const unpriced = [...container.querySelectorAll('[data-unpriced-row]')].map((r) => r.textContent);
             expect(unpriced.join(' ')).toContain('Community EXP');
+        });
+
+        describe('combat scrolls', () => {
+            const rate = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
+            const scroll = (description, profitGain) => ({
+                ...row(description, { cost: null, type: 'scroll', profitGain }),
+                cost: null,
+            });
+
+            afterEach(() => {
+                mocks.scrollRate = null;
+            });
+
+            test('are priced by their tokens in their own table, not left in the unpriced box', () => {
+                mocks.scrollRate = rate;
+                const rows = [scroll('Add Scroll of Attack Speed (+15%)', 1_200_000)];
+                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+                const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+                expect(container.textContent).toContain('Scrolls, priced by their tokens');
+                expect(container.textContent).not.toContain('Measured, but not priced');
+                const line = container.querySelector('[data-scroll-row]').textContent;
+                expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone) = 204.0K per scroll');
+                expect(line).toContain('+792.0K');
+            });
+
+            test('a scroll that earns less than its tokens shows as a loss', () => {
+                mocks.scrollRate = rate;
+                const rows = [scroll('Add Scroll of Combat Drop (+15%)', 300_000)];
+                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+                const cells = ui.panel.querySelector('[data-scroll-row]').textContent;
+                expect(cells).toContain('−108.0K loss');
+                expect(ui.panel.querySelector('[data-scroll-detail]').textContent).toContain(
+                    'the same tokens buy more as Pathseeker Lodestone'
+                );
+            });
+
+            test('with no shop price they stay in the unpriced box', () => {
+                const rows = [scroll('Add Scroll of Attack Speed (+15%)', 1_200_000)];
+                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+
+                const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+                expect(container.querySelector('[data-scroll-row]')).toBeNull();
+                expect(container.querySelector('[data-unpriced-row]').textContent).toContain('Scroll of Attack Speed');
+            });
         });
 
         test('and the box does not appear at all when everything has a price', () => {
