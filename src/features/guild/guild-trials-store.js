@@ -736,10 +736,17 @@ export function recordTileSample(record, tile, at, characterId = null) {
     const mine = asObject(existing.personalByCharacter?.[personalSlotKey]);
     const tiers = [...(existing.tiers || [])];
     if (Number.isFinite(observationTier)) {
+        // A combat sample's boss reading says what it summed, and its
+        // observations carry that along: an untagged observation on a
+        // multi-monster wave may be the old bug's (a T12 filed off a
+        // one-Badger base), and is what `scrubWaveObservations` drops
+        const source = typeof readings[0]?.source === 'string' ? readings[0].source : null;
         for (const reading of readings) {
             if (!(reading.max > 0)) continue;
-            const seen = tiers.find((entry) => entry.tier === observationTier && entry.total === reading.max);
-            if (!seen) tiers.push({ tier: observationTier, total: reading.max });
+            const observation = source ? { tier: observationTier, total: reading.max, source } : null;
+            const at = tiers.findIndex((entry) => entry.tier === observationTier && entry.total === reading.max);
+            if (at === -1) tiers.push(observation ?? { tier: observationTier, total: reading.max });
+            else if (observation && typeof tiers[at]?.source !== 'string') tiers[at] = observation;
         }
     }
 
@@ -1109,7 +1116,10 @@ export function mergeTrialRecords(base, incoming) {
 
         const tiers = [...(existing.tiers || [])];
         for (const entry of tile.tiers || []) {
-            if (!tiers.some((seen) => seen.tier === entry.tier && seen.total === entry.total)) tiers.push(entry);
+            const at = tiers.findIndex((seen) => seen.tier === entry.tier && seen.total === entry.total);
+            if (at === -1) tiers.push(entry);
+            // The tagged copy of the same observation wins over the untagged one
+            else if (typeof entry?.source === 'string' && typeof tiers[at]?.source !== 'string') tiers[at] = entry;
         }
 
         // The newer record's identity wins: a tile that has moved on a tier is
@@ -1486,7 +1496,7 @@ export async function saveTrialRecord(
     guildName,
     record,
     characterId = null,
-    { guildId = null, overwrite = false } = {}
+    { guildId = null, overwrite = false, scrub = null } = {}
 ) {
     // Stamped on the way out, so the next session can tell whose it is
     const stamped = {
@@ -1495,7 +1505,10 @@ export async function saveTrialRecord(
         guildName: record?.guildName ?? guildName ?? null,
     };
     const fold = (stored, memory) => {
-        const merged = mergeTrialRecords(stored, memory);
+        // The merge is a union, so anything retired in memory would come
+        // straight back from the stored copy without this
+        const unioned = mergeTrialRecords(stored, memory);
+        const merged = typeof scrub === 'function' ? scrub(unioned) : unioned;
         return {
             ...merged,
             guildId: merged.guildId ?? stamped.guildId,
@@ -1503,6 +1516,39 @@ export async function saveTrialRecord(
         };
     };
     return probeMergeWrite(guildTrialsStorageKey(guildName, characterId), stamped, fold, { overwrite });
+}
+
+/**
+ * Drop the untagged tier observations of multi-monster combat waves.
+ *
+ * Before readings said what they summed, a two-Badger wave's 971,520 was read
+ * against a one-Badger base and filed as T12 — and the bad observation fed the
+ * growth fit the damage rate's multi-tier check is built on, long after the
+ * tier itself was fixed. On a multi-monster wave an untagged observation cannot
+ * be told from that, so it goes; single-boss and skilling records are untouched.
+ *
+ * @param {Object|null} record - A trial record
+ * @param {Function} isMultiWave - `(name) => boolean`, true for a wave fielding several monsters
+ * @returns {Object|null} The record, the same object when nothing was dropped
+ */
+export function scrubWaveObservations(record, isMultiWave) {
+    if (!record?.tiles || typeof isMultiWave !== 'function') return record;
+    let changed = false;
+    const tiles = {};
+    for (const [key, tile] of Object.entries(record.tiles)) {
+        if (tile?.kind !== 'combat' || !Array.isArray(tile.tiers) || !isMultiWave(tile.name)) {
+            tiles[key] = tile;
+            continue;
+        }
+        const tiers = tile.tiers.filter((entry) => typeof entry?.source === 'string');
+        if (tiers.length === tile.tiers.length) {
+            tiles[key] = tile;
+            continue;
+        }
+        changed = true;
+        tiles[key] = { ...tile, tiers };
+    }
+    return changed ? { ...record, tiles } : record;
 }
 
 // ─── Learned work bases ─────────────────────────────────────────────────────
