@@ -48,6 +48,10 @@ export const SETTING = 'market_overbidPanel';
 const PANEL_ID = 'overbidPanel';
 /** How often the memory-only comparison is redone, so expired figures drop off */
 const RECHECK_MS = 5000;
+/** Wait this long for a burst of listing messages to settle before asking for sightings */
+const SIGHTING_DEBOUNCE_MS = 2000;
+/** The price history setting is the opt-in that lets the pooled dataset be consulted */
+const POOLED_SETTING = 'market_pooledHistory';
 const ACTIVE_STATUS = '/market_listing_status/active';
 const ACCENT = '#ff8f6b';
 const MUTED = 'rgba(232, 236, 245, 0.55)';
@@ -65,8 +69,27 @@ const MUTED = 'rgba(232, 236, 245, 0.55)';
  *   bestPrice: number, ageMs: number}>} Beaten listings, in the order given
  */
 export function findBeatenListings(listings, observe, now, maxAgeMs) {
+    return classifyListings(listings, observe, now, maxAgeMs).beaten;
+}
+
+/**
+ * Sort the active listings into beaten, settled and unknown.
+ *
+ * `settled` holds the ids that fresh evidence shows competitive (or only behind
+ * your own order); a listing with no usable figure is in neither set, because an
+ * unknown price proves nothing in either direction.
+ *
+ * @param {Object[]} listings - Listings as the game sends them
+ * @param {Function} observe - See {@link findBeatenListings}
+ * @param {number} now - Current time in ms
+ * @param {number} maxAgeMs - How old a figure may be and still count
+ * @returns {{beaten: ReturnType<typeof findBeatenListings>, settled: Set<*>, activeIds: Set<*>}}
+ */
+export function classifyListings(listings, observe, now, maxAgeMs) {
     const active = (listings || []).filter((listing) => listing?.status === ACTIVE_STATUS && listing.itemHrid);
     const beaten = [];
+    const settled = new Set();
+    const activeIds = new Set(active.map((listing) => listing.id));
 
     for (const listing of active) {
         const level = listing.enhancementLevel || 0;
@@ -83,7 +106,11 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
             priceAgeMs: ageMs,
             maxPriceAgeMs: maxAgeMs,
         });
-        if (!fire) continue;
+        if (!fire) {
+            const usable = Number.isFinite(ageMs) && ageMs <= maxAgeMs && Number.isFinite(observation.price);
+            if (usable) settled.add(listing.id);
+            continue;
+        }
 
         // The price in front of you is another listing of yours: not a rival
         const beatenByYourself = active.some(
@@ -94,7 +121,10 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
                 (other.isSell === true) === isSell &&
                 (isSell ? other.price <= observation.price : other.price >= observation.price)
         );
-        if (beatenByYourself) continue;
+        if (beatenByYourself) {
+            settled.add(listing.id);
+            continue;
+        }
 
         beaten.push({
             id: listing.id,
@@ -107,7 +137,7 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
         });
     }
 
-    return beaten;
+    return { beaten, settled, activeIds };
 }
 
 /**
@@ -115,11 +145,25 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
  * @returns {ReturnType<typeof findBeatenListings>}
  */
 export function currentBeatenListings() {
-    return findBeatenListings(
+    return currentClassification().beaten;
+}
+
+/**
+ * The initialized alerts singleton; this bundle's own import is only the dev-build fallback.
+ * @returns {Object}
+ */
+function undercutAlerts() {
+    return liveMarketUndercutAlerts() || localMarketUndercutAlerts;
+}
+
+/**
+ * Classify the live listings against the current figures.
+ * @returns {ReturnType<typeof classifyListings>}
+ */
+function currentClassification() {
+    return classifyListings(
         dataManager.getMarketListings(),
-        (itemHrid, level, isSell) =>
-            // The initialized copy lives in the UI bundle; this bundle's own import is only the dev-build fallback
-            (liveMarketUndercutAlerts() || localMarketUndercutAlerts).sideObservation(itemHrid, level, isSell),
+        (itemHrid, level, isSell) => undercutAlerts().sideObservation(itemHrid, level, isSell),
         Date.now(),
         marketAPI.CACHE_DURATION
     );
@@ -207,6 +251,10 @@ class OverbidPanel {
         /** Listing ids already announced (and not since resolved), so a dismissed panel stays dismissed */
         this.announced = new Set();
         this.isInitialized = false;
+        this.generation = 0;
+        this.sightingTimer = null;
+        /** `itemHrid:level` keys already asked for, so an unknown item is not asked for again */
+        this.requestedSightings = new Set();
     }
 
     /**
@@ -233,12 +281,16 @@ class OverbidPanel {
         });
 
         const handler = () => this.update();
+        const listingsHandler = () => {
+            this.update();
+            this.requestMissingSightings();
+        };
         dataManager.on('character_initialized', handler);
-        dataManager.on('market_listings_updated', handler);
+        dataManager.on('market_listings_updated', listingsHandler);
         marketAPI.on(handler);
         this.cleanup.registerCleanup(() => {
             dataManager.off('character_initialized', handler);
-            dataManager.off('market_listings_updated', handler);
+            dataManager.off('market_listings_updated', listingsHandler);
             marketAPI.off(handler);
         });
 
@@ -253,20 +305,60 @@ class OverbidPanel {
     }
 
     /**
+     * Ask for pooled sightings of items that have none yet, after a listing change.
+     *
+     * Debounced so a burst of listing messages makes one refresh, and each item is asked for at most once
+     * per session (an item the pooled dataset does not know would otherwise be asked for on every message).
+     * The refresh itself is the shared one: it skips itself unless pooled history is on, reuses the history
+     * client's cache, and does not overlap itself.
+     */
+    requestMissingSightings() {
+        if (!config.getSetting(POOLED_SETTING)) return;
+        const alerts = undercutAlerts();
+        const missing = alerts.distinctActiveItems().filter((item) => {
+            const key = `${item.itemHrid}:${item.enhancementLevel}`;
+            return !alerts.mooketObservations.has(key) && !this.requestedSightings.has(key);
+        });
+        if (!missing.length || this.sightingTimer !== null) return;
+        for (const item of missing) this.requestedSightings.add(`${item.itemHrid}:${item.enhancementLevel}`);
+
+        const generation = this.generation;
+        this.sightingTimer = this.cleanup.scheduleTimeout(
+            async () => {
+                this.sightingTimer = null;
+                if (generation !== this.generation) return;
+                try {
+                    await alerts.refreshMooketObservations();
+                } catch (error) {
+                    console.error('[OverbidPanel] Refreshing pooled sightings failed:', error);
+                }
+                if (generation === this.generation) this.update();
+            },
+            SIGHTING_DEBOUNCE_MS,
+            'overbidPanel:sightings'
+        );
+    }
+
+    /**
      * Recompute who is beaten and show, refresh or hide the panel.
      */
     update() {
         if (!this.isInitialized || !this.panel) return;
+        let classification;
         try {
-            this.rows = currentBeatenListings();
+            classification = currentClassification();
+            this.rows = classification.beaten;
         } catch (error) {
             console.error('[OverbidPanel] Checking listings failed:', error);
             return;
         }
 
         const ids = new Set(this.rows.map((row) => row.id));
-        // Resolved listings are forgotten, so being beaten again is news again
-        for (const id of this.announced) if (!ids.has(id)) this.announced.delete(id);
+        // Forgotten only when the listing is gone or fresh evidence shows it competitive again, so being
+        // beaten again is news. A figure gone stale or unknown proves nothing and must not reset a dismissal.
+        for (const id of this.announced) {
+            if (!classification.activeIds.has(id) || classification.settled.has(id)) this.announced.delete(id);
+        }
 
         if (!this.rows.length) {
             this.panel.hide({ remember: false });
@@ -293,6 +385,9 @@ class OverbidPanel {
         this.panel = null;
         this.rows = [];
         this.announced.clear();
+        this.requestedSightings.clear();
+        this.sightingTimer = null;
+        this.generation += 1;
         this.isInitialized = false;
     }
 }
