@@ -1757,10 +1757,11 @@ class EnhancementUI {
         // Predicted rate per level, so the observed column has something to be read against.
         // successRates[i] is the chance of going from +i to +i+1, which is how the attempt
         // rows are keyed.
-        // A session that ran in several predicted legs has none of its own: the rate per level is
-        // each leg's predicted rate, weighted by the attempts that leg made at the level
-        const mergedRates = session.predictions ? null : mergedExpectation(session)?.successRates || null;
-        const predictedRates = session.predictions?.successRates || mergedRates || null;
+        // A session that ran in several predicted legs (merged, or resumed or extended with banked
+        // legs, live leg included): the rate per level is each leg's predicted rate, weighted by
+        // the attempts that leg made at the level, the same source as the headline figures
+        const mergedRates = hasPredictionLegs(session) ? mergedExpectation(session)?.successRates || {} : null;
+        const predictedRates = mergedRates || session.predictions?.successRates || null;
 
         let rows = '';
         for (const level of levels) {

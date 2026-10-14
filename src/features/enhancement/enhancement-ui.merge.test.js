@@ -388,6 +388,48 @@ describe('a merged session', () => {
         expect(text).not.toContain('of runs take that many');
     });
 
+    test('a resumed session with a live leg shows the weighted Pred %, not only the live leg rates', () => {
+        const { eight } = spatulaRuns();
+        const forecast = (rate) => ({
+            expectedAttempts: 10,
+            expectedAttemptsExact: 10,
+            expectedProtections: 0,
+            levelExpectations: { 1: [4, 0] },
+            successRates: [{ actualRate: rate }, { actualRate: 50 }],
+        });
+        const resumed = {
+            ...eight,
+            startLevel: 0,
+            targetLevel: 2,
+            currentLevel: 1,
+            state: SessionState.TRACKING,
+            // The live leg is predicted on stats that now give 20% at +0; the banked one gave 40%
+            predictions: forecast(20),
+            legPredictions: [
+                {
+                    sessionId: 'session_8',
+                    startLevel: 0,
+                    targetLevel: 2,
+                    protectFrom: 0,
+                    attempts: 3,
+                    levelAttempts: { 0: 3 },
+                    predictions: forecast(40),
+                },
+            ],
+            segmentStartLevel: 0,
+            extensionBaseline: { totalAttempts: 3, protectionCount: 0 },
+            totalAttempts: 4,
+            attemptsPerLevel: { 0: { success: 2, fail: 2, blessed: 0, successRate: 0.5 } },
+        };
+        const box = document.createElement('div');
+        box.innerHTML = enhancementUI.generateSessionHTML(resumed);
+        const cells = [...box.querySelectorAll('tbody tr')].map((row) =>
+            [...row.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+        // (3 x 40 + 1 x 20) / 4 = 35, not the live leg's 20
+        expect(cells.find((row) => row[0] === '0')[4]).toBe('35.0%');
+    });
+
     test('a leg with no prediction leaves nothing honest to sum', () => {
         const { eight } = spatulaRuns();
         const merged = {
