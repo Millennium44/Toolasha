@@ -1810,6 +1810,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a "Stale" tab to the marketplace ranking your open sell listings and buy orders by coins tied up, with each row\'s age and how its price compares to the current book.',
             },
+            market_overbidPanel: {
+                id: 'market_overbidPanel',
+                label: 'Market: Show overbid table',
+                type: 'checkbox',
+                default: true,
+                help: 'Opens a small movable, minimizable table when a listing of yours is beaten (a sell listing with a cheaper ask in front of it, a buy order with a higher bid in front of it), listing only those items with the price that beats you and your own price. The item name opens its marketplace page. It uses the market data this script already holds, with the same freshness rule as the undercut notification (figures older than 15 minutes are ignored), makes no requests of its own, and closes when nothing is beaten. Separate from the notification.',
+            },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
                 label: 'Market: Listing price decimal precision',

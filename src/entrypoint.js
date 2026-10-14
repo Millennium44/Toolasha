@@ -986,6 +986,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'overbidPanel',
+            name: 'Overbid Panel',
+            category: 'Market',
+            module: Market.overbidPanel,
+            async: false,
+        },
+        {
             key: 'tradeHistoryDisplay',
             name: 'Trade History Display',
             category: 'Market',
