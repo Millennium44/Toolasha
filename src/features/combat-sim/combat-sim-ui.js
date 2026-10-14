@@ -1860,6 +1860,9 @@ export function upgradeRowPurchase(result) {
     const candidate = result?.candidate;
     if (!candidate) return null;
 
+    // A hand-checked swap that reuses a piece already worn: nothing to buy, save for or watch
+    if (candidate.noPurchase) return null;
+
     const type = candidate.type || 'equipment';
     if (type === 'combat_level' || type === 'community_buff' || type === 'scroll') return null;
     if (type === 'house') return houseRowPurchase(candidate, result);

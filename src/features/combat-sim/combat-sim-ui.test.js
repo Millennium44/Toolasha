@@ -4079,6 +4079,23 @@ describe('upgrade row handoff', () => {
         expect(task).toContain('on task');
     });
 
+    test('an owned-copy swap row offers no acquisition actions, a bought one does', () => {
+        const bought = {
+            description: 'Cape',
+            upgradeHrid: '/items/cape',
+            upgradeLevel: 7,
+            type: 'enhancement',
+            checkedSwap: true,
+        };
+        expect(upgradeRowActionsHtml({ cost: 5_000_000, candidate: bought })).toContain('data-buy-action');
+        expect(upgradeRowActionsHtml({ cost: 0, candidate: { ...bought, noPurchase: true } })).toBe('');
+        expect(upgradeRowPurchase({ cost: 0, candidate: { ...bought, noPurchase: true } })).toBeNull();
+        // A merged skilling candidate is the same
+        const merged = { ...bought, type: 'skilling_gear', merged: true, members: [] };
+        expect(upgradeRowActionsHtml({ cost: 5_000_000, candidate: merged })).toContain('data-buy-action');
+        expect(upgradeRowActionsHtml({ cost: 0, candidate: { ...merged, noPurchase: true } })).toBe('');
+    });
+
     test('Watch also pins the item on the price panel, targeted at the row’s own cost', () => {
         // Watching an item you were just quoted a price for almost always means
         // "tell me when it costs that"; retyping the figure would be the reader
