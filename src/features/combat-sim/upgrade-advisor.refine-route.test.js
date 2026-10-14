@@ -171,4 +171,17 @@ describe('refined target priced from a held base', () => {
         const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
         expect(calculateUpgradeCost(candidate, gameData)).toBe(SHARDS);
     });
+
+    test('a base listed on the marketplace is not a held copy', () => {
+        state.items = [stack(BASE, 7, '/item_locations/back'), stack(BASE, 10, '/item_locations/marketplace')];
+        const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(detail.ladder).toMatchObject({ fromLevel: 7, fromEquipped: true });
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(SHARDS);
+    });
+
+    test('a base listed on the marketplace alone does not make a refine route', () => {
+        state.items = [stack(BASE, 10, '/item_locations/marketplace')];
+        expect(explainUpgradeCost(tier(7), gameData).buys[0].source).toBe('enhance');
+    });
 });
