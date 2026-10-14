@@ -460,6 +460,8 @@ class TreasureTracker {
          * character's ledger or writing over the arriving character's.
          */
         this._generation = 0;
+        /** Bumped by every write that means to replace the ledger (reset, import), so a pull's re-read can tell */
+        this._replaced = 0;
     }
 
     /**
@@ -576,9 +578,16 @@ class TreasureTracker {
         if (!this.isInitialized) return;
         const owner = this._owner();
         const held = this.tally;
+        const replaced = this._replaced;
         this.ledger.set(held);
         if (!(await this.ledger.load())) return;
         if (!this._stillOurs(owner)) return;
+        if (replaced !== this._replaced) {
+            // A reset or import-replace landed while the read was out. The load folded the stored ledger's
+            // larger counts under it, so the record is put back to what the replace meant before its write runs.
+            this.ledger.set(this.tally);
+            return;
+        }
         const folded = this.tally === held ? this.ledger.get() : mergeStoredTally(this.ledger.get(), this.tally);
         if (JSON.stringify(folded) === JSON.stringify(this.tally)) return;
         this.tally = folded;
@@ -786,6 +795,7 @@ class TreasureTracker {
      *   the writes whose point is that counts go away
      */
     _save({ replace = false } = {}) {
+        if (replace) this._replaced += 1;
         this.ledger.set(this.tally);
         this.ledger.save({ overwrite: replace }).catch((error) => {
             console.error('[TreasureTracker] Saving the chest tally failed:', error);
