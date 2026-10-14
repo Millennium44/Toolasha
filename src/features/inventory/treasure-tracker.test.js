@@ -177,6 +177,7 @@ const {
     default: treasureTracker,
 } = await import('./treasure-tracker.js');
 const { default: config } = await import('../../core/config.js');
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 describe('formatReturn', () => {
     test('reads as a gain or a shortfall against expectation', () => {
@@ -1138,6 +1139,71 @@ describe('which chests are expanded is remembered', () => {
 
         expect(treasureTracker.expanded.has(CHEST)).toBe(true);
         treasureTracker.disable();
+    });
+});
+
+describe('a sync pull landing under the running tracker', () => {
+    const CHEST = '/items/chimerical_chest';
+    const KEY = 'treasureTally_char-1';
+
+    afterEach(() => {
+        treasureTracker.disable();
+        storageMock.reset();
+        config.getSetting.mockImplementation(() => false);
+        dm.characterId = 'char-1';
+        socketMock.handlers.clear();
+        treasureTracker.tally = {};
+        treasureTracker.isInitialized = false;
+    });
+
+    test('the tally takes in the pulled counts, keeps its own, and an open panel redraws', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 3, loot: {} } });
+        await treasureTracker.initialize();
+        treasureTracker._onLootOpened({ openedItem: { itemHrid: '/items/other_chest', count: 2 } }, null);
+        treasureTracker.toggle();
+
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 9, loot: {} } });
+        announceSyncPullApplied({ settings: [KEY] });
+        await vi.waitFor(() => expect(treasureTracker.tally[CHEST].opened).toBe(9));
+
+        expect(treasureTracker.tally['/items/other_chest'].opened).toBe(2);
+        expect(treasureTracker.ledger.get()[CHEST].opened).toBe(9);
+        treasureTracker.toggle();
+    });
+
+    test('a chest opened while the pull is being read is not lost', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        await treasureTracker.initialize();
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 9, loot: {} } });
+        let release;
+        storageMock.delays.set(
+            KEY,
+            new Promise((resolve) => {
+                release = resolve;
+            })
+        );
+        announceSyncPullApplied({ settings: [KEY] });
+        await Promise.resolve();
+        treasureTracker._onLootOpened({ openedItem: { itemHrid: '/items/other_chest', count: 1 } }, null);
+        storageMock.delays.clear();
+        release();
+        await vi.waitFor(() => expect(treasureTracker.tally[CHEST]?.opened).toBe(9));
+        expect(treasureTracker.tally['/items/other_chest'].opened).toBe(1);
+    });
+
+    test('a pull of another character, or with the tracker off, changes nothing', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        await treasureTracker.initialize();
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 9, loot: {} } });
+        announceSyncPullApplied({ settings: ['treasureTally_char-2'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(treasureTracker.tally).toEqual({});
+
+        treasureTracker.disable();
+        announceSyncPullApplied({ settings: [KEY] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(treasureTracker.tally).toEqual({});
     });
 });
 

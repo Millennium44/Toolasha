@@ -439,6 +439,7 @@ class TreasureTracker {
             empty: () => ({}),
             merge: mergeStoredTally,
             label: 'TreasureTracker',
+            onPulled: () => this._refreshFromPull(),
         });
         this.lootOpenedHandler = null;
         this.panel = null;
@@ -560,6 +561,28 @@ class TreasureTracker {
             hint: 'Chests opened and what came out',
             run: () => this.toggle(),
         });
+    }
+
+    /**
+     * Take in a ledger a sync pull wrote under the running page.
+     *
+     * `initialize()`'s pattern: the tally in hand is put back into the record so the load folds the stored
+     * ledger under it. A chest opened while the read was out is in `this.tally` but not yet in the record, so
+     * it is folded back in with the stored-ledger merge rather than lost. The panel is redrawn only when it is
+     * open and something changed (`_render` does nothing without one).
+     * @returns {Promise<void>}
+     */
+    async _refreshFromPull() {
+        if (!this.isInitialized) return;
+        const owner = this._owner();
+        const held = this.tally;
+        this.ledger.set(held);
+        if (!(await this.ledger.load())) return;
+        if (!this._stillOurs(owner)) return;
+        const folded = this.tally === held ? this.ledger.get() : mergeStoredTally(this.ledger.get(), this.tally);
+        if (JSON.stringify(folded) === JSON.stringify(this.tally)) return;
+        this.tally = folded;
+        this._render();
     }
 
     disable() {
