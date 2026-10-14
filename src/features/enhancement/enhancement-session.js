@@ -886,15 +886,19 @@ function legReach(leg, level) {
 }
 
 /**
- * The furthest level a session's climb got to: where it stands, or one past the highest level it
- * ever succeeded from (a failure can reset it below that).
+ * The furthest level a session's climb got to: where it stands, the highest level it ever made an
+ * attempt from (it had to be there), or one past (two past, for a Blessed success) the highest level
+ * it succeeded from. A failure can leave the item below any of these.
  * @param {Object} session - Session object
  * @returns {number}
  */
 function furthestLevel(session) {
     let peak = Number.isFinite(session.currentLevel) ? session.currentLevel : 0;
-    for (const [level, data] of Object.entries(session.attemptsPerLevel || {})) {
-        if ((data.success || 0) > 0) peak = Math.max(peak, Number(level) + 1);
+    for (const [key, data] of Object.entries(session.attemptsPerLevel || {})) {
+        const level = Number(key);
+        const attempted = (data.success || 0) + (data.fail || 0) > 0;
+        if (attempted) peak = Math.max(peak, level);
+        if ((data.success || 0) > 0) peak = Math.max(peak, level + ((data.blessed || 0) > 0 ? 2 : 1));
     }
     return peak;
 }

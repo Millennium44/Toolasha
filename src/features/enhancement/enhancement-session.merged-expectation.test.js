@@ -294,6 +294,35 @@ describe('expected attempts and protections for the whole merged path', () => {
         expect(expected.expectedAttempts).toBe(Math.round(predict(4, 6, 4, LOW).expectedAttemptsExact));
     });
 
+    test('counts a Blessed jump that a failure then undid as reached', () => {
+        // +4 → +6 on a Blessed success, a protected failure at +6 leaves +5; the second run picks
+        // up at +5 and ends there too
+        const first = run(
+            'b1',
+            4,
+            [
+                [4, 6],
+                [6, 5],
+            ],
+            LOW
+        );
+        first.attemptsPerLevel[4].blessed = 1;
+        const second = run(
+            'b2',
+            5,
+            [
+                [5, 4],
+                [4, 5],
+            ],
+            LOW
+        );
+        const merged = foldSessions(planSessionMerge([first, second]).ordered);
+        expect(merged.currentLevel).toBe(5);
+        const { expected } = mergedExpectation(merged);
+        expect([expected.fromLevel, expected.toLevel]).toEqual([4, 6]);
+        expect(expected.expectedAttempts).toBe(Math.round(predict(4, 6, 4, LOW).expectedAttemptsExact));
+    });
+
     test('is never stored on the session and the session stays out of calibration', () => {
         const merged = mergeFour();
         mergedExpectation(merged);
