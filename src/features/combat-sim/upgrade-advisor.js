@@ -3236,12 +3236,30 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
         minLevel: MIRROR_FIRST_LEVEL,
         held: mirrorHeldInputs(itemHrid, { isSelf: options.isSelf !== false, candidate: options.candidate || null }),
     });
-    if (mirror && (chosen.price == null || mirror.baseCost + mirror.forfeited < chosen.price)) {
+    // Against a market quote a tier swap is judged on the final net, after the resale of what it takes
+    // off: a quote keeps the whole credit and a built route's credit is capped at its spend, so a dear
+    // piece sold into a high bid can leave the quote the cheaper way even when the build is cheaper
+    // gross. Any other basis (a sweep, a craft estimate) is already capped like a build, and a row with
+    // several bought pieces cannot split one credit among them, so those compare the gross figures.
+    const candidate = options.candidate;
+    const netOf = (route) => {
+        if (chosen.source !== 'market' || !candidate || candidate.addedSlots) {
+            return route.price + (route.forfeited || 0);
+        }
+        const credit = resaleCredit(candidate, route.consumed);
+        return route.price - cappedResale(credit, route.price, isBuiltRoute(route.source));
+    };
+    const viaMirror = mirror && {
+        // A worn piece that went into the mirror is not also sold
+        ...(mirror.consumed.length ? { consumed: mirror.consumed } : {}),
+        price: mirror.baseCost,
+        forfeited: mirror.forfeited,
+        source: 'mirror',
+    };
+    if (viaMirror && (chosen.price == null || netOf(viaMirror) < netOf(chosen))) {
+        const { forfeited: _forfeited, ...route } = viaMirror;
         return {
-            // A worn piece that went into the mirror is not also sold
-            ...(mirror.consumed.length ? { consumed: mirror.consumed } : {}),
-            price: mirror.baseCost,
-            source: 'mirror',
+            ...route,
             enhanceSource: describeEnhancementSource(enhancementSweepParams(itemHrid)),
             ladder: {
                 fromLevel: level - 1,
