@@ -2190,6 +2190,7 @@ const observationRecord = createPersistedRecord({
     merge: mergeObservations,
     migrate: 'discard',
     label: 'ReplayCheck',
+    onPulled: () => replayCheck.refreshFromPull('observations'),
 });
 
 /** The check history, same discipline; a check is identified by when it ran */
@@ -2200,6 +2201,7 @@ const historyRecord = createPersistedRecord({
     merge: mergeCheckHistory,
     migrate: 'discard',
     label: 'ReplayCheck',
+    onPulled: () => replayCheck.refreshFromPull('history'),
 });
 
 /*
@@ -2360,6 +2362,35 @@ class ReplayCheck {
             await this.saveObservations();
         } catch (error) {
             console.error('[ReplayCheck] Keeping the observation failed:', error);
+        }
+    }
+
+    /**
+     * Take in observations or checks a sync pull wrote under the running page.
+     *
+     * The list in hand goes back into its record so the load folds the stored one under it (a Forget the pull
+     * carried applies through the fold), and the result is adopted. Both lists are reassigned wholesale by
+     * `remember` and the check, so one changed while the read was out would be lost by the adoption: the round
+     * is repeated, a few times at most, and skipped if the list keeps moving (memory wins; the next save folds
+     * the stored one under it). An open panel redraws when the list changed.
+     * @param {'observations'|'history'} which - The list the pull touched
+     * @returns {Promise<void>}
+     */
+    async refreshFromPull(which) {
+        const isObservations = which === 'observations';
+        const record = isObservations ? observationRecord : historyRecord;
+        const owner = this._owner();
+        for (let round = 0; round < 3; round++) {
+            const held = this[which];
+            record.set(clearedRecord(held));
+            if (!(await record.load()) || !this._stillOurs(owner)) return;
+            if (this[which] !== held) continue;
+            const stored = entriesOf(record.get());
+            const next = isObservations ? stored : pruneHistory(stored);
+            const changed = JSON.stringify(next) !== JSON.stringify(held);
+            this[which] = next;
+            if (changed) replayCheckPanel.render();
+            return;
         }
     }
 

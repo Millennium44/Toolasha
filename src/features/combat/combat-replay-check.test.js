@@ -1796,6 +1796,42 @@ describe('surviving a refresh', () => {
  * got a fresh watch at all: the first character's observations, history and
  * comparison kept being read as the second's, main and ironcow alts alike.
  */
+describe('a sync pull', () => {
+    test('brings the other device observations and checks in, keeping the ones held', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        replayCheck.ensureWatching();
+        await settle();
+        const mine = evenObservation({ recordedAt: 2_000, seconds: 20, damageDealt: 4_125 });
+        const theirs = evenObservation({ recordedAt: 1_000, seconds: 10, damageDealt: 4_125 });
+        replayCheck.remember(mine);
+        const now = Date.now();
+        replayCheck.history = [{ at: now - 1_000, deviationPct: 1 }];
+        store.data.set(OBSERVATIONS_KEY, { clearedAt: 0, entries: [theirs] });
+        store.data.set(HISTORY_KEY, { clearedAt: 0, entries: [{ at: now - 2_000, deviationPct: 2 }] });
+
+        announceSyncPullApplied({ settings: [OBSERVATIONS_KEY, HISTORY_KEY] });
+        await vi.waitFor(() => {
+            expect(replayCheck.observations.map((entry) => entry.recordedAt)).toEqual([1_000, 2_000]);
+            expect(replayCheck.history.map((entry) => entry.at)).toEqual([now - 2_000, now - 1_000]);
+        });
+    });
+
+    test('for another character, or before the first load, changes nothing', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        store.data.set(OBSERVATIONS_KEY, { clearedAt: 0, entries: [evenObservation({ recordedAt: 1_000 })] });
+        announceSyncPullApplied({ settings: [OBSERVATIONS_KEY] });
+        await settle();
+        expect(replayCheck.observations).toEqual([]);
+
+        replayCheck.ensureWatching();
+        await settle();
+        store.data.set('combatReplayCheck_observations_char2', { clearedAt: 0, entries: [evenObservation()] });
+        announceSyncPullApplied({ settings: ['combatReplayCheck_observations_char2'] });
+        await settle();
+        expect(replayCheck.observations).toHaveLength(1);
+    });
+});
+
 describe('a character switch', () => {
     test('stops watching, so the arriving character gets a fresh ensureWatching', async () => {
         replayCheck.ensureWatching();
