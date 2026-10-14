@@ -112,6 +112,10 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => game.initClientData,
         getItemDetails: (hrid) => game.items[hrid] || null,
         getSkills: () => game.skills,
+        on: (event, cb) => event === 'items_updated' && tooltip.inventoryListeners.push(cb),
+        off: (event, cb) => {
+            tooltip.inventoryListeners = tooltip.inventoryListeners.filter((c) => c !== cb);
+        },
     },
 }));
 
@@ -152,7 +156,15 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 /** What the item tooltip's own functions answer, and what the bag holds, for the own-stock sort */
-const tooltip = vi.hoisted(() => ({ held: {}, chains: {}, calls: [], envCalls: 0, gate: null }));
+const tooltip = vi.hoisted(() => ({
+    held: {},
+    chains: {},
+    calls: [],
+    envCalls: 0,
+    gate: null,
+    keepListeners: [],
+    inventoryListeners: [],
+}));
 
 vi.mock('../market/tooltip-prices.js', () => ({
     default: {
@@ -164,6 +176,17 @@ vi.mock('../market/tooltip-prices.js', () => ({
             tooltip.calls.push({ hrid, env });
             if (tooltip.gate) await tooltip.gate;
             return tooltip.chains[hrid] ?? null;
+        },
+    },
+}));
+
+vi.mock('../market/self-use-wanted.js', () => ({
+    default: {
+        onChange: (cb) => {
+            tooltip.keepListeners.push(cb);
+            return () => {
+                tooltip.keepListeners = tooltip.keepListeners.filter((c) => c !== cb);
+            };
         },
     },
 }));
@@ -1750,6 +1773,48 @@ describe('the Chain/hr (own stock) sort', () => {
         await vi.waitFor(() => expect(bestItems.ownStock.has('/items/a')).toBe(true));
         expect(tooltip.envCalls).toBe(1);
         expect(tooltip.calls).toHaveLength(1);
+    });
+
+    test('a keep-list or mark-meaning change re-prices the open own-stock table', async () => {
+        tooltip.held = { '/items/a': 1 };
+        tooltip.chains = { '/items/a': chain(100) };
+        await open([row('a', 1)]);
+        bestItems.modal.style.display = 'flex';
+        bestItems.subscribePricingChanges();
+        expect(cells()[0].textContent).toBe(formatKMB(100));
+        tooltip.chains = { '/items/a': chain(900) };
+        for (const cb of tooltip.keepListeners) cb();
+        await vi.waitFor(() => expect(cells()[0].textContent).toBe(formatKMB(900)));
+        tooltip.chains = { '/items/a': chain(2000) };
+        for (const cb of settings.changeListeners.selfUse_markMeaning || []) cb('keep');
+        await vi.waitFor(() => expect(cells()[0].textContent).toBe(formatKMB(2000)));
+        bestItems.unsubscribePricingChanges();
+        expect(tooltip.keepListeners).toHaveLength(0);
+        expect(tooltip.inventoryListeners).toHaveLength(0);
+    });
+
+    test('an inventory update redraws the open own-stock table: used-up stock leaves, new stock arrives', async () => {
+        vi.useFakeTimers();
+        try {
+            tooltip.held = { '/items/a': 1 };
+            tooltip.chains = { '/items/a': chain(100), '/items/b': chain(7000) };
+            await open([row('a', 1), row('b', 1)]);
+            bestItems.modal.style.display = 'flex';
+            bestItems.subscribePricingChanges();
+            expect(names()).toEqual(['a']);
+            tooltip.held = { '/items/b': 3 };
+            for (const cb of tooltip.inventoryListeners) cb();
+            // Debounced: nothing yet, and a burst collapses into one redraw
+            for (const cb of tooltip.inventoryListeners) cb();
+            expect(names()).toEqual(['a']);
+            await vi.advanceTimersByTimeAsync(500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(names()).toEqual(['b']);
+            expect(cells()[0].textContent).toBe(formatKMB(7000));
+            bestItems.unsubscribePricingChanges();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('the hover words kept outputs as valued at what you would pay', async () => {
