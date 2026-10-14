@@ -86,6 +86,7 @@ import tradeLedgerStore from '../features/market/trade-ledger-store.js';
 import selfUseWanted from '../features/market/self-use-wanted.js';
 import tradeLedgerView from '../features/market/trade-ledger-view.js';
 import staleCapitalView from '../features/market/stale-capital-view.js';
+import overbidPanel from '../features/market/overbid-panel.js';
 import watchlist, { watchlistPanel, watchItem } from '../features/inventory/watchlist.js';
 import autoAllButton from '../features/inventory/auto-all-button.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
@@ -161,6 +162,7 @@ toolashaRoot.Market = {
     tradeLedgerStore,
     tradeLedgerView,
     staleCapitalView,
+    overbidPanel,
     abilityBookPanel,
     abilityCheckpoints,
     watchlist,
