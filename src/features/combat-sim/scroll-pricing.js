@@ -87,3 +87,22 @@ export function priceScrollRow(row, rate, baseline) {
         netText: `${signed(netPerScroll)} per scroll`,
     };
 }
+
+/** The improvement step the Score's cost columns are quoted per, in percent. */
+const SCROLL_STEP_PCT = 0.01;
+
+/**
+ * Gold per hour of tokens spent per 0.01% of one metric: the recurring-cost
+ * counterpart of the gear table's Gold/0.01% and the levels table's Hours/0.01%.
+ * Lower is better. A delta that is not a clear gain (zero, negative, unknown, or
+ * inside the run's error) has no figure, returned as Infinity so it never scores.
+ *
+ * @param {number} costPerHour - Token cost of keeping the scroll up, gold per hour
+ * @param {number} pctDelta - What carrying the scroll adds, in percent (2 = 2%)
+ * @param {boolean} [significant=true] - Whether the delta cleared the run's error
+ * @returns {number} Gold per hour per 0.01%, or Infinity
+ */
+export function scrollGoldPerStep(costPerHour, pctDelta, significant = true) {
+    if (!significant || !(costPerHour > 0) || !Number.isFinite(pctDelta) || pctDelta <= 0) return Infinity;
+    return costPerHour / (pctDelta / SCROLL_STEP_PCT);
+}

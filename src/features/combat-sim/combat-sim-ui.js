@@ -74,7 +74,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
-import { scrollTokenRate, priceScrollRow } from './scroll-pricing.js';
+import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -2509,6 +2509,23 @@ const LEVEL_SCORE_METRICS = ['dps', 'xp', 'profit'].map((key) => {
         value: (r) => levelRowHoursPer(r, key),
     };
 });
+
+/**
+ * The Score metrics the Scrolls table places on: the gold table's DPS, EXP and
+ * Profit metrics, read off the token cost per hour per 0.01% (`scrollGoldPer`,
+ * set on each row as the table draws). Lower is better, as in the other tables.
+ */
+const SCROLL_SCORE_METRICS = ['dps', 'xp', 'profit'].map((key) => {
+    const metric = SCORE_METRICS.find((m) => m.key === key);
+    return {
+        ...metric,
+        label: metric.label.replace('Gold/0.01%', 'Gold/hr per 0.01%'),
+        value: (r) => r.scrollGoldPer?.[key] ?? Infinity,
+    };
+});
+
+/** The Scrolls table's scale when nothing has been chosen: percent of best, like the levels table. */
+export const DEFAULT_SCROLL_SCORE_SCALE = SCORE_PERCENT;
 
 /**
  * Compact hours for the Hours/0.01% columns: "45m" under an hour, else "1.2h".
@@ -11161,6 +11178,7 @@ class CombatSimUI {
 
         const depthOptions = scoreScaleOptions(this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH);
         const levelOptions = scoreScaleOptions(this._upgradeLevelScoreScale || DEFAULT_LEVEL_SCORE_SCALE);
+        const scrollOptions = scoreScaleOptions(this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE);
         const selectStyle =
             'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:1px 4px; ' +
             'font-size:11px; font-family:inherit;';
@@ -11194,6 +11212,11 @@ class CombatSimUI {
                         rather than coming a close second on placings.">
                         <span>Combat levels</span>
                         <select class="toolasha-select" id="mwi-csim-level-score-scale" style="${selectStyle}">${levelOptions}</select>
+                    </label>
+                    <label style="${box}" title="How the Scrolls table scores, on its Gold/hr per 0.01% columns
+                        (the token cost of keeping a scroll up, per 0.01% of each metric). % of best by default.">
+                        <span>Scrolls</span>
+                        <select class="toolasha-select" id="mwi-csim-scroll-score-scale" style="${selectStyle}">${scrollOptions}</select>
                     </label>
                     <label style="${box}" title="Color the nine best values in Score and in every column that
                         counts toward it — green through amber to red — so you can see at a glance which row is
@@ -11767,14 +11790,71 @@ class CombatSimUI {
      * @private
      */
     _renderScrollTable(rows, baseline, rate) {
-        const priced = rows
-            .map((r) => ({ r, p: priceScrollRow(r, rate, baseline) }))
-            .filter((entry) => entry.p)
-            .sort((a, b) => b.p.netPerHour - a.p.netPerHour);
+        const priced = rows.map((r) => ({ r, p: priceScrollRow(r, rate, baseline) })).filter((entry) => entry.p);
         if (!priced.length) return '';
+        const scrollRows = priced.map((entry) => entry.r);
+        const pricedByRow = new Map(priced.map((entry) => [entry.r, entry.p]));
 
-        const thStyle = 'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        // Gold per hour of tokens per 0.01% of each metric: what carrying the scroll adds, and only when
+        // that clears the run's error. A scroll already carried measures the loss of dropping it, so
+        // the sign is flipped to read as what it adds.
+        for (const { r, p } of priced) {
+            r.scrollGoldPer = {};
+            for (const key of ['dps', 'xp', 'profit']) {
+                const delta = r.candidate?.measuresLoss ? -(r.deltas?.[key] ?? 0) : (r.deltas?.[key] ?? 0);
+                r.scrollGoldPer[key] = scrollGoldPerStep(p.costPerHour, delta, upgradeNoiseFor(r, key).significant);
+            }
+            r.scrollNetPerHour = p.netPerHour;
+        }
+
+        // The same scoring the other tables use, over the scrolls only (they compete with each other)
+        const scaleKey = this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE;
+        applyScoreScale(scrollRows, scaleKey, {
+            metrics: SCROLL_SCORE_METRICS,
+            keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
+        });
+        const places = this._upgradeScoreGradient && scaleKey !== SCORE_PERCENT ? scorePlaces(scrollRows) : null;
+        const scoreColor = (r) => {
+            if (!this._upgradeScoreGradient) return null;
+            if (scaleKey === SCORE_PERCENT) return scoreValueColor(r.score);
+            return scoreGradientColor(places.get(r));
+        };
+
+        if (!this._scrollSort) this._scrollSort = { key: 'score', asc: true };
+        const { key: sortKey, asc: sortAsc } = this._scrollSort;
+        const finiteOrNull = (v) => (Number.isFinite(v) ? v : null);
+        const sortValue = (r) => {
+            switch (sortKey) {
+                case 'upgrade':
+                    return r.candidate.description.toLowerCase();
+                case 'net':
+                    return -pricedByRow.get(r).netPerHour;
+                case 'gain':
+                    return -pricedByRow.get(r).gainPerHour;
+                case 'dps':
+                    return -(r.deltas?.dps ?? 0);
+                case 'profit':
+                    return -(r.deltas?.profit ?? 0);
+                case 'xp':
+                    return -(r.deltas?.xp ?? 0);
+                case 'gDps':
+                    return finiteOrNull(r.scrollGoldPer.dps);
+                case 'gXp':
+                    return finiteOrNull(r.scrollGoldPer.xp);
+                case 'gProfit':
+                    return finiteOrNull(r.scrollGoldPer.profit);
+                default:
+                    // Score, higher is better so negated; a scroll that scored nothing stays last
+                    return r.score > 0 ? -r.score : null;
+            }
+        };
+        const sorted = sortRowsBy(scrollRows, sortValue, sortAsc);
+
+        const thStyle =
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
+            'cursor:pointer; user-select:none; white-space:nowrap;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
         // Greyed when the delta is inside the run's own error, as in the unpriced table
         const cell = (r, key) => {
             const value = r.deltas?.[key];
@@ -11783,6 +11863,15 @@ class CombatSimUI {
             const color = !significant ? '#888' : value > 0 ? '#8bc34a' : '#f44336';
             return `<span style="color:${color};">${value > 0 ? '+' : ''}${value.toFixed(2)}%</span>`;
         };
+        const goldPerCell = (r, key) =>
+            Number.isFinite(r.scrollGoldPer[key]) ? formatKMB(Math.round(r.scrollGoldPer[key])) : '—';
+        const goldPerTitle = (label) =>
+            `Gold per hour of tokens spent on this scroll for each 0.01% of ${label} it adds. Lower is better. ` +
+            'A dash means no clear gain (none, a loss, or inside the run’s error).';
+        const scoreTitle =
+            'Ranks the scrolls against each other by gold per hour of tokens per 0.01% of each metric. ' +
+            scoreScaleTitle(scaleKey, 'Gold/hr per 0.01%') +
+            ' Use ⚙ Columns to choose what counts and the scale.';
 
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
             <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Scrolls, priced by their tokens</div>
@@ -11794,27 +11883,39 @@ class CombatSimUI {
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
-                <th style="${thStyle}">Scroll</th>
+                <th style="${thStyle}" data-scroll-sort-key="upgrade">Scroll${arrow('upgrade')}</th>
                 <th style="${thStyle}">Priced as</th>
-                <th style="${thStyle}">ΔDPS</th>
-                <th style="${thStyle}">ΔProfit</th>
-                <th style="${thStyle}">Gain</th>
-                <th style="${thStyle}">Net / hr</th>
+                <th style="${thStyle}" data-scroll-sort-key="dps">ΔDPS${arrow('dps')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="gDps" title="${goldPerTitle('DPS')}">Gold/hr per 0.01% DPS${arrow('gDps')}</th>
+                <th style="${thStyle}" data-scroll-sort-key="xp">ΔEXP${arrow('xp')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="gXp" title="${goldPerTitle('EXP/hr')}">Gold/hr per 0.01% EXP${arrow('gXp')}</th>
+                <th style="${thStyle}" data-scroll-sort-key="profit">ΔProfit${arrow('profit')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="gProfit" title="${goldPerTitle('Profit/hr')}">Gold/hr per 0.01% Profit${arrow('gProfit')}</th>
+                <th style="${thStyle}" data-scroll-sort-key="gain">Gain${arrow('gain')}</th>
+                <th style="${thStyle}" data-scroll-sort-key="net">Net / hr${arrow('net')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="score" title="${scoreTitle}">Score<br>${scoreDepthLabel(scaleKey)}${arrow('score')}</th>
             </tr></thead><tbody>`;
 
-        priced.forEach(({ r, p }, i) => {
+        sorted.forEach((r, i) => {
+            const p = pricedByRow.get(r);
             const rowKey = upgradeRowKey(r);
             const netColor = p.worthIt ? '#8bc34a' : '#f44336';
+            const color = scoreColor(r);
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-scroll-row="${i}" data-row-key="${rowKey}">
                 <td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
                 <td style="${tdStyle} color:#888;">${p.basis}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
+                <td style="${tdStyle}" data-scroll-gold-per="dps">${goldPerCell(r, 'dps')}</td>
+                <td style="${tdStyle}">${cell(r, 'xp')}</td>
+                <td style="${tdStyle}" data-scroll-gold-per="xp">${goldPerCell(r, 'xp')}</td>
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
+                <td style="${tdStyle}" data-scroll-gold-per="profit">${goldPerCell(r, 'profit')}</td>
                 <td style="${tdStyle}">${p.gainText}</td>
                 <td style="${tdStyle} color:${netColor};" title="${p.verdict}">${p.worthIt ? '+' : '−'}${formatKMB(Math.abs(p.netPerHour))}${p.worthIt ? '' : ' loss'}</td>
+                <td style="${tdStyle}${color ? ` color:${color};` : ''}" data-scroll-score>${formatScore(r.score)}</td>
             </tr>
             <tr data-scroll-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="6" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                <td colspan="11" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
                     <div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
@@ -12231,7 +12332,7 @@ class CombatSimUI {
         // The gold table carries the ⚙ Columns popover; with no gold table the
         // level Score would be stuck on its saved metrics and depth, so the
         // levels table brings its own. Never both: the wiring finds it by id.
-        if (levelRows.length && !goldRows.length) html += this._renderUpgradeColumnMenu();
+        if ((levelRows.length || scrollRows.length) && !goldRows.length) html += this._renderUpgradeColumnMenu();
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         if (scrollRows.length) html += this._renderScrollTable(scrollRows, results.baseline, tokenRate);
         if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
@@ -12291,6 +12392,7 @@ class CombatSimUI {
         wireSort('data-sort-key', '_upgradeSort');
         wireSort('data-level-sort-key', '_upgradeLevelSort');
         wireSort('data-unpriced-sort-key', '_unpricedSort');
+        wireSort('data-scroll-sort-key', '_scrollSort');
 
         // Forgets the saved run only — the table on screen came from this
         // render call and stays right there; there is simply nothing left to
@@ -12339,6 +12441,10 @@ class CombatSimUI {
                 { key: 'repayHours', label: 'Hours to repay' },
                 { key: 'roiAnnualPct', label: 'ROI 1yr %' },
                 { key: 'levelTimeHours', label: 'Hours to level' },
+                { key: 'scrollGoldPerDps', label: 'Scroll gold/hr per 0.01% DPS' },
+                { key: 'scrollGoldPerXp', label: 'Scroll gold/hr per 0.01% EXP' },
+                { key: 'scrollGoldPerProfit', label: 'Scroll gold/hr per 0.01% Profit' },
+                { key: 'scrollNetPerHour', label: 'Scroll net gold/hr after tokens' },
                 { key: 'dpsNoisePct', label: 'DPS error ±%' },
                 { key: 'profitNoisePct', label: 'Profit error ±%' },
                 { key: 'measured', label: 'Clears the noise' },
@@ -12374,6 +12480,10 @@ class CombatSimUI {
                     repayHours: finite(r.economics?.repayHours),
                     roiAnnualPct: finite(r.economics?.roiAnnualPct),
                     levelTimeHours: finite(r.levelTimeHours),
+                    scrollGoldPerDps: finite(r.scrollGoldPer?.dps),
+                    scrollGoldPerXp: finite(r.scrollGoldPer?.xp),
+                    scrollGoldPerProfit: finite(r.scrollGoldPer?.profit),
+                    scrollNetPerHour: finite(r.scrollNetPerHour),
                     dpsNoisePct: finite(r.noise?.dps),
                     profitNoisePct: finite(r.noise?.profit),
                     measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
@@ -12438,6 +12548,12 @@ class CombatSimUI {
         // The level table scores itself on every render, so a re-render is enough
         menu.querySelector('#mwi-csim-level-score-scale')?.addEventListener('change', (event) => {
             this._upgradeLevelScoreScale = event.target.value || DEFAULT_LEVEL_SCORE_SCALE;
+            this._persistUpgradeColumnPrefs();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
+
+        menu.querySelector('#mwi-csim-scroll-score-scale')?.addEventListener('change', (event) => {
+            this._scrollScoreScale = event.target.value || DEFAULT_SCROLL_SCORE_SCALE;
             this._persistUpgradeColumnPrefs();
             this._renderUpgradeResults(this._upgradeResultsData);
         });
@@ -12510,6 +12626,8 @@ class CombatSimUI {
                     sort: this._upgradeSort || null,
                     levelSort: this._upgradeLevelSort || null,
                     unpricedSort: this._unpricedSort || null,
+                    scrollSort: this._scrollSort || null,
+                    scrollScoreScale: this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE,
                 },
                 'settings'
             );
@@ -12540,6 +12658,8 @@ class CombatSimUI {
             if (isSortShape(saved.sort)) this._upgradeSort = saved.sort;
             if (isSortShape(saved.levelSort)) this._upgradeLevelSort = saved.levelSort;
             if (isSortShape(saved.unpricedSort)) this._unpricedSort = saved.unpricedSort;
+            if (isSortShape(saved.scrollSort)) this._scrollSort = saved.scrollSort;
+            if (isScoreScale(saved.scrollScoreScale)) this._scrollScoreScale = saved.scrollScoreScale;
         } catch (error) {
             console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
         }
