@@ -380,7 +380,7 @@ export function mergeMultiSkillGearRows({
     for (const row of results) {
         const c = row.candidate;
         if (row.costType !== 'gold' || !c?.upgradeHrid || !c.slot) continue;
-        if (c.type !== 'skilling_gear' && c.type !== 'enhancement') continue;
+        if (c.type !== 'skilling_gear' && c.type !== 'enhancement' && c.type !== 'tier') continue;
         const key = `${c.slot}|${c.upgradeHrid}|${c.upgradeLevel}`;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(row);
