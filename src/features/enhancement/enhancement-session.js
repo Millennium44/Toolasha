@@ -400,9 +400,12 @@ export function lastActivityTime(session) {
  * @param {number} run.targetLevel - The action's enhancingMaxLevel
  * @param {number} run.protectFrom - The action's enhancingProtectionMinLevel (0: none)
  * @param {string|null} [run.protectionItemHrid] - Protection item loaded, when known
+ * @param {Object} [options]
+ * @param {boolean} [options.combineProtectionItems] - Continue the session even when the new run
+ *   loads a different protection item (the per-item protection breakdown keeps them apart)
  * @returns {boolean}
  */
-export function canResumeSession(session, run) {
+export function canResumeSession(session, run, { combineProtectionItems = false } = {}) {
     if (!session || !run) return false;
     if (session.state !== SessionState.COMPLETED) return false;
     if (session.itemHrid !== run.itemHrid) return false;
@@ -414,7 +417,7 @@ export function canResumeSession(session, run) {
     // setup is the item loaded on its last attempt; the item it first consumed stands in for
     // sessions recorded before attempts carried it.
     const configured = session.lastAttempt?.protectionItemHrid ?? session.protectionItemHrid;
-    if (configured && run.protectionItemHrid && configured !== run.protectionItemHrid) {
+    if (!combineProtectionItems && configured && run.protectionItemHrid && configured !== run.protectionItemHrid) {
         return false;
     }
     // A run that reached its target is extended, not resumed

@@ -1415,6 +1415,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'When a new enhancing run is the same item, target level and protection setup as the most recent session, and starts at exactly the level that session ended at, its attempts are added to that session instead of starting a new one. Only active enhancing time is counted. It matches by item and level only, so a different copy of the same item at the same level also resumes it, as does a run whose protection item is not known yet.',
             },
+            enhancementTracker_autoCombine: {
+                id: 'enhancementTracker_autoCombine',
+                label: 'Auto-resume also continues a run that uses a different protection item',
+                type: 'checkbox',
+                default: true,
+                help: 'Works with auto-resume. When the new run matches the most recent session in every way except the protection item it loads, it still continues that session instead of starting a new one, and the session lists the protection used per item. A different target, a different protect-from level or a different starting level still start a new session.',
+            },
             enhancementXPH: {
                 id: 'enhancementXPH',
                 label: 'Enhancement: XPH calculator',
