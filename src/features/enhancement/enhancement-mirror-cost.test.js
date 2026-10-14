@@ -10,6 +10,7 @@ import {
     addMirrorCost,
     addProtectionCost,
     createSession,
+    extendSession,
     foldSessions,
     getCurrentLegCounters,
     getMirrorUsage,
@@ -88,6 +89,33 @@ describe('a session recorded with the mirror inside the protection fields', () =
 
         expect(getMirrorUsage(session).count).toBe(3);
         expect(getProtectionUsage(session)).toEqual({ count: 0, cost: 0, breakdown: {} });
+    });
+
+    test('an unmarked extension baseline that counted mirrors makes the leg protections unknown, not 0', () => {
+        // Codex's case: stored baseline 5 (2 protections + 3 mirrors), then 2 more protections
+        const session = legacySession({
+            extensionBaseline: { totalAttempts: 0, protectionCount: 5 },
+        });
+        session.protectionCount = 7;
+        session.protectionCost += 2000;
+        session.protectionBreakdown[BOOK] = { count: 4, totalCost: 4000 };
+
+        expect(getCurrentLegCounters(session).protections).toBeNull();
+        // A marked baseline is exact, and a session that never used a mirror is as it was
+        session.extensionBaseline.protectionCount = 2;
+        session.extensionBaseline.protectionCountExcludesMirrors = true;
+        expect(getCurrentLegCounters(session).protections).toBe(2);
+        const plain = createSession('/items/foo', 'Foo', 0, 10, 2);
+        addProtectionCost(plain, BOOK, 1000);
+        plain.extensionBaseline = { totalAttempts: 0, protectionCount: 0 };
+        expect(getCurrentLegCounters(plain).protections).toBe(1);
+    });
+
+    test('baselines written now carry the marker', () => {
+        const session = legacySession({ state: SessionState.COMPLETED });
+        extendSession(session, 12);
+        expect(session.extensionBaseline.protectionCountExcludesMirrors).toBe(true);
+        expect(getCurrentLegCounters(session).protections).toBe(0);
     });
 
     test('the Prot Factor leg counter does not count the mirrors', () => {

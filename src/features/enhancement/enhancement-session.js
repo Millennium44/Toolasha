@@ -617,6 +617,7 @@ export function resumeSession(session, now = Date.now(), options = {}) {
         session.extensionBaseline = {
             totalAttempts: session.totalAttempts || 0,
             protectionCount: getProtectionUsage(session).count,
+            protectionCountExcludesMirrors: true,
         };
     }
     // The run began no earlier than the last one ended and no later than now
@@ -744,6 +745,9 @@ export function foldSessions(ordered) {
     const liveBaseline = {
         totalAttempts: newest.extensionBaseline?.totalAttempts || 0,
         protectionCount: newest.extensionBaseline?.protectionCount || 0,
+        // A stored baseline without the marker counted mirrors as protections; it stays unmarked
+        protectionCountExcludesMirrors:
+            !newest.extensionBaseline || newest.extensionBaseline.protectionCountExcludesMirrors === true,
     };
     const legPredictions = ordered.flatMap((session) => {
         const banked = Array.isArray(session.legPredictions) ? session.legPredictions : [];
@@ -844,6 +848,7 @@ export function foldSessions(ordered) {
         newest.extensionBaseline = {
             totalAttempts: older.reduce((sum, s) => sum + (s.totalAttempts || 0), liveBaseline.totalAttempts),
             protectionCount: older.reduce((sum, s) => sum + getProtectionUsage(s).count, liveBaseline.protectionCount),
+            ...(liveBaseline.protectionCountExcludesMirrors ? { protectionCountExcludesMirrors: true } : {}),
         };
         newest.mergedLiveLeg = true;
     } else {
@@ -1282,6 +1287,7 @@ export function extendSession(session, newTargetLevel, now = Date.now()) {
     session.extensionBaseline = {
         totalAttempts: session.totalAttempts || 0,
         protectionCount: getProtectionUsage(session).count,
+        protectionCountExcludesMirrors: true,
     };
 }
 
@@ -1289,16 +1295,22 @@ export function extendSession(session, newTargetLevel, now = Date.now()) {
  * Get attempts and protections accrued since the session was last extended.
  * A session that was never extended reports its full totals.
  * @param {Object} session - Session object
- * @returns {{attempts: number, protections: number}} Counters for the current leg
+ * @returns {{attempts: number, protections: number|null}} Counters for the current leg.
+ *   `protections` is null when it cannot be known: the baseline predates mirrors being kept apart
+ *   (no `protectionCountExcludesMirrors` marker) and the session holds a mirror in its protection
+ *   fields, so the baseline's share of mirrors is unknown
  */
 export function getCurrentLegCounters(session) {
     const baseline = session?.extensionBaseline;
     const attempts = (session?.totalAttempts || 0) - (baseline?.totalAttempts || 0);
     const protections = getProtectionUsage(session).count - (baseline?.protectionCount || 0);
 
+    const unknown =
+        baseline != null && baseline.protectionCountExcludesMirrors !== true && getMirrorUsage(session).legacyCount > 0;
+
     return {
         attempts: Math.max(0, attempts),
-        protections: Math.max(0, protections),
+        protections: unknown ? null : Math.max(0, protections),
     };
 }
 

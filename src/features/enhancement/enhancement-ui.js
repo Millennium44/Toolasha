@@ -1303,7 +1303,7 @@ class EnhancementUI {
             // Calculate factors (like Ultimate Tracker)
             // Use more precision for small values to avoid showing 0.00x
             const rawAttFactor = expAtt > 0 ? leg.attempts / expAtt : null;
-            const rawProtFactor = expProt > 0 ? leg.protections / expProt : null;
+            const rawProtFactor = expProt > 0 && leg.protections !== null ? leg.protections / expProt : null;
 
             // Format with appropriate precision (more decimals for small values)
             const formatFactor = (val) => {
