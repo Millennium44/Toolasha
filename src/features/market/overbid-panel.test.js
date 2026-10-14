@@ -314,6 +314,18 @@ describe('panel', () => {
         expect(hoisted.refresh).not.toHaveBeenCalled();
     });
 
+    it('fetches missing sightings when pooled history is turned on mid-session, with no listing event', async () => {
+        hoisted.listings = [listing({ id: 1 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).not.toHaveBeenCalled();
+        hoisted.pooled = true;
+        hoisted.settingCallbacks.market_pooledHistory.forEach((fn) => fn(true));
+        hoisted.settingCallbacks.market_pooledHistory.forEach((fn) => fn(true));
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+    });
+
     it('retries a newly listed item after a refresh that was already in flight', async () => {
         hoisted.pooled = true;
         hoisted.inFlight = true;
