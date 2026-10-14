@@ -2557,7 +2557,8 @@ describe('the remembered upgrade analysis across a character switch', () => {
 
             const rows = [...container.querySelectorAll('[data-scroll-row]')];
             expect(rows[0].textContent).toContain('Carried');
-            expect(rows[0].textContent).toContain('+5.00%');
+            // -5% measured from the carried state is +5.26% from the state without it
+            expect(rows[0].textContent).toContain('+5.26%');
             expect(rows[0].textContent).not.toContain('-5.00%');
         });
 

@@ -11798,8 +11798,14 @@ class CombatSimUI {
         // Gold per hour of tokens per 0.01% of each metric: what carrying the scroll adds, and only when
         // that clears the run's error. A scroll already carried measures the loss of dropping it, so
         // the sign is flipped to read as what it adds.
-        // What carrying the scroll adds, whichever way it was measured
-        const added = (r, key) => (r.candidate?.measuresLoss ? -(r.deltas?.[key] ?? 0) : (r.deltas?.[key] ?? 0));
+        // What carrying the scroll adds, as a % of the run without it. A carried scroll was measured as
+        // (off - on) / on, so it is rebased onto the off state: -d / (1 + d), with d a fraction.
+        const added = (r, key) => {
+            const pct = r.deltas?.[key] ?? 0;
+            if (!r.candidate?.measuresLoss) return pct;
+            const d = pct / 100;
+            return d > -1 ? (-d / (1 + d)) * 100 : 0;
+        };
         for (const { r, p } of priced) {
             r.scrollGoldPer = {};
             for (const key of ['dps', 'xp', 'profit']) {
