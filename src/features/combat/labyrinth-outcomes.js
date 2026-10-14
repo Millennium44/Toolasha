@@ -183,6 +183,12 @@ function emptyOutcomeDocument() {
 }
 
 /**
+ * The singleton the record belongs to, for a sync pull to find. The record is module-level while the totals
+ * live on the singleton's fields; `loadOutcomes()` names the owner and `forgetOutcomes()` lets it go.
+ */
+let outcomeOwner = null;
+
+/**
  * The record on disk, kept through the shared load/save discipline: an
  * unreadable probe keeps the totals in memory, and a save folds in what
  * another tab stored rather than overwriting it.
@@ -194,6 +200,7 @@ const outcomeRecord = createPersistedRecord({
     merge: mergeOutcomeDocuments,
     migrate: 'discard',
     label: 'LabyrinthClearRate',
+    onPulled: () => outcomeOwner?.refreshOutcomesFromPull(),
 });
 
 /*
@@ -242,6 +249,7 @@ export const outcomeMethods = {
             // A read that could not be made leaves memory alone and is retried
             // at the next call, so no record is ever written over on the
             // strength of a failed read.
+            outcomeOwner = this;
             outcomeRecord.set(this._outcomeDocument());
             const readable = await outcomeRecord.load();
             this._adoptOutcomeDocument(outcomeRecord.get());
@@ -269,6 +277,30 @@ export const outcomeMethods = {
         } catch (error) {
             console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
             return false;
+        }
+    },
+
+    /**
+     * Take in totals a sync pull wrote under the running page.
+     *
+     * The held document goes back into the record so the load folds the stored one under it. A fight folded in
+     * while the read was out replaced one of the fields, so the adoption would have dropped it; the fields are
+     * compared and the round repeated (a few times at most) until nothing moved during one.
+     * @returns {Promise<void>}
+     */
+    async refreshOutcomesFromPull() {
+        if (!this._outcomesLoaded) return;
+        const started = this._outcomeGeneration || 0;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const fields = [this._outcomes, this._outcomesSeen, this._baseline];
+            outcomeRecord.set(this._outcomeDocument());
+            if (!(await outcomeRecord.load())) return;
+            if ((this._outcomeGeneration || 0) !== started) return;
+            if (fields.some((value, at) => value !== [this._outcomes, this._outcomesSeen, this._baseline][at])) {
+                continue;
+            }
+            this._adoptOutcomeDocument(outcomeRecord.get());
+            return;
         }
     },
 
@@ -300,6 +332,7 @@ export const outcomeMethods = {
      */
     forgetOutcomes() {
         outcomeRecord.reset();
+        outcomeOwner = null;
         this._outcomes = {};
         this._outcomesSeen = {};
         this._baseline = null;
