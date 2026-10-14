@@ -484,9 +484,13 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
     if (replaced) {
         // Combat armor is never sold to fund a skilling piece; it goes back in its loadout
         const combatOnly = (item) => isCombatOnlyItem(gameData.itemDetailMap[item.hrid]);
-        const kept = [...replaced.kept, ...replaced.removed.filter(combatOnly)];
+        const keptCombat = replaced.removed.filter(combatOnly);
+        const kept = [...replaced.kept, ...keptCombat];
         priced.removedItems = replaced.removed.filter((item) => !combatOnly(item));
         if (kept.length) priced.keptItems = kept;
+        // Why each kept piece is kept, so the row can say so: another kit wears it, or it is combat armor
+        if (replaced.kept.length) priced.keptUnreached = true;
+        if (keptCombat.length) priced.keptCombat = true;
     }
     // A kit already wearing the piece at this level owns it; the others reuse that copy
     const cost = owned ? 0 : calculateUpgradeCost(priced, gameData, isSelf);
