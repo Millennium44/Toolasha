@@ -74,6 +74,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
+import { scrollTokenRate, priceScrollRow } from './scroll-pricing.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -2711,9 +2712,10 @@ const UPGRADE_MODES = [
         title:
             'What each Labyrinth combat scroll is worth in this fight: turning on one you are not carrying, ' +
             'or — for one already on — what you would lose by dropping it.\n\n' +
-            'Damage, attack and cast speed, crit rate, combat drop, wisdom and rare find are all offered. The ' +
-            'per-run scroll cost is not priced, so these land in the "measured, but not priced" box next to ' +
-            'Community — read them on their deltas.',
+            'Damage, attack and cast speed, crit rate, combat drop, wisdom and rare find are all offered. Each ' +
+            'costs 30 Labyrinth Tokens for a 30-minute buff, priced at what those tokens would otherwise buy ' +
+            "at the Labyrinth Shop's best conversion, so they get their own table with the net gain per hour. " +
+            'With no shop price available they fall back to the "measured, but not priced" box.',
     },
     {
         key: 'food',
@@ -11745,6 +11747,81 @@ class CombatSimUI {
     }
 
     /**
+     * The Labyrinth combat scrolls, priced by what their tokens are worth.
+     *
+     * A scroll is bought with 30 Labyrinth Tokens and lasts 30 minutes, so it is
+     * a recurring spend rather than a purchase and does not belong in the ranked
+     * table, whose cost, repay-time and budget columns assume a one-off outlay.
+     * Its price is the tokens' opportunity cost (30 x the shop's best gold/token),
+     * set against the Profit/hr it adds. A scroll whose gain falls short of that
+     * cost is a net loss: the same tokens were worth more bought as the shop's
+     * best item.
+     *
+     * @param {Array<Object>} rows - Scroll results
+     * @param {Object} baseline - Baseline metrics
+     * @param {{value: number, itemName: string}} rate - Best gold/token, from {@link scrollTokenRate}
+     * @returns {string} HTML
+     * @private
+     */
+    _renderScrollTable(rows, baseline, rate) {
+        const priced = rows
+            .map((r) => ({ r, p: priceScrollRow(r, rate, baseline) }))
+            .filter((entry) => entry.p)
+            .sort((a, b) => b.p.netPerHour - a.p.netPerHour);
+        if (!priced.length) return '';
+
+        const thStyle = 'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        // Greyed when the delta is inside the run's own error, as in the unpriced table
+        const cell = (r, key) => {
+            const value = r.deltas?.[key];
+            if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return '<span style="color:#888;">—</span>';
+            const { significant } = upgradeNoiseFor(r, key);
+            const color = !significant ? '#888' : value > 0 ? '#8bc34a' : '#f44336';
+            return `<span style="color:${color};">${value > 0 ? '+' : ''}${value.toFixed(2)}%</span>`;
+        };
+
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Scrolls, priced by their tokens</div>
+            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+                A scroll costs 30 Labyrinth Tokens for a 30-minute buff, kept up all run (2 per hour). Its price is what
+                those tokens would otherwise buy: the shop's best conversion, ${formatKMB(Math.floor(rate.value))}
+                gold/token as ${rate.itemName}. Net is the profit it adds per hour minus that cost; a loss means
+                buying ${rate.itemName} with the tokens beats the scroll. ΔProfit is a % of Profit/hr.
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}">Scroll</th>
+                <th style="${thStyle}">Priced as</th>
+                <th style="${thStyle}">ΔDPS</th>
+                <th style="${thStyle}">ΔProfit</th>
+                <th style="${thStyle}">Gain</th>
+                <th style="${thStyle}">Net / hr</th>
+            </tr></thead><tbody>`;
+
+        priced.forEach(({ r, p }, i) => {
+            const rowKey = upgradeRowKey(r);
+            const netColor = p.worthIt ? '#8bc34a' : '#f44336';
+            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-scroll-row="${i}" data-row-key="${rowKey}">
+                <td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
+                <td style="${tdStyle} color:#888;">${p.basis}</td>
+                <td style="${tdStyle}">${cell(r, 'dps')}</td>
+                <td style="${tdStyle}">${cell(r, 'profit')}</td>
+                <td style="${tdStyle}">${p.gainText}</td>
+                <td style="${tdStyle} color:${netColor};" title="${p.verdict}">${p.worthIt ? '+' : '−'}${formatKMB(Math.abs(p.netPerHour))}${p.worthIt ? '' : ' loss'}</td>
+            </tr>
+            <tr data-scroll-detail="${i}" data-row-key="${rowKey}" style="display:none;">
+                <td colspan="6" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                    <div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>
+                    ${this._renderUpgradeDetailCells(r, baseline)}
+                </td>
+            </tr>`;
+        });
+
+        return html + '</tbody></table></div>';
+    }
+
+    /**
      * The shopping list a budget buys, above the table it came from.
      *
      * The table answers "what is the best single thing"; nobody buys one thing.
@@ -12030,7 +12107,9 @@ class CombatSimUI {
     _openUpgradeDetails(container) {
         const open = new Set();
         container
-            .querySelectorAll('[data-upgrade-detail], [data-level-detail], [data-unpriced-detail]')
+            .querySelectorAll(
+                '[data-upgrade-detail], [data-level-detail], [data-unpriced-detail], [data-scroll-detail]'
+            )
             .forEach((detail) => {
                 const key = detail.getAttribute('data-row-key');
                 if (key && detail.style.display !== 'none') open.add(key);
@@ -12131,7 +12210,12 @@ class CombatSimUI {
         // the gold that is missing — so it gets its own group where the deltas
         // can be read without a value ranking they cannot take part in.
         const goldRows = purchasable.filter((r) => r.cost != null);
-        const unpricedRows = purchasable.filter((r) => r.cost == null);
+        // A scroll is a recurring token spend, not a purchase: priced by its tokens'
+        // value in its own table, because the cost/repay/budget columns above
+        // assume a one-off outlay. Without a token value it stays unpriced.
+        const tokenRate = scrollTokenRate();
+        const scrollRows = tokenRate ? purchasable.filter((r) => r.cost == null && r.candidate?.type === 'scroll') : [];
+        const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r));
 
         let html = foodHtml;
         if (this._restoredUpgradeAt) {
@@ -12144,6 +12228,7 @@ class CombatSimUI {
         // levels table brings its own. Never both: the wiring finds it by id.
         if (levelRows.length && !goldRows.length) html += this._renderUpgradeColumnMenu();
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
+        if (scrollRows.length) html += this._renderScrollTable(scrollRows, results.baseline, tokenRate);
         if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
         container.innerHTML = html;
 
@@ -12153,7 +12238,9 @@ class CombatSimUI {
         // no row to reopen, which is the right outcome.
         if (openDetails.size) {
             container
-                .querySelectorAll('[data-upgrade-detail], [data-level-detail], [data-unpriced-detail]')
+                .querySelectorAll(
+                    '[data-upgrade-detail], [data-level-detail], [data-unpriced-detail], [data-scroll-detail]'
+                )
                 .forEach((detail) => {
                     if (openDetails.has(detail.getAttribute('data-row-key'))) detail.style.display = 'table-row';
                 });
@@ -12174,6 +12261,7 @@ class CombatSimUI {
         wireRows('data-upgrade-row', 'data-upgrade-detail');
         wireRows('data-level-row', 'data-level-detail');
         wireRows('data-unpriced-row', 'data-unpriced-detail');
+        wireRows('data-scroll-row', 'data-scroll-detail');
 
         // Header click sorts that table (second click flips direction)
         const wireSort = (attr, stateKey) => {
