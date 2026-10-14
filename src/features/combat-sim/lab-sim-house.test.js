@@ -82,6 +82,7 @@ vi.mock('./upgrade-advisor.js', () => ({
     houseRoomMovesWinRate: () => true,
     MAX_HOUSE_LEVEL: 8,
     MAX_GUILD_SHRINE_LEVEL: 20,
+    calculateUpgradeCost: () => null,
     explainLabCandidateCost: () => null,
     checkedSwapAppliesToDTO: () => false,
 }));
