@@ -5109,7 +5109,7 @@ function buildModifiedCombatBuffs(baseBuffs, candidate) {
  * @param {boolean} [isSelf=true] - False for a player other than the live character
  * @returns {Object} Breakdown from explainUpgradeCost plus kept-gear detail
  */
-function explainLabCandidateCost(candidate, gameData, isSelf = true) {
+export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
     const detail = explainUpgradeCost(candidate, gameData, isSelf);
     if (!candidate.keptItems?.length) return detail;
 
@@ -7461,6 +7461,11 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
 
     const equipment = dto.equipment || {};
 
+    // A swap the player typed in rather than one the generator proposed: the
+    // generator's "would this be an upgrade here" tests do not apply, because
+    // the question being asked is "what happens if this goes in the slot"
+    if (candidate.checkedSwap) return checkedSwapAppliesToDTO(candidate, dto, gameData);
+
     // The forced labyrinth armor sets are one purchase every loadout can wear,
     // so unlike a tier candidate they are not tied to the piece they displaced
     // in the room they were generated for — a Royal Fire set bought for the
@@ -7514,6 +7519,59 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
     }
 
     return tierAppliesToWorn(candidate, worn, equipment, gameData);
+}
+
+/**
+ * Whether a swap the player chose by hand reaches a loadout.
+ *
+ * The item goes into its own equipment slot in every loadout that has a use for
+ * it. It does not reach a loadout when:
+ * - the slot cannot be filled there, because the hands are arranged the other
+ *   way (a two-hander against a main hand, or either hand against a two-hander) -
+ *   trading between the two is a cross-slot swap, not this;
+ * - the loadout already wears that item at the level asked for or higher;
+ * - the item carries no combat stats at all, so nothing in a fight can feel it;
+ * - the item is built for another attack style than the loadout fights in (a
+ *   bow in a staff loadout is a costume change, not an upgrade). The style is
+ *   read from the loadout's weapon, or from the piece being replaced when it has
+ *   no weapon.
+ *
+ * @param {Object} candidate - `{ slot, upgradeHrid, upgradeLevel }`
+ * @param {Object} dto - The loadout
+ * @param {Object|null} gameData - For item stats
+ * @returns {boolean}
+ */
+export function checkedSwapAppliesToDTO(candidate, dto, gameData) {
+    if (!candidate?.slot || !candidate.upgradeHrid || !dto) return false;
+    const equipment = dto.equipment || {};
+    const slot = candidate.slot;
+    if (equipment[TWO_HAND_SLOT]?.hrid && (slot === MAIN_HAND_SLOT || slot === OFF_HAND_SLOT)) return false;
+    if (equipment[MAIN_HAND_SLOT]?.hrid && slot === TWO_HAND_SLOT) return false;
+
+    const worn = equipment[slot];
+    if (worn?.hrid === candidate.upgradeHrid) return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
+
+    const details = gameData?.itemDetailMap;
+    const upgrade = details?.[candidate.upgradeHrid];
+    if (!upgrade) return false;
+    if (!hasCombatStats(upgrade) && !isCharmItem(upgrade)) return false;
+
+    // Stab, slash and smash are one family here: a loadout swinging a mace is
+    // fair game for a sword, and it is the loadouts holding a staff or a bow
+    // that a sword has no business in
+    const family = (style) => (style === 'stab' || style === 'slash' || style === 'smash' ? 'melee' : style);
+    const newStyle = family(getItemDamageStyle(upgrade.equipmentDetail?.combatStats));
+    if (newStyle === 'unknown') return true;
+    // What the loadout fights with decides, not the piece in the slot: a cape
+    // built for melee is still what a ranged loadout is wearing today, and a
+    // quiver is exactly what it might swap it for. The worn piece's own style is
+    // the fallback for a loadout with no weapon to read
+    const weaponStyle = family(getPlayerCombatStyle(dto, gameData));
+    const wornStyle = worn?.hrid
+        ? family(getItemDamageStyle(details[worn.hrid]?.equipmentDetail?.combatStats))
+        : 'unknown';
+    const referenceStyle = weaponStyle !== 'unknown' ? weaponStyle : wornStyle;
+    return referenceStyle === 'unknown' || referenceStyle === newStyle;
 }
 
 /**

@@ -61,6 +61,10 @@ const game = vi.hoisted(() => ({
     rememberUpgradeResults: false,
     /** Clear rate a skilling room loses per room level; 0 keeps it level-blind */
     levelPenalty: 0,
+    /** What `buildGameDataPayload` reports as the game's items */
+    itemDetailMap: {},
+    /** Loadout id → the equipment that loadout wears */
+    loadoutEquipment: {},
 }));
 const sim = vi.hoisted(() => ({
     cancelled: 0,
@@ -103,7 +107,7 @@ vi.mock('../../core/storage.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ abilityDetailMap: {} }),
+        getInitClientData: () => ({ abilityDetailMap: {}, itemDetailMap: game.itemDetailMap }),
         getItemDetails: () => null,
         getSkills: () => [],
         getInventory: () => [],
@@ -166,7 +170,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({
-        itemDetailMap: {},
+        itemDetailMap: game.itemDetailMap,
         actionDetailMap: { '/actions/combat/fly': {} },
         houseRoomDetailMap: game.houseRoomDetailMap,
         abilityDetailMap: game.abilityDetailMap,
@@ -261,7 +265,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getRecommendedCombatRoomLevel: (hrid) => game.recommendedLevels[hrid] || 0,
         getLabyrinthLoadoutId: (monsterHrid) => game.loadoutByMonster[monsterHrid] ?? null,
         buildLabyrinthPlayerDTO: (loadoutId) => ({
-            equipment: {},
+            equipment: JSON.parse(JSON.stringify(game.loadoutEquipment[loadoutId] || {})),
             abilities: (game.loadoutAbilities[loadoutId] || []).map((ability) => ({ ...ability })),
             houseRooms: { ...game.houseRooms },
             guildShrineLevels: { ...game.guildShrineLevels },
@@ -4012,5 +4016,342 @@ describe('the Skilling tab’s room levels, goal planner and Sim together', () =
         expect(detail.querySelector('[data-skill-breakdown-line="/skills/cooking"]').textContent).toContain(
             'unaffected \u2014 30.0% unchanged'
         );
+    });
+});
+
+/**
+ * Check a swap: the row on each tab, its queue, and the table it feeds.
+ *
+ * The analysis behind it is the generated one (`runLabyrinthAllFightsAnalysis`
+ * with the queued candidates as its only candidates), so what is worth asserting
+ * here is the panel's own part: the queue and its persistence, the same table
+ * drawn above the generated one, and that none of it disturbs the generated
+ * table when nothing is queued.
+ */
+describe('Check a swap', () => {
+    const CAPE = '/items/sinister_cape';
+    const BACK = '/equipment_types/back';
+
+    beforeEach(async () => {
+        game.characterId = 'me';
+        game.itemDetailMap = {
+            [CAPE]: {
+                hrid: CAPE,
+                name: 'Sinister Cape',
+                equipmentDetail: { type: BACK, combatStats: { slashDamage: 0.1 } },
+            },
+        };
+        storage.written = {};
+        storage.values = {};
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        game.itemDetailMap = {};
+        storage.values = {};
+        ui.destroy();
+    });
+
+    const type = (kind, name, level) => {
+        const item = ui.panel.querySelector(`#mwi-labsim-swap-item-${kind}`);
+        item.value = name;
+        item.dispatchEvent(new window.Event('input', { bubbles: true }));
+        ui.panel.querySelector(`#mwi-labsim-swap-level-${kind}`).value = level;
+    };
+    const chips = (kind) =>
+        [...ui.panel.querySelectorAll(`#mwi-labsim-swap-chips-${kind} [data-swap-chip]`)].map((chip) =>
+            chip.textContent.replace('×', '').trim()
+        );
+
+    test('both tabs carry the row, with an item picker, a level, Add and Check', () => {
+        for (const kind of ['combat', 'skilling']) {
+            expect(ui.panel.querySelector(`#mwi-labsim-swap-item-${kind}`)).toBeTruthy();
+            expect(ui.panel.querySelector(`#mwi-labsim-swap-level-${kind}`).max).toBe('20');
+            expect(ui.panel.querySelector(`#mwi-labsim-swap-add-${kind}`).textContent).toBe('Add');
+            expect(ui.panel.querySelector(`#mwi-labsim-swap-check-${kind}`).textContent).toBe('Check');
+        }
+        // Each tab's table sits above the generated one
+        const upgrade = ui.panel.querySelector('#mwi-labsim-upgrade-content');
+        const order = [...upgrade.children].map((el) => el.id);
+        expect(order.indexOf('mwi-labsim-swap-results')).toBeLessThan(order.indexOf('mwi-labsim-upgrade-results'));
+        const skilling = ui.panel.querySelector('#mwi-labsim-skilling-content');
+        const skillingOrder = [...skilling.children].map((el) => el.id);
+        expect(skillingOrder.indexOf('mwi-labsim-skilling-swap-results')).toBeLessThan(
+            skillingOrder.indexOf('mwi-labsim-skilling-results')
+        );
+    });
+
+    test('the picker suggests equipment by name', () => {
+        type('combat', 'sinis', '');
+        const options = [...ui.panel.querySelectorAll('#mwi-labsim-swap-items-combat option')];
+        expect(options.map((option) => option.value)).toEqual(['Sinister Cape']);
+        expect(options[0].getAttribute('label')).toBe('back');
+    });
+
+    test('Add queues a chip, which can be removed, and a repeat or an unknown name is refused', () => {
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        expect(chips('combat')).toEqual(['Sinister Cape +7']);
+        expect(ui.panel.querySelector('#mwi-labsim-swap-item-combat').value).toBe('');
+
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        expect(chips('combat')).toEqual(['Sinister Cape +7']);
+        expect(ui.panel.querySelector('#mwi-labsim-swap-note-combat').textContent).toContain('Already queued');
+
+        type('combat', 'no such thing', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        expect(chips('combat')).toHaveLength(1);
+
+        ui.panel.querySelector('[data-swap-remove]').click();
+        expect(chips('combat')).toEqual([]);
+    });
+
+    test('the two tabs keep separate queues', () => {
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        expect(chips('skilling')).toEqual([]);
+    });
+
+    test('the queue is saved per character through the panel storage, and comes back', async () => {
+        type('skilling', 'Sinister Cape', '3');
+        ui.panel.querySelector('#mwi-labsim-swap-add-skilling').click();
+        await settle();
+        expect(storage.written['labSimCheckedSwaps_me']).toEqual({ combat: [], skilling: [{ hrid: CAPE, level: 3 }] });
+
+        // A fresh panel for the same character reads it back
+        const saved = storage.written['labSimCheckedSwaps_me'];
+        ui.destroy();
+        storage.values['labSimCheckedSwaps_me'] = saved;
+        ui.buildPanel();
+        await settle();
+        expect(chips('skilling')).toEqual(['Sinister Cape +3']);
+        expect(chips('combat')).toEqual([]);
+    });
+
+    test('another character does not see it, and a switch mid-read does not adopt it', async () => {
+        storage.values['labSimCheckedSwaps_me'] = { combat: [{ hrid: CAPE, level: 5 }], skilling: [] };
+        ui.destroy();
+        game.characterId = 'alt';
+        ui.buildPanel();
+        await settle();
+        expect(chips('combat')).toEqual([]);
+
+        let resolveRead;
+        storage.pending['labSimCheckedSwaps_alt'] = new Promise((resolve) => {
+            resolveRead = resolve;
+        });
+        const restore = ui._restoreCheckedSwaps();
+        game.characterId = 'someone-else';
+        resolveRead({ combat: [{ hrid: CAPE, level: 9 }], skilling: [] });
+        await restore;
+        delete storage.pending['labSimCheckedSwaps_alt'];
+        expect(ui._checkedSwaps.combat).toEqual([]);
+        game.characterId = 'me';
+    });
+
+    test('destroying the panel drops the queue from memory', () => {
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        ui.destroy();
+        expect(ui._checkedSwaps).toEqual({ combat: [], skilling: [] });
+    });
+
+    test('Check with nothing queued does nothing', async () => {
+        sim.calls.length = 0;
+        ui.panel.querySelector('#mwi-labsim-swap-check-combat').click();
+        ui.panel.querySelector('#mwi-labsim-swap-check-skilling').click();
+        await settle();
+        expect(sim.calls).toHaveLength(0);
+        expect(ui.panel.querySelector('#mwi-labsim-swap-results').innerHTML).toBe('');
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-swap-results').innerHTML).toBe('');
+        expect(ui.panel.querySelector('#mwi-labsim-swap-note-combat').textContent).toContain('Add a swap');
+    });
+
+    const fightRow = (monsterName, applied, winRate, delta) => ({
+        monsterHrid: `/monsters/${monsterName.toLowerCase()}`,
+        monsterName,
+        roomLevel: 199,
+        loadoutName: 'Magic - Nature Lab',
+        winRate,
+        winRateDelta: delta,
+        applied,
+        replaced: applied ? 'Other Cape +3' : null,
+    });
+    const combatAnalysis = () => ({
+        baseline: {
+            fights: [
+                { monsterName: 'Scorpion', winRate: 0.295 },
+                { monsterName: 'Mimic', winRate: 0.6 },
+            ],
+            expectedAttempts: 5,
+        },
+        results: [
+            {
+                candidate: { description: 'Sinister Cape +5 → +7', caveat: 'Checked by hand.', type: 'enhancement' },
+                costType: 'gold',
+                cost: 12_000_000,
+                fights: [fightRow('Scorpion', true, 0.319, 0.0238), fightRow('Mimic', false, 0.6, 0)],
+                appliedFights: 1,
+                expectedAttempts: 4.8,
+                attemptsDelta: -0.2,
+                attemptsDeltaNoise: 0.05,
+                significant: true,
+                avgWinDelta: 0.0238,
+                attemptsSavedPerMillion: 0.016,
+            },
+        ],
+    });
+
+    test('Check runs only the queued swap, over the fights whose loadouts use the slot', async () => {
+        game.monsters = [
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/eye_watcher', name: 'Eye Watcher' },
+        ];
+        game.skipLevels = { '/monsters/mimic': 130, '/monsters/eye_watcher': 150 };
+        game.loadoutByMonster = { '/monsters/mimic': 'low', '/monsters/eye_watcher': 'high' };
+        game.loadoutNames = { low: 'Low Lab', high: 'High Lab' };
+        game.loadoutEquipment = {
+            low: { [BACK]: { hrid: CAPE, enhancementLevel: 5 } },
+            high: { [BACK]: { hrid: CAPE, enhancementLevel: 7 } },
+        };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scope.value = 'all';
+        scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis');
+        sim.calls.length = 0;
+
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        await ui._onCheckSwapsCombat();
+
+        const params = allSpy.mock.calls[0][0];
+        expect(params.modes).toEqual([]);
+        expect(params.extraCandidates).toHaveLength(1);
+        expect(params.extraCandidates[0]).toMatchObject({ checkedSwap: true, slot: BACK, reach: 1 });
+        // Two baselines, and one candidate sim: the loadout already at +7 is not simulated
+        expect(sim.calls).toHaveLength(3);
+        const shown = ui.panel.querySelector('#mwi-labsim-swap-results');
+        expect(shown.style.display).toBe('block');
+        expect(shown.textContent).toContain('Checked swaps');
+        expect(shown.textContent).toContain('1 / 2');
+        // The generated table is untouched
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').innerHTML).toBe('');
+        allSpy.mockRestore();
+        game.loadoutByMonster = {};
+        game.loadoutNames = {};
+        game.loadoutEquipment = {};
+        game.monsters = [];
+        game.skipLevels = {};
+    });
+
+    test('the checked combat table has the generated columns and a per-fight breakdown on click', () => {
+        const container = document.createElement('div');
+        ui._renderAllFightsResults(combatAnalysis(), container, { checked: true });
+
+        expect(container.textContent).toContain('Checked swaps');
+        const headers = [...container.querySelectorAll('th')].map((th) => th.textContent.replace(/[▲▼]/, '').trim());
+        expect(headers).toEqual(['Upgrade', 'Cost', 'Per 1M', 'Attempts', 'ΔAttempts', 'Rooms', 'Avg ΔWin']);
+        const row = container.querySelector('tr[data-allfights-row]');
+        expect(row.textContent).toContain('Sinister Cape +5 → +7');
+        expect(row.textContent).toContain('1 / 2');
+        const detail = container.querySelector('[data-allfights-detail]');
+        expect(detail.style.display).toBe('none');
+        row.click();
+        expect(detail.style.display).toBe('table-row');
+        expect(detail.textContent).toContain('29.5% → 31.9%');
+        expect(detail.textContent).toContain('not in this loadout — 60.0% unchanged');
+        expect(detail.textContent).toContain('Checked by hand.');
+    });
+
+    test('drawing the checked table leaves the generated table’s state alone', () => {
+        const generated = document.createElement('div');
+        const generatedResult = combatAnalysis();
+        generatedResult.results[0].candidate.description = 'Generated Row';
+        ui._renderAllFightsResults(generatedResult, generated);
+        const before = generated.innerHTML;
+
+        const checked = document.createElement('div');
+        ui._renderAllFightsResults(combatAnalysis(), checked, { checked: true });
+        // Sorting the checked table re-draws it, still not the generated one
+        checked.querySelector('th[data-af-sort="cost"]').click();
+
+        expect(ui._allFightsResult).toBe(generatedResult);
+        expect(ui._allFightsContainer).toBe(generated);
+        expect(ui._allFightsSort).toBeFalsy();
+        expect(ui._checkedSwapSort).toMatchObject({ key: 'cost' });
+        expect(generated.innerHTML).toBe(before);
+        expect(generated.textContent).toContain('Generated Row');
+        expect(generated.textContent).not.toContain('Checked swaps');
+        // The generated table keeps its budget box; the checked one has none
+        expect(generated.querySelector('#mwi-labsim-budget')).toBeTruthy();
+        expect(checked.querySelector('#mwi-labsim-budget')).toBeNull();
+    });
+
+    test('the checked skilling table has the generated columns and the per-skill breakdown', () => {
+        const container = document.createElement('div');
+        const lines = [
+            {
+                skillHrid: '/skills/milking',
+                skillName: 'Milking',
+                roomLevel: 120,
+                before: 0.27,
+                after: 0.274,
+                delta: 0.004,
+                triesBefore: 3.7,
+                triesAfter: 3.65,
+                affected: true,
+            },
+            {
+                skillHrid: '/skills/cooking',
+                skillName: 'Cooking',
+                roomLevel: 90,
+                before: 0.3,
+                after: 0.3,
+                delta: 0,
+                triesBefore: 3.33,
+                triesAfter: 3.33,
+                affected: false,
+            },
+        ];
+        const row = {
+            candidate: { description: 'Celestial Milking Tool +2 → +7 (milking)', merged: true },
+            costType: 'gold',
+            cost: 5_000_000,
+            clearRate: 0.5,
+            clearRateDelta: 0.004,
+            metricType: 'clearRate',
+            rooms: { affected: 1, total: 2 },
+            tries: 6.98,
+            triesDelta: -0.05,
+            breakdownLines: lines,
+        };
+        const generatedHandler = ui._skillingSortHandler;
+        ui._renderSkillingUpgradeResults({ baseline: { clearRate: 0.496 }, results: [row] }, container, {
+            checked: true,
+        });
+
+        expect(container.textContent).toContain('Checked swaps');
+        const headers = [...container.querySelectorAll('th')].map((th) => th.textContent.trim());
+        expect(headers).toEqual(expect.arrayContaining(['Upgrade', 'Cost', 'Rooms', 'Tries', 'ΔTries']));
+        expect(container.querySelector('input[data-skilling-pick]')).toBeNull();
+        const tr = container.querySelector('tr[data-skilling-gold-row]');
+        expect(tr.textContent).toContain('1 / 2');
+        tr.click();
+        const detail = container.querySelector('[data-skilling-gold-detail]');
+        expect(detail.querySelector('[data-skill-breakdown-line="/skills/milking"]').textContent).toContain(
+            '27.0% → 27.4% (+0.40%)'
+        );
+        expect(detail.querySelector('[data-skill-breakdown-line="/skills/cooking"]').textContent).toContain(
+            'unaffected'
+        );
+        // Its click handler is its own: the generated table's is left where it was
+        expect(ui._skillingSortHandler).toBe(generatedHandler);
+        expect(ui._skillingSwapSortHandler).toEqual(expect.any(Function));
     });
 });
