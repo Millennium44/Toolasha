@@ -456,7 +456,7 @@ class DungeonTokenTooltips {
         const amount = (tokenHrid && ownedTokenCount(tokenHrid)) || this._heldAmount(tooltipText.textContent);
         const held = heldTokensWorth(amount, shopItems);
         if (held) {
-            html += this._heldTotalHtml(amount, held, shopItems[0]);
+            html += this._heldTotalHtml(amount, held);
         }
 
         shopDiv.innerHTML = html;
@@ -467,15 +467,18 @@ class DungeonTokenTooltips {
      * The "Your N tokens ≈ X" line under the table.
      * @param {number} amount - Tokens held
      * @param {Object} held - From {@link heldTokensWorth}
-     * @param {Object} best - The table's best row, which sets the wording of the price basis
      * @returns {string} HTML
      */
-    _heldTotalHtml(amount, held, best) {
-        // Say what the best row is priced from: a task row can be an openable's expected value
-        const basis =
-            best.valueSource === 'EV'
-                ? `the expected value of its contents${best.isPartial ? ' (a lower bound, some drops are unpriced)' : ''}`
-                : 'the ask price before tax';
+    _heldTotalHtml(amount, held) {
+        // Say what the rows actually bought are priced from: a task row can be an openable's expected value
+        const evParts = held.parts.filter((part) => part.valueSource === 'EV');
+        const lowerBound = evParts.some((part) => part.isPartial) ? ' (a lower bound, some drops are unpriced)' : '';
+        let basis = 'the ask price before tax';
+        if (evParts.length === held.parts.length) {
+            basis = `the expected value of its contents${lowerBound}`;
+        } else if (evParts.length) {
+            basis = `the ask price before tax, and the expected value of contents for openable items${lowerBound}`;
+        }
         const title =
             `Whole shop purchases: the best row first, then what is left on the best row it can still afford. ` +
             `Valued at ${basis}. The shop may cap how many can be bought, and selling that many would move the ` +

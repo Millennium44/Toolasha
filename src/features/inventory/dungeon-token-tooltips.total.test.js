@@ -4,7 +4,7 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ handler: null, prices: {}, inventory: [], ev: {} }));
+const state = vi.hoisted(() => ({ handler: null, prices: {}, inventory: [], ev: {}, extraTaskShop: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: { isFeatureEnabled: () => true, getSetting: () => true, COLOR_TOOLTIP_INFO: '#abc' },
@@ -26,10 +26,12 @@ vi.mock('../../core/data-manager.js', () => ({
                 '/items/pathseeker_lodestone': { name: 'Pathseeker Lodestone' },
                 '/items/labyrinth_essence': { name: 'Labyrinth Essence' },
                 '/items/task_token': { name: 'Task Token' },
+                '/items/task_crystal': { name: 'Task Crystal' },
                 '/items/large_treasure_chest': { name: 'Large Treasure Chest', isOpenable: true },
             },
             taskShopItemDetailMap: {
                 chest: { itemHrid: '/items/large_treasure_chest', cost: { itemHrid: '/items/task_token', count: 10 } },
+                ...state.extraTaskShop,
             },
             labyrinthShopItemDetailMap: {
                 lodestone: {
@@ -81,6 +83,7 @@ beforeEach(async () => {
     document.body.innerHTML = '';
     state.inventory = [];
     state.ev = {};
+    state.extraTaskShop = {};
     state.prices = {
         '/items/pathseeker_lodestone': { ask: 6_800_000, bid: 6_000_000 },
         '/items/labyrinth_essence': { ask: 100, bid: 90 },
@@ -225,5 +228,42 @@ describe('price basis wording follows the winning row', () => {
         state.handler(el);
         await Promise.resolve();
         expect(titleOf(el)).toContain('ask price before tax');
+    });
+
+    describe('basis follows the rows actually bought', () => {
+        const crystal = (cost) => ({
+            crystal: { itemHrid: '/items/task_crystal', cost: { itemHrid: '/items/task_token', count: cost } },
+        });
+
+        beforeEach(() => {
+            state.prices['/items/task_crystal'] = { ask: 300, bid: 250 };
+            state.ev['/items/large_treasure_chest'] = { expectedValue: 50_000, isPartial: true };
+        });
+
+        test('an unaffordable expected-value leader does not label a market-only purchase', async () => {
+            // Chest (EV) costs 30 and leads the table; 20 tokens can only buy crystals
+            state.extraTaskShop = {
+                chest: { itemHrid: '/items/large_treasure_chest', cost: { itemHrid: '/items/task_token', count: 30 } },
+                ...crystal(10),
+            };
+            const el = labyrinthTooltip('Amount: 20', 'Task Token');
+            state.handler(el);
+            await Promise.resolve();
+            expect(titleOf(el)).toContain('ask price before tax');
+            expect(titleOf(el)).not.toContain('expected value');
+            expect(titleOf(el)).not.toContain('lower bound');
+        });
+
+        test('a purchase mixing both says so and flags a partial expected value', async () => {
+            // 25 tokens: 2 chests (EV) for 20, then 1 crystal (ask) for 3
+            state.extraTaskShop = crystal(3);
+            const el = labyrinthTooltip('Amount: 25', 'Task Token');
+            state.handler(el);
+            await Promise.resolve();
+            expect(titleOf(el)).toContain(
+                'ask price before tax, and the expected value of contents for openable items'
+            );
+            expect(titleOf(el)).toContain('lower bound');
+        });
     });
 });

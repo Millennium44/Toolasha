@@ -26,7 +26,8 @@ export const SCROLL_BUFF_MINUTES = 30;
  * @param {number} amount - Tokens held
  * @param {Array<{name: string, cost: number, askPrice: number, goldPerToken: number}>} rows - Shop rows, best
  *   gold/token first; `askPrice` is the value of one whole purchase
- * @returns {{total: number, parts: Array<{name: string, purchases: number, tokens: number, value: number}>,
+ * @returns {{total: number, parts: Array<{name: string, purchases: number, tokens: number, value: number, valueSource?: string,
+ *   isPartial: boolean}>,
  *   unspent: number}|null} Null with nothing held or no priced row
  */
 export function heldTokensWorth(amount, rows) {
@@ -41,7 +42,14 @@ export function heldTokensWorth(amount, rows) {
         if (purchases < 1) continue;
         const tokens = purchases * row.cost;
         const value = purchases * row.askPrice;
-        parts.push({ name: row.name, purchases, tokens, value });
+        parts.push({
+            name: row.name,
+            purchases,
+            tokens,
+            value,
+            valueSource: row.valueSource,
+            isPartial: Boolean(row.isPartial),
+        });
         left -= tokens;
         total += value;
     }
