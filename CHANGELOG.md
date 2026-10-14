@@ -33,6 +33,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The tooltip's Instead of buying line now shows its headline figure in green (red for a loss), and a new setting picks which figure leads: saving per unit (default), saving per hour over your time value, or plain alchemy gold/hr; the others stay on the detail line.
 
+### Alchemy Best Items: buy inputs at the NPC shop
+
+- Best Items now charges an input the NPC shop sells for coins (cheese, logs and the like) at the shop price when it beats the market, marks those rows "shop", and ranks shop items the market has no price for; untick Include shop prices to go back to market prices.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
