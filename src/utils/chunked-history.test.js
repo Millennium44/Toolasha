@@ -51,7 +51,7 @@ const storageMock = vi.hoisted(() => {
 
 vi.mock('../core/storage.js', () => ({ default: storageMock }));
 
-const { mergeForKey } = await import('./sync-merge-registry.js');
+const { mergeForKey, isLiveSafeKey, announceSyncPullApplied } = await import('./sync-merge-registry.js');
 const {
     createChunkedHistory,
     timeChunkId,
@@ -1711,5 +1711,138 @@ describe('review round: folds that rerun, removals, and the owner’s prune', ()
 
         expect(onDisk(JULY)).toEqual(['2026-7-10', '2026-7-12', '2026-7-14']);
         expect(storageMock.store.has('recTomb_c1')).toBe(false);
+    });
+});
+
+describe('a history that opts in takes a sync pull without a reload', () => {
+    const buildLive = (prefix, liveSafe = true) =>
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix,
+            legacyKey: (charId) => `legacy_${prefix}_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            liveSafe,
+            label: 'Live',
+        });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    test('registers its records and deletions live-safe, and leaves the legacy key latched', () => {
+        buildLive('liveRegA');
+        expect(isLiveSafeKey('testStore', 'liveRegA_a_2026-08')).toBe(true);
+        expect(isLiveSafeKey('testStore', 'liveRegATomb_a')).toBe(true);
+        expect(isLiveSafeKey('testStore', 'legacy_liveRegA_a')).toBe(false);
+    });
+
+    test('a history that does not opt in stays latched, as before', () => {
+        buildLive('liveRegB', false);
+        expect(isLiveSafeKey('testStore', 'liveRegB_a_2026-08')).toBe(false);
+        expect(isLiveSafeKey('testStore', 'liveRegBTomb_a')).toBe(false);
+    });
+
+    test('a pull lands: the store adopts what it wrote, tells the owner, and the next save keeps it', async () => {
+        const history = buildLive('liveRefresh');
+        const heard = [];
+        history.onRefreshed((charId, entries) => heard.push({ charId, entries }));
+        await history.load('a');
+        await history.save('a', [at(2026, 8, 1)]);
+        await settle();
+
+        // What the pull wrote: its merge of the chunk, and a chunk this device never had
+        storageMock.store.set('liveRefresh_a_2026-08', [at(2026, 8, 1), at(2026, 8, 5)]);
+        storageMock.store.set('liveRefresh_a_2026-07', [at(2026, 7, 9)]);
+        announceSyncPullApplied({ testStore: ['liveRefresh_a_2026-08', 'liveRefresh_a_2026-07'] });
+        await settle();
+
+        expect(heard).toHaveLength(1);
+        expect(heard[0].charId).toBe('a');
+        expect(heard[0].entries.map((entry) => entry.v).sort()).toEqual(['2026-7-9', '2026-8-5']);
+
+        // The owner has not seen them yet and saves its own list; they are not read as deletions
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 20)]);
+        await settle();
+        expect(storageMock.store.get('liveRefresh_a_2026-08').map((entry) => entry.v)).toEqual([
+            '2026-8-1',
+            '2026-8-5',
+            '2026-8-20',
+        ]);
+        expect(storageMock.store.get('liveRefresh_a_2026-07')).toHaveLength(1);
+        expect(storageMock.store.has('liveRefreshTomb_a')).toBe(false);
+    });
+
+    test('an entry this store let go of is not taken back in', async () => {
+        const history = buildLive('liveLetGo');
+        const heard = [];
+        history.onRefreshed((charId, entries) => heard.push(entries));
+        await history.load('a');
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 2)]);
+        await settle();
+        await history.save('a', [at(2026, 8, 1)]);
+        await settle();
+
+        // The peer still holds the second one and the pull's union brought it back
+        storageMock.store.set('liveLetGo_a_2026-08', [at(2026, 8, 1), at(2026, 8, 2)]);
+        announceSyncPullApplied({ testStore: ['liveLetGo_a_2026-08'] });
+        await settle();
+
+        expect(heard).toEqual([]);
+    });
+
+    test('a pull of another character, or of nothing of its own, is not read', async () => {
+        const history = buildLive('liveOther');
+        await history.load('a');
+        await history.save('a', [at(2026, 8, 1)]);
+        await settle();
+        storageMock.tryGetAllKeys.mockClear();
+
+        announceSyncPullApplied({ testStore: ['liveOther_b_2026-08'], otherStore: ['liveOther_a_2026-08'] });
+        await settle();
+
+        expect(storageMock.tryGetAllKeys).not.toHaveBeenCalled();
+    });
+
+    test('the deletions key is written folded: a peer’s stone put there by a pull survives', async () => {
+        const history = buildLive('liveTomb');
+        await history.load('a');
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 2), at(2026, 8, 3)]);
+        await settle();
+
+        const peers = { stoneOfAPeer: { at: Date.now(), fp: 'abc', bulk: false } };
+        storageMock.store.set('liveTombTomb_a', peers);
+
+        // An interior removal here files a stone of its own
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 3)]);
+        await settle();
+
+        const stones = storageMock.store.get('liveTombTomb_a');
+        expect(Object.keys(stones)).toContain('stoneOfAPeer');
+        expect(Object.keys(stones)).toHaveLength(2);
+    });
+
+    test('a history that does not opt in still writes its own map whole', async () => {
+        const history = buildLive('plainTomb', false);
+        await history.load('a');
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 2), at(2026, 8, 3)]);
+        await settle();
+        storageMock.store.set('plainTombTomb_a', { stoneOfAPeer: { at: Date.now(), fp: 'abc', bulk: false } });
+
+        await history.save('a', [at(2026, 8, 1), at(2026, 8, 3)]);
+        await settle();
+
+        expect(Object.keys(storageMock.store.get('plainTombTomb_a'))).toHaveLength(1);
+    });
+
+    test('a stone removed because its entry outlived the deletion does not come back from disk', async () => {
+        const entry = at(2026, 8, 1);
+        const id = JSON.stringify(entry);
+        // A deletion filed for a different version of the entry: this copy has been touched since
+        storageMock.store.set('liveRevive_a_2026-08', [entry]);
+        storageMock.store.set('liveReviveTomb_a', { [id]: { at: Date.now(), fp: 'not-this-copy', bulk: false } });
+
+        const history = buildLive('liveRevive');
+        await history.load('a');
+        await settle();
+
+        expect(storageMock.store.get('liveReviveTomb_a')).toEqual({});
     });
 });

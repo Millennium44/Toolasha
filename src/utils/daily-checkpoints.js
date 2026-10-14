@@ -234,8 +234,11 @@ class DailyCheckpoints {
             // wrote 4,000 xp for Monday and one that wrote 4,100 both survive a
             // merge, and the day would then have two truths
             identityOf: (entry) => `${entry?.d}|${entry?.k}`,
+            // Written once and never edited or deleted, so a pull lands under the running page
+            liveSafe: true,
             label,
         });
+        this._store.onRefreshed?.((charId, entries) => this._adoptPulled(charId, entries));
 
         /** The entries as they stand, which is the truth between debounced writes */
         this._entries = [];
@@ -285,6 +288,20 @@ class DailyCheckpoints {
             if (this._generation === generation) this._loading = null;
         }
         return this._generation === generation ? [...this._entries] : [];
+    }
+
+    /**
+     * Take in the checkpoints a sync pull brought for this character, which the store has already adopted.
+     * @param {string} charId - Whose checkpoints
+     * @param {Array<Object>} entries - Entries the store did not hold
+     */
+    _adoptPulled(charId, entries) {
+        // A load in flight reads the pulled entries itself
+        if (charId !== this._charId || this._loading) return;
+        const have = new Set(this._entries.map((entry) => `${entry?.d}|${entry?.k}`));
+        const added = entries.filter((entry) => entry && !have.has(`${entry.d}|${entry.k}`));
+        if (added.length === 0) return;
+        this._entries = this._entries.concat(added).sort(compareEntries);
     }
 
     /** @returns {Array<Object>} The entries in memory, without a read */

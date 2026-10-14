@@ -511,8 +511,12 @@ class ItemFlowRecorder {
             mergeCopies: mergeDayRow,
             // The recorder's own pruning, applied to a folded chunk so a sync cannot hand back a pruned day
             pruneIncoming: pruneDayRows(RETENTION_DAYS),
+            // Rows are folded by `mergeDayRow` wherever two copies meet, and nothing is ever deleted from the
+            // middle, so a pull lands under the running page
+            liveSafe: true,
             label: 'ItemFlow',
         });
+        this._store.onRefreshed?.((charId, rows) => this._adoptPulled(charId, rows));
 
         /** The rows as they stand, which is the truth between debounced writes */
         this._rows = [];
@@ -657,6 +661,28 @@ class ItemFlowRecorder {
     _seedFoodSlots(payload) {
         const slots = payload?.actionTypeFoodSlotsMap?.[COMBAT_TYPE];
         if (Array.isArray(slots)) this._combatFoodSlots = slots;
+    }
+
+    /**
+     * Take in the days a sync pull brought for this character, which the store has already adopted. Folded
+     * into the rows as they stand now, so a fall recorded since the pull started is kept.
+     * @param {string} charId - Whose rows
+     * @param {Array<ItemFlowDay>} rows - Days the store did not hold, or held an older copy of
+     */
+    _adoptPulled(charId, rows) {
+        // A load in flight reads the pulled rows itself
+        if (charId !== this._charId || this._loading) return;
+        let changed = false;
+        for (const row of rows) {
+            if (!row?.d) continue;
+            const at = this._rows.findIndex((entry) => entry.d === row.d);
+            if (at === -1) this._rows.push(row);
+            else this._rows[at] = mergeDayRow(this._rows[at], row);
+            changed = true;
+        }
+        if (!changed) return;
+        this._rows.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+        this._notifyChange();
     }
 
     /** Forget the departing character's rows, so they are never written under the arriving one's key. */
