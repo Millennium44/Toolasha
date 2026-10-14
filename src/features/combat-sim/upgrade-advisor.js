@@ -2691,14 +2691,20 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     }
 
     // Tier upgrade: buy new item at target enhancement - sell current item
-    const { price: buyPrice } = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, gameData, {
-        isSelf,
-    });
+    const { price: buyPrice, consumed } = resolveUpgradeBuyPrice(
+        candidate.upgradeHrid,
+        candidate.upgradeLevel,
+        gameData,
+        {
+            isSelf,
+            candidate,
+        }
+    );
     if (buyPrice === null) {
         return null; // Unknown acquisition cost — don't rank as free
     }
 
-    return buyPrice - resaleCredit(candidate);
+    return buyPrice - resaleCredit(candidate, consumed);
 }
 
 /**
@@ -2736,9 +2742,10 @@ function capEnhancementCredit(ask, bid) {
  * price depends on which branch costed it is a candidate nobody can check.
  *
  * @param {Object} candidate - Upgrade candidate
+ * @param {{hrid: string, level: number}|null} [consumed] - A worn piece the purchase is made from (a refine)
  * @returns {number} Total resale credit, 0 when nothing is being sold
  */
-function resaleCredit(candidate) {
+function resaleCredit(candidate, consumed = null) {
     const removed =
         candidate.removedItems ||
         (candidate.currentHrid ? [{ hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel }] : []);
@@ -2746,6 +2753,8 @@ function resaleCredit(candidate) {
     let credit = 0;
     for (const item of removed) {
         if (!item?.hrid) continue;
+        // Refined into the target, so there is nothing left to sell
+        if (consumed && item.hrid === consumed.hrid && (item.enhancementLevel || 0) === consumed.level) continue;
         credit +=
             resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0;
     }
@@ -2837,17 +2846,21 @@ export const MIN_REFINE_BASE_LEVEL = 5;
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
  * @param {boolean} [options.isSelf=true] - Whether the live character's copies apply
- * @returns {{price: number, source: string, enhanceSource: Object|undefined, ladder: Object}|null}
+ * @param {Object} [options.candidate] - The row being priced. The worn base is a candidate to refine only
+ *   when the row replaces it (`currentHrid` is the base): that swap is exactly consuming the worn piece
+ * @returns {{price: number, source: string, enhanceSource: Object|undefined, ladder: Object,
+ *   consumed: Object|undefined}|null}
  *   The refine price, or null when no held base can be refined
  */
-function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true } = {}) {
+function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, candidate = null } = {}) {
     if (!isSelf || !itemHrid?.endsWith('_refined')) return null;
     const baseHrid = findRefinementAction(itemHrid)?.upgradeItemHrid;
     if (!baseHrid) return null;
 
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
+    const wornIsReplaced = candidate?.currentHrid === baseHrid;
     const copies = copiesForPricing(baseHrid, { isSelf }).filter(
-        (copy) => !copy.equipped && copy.level >= MIN_REFINE_BASE_LEVEL
+        (copy) => (!copy.equipped || wornIsReplaced) && copy.level >= MIN_REFINE_BASE_LEVEL
     );
     if (!copies.length) return null;
 
@@ -2866,6 +2879,8 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true } =
 
     const toLevel = Math.max(target, best.copy.level);
     return {
+        // A worn piece turned into the star item is not also sold, so its resale credit must not be taken
+        ...(best.copy.equipped ? { consumed: { hrid: baseHrid, level: best.copy.level } } : {}),
         price: best.price,
         source: 'refine',
         enhanceSource: best.enhance > 0 ? describeEnhancementSource(enhancementSweepParams(itemHrid)) : undefined,
@@ -3343,6 +3358,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     }
 
     const buys = [];
+    let refineConsumed = null;
     if (candidate.addedSlots) {
         for (const item of Object.values(candidate.addedSlots)) {
             const { price, source, enhanceSource, ladder } = resolveUpgradeBuyPrice(
@@ -3362,12 +3378,13 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
             });
         }
     } else if (candidate.upgradeHrid) {
-        const { price, source, enhanceSource, ladder } = resolveUpgradeBuyPrice(
+        const { price, source, enhanceSource, ladder, consumed } = resolveUpgradeBuyPrice(
             candidate.upgradeHrid,
             candidate.upgradeLevel || 0,
             gameData,
-            { isSelf }
+            { isSelf, candidate }
         );
+        refineConsumed = consumed || null;
         buys.push({
             hrid: candidate.upgradeHrid,
             name: nameOf(candidate.upgradeHrid),
@@ -3386,7 +3403,11 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
         hrid: item.hrid,
         name: nameOf(item.hrid),
         enhancementLevel: item.enhancementLevel || 0,
-        price: resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0,
+        price:
+            refineConsumed && item.hrid === refineConsumed.hrid && (item.enhancementLevel || 0) === refineConsumed.level
+                ? 0
+                : resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ||
+                  0,
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
