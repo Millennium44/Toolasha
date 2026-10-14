@@ -60,6 +60,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 const { default: labyrinthTracker, mergeBestLevels } = await import('./labyrinth-tracker.js');
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 function combatRoom(overrides = {}) {
     return {
@@ -335,6 +336,32 @@ describe('the best levels survive a failed read and a second tab', () => {
 
         expect(game.saved[KEY]).toEqual({ '/monsters/a': best(50), '/monsters/b': best(10), '/monsters/c': best(5) });
         expect(labyrinthTracker.getBestLevel('/monsters/a')).toBe(50);
+    });
+
+    test('a sync pull raises the held levels and tells the listeners once', async () => {
+        game.saved[KEY] = { '/monsters/a': best(20) };
+        labyrinthTracker.monsterBestLevels = { '/monsters/b': best(10) };
+        await labyrinthTracker.loadData();
+        const listener = vi.fn();
+        labyrinthTracker.onUpdate(listener);
+
+        game.saved[KEY] = { '/monsters/a': best(50), '/monsters/b': best(3) };
+        announceSyncPullApplied({ labyrinth: [KEY] });
+        await vi.waitFor(() => expect(labyrinthTracker.getBestLevel('/monsters/a')).toBe(50));
+
+        expect(labyrinthTracker.getBestLevel('/monsters/b')).toBe(10);
+        expect(listener).toHaveBeenCalledTimes(1);
+        announceSyncPullApplied({ labyrinth: [KEY] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    test('a pull of another character changes nothing', async () => {
+        await labyrinthTracker.loadData();
+        game.saved[KEY] = { '/monsters/a': best(50) };
+        announceSyncPullApplied({ labyrinth: ['monsterBestLevels_other'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(labyrinthTracker.getBestLevel('/monsters/a')).toBeNull();
     });
 
     test('once storage reads again the next save lands everything', async () => {
