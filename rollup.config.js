@@ -451,6 +451,10 @@ const marketExternalGlobals = new Map([
     // the settings panel's review list (ui bundle). Left inline, the settings copy's removals
     // would land in a cache the tooltip never reads.
     [normalize(join(__dirname, 'src/features/market/self-use-wanted.js')), 'Toolasha.Market.selfUseWanted'],
+    // The item tooltip's own-use pricing and decompose-chain walker, which the Best Items
+    // own-stock sort (actions bundle) calls so its figure is the tooltip's. Left inline the
+    // actions bundle carried a whole second tooltip module and its singleton.
+    [normalize(join(__dirname, 'src/features/market/tooltip-prices.js')), 'Toolasha.Market.tooltipPrices'],
 ]);
 
 const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());

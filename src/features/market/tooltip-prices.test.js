@@ -267,6 +267,7 @@ const {
     loadoutSlotsItem,
     loadoutsContainingItem,
 } = await import('./tooltip-prices.js');
+const { formatKMB } = await import('../../utils/formatters.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 const { default: selfUseWanted } = await import('./self-use-wanted.js');
 const { clearInsteadCache } = await import('./alchemy-instead-of-buying.js');
@@ -1109,6 +1110,28 @@ describe('self-use alchemy lines', () => {
         // Per twin sword: 5 cheese (50) + one sword decomposed on prime: 18 x 0.75 cheese (135)
         // less 2,000/100 = 20 of catalyst; cost 100. The seller's sword setup would give 58.
         expect(block.textContent).toContain('Full decompose chain (self-use, sell outputs): 65/item');
+    });
+
+    test('the Best Items own-stock figure is the tooltip chain line, to the digit', async () => {
+        settings.selfUseAlchemy = true;
+        const twin = {
+            ...cheeseSwordDecompose(),
+            itemHrid: '/items/twin_sword',
+            successRate: 1,
+            requirementCosts: [{ itemHrid: '/items/twin_sword', count: 1, price: 100 }],
+        };
+        alchemyState.profits = { decompose: twin };
+        alchemyState.decompose = { '/items/cheese_sword': cheeseSwordDecompose() };
+        alchemyState.candidates = {
+            'decompose|/items/cheese_sword': [cheeseSwordDecompose(), cheeseSwordPrime()],
+        };
+        const text = (await blockFor('/items/twin_sword')).textContent;
+        const chain = await tooltipPrices.selfUseChainFor('/items/twin_sword');
+        expect(chain.net).toBeCloseTo(65, 0);
+        // The same walker, the same setup picks: what the tooltip prints is what the panel ranks on
+        expect(text).toContain(`Full decompose chain (self-use, sell outputs): ${formatKMB(chain.net)}/item`);
+        expect(text).toContain(`${formatKMB(chain.netPerHour)}/hr`);
+        expect(chain.topStep).toBeTruthy();
     });
 
     test('a chain step is scored by what its gear yields further down, not its market price', async () => {

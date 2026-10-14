@@ -90,10 +90,17 @@ function bundle(library) {
             continue;
         }
         seen.add(file);
+        // Another library's external is a global read here, not a module compiled in: what it
+        // imports belongs to its owner's bundle, so the walk stops at it
+        const owned = externalOwners.get(file);
+        if (owned && owned !== library) continue;
         queue.push(...importsOf(file));
     }
     return seen;
 }
+
+/** Repo-relative path of each externalised module -> the library whose global it is */
+const externalOwners = new Map(externals().map((entry) => [entry.file, entry.global.split('.')[1].toLowerCase()]));
 
 const bundles = Object.fromEntries(LIBRARIES.map((library) => [library, bundle(library)]));
 
@@ -135,7 +142,11 @@ function crossBundleNamedImports(file, owner) {
         if (path === file) continue;
 
         // Same bundle means no substitution happens and the import is ordinary
-        const elsewhere = LIBRARIES.some((library) => library !== owner && bundles[library].has(path));
+        // (a file another library reaches only as a global was never compiled into it)
+        const elsewhere = LIBRARIES.some(
+            (library) =>
+                library !== owner && bundles[library].has(path) && (externalOwners.get(path) ?? library) === library
+        );
         if (!elsewhere) continue;
 
         const match = readFileSync(join(ROOT, path), 'utf8').match(pattern);
