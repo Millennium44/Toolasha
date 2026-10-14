@@ -25,6 +25,8 @@ import { buildItemHash } from '../../utils/item-hash.js';
 export const LADDER_SPARE_FROM_LEVEL = 5;
 
 const INVENTORY_LOCATION = '/item_locations/inventory';
+/** Escrowed by a market listing: neither held in the bag nor worn, so not a copy anyone can use */
+const MARKETPLACE_LOCATION = '/item_locations/marketplace';
 
 /**
  * Whether an item can only be had by enhancing a copy yourself.
@@ -67,6 +69,7 @@ export function heldCopies(itemHrid, items) {
         const count = item.count == null ? 1 : Math.floor(Number(item.count) || 0);
         if (count <= 0) continue;
         const location = item.itemLocationHrid || INVENTORY_LOCATION;
+        if (location === MARKETPLACE_LOCATION) continue;
         const copy = {
             level: Math.max(0, Math.floor(Number(item.enhancementLevel) || 0)),
             equipped: location !== INVENTORY_LOCATION,
