@@ -95,6 +95,7 @@ vi.mock('../../utils/asset-manifest.js', () => ({
     },
 }));
 
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const { leaderboardRankBadges, describeEntries, RANK_SERVER_INTERVAL_MS } =
     await import('./leaderboard-rank-badges.js');
 
@@ -345,6 +346,44 @@ describe('leaderboard rank badges', () => {
 
         expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 7]]);
         expect(game.saved.rankBoards['standard|milking'].at).toBeLessThanOrEqual(Date.now());
+    });
+
+    test('a sync pull landing under the running page redraws badges from the pulled boards', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const alice = nameEl('Alice');
+        const bob = nameEl('Bob');
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+        });
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(alice.nextElementSibling.textContent).toContain('7');
+        expect(bob.nextElementSibling?.hasAttribute?.('data-toolasha-rank-badge')).toBeFalsy();
+
+        game.saved.rankBoards = {
+            ...game.saved.rankBoards,
+            'standard|foraging': { at: Date.now() - 1000, source: 'local', rows: [['Bob', 4]] },
+        };
+        announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+
+        expect(bob.nextElementSibling.textContent).toContain('4');
+        // What the page held is still there
+        expect(alice.nextElementSibling.textContent).toContain('7');
+        expect(Object.keys(leaderboardRankBadges.boards).sort()).toEqual(['standard|foraging', 'standard|milking']);
+    });
+
+    test('a pull of some other key, or with the feature off, changes nothing', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        game.saved.rankBoards = { 'standard|foraging': { at: Date.now() - 1000, source: 'local', rows: [['Bob', 4]] } };
+        announceSyncPullApplied({ leaderboardHistory: ['somethingElse'] });
+        await flush();
+        expect(leaderboardRankBadges.boards).toEqual({});
     });
 
     test('a settings restart during a save keeps the board being saved', async () => {
