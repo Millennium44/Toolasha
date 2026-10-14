@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
     mirrorPrice: 1_000_000_000,
     /** No market listing at any level */
     noAsk: false,
+    /** What the sword sells for */
+    swordSell: 1,
     /** What the star item is worth as a craft estimate, and what the base sells for */
     starPrice: 500_000_000,
     baseSell: 300_000,
@@ -106,7 +108,9 @@ vi.mock('../../utils/profit-helpers.js', () => ({
                         : 300_000
                     : hrid === MIRROR
                       ? state.mirrorPrice
-                      : 1,
+                      : hrid === SWORD && opts?.side === 'sell'
+                        ? state.swordSell
+                        : 1,
     })),
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -147,6 +151,7 @@ describe('refined target priced from a held base', () => {
         state.shops = {};
         state.mirrorPrice = 1_000_000_000;
         state.noAsk = false;
+        state.swordSell = 1;
         state.starPrice = 500_000_000;
         state.baseSell = 300_000;
         state.climb = (from, to) => (to - from) * 1_000_000;
@@ -323,6 +328,25 @@ describe('refined target priced from a held base', () => {
             state.mirrorPrice = 1_000_000_000;
             expect(explainUpgradeCost(breakpoint(SWORD, 6, 7), gameData).source).toBe('sim');
             expect(calculateUpgradeCost(breakpoint(SWORD, 6, 7), gameData)).toBe(64_000_000);
+        });
+
+        test('a 312B bid on the replaced piece cannot take a mirror-built row below free', () => {
+            state.swordSell = 312_000_000_000;
+            const enhancement = breakpoint(SWORD, 6, 7);
+            expect(explainUpgradeCost(enhancement, gameData).source).toBe('mirror');
+            expect(explainUpgradeCost(enhancement, gameData).net).toBeGreaterThanOrEqual(0);
+            expect(calculateUpgradeCost(enhancement, gameData)).toBeGreaterThanOrEqual(0);
+
+            const swap = {
+                type: 'tier',
+                upgradeHrid: SWORD,
+                upgradeLevel: 7,
+                removedItems: [{ hrid: SWORD, enhancementLevel: 6 }],
+            };
+            const detail = explainUpgradeCost(swap, gameData);
+            expect(detail.buys[0].source).toBe('mirror');
+            expect(detail.net).toBeGreaterThanOrEqual(0);
+            expect(calculateUpgradeCost(swap, gameData)).toBeGreaterThanOrEqual(0);
         });
 
         test('below +3 a mirror cannot run, and a dear mirror changes nothing', () => {
