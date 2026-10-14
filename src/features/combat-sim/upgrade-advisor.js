@@ -17,7 +17,12 @@ import {
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
-import { generateLabArmorCandidates, labelItemWithLevel } from './lab-armor-candidates.js';
+import {
+    generateLabArmorCandidates,
+    getWeaponStyleFamily,
+    labelItemWithLevel,
+    styleFamilyOfStats,
+} from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
@@ -7531,10 +7536,9 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
  *   trading between the two is a cross-slot swap, not this;
  * - the loadout already wears that item at the level asked for or higher;
  * - the item carries no combat stats at all, so nothing in a fight can feel it;
- * - the item is built for another attack style than the loadout fights in (a
- *   bow in a staff loadout is a costume change, not an upgrade). The style is
- *   read from the loadout's weapon, or from the piece being replaced when it has
- *   no weapon.
+ * - the item's offensive stats serve another style than the loadout's weapon
+ *   (a bow in a staff loadout is a costume change, not an upgrade). Items with no
+ *   offensive stats go everywhere. `candidate.allLoadouts` waives this test.
  *
  * @param {Object} candidate - `{ slot, upgradeHrid, upgradeLevel }`
  * @param {Object} dto - The loadout
@@ -7549,41 +7553,27 @@ export function checkedSwapAppliesToDTO(candidate, dto, gameData) {
     if (equipment[MAIN_HAND_SLOT]?.hrid && slot === TWO_HAND_SLOT) return false;
 
     const worn = equipment[slot];
-    if (worn?.hrid === candidate.upgradeHrid) return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
-
     const details = gameData?.itemDetailMap;
     const upgrade = details?.[candidate.upgradeHrid];
     if (!upgrade) return false;
+    // Before the same-item shortcut below: a higher level of a worn skilling
+    // tool is still a piece no fight can feel
     if (!hasCombatStats(upgrade) && !isCharmItem(upgrade)) return false;
+    if (worn?.hrid === candidate.upgradeHrid) return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
 
-    // Stab, slash and smash are one family here: a loadout swinging a mace is
-    // fair game for a sword, and it is the loadouts holding a staff or a bow
-    // that a sword has no business in
-    //
-    // Only weapons and quivers are held to the loadout's style. Armor can carry
-    // magic or ranged stats (a Magician's Hat) and still goes on any body: the
-    // player asked for it, so even a downgrade is shown. What marks a piece as
-    // style-bound is that it sits in a hand slot or names combat styles.
-    const family = (style) => (style === 'stab' || style === 'slash' || style === 'smash' ? 'melee' : style);
-    const styleBound =
-        slot === MAIN_HAND_SLOT ||
-        slot === OFF_HAND_SLOT ||
-        slot === TWO_HAND_SLOT ||
-        Boolean(upgrade.equipmentDetail?.combatStats?.combatStyleHrids?.length) ||
-        Boolean(upgrade.equipmentDetail?.combatStyleHrids?.length);
-    if (!styleBound) return true;
-    const newStyle = family(getItemDamageStyle(upgrade.equipmentDetail?.combatStats));
-    if (newStyle === 'unknown') return true;
-    // What the loadout fights with decides, not the piece in the slot: a cape
-    // built for melee is still what a ranged loadout is wearing today, and a
-    // quiver is exactly what it might swap it for. The worn piece's own style is
-    // the fallback for a loadout with no weapon to read
-    const weaponStyle = family(getPlayerCombatStyle(dto, gameData));
-    const wornStyle = worn?.hrid
-        ? family(getItemDamageStyle(details[worn.hrid]?.equipmentDetail?.combatStats))
-        : 'unknown';
-    const referenceStyle = weaponStyle !== 'unknown' ? weaponStyle : wornStyle;
-    return referenceStyle === 'unknown' || referenceStyle === newStyle;
+    // "All loadouts" forces every loadout with the slot; the hand rules and the
+    // item having combat stats at all still hold
+    if (candidate.allLoadouts) return true;
+
+    // Relevance by the item's own offensive stats. A piece whose stats serve one
+    // style (a Quiver is ranged, a Magician's Hat is magic, a Sinister Cape is
+    // melee) goes only into loadouts of that style; one with no offensive stats
+    // (armor or evasion only) goes everywhere, and so does any piece in a
+    // loadout with no weapon to read a style from.
+    const itemStyle = styleFamilyOfStats(upgrade.equipmentDetail?.combatStats);
+    if (itemStyle === 'defensive') return true;
+    const loadoutStyle = getWeaponStyleFamily(dto, gameData);
+    return loadoutStyle === 'defensive' || loadoutStyle === itemStyle;
 }
 
 /**

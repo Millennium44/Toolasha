@@ -75,6 +75,7 @@ import {
     describeCheckedSwap,
     evaluateSkillingSwaps,
     resolveEquipmentHrid,
+    sanitizeSwapOptions,
     sanitizeSwapQueues,
     searchEquipmentItems,
 } from './lab-swap-check.js';
@@ -705,6 +706,7 @@ class LabSimUI {
         // The "Check a swap" queues, one per tab, and the sort the checked combat
         // table is in (kept apart from the generated table's)
         this._checkedSwaps = { combat: [], skilling: [] };
+        this._swapOptions = sanitizeSwapOptions(null);
         this._checkedSwapSort = null;
         this._skillingSwapSortHandler = null;
         this._skillLoadouts = {};
@@ -3018,8 +3020,14 @@ class LabSimUI {
                 : 'Put any piece of equipment, at the level you choose, into every skill kit that can feel it, and see ' +
                   'what it does to the clear rate. Owned or not. Add queues it; Check runs the queue.';
         bar.innerHTML = `
+            <div id="mwi-labsim-swap-header-${kind}" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
+                title="${escapeHtmlAttribute(what)}">
+                <span id="mwi-labsim-swap-toggle-${kind}" style="font-size:10px; color:#888;">▶</span>
+                <span style="color:${ACCENT}; font-weight:700; font-size:12px;">Check a swap</span>
+                <span id="mwi-labsim-swap-count-${kind}" style="color:#666; font-size:11px;"></span>
+            </div>
+            <div id="mwi-labsim-swap-body-${kind}" style="display:none; margin-top:4px;">
             <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;">
-                <span style="color:${ACCENT}; font-weight:700; font-size:12px;" title="${escapeHtmlAttribute(what)}">Check a swap</span>
                 <input id="mwi-labsim-swap-item-${kind}" list="mwi-labsim-swap-items-${kind}" type="text" autocomplete="off"
                     placeholder="Item name, e.g. Sinister Cape" style="${inputStyle} width:210px; max-width:100%;">
                 <datalist id="mwi-labsim-swap-items-${kind}"></datalist>
@@ -3028,9 +3036,15 @@ class LabSimUI {
                     placeholder="Lv" title="Enhancement level to check" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
                 <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
+                <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
+                    title="${kind === 'combat' ? 'Put the item in every loadout that has the slot, even ones of another attack style. Without this, a ranged item skips melee loadouts and so on.' : 'Put the item in every skill kit in scope, not only the skills it is made for.'}">
+                    <input type="checkbox" id="mwi-labsim-swap-all-${kind}" style="margin:0; cursor:pointer;">
+                    All loadouts
+                </label>
                 <span id="mwi-labsim-swap-note-${kind}" style="color:#666; font-size:11px;"></span>
             </div>
             <div id="mwi-labsim-swap-chips-${kind}" style="display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:4px;"></div>
+            </div>
         `;
         return bar;
     }
@@ -3043,6 +3057,15 @@ class LabSimUI {
         for (const kind of ['combat', 'skilling']) {
             const item = this.panel.querySelector(`#mwi-labsim-swap-item-${kind}`);
             const level = this.panel.querySelector(`#mwi-labsim-swap-level-${kind}`);
+            this.panel.querySelector(`#mwi-labsim-swap-header-${kind}`)?.addEventListener('click', () => {
+                this._swapOptions.open[kind] = !this._isSwapSectionOpen(kind);
+                this._applySwapSectionState(kind);
+                void this._saveCheckedSwaps();
+            });
+            this.panel.querySelector(`#mwi-labsim-swap-all-${kind}`)?.addEventListener('change', (event) => {
+                this._swapOptions.all[kind] = event.target.checked;
+                void this._saveCheckedSwaps();
+            });
             item?.addEventListener('input', () => this._fillSwapSuggestions(kind));
             for (const box of [item, level]) {
                 box?.addEventListener('keydown', (event) => {
@@ -3067,6 +3090,36 @@ class LabSimUI {
                 void this._saveCheckedSwaps();
             });
         }
+    }
+
+    /**
+     * Whether a tab's Check a swap section is open: what was last chosen, or open
+     * when it has swaps queued and nothing was ever chosen.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @returns {boolean}
+     * @private
+     */
+    _isSwapSectionOpen(kind) {
+        const chosen = this._swapOptions.open[kind];
+        return chosen === null ? this._checkedSwaps[kind].length > 0 : chosen;
+    }
+
+    /**
+     * Draw a tab's section open or closed, its count and its All loadouts box.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @private
+     */
+    _applySwapSectionState(kind) {
+        const open = this._isSwapSectionOpen(kind);
+        const body = this.panel?.querySelector(`#mwi-labsim-swap-body-${kind}`);
+        if (body) body.style.display = open ? 'block' : 'none';
+        const toggle = this.panel?.querySelector(`#mwi-labsim-swap-toggle-${kind}`);
+        if (toggle) toggle.textContent = open ? '▼' : '▶';
+        const count = this.panel?.querySelector(`#mwi-labsim-swap-count-${kind}`);
+        const n = this._checkedSwaps[kind].length;
+        if (count) count.textContent = n ? `${n} queued` : '';
+        const all = this.panel?.querySelector(`#mwi-labsim-swap-all-${kind}`);
+        if (all) all.checked = this._swapOptions.all[kind];
     }
 
     /**
@@ -3151,6 +3204,7 @@ class LabSimUI {
     _renderSwapChips(kind) {
         const box = this.panel?.querySelector(`#mwi-labsim-swap-chips-${kind}`);
         if (!box) return;
+        this._applySwapSectionState(kind);
         const gameData = buildGameDataPayload();
         box.innerHTML = this._checkedSwaps[kind]
             .map(
@@ -3172,7 +3226,11 @@ class LabSimUI {
      */
     async _saveCheckedSwaps() {
         try {
-            await writeScoped(CHECKED_SWAPS_KEY, JSON.parse(JSON.stringify(this._checkedSwaps)), 'settings');
+            await writeScoped(
+                CHECKED_SWAPS_KEY,
+                JSON.parse(JSON.stringify({ ...this._checkedSwaps, options: this._swapOptions })),
+                'settings'
+            );
         } catch (error) {
             console.error('[LabSimUI] Failed to save checked swaps:', error);
         }
@@ -3194,6 +3252,7 @@ class LabSimUI {
         }
         if (!this.panel || !this._stillSameCharacter(ownerId)) return;
         const restored = sanitizeSwapQueues(saved);
+        this._swapOptions = sanitizeSwapOptions(saved?.options);
         for (const kind of ['combat', 'skilling']) {
             if (!this._checkedSwaps[kind].length) this._checkedSwaps[kind] = restored[kind];
             this._renderSwapChips(kind);
@@ -3239,23 +3298,89 @@ class LabSimUI {
                 return;
             }
 
+            // Stopping rules as the generated run reads them
+            const uncapped = this.panel.querySelector('#mwi-labsim-upgrade-uncapped')?.checked;
+            const maxHours = Math.max(
+                1,
+                parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || DEFAULT_LAB_SIM_MAX_HOURS
+            );
+            const hours = uncapped ? 1e6 : maxHours;
+            const precision = {
+                targetHalfWidth:
+                    Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1)))) / 100,
+                minTrials: 100,
+                maxTrials: uncapped ? Number.MAX_SAFE_INTEGER : LAB_SIM_MAX_FIGHTS,
+            };
+            const crates = this.getSelectedCrates();
+            const communityBuffs = getCommunityBuffs();
+            const labyrinthCombatBuffs = this._labyrinthCombatBuffs();
+
+            if (progressEl) progressEl.style.display = 'block';
+            if (runBtn) runBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'inline-block';
+            if (checkBtn) checkBtn.disabled = true;
+            this._upgradeAborted = false;
+
             // The fights the tab's scope names. `equipment` is only asked of the
             // planner so it will name the fights; nothing is generated from it
-            const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
-            const allFights = this._collectLabyrinthFights(useSkipLevels);
             const plan = planLabUpgradeRun({
                 dimensions: ['equipment'],
                 scopeMode: this._getUpgradeScopeMode(),
                 chosenMonsters: this._getChosenTargets(),
-                allMonsters: allFights.map((fight) => fight.monsterHrid),
+                allMonsters: this._allUpgradeTargets(),
                 configureMonsterHrid: this.panel.querySelector('#mwi-labsim-monster')?.value || '',
             });
             if (plan.kind === 'none') {
                 this._setStatus(plan.error);
                 return;
             }
-            const chosen = new Set(plan.monsterHrids);
-            const fights = allFights.filter((fight) => chosen.has(fight.monsterHrid));
+            let fights;
+            if (plan.kind === 'single') {
+                // The Configure fight is the edited player at the resolved room
+                // level, exactly as the single-fight analysis takes it, not the
+                // monster's assigned labyrinth loadout
+                const monsterHrid = plan.monsterHrids[0];
+                const edited = this._editor?.getEditedDTOs();
+                const playerDTOs = edited ? Object.values(edited) : (await buildAllPlayerDTOs()).players;
+                const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+                const dto = playerDTOs?.[playerIndex];
+                if (!dto) {
+                    this._setStatus('No player data available.');
+                    return;
+                }
+                const roomLevel = await this._resolveUpgradeRoomLevel({
+                    monsterHrid,
+                    gameData,
+                    playerDTOs,
+                    playerIndex,
+                    crates,
+                    hours,
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                });
+                if (!this.panel || this._upgradeAborted || !this._stillSameCharacter(ownerId)) return;
+                if (!roomLevel) {
+                    this._setStatus(
+                        'No room level resolves for this fight. Pick a level source with a value behind it, ' +
+                            'or put a level in the Configure tab.'
+                    );
+                    return;
+                }
+                const monster = getLabyrinthMonsters().find((entry) => entry.hrid === monsterHrid);
+                fights = [
+                    {
+                        monsterHrid,
+                        monsterName: monster?.name || monsterHrid.split('/').pop().replace(/_/g, ' '),
+                        roomLevel,
+                        dto,
+                        loadoutName: 'Configure fight',
+                    },
+                ];
+            } else {
+                const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+                const chosen = new Set(plan.monsterHrids);
+                fights = this._collectLabyrinthFights(useSkipLevels).filter((fight) => chosen.has(fight.monsterHrid));
+            }
             if (!fights.length) {
                 this._setStatus(
                     'No labyrinth fights found. Set combat skip levels in the game (or enter the labyrinth) so fights have room levels.'
@@ -3269,7 +3394,9 @@ class LabSimUI {
                 const candidate = buildCombatSwapCandidate(
                     swap,
                     fights.map((fight) => fight.dto),
-                    gameData
+                    gameData,
+                    true,
+                    { allLoadouts: this._swapOptions.all.combat }
                 );
                 if (candidate && candidate.reach > 0) candidates.push(candidate);
                 else unreached.push(swap);
@@ -3282,24 +3409,6 @@ class LabSimUI {
                 return;
             }
 
-            // Stopping rules as the generated run reads them
-            const uncapped = this.panel.querySelector('#mwi-labsim-upgrade-uncapped')?.checked;
-            const maxHours = Math.max(
-                1,
-                parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || DEFAULT_LAB_SIM_MAX_HOURS
-            );
-            const precision = {
-                targetHalfWidth:
-                    Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1)))) / 100,
-                minTrials: 100,
-                maxTrials: uncapped ? Number.MAX_SAFE_INTEGER : LAB_SIM_MAX_FIGHTS,
-            };
-
-            if (progressEl) progressEl.style.display = 'block';
-            if (runBtn) runBtn.style.display = 'none';
-            if (stopBtn) stopBtn.style.display = 'inline-block';
-            if (checkBtn) checkBtn.disabled = true;
-            this._upgradeAborted = false;
             const eta = createEtaTracker();
             this._setStatus(
                 `Checking ${candidates.length} swap${candidates.length === 1 ? '' : 's'} across ${fights.length} fights. Stop cancels at any point.`
@@ -3308,11 +3417,11 @@ class LabSimUI {
             const analysisResult = await runLabyrinthAllFightsAnalysis(
                 {
                     fights,
-                    crates: this.getSelectedCrates(),
-                    hours: uncapped ? 1e6 : maxHours,
+                    crates,
+                    hours,
                     precision,
-                    communityBuffs: getCommunityBuffs(),
-                    labyrinthCombatBuffs: this._labyrinthCombatBuffs(),
+                    communityBuffs,
+                    labyrinthCombatBuffs,
                     modes: [],
                     extraCandidates: candidates,
                 },
@@ -3414,6 +3523,7 @@ class LabSimUI {
                 gameData,
                 abortSignal,
                 onProgress,
+                allLoadouts: this._swapOptions.all.skilling,
             });
             if (abortSignal()) return;
             await annotateRoomsReached({
@@ -7553,6 +7663,7 @@ class LabSimUI {
         // Queued swaps belong to the character being torn down; the arriving one
         // reads its own back from storage
         this._checkedSwaps = { combat: [], skilling: [] };
+        this._swapOptions = sanitizeSwapOptions(null);
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
