@@ -8,8 +8,10 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 import dom from '../../utils/dom.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { parseItemCount } from '../../utils/number-parser.js';
+import { heldTokensWorth } from '../../utils/token-worth.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { dungeonShopOffers } from './dungeon-shop-offers.js';
 
@@ -423,8 +425,34 @@ class DungeonTokenTooltips {
         }
 
         html += '</table>';
+
+        // The stack the game's own "Amount:" line reports, totalled at the best row. Read before
+        // this block is appended, so nothing injected can be mistaken for it.
+        const amount = this._heldAmount(tooltipText.textContent);
+        const held = heldTokensWorth(amount, shopItems[0]);
+        if (held) {
+            const title =
+                'Assumes the whole stack goes into this one item. The shop may cap how many can be bought, and ' +
+                'selling that many would move the market, so treat it as an upper bound. Net worth counts tokens ' +
+                'at this same best row, priced by your profit pricing mode (the ask, by default).';
+            html +=
+                `<div style="margin-top: 4px;" title="${title}">Your ${formatWithSeparator(amount)} tokens ` +
+                `≈ <strong>${formatKMB(held.total)}</strong> as ${shopItems[0].name} ` +
+                `(${formatKMB(held.perToken)}/token)</div>`;
+        }
+
         shopDiv.innerHTML = html;
         tooltipText.appendChild(shopDiv);
+    }
+
+    /**
+     * The token count in a tooltip's "Amount:" line.
+     * @param {string} text - Tooltip text
+     * @returns {number} Tokens held, 0 when the tooltip has no amount line (a collection tooltip)
+     */
+    _heldAmount(text) {
+        const match = /amount:\s*[\d,.\s]*\d[kmb]?/i.exec(text || '');
+        return match ? parseItemCount(match[0], 0) : 0;
     }
 
     /**
