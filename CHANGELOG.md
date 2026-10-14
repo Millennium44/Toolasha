@@ -85,6 +85,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Lab Sim's Skilling tab can measure how many room levels each top upgrade adds at a target clear % and which floor that finishes, plan the cheapest stack of upgrades to reach a floor, and sim any ticked upgrades together; items that help several skills (like a Gatherer Cape ★) are now one row applied to all of them, with a per-skill breakdown and Rooms and Tries columns.
 
+### Token worth and scroll value
+
+- Token tooltips now total the stack you hold at the best shop item ("Your 22,657 tokens ≈ 154.1M as Pathseeker Lodestone"), and the Combat Sim prices labyrinth scrolls by what their tokens would buy instead, in their own table with net gold per hour, so you can see when a scroll beats spending those tokens on lodestones.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
