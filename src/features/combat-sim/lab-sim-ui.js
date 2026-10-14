@@ -3281,6 +3281,10 @@ class LabSimUI {
         // stale and must not clear a guard that now belongs to somebody else's run
         const runToken = ++this._runStartToken;
         const ownerId = dataManager.getCurrentCharacterId();
+        // Whether this invocation is still the one the panel is running: a teardown
+        // bumps the token even when the same character's panel is rebuilt
+        const isCurrent = () =>
+            runToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
         const resultsEl = this.panel.querySelector('#mwi-labsim-swap-results');
         const progressEl = this.panel.querySelector('#mwi-labsim-upgrade-progress');
         const runBtn = this.panel.querySelector('#mwi-labsim-upgrade-run');
@@ -3354,6 +3358,7 @@ class LabSimUI {
                     selfHrid = this._editor.getSelfHrid() ?? null;
                 } else {
                     const loaded = await buildAllPlayerDTOs();
+                    if (!isCurrent()) return;
                     playerDTOs = loaded.players;
                     selfHrid = loaded.selfHrid ?? null;
                 }
@@ -3373,7 +3378,7 @@ class LabSimUI {
                     communityBuffs,
                     labyrinthCombatBuffs,
                 });
-                if (!this.panel || this._upgradeAborted || !this._stillSameCharacter(ownerId)) return;
+                if (!isCurrent() || this._upgradeAborted) return;
                 if (!roomLevel) {
                     this._setStatus(
                         'No room level resolves for this fight. Pick a level source with a value behind it, ' +
@@ -3455,7 +3460,7 @@ class LabSimUI {
                 { abortSignal: () => this._upgradeAborted }
             );
 
-            if (!this.panel || this._upgradeAborted || !this._stillSameCharacter(ownerId)) return;
+            if (!isCurrent() || this._upgradeAborted) return;
             if (!analysisResult?.baseline || !analysisResult.results?.length) {
                 resultsEl.style.display = 'none';
                 this._setStatus('Checking the swaps produced no results.');

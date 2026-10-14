@@ -354,6 +354,8 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
         type: route.type,
         checkedSwap: true,
         allLoadouts,
+        // Whose copies priced it, so a breakdown built later reads the same inventory
+        isSelf,
         pricingNote: routeCaveat(route.route),
         reach: reached.length,
     };
@@ -471,6 +473,7 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         members,
         merged: true,
         checkedSwap: true,
+        isSelf,
         pricingNote: owned ? OWNED_CAVEAT : routeCaveat(route.route),
         allLoadouts,
         cost,

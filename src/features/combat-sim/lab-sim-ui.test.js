@@ -4422,6 +4422,48 @@ describe('Check a swap', () => {
         game.monsters = [];
     });
 
+    test('a stale check resuming after the panel was rebuilt for the same character stops without touching status', async () => {
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = {};
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [] }];
+        game.editedDTOs = { p1: { hrid: 'p1', equipment: {}, abilities: [] } };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        ui.panel.querySelector('#mwi-labsim-level').value = '170';
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const results = combatAnalysis();
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis').mockImplementation(async () => {
+            await gate;
+            return results;
+        });
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        const stale = ui._onCheckSwapsCombat();
+        await settle();
+
+        // Same character, new panel; its status line says something of its own
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._setStatus('fresh panel status');
+        release();
+        await stale;
+
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toBe('fresh panel status');
+        expect(ui.panel.querySelector('#mwi-labsim-swap-results').innerHTML).toBe('');
+        allSpy.mockRestore();
+        game.editedDTOs = null;
+        game.players = [];
+        game.monsters = [];
+    });
+
     test('the same for the Skilling task runner', async () => {
         ui.buildPanel();
         await settle();
