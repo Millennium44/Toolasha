@@ -23,6 +23,7 @@ const character = vi.hoisted(() => ({ id: 'char1' }));
  */
 const ledger = vi.hoisted(() => ({ enabled: false, reserved: [], swept: [], onSweep: null }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     reservationsEnabled: () => ledger.enabled,
     effectiveInventory: (_hrid, _level, { held = 0 } = {}) => held,
     shortfallNote: () => '',

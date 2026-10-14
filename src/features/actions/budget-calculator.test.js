@@ -70,6 +70,7 @@ const reservationsMock = vi.hoisted(() => ({
     },
 }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     reserve: (...args) => reservationsMock.reserve(...args),
     release: (...args) => reservationsMock.release(...args),
 }));

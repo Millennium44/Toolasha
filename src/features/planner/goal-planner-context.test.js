@@ -107,6 +107,7 @@ vi.mock('../../utils/market-data.js', () => ({ getPriceAgeString: () => 'a momen
  */
 const reservations = vi.hoisted(() => ({ claims: {}, calls: [] }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     effectiveInventory: (itemHrid, level, { excludeOwner, held } = {}) => {
         reservations.calls.push({ itemHrid, excludeOwner, held });
         let elsewhere = 0;

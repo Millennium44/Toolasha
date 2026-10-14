@@ -52,6 +52,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     effectiveInventory: (itemHrid, enhancementLevel = 0) => {
         const held = inventoryState.items
             .filter(

@@ -108,6 +108,7 @@ vi.mock('../../utils/react-input.js', () => ({ setReactInputValue: () => {} }));
  */
 const ledger = vi.hoisted(() => ({ claims: {}, reserved: [], released: [] }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    onReservationsChanged: () => () => {},
     INVENTORY_LOCATION: '/item_locations/inventory',
     reservedElsewhere: (itemHrid, level, { excludeOwner } = {}) => {
         let total = 0;
