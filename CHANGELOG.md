@@ -45,6 +45,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Hovering a Decompose chain/hr figure now shows what it assumes (buying at the ask now, selling outputs at bid) and how it adds up, and a new "Chain/hr (own stock)" sort ranks the items you hold the way their tooltips do, so a chain the tooltip calls profitable for your stock is no longer missing from the list.
 
+### Sync: far fewer "Reload now" toasts
+
+- Device-only data (action progress, the last combat run, the spawn census, panel positions) no longer syncs, and hourly networth snapshots, the networth chart, item flow, the loot log and daily checkpoints now take a pull without a reload and show the other device's entries straight away; the toast no longer says to reload when nothing was locked, or after you change a device-only setting such as the sync token.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
