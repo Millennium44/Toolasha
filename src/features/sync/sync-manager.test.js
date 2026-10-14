@@ -2416,6 +2416,45 @@ describe('automatic pushes merge into the upload, never into this device', () =>
             expect(toasts[0].message).not.toContain('Reload now');
         });
 
+        test('a pull that latched nothing but could not combine a record says so without a reload sentence', async () => {
+            payload.expected = { xpHistory: 1 };
+            payload.latched = 0;
+            payload.mergeFailed = [{ store: 'xpHistory', key: 'xpHistory_char', label: 'Skill XP history' }];
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].message).toContain('could not be combined');
+            expect(toasts[0].message).toContain('Skill XP history');
+            expect(toasts[0].message).not.toContain('Reload now');
+            expect(toasts[0].message).not.toContain('will not be kept');
+            expect(toasts[0].kind ?? toasts[0].options?.kind).toBe('warn');
+        });
+
+        test('a pull that latched nothing but held a record back says so without a reload sentence', async () => {
+            payload.expected = { xpHistory: 1 };
+            payload.latched = 0;
+            payload.mergeHeld = [{ label: 'market history', store: 'marketplace' }];
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].message).toContain('market history');
+            expect(toasts[0].message).toContain('Pushes are paused');
+            expect(toasts[0].message).not.toContain('Reload now');
+        });
+
+        test('a pull that latched something and could not combine a record still asks for the reload', async () => {
+            payload.expected = { xpHistory: 1 };
+            payload.latched = 2;
+            payload.mergeFailed = [{ store: 'xpHistory', key: 'xpHistory_char', label: 'Skill XP history' }];
+
+            await syncManager.pull({ silent: true, startup: true });
+
+            expect(toasts[0].message).toContain('could not be combined');
+            expect(toasts[0].message).toContain('Reload now');
+        });
+
         test('a silent pull that latched something still asks for the reload', async () => {
             payload.expected = { combatStats: 1, settings: 1 };
             payload.latched = 1;
