@@ -2609,6 +2609,46 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
  *   purchase, or null when some part of it has no known price
  */
 export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
+    const cost = calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf);
+    const mirror = enhancementMirrorRoute(candidate, gameData);
+    return mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
+}
+
+/**
+ * The route to an enhancement row's target level by building it with a Philosopher's Mirror, net of
+ * what the piece it replaces would sell for.
+ *
+ * The generated "next breakpoint" row (`type: 'enhancement'`) is priced as an enhance or a market delta
+ * on the worn piece; a +(L-1) and a +(L-2) copy plus a mirror is another way to hold a +L, and the
+ * worn piece is then sold. The inputs are priced as fresh acquisitions (see `resolveMirrorBase`), and a
+ * piece nobody can sell gets no credit. Refined pieces are left to the refine route: their mirror copy
+ * is the unrefined base.
+ *
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @returns {{net: number, baseCost: number, credit: number, mirrorPrice: number}|null} Null when no
+ *   mirror route beats the ordinary one for this row
+ */
+function enhancementMirrorRoute(candidate, gameData) {
+    if (candidate?.type !== 'enhancement' || !candidate.currentHrid) return null;
+    if (candidate.currentHrid.endsWith('_refined')) return null;
+    const level = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
+    const mirror = resolveMirrorBase(candidate.currentHrid, level, gameData);
+    if (!mirror) return null;
+    const credit = isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
+        ? 0
+        : sellValue(candidate.currentHrid, candidate.currentLevel || 0);
+    return { net: mirror.baseCost - credit, baseCost: mirror.baseCost, credit, mirrorPrice: mirror.mirrorPrice };
+}
+
+/**
+ * {@link calculateUpgradeCost} without the mirror comparison on enhancement rows.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {number|null} Net cost
+ */
+function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
     // Combat skill levels cost XP and time, not gold
     if (candidate.type === 'combat_level') {
         return null;
@@ -3381,6 +3421,59 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
  * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
+    const detail = explainUpgradeCostWithoutMirror(candidate, gameData, isSelf);
+    const mirror = enhancementMirrorRoute(candidate, gameData);
+    if (!mirror || !(detail.net == null || mirror.net < detail.net)) return detail;
+    const name = gameData?.itemDetailMap?.[candidate.currentHrid]?.name || candidate.currentHrid.split('/').pop();
+    return {
+        buys: [
+            {
+                hrid: candidate.currentHrid,
+                name,
+                enhancementLevel: candidate.upgradeLevel,
+                price: mirror.baseCost,
+                source: 'mirror',
+            },
+        ],
+        credits:
+            mirror.credit > 0
+                ? [
+                      {
+                          hrid: candidate.currentHrid,
+                          name,
+                          enhancementLevel: candidate.currentLevel || 0,
+                          price: mirror.credit,
+                      },
+                  ]
+                : [],
+        gross: mirror.baseCost,
+        credit: mirror.credit,
+        net: mirror.net,
+        unpriced: [],
+        creditApplied: mirror.credit > 0,
+        source: 'mirror',
+        enhanceSource: describeEnhancementSource(enhancementSweepParams(candidate.currentHrid)),
+        ladder: {
+            fromLevel: candidate.upgradeLevel - 1,
+            toLevel: candidate.upgradeLevel,
+            fresh: false,
+            alreadyHeld: false,
+            fromEquipped: false,
+            isSelf: Boolean(isSelf),
+            baseCost: 0,
+            mirror: { mirrorPrice: mirror.mirrorPrice },
+        },
+    };
+}
+
+/**
+ * {@link explainUpgradeCost} without the mirror comparison on enhancement rows.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object} The breakdown
+ */
+function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
     if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData, isSelf);
     if (candidate.type === 'guild_shrine') return explainGuildShrineCost(candidate);
     if (candidate.type === 'drink') {
