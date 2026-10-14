@@ -730,7 +730,7 @@ class LeaderboardRankBadges {
      * Take in boards a sync pull wrote under the running page. Same fold as `persist()` without the save: the
      * held boards are put back into the record first so the load folds stored UNDER them, then the result is
      * adopted and the badges redrawn. A board stamped in the future is capped in memory by the fold and
-     * flagged in `storedFuture`; the repair stays restart()'s, which overwrites the stored copy once.
+     * flagged in `storedFuture`; the stored copy is overwritten once with the capped boards, as restart() does.
      * @returns {Promise<void>}
      */
     async refreshFromPull() {
@@ -743,6 +743,7 @@ class LeaderboardRankBadges {
         this.boards = folded;
         this.rebuildIndex();
         this.decorateAll(true);
+        this.refreshCycleBars();
     }
 
     rebuildIndex() {
