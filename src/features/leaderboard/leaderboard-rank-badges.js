@@ -738,6 +738,13 @@ class LeaderboardRankBadges {
         const runId = this.runId;
         this.record.set(this.boards);
         if (!(await this.record.load()) || runId !== this.runId) return;
+        // The pull may carry a board stamped by a fast clock. The load capped it in memory only; store the capped copy
+        // once, as restart() does, or every later save re-caps it to a newer "now" and the stale board outranks newer ones.
+        if (this.storedFuture) {
+            this.storedFuture = false;
+            await this.record.save({ overwrite: true });
+            if (runId !== this.runId) return;
+        }
         const folded = this.record.get();
         if (sameBoards(folded, this.boards)) return;
         this.boards = folded;
