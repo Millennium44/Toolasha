@@ -14,7 +14,11 @@ import {
     createRowLevelMeasure,
     describeCost,
     findMaxSkillingRoomLevel,
+    annotateRoomsReached,
     includedSkills,
+    mergeMultiSkillGearRows,
+    renderSkillBreakdownHtml,
+    skillBreakdown,
     planSkillingGoal,
     renderCombinationHtml,
     renderPlanHtml,
@@ -586,5 +590,212 @@ describe('the candidates a plan weighs', () => {
         const rows = [gearRow('/items/a', 'slot_1', null, 0.5), gearRow('/items/b', 'slot_2', 9999, 0.01)];
 
         expect(selectPlanPool(rows).map((r) => r.cost)).toEqual([9999, null]);
+    });
+});
+
+describe('one row per physical item', () => {
+    const SKILLS = ['/skills/milking', '/skills/foraging', '/skills/woodcutting', '/skills/cooking'];
+    const BACK = '/equipment_types/back';
+
+    /** Each room's clear rate: 0.5, plus 0.04 when its own kit wears the cape. */
+    function perRoom(setup) {
+        const results = SKILLS.map((skillHrid) => {
+            const kit = setup.skillEquipmentMap[skillHrid] || setup.dto.equipment;
+            const worn = kit[BACK]?.hrid === '/items/cape';
+            return {
+                skillHrid,
+                skillName: skillHrid.replace('/skills/', ''),
+                roomLevel: 50,
+                clearChance: 0.5 + (worn ? 0.04 : 0),
+                xpPerRoom: 10,
+            };
+        });
+        return averageSkillingResults(results);
+    }
+    const evaluateRooms = (setup) => perRoom(setup);
+    const kitSetup = () => ({
+        dto: { equipment: { [BACK]: { hrid: '/items/old_cape', enhancementLevel: 0 } } },
+        skillEquipmentMap: Object.fromEntries(
+            SKILLS.map((s) => [s, { [BACK]: { hrid: '/items/old_cape', enhancementLevel: 0 } }])
+        ),
+    });
+    const capeRow = (skill, cost = 1000) => ({
+        candidate: {
+            type: 'skilling_gear',
+            skillKey: skill,
+            slot: BACK,
+            currentHrid: '/items/old_cape',
+            currentLevel: 0,
+            upgradeHrid: '/items/cape',
+            upgradeLevel: 5,
+            description: `Old Cape → Gatherer Cape +5 (${skill.replace('/skills/', '')})`,
+        },
+        costType: 'gold',
+        cost,
+        // Each part counts its one room out of four
+        clearRate: 0.51,
+        clearRateDelta: 0.01,
+        metricType: 'clearRate',
+    });
+
+    const analysis = () => ({
+        baseline: { clearRate: 0.5 },
+        results: [
+            capeRow('/skills/milking'),
+            capeRow('/skills/foraging', 1200),
+            capeRow('/skills/woodcutting'),
+            gearRow('/items/other', '/equipment_types/neck', 5, 0.02),
+        ],
+    });
+
+    test('the per-skill rows of one item become a single row applied to every skill it serves', () => {
+        const result = analysis();
+        const added = mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+
+        expect(added).toBe(1);
+        const merged = result.results.find((r) => r.candidate.merged);
+        expect(merged.candidate.description).toBe('Old Cape → Gatherer Cape +5 (milking, foraging, woodcutting)');
+        // Three of the four rooms gain 0.04 each: 0.03 on the average, not 0.01
+        expect(merged.clearRateDelta).toBeCloseTo(0.03, 10);
+        expect(merged.clearRate).toBeCloseTo(0.53, 10);
+        // One copy is bought: the dearest part's price, not the sum
+        expect(merged.cost).toBe(1200);
+        // The halves no longer rank as if each were the whole
+        expect(result.results.filter((r) => r.candidate.skillKey)).toEqual([]);
+        expect(result.results).toHaveLength(2);
+    });
+
+    test('a single-skill item, or two different items for one slot, are left as they are', () => {
+        const result = {
+            results: [
+                capeRow('/skills/milking'),
+                {
+                    ...capeRow('/skills/foraging'),
+                    candidate: { ...capeRow('/skills/foraging').candidate, upgradeHrid: '/items/x' },
+                },
+            ],
+        };
+        const added = mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+
+        expect(added).toBe(0);
+        expect(result.results).toHaveLength(2);
+    });
+
+    test('a merged row is one choice for its slot: it conflicts with a part of itself and with a rival cape', () => {
+        const result = analysis();
+        mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+        const merged = result.results.find((r) => r.candidate.merged);
+
+        expect(skillingCandidatesConflict(merged.candidate, capeRow('/skills/milking').candidate)).toBe(true);
+        expect(skillingCandidatesConflict(merged.candidate, gearRow('/items/other_cape', BACK, 1, 0.1).candidate)).toBe(
+            true
+        );
+        expect(
+            skillingCandidatesConflict(merged.candidate, gearRow('/items/x', '/equipment_types/neck', 1, 0.1).candidate)
+        ).toBe(false);
+    });
+
+    test('the planner and Sim together use the merged row and count its price once', async () => {
+        const result = analysis();
+        mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+
+        const combo = await simulateCombination({
+            rows: result.results.filter((r) => r.candidate.merged),
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+        expect(combo.clearRateDelta).toBeCloseTo(0.03, 10);
+        expect(combo.costs.gold).toBe(1200);
+
+        const plan = await planSkillingGoal({
+            baseSetup: kitSetup(),
+            rows: result.results,
+            evaluate: evaluateRooms,
+            goalRoomLevel: 50,
+            goalRate: 0.53,
+            yieldFn: async () => {},
+        });
+        expect(plan.reached).toBe(true);
+        expect(plan.steps.map((s) => s.row.candidate.merged)).toEqual([true]);
+        expect(plan.totals.gold).toBe(1200);
+    });
+
+    test('the breakdown lists every room: moved ones before to after, the rest as unaffected', () => {
+        const result = analysis();
+        mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+        const merged = result.results.find((r) => r.candidate.merged);
+
+        const lines = skillBreakdown({
+            baseSetup: kitSetup(),
+            candidate: merged.candidate,
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+
+        expect(lines.map((l) => [l.skillName, l.affected])).toEqual([
+            ['milking', true],
+            ['foraging', true],
+            ['woodcutting', true],
+            ['cooking', false],
+        ]);
+        expect(lines[0]).toMatchObject({ before: 0.5, after: 0.54 });
+        expect(lines[0].triesBefore).toBeCloseTo(2, 10);
+
+        const html = renderSkillBreakdownHtml(lines);
+        expect(html).toContain('50.0% → 54.0%');
+        expect(html).toContain('tries');
+        expect(html).toContain('unaffected — 50.0% unchanged');
+    });
+
+    test('each gear row says how many rooms it moves and what it does to the tries', async () => {
+        const result = analysis();
+        mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+        });
+        await annotateRoomsReached({
+            rows: result.results,
+            baseSetup: kitSetup(),
+            evaluate: evaluateRooms,
+            roomLevel: 50,
+            yieldFn: async () => {},
+        });
+        const merged = result.results.find((r) => r.candidate.merged);
+
+        expect(merged.rooms).toEqual({ affected: 3, total: 4 });
+        // Four rooms at 2 tries each is 8; three of them at 1/0.54 is about 7.56
+        expect(merged.triesDelta).toBeCloseTo(3 * (1 / 0.54 - 2), 8);
+        expect(merged.tries).toBeCloseTo(2 + 3 / 0.54, 8);
+        expect(merged.breakdownLines).toHaveLength(4);
+        const neck = result.results.find((r) => r.candidate.slot === '/equipment_types/neck');
+        expect(neck.rooms.affected).toBe(0);
     });
 });

@@ -66,6 +66,12 @@ const RATE_EPSILON = 1e-12;
  * @returns {SkillingSetup} A new setup
  */
 export function applySkillingCandidate(setup, candidate, targetSkill = null) {
+    // One physical item that serves several rooms is applied as the pieces it
+    // was merged from, one after another, each into the kits it belongs to
+    if (Array.isArray(candidate.members)) {
+        return candidate.members.reduce((acc, member) => applySkillingCandidate(acc, member, targetSkill), setup);
+    }
+
     let dto = JSON.parse(JSON.stringify(setup.dto));
     const skillEquipmentMap = JSON.parse(JSON.stringify(setup.skillEquipmentMap || {}));
 
@@ -128,14 +134,21 @@ export function uniformRoomLevels(level, skills, allSkills) {
  *
  * @param {Array<Object>} results - From `computeSkillingClearRatesFromEditor`
  * @param {string|null} [targetSkill] - Restrict to one skill
- * @returns {{clearRate: number, xpPerRoom: number, count: number}}
+ * @returns {{clearRate: number, xpPerRoom: number, count: number, perSkill: Array<Object>}}
  */
 export function averageSkillingResults(results, targetSkill = null) {
     const active = (Array.isArray(results) ? results : []).filter(
         (r) => r && !r.skipped && (!targetSkill || r.skillHrid === targetSkill)
     );
-    if (!active.length) return { clearRate: 0, xpPerRoom: 0, count: 0 };
+    if (!active.length) return { clearRate: 0, xpPerRoom: 0, count: 0, perSkill: [] };
     return {
+        // Each room's own figure, so a caller can say which rooms an upgrade moved
+        perSkill: active.map((r) => ({
+            skillHrid: r.skillHrid,
+            skillName: r.skillName,
+            roomLevel: r.roomLevel,
+            clearChance: r.clearChance || 0,
+        })),
         clearRate: active.reduce((sum, r) => sum + (r.clearChance || 0), 0) / active.length,
         xpPerRoom: active.reduce((sum, r) => sum + (r.xpPerRoom || 0), 0) / active.length,
         count: active.length,
@@ -288,6 +301,125 @@ export function createRowLevelMeasure({ baseSetup, targetSkill = null, ...search
     return (row) => searchSetup(row ? applySkillingCandidate(baseSetup, row.candidate, targetSkill) : baseSetup);
 }
 
+// ─── One row per physical item ───────────────────────────────────────────────
+
+/**
+ * A skilling piece's stats are read per room: `<skill>Speed`/`<skill>Efficiency`
+ * apply only in that skill's room and `skillingSpeed`/`skillingEfficiency` in
+ * all of them (`parseEquipmentEfficiencyBonuses`). So an item worn in a room of
+ * a skill it has no stat for really does nothing there, and a cape with stats
+ * for three skills really does help three rooms. The analysis generates its
+ * pieces one skill at a time, which lists such an item once per skill with each
+ * row counting only that room.
+ *
+ * This merges the rows that are the same purchase (the same slot, item and
+ * target level) into one row applied to every kit it was generated for, and
+ * measures it as a whole. The per-skill rows are removed: each is a part of the
+ * merged gain, so leaving them in would rank every part as if it were the whole.
+ *
+ * Cost is the highest of the parts' costs: one copy is bought, and the parts
+ * differ only in which piece each kit would give up.
+ *
+ * @param {Object} params
+ * @param {Object} params.analysisResult - `{ results }`, modified in place
+ * @param {SkillingSetup} params.baseSetup
+ * @param {function(SkillingSetup, number|Object): Object} params.evaluate
+ * @param {number|Object} params.roomLevel - What the table was measured at
+ * @param {string|null} [params.targetSkill]
+ * @returns {number} How many merged rows were added
+ */
+export function mergeMultiSkillGearRows({ analysisResult, baseSetup, evaluate, roomLevel, targetSkill = null }) {
+    const results = analysisResult?.results || [];
+    const groups = new Map();
+    for (const row of results) {
+        const c = row.candidate;
+        if (row.costType !== 'gold' || !c?.upgradeHrid || !c.slot) continue;
+        if (c.type !== 'skilling_gear' && c.type !== 'enhancement') continue;
+        const key = `${c.slot}|${c.upgradeHrid}|${c.upgradeLevel}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+    }
+
+    const baseline = evaluate(baseSetup, roomLevel);
+    let added = 0;
+    for (const members of groups.values()) {
+        // Parts must be for different kits: two rows for the same skill are
+        // alternatives, not halves of one purchase
+        const identity = (r) => r.candidate.skillKey || `${r.candidate.currentHrid}+${r.candidate.currentLevel}`;
+        if (new Set(members.map(identity)).size < 2) continue;
+
+        const first = members[0].candidate;
+        const skills = members.map((r) => r.candidate.skillKey).filter(Boolean);
+        const sameStem = members.every((r) => r.candidate.currentHrid === first.currentHrid);
+        const stem = String(first.description || '').replace(/ \([^)]*\)$/, '');
+        const base = sameStem ? stem : stem.replace(/^.* \u2192 /, '');
+        const scope =
+            skills.length === members.length
+                ? skills.map((k) => k.replace('/skills/', '')).join(', ')
+                : `${members.length} kits`;
+        const pricey = members.reduce((best, r) => ((r.cost ?? -Infinity) > (best.cost ?? -Infinity) ? r : best));
+        const candidate = {
+            ...first,
+            description: `${base} (${scope})`,
+            skillKey: undefined,
+            skillKeys: skills,
+            members: members.map((r) => r.candidate),
+            merged: true,
+        };
+        const after = evaluate(applySkillingCandidate(baseSetup, candidate, targetSkill), roomLevel);
+        const clearRateDelta = after.clearRate - baseline.clearRate;
+        const cost = members.some((r) => r.cost === null || r.cost === undefined) ? null : pricey.cost;
+        const merged = {
+            candidate,
+            costType: 'gold',
+            cost,
+            costDetail: pricey.costDetail ?? null,
+            clearRate: after.clearRate,
+            clearRateDelta,
+            goldPerClearRate: clearRateDelta > GAIN_EPSILON && cost != null ? cost / (clearRateDelta * 100) : Infinity,
+            metricType: 'clearRate',
+            mergedFrom: members,
+        };
+        const at = results.indexOf(members[0]);
+        for (const r of members) results.splice(results.indexOf(r), 1);
+        results.splice(Math.min(at, results.length), 0, merged);
+        added++;
+    }
+    return added;
+}
+
+/**
+ * What an upgrade does to each room in scope.
+ *
+ * @param {Object} params
+ * @param {SkillingSetup} params.baseSetup
+ * @param {Object} params.candidate - A row's candidate (merged or not)
+ * @param {function(SkillingSetup, number|Object): Object} params.evaluate - Must report `perSkill`
+ * @param {number|Object} params.roomLevel
+ * @param {string|null} [params.targetSkill]
+ * @returns {Array<{skillHrid: string, skillName: string, roomLevel: number, before: number, after: number,
+ *   delta: number, triesBefore: number, triesAfter: number, affected: boolean}>}
+ */
+export function skillBreakdown({ baseSetup, candidate, evaluate, roomLevel, targetSkill = null }) {
+    const before = evaluate(baseSetup, roomLevel).perSkill || [];
+    const after = evaluate(applySkillingCandidate(baseSetup, candidate, targetSkill), roomLevel).perSkill || [];
+    const tries = (rate) => (rate > 0 ? 1 / rate : Infinity);
+    return before.map((b) => {
+        const a = after.find((x) => x.skillHrid === b.skillHrid) || b;
+        return {
+            skillHrid: b.skillHrid,
+            skillName: b.skillName,
+            roomLevel: b.roomLevel,
+            before: b.clearChance,
+            after: a.clearChance,
+            delta: a.clearChance - b.clearChance,
+            triesBefore: tries(b.clearChance),
+            triesAfter: tries(a.clearChance),
+            affected: Math.abs(a.clearChance - b.clearChance) > RATE_EPSILON,
+        };
+    });
+}
+
 // ─── Costs ───────────────────────────────────────────────────────────────────
 
 /**
@@ -354,6 +486,9 @@ function rankGold(cost) {
  */
 export function skillingCandidatesConflict(a, b) {
     if (!a || !b) return false;
+    if (a.members || b.members) {
+        return (a.members || [a]).some((x) => (b.members || [b]).some((y) => skillingCandidatesConflict(x, y)));
+    }
     if (a.type === 'labyrinth_buff' || b.type === 'labyrinth_buff') {
         return a.type === b.type && a.editorKey === b.editorKey;
     }
@@ -751,4 +886,73 @@ export function renderCombinationHtml(combo, { showLevels = false } = {}) {
     if (showLevels) html += `<td style="${TD} color:#ccc;">${levelCell(combo.maxRoomLevel, combo.floor)}</td>`;
     html += '</tr></tbody></table>';
     return html;
+}
+
+/**
+ * Work out, for each gear row, which rooms it moves and what it does to the
+ * tries a full pass over the rooms takes.
+ *
+ * Fills `rooms` ({affected, total}), `tries` and `triesDelta` (the sum of
+ * 1 / clear rate over the rooms run, before and after; the skilling model is
+ * analytic, so unlike the combat table there is no sampling error to quote) and
+ * keeps the room lines on the row for its expansion. A room that never clears
+ * has infinite tries.
+ *
+ * @param {Object} params
+ * @param {Array<Object>} params.rows - Skilling analysis rows; only gold rows are annotated
+ * @param {SkillingSetup} params.baseSetup
+ * @param {function(SkillingSetup, number|Object): Object} params.evaluate - Must report `perSkill`
+ * @param {number|Object} params.roomLevel
+ * @param {string|null} [params.targetSkill]
+ * @param {Function} [params.abortSignal]
+ * @param {function(): Promise<void>} [params.yieldFn]
+ * @returns {Promise<void>}
+ */
+export async function annotateRoomsReached({
+    rows,
+    baseSetup,
+    evaluate,
+    roomLevel,
+    targetSkill = null,
+    abortSignal = null,
+    yieldFn = defaultYield,
+}) {
+    for (const row of rows) {
+        if (row.costType !== 'gold' || !row.candidate) continue;
+        if (abortSignal?.()) return;
+        await yieldFn();
+        const lines = skillBreakdown({ baseSetup, candidate: row.candidate, evaluate, roomLevel, targetSkill });
+        const before = lines.reduce((sum, l) => sum + l.triesBefore, 0);
+        const after = lines.reduce((sum, l) => sum + l.triesAfter, 0);
+        row.breakdownLines = lines;
+        row.rooms = { affected: lines.filter((l) => l.affected).length, total: lines.length };
+        row.tries = after;
+        row.triesDelta = after - before;
+    }
+}
+
+/**
+ * The per-room breakdown of one upgrade, laid out like the combat Upgrade tab's
+ * per-fight lines: the room on the left, before to after on the right, and
+ * rooms the upgrade cannot touch named as such rather than dropped.
+ *
+ * @param {Array<Object>} lines - From `skillBreakdown`
+ * @returns {string} HTML
+ */
+export function renderSkillBreakdownHtml(lines) {
+    const tries = (value) => (Number.isFinite(value) ? value.toFixed(1) : '\u221e');
+    return lines
+        .map((line) => {
+            const outcome = line.affected
+                ? `${pct(line.before)} \u2192 ${pct(line.after)} ` +
+                  `<span style="color:${line.delta > 0 ? '#4caf50' : '#f44336'};">(${line.delta >= 0 ? '+' : ''}${(line.delta * 100).toFixed(2)}%)</span> ` +
+                  `<span style="color:#666;">| ${tries(line.triesBefore)} \u2192 ${tries(line.triesAfter)} tries</span>`
+                : `<span style="color:#666;">unaffected \u2014 ${pct(line.before)} unchanged</span>`;
+            return (
+                `<div data-skill-breakdown-line="${esc(line.skillHrid)}" style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">` +
+                `<span style="color:#aaa;">${esc(line.skillName)} <span style="color:#666;">(Lv ${line.roomLevel})</span></span>` +
+                `<span style="white-space:nowrap;">${outcome}</span></div>`
+            );
+        })
+        .join('');
 }

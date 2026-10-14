@@ -3733,7 +3733,7 @@ describe('the Skilling tab’s room levels, goal planner and Sim together', () =
             container
         );
 
-        expect(container.querySelectorAll('th').length).toBe(6);
+        expect(container.querySelectorAll('th').length).toBe(9);
         expect(container.textContent).not.toContain('Levels');
         expect(container.querySelector('[data-skilling-room-level-summary]')).toBeNull();
         expect(container.querySelectorAll('input[data-skilling-pick]').length).toBe(1);
@@ -3919,5 +3919,54 @@ describe('the Skilling tab’s room levels, goal planner and Sim together', () =
         expect(goalResults().querySelector('[data-combo-conflict]').textContent).toContain('the later one was taken');
         expect(goalResults().querySelector('[data-combo-clear]').textContent).toBe('70.0%');
         expect(goalResults().textContent).toContain('Top B');
+    });
+
+    test('a gear row shows its rooms and tries, and unfolds into one line per room', () => {
+        const lines = [
+            {
+                skillHrid: '/skills/milking',
+                skillName: 'Milking',
+                roomLevel: 100,
+                before: 0.27,
+                after: 0.274,
+                delta: 0.004,
+                triesBefore: 3.7,
+                triesAfter: 3.65,
+                affected: true,
+            },
+            {
+                skillHrid: '/skills/cooking',
+                skillName: 'Cooking',
+                roomLevel: 100,
+                before: 0.3,
+                after: 0.3,
+                delta: 0,
+                triesBefore: 3.33,
+                triesAfter: 3.33,
+                affected: false,
+            },
+        ];
+        const container = document.createElement('div');
+        const row = tableRow({
+            candidate: { description: 'Cape' },
+            rooms: { affected: 1, total: 2 },
+            tries: 7,
+            triesDelta: -0.05,
+            breakdownLines: lines,
+        });
+        ui._renderSkillingUpgradeResults({ baseline: { clearRate: 0.5 }, results: [row] }, container);
+
+        const tr = container.querySelector('tr[data-skilling-gold-row]');
+        expect(tr.textContent).toContain('1 / 2');
+        expect(tr.textContent).toContain('-0.05');
+        tr.click();
+        const detail = container.querySelector('[data-skilling-gold-detail]');
+        expect(detail.style.display).toBe('table-row');
+        expect(detail.querySelector('[data-skill-breakdown-line="/skills/milking"]').textContent).toContain(
+            '27.0% \u2192 27.4% (+0.40%)'
+        );
+        expect(detail.querySelector('[data-skill-breakdown-line="/skills/cooking"]').textContent).toContain(
+            'unaffected \u2014 30.0% unchanged'
+        );
     });
 });
