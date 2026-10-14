@@ -89,6 +89,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Token tooltips now total the stack you hold at the best shop item ("Your 22,657 tokens ≈ 154.1M as Pathseeker Lodestone"), and the Combat Sim prices labyrinth scrolls by what their tokens would buy instead, in their own table with net gold per hour, so you can see when a scroll beats spending those tokens on lodestones. Scrolls also get a Score across DPS, EXP and Profit, from gold per hour of tokens per 0.01% gained.
 
+### Lab Sim: check a swap you pick
+
+- The Lab Sim's Upgrade and Skilling tabs have a Check a swap row: queue any items at a level (Sinister Cape +7, Chimerical Quiver +5…), and Check puts each into every loadout or skill kit that uses that slot, prices it like the generated rows, and lists them side by side with the per-fight or per-skill breakdown.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
