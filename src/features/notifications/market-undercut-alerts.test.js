@@ -600,12 +600,16 @@ describe('settings schema backs the undercut alert', () => {
 });
 
 describe('settings schema backs the overbid table', () => {
-    test('its help names the pooled-history opt-in and the host it talks to', () => {
+    test('its help names the pooled-history opt-in, the source setting, and every host that source can use', () => {
         const panel = getSettingDefinition('market_overbidPanel');
         const pooled = getSettingDefinition('market_pooledHistory');
-        const host = /q7\.nainai\.eu\.org/.exec(pooled.help)[0];
-        expect(panel.help).toContain(host);
+        const source = getSettingDefinition('market_historySource');
         expect(panel.help).toContain(pooled.label.replace('Market: ', ''));
+        expect(panel.help).toContain(source.label);
+        for (const option of source.options) {
+            const host = /\(([^)]+)\)/.exec(option.label)[1];
+            expect(panel.help).toContain(host);
+        }
         expect(panel.help).not.toMatch(/makes no requests of its own/);
     });
 });
