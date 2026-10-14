@@ -1680,6 +1680,34 @@ describe('the Chain/hr (own stock) sort', () => {
         expect(cells()[1].textContent).toBe('—');
     });
 
+    test('stock gained while the table is open gets its figure instead of a permanent ellipsis', async () => {
+        tooltip.held = { '/items/a': 1 };
+        tooltip.chains = { '/items/a': chain(100), '/items/b': chain(7000) };
+        await open([row('a', 1), row('b', 1)]);
+        expect(names()).toEqual(['a']);
+        tooltip.held = { '/items/a': 1, '/items/b': 4 };
+        bestItems.modal.style.display = 'flex';
+        bestItems.renderTable();
+        expect(cells().map((c) => c.textContent)).toContain('…');
+        await vi.waitFor(() => expect(bestItems.ownStock.has('/items/b')).toBe(true));
+        expect(names()).toEqual(['b', 'a']);
+        expect(cells()[0].textContent).toBe(formatKMB(7000));
+        // And it settles: no further sweeps once every held row has a figure
+        const calls = tooltip.calls.length;
+        bestItems.renderTable();
+        expect(tooltip.calls.length).toBe(calls);
+    });
+
+    test('the hover words kept outputs as valued at what you would pay', async () => {
+        tooltip.held = { '/items/a': 1 };
+        tooltip.chains = { '/items/a': chain(100, { kept: ['/items/frenzy'] }) };
+        game.items['/items/frenzy'] = { name: 'Frenzy' };
+        await open([row('a', 1)]);
+        const title = cells()[0].title;
+        expect(title).toContain('Frenzy kept at what you would pay');
+        expect(title).toContain('the rest at your sell pricing');
+    });
+
     test('is remembered like the other sorts, and falls back to profit off the Decompose tab', () => {
         bestItems.createModal();
         bestItems.chooseSortMode('chainOwnStock');
