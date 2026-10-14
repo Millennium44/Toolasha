@@ -199,10 +199,14 @@ describe('the one-time split of the legacy array', () => {
         const loaded = await lootLogHistory.getHistoricalEntries(new Set());
 
         expect(loaded.map((e) => e.characterActionId)).toEqual([2, 1]);
-        expect(storageMock.putAll).toHaveBeenCalledWith('lootLogHistory', {
-            'lootLogRec_char-1_2026-08-01T11': [expect.objectContaining({ characterActionId: 2 })],
-            'lootLogRec_char-1_2026-08-01T10': [expect.objectContaining({ characterActionId: 1 })],
-        });
+        expect(storageMock.putAll).toHaveBeenCalledWith(
+            'lootLogHistory',
+            {
+                'lootLogRec_char-1_2026-08-01T11': [expect.objectContaining({ characterActionId: 2 })],
+                'lootLogRec_char-1_2026-08-01T10': [expect.objectContaining({ characterActionId: 1 })],
+            },
+            expect.anything()
+        );
         expect(storageMock.store.has('lootLog_char-1')).toBe(false);
     });
 
