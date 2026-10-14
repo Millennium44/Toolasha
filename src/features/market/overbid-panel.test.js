@@ -10,6 +10,7 @@ const hoisted = vi.hoisted(() => ({
     setting: true,
     pooled: false,
     inFlight: false,
+    tabs: null,
     mooket: new Map(),
     refresh: vi.fn(async () => {}),
 }));
@@ -64,7 +65,11 @@ vi.mock('../notifications/market-undercut-alerts.js', () => ({
         refreshMooketObservations: hoisted.refresh,
     },
 }));
-vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: hoisted.navigate }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: hoisted.navigate,
+    visibleTabsContainer: () => hoisted.tabs,
+    insertTabInOrder: (container, tab) => container.appendChild(tab),
+}));
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: vi.fn(),
     saveGeometry: vi.fn(),
@@ -158,6 +163,7 @@ describe('panel', () => {
         hoisted.navigate.mockClear();
         hoisted.pooled = false;
         hoisted.inFlight = false;
+        hoisted.tabs = null;
         hoisted.mooket.clear();
         hoisted.refresh.mockClear();
         document.body.innerHTML = '';
@@ -313,6 +319,115 @@ describe('panel', () => {
         hoisted.inFlight = false;
         await vi.advanceTimersByTimeAsync(2500);
         expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('an auto-hide for want of fresh evidence is not a dismissal: the same beaten listing reopens it', () => {
+        hoisted.listings = [listing({ id: 1 })];
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        expect(root()).not.toBeNull();
+        // The evidence expires and the panel hides itself
+        delete hoisted.observations[`${CHEESE}:0:sell`];
+        fire();
+        expect(root()).toBeNull();
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        fire();
+        expect(root()).not.toBeNull();
+    });
+
+    it('a relisted item with a stale sighting, or an earlier request mark, is asked for again', async () => {
+        hoisted.pooled = true;
+        hoisted.listings = [listing({ id: 1 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(1);
+        // The listing leaves, then the item is listed again
+        hoisted.listings = [];
+        fire();
+        hoisted.listings = [listing({ id: 2 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(2);
+        // A sighting older than the freshness window counts as missing
+        hoisted.listings = [];
+        fire();
+        hoisted.mooket.set(`${CHEESE}:0`, { timestamp: NOW - MAX - 1000 });
+        hoisted.listings = [listing({ id: 3 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(3);
+        // A fresh one does not
+        hoisted.listings = [];
+        fire();
+        hoisted.mooket.set(`${CHEESE}:0`, { timestamp: Date.now() - 1000 });
+        hoisted.listings = [listing({ id: 4 })];
+        fire();
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(hoisted.refresh).toHaveBeenCalledTimes(3);
+    });
+
+    describe('the Overbid tab', () => {
+        function strip() {
+            const container = document.createElement('div');
+            const native = document.createElement('button');
+            native.setAttribute('role', 'tab');
+            native.innerHTML = '<span class="TabsComponent_badge__x">My Listings</span>';
+            container.appendChild(native);
+            document.body.appendChild(container);
+            hoisted.tabs = container;
+            return container;
+        }
+        const tab = (container) => container.querySelector('[data-mwi-overbid-tab="true"]');
+        const seen = () => document.body.textContent;
+
+        it('is added to the marketplace strip once, as a clone of a native tab', async () => {
+            const container = strip();
+            await overbidPanel.disable();
+            await overbidPanel.initialize();
+            await Promise.resolve();
+            expect(tab(container)).not.toBeNull();
+            expect(tab(container).textContent).toBe('Overbid');
+            expect(container.querySelectorAll('[data-mwi-overbid-tab="true"]')).toHaveLength(1);
+        });
+
+        it('opens the table with a nothing-beaten line, and is not a dismissal', async () => {
+            const container = strip();
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            expect(root()).toBeNull();
+            tab(container).click();
+            expect(root()).not.toBeNull();
+            expect(root().textContent).toContain('Nothing is undercut or outbid right now');
+            // Stays open through updates while nothing is beaten
+            fire();
+            expect(root()).not.toBeNull();
+            // The automatic pop-up still works afterwards
+            root().querySelector('.toolasha-minimize-btn').nextElementSibling.click();
+            expect(root()).toBeNull();
+            hoisted.listings = [listing()];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            expect(root()).not.toBeNull();
+        });
+
+        it('notes listings whose price data is old or missing', async () => {
+            const container = strip();
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            hoisted.listings = [listing()];
+            tab(container).click();
+            expect(root().textContent).toMatch(/old or missing for 1 of your listings/);
+            expect(seen()).toContain('Nothing is undercut or outbid right now');
+        });
+
+        it('is removed on disable', async () => {
+            const container = strip();
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            expect(tab(container)).not.toBeNull();
+            overbidPanel.disable();
+            expect(tab(container)).toBeNull();
+        });
     });
 
     it('cleanup removes the panel and every subscription', () => {

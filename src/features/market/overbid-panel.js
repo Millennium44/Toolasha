@@ -38,7 +38,8 @@ import localMarketUndercutAlerts from '../notifications/market-undercut-alerts.j
 import { marketUndercutAlerts as liveMarketUndercutAlerts } from '../../utils/bundle-bridge.js';
 import { listingBeaten } from '../notifications/notification-predicates.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
-import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { navigateToMarketplace, visibleTabsContainer, insertTabInOrder } from '../../utils/marketplace-tabs.js';
+import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB3Digits } from '../../utils/formatters.js';
 
@@ -83,19 +84,24 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
  * @param {Function} observe - See {@link findBeatenListings}
  * @param {number} now - Current time in ms
  * @param {number} maxAgeMs - How old a figure may be and still count
- * @returns {{beaten: ReturnType<typeof findBeatenListings>, settled: Set<*>, activeIds: Set<*>}}
+ * @returns {{beaten: ReturnType<typeof findBeatenListings>, settled: Set<*>, activeIds: Set<*>,
+ *   unknown: number}} `unknown` counts active listings with no usable figure
  */
 export function classifyListings(listings, observe, now, maxAgeMs) {
     const active = (listings || []).filter((listing) => listing?.status === ACTIVE_STATUS && listing.itemHrid);
     const beaten = [];
     const settled = new Set();
     const activeIds = new Set(active.map((listing) => listing.id));
+    let unknown = 0;
 
     for (const listing of active) {
         const level = listing.enhancementLevel || 0;
         const isSell = listing.isSell === true;
         const observation = observe(listing.itemHrid, level, isSell);
-        if (!observation) continue;
+        if (!observation) {
+            unknown += 1;
+            continue;
+        }
 
         const ageMs = now - observation.timestamp;
         const { fire } = listingBeaten({
@@ -109,6 +115,7 @@ export function classifyListings(listings, observe, now, maxAgeMs) {
         if (!fire) {
             const usable = Number.isFinite(ageMs) && ageMs <= maxAgeMs && Number.isFinite(observation.price);
             if (usable) settled.add(listing.id);
+            else unknown += 1;
             continue;
         }
 
@@ -137,7 +144,7 @@ export function classifyListings(listings, observe, now, maxAgeMs) {
         });
     }
 
-    return { beaten, settled, activeIds };
+    return { beaten, settled, activeIds, unknown };
 }
 
 /**
@@ -183,10 +190,18 @@ function rowLabel(row) {
  * Draw the table into a panel body.
  * @param {HTMLElement} body - Panel body
  * @param {Object[]} rows - Beaten listings
+ * @param {number} [unknown] - Active listings that could not be checked for lack of fresh data
  */
-export function drawOverbidTable(body, rows) {
+export function drawOverbidTable(body, rows, unknown = 0) {
+    if (unknown > 0) {
+        body.appendChild(
+            panelNote(
+                `Price data is old or missing for ${unknown} of your listings, so ${unknown === 1 ? 'it' : 'they'} could not be checked.`
+            )
+        );
+    }
     if (!rows.length) {
-        body.appendChild(panelNote('Nothing of yours is overbid right now.'));
+        body.appendChild(panelNote('Nothing is undercut or outbid right now.'));
         return;
     }
 
@@ -248,8 +263,15 @@ class OverbidPanel {
         this.panel = null;
         /** The beaten listings from the last update; the panel draws from this */
         this.rows = [];
-        /** Listing ids already announced (and not since resolved), so a dismissed panel stays dismissed */
-        this.announced = new Set();
+        /** Listing ids the player closed the panel on, so they are not announced again until resolved */
+        this.dismissed = new Set();
+        /** Whether the panel is open because this module (or the button) opened it and has not seen it close */
+        this.wasOpen = false;
+        /** Opened on demand: stays open when nothing is beaten */
+        this.manual = false;
+        /** Active listings with no usable figure, as of the last update */
+        this.unknown = 0;
+        this.openButton = null;
         this.isInitialized = false;
         this.generation = 0;
         this.sightingTimer = null;
@@ -272,11 +294,13 @@ class OverbidPanel {
             size: { width: 400, height: 220 },
             accent: ACCENT,
             draw: (body) => {
-                const note = document.createElement('div');
-                note.textContent = 'Your items have been overbid';
-                note.style.color = MUTED;
-                body.appendChild(note);
-                drawOverbidTable(body, this.rows);
+                if (this.rows.length) {
+                    const note = document.createElement('div');
+                    note.textContent = 'Your items have been overbid';
+                    note.style.color = MUTED;
+                    body.appendChild(note);
+                }
+                drawOverbidTable(body, this.rows, this.unknown);
             },
         });
 
@@ -297,6 +321,8 @@ class OverbidPanel {
         // An observation ages out without any event announcing it; reading memory is cheap
         this.cleanup.registerInterval(setInterval(handler, RECHECK_MS), 'overbidPanel:recheck');
 
+        this.addOpenButton();
+
         const switching = () => this.disable();
         dataManager.on('character_switching', switching);
         this.cleanup.registerCleanup(() => dataManager.off('character_switching', switching));
@@ -315,9 +341,17 @@ class OverbidPanel {
     requestMissingSightings() {
         if (!config.getSetting(POOLED_SETTING)) return;
         const alerts = undercutAlerts();
-        const missing = alerts.distinctActiveItems().filter((item) => {
+        const items = alerts.distinctActiveItems();
+        // A listing that left takes its mark with it, so a relisting starts a fresh life
+        const activeKeys = new Set(items.map((item) => `${item.itemHrid}:${item.enhancementLevel}`));
+        for (const key of this.requestedSightings) if (!activeKeys.has(key)) this.requestedSightings.delete(key);
+        const now = Date.now();
+        const missing = items.filter((item) => {
             const key = `${item.itemHrid}:${item.enhancementLevel}`;
-            return !alerts.mooketObservations.has(key) && !this.requestedSightings.has(key);
+            const seen = alerts.mooketObservations.get(key);
+            // An old sighting proves nothing, so it counts as missing
+            const usable = seen && Number.isFinite(seen.timestamp) && now - seen.timestamp <= marketAPI.CACHE_DURATION;
+            return !usable && !this.requestedSightings.has(key);
         });
         if (!missing.length || this.sightingTimer !== null) return;
         this.scheduleSightingRefresh(this.generation);
@@ -359,6 +393,7 @@ class OverbidPanel {
      */
     update() {
         if (!this.isInitialized || !this.panel) return;
+        const shownRows = this.rows;
         let classification;
         try {
             classification = currentClassification();
@@ -368,27 +403,100 @@ class OverbidPanel {
             return;
         }
 
-        const ids = new Set(this.rows.map((row) => row.id));
+        this.unknown = classification.unknown;
+
+        // Open before and closed now, and not by us: the player closed it, which is a dismissal of what it showed
+        if (this.wasOpen && !this.panel.isOpen()) {
+            this.wasOpen = false;
+            this.manual = false;
+            for (const row of shownRows) this.dismissed.add(row.id);
+        }
+
         // Forgotten only when the listing is gone or fresh evidence shows it competitive again, so being
-        // beaten again is news. A figure gone stale or unknown proves nothing and must not reset a dismissal.
-        for (const id of this.announced) {
-            if (!classification.activeIds.has(id) || classification.settled.has(id)) this.announced.delete(id);
+        // beaten again is news. A figure gone stale or unknown proves nothing and must not reset a dismissal,
+        // and a panel that hid itself for want of fresh evidence was never dismissed.
+        for (const id of this.dismissed) {
+            if (!classification.activeIds.has(id) || classification.settled.has(id)) this.dismissed.delete(id);
         }
 
         if (!this.rows.length) {
-            this.panel.hide({ remember: false });
+            this.panel.setTitle('Overbid table');
+            if (this.manual && this.panel.isOpen()) {
+                this.panel.render();
+            } else {
+                this.wasOpen = false;
+                this.panel.hide({ remember: false });
+            }
             return;
         }
 
         this.panel.setTitle(`Overbid table (${this.rows.length})`);
-        const fresh = this.rows.some((row) => !this.announced.has(row.id));
-        for (const id of ids) this.announced.add(id);
+        const fresh = this.rows.some((row) => !this.dismissed.has(row.id));
 
         if (this.panel.isOpen()) {
             this.panel.render();
         } else if (fresh) {
             this.panel.show({ remember: false });
+            this.wasOpen = true;
         }
+    }
+
+    /**
+     * Open the table on demand, whether or not anything is beaten. Not a dismissal, and the automatic
+     * pop-up keeps working afterwards.
+     */
+    openNow() {
+        if (!this.isInitialized || !this.panel) return;
+        this.manual = true;
+        this.update();
+        if (!this.panel.isOpen()) this.panel.show({ remember: false });
+        this.panel.expand();
+        this.wasOpen = true;
+        this.panel.render();
+    }
+
+    /**
+     * Keep a small "Overbid" tab in the marketplace tab strip that opens the table.
+     *
+     * Cloned from one of the game's own tabs, chosen by role and by not carrying one of our markers rather
+     * than by its label; the strip itself is found by the shared `visibleTabsContainer`.
+     */
+    addOpenButton() {
+        const ensure = () => {
+            const container = visibleTabsContainer();
+            if (!container) return;
+            if (container.querySelector('[data-mwi-overbid-tab="true"]')) return;
+            const reference = Array.from(container.querySelectorAll('[role="tab"]')).find(
+                (tab) => !tab.matches('[data-mwi-custom-tab], [data-mwi-tab-key], [data-mwi-shrine-tab]')
+            );
+            if (!reference) return;
+
+            const tab = reference.cloneNode(true);
+            tab.setAttribute('data-mwi-overbid-tab', 'true');
+            tab.setAttribute('data-mwi-custom-tab', 'true');
+            tab.classList.remove('Mui-selected');
+            tab.setAttribute('aria-selected', 'false');
+            tab.setAttribute('tabindex', '-1');
+            const badge = tab.querySelector('[class*="TabsComponent_badge"]');
+            if (badge) badge.textContent = 'Overbid';
+            else tab.textContent = 'Overbid';
+            tab.title = 'Show the listings of yours that are undercut or outbid';
+            tab.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.openNow();
+            });
+            insertTabInOrder(container, tab);
+            this.openButton = tab;
+        };
+
+        const unwatch = createMutationWatcher(document.body, ensure, { childList: true, subtree: true });
+        this.cleanup.registerCleanup(() => {
+            unwatch();
+            this.openButton?.remove();
+            this.openButton = null;
+        });
+        ensure();
     }
 
     /**
@@ -399,7 +507,10 @@ class OverbidPanel {
         this.panel?.destroy();
         this.panel = null;
         this.rows = [];
-        this.announced.clear();
+        this.dismissed.clear();
+        this.wasOpen = false;
+        this.manual = false;
+        this.unknown = 0;
         this.requestedSightings.clear();
         this.sightingTimer = null;
         this.generation += 1;
