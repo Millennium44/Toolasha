@@ -491,6 +491,14 @@ export function createPersistedRecord({
             }
         },
 
+        /**
+         * Stop listening for sync pulls. For an owner that discards a record handle (one made per character)
+         * so it is not held by the pull registry for the life of the page. The record still works.
+         */
+        release() {
+            pulledRecords.delete(record);
+        },
+
         /** @returns {boolean} Whether a readable load has completed */
         isLoaded() {
             return loaded;
