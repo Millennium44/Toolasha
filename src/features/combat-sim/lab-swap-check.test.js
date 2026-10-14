@@ -538,6 +538,82 @@ describe('combat: who a checked swap reaches', () => {
             expect(both.cost).toBeGreaterThan(meleeOnly.cost);
         });
 
+        test('combat: every distinct piece replaced in a reached loadout is credited once; one an unreached loadout wears is not', () => {
+            const OTHER = '/items/other_plain_cape';
+            ITEM_DETAIL_MAP[OTHER] = {
+                hrid: OTHER,
+                name: 'Other Plain Cape',
+                isTradable: true,
+                equipmentDetail: { type: BACK, combatStats: { armor: 1 } },
+            };
+            const meleeA = wearing({ [MAIN]: piece(SWORD, 3), [BACK]: piece(PLAIN_CAPE, 3) });
+            const meleeB = wearing({ [MAIN]: piece(MACE, 3), [BACK]: piece(OTHER, 2) });
+            const meleeC = wearing({ [MAIN]: piece(SWORD, 9), [BACK]: piece(PLAIN_CAPE, 3) });
+            const magicLoadout = wearing({ [TWO]: piece(STAFF, 3), [BACK]: piece(OTHER, 2) });
+            const swap = { hrid: CAPE, level: 7 };
+            const entry = (hrid, enhancementLevel) => ({ hrid, enhancementLevel });
+            const price = (removedItems) =>
+                advisor.calculateUpgradeCost(
+                    {
+                        type: 'tier',
+                        slot: BACK,
+                        currentHrid: PLAIN_CAPE,
+                        currentLevel: 3,
+                        upgradeHrid: CAPE,
+                        upgradeLevel: 7,
+                        removedItems,
+                    },
+                    gameData
+                );
+
+            // Two reached loadouts, two different capes, one cape replaces both
+            const both = buildCombatSwapCandidate(swap, [meleeA, meleeB, meleeC], gameData);
+            expect(both.reach).toBe(3);
+            expect(both.removedItems).toEqual([entry(PLAIN_CAPE, 3), entry(OTHER, 2)]);
+            expect(both.keptItems).toBeUndefined();
+            expect(both.cost).toBe(price([entry(PLAIN_CAPE, 3), entry(OTHER, 2)]));
+            expect(both.cost).toBeLessThan(price([entry(PLAIN_CAPE, 3)]));
+
+            // The magic loadout is not reached and still wears the Other cape: kept, not sold
+            const withUnreached = buildCombatSwapCandidate(swap, [meleeA, meleeB, magicLoadout], gameData);
+            expect(withUnreached.removedItems).toEqual([entry(PLAIN_CAPE, 3)]);
+            expect(withUnreached.keptItems).toEqual([entry(OTHER, 2)]);
+            expect(withUnreached.cost).toBe(price([entry(PLAIN_CAPE, 3)]));
+        });
+
+        test('skilling: every distinct piece replaced across the reached kits is credited once', () => {
+            const TOOL = '/equipment_types/milking_tool';
+            ITEM_DETAIL_MAP['/items/tool_a'] = {
+                hrid: '/items/tool_a',
+                name: 'Tool A',
+                isTradable: true,
+                equipmentDetail: { type: TOOL, noncombatStats: { milkingSpeed: 0.1 } },
+            };
+            ITEM_DETAIL_MAP['/items/tool_b'] = {
+                hrid: '/items/tool_b',
+                name: 'Tool B',
+                isTradable: true,
+                equipmentDetail: { type: TOOL, noncombatStats: { milkingSpeed: 0.2 } },
+            };
+            const context = {
+                dto: { equipment: {} },
+                skillEquipmentMap: {
+                    '/skills/milking': { [TOOL]: piece('/items/tool_a', 3) },
+                    '/skills/foraging': { [TOOL]: piece('/items/tool_b', 2) },
+                },
+                skills: ['/skills/milking', '/skills/foraging'],
+            };
+            const candidate = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 7 }, context, gameData, true, {
+                allLoadouts: true,
+            });
+            expect(candidate.skillKeys).toEqual(['/skills/milking', '/skills/foraging']);
+            expect(candidate.removedItems).toEqual([
+                { hrid: '/items/tool_a', enhancementLevel: 3 },
+                { hrid: '/items/tool_b', enhancementLevel: 2 },
+            ]);
+            expect(candidate.keptItems).toBeUndefined();
+        });
+
         test('combat: a different piece in the unreached loadout leaves the credit alone', () => {
             const melee = wearing({ [MAIN]: piece(SWORD, 3), [BACK]: piece(PLAIN_CAPE, 3) });
             const magic = wearing({ [TWO]: piece(STAFF, 3), [BACK]: piece(PLAIN_CAPE, 4) });

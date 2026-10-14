@@ -279,17 +279,35 @@ const KEPT_CAVEAT =
     ' The piece it replaces is still worn by a loadout this swap does not reach, so its resale is not credited.';
 
 /**
- * The replaced piece, as a kept item, when something outside the swap's reach still wears it.
- * @param {{route: string, currentHrid: string, currentLevel: number}} route - From `routeFor`
- * @param {Array<Object|null|undefined>} unreachedPieces - What the loadouts left out wear in the slot
- * @returns {Array<{hrid: string, enhancementLevel: number}>|null}
+ * Every piece the swap replaces, split into what is sold and what is kept.
+ *
+ * The swap reaches several loadouts, and they may wear different pieces in the
+ * slot: each distinct piece (by item and level) is replaced somewhere and so is
+ * credited once. A piece that a loadout the swap does not reach still wears is
+ * kept, not sold, and the item being bought is never its own replacement.
+ *
+ * @param {Object} swap - `{ hrid, level }`
+ * @param {string} routeName - From `routeFor`; only a `swap` replaces anything
+ * @param {Array<Object|null|undefined>} reachedPieces - `{ hrid, level }` worn in the slot by the loadouts reached
+ * @param {Array<Object|null|undefined>} unreachedPieces - `{ hrid, enhancementLevel }` worn by the loadouts left out
+ * @returns {{removed: Array<{hrid: string, enhancementLevel: number}>, kept: Array<{hrid: string, enhancementLevel: number}>}|null}
  */
-function keptByUnreached(route, unreachedPieces) {
-    if (route.route !== 'swap') return null;
-    const stillWorn = unreachedPieces.some(
-        (piece) => piece?.hrid === route.currentHrid && (piece.enhancementLevel || 0) === route.currentLevel
-    );
-    return stillWorn ? [{ hrid: route.currentHrid, enhancementLevel: route.currentLevel }] : null;
+function replacedPieces(swap, routeName, reachedPieces, unreachedPieces) {
+    if (routeName !== 'swap') return null;
+    const stillWorn = (hrid, level) =>
+        unreachedPieces.some((piece) => piece?.hrid === hrid && (piece.enhancementLevel || 0) === level);
+    const seen = new Set();
+    const removed = [];
+    const kept = [];
+    for (const piece of reachedPieces) {
+        if (!piece?.hrid || piece.hrid === swap.hrid) continue;
+        const key = `${piece.hrid}@${piece.level}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const item = { hrid: piece.hrid, enhancementLevel: piece.level };
+        (stillWorn(piece.hrid, piece.level) ? kept : removed).push(item);
+    }
+    return { removed, kept };
 }
 
 const OWNED_CAVEAT =
@@ -368,14 +386,19 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
     } else {
         // A replaced piece that a loadout the swap does not reach still wears
         // cannot be sold to fund it
-        const kept = keptByUnreached(
-            route,
+        const replaced = replacedPieces(
+            swap,
+            route.route,
+            worn,
             (dtos || []).filter((dto) => !reached.includes(dto)).map((dto) => dto?.equipment?.[slot])
         );
-        if (kept) {
-            candidate.keptItems = kept;
-            candidate.removedItems = [];
-            candidate.pricingNote += KEPT_CAVEAT;
+        if (replaced) {
+            // Each distinct piece replaced in a reached loadout is sold once
+            candidate.removedItems = replaced.removed;
+            if (replaced.kept.length) {
+                candidate.keptItems = replaced.kept;
+                candidate.pricingNote += KEPT_CAVEAT;
+            }
         }
         candidate.cost = calculateUpgradeCost(candidate, gameData, isSelf);
     }
@@ -454,13 +477,16 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         description: route.description,
         type: route.type,
     };
-    const replaced = route.currentHrid && route.type === 'tier' ? gameData.itemDetailMap[route.currentHrid] : null;
     const unreachedPieces = skills
         .filter((skill) => !reached.some((entry) => entry.skill === skill))
         .map((skill) => (skillEquipmentMap[skill] || dto?.equipment || {})[slot]);
-    if ((replaced && isCombatOnlyItem(replaced)) || keptByUnreached(route, unreachedPieces)) {
-        priced.keptItems = [{ hrid: route.currentHrid, enhancementLevel: route.currentLevel }];
-        priced.removedItems = [];
+    const replaced = replacedPieces(swap, route.route, worn, unreachedPieces);
+    if (replaced) {
+        // Combat armor is never sold to fund a skilling piece; it goes back in its loadout
+        const combatOnly = (item) => isCombatOnlyItem(gameData.itemDetailMap[item.hrid]);
+        const kept = [...replaced.kept, ...replaced.removed.filter(combatOnly)];
+        priced.removedItems = replaced.removed.filter((item) => !combatOnly(item));
+        if (kept.length) priced.keptItems = kept;
     }
     // A kit already wearing the piece at this level owns it; the others reuse that copy
     const cost = owned ? 0 : calculateUpgradeCost(priced, gameData, isSelf);
