@@ -1192,6 +1192,33 @@ describe('a sync pull landing under the running tracker', () => {
         expect(treasureTracker.tally['/items/other_chest'].opened).toBe(1);
     });
 
+    test('a replace import landing while the pull is being read is not raised back to the old counts', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 9, loot: {} } });
+        await treasureTracker.initialize();
+        let release;
+        storageMock.delays.set(
+            KEY,
+            new Promise((resolve) => {
+                release = resolve;
+            })
+        );
+        announceSyncPullApplied({ settings: [KEY] });
+        await Promise.resolve();
+        // What a "replace" import does: the ledger becomes exactly the file's
+        treasureTracker.tally = { [CHEST]: { opened: 2, loot: {} } };
+        treasureTracker._save({ replace: true });
+        await treasureTracker.ledger.flushed();
+        // The read was started before the replace landed, so it still finds the old counts
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 9, loot: {} } });
+        storageMock.delays.clear();
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(treasureTracker.tally[CHEST].opened).toBe(2);
+        expect(treasureTracker.ledger.get()[CHEST].opened).toBe(2);
+    });
+
     test('a pull of another character, or with the tracker off, changes nothing', async () => {
         config.getSetting.mockImplementation((id) => id === 'treasureTracker');
         await treasureTracker.initialize();
