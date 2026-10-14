@@ -95,7 +95,20 @@ import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthFloorClearLevel } from '../combat/labyrinth-formulas.js';
-import { ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
+import { ROOM_LEVEL_SHORTLIST_SIZE, measureRoomLevelGains } from './labyrinth-upgrade-levels.js';
+import {
+    createRowLevelMeasure,
+    createSetupLevelSearch,
+    createSkillingEvaluator,
+    goalLevelForFloor,
+    includedSkills,
+    planSkillingGoal,
+    renderCombinationHtml,
+    renderPlanHtml,
+    shortlistSkillingForRoomLevels,
+    simulateCombination,
+    uniformRoomLevels,
+} from './lab-skilling-goals.js';
 import { labyrinthClearRate, loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 
@@ -163,6 +176,16 @@ const UPGRADE_ROOM_LEVELS_KEY = 'labSimUpgradeRoomLevels';
 
 /** The floor the room-level pass is aiming at, 0 for none. */
 const UPGRADE_TARGET_FLOOR_KEY = 'labSimUpgradeTargetFloor';
+
+/**
+ * The Skilling tab's counterparts: whether its Analyze Upgrades follows up with
+ * the room-level search, the clear-rate bar that search and the goal planner
+ * aim at, and the floor they are trying to finish. Per character, with the rest
+ * of the tab's inputs.
+ */
+const SKILLING_ROOM_LEVELS_KEY = 'labSimSkillingRoomLevels';
+const SKILLING_TARGET_CLEAR_KEY = 'labSimSkillingTargetClear';
+const SKILLING_TARGET_FLOOR_KEY = 'labSimSkillingTargetFloor';
 
 /**
  * Labyrinth token levels the Configure tab is simulating under.
@@ -650,6 +673,12 @@ class LabSimUI {
         this._upgradeRunning = false;
         this._skillingAborted = false;
         this._skillingRunning = false;
+        // The last Analyze Upgrades run, with everything the planner and the
+        // combine button need to re-sim against it, and the rows ticked for
+        // Sim together (indexes into its results, in the order they were ticked).
+        this._skillingAnalysis = null;
+        this._skillingChecked = [];
+        this._skillingGoalKey = null;
         this._skillLoadouts = {};
         /**
          * The scoped key `_skillLoadouts` was read from, i.e. whose loadout
@@ -1203,6 +1232,39 @@ class LabSimUI {
                 font-family:inherit;">Stop</button>
         `;
 
+        // Room levels, the clear-rate bar, the floor, and the two actions that
+        // work from them. The bar is the tab's own: it averages over several
+        // rooms, which the Target Win % the combat tabs share does not mean.
+        const skillingGoalRow = document.createElement('div');
+        skillingGoalRow.style.cssText = `
+            display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+            padding: 6px 14px; border-bottom: 1px solid #222; flex-shrink: 0;
+        `;
+        const goalInputStyle =
+            'width:48px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px;';
+        const goalButtonStyle = `background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;`;
+        skillingGoalRow.innerHTML = `
+            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
+                title="After Analyze Upgrades, measure the top ${ROOM_LEVEL_SHORTLIST_SIZE} upgrades in room levels: the deepest room that still clears at the Target clear % bar, and which floor that finishes. Floor N needs room level 20N+20, its exit room. A skilling room is cheap to simulate, so this adds little time.">
+                <input type="checkbox" id="mwi-labsim-skilling-room-levels" style="margin:0; cursor:pointer;">
+                Room levels
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px;"
+                title="The average clear rate over the chosen skills that a room level, or the goal planner, has to reach. All Skills averages every skilling room, exactly like the baseline row; one skill measures just that skill.">
+                Target clear
+                <input id="mwi-labsim-skilling-target-clear" type="number" min="1" max="100" value="${Math.min(100, Math.max(1, Math.floor(Number(config.getSettingValue('labyrinthRecommendTargetRate', 70)) || 70)))}" style="${goalInputStyle}">
+                <span>%</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px;"
+                title="The floor to finish. Floor N needs room level 20N+20, its exit room. Rows that reach it are marked, and Plan to goal buys toward it. Leave empty to plan for the Target clear % at the Room Level above.">
+                Floor
+                <input id="mwi-labsim-skilling-target-floor" type="number" min="1" step="1" placeholder="—" style="${goalInputStyle}">
+            </label>
+            <button id="mwi-labsim-skilling-plan" title="Needs Analyze Upgrades first. From today's setup, repeatedly takes the upgrade with the best cost per point of clear rate (simmed together with the ones already taken) until the goal is met or nothing helps." style="${goalButtonStyle}">Plan to goal</button>
+            <button id="mwi-labsim-skilling-combine" title="Sims every checked row at once, one upgrade per slot (a later pick replaces an earlier one for the same slot)." style="${goalButtonStyle}">Sim together</button>
+            <span id="mwi-labsim-skilling-checked-count" style="color:#666; font-size:11px;"></span>
+        `;
+
         const skillingCrateRow = document.createElement('div');
         skillingCrateRow.style.cssText = `
             display: flex; align-items: center; gap: 10px;
@@ -1267,13 +1329,20 @@ class LabSimUI {
         const skillingResults = document.createElement('div');
         skillingResults.id = 'mwi-labsim-skilling-results';
         skillingResults.style.cssText = 'padding:10px 14px; flex-shrink:0;';
+        // The planner's steps and the combined-upgrade result, kept apart from
+        // the tables so a re-sort (which rebuilds them) does not wipe an answer
+        const skillingGoalResults = document.createElement('div');
+        skillingGoalResults.id = 'mwi-labsim-skilling-goal-results';
+        skillingGoalResults.style.cssText = 'padding:0 14px 10px; flex-shrink:0;';
 
         skillingContent.appendChild(skillingControls);
+        skillingContent.appendChild(skillingGoalRow);
         skillingContent.appendChild(skillingCrateRow);
         skillingContent.appendChild(skillingLoadoutArea);
         skillingContent.appendChild(skillingEditorSection);
         skillingContent.appendChild(skillingProgress);
         skillingContent.appendChild(skillingResults);
+        skillingContent.appendChild(skillingGoalResults);
 
         // Status bar
         const status = document.createElement('div');
@@ -1541,6 +1610,15 @@ class LabSimUI {
         this.panel.querySelector('#mwi-labsim-skilling-filter').addEventListener('change', () => {
             this._renderSkillLoadoutTable();
         });
+        this.panel.querySelector('#mwi-labsim-skilling-plan').addEventListener('click', () => this._onSkillingPlan());
+        this.panel
+            .querySelector('#mwi-labsim-skilling-combine')
+            .addEventListener('click', () => this._onSkillingCombine());
+        for (const id of ['room-levels', 'target-clear', 'target-floor']) {
+            this.panel
+                .querySelector(`#mwi-labsim-skilling-${id}`)
+                .addEventListener('change', () => this._saveSkillingGoalInputs());
+        }
 
         this._populateMonsters();
         // Recorded runs outlive the session, so they are read back as the panel
@@ -2386,6 +2464,7 @@ class LabSimUI {
                 await this._skillingEditor.initEditor();
             }
             await this._renderSkillLoadoutTable();
+            await this._restoreSkillingGoalInputs();
         } catch (error) {
             console.error('[LabSimUI] Failed to show skilling tab:', error);
             this._setStatus('Failed to load skilling tab: ' + error.message);
@@ -3541,6 +3620,299 @@ class LabSimUI {
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
+    }
+
+    /**
+     * Whether Analyze Upgrades follows its clear-rate pass with the room-level search.
+     * @returns {boolean}
+     * @private
+     */
+    _getSkillingRoomLevelsOn() {
+        return Boolean(this.panel?.querySelector('#mwi-labsim-skilling-room-levels')?.checked);
+    }
+
+    /**
+     * The average clear rate the room-level search and the planner aim at, 0-1.
+     * An empty or nonsense box falls back to the shared Target Win % setting.
+     * @returns {number}
+     * @private
+     */
+    _getSkillingTargetClear() {
+        const typed = parseInt(this.panel?.querySelector('#mwi-labsim-skilling-target-clear')?.value, 10);
+        const fallback = Math.floor(Number(config.getSettingValue('labyrinthRecommendTargetRate', 70)) || 70);
+        return Math.min(100, Math.max(1, Number.isFinite(typed) ? typed : fallback)) / 100;
+    }
+
+    /**
+     * The floor the Skilling tab is aiming at, 0 when none is set.
+     * @returns {number}
+     * @private
+     */
+    _getSkillingTargetFloor() {
+        return Math.max(0, parseInt(this.panel?.querySelector('#mwi-labsim-skilling-target-floor')?.value, 10) || 0);
+    }
+
+    /** @private */
+    async _saveSkillingGoalInputs() {
+        try {
+            // Issued together for the same reason the Upgrade tab's are: a
+            // character switch landing between awaited writes would split one
+            // selection across two characters
+            await Promise.all([
+                writeScoped(SKILLING_ROOM_LEVELS_KEY, this._getSkillingRoomLevelsOn(), 'settings'),
+                writeScoped(SKILLING_TARGET_CLEAR_KEY, Math.round(this._getSkillingTargetClear() * 100), 'settings'),
+                writeScoped(SKILLING_TARGET_FLOOR_KEY, this._getSkillingTargetFloor(), 'settings'),
+            ]);
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save skilling goal inputs:', error);
+        }
+    }
+
+    /**
+     * Put the remembered Room levels / Target clear / Floor back, once per
+     * character. A plain latch would keep the first character's goals for the
+     * life of the page.
+     * @private
+     */
+    async _restoreSkillingGoalInputs() {
+        const key = characterKey(SKILLING_ROOM_LEVELS_KEY);
+        if (this._skillingGoalKey === key) return;
+        this._skillingGoalKey = key;
+        let saved;
+        try {
+            saved = await Promise.all([
+                readScoped(SKILLING_ROOM_LEVELS_KEY, 'settings', false),
+                readScoped(SKILLING_TARGET_CLEAR_KEY, 'settings', null),
+                readScoped(SKILLING_TARGET_FLOOR_KEY, 'settings', 0),
+            ]);
+        } catch (error) {
+            console.error('[LabSimUI] Failed to restore skilling goal inputs:', error);
+            return;
+        }
+        // A switch during the read means the arriving character's own restore is
+        // the one that counts
+        if (!this.panel || this._skillingGoalKey !== key) return;
+        const [roomLevelsOn, targetClear, targetFloor] = saved;
+        const roomLevelsBox = this.panel.querySelector('#mwi-labsim-skilling-room-levels');
+        if (roomLevelsBox) roomLevelsBox.checked = Boolean(roomLevelsOn);
+        const clearBox = this.panel.querySelector('#mwi-labsim-skilling-target-clear');
+        const clear = Math.floor(Number(targetClear));
+        if (clearBox && clear >= 1 && clear <= 100) clearBox.value = String(clear);
+        const floorBox = this.panel.querySelector('#mwi-labsim-skilling-target-floor');
+        const floor = Math.max(0, Math.floor(Number(targetFloor) || 0));
+        if (floorBox) floorBox.value = floor ? String(floor) : '';
+    }
+
+    /**
+     * Everything a re-sim of the last analysis needs, gathered once so the
+     * room-level search, the planner and Sim together all measure the same
+     * thing the table did.
+     * @private
+     */
+    _buildSkillingContext({ dto, roomLevel, crateHrids, skillEquipmentMap, targetSkill, gameData, analysisResult }) {
+        return {
+            analysisResult,
+            roomLevel,
+            targetSkill,
+            baseSetup: { dto, skillEquipmentMap },
+            evaluate: createSkillingEvaluator({
+                computeRates: computeSkillingClearRatesFromEditor,
+                gameData,
+                crateHrids,
+                targetSkill,
+            }),
+            skills: includedSkills({ roomLevel, targetSkill, allSkills: SKILLING_SKILL_HRIDS }),
+        };
+    }
+
+    /**
+     * Measure the shortlist's room levels and attach the summary to the analysis.
+     * @param {Object} context - From `_buildSkillingContext`
+     * @param {Function} onProgress - `({ current, total, description })`
+     * @private
+     */
+    async _measureSkillingRoomLevels(context, onProgress) {
+        const threshold = this._getSkillingTargetClear();
+        const abortSignal = () => this._skillingAborted;
+        const measure = createRowLevelMeasure({
+            baseSetup: context.baseSetup,
+            evaluate: context.evaluate,
+            skills: context.skills,
+            allSkills: SKILLING_SKILL_HRIDS,
+            threshold,
+            targetSkill: context.targetSkill,
+            abortSignal,
+        });
+        const summary = await measureRoomLevelGains(context.analysisResult.results, {
+            measure,
+            select: shortlistSkillingForRoomLevels,
+            shortlistSize: ROOM_LEVEL_SHORTLIST_SIZE,
+            abortSignal,
+            onProgress,
+        });
+        summary.threshold = threshold;
+        summary.targetFloor = this._getSkillingTargetFloor();
+        context.analysisResult.roomLevels = summary;
+    }
+
+    /**
+     * A row ticked or unticked for Sim together.
+     * @param {number} index - Index into the analysis's results
+     * @param {boolean} checked
+     * @private
+     */
+    _toggleSkillingPick(index, checked) {
+        this._skillingChecked = this._skillingChecked.filter((i) => i !== index);
+        if (checked) this._skillingChecked.push(index);
+        this._updateSkillingCheckedCount();
+    }
+
+    /** @private */
+    _updateSkillingCheckedCount() {
+        const el = this.panel?.querySelector('#mwi-labsim-skilling-checked-count');
+        if (!el) return;
+        const n = this._skillingChecked.length;
+        el.textContent = n ? `${n} checked` : '';
+    }
+
+    /**
+     * Run a task on the Skilling tab's progress bar and Stop button, the way
+     * Analyze Upgrades does.
+     * @param {function(function({current: number, total: number, description: string}): void): Promise<void>} task
+     * @private
+     */
+    async _runSkillingTask(task) {
+        if (this._skillingRunning || this._upgradeRunning || this._runStarting || this.isRunning) return;
+        const panel = this.panel;
+        const progressEl = panel.querySelector('#mwi-labsim-skilling-progress');
+        const hidden = ['calc', 'upgrade'].map((id) => panel.querySelector(`#mwi-labsim-skilling-${id}`));
+        const busy = ['plan', 'combine'].map((id) => panel.querySelector(`#mwi-labsim-skilling-${id}`));
+        const stopBtn = panel.querySelector('#mwi-labsim-skilling-stop');
+        progressEl.style.display = 'block';
+        for (const button of hidden) button.style.display = 'none';
+        for (const button of busy) button.disabled = true;
+        stopBtn.style.display = 'inline-block';
+        this._skillingAborted = false;
+        this._skillingRunning = true;
+        const eta = createEtaTracker();
+        try {
+            await task(({ current, total, description }) => {
+                if (this._skillingAborted || !this.panel) return;
+                const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
+                const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
+                const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+                if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
+                if (text)
+                    text.textContent =
+                        `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+            });
+        } catch (error) {
+            console.error('[LabSimUI] Skilling task failed:', error);
+            this._setStatus('Skilling task failed: ' + error.message);
+        } finally {
+            this._skillingRunning = false;
+            progressEl.style.display = 'none';
+            for (const button of hidden) button.style.display = '';
+            for (const button of busy) button.disabled = false;
+            stopBtn.style.display = 'none';
+        }
+    }
+
+    /**
+     * Plan to goal: the cheapest sequence of the analyzed upgrades that reaches
+     * the Target clear % (at the Floor's exit room when a floor is set).
+     * @private
+     */
+    async _onSkillingPlan() {
+        const context = this._skillingAnalysis;
+        if (!context) {
+            this._setStatus('Run Analyze Upgrades first: the plan chooses among its upgrades.');
+            return;
+        }
+        const goalEl = this.panel.querySelector('#mwi-labsim-skilling-goal-results');
+        const floor = this._getSkillingTargetFloor();
+        const goalRate = this._getSkillingTargetClear();
+        const goalLevel = floor > 0 ? goalLevelForFloor(floor) : 0;
+        const showLevels = this._getSkillingRoomLevelsOn();
+        const barText = `${Math.round(goalRate * 100)}% average clear`;
+        const goalText =
+            floor > 0
+                ? `${barText} at floor ${floor}'s exit room (level ${goalLevel})`
+                : `${barText} at the analyzed room level`;
+
+        let plan = null;
+        await this._runSkillingTask(async (onProgress) => {
+            const abortSignal = () => this._skillingAborted;
+            plan = await planSkillingGoal({
+                baseSetup: context.baseSetup,
+                rows: context.analysisResult.results,
+                evaluate: context.evaluate,
+                goalRoomLevel:
+                    floor > 0 ? uniformRoomLevels(goalLevel, context.skills, SKILLING_SKILL_HRIDS) : context.roomLevel,
+                goalRate,
+                targetSkill: context.targetSkill,
+                abortSignal,
+                onProgress,
+                measureMax: showLevels
+                    ? createSetupLevelSearch({
+                          evaluate: context.evaluate,
+                          skills: context.skills,
+                          allSkills: SKILLING_SKILL_HRIDS,
+                          threshold: goalRate,
+                          abortSignal,
+                      })
+                    : null,
+            });
+        });
+        if (!plan || !goalEl || !this.panel?.contains(goalEl) || this._skillingAnalysis !== context) return;
+        goalEl.innerHTML = renderPlanHtml(plan, { goalText, showLevels });
+        this._setStatus(
+            plan.reached
+                ? `Plan reached the goal in ${plan.steps.length} steps.`
+                : `Goal not reached (${plan.steps.length} steps taken).`
+        );
+    }
+
+    /**
+     * Sim together: every ticked row applied at once, one per slot.
+     * @private
+     */
+    async _onSkillingCombine() {
+        const context = this._skillingAnalysis;
+        if (!context) {
+            this._setStatus('Run Analyze Upgrades first, then tick the rows to combine.');
+            return;
+        }
+        const picks = this._skillingChecked.map((i) => context.analysisResult.results[i]).filter(Boolean);
+        if (!picks.length) {
+            this._setStatus('Tick at least one upgrade row to sim together.');
+            return;
+        }
+        const goalEl = this.panel.querySelector('#mwi-labsim-skilling-goal-results');
+        const showLevels = this._getSkillingRoomLevelsOn();
+        let combo = null;
+        await this._runSkillingTask(async () => {
+            const abortSignal = () => this._skillingAborted;
+            combo = await simulateCombination({
+                rows: picks,
+                baseSetup: context.baseSetup,
+                evaluate: context.evaluate,
+                roomLevel: context.roomLevel,
+                targetSkill: context.targetSkill,
+                measureMax: showLevels
+                    ? createSetupLevelSearch({
+                          evaluate: context.evaluate,
+                          skills: context.skills,
+                          allSkills: SKILLING_SKILL_HRIDS,
+                          threshold: this._getSkillingTargetClear(),
+                          abortSignal,
+                      })
+                    : undefined,
+            });
+        });
+        if (!combo || !goalEl || !this.panel?.contains(goalEl) || this._skillingAnalysis !== context) return;
+        goalEl.innerHTML = renderCombinationHtml(combo, { showLevels });
+        this._setStatus(`${combo.kept.length} upgrades simmed together.`);
     }
 
     /**
@@ -5663,6 +6035,13 @@ class LabSimUI {
         stopBtn.style.display = 'inline-block';
         this._skillingAborted = false;
         this._skillingRunning = true;
+        // The previous run's rows are about to be replaced, so ticks and answers
+        // made against them mean nothing to the new table
+        this._skillingAnalysis = null;
+        this._skillingChecked = [];
+        const goalResultsEl = this.panel.querySelector('#mwi-labsim-skilling-goal-results');
+        if (goalResultsEl) goalResultsEl.innerHTML = '';
+        this._updateSkillingCheckedCount();
         const eta = createEtaTracker();
 
         try {
@@ -5714,7 +6093,27 @@ class LabSimUI {
             // later render stacked another, and sorting the skilling results
             // silently stopped working.
             if (this.panel?.contains(resultsEl)) {
-                this._renderSkillingUpgradeResults(analysisResult, resultsEl);
+                const context = this._buildSkillingContext({
+                    dto,
+                    roomLevel,
+                    crateHrids,
+                    skillEquipmentMap,
+                    targetSkill,
+                    gameData,
+                    analysisResult,
+                });
+                if (analysisResult?.baseline && this._getSkillingRoomLevelsOn() && !this._skillingAborted) {
+                    await this._measureSkillingRoomLevels(context, ({ current, total, description }) => {
+                        const fill = this.panel?.querySelector('#mwi-labsim-skilling-progress-fill');
+                        const text = this.panel?.querySelector('#mwi-labsim-skilling-progress-text');
+                        if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
+                        if (text) text.textContent = `Room levels ${current} / ${total}: ${description}`;
+                    });
+                }
+                if (this.panel?.contains(resultsEl)) {
+                    this._skillingAnalysis = analysisResult?.baseline ? context : null;
+                    this._renderSkillingUpgradeResults(analysisResult, resultsEl);
+                }
             }
         } catch (error) {
             console.error('[LabSimUI] Skilling upgrade analysis failed:', error);
@@ -5868,6 +6267,29 @@ class LabSimUI {
         }
 
         const baseline = analysisResult.baseline;
+        // Present only when the room-level pass ran. Everything it adds is
+        // behind this one value, so a run without it draws what it always did
+        // apart from the pick checkboxes.
+        const roomLevels = analysisResult.roomLevels || null;
+        const targetFloor = Math.max(0, Math.floor(Number(roomLevels?.targetFloor) || 0));
+        const extraFields = (r) => {
+            const levels = roomLevels ? roomLevelCells(r, roomLevels) : null;
+            return {
+                result: r,
+                pickIdx: results.indexOf(r),
+                ...(levels
+                    ? {
+                          roomLevelDelta: levels.delta,
+                          roomLevelStr: levels.deltaStr,
+                          roomLevelColor: levels.deltaColor,
+                          floorVal: levels.floor,
+                          floorStr: levels.floorStr,
+                          levelTitle: levels.title,
+                          reachesTarget: levels.reachesTarget,
+                      }
+                    : {}),
+            };
+        };
         const tokenResults = results.filter((r) => r.costType === 'token');
         const goldResults = results.filter((r) => r.costType === 'gold');
         const guildResults = results.filter((r) => r.costType === 'guild');
@@ -5898,6 +6320,7 @@ class LabSimUI {
             const tokensPerXp = r.tokensPerXp ?? Infinity;
 
             return {
+                ...extraFields(r),
                 desc: r.candidate?.description || '',
                 tokenCost,
                 clearRate,
@@ -5928,6 +6351,7 @@ class LabSimUI {
             const kept = r.candidate?.keptItems || [];
 
             return {
+                ...extraFields(r),
                 desc: r.candidate?.description || '',
                 cost: Number.isFinite(r.cost) ? r.cost : Infinity,
                 costStr: goldCostCell(r.cost),
@@ -5971,6 +6395,7 @@ class LabSimUI {
             const xpDelta = r.xpPerRoomDelta || 0;
 
             return {
+                ...extraFields(r),
                 desc: r.candidate?.description || '',
                 cost,
                 costStr: r.cost == null ? '\u2014' : formatWithSeparator(cost),
@@ -6005,6 +6430,7 @@ class LabSimUI {
             const isXpRow = r.metricType === 'xpPerRoom';
 
             return {
+                ...extraFields(r),
                 desc: r.candidate?.description || '',
                 cowbellCost: r.cowbellCost ?? Infinity,
                 cowbellCostStr: r.cowbellCost == null ? '—' : formatWithSeparator(r.cowbellCost) + '/min',
@@ -6020,9 +6446,9 @@ class LabSimUI {
         });
 
         const sortState = {
-            token: { key: 'tokensPerPct', dir: 'asc' },
-            gold: { key: 'goldPerPct', dir: 'asc' },
-            guild: { key: 'goldPerPct', dir: 'asc' },
+            token: roomLevels ? { key: 'roomLevelDelta', dir: 'desc' } : { key: 'tokensPerPct', dir: 'asc' },
+            gold: roomLevels ? { key: 'roomLevelDelta', dir: 'desc' } : { key: 'goldPerPct', dir: 'asc' },
+            guild: roomLevels ? { key: 'roomLevelDelta', dir: 'desc' } : { key: 'goldPerPct', dir: 'asc' },
             community: { key: 'deltaVal', dir: 'desc' },
         };
 
@@ -6037,6 +6463,55 @@ class LabSimUI {
 
         const arrow = (dir) => (dir === 'asc' ? ' \u25B2' : ' \u25BC');
 
+        const pickTh = '<th style="width:1%; border-bottom:1px solid #333;"></th>';
+        const pickCellHtml = (row) =>
+            `<td style="padding:3px 4px; width:1%;"><input type="checkbox" data-skilling-pick="${row.pickIdx}"` +
+            `${this._skillingChecked.includes(row.pickIdx) ? ' checked' : ''} style="margin:0; cursor:pointer;" ` +
+            `title="Check to include in Sim together"></td>`;
+        const roomLevelCellsHtml = (row) => {
+            if (!roomLevels) return '';
+            const floorColor = row.reachesTarget ? '#4caf50' : '#888';
+            const reached = row.reachesTarget ? ' font-weight:700;' : '';
+            return (
+                `<td style="${tdStyle} color:${row.roomLevelColor}; font-weight:600;" title="${escapeHtmlAttribute(row.levelTitle)}">${row.roomLevelStr}</td>` +
+                `<td data-reaches-target="${row.reachesTarget ? 1 : 0}" style="${tdStyle} color:${floorColor};${reached}" title="${escapeHtmlAttribute(row.levelTitle)}">${row.floorStr}</td>`
+            );
+        };
+        const renderRoomLevelSummary = () => {
+            const bar = `${Math.round((roomLevels.threshold || 0) * 100)}%`;
+            const parts = [];
+            if (roomLevels.baselineCleared) {
+                parts.push(
+                    `Today this setup clears room level <b>${roomLevels.baselineLevel}</b> at an average ${bar} — ` +
+                        `floor <b>${roomLevels.baselineFloor}</b> finished` +
+                        (roomLevels.baselineFloor > 0
+                            ? ` (its exit room is level ${labyrinthFloorClearLevel(roomLevels.baselineFloor)})`
+                            : '') +
+                        '.'
+                );
+                parts.push(
+                    `Levels is what the top ${roomLevels.shortlistSize} upgrades move that by; every other row ` +
+                        'shows a dash because it was not searched.'
+                );
+            } else {
+                parts.push(`No room level cleared at an average ${bar}, so there is no level to move.`);
+            }
+            if (targetFloor > 0) {
+                const need = labyrinthFloorClearLevel(targetFloor);
+                parts.push(
+                    `Floor ${targetFloor} needs room level <b>${need}</b> — its exit room — ` +
+                        `which is ${need - roomLevels.baselineLevel > 0 ? `${need - roomLevels.baselineLevel} levels away` : 'already cleared'}.`
+                );
+            }
+            if (roomLevels.aborted) parts.push('Stopped early: the rows below it were never searched.');
+            return (
+                `<div data-skilling-room-level-summary style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; line-height:1.5; ` +
+                `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
+                parts.join(' ') +
+                `</div>`
+            );
+        };
+
         const renderTokenTable = () => {
             const s = sortState.token;
             const th = (label, key, align) => {
@@ -6048,10 +6523,10 @@ class LabSimUI {
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Token Upgrades</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:12px;">';
             html += `<thead><tr>
-                ${th('Upgrade', 'desc', 'left')}
+                ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Tokens', 'tokenCost', 'right')}
                 ${th('Clear Rate', 'clearRate', 'right')}
-                ${th('Delta', 'deltaVal', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}${roomLevels ? th('Levels', 'roomLevelDelta', 'right') + th('Floor', 'floorVal', 'right') : ''}
                 ${th('Tokens/1%', 'tokensPerPct', 'right')}
                 ${th('XP/Room', 'xpDelta', 'right')}
                 ${th('Tokens/XP', 'tokensPerXp', 'right')}
@@ -6059,10 +6534,11 @@ class LabSimUI {
 
             for (const row of tokenRows) {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="${tdNameStyle}">${row.desc}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCost || '\u2014'}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
+                    ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.tokensPerPctStr}</td>
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                     <td style="${tdStyle} color:#888;">${row.tokensPerXpStr}</td>
@@ -6083,11 +6559,11 @@ class LabSimUI {
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Guild Shrines</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
             html += `<thead><tr>
-                ${th('Upgrade', 'desc', 'left')}
+                ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Credits', 'cost', 'right')}
                 ${th('Tokens', 'tokenCost', 'right')}
                 ${th('Clear Rate', 'clearRate', 'right')}
-                ${th('Delta', 'deltaVal', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}${roomLevels ? th('Levels', 'roomLevelDelta', 'right') + th('Floor', 'floorVal', 'right') : ''}
                 ${th('Gold/1%', 'goldPerPct', 'right')}
                 ${th('XP/Room', 'xpDelta', 'right')}
             </tr></thead><tbody>`;
@@ -6095,11 +6571,12 @@ class LabSimUI {
             for (const row of guildRows) {
                 const note = row.shrineNote ? ` title="${row.shrineNote}"` : '';
                 html += `<tr style="border-bottom:1px solid #1a1a1a;"${note}>
-                    <td style="${tdNameStyle}">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
+                    ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                 </tr>`;
@@ -6127,19 +6604,20 @@ class LabSimUI {
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Community Buffs</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
             html += `<thead><tr>
-                ${th('Upgrade', 'desc', 'left')}
+                ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Cowbells', 'cowbellCost', 'right')}
                 ${th('Clear Rate', 'clearRate', 'right')}
-                ${th('Delta', 'deltaVal', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}${roomLevels ? th('Levels', 'roomLevelDelta', 'right') + th('Floor', 'floorVal', 'right') : ''}
                 ${th('XP/Room', 'xpDelta', 'right')}
             </tr></thead><tbody>`;
 
             for (const row of communityRows) {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="${tdNameStyle}">${row.desc}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
+                    ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                 </tr>`;
             }
@@ -6163,24 +6641,25 @@ class LabSimUI {
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gear Upgrades</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
             html += `<thead><tr>
-                ${th('Upgrade', 'desc', 'left')}
+                ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Cost', 'cost', 'right')}
                 ${th('Clear Rate', 'clearRate', 'right')}
-                ${th('Delta', 'deltaVal', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}${roomLevels ? th('Levels', 'roomLevelDelta', 'right') + th('Floor', 'floorVal', 'right') : ''}
                 ${th('Gold/1%', 'goldPerPct', 'right')}
             </tr></thead><tbody>`;
 
             goldRows.forEach((row, i) => {
                 const note = ` title="${escapeHtmlAttribute(row.keptNote || 'Click for the cost breakdown')}"`;
                 html += `<tr data-skilling-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;"${note}>
-                    <td style="${tdNameStyle}">${row.desc}${row.actions}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.actions}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
+                    ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
                 </tr>
                 <tr data-skilling-gold-detail="${i}" style="display:none;">
-                    <td colspan="5" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    <td colspan="${6 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
                         ${row.detailHtml}
                     </td>
                 </tr>`;
@@ -6205,6 +6684,7 @@ class LabSimUI {
                 Baseline Avg Clear: <span style="color:#e0e0e0; font-weight:600;">${((baseline?.clearRate || 0) * 100).toFixed(1)}%</span>
                 ${baselineXp > 0 ? ` · Avg XP/Room: <span style="color:#e0e0e0; font-weight:600;">${baselineXp.toFixed(1)}</span>` : ''}
             </div>`;
+            if (roomLevels) html += renderRoomLevelSummary();
             if (tokenRows.length > 0) html += renderTokenTable();
             if (guildRows.length > 0) html += renderGuildTable();
             if (communityRows.length > 0) html += renderCommunityTable();
@@ -6256,6 +6736,12 @@ class LabSimUI {
             container.removeEventListener('click', this._skillingSortHandler);
         }
         this._skillingSortHandler = (e) => {
+            // A pick box is a choice about the row, not a click on the row
+            const pick = e.target.closest('input[data-skilling-pick]');
+            if (pick) {
+                this._toggleSkillingPick(Number(pick.dataset.skillingPick), pick.checked);
+                return;
+            }
             // A row's own handoff buttons come first — a click on "Buy" is not a
             // request to unfold the row it sits in
             const expandable = e.target.closest('tr[data-skilling-gold-row]');
@@ -6281,6 +6767,7 @@ class LabSimUI {
         };
         container.addEventListener('click', this._skillingSortHandler);
 
+        this._updateSkillingCheckedCount();
         this._setStatus(`${results.length} skilling upgrade candidates analyzed.`);
     }
 
@@ -6422,6 +6909,10 @@ class LabSimUI {
         this._upgradeRunning = false;
         this._upgradeAborted = true;
         this._skillingRunning = false;
+        // A reading of one character's build and the ticks made on it
+        this._skillingAnalysis = null;
+        this._skillingChecked = [];
+        this._skillingGoalKey = null;
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
