@@ -322,6 +322,8 @@ class LeaderboardRankBadges {
         this.unwatchSetting = null;
         this.fetching = false;
         this.nameWatcher = null;
+        /** The run whose `restart()` is between emptying `boards` and re-adopting them; see refreshFromPull */
+        this.startingRun = 0;
     }
 
     /**
@@ -420,6 +422,8 @@ class LeaderboardRankBadges {
         this.installStyle();
         // Not reset: the record is the account's, and a settings restart can land while a save is awaiting its
         // storage read. A reset would make that save stand down and drop the board it was writing.
+        // A pull announced while this load is out must not rebuild the record from the emptied `this.boards`
+        this.startingRun = runId;
         const readable = await this.record.load();
         if (runId !== this.runId) return;
         // The load capped a future-dated board in memory only. Left stored, every later save re-reads the raw stamp,
@@ -430,6 +434,7 @@ class LeaderboardRankBadges {
             if (runId !== this.runId) return;
         }
         this.boards = this.record.get();
+        this.startingRun = 0;
         this.rebuildIndex();
 
         const onBoard = (data) => this.onLocalBoard(data);
@@ -725,7 +730,7 @@ class LeaderboardRankBadges {
      * @returns {Promise<void>}
      */
     async refreshFromPull() {
-        if (this.mode === 'off') return;
+        if (this.mode === 'off' || this.startingRun === this.runId) return;
         const runId = this.runId;
         this.record.set(this.boards);
         if (!(await this.record.load()) || runId !== this.runId) return;
