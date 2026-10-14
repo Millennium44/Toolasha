@@ -410,6 +410,30 @@ describe('panel', () => {
             expect(root()).not.toBeNull();
         });
 
+        it('toggles: a second click closes it as a dismissal, a minimized panel is expanded instead', async () => {
+            const container = strip();
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            hoisted.listings = [listing()];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            expect(root()).not.toBeNull();
+            // Minimized: the tab expands it
+            root().querySelector('.toolasha-minimize-btn').click();
+            expect(root().dataset.minimized).toBe('true');
+            tab(container).click();
+            expect(root().dataset.minimized).toBe('false');
+            // Open and showing: the tab closes it
+            tab(container).click();
+            expect(root()).toBeNull();
+            // That counts as pressing X: the same beaten listing does not pop back up
+            fire();
+            expect(root()).toBeNull();
+            // Clicking again opens it
+            tab(container).click();
+            expect(root()).not.toBeNull();
+        });
+
         it('notes listings whose price data is old or missing', async () => {
             const container = strip();
             overbidPanel.disable();

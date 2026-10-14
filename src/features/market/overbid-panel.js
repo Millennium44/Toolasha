@@ -456,6 +456,22 @@ class OverbidPanel {
     }
 
     /**
+     * What the tab does: close the table when it is open and showing, otherwise open or expand it. Closing
+     * from the tab is the same as pressing X, so it dismisses the rows currently shown.
+     */
+    toggleFromTab() {
+        if (!this.isInitialized || !this.panel) return;
+        if (this.panel.isOpen() && !this.panel.isMinimized()) {
+            for (const row of this.rows) this.dismissed.add(row.id);
+            this.wasOpen = false;
+            this.manual = false;
+            this.panel.hide({ remember: false });
+            return;
+        }
+        this.openNow();
+    }
+
+    /**
      * Keep a small "Overbid" tab in the marketplace tab strip that opens the table.
      *
      * Cloned from one of the game's own tabs, chosen by role and by not carrying one of our markers rather
@@ -484,7 +500,7 @@ class OverbidPanel {
             tab.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                this.openNow();
+                this.toggleFromTab();
             });
             insertTabInOrder(container, tab);
             this.openButton = tab;
