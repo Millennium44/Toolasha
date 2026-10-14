@@ -327,6 +327,7 @@ const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
 const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
+const { TRIAL_GAME_DATA } = await import('../combat-sim/engine/guild-trial-game-data.fixture.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 
@@ -3845,6 +3846,203 @@ describe('the panel, end to end', () => {
         expect(body).not.toContain('scheduled');
     });
 
+    describe('a multi-monster wave read from two sources under one card', () => {
+        const BADGER = 485_760;
+        const fmt = (value) => value.toLocaleString('en-US');
+
+        /** The In Progress fight view: one DOM card per Badger on screen */
+        const inProgress = (bars) =>
+            buildTab(
+                bars.map((current) => ({ name: 'Trial Badger', level: 100, bar: `${fmt(current)} / ${fmt(BADGER)}` }))
+            );
+
+        /** The Trials tab: the combat card carries no bar, so the stream's pool is grafted */
+        const trialsTab = () => {
+            const root = buildTab([{ name: 'Trial Badger', level: 100, bar: '' }]);
+            root.querySelector('[class*="ProgressBar_text"]').remove();
+            return root;
+        };
+
+        const stream = (current, slots) => {
+            game.breakdown = {
+                pool: { current, max: slots * BADGER, slots, tier: 1, at: Date.now(), encounter: 'badger' },
+            };
+        };
+
+        let clock;
+        const step = () => {
+            clock += 5_000;
+            vi.setSystemTime(clock);
+        };
+
+        beforeEach(() => {
+            game.clientData = TRIAL_GAME_DATA;
+            clock = now;
+        });
+
+        test('the DOM cards and the grafted pool alternate on one key without a phantom clear', () => {
+            // Both Badger cards (folded into one wave reading), the Trials tab's
+            // graft of the same wave, a moment with only one card mounted, a
+            // refresh-style one-slot pool, then both again
+            stream(785_760, 2);
+            fire(inProgress([300_000, BADGER]));
+            step();
+            stream(784_760, 2);
+            fire(trialsTab());
+            step();
+            stream(784_760, 2);
+            fire(inProgress([300_000]));
+            step();
+            stream(299_000, 1);
+            fire(trialsTab());
+            step();
+            stream(783_760, 2);
+            fire(inProgress([299_000, 484_760]));
+            step();
+            stream(782_760, 2);
+            fire(trialsTab());
+
+            const record = guildTrials.record.tiles['combat::trial badger'];
+            const scales = record.samples.map((sample) => sample.readings[0]);
+            // The one-slot pool was not grafted as the wave, and every reading
+            // says what it summed
+            expect(scales.map((reading) => `${reading.source}:${reading.slots}`)).toEqual([
+                'cards:2',
+                'pool:2',
+                'cards:1',
+                'cards:2',
+                'pool:2',
+            ]);
+            expect(scales.every((reading) => reading.waveCount === 2)).toBe(true);
+
+            const analysis = analyseTrial(record, {
+                participants: 47,
+                phase: 'live',
+                workBase: guildTrials._workBase(record),
+                now: clock,
+            });
+            // The wave's pool lost 2,000 over the twenty seconds between its two
+            // grafts; nothing was paired across a switch of source
+            expect(analysis.rate * 1000).toBeCloseTo(100, 6);
+            expect(analysis.tier).toBe(1);
+            expect(analysis.tiersClearedSoFar).toBe(0);
+            // Every reading was filed under the stream's tier, never a derived 12
+            expect(record.tiers.every((entry) => entry.tier === 1)).toBe(true);
+        });
+
+        test('a Trial Swarm pool that fills slot by slot is not a tier clear', () => {
+            // After a refresh the stream names the Swarm's four monsters one at a
+            // time, so the published pool grows 1 → 4 slots within one wave
+            const swarm = (current, max, slots) => {
+                game.breakdown = {
+                    pool: { current, max, slots, tier: 3, at: Date.now(), encounter: 'swarm' },
+                    trialNames: ['Trial Swarm'],
+                };
+                const root = buildTab([]);
+                const monsters = document.createElement('div');
+                monsters.className = 'BattlePanel_monstersArea__x';
+                root.appendChild(monsters);
+                fire(root);
+            };
+
+            swarm(60_000, 67_600, 1);
+            step();
+            swarm(246_735, 270_400, 4);
+            step();
+            swarm(245_735, 270_400, 4);
+
+            const record = guildTrials.record.tiles['combat::trial swarm'];
+            expect(record.samples.map((sample) => sample.readings[0].slots)).toEqual([4, 4]);
+            const analysis = analyseTrial(record, { participants: 0, phase: 'live', now: clock });
+            expect(analysis.rate * 1000).toBeCloseTo(200, 6);
+        });
+
+        test('a one-slot pool on a two-Badger wave teaches no work base', () => {
+            const tile = { name: 'Trial Badger', kind: 'combat' };
+            const record = {
+                ...tile,
+                samples: [
+                    { t: now, readings: [{ current: 480_000, max: BADGER, source: 'pool', slots: 1, waveCount: 2 }] },
+                ],
+            };
+            const analysis = { tierSource: 'socket', tier: 1, total: BADGER };
+
+            guildTrials._learnWorkBase(tile, record, analysis, 47, now);
+            expect(guildTrials.workBases['trial badger']).toBeUndefined();
+
+            // The whole wave teaches one Badger's base, tagged as such
+            const whole = {
+                ...tile,
+                samples: [
+                    {
+                        t: now,
+                        readings: [{ current: 960_000, max: 2 * BADGER, source: 'pool', slots: 2, waveCount: 2 }],
+                    },
+                ],
+            };
+            guildTrials._learnWorkBase(tile, whole, { ...analysis, total: 2 * BADGER }, 47, now);
+            expect(guildTrials.workBases['trial badger']).toMatchObject({ scale: 'monster', version: 2, monsters: 2 });
+            expect(guildTrials.workBases['trial badger'].baseWork).toBeCloseTo(BADGER / 1.47, 6);
+        });
+
+        test('a held base that contradicts the stream’s fresh tier is relearned', () => {
+            const tile = { name: 'Trial Badger', kind: 'combat' };
+            // Half a Badger: it explains one Badger's 485,760 as T12, the same
+            // ratio of two that the report's base put on the whole wave
+            guildTrials.workBases = {
+                'trial badger': { baseWork: BADGER / 1.47 / 2, scale: 'monster', version: 2 },
+            };
+            const record = {
+                ...tile,
+                samples: [
+                    {
+                        t: now,
+                        readings: [{ current: 960_000, max: 2 * BADGER, source: 'pool', slots: 2, waveCount: 2 }],
+                    },
+                ],
+            };
+            guildTrials._learnWorkBase(tile, record, { tierSource: 'socket', tier: 1, total: 2 * BADGER }, 47, now);
+            expect(guildTrials.workBases['trial badger'].baseWork).toBeCloseTo(BADGER / 1.47, 6);
+            expect(guildTrials.workBases['trial badger'].learnedAt).toBe(now);
+        });
+
+        test('an untagged base on a multi-monster wave is dropped on load, a single boss’s is kept', async () => {
+            trialsFeature.cleanup();
+            game.store = {
+                guildTrialsWorkBases: {
+                    'trial badger': {
+                        baseWork: BADGER / 1.47,
+                        tier: 1,
+                        target: BADGER,
+                        participants: 47,
+                        learnedAt: 1,
+                    },
+                    'trial swarm': { baseWork: 200_000, tier: 3, target: 270_400, participants: 0, learnedAt: 1 },
+                    'trial chameleon': { baseWork: 550_000, tier: 1, target: 572_000, participants: 4, learnedAt: 1 },
+                    crafting: { baseWork: 40_000 },
+                },
+            };
+            await trialsFeature.initialize();
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect(Object.keys(guildTrials.workBases).sort()).toEqual(['crafting', 'trial chameleon']);
+            expect(Object.keys(game.store.guildTrialsWorkBases).sort()).toEqual(['crafting', 'trial chameleon']);
+            // The seeded one-Badger base answers in its place
+            expect(guildTrials._workBase({ name: 'Trial Badger', kind: 'combat' })).toBe(330_000);
+        });
+
+        test('an untagged multi-monster base is ignored once the game data can place it', async () => {
+            trialsFeature.cleanup();
+            game.clientData = {};
+            game.store = { guildTrialsWorkBases: { 'trial badger': { baseWork: BADGER / 1.47 } } };
+            await trialsFeature.initialize();
+            expect(guildTrials._workBase({ name: 'Trial Badger', kind: 'combat' })).toBeCloseTo(BADGER / 1.47, 6);
+
+            game.clientData = TRIAL_GAME_DATA;
+            expect(guildTrials._workBase({ name: 'Trial Badger', kind: 'combat' })).toBe(330_000);
+        });
+    });
+
     describe('the finished trial outlives its cards', () => {
         /** Sample a live combat trial twice, so the record holds a rate and points */
         const runTrial = () => {
@@ -5281,6 +5479,100 @@ describe('the combat tier from the card alone', () => {
 
         expect(html).toContain('derived from the boss’s full health');
         expect(html).not.toContain('tier not seen yet');
+    });
+});
+
+describe('a two-Badger wave on one Badger’s base', () => {
+    // The reported fight: Trial Badger, two Badgers at 485,760 each with 47 in
+    // the trial, the party barely through its first tier. The panel read "On
+    // pace for 12 tiers → T12", "Banked 11 tiers" and "Next tier HP (T13)
+    // 1.0M": the 971,520 wave read against a one-Badger base is a ratio of two,
+    // and the combat inverse puts that at T12 — which then outranked the
+    // stream's fresh "tier 1" because the largest rung won.
+    const badgerFight = (
+        readings = [
+            { current: 520_000, max: 971_520 },
+            { current: 500_000, max: 971_520 },
+        ]
+    ) => ({
+        name: 'Trial Badger',
+        kind: 'combat',
+        tier: null,
+        liveTier: 1,
+        liveTierTarget: 971_520,
+        samples: [
+            { t: now - 10_000, readings: [readings[0]] },
+            { t: now, readings: [readings[1]] },
+        ],
+        tiers: [],
+    });
+
+    test.each([
+        ['a base learned off one Badger', 485_760 / 1.47],
+        ['the seeded one-Badger base', 330_000],
+    ])('a fresh stated tier 1 is not outranked by the work ladder — %s', (_label, workBase) => {
+        const analysis = analyseTrial(badgerFight(), {
+            participants: 47,
+            phase: 'live',
+            workBase,
+            liveTierFloor: 1,
+            now,
+            timeLeftMs: 6.8 * 60_000,
+        });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.tierSource).toBe('socket');
+        expect(analysis.tiersClearedSoFar).toBe(0);
+        // The next tier is priced off T1's wave, not a T12 that never was
+        expect(analysis.next?.tier).toBe(2);
+    });
+
+    test('with nothing stating a tier, a whole-wave reading is read on the wave’s scale', () => {
+        // T3 with 47 in: two Badgers × 330,000 × 130/110 × 1.47
+        const t3 = Math.round(2 * 330_000 * (130 / 110) * 1.47);
+        const wave = (current) => ({ current, max: t3, source: 'pool', slots: 2, waveCount: 2 });
+        const record = { ...badgerFight([wave(t3 - 1_000), wave(t3 - 2_000)]), liveTier: null, liveTierTarget: null };
+        const analysis = analyseTrial(record, { participants: 47, phase: 'live', workBase: 330_000, now });
+
+        expect(analysis.tier).toBe(3);
+        expect(analysis.tierSource).toBe('work-ladder');
+        expect(analysis.tiersClearedSoFar).toBe(2);
+
+        // Both Badger cards folded by `mergeWaveTiles` are the same wave
+        const cards = {
+            ...record,
+            samples: record.samples.map((sample) => ({
+                ...sample,
+                readings: [{ ...sample.readings[0], source: 'cards' }],
+            })),
+        };
+        expect(analyseTrial(cards, { participants: 47, phase: 'live', workBase: 330_000, now }).tier).toBe(3);
+    });
+
+    test('a reading of part of the wave identifies no tier', () => {
+        // One Badger card mounted, or one stream slot named after a refresh
+        const lone = (current) => ({ current, max: 485_760, source: 'cards', slots: 1, waveCount: 2 });
+        const record = { ...badgerFight([lone(400_000), lone(399_000)]), liveTier: null, liveTierTarget: null };
+        const analysis = analyseTrial(record, { participants: 47, phase: 'live', workBase: 330_000, now });
+
+        expect(analysis.tierSource).not.toBe('work-ladder');
+        expect(analysis.tier).toBeNull();
+    });
+
+    test('the damage rate is measured on the newest reading’s scale only', () => {
+        const record = {
+            ...badgerFight(),
+            samples: [
+                { t: now - 15_000, readings: [{ current: 785_760, max: 971_520, source: 'pool', slots: 2 }] },
+                { t: now - 10_000, readings: [{ current: 300_000, max: 485_760, source: 'cards', slots: 1 }] },
+                { t: now - 5_000, readings: [{ current: 784_760, max: 971_520, source: 'pool', slots: 2 }] },
+                { t: now, readings: [{ current: 299_000, max: 485_760, source: 'cards', slots: 1 }] },
+            ],
+        };
+        const analysis = analyseTrial(record, { participants: 47, phase: 'live', liveTierFloor: 1, now });
+
+        // One Badger's 1,000 over ten seconds; nothing paired across the switch
+        expect(analysis.rate * 1000).toBeCloseTo(100, 6);
     });
 });
 

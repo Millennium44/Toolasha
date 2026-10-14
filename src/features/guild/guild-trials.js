@@ -268,6 +268,17 @@ const READING_STALE_MS = 60_000;
  */
 const WORK_BASE_LEARN_FRESH_MS = 15_000;
 
+/**
+ * The tag a learned work base carries to say it is one monster's.
+ *
+ * Bases learned before it existed may be off a two-Badger graft that had only
+ * named one slot (a refresh mid-tier), or off the wave's sum: on a
+ * multi-monster wave an untagged base is not to be trusted, and is dropped.
+ * Single-monster encounters and skilling bases have one scale and keep theirs.
+ */
+const WORK_BASE_SCALE = 'monster';
+const WORK_BASE_VERSION = 2;
+
 /** What a card's level line looks like, for finding the node the tier badge belongs on */
 const LEVEL_LINE_RE = /Lv\.\s*\d+/;
 
@@ -318,6 +329,64 @@ const DEFAULT_WORK_BASES = {
     'trial chameleon': 550_000,
     'trial badger': 330_000,
 };
+
+/**
+ * Which scale a combat reading is on, for pairing like with like.
+ *
+ * Every combat boss reading the sampler files says what it summed: `source`
+ * is `pool` for the spectator stream's wave grafted onto a barless card, or
+ * `cards` for the DOM's own bars (two same-named Badger cards are folded into
+ * one by `mergeWaveTiles`), and `slots` is how many monsters went into it. A
+ * reading filed before the tag existed is `card`, one scale of its own.
+ *
+ * `pool:2` and `cards:2` are the same wave from two clocks — the stream per
+ * tick, the DOM per redraw — and are kept apart for that reason.
+ *
+ * @param {Object|null} reading - A stored reading
+ * @returns {string} `card`, or `<source>:<slots>`
+ */
+export function readingScale(reading) {
+    if (typeof reading?.source !== 'string') return 'card';
+    return `${reading.source}:${Number.isFinite(reading.slots) ? reading.slots : ''}`;
+}
+
+/**
+ * A one-monster first-tier base, put on the scale of the reading it is meant to
+ * identify.
+ *
+ * Every work base is one monster's (`DEFAULT_WORK_BASES`, and what
+ * {@link GuildTrials#_learnWorkBase} stores). A reading that summed the whole
+ * wave — both Badger cards, or the stream's pool — takes the base times the
+ * wave's monster count; an untagged reading (a skilling bar, a single-boss
+ * card filed before the tag) takes it as it is. A reading that summed fewer
+ * monsters than the wave fields (one Badger card mounted, one slot named after
+ * a refresh) is a fraction of the wave, and identifies no tier at all.
+ *
+ * @param {number|null} base - The one-monster base
+ * @param {Object|null} reading - The reading the tier is read off, or null for a skilling bar
+ * @returns {number|null} The base on the reading's scale, or null when none applies
+ */
+export function waveLadderBase(base, reading) {
+    if (!Number.isFinite(base) || base <= 0) return null;
+    const monsters = readingMonsters(reading);
+    return monsters === null ? null : base * monsters;
+}
+
+/**
+ * How many monsters a combat reading stands for: 1 for an untagged reading,
+ * the wave's count for one that summed the whole wave, null for a partial one.
+ *
+ * @param {Object|null} reading - A stored reading
+ * @returns {number|null}
+ */
+export function readingMonsters(reading) {
+    if (typeof reading?.source !== 'string') return 1;
+    const count = Number.isFinite(reading.waveCount) && reading.waveCount > 0 ? reading.waveCount : null;
+    const slots = Number.isFinite(reading.slots) && reading.slots > 0 ? reading.slots : null;
+    // An encounter the game data does not describe counts what was summed
+    const monsters = count ?? slots ?? 1;
+    return slots !== null && slots < monsters ? null : monsters;
+}
 
 /**
  * Everything derivable about one trial, from its stored samples.
@@ -501,11 +570,28 @@ export function analyseTrial(
         kind === 'combat' && Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
             ? samples[samples.length - 1].readings[1].max
             : null;
+    // The base is one monster's; the bar may be the whole wave's. Two Trial
+    // Badgers grafted off the spectator stream read 971,520 against a
+    // one-Badger base, and the combat inverse put that ratio of two at T12 —
+    // "On pace for 12 tiers", "Banked 11" — on a party that had barely cleared
+    // one. See {@link waveLadderBase}.
+    const bossLadderBase = waveLadderBase(ladderBase, kind === 'combat' ? latest : null);
     const fromWorkLadder = !completed
         ? ((combatPoolTarget !== null
               ? tierFromWorkTarget({ target: combatPoolTarget, baseWork: ladderBase, participants: 0, kind })
-              : null) ?? tierFromWorkTarget({ target: total, baseWork: ladderBase, participants, kind }))
+              : null) ?? tierFromWorkTarget({ target: total, baseWork: bossLadderBase, participants, kind }))
         : null;
+
+    // A tier the game is stating *now* — the socket's, for the very pool on
+    // the bar, or the spectator stream flowing this render — is the answer, and
+    // a derived tier only fills the gap where nothing states one. Letting the
+    // largest rung win handed T12 off the work ladder the win over a fresh
+    // stated T1; the badge and the guild payload stay in the race, because
+    // they lag by a scrape and the ladder is what catches them up.
+    const freshSocket = fromSocket !== null && socketTarget !== null && socketTarget === total ? fromSocket : null;
+    const freshFloor = !completed && Number.isFinite(liveTierFloor) ? liveTierFloor : null;
+    const statedNow = freshSocket !== null || freshFloor !== null;
+    const derivedTier = statedNow ? null : fromWorkLadder;
 
     let tier = null;
     let tierSource = null;
@@ -513,7 +599,7 @@ export function analyseTrial(
         [fromBadge, 'card'],
         [fromSocket, 'socket'],
         [fromServer, 'server'],
-        [fromWorkLadder, 'work-ladder'],
+        [derivedTier, 'work-ladder'],
     ]) {
         if (candidate === null || (tier !== null && candidate <= tier)) continue;
         tier = candidate;
@@ -631,7 +717,7 @@ export function analyseTrial(
     // bar itself place it below the tier, or when a tier has banked since it
     // was taken; a stale reading behind the tier anchors, paces and forecasts
     // nothing, and the tier-clear timing speaks for the trial instead.
-    const barTier = fromWorkLadder ?? fromSocket;
+    const barTier = derivedTier ?? fromSocket;
     const readingSuperseded =
         readingStale &&
         ((barTier !== null && Number.isFinite(tier) && barTier < tier) ||
@@ -647,12 +733,20 @@ export function analyseTrial(
     let rate = null;
     let rateNote = null;
     if (kind === 'combat') {
+        // One scale only: the newest reading's. One Badger's card and the
+        // whole wave's graft land on the same record, and a pace walked from
+        // the newest reading's remaining health needs a rate on that scale —
+        // paired across the two, every tab switch was a phantom tier clear
+        const latestScale = readingScale(latest);
         const measured = combatDamageRate(
-            samples.map((sample) => ({
-                t: sample?.t,
-                current: sample?.readings?.[index]?.current,
-                max: sample?.readings?.[index]?.max,
-            })),
+            samples
+                .filter((sample) => readingScale(sample?.readings?.[index]) === latestScale)
+                .map((sample) => ({
+                    t: sample?.t,
+                    current: sample?.readings?.[index]?.current,
+                    max: sample?.readings?.[index]?.max,
+                    scale: latestScale,
+                })),
             { growthPerTier }
         );
         rate = measured.rate;
@@ -2727,6 +2821,7 @@ class GuildTrials {
         // Before the character check below because work bases are the game's,
         // not one character's.
         this.workBases = { ...storedBases, ...this.workBases };
+        this._purgeWorkBases();
 
         if (this.characterId !== characterId) return;
         this._adoptStored(stored);
@@ -3465,9 +3560,11 @@ class GuildTrials {
             // work-ladder tier filing wants a participant count
             const counts = participantCounts();
             for (const tile of tiles) {
-                const withPersonal = this._withSocketSkilling(
-                    this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched),
-                    now
+                const withPersonal = this._withWaveScale(
+                    this._withSocketSkilling(
+                        this._withSpectatedPool(tile === owner ? { ...tile, personal } : tile, watched),
+                        now
+                    )
                 );
                 // A running trial whose cards state nothing is on its first
                 // tier, so its readings belong to T1 rather than to no tier at
@@ -3493,8 +3590,13 @@ class GuildTrials {
                     // is known — the target moves the moment a tier clears,
                     // where a badge goes stale until the Trials tab is reopened
                     const ladderTier = this._workLadderTier(withPersonal, held, counts);
+                    // The stream flowing this render states the tier too, on
+                    // the In Progress tab where the card keeps its own bar and
+                    // nothing is grafted; a derived tier only fills the gap
+                    const streamTier = this._liveTierFloor(withPersonal);
                     if (Number.isFinite(withPersonal.socketTier)) readingTier = withPersonal.socketTier;
                     else if (Number.isFinite(withPersonal.spectatedTier)) readingTier = withPersonal.spectatedTier;
+                    else if (Number.isFinite(streamTier)) readingTier = streamTier;
                     else if (ladderTier !== null) readingTier = ladderTier;
                     else if (Number.isFinite(badge)) readingTier = badge + (banked ? 1 : 0);
                     else if (this._workBase(withPersonal) === null && !banked && !(held?.tiers || []).length) {
@@ -5198,8 +5300,62 @@ class GuildTrials {
         const key = String(tile?.name || '')
             .trim()
             .toLowerCase();
-        const base = this.workBases[key]?.baseWork ?? DEFAULT_WORK_BASES[key];
+        const learned = this._workBaseTrusted(key, this.workBases[key]) ? this.workBases[key]?.baseWork : null;
+        const base = learned ?? DEFAULT_WORK_BASES[key];
         return Number.isFinite(base) && base > 0 ? base : null;
+    }
+
+    /**
+     * How many monsters a trial's wave fields, from the game's own data.
+     * @param {string} name - The trial's name or key
+     * @returns {number|null} The count, or null where the data does not say
+     */
+    _waveCount(name) {
+        const wave = trialWave(name, dataManager.getInitClientData?.() || null);
+        return Number.isFinite(wave?.count) && wave.count > 0 ? wave.count : null;
+    }
+
+    /**
+     * Whether a learned base may be used: tagged as one monster's, or on an
+     * encounter with only one monster to be confused with.
+     *
+     * Untagged bases on a multi-monster wave are the ones the old learning
+     * could have taken off a partial graft or the wave's sum. The wave count
+     * comes from the game data, which may not have arrived when the store is
+     * read — an untagged base on an encounter the data cannot yet place is
+     * kept until it can, and is checked again on every read.
+     *
+     * @param {string} key - The base's key (`trial badger`)
+     * @param {Object|null} entry - The stored entry
+     * @returns {boolean}
+     */
+    _workBaseTrusted(key, entry) {
+        if (!entry) return false;
+        if (entry.scale === WORK_BASE_SCALE && Number(entry.version) >= WORK_BASE_VERSION) return true;
+        const count = this._waveCount(key);
+        return !(count !== null && count > 1);
+    }
+
+    /**
+     * Drop the untagged bases of multi-monster waves, in memory and on disk.
+     *
+     * A learned cache rather than a setting, so dropping one costs nothing but
+     * a relearn — and keeping one kept T12 on a T1 Badger fight for good, since
+     * the held-base guard keeps any base that explains the bar at some tier.
+     */
+    _purgeWorkBases() {
+        try {
+            const dropped = Object.keys(this.workBases).filter(
+                (key) => !this._workBaseTrusted(key, this.workBases[key])
+            );
+            if (!dropped.length) return;
+            this.workBases = Object.fromEntries(
+                Object.entries(this.workBases).filter(([key]) => !dropped.includes(key))
+            );
+            saveWorkBases(this.workBases, { keep: (key, entry) => this._workBaseTrusted(key, entry) }).catch(() => {});
+        } catch (error) {
+            console.error('[GuildTrials] Purging work bases failed:', error);
+        }
     }
 
     /**
@@ -5257,7 +5413,12 @@ class GuildTrials {
         const poolTarget = kind === 'combat' && Number.isFinite(tile.readings?.[1]?.max) ? tile.readings[1].max : null;
         const fromPool =
             poolTarget !== null ? tierFromWorkTarget({ target: poolTarget, baseWork, participants: 0, kind }) : null;
-        return fromPool ?? tierFromWorkTarget({ target: tile.readings?.[0]?.max, baseWork, participants, kind });
+        // A grafted wave is read against the whole wave's base, as in
+        // `analyseTrial`; a partial one identifies nothing
+        const bossBase = waveLadderBase(baseWork, kind === 'combat' ? tile.readings?.[0] : null);
+        return (
+            fromPool ?? tierFromWorkTarget({ target: tile.readings?.[0]?.max, baseWork: bossBase, participants, kind })
+        );
     }
 
     /**
@@ -5302,30 +5463,61 @@ class GuildTrials {
             // skilling bar) is participant-scaled and needs the count.
             const poolTarget = kind === 'combat' ? Number(lastSample?.readings?.[1]?.max) : NaN;
             const usingPool = Number.isFinite(poolTarget) && poolTarget > 0;
-            const target = usingPool ? poolTarget : analysis.total;
+            const key = String(tile.name || '')
+                .trim()
+                .toLowerCase();
+
+            // Learned on one monster's scale, always. A graft is the wave's
+            // sum and is divided back down by the wave's count — and only a
+            // whole wave teaches: one slot of two Badgers after a refresh is
+            // 485,760 of a 971,520 wave, and learning off it gave a base the
+            // whole wave then "explained" as T12
+            let monsters = 1;
+            const bossReading = kind === 'combat' ? lastSample?.readings?.[0] : null;
+            if (!usingPool && typeof bossReading?.source === 'string') {
+                // A tagged reading must say how much of the wave it is, and
+                // be all of it
+                const count = Number(bossReading.waveCount) || this._waveCount(key);
+                const slots = Number(bossReading.slots);
+                if (!(count > 0) || !(slots >= count)) return;
+                monsters = count;
+            }
+            const target = usingPool ? poolTarget : analysis.total / monsters;
             if (!Number.isFinite(target)) return;
             if (!usingPool && !(participants > 0)) return;
             const scaledBy = usingPool ? 0 : participants;
 
-            const key = String(tile.name || '')
-                .trim()
-                .toLowerCase();
-            const held = this.workBases[key]?.baseWork;
-            if (
-                Number.isFinite(held) &&
-                tierFromWorkTarget({ target, baseWork: held, participants: scaledBy, kind }) !== null
-            ) {
-                return;
-            }
+            // A base in hand that explains the bar is kept: relearning on a
+            // stale badge is how a constant drifts. Not when the game is
+            // stating the tier this moment and the held base puts the bar on a
+            // different one — that base is wrong, and keeping it is how a bad
+            // one learned once stayed for good
+            const heldEntry = this.workBases[key];
+            const held = this._workBaseTrusted(key, heldEntry) ? heldEntry?.baseWork : null;
+            const heldTier = Number.isFinite(held)
+                ? tierFromWorkTarget({ target, baseWork: held, participants: scaledBy, kind })
+                : null;
+            if (heldTier !== null && (analysis.tierSource !== 'socket' || heldTier === analysis.tier)) return;
 
             const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: target }], scaledBy, kind);
             if (!Number.isFinite(baseWork) || baseWork <= 0) return;
 
             this.workBases = {
                 ...this.workBases,
-                [key]: { baseWork, tier: analysis.tier, target: analysis.total, participants, learnedAt: now },
+                [key]: {
+                    baseWork,
+                    scale: WORK_BASE_SCALE,
+                    version: WORK_BASE_VERSION,
+                    tier: analysis.tier,
+                    target: analysis.total,
+                    monsters,
+                    participants,
+                    learnedAt: now,
+                },
             };
-            saveWorkBases(this.workBases).catch(() => {});
+            saveWorkBases(this.workBases, { keep: (name, entry) => this._workBaseTrusted(name, entry) }).catch(
+                () => {}
+            );
         } catch (error) {
             console.error('[GuildTrials] Learning a work base failed:', error);
         }
@@ -5371,9 +5563,28 @@ class GuildTrials {
         // then reported it under Hedgehog's name, tier ladder and banked count
         if (!pool.encounter || encounterOf(tile.name) !== pool.encounter) return tile;
 
+        // The pool is the wave's sum, and only the *whole* wave is a reading
+        // of anything. After a refresh mid-tier the stream names one Badger
+        // before the other, and a one-slot pool grafted as the wave was filed
+        // as the tier's total, taught a work base half the wave's, and paired
+        // with the next whole reading as a tier clear
+        const waveCount = this._waveCount(tile.name);
+        const slots = Number.isFinite(pool.slots) ? pool.slots : null;
+        if (waveCount !== null && slots !== null && slots < waveCount) return tile;
+
         return {
             ...tile,
-            readings: [{ current: pool.current, max: pool.max }],
+            // Tagged as the wave's sum, with what it summed: the same card is
+            // also read off one monster's DOM bar, on a different scale
+            readings: [
+                {
+                    current: pool.current,
+                    max: pool.max,
+                    source: 'pool',
+                    ...(slots !== null ? { slots } : {}),
+                    ...(waveCount !== null ? { waveCount } : {}),
+                },
+            ],
             spectatedTier: Number.isFinite(pool.tier) ? pool.tier : null,
             // The stream states the tier the same way the skilling socket does
             // (`new_battle.tier`), and it is persisted the same way — as
@@ -5385,6 +5596,37 @@ class GuildTrials {
             ...(Number.isFinite(pool.tier)
                 ? { socketTier: pool.tier, socketTierTarget: Number.isFinite(pool.max) ? pool.max : null }
                 : {}),
+        };
+    }
+
+    /**
+     * Say what a combat card's own boss bar sums.
+     *
+     * The DOM's bars are folded per wave by `mergeWaveTiles` — both Trial
+     * Badger cards into one 971,520 reading — but a wave whose second card has
+     * not mounted is one Badger's 485,760 under the same key. Both are filed,
+     * and the work ladder and the damage rate must know which they hold, so the
+     * reading carries its card count and the wave's monster count, as a graft
+     * does. A reading that already says (the graft) is left alone.
+     *
+     * @param {Object} tile - A card, after any graft
+     * @returns {Object} The card, its boss reading tagged
+     */
+    _withWaveScale(tile) {
+        const reading = tile?.readings?.[0];
+        if (tile?.kind !== 'combat' || !reading || typeof reading.source === 'string') return tile;
+        const waveCount = this._waveCount(tile.name);
+        return {
+            ...tile,
+            readings: [
+                {
+                    ...reading,
+                    source: 'cards',
+                    slots: Number.isFinite(tile.waveSize) && tile.waveSize > 0 ? tile.waveSize : 1,
+                    ...(waveCount !== null ? { waveCount } : {}),
+                },
+                ...tile.readings.slice(1),
+            ],
         };
     }
 

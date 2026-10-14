@@ -873,6 +873,44 @@ describe('combatDamageRate', () => {
         expect(measured.rate).toBeNull();
         expect(measured.damage).toBe(0);
     });
+
+    // Two Trial Badgers at 485,760 each: one Badger's DOM card on the In
+    // Progress tab, and the spectator stream's 971,520 sum grafted onto the
+    // Trials tab, both under one record. Paired across a tab switch they read
+    // as a tier clear each way — ~1.46M of damage nobody dealt, and "Party DPS
+    // 1.8K" beside a split of 281.
+    test('one Badger and the whole wave alternating are no tier clear', () => {
+        const measured = combatDamageRate([
+            at(0, 300_000, 485_760),
+            at(5_000, 300_000, 971_520),
+            at(10_000, 299_000, 485_760),
+        ]);
+
+        expect(measured.damage).toBeLessThanOrEqual(1_000);
+        expect(measured.boundaries).toBe(0);
+        expect(measured.rescaled).toBe(2);
+    });
+
+    test('readings of two scales are each paired with their own kind', () => {
+        const card = (t, current) => ({ t, current, max: 485_760, scale: 'card' });
+        const pool = (t, current) => ({ t, current, max: 971_520, scale: 'pool:2' });
+        const measured = combatDamageRate([card(0, 300_000), pool(5_000, 785_760), card(10_000, 299_000)]);
+
+        expect(measured.damage).toBe(1_000);
+        expect(measured.spanMs).toBe(10_000);
+        expect(measured.boundaries).toBe(0);
+    });
+
+    test('a falling maximum is never a clear, even across a short gap and a fitted growth', () => {
+        const measured = combatDamageRate([at(0, 600_000, 669_500), at(5_000, 300_000, 618_000)], {
+            growthPerTier: 669_500 / 618_000,
+        });
+
+        expect(measured.damage).toBe(0);
+        expect(measured.boundaries).toBe(0);
+        expect(measured.rescaled).toBe(1);
+        expect(measured.rate).toBeNull();
+    });
 });
 
 describe('pace', () => {

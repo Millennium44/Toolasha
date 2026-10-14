@@ -1542,12 +1542,24 @@ export async function loadWorkBases() {
 
 /**
  * Write the learned work bases down.
+ *
+ * A base another tab learned is kept, so dropping one from memory alone never
+ * removes it from storage — the merge would put it straight back. `keep` is
+ * the way to retire entries: it is asked of every entry of the merged map,
+ * stored and held alike, inside the same fold that lands the write.
+ *
  * @param {Object} bases - The map {@link loadWorkBases} returns
+ * @param {Object} [options] - Options
+ * @param {Function} [options.keep] - `(key, entry) => boolean`; an entry it refuses is dropped
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveWorkBases(bases) {
+export async function saveWorkBases(bases, { keep = null } = {}) {
     // Stored under memory, per skill: a base another tab learned is kept
-    return probeMergeWrite(WORK_BASES_KEY, bases || {}, (stored, memory) => ({ ...stored, ...memory }));
+    return probeMergeWrite(WORK_BASES_KEY, bases || {}, (stored, memory) => {
+        const merged = { ...stored, ...memory };
+        if (typeof keep !== 'function') return merged;
+        return Object.fromEntries(Object.entries(merged).filter(([key, entry]) => keep(key, entry)));
+    });
 }
 
 // ─── The spectated fight's roster ───────────────────────────────────────────
