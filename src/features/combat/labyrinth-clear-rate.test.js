@@ -1252,6 +1252,39 @@ describe('per-character fight outcomes', () => {
         expect(labyrinthClearRate._outcomes).toEqual({ mine: { wins: 1, fights: 1 } });
     });
 
+    test('a sync pull brings the other device totals in and keeps what this one counted', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { mine: { attempts: 1, clears: 1 } },
+        });
+        await labyrinthClearRate.loadOutcomes();
+        labyrinthClearRate._outcomes = {
+            ...labyrinthClearRate._outcomes,
+            fresh: { attempts: 2, clears: 1, updatedAt: Date.now() },
+        };
+
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { mine: { attempts: 1, clears: 1 }, theirs: { attempts: 5, clears: 1 } },
+        });
+        announceSyncPullApplied({ settings: ['labyrinthFightOutcomes_me'] });
+        await vi.waitFor(() =>
+            expect(Object.keys(labyrinthClearRate._outcomes).sort()).toEqual(['fresh', 'mine', 'theirs'])
+        );
+    });
+
+    test('a pull before the first load, or after a character switch, is left to the load', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { theirs: { attempts: 5, clears: 1 } },
+        });
+        announceSyncPullApplied({ settings: ['labyrinthFightOutcomes_me'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(labyrinthClearRate._outcomes).toEqual({});
+    });
+
     test('a legacy global record is discarded rather than inherited', async () => {
         // A win rate is a measurement of one character's power against a room.
         // Handing it to another character would poison every verdict from there
