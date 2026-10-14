@@ -1688,7 +1688,7 @@ describe('the panel', () => {
                 expect(container.textContent).toContain('Scrolls, priced by their tokens');
                 expect(container.textContent).not.toContain('Measured, but not priced');
                 const line = container.querySelector('[data-scroll-row]').textContent;
-                expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone) = 204.0K per scroll');
+                expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone, after tax) = 204.0K per scroll');
                 expect(line).toContain('+792.0K');
             });
 
@@ -2424,7 +2424,7 @@ describe('the remembered upgrade analysis across a character switch', () => {
             mocks.scrollRate = null;
 
             const line = container.querySelector('[data-scroll-row]').textContent;
-            expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone)');
+            expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone, after tax)');
             expect(line).not.toContain('Something Else');
         });
 

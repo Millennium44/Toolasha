@@ -484,7 +484,8 @@ class DungeonTokenTooltips {
             `Valued at ${basis}. The shop may cap how many can be bought, and selling that many would move the ` +
             `market, so treat it as an upper bound. Net worth values tokens by its own rules and can differ.`;
         const [first, ...rest] = held.parts;
-        const spent = (part) => `${formatWithSeparator(part.purchases)} × ${part.name}`;
+        // Items, not purchases: one purchase can hand over several (1 token -> 10 essences)
+        const spent = (part) => `${formatWithSeparator(part.purchases * part.outputCount)} × ${part.name}`;
         let what = spent(first);
         if (rest.length === 1) {
             what += ` + ${formatWithSeparator(rest[0].tokens)} tokens as ${rest[0].name}`;
