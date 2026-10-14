@@ -2235,6 +2235,20 @@ describe('a Skilling gear row unfolds into what it is buying', () => {
         expect(detail.textContent).not.toContain('Keep gear the forced armor swaps replace');
     });
 
+    test('a checked swap that keeps a piece says an unreached loadout wears it, not the armor setting', () => {
+        const costDetail = {
+            kept: [{ name: 'Sinister Cape', enhancementLevel: 5, price: 90_000_000 }],
+            keptValue: 90_000_000,
+        };
+        const checked = ui._renderAllFightsNotes({ costDetail, candidate: { checkedSwap: true } });
+        expect(checked).toContain('a loadout this swap does not reach still wears it');
+        expect(checked).not.toContain('Keep gear the forced armor swaps replace');
+
+        // The forced armor swaps keep their own reason
+        const forced = ui._renderAllFightsNotes({ costDetail, candidate: {} });
+        expect(forced).toContain('Keep gear the forced armor swaps replace');
+    });
+
     test('a row the analysis could not explain says so rather than drawing an empty box', () => {
         ui._renderSkillingUpgradeResults(geared({ costDetail: null }), container);
         const detail = container.querySelector('[data-skilling-gold-detail="0"]');

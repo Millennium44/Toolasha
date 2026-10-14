@@ -326,6 +326,12 @@ const KEPT_REASON_SKILLING =
     'since it is combat gear you keep in a loadout — selling it to fund skilling gear is not a trade anybody makes.';
 
 /**
+ * Why a hand-checked swap does not credit a piece: a loadout the swap does not
+ * reach still wears it. No setting changes this — only checking "All loadouts".
+ */
+const KEPT_REASON_CHECKED = 'since a loadout this swap does not reach still wears it.';
+
+/**
  * The Cost cell of a gold row, in the wording the all-fights table uses.
  *
  * Four different things used to render as the same em dash or as a bare
@@ -5482,9 +5488,8 @@ class LabSimUI {
         if (kept?.length) {
             notes.push(
                 `Keeping ${kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ')} — resale of ` +
-                    `${formatKMB(Math.round(result.costDetail.keptValue || 0))} deliberately not credited, since the labyrinth needs ` +
-                    'every set. Turn off "Keep gear the forced armor swaps replace" in settings to price these as ' +
-                    'straight swaps.'
+                    `${formatKMB(Math.round(result.costDetail.keptValue || 0))} deliberately not credited, ` +
+                    (result.candidate?.checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH)
             );
         }
         if (result.candidate?.caveat) notes.push(result.candidate.caveat);
@@ -6014,7 +6019,11 @@ class LabSimUI {
             );
         }
 
-        parts.push(this._renderCostBreakdown(result.costDetail));
+        parts.push(
+            this._renderCostBreakdown(result.costDetail, {
+                keptReason: result.candidate?.checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH,
+            })
+        );
         return parts.join('');
     }
 
