@@ -265,6 +265,43 @@ export function isLiveSafeKey(store, key) {
     return mergeForKey(store, key)?.liveSafe === true;
 }
 
+/** @type {Set<(written: Record<string, Array<string>>) => (void|Promise<void>)>} */
+const pullListeners = new Set();
+
+/**
+ * Be told when a sync pull has written keys, after it has landed.
+ *
+ * A `liveSafe` record is adopted under a running page without a reload, which
+ * leaves the page's in-memory copy of it behind the stored one. Its owner
+ * subscribes here to read what the pull brought. The listener is handed the
+ * keys the pull wrote, by store, and decides for itself whether any are its
+ * own. It runs after the pull's writes (and any retention deletes) are done,
+ * must not throw, and is not awaited.
+ * @param {(written: Record<string, Array<string>>) => (void|Promise<void>)} listener - Called per pull
+ * @returns {() => void} Unsubscribe
+ */
+export function onSyncPullApplied(listener) {
+    pullListeners.add(listener);
+    return () => pullListeners.delete(listener);
+}
+
+/**
+ * Tell the subscribers a pull has landed. Called by the sync once per applied pull.
+ * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+ * @returns {void}
+ */
+export function announceSyncPullApplied(written) {
+    for (const listener of [...pullListeners]) {
+        try {
+            Promise.resolve(listener(written || {})).catch((error) => {
+                console.error('[SyncMergeRegistry] A pull listener failed:', error);
+            });
+        } catch (error) {
+            console.error('[SyncMergeRegistry] A pull listener threw:', error);
+        }
+    }
+}
+
 /**
  * Every registration, for diagnostics and for the settings panel's "what does
  * a pull combine?" answer.

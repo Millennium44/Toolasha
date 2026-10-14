@@ -160,6 +160,9 @@ const seriesStore = createChunkedHistory({
     // month brings the thinned points back (the peer, or the gist, still holds them), and this device
     // thins them again on its next load: a pull that never settles
     pruneEntries: (points) => pruneHistory(points),
+    // Points are only ever added; a removal (a compaction, the chart's delete button) is a tombstone, and both
+    // the months and the deletions key are written folded, so a pull lands under the running page
+    liveSafe: true,
     label: 'NetworthHistory',
 });
 
@@ -408,6 +411,21 @@ class NetworthHistory {
     }
 
     /**
+     * Take in the points a sync pull brought for this character, which the store has already adopted.
+     * Merged into the array as it stands now, never swapped for a re-read one, so a point recorded since
+     * the pull started is kept.
+     * @param {string} charId - Whose points
+     * @param {Array<Object>} points - Points the store did not hold
+     */
+    _adoptPulled(charId, points) {
+        if (charId !== this.characterId) return;
+        const have = new Set(this.history.map((point) => point.t));
+        const added = points.filter((point) => point && typeof point.t === 'number' && !have.has(point.t));
+        if (added.length === 0) return;
+        this.history = pruneHistory([...this.history, ...added].sort((a, b) => a.t - b.t));
+    }
+
+    /**
      * Append a snapshot and compact consecutive identical totals.
      * If 3+ consecutive entries share the same total, keep only the first and last.
      * @param {Object} snapshot - Snapshot object with t, total, and breakdown fields
@@ -607,5 +625,6 @@ class NetworthHistory {
 }
 
 const networthHistory = new NetworthHistory();
+seriesStore.onRefreshed?.((charId, points) => networthHistory._adoptPulled(charId, points));
 
 export default networthHistory;

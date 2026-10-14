@@ -32,7 +32,12 @@ import {
 } from './sync-ownership.js';
 import { ensureExternalKeysLoaded, ensureExternalKeysSaved } from './sync-external-keys.js';
 import { importEverything, stripExcludedKeys, tombstoneCompanionKey } from '../../utils/full-backup.js';
-import { mergeForKey, retentionDrops, retentionKeepsLocal } from '../../utils/sync-merge-registry.js';
+import {
+    announceSyncPullApplied,
+    mergeForKey,
+    retentionDrops,
+    retentionKeepsLocal,
+} from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
 
 /** Matches the full-backup format, because that is what this produces */
@@ -935,6 +940,8 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         if ((failed || []).some((entry) => entry.store === SETTINGS_STORE)) {
             await restoreMigrationRecords(migrationRecords);
         }
+        // The records that took the pull under a running page re-read what it wrote
+        announceSyncPullApplied(imported.writtenKeys ?? payloadKeys);
         return {
             restored,
             expected,

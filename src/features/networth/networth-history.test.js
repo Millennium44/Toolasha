@@ -602,3 +602,35 @@ describe('detail snapshots take a pull without a reload', () => {
         expect(isLiveSafeKey('networthHistory', 'networthDetail_12345')).toBe(false);
     });
 });
+
+describe('a sync pull that landed under the running page', () => {
+    test('the points it brought join the history, and a point taken since is kept', () => {
+        const mine = point(1, 100);
+        networthHistory.history = [mine];
+
+        networthHistory._adoptPulled('char-1', [point(5, 50), point(1, 100), { t: 'bad' }]);
+
+        expect(networthHistory.history.map((entry) => entry.total)).toEqual([50, 100]);
+        expect(networthHistory.history[1]).toBe(mine);
+    });
+
+    test('points for another character are not taken in', () => {
+        networthHistory.history = [point(1, 100)];
+
+        networthHistory._adoptPulled('char-2', [point(5, 50)]);
+
+        expect(networthHistory.history).toHaveLength(1);
+    });
+
+    test('a point older than a year is thinned the way the history thins its own', () => {
+        const day = Date.now() - 400 * 24 * HOUR;
+        networthHistory.history = [];
+
+        networthHistory._adoptPulled('char-1', [
+            { t: day, total: 1 },
+            { t: day + HOUR, total: 2 },
+        ]);
+
+        expect(networthHistory.history).toHaveLength(1);
+    });
+});

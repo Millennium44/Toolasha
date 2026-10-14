@@ -51,6 +51,7 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/sync-merge-registry.js', () => ({
     registerSyncMerge: () => {},
     registerSyncRetention: () => {},
+    onSyncPullApplied: () => () => {},
     retentionKeepsLocal: () => false,
 }));
 

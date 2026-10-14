@@ -285,3 +285,30 @@ describe('the rate a long window measures', () => {
         expect(checkpointRate(mixed, 'a').gained).toBe(300);
     });
 });
+
+describe('a sync pull that landed under the running page', () => {
+    test('the checkpoints it brought join the list, the ones already held are not doubled', async () => {
+        const checkpoints = build();
+        state.stored = [{ d: '2026-03-14', k: 'a', xp: 100, level: 1 }];
+        await checkpoints.load('char-1');
+
+        checkpoints._adoptPulled('char-1', [
+            { d: '2026-03-14', k: 'a', xp: 999, level: 9 },
+            { d: '2026-03-13', k: 'a', xp: 50, level: 1 },
+        ]);
+
+        expect(checkpoints.peek()).toEqual([
+            { d: '2026-03-13', k: 'a', xp: 50, level: 1 },
+            { d: '2026-03-14', k: 'a', xp: 100, level: 1 },
+        ]);
+    });
+
+    test('another character’s checkpoints are not taken in', async () => {
+        const checkpoints = build();
+        await checkpoints.load('char-1');
+
+        checkpoints._adoptPulled('char-2', [{ d: '2026-03-13', k: 'a', xp: 50, level: 1 }]);
+
+        expect(checkpoints.peek()).toEqual([]);
+    });
+});

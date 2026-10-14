@@ -42,7 +42,7 @@
  */
 
 import storage from '../core/storage.js';
-import { registerSyncMerge } from './sync-merge-registry.js';
+import { registerSyncMerge, onSyncPullApplied } from './sync-merge-registry.js';
 
 /**
  * Prefixes whose sync merge is already registered.
@@ -191,6 +191,25 @@ export function mergeTombstones(local, incoming, now = Date.now()) {
         else if (stone.at === held.at && stone.bulk) out[id] = stone;
     }
     ageTombstones(out, now);
+    return out;
+}
+
+/**
+ * The deletions key as a folded write leaves it: this store's map and the stored one, the later deletion
+ * winning per id, less the stones this store removed because their entry outlived the deletion.
+ *
+ * Without the fold a write of the memory map replaces whatever a sync pull put under the key since the page
+ * read it, which for a history that takes a pull without a reload is a peer's deletions erased.
+ * @param {*} stored - The map on disk now
+ * @param {*} value - This store's map
+ * @param {Map<string, number>} revived - Stones removed on purpose (`id` to the `at` of the removed stone)
+ * @returns {Object<string, Object>} The map to write
+ */
+function foldTombstones(stored, value, revived) {
+    const out = mergeTombstones(value, stored);
+    for (const [id, at] of revived || []) {
+        if (out[id] && out[id].at <= at) delete out[id];
+    }
     return out;
 }
 
@@ -379,6 +398,10 @@ export function maxRecordsPerCharacter(storeName, keys) {
  *   rewritten in place has got (a session's action count). A tombstone then also deletes any copy no further
  *   along than the one deleted — an older snapshot a peer still holds — where without it only the exact
  *   deleted copy (same fingerprint) is matched. A copy further along has outlived the deletion.
+ * @param {boolean} [options.liveSafe] - Opt in to taking a sync pull without a reload: the records and the
+ *   deletions key are registered live-safe, so the pull's keys are not latched, and the store re-reads what a
+ *   pull wrote (`refresh`, `onRefreshed`). Only for a history whose every write already goes through the folding
+ *   chunk write and whose deletions key is written folded (see `_writeTombs`); the default is the latch
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -400,6 +423,7 @@ class ChunkedHistory {
         pruneIncoming,
         legacyIdentitiesOf,
         revisionOf,
+        liveSafe = false,
         label = 'ChunkedHistory',
     }) {
         this.storeName = storeName;
@@ -416,6 +440,7 @@ class ChunkedHistory {
         this.pruneIncoming = typeof pruneIncoming === 'function' ? pruneIncoming : null;
         this.legacyIdentitiesOf = typeof legacyIdentitiesOf === 'function' ? legacyIdentitiesOf : null;
         this.revisionOf = typeof revisionOf === 'function' ? revisionOf : null;
+        this.liveSafe = liveSafe === true;
         this.label = label;
 
         /** Whose records are in memory */
@@ -480,6 +505,15 @@ class ChunkedHistory {
          */
         this._adopted = new Map();
 
+        /**
+         * Tombstones this store removed because their entry outlived the deletion (`id -> at` of the stone),
+         * so a folded write of the deletions key does not bring them back from disk.
+         * @type {Map<string, number>}
+         */
+        this._revived = new Map();
+        /** Called with `(charId, entries)` when a pull brought entries memory lacked; see `onRefreshed` */
+        this._refreshListeners = new Set();
+
         /** The read in flight, so two concurrent `load()`s share one */
         this._loading = null;
         /** Which read is current, so one abandoned by `forget()` does not commit */
@@ -487,6 +521,7 @@ class ChunkedHistory {
 
         registerChunkedStore(storeName, prefix);
         this._registerSyncMerge();
+        if (this.liveSafe) onSyncPullApplied((written) => this._onPulled(written));
     }
 
     /**
@@ -581,6 +616,8 @@ class ChunkedHistory {
             label: `${this.label} records`,
             merge,
             pull,
+            // Every write of a record goes through `_writeChunk`'s fold, which keeps what a pull put on disk
+            liveSafe: this.liveSafe,
         });
 
         // The deletions, under their own claim. Deliberately NOT
@@ -596,6 +633,8 @@ class ChunkedHistory {
             prefix: `${this.prefix}Tomb_`,
             label: `${this.label} deletions`,
             merge: (local, incoming) => mergeTombstones(local, incoming),
+            // Written folded (`_writeTombs`) and read only when the history loads, which applies them
+            liveSafe: this.liveSafe,
         });
 
         const legacyBase = this._legacyBase();
@@ -973,22 +1012,30 @@ class ChunkedHistory {
     }
 
     /**
-     * Persist a tombstone map (an empty one as `{}`, so the clear syncs).
+     * Persist a tombstone map (an empty one as `{}`, so the clear syncs). A live-safe history writes it
+     * folded into the stored map (`foldTombstones`), so a pull's deletions are not written over.
      *
      * Fire and forget: nothing downstream waits on it, and a write that does
      * not land leaves the map exactly as it was on disk — which is the same
      * degradation an expired tombstone has.
      * @param {string} charId - Whose deletions
      * @param {Object} stones - The map to write
+     * @param {Map<string, number>} [revived] - Stones this store removed on purpose, to keep out of the fold
      * @returns {Promise<*>} The write, for callers that must await it
      * @private
      */
-    _writeTombs(charId, stones) {
+    _writeTombs(charId, stones, revived = this._revived) {
         const key = this.tombKey(charId);
         // An empty map is written as `{}`, never deleted: sync carries whole keys, so a deleted key is still in the
         // gist, comes back on the next pull with its expired stones, is emptied again by the next load, and loops.
         // `{}` is a newer value the merge folds the old copy into (`mergeTombstones` ages the stones away).
-        const write = storage.set(key, stones, this.storeName, this.immediate);
+        // A live-safe history takes a pull without a reload, so the stored map may hold deletions a peer
+        // filed since this one was read: the write folds them in, less the stones this store itself removed
+        const write = this.liveSafe
+            ? storage.set(key, stones, this.storeName, this.immediate, {
+                  fold: (stored, value) => foldTombstones(stored, value, revived),
+              })
+            : storage.set(key, stones, this.storeName, this.immediate);
         return Promise.resolve(write).catch((error) => {
             console.error(`[${this.label}] Writing the deletion record failed:`, error);
         });
@@ -1017,13 +1064,15 @@ class ChunkedHistory {
      *
      * @param {Array<Object>} entries - The assembled history
      * @param {Object} stones - The tombstone map, mutated: a revived id is cleared
-     * @returns {{entries: Array<Object>, changed: boolean, dropped: Array<Object>}} What survives
+     * @returns {{entries: Array<Object>, changed: boolean, dropped: Array<Object>, revived: Map<string, number>}}
+     *   What survives, and the stones removed because their entry outlived the deletion (`key -> at`)
      * @private
      */
     _applyTombstones(entries, stones) {
+        const revived = new Map();
         // Identity is `JSON.stringify` by default, so the loop below is not
         // free; a history nobody has deleted from must not pay for it
-        if (Object.keys(stones).length === 0) return { entries, changed: false, dropped: [] };
+        if (Object.keys(stones).length === 0) return { entries, changed: false, dropped: [], revived };
         let changed = false;
         const kept = [];
         const dropped = [];
@@ -1036,7 +1085,10 @@ class ChunkedHistory {
             }
             if (this._matchingStone(id, entry, stones) === undefined) {
                 // Touched since the deletion, so this copy has outlived it
-                for (const key of keys) delete stones[key];
+                for (const key of keys) {
+                    revived.set(key, stones[key].at);
+                    delete stones[key];
+                }
                 changed = true;
                 kept.push(entry);
                 continue;
@@ -1053,10 +1105,10 @@ class ChunkedHistory {
                 `[${this.label}] Refusing a fold that would delete ${casual} of ${entries.length} entries at once; ` +
                     'keeping every entry and holding the tombstones back un-applied.'
             );
-            return { entries, changed, dropped: [] };
+            return { entries, changed, dropped: [], revived };
         }
-        if (dropped.length === 0) return { entries, changed, dropped };
-        return { entries: kept, changed, dropped };
+        if (dropped.length === 0) return { entries, changed, dropped, revived };
+        return { entries: kept, changed, dropped, revived };
     }
 
     /** @returns {boolean} True while the legacy single-array key is still in use */
@@ -1188,9 +1240,10 @@ class ChunkedHistory {
                 // rewrites anyway, having never matched a snapshot entry
             }
         }
-        if (applied.changed || state.tombsChanged) this._writeTombs(charId, state.tombs);
+        if (applied.changed || state.tombsChanged) this._writeTombs(charId, state.tombs, applied.revived);
 
         this._charId = charId;
+        this._revived = applied.revived;
         this._entries = state.entries;
         this._snapshot = state.snapshot;
         this._tombs = state.tombs;
@@ -1823,6 +1876,131 @@ class ChunkedHistory {
     }
 
     /**
+     * Be told when a pull brought entries this store did not hold.
+     * @param {(charId: string, entries: Array<Object>) => void} listener - Called with the loaded character's
+     *   id and the entries a pull added or advanced (a copy further along, folded by `mergeCopies`)
+     * @returns {() => void} Unsubscribe
+     */
+    onRefreshed(listener) {
+        this._refreshListeners.add(listener);
+        return () => this._refreshListeners.delete(listener);
+    }
+
+    /**
+     * A pull has written keys: re-read this character's history if any of them is one of its records.
+     * @param {Record<string, Array<string>>} written - The pull's keys, by store
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _onPulled(written) {
+        const keys = written?.[this.storeName];
+        if (!this._loaded || !this._charId || !Array.isArray(keys)) return;
+        const charId = this._charId;
+        const mine = `${this.prefix}_${charId}_`;
+        if (!keys.some((key) => typeof key === 'string' && key.startsWith(mine))) return;
+        const fresh = await this.refresh(charId);
+        if (fresh.length === 0) return;
+        for (const listener of [...this._refreshListeners]) {
+            try {
+                listener(charId, fresh);
+            } catch (error) {
+                console.error(`[${this.label}] A refresh listener threw:`, error);
+            }
+        }
+    }
+
+    /**
+     * Take into memory what a sync pull wrote to disk since this store last looked.
+     *
+     * The pull folded its copy of each chunk into the stored one under a running page (the records are
+     * live-safe), so disk is ahead of memory. An entry on disk that memory lacks is news unless this store
+     * once held it and let it go (`_known`, or the chunk's last serialization) or a deletion covers it. News is
+     * put into `_entries` and `_adopted`, exactly as a chunk write that folds an entry in does, so the next
+     * `save()` carries it and does not read its absence from the caller's list as a deletion. A copy further
+     * along than the one held (by `mergeCopies`) replaces it. Nothing is written.
+     *
+     * The comparison runs in one step after the read's await, so an entry the caller added in the meantime is
+     * neither lost nor duplicated.
+     * @param {string} charId - Whose history
+     * @returns {Promise<Array<Object>>} The entries added or advanced, empty when nothing changed
+     */
+    async refresh(charId) {
+        if (!charId || !this._loaded || this._charId !== charId || this._legacy) return [];
+        const token = this._loadToken;
+        const state = { snapshot: new Map(), tombs: {}, tombsChanged: false };
+        let disk;
+        try {
+            disk = await this._readRecords(charId, state);
+        } catch (error) {
+            console.error(`[${this.label}] Re-reading after a pull failed:`, error);
+            return [];
+        }
+        // A read that could not be made says nothing; a store that moved on (a character switch, a forget)
+        // describes somebody else now
+        if (disk === null || token !== this._loadToken || !this._loaded || this._charId !== charId) return [];
+
+        const present = new Map();
+        for (const entry of this._entries) {
+            const id = this._identity(entry);
+            if (id !== undefined && id !== null) present.set(id, entry);
+        }
+        /** chunk id to every identity the store held for it: written since the read, or in its last serialization */
+        const heldIds = new Map();
+        const held = (chunkId) => {
+            let ids = heldIds.get(chunkId);
+            if (ids) return ids;
+            ids = new Set(this._known.get(chunkId) || []);
+            const json = this._snapshot.get(chunkId)?.json;
+            if (typeof json === 'string') {
+                try {
+                    for (const entry of JSON.parse(json)) {
+                        const id = this._identity(entry);
+                        if (id !== undefined && id !== null) ids.add(id);
+                    }
+                } catch {
+                    // A serialization that will not parse names nothing
+                }
+            }
+            heldIds.set(chunkId, ids);
+            return ids;
+        };
+
+        const added = [];
+        const advanced = [];
+        for (const entry of disk) {
+            if (entry == null) continue;
+            const id = this._identity(entry);
+            if (id === undefined || id === null) continue;
+            const mine = present.get(id);
+            if (mine !== undefined) {
+                if (!this.mergeCopies) continue;
+                const folded = this._mergeCopies(mine, entry);
+                if (folded !== mine) advanced.push({ mine, folded });
+                continue;
+            }
+            if (this._tombstoned(id, entry, this._tombs) || this._tombstoned(id, entry, state.tombs)) continue;
+            let chunkId;
+            try {
+                chunkId = String(this.groupOf(entry));
+            } catch {
+                continue;
+            }
+            if (held(chunkId).has(id)) continue;
+            added.push({ id, entry });
+        }
+        if (added.length === 0 && advanced.length === 0) return [];
+
+        let next = this._entries;
+        if (advanced.length > 0) {
+            const replace = new Map(advanced.map(({ mine, folded }) => [mine, folded]));
+            next = next.map((entry) => replace.get(entry) ?? entry);
+        }
+        for (const { id, entry } of added) this._adopted.set(id, entry);
+        this._entries = this._sorted([...next, ...added.map(({ entry }) => entry)]);
+        return [...added.map(({ entry }) => entry), ...advanced.map(({ folded }) => folded)];
+    }
+
+    /**
      * Drop the in-memory copy, so the next read comes from storage.
      *
      * What a character switch needs: the departing character's entries must not
@@ -1836,6 +2014,7 @@ class ChunkedHistory {
         this._entries = [];
         this._snapshot = new Map();
         this._tombs = {};
+        this._revived = new Map();
         this._known = new Map();
         this._adopted = new Map();
         this._legacy = false;

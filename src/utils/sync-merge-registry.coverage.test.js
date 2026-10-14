@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, test, expect, vi } from 'vitest';
 
-import { mergeForKey } from './sync-merge-registry.js';
+import { mergeForKey, isLiveSafeKey } from './sync-merge-registry.js';
 
 await import('./chest-tally.js');
 await import('./inventory-reservations.js');
@@ -564,5 +564,35 @@ describe('a new additive record cannot be forgotten by the registry', () => {
             const source = readFileSync(join(SRC, relative), 'utf8');
             expect(source, `${relative} no longer builds a persisted record`).toContain('createPersistedRecord(');
         }
+    });
+});
+
+describe('which chunked histories take a pull without a reload', () => {
+    // Opt-in per history (`liveSafe` in createChunkedHistory). Every one below writes only through the
+    // folding chunk write and writes its deletions key folded; the others keep their latch
+    test.each([
+        ['networthHistory', `networthSeries_${CHAR}_2026-01`, `networthSeriesTomb_${CHAR}`],
+        ['networthHistory', `itemFlowRec_${CHAR}_2026-01-05`, `itemFlowRecTomb_${CHAR}`],
+        ['lootLogHistory', `lootLogRec_${CHAR}_2026-01-05T09`, `lootLogRecTomb_${CHAR}`],
+        ['xpHistory', `skillCheckpointRec_${CHAR}_2026-01`, `skillCheckpointRecTomb_${CHAR}`],
+        ['xpHistory', `abilityCheckpointRec_${CHAR}_2026-01`, `abilityCheckpointRecTomb_${CHAR}`],
+    ])('%s %s and its deletions are live-safe', (store, record, tombs) => {
+        expect(isLiveSafeKey(store, record)).toBe(true);
+        expect(isLiveSafeKey(store, tombs)).toBe(true);
+    });
+
+    test.each([
+        ['alchemyHistory', 'transmuteSessionsRec'],
+        ['networthHistory', 'chestOpenRec'],
+        ['networthHistory', 'combatLootRec'],
+        ['networthHistory', 'prodIncomeRec'],
+    ])('%s %s is not (it keeps the latch)', (store, prefix) => {
+        expect(isLiveSafeKey(store, `${prefix}_${CHAR}_2026-01`)).toBe(false);
+    });
+
+    test('the legacy single-array keys are never live-safe: the next load migrates and deletes them', () => {
+        expect(isLiveSafeKey('networthHistory', `networth_${CHAR}`)).toBe(false);
+        expect(isLiveSafeKey('lootLogHistory', `lootLog_${CHAR}`)).toBe(false);
+        expect(isLiveSafeKey('xpHistory', `skillCheckpoints_${CHAR}`)).toBe(false);
     });
 });

@@ -396,6 +396,55 @@ describe('two copies of one day in the store', () => {
     });
 });
 
+describe('a sync pull that landed under the running page', () => {
+    const stretch = (to, milk) => ({ from: 1000, to, gained: { '/items/milk': milk } });
+
+    afterEach(() => {
+        hoisted.loaded = null;
+        recorder.cleanup();
+    });
+
+    test('a day the pull brought joins the rows, and a day held in both is folded', async () => {
+        hoisted.loaded = [
+            { d: '2026-09-27', gathering: { 7: { a: '/actions/milking/cow', stretches: [stretch(2000, 10)] } } },
+        ];
+        hoisted.game.charId = 'me';
+        recorder.cleanup();
+        recorder._rows = [];
+        recorder._charId = null;
+        recorder._loading = null;
+        await recorder.initialize();
+        await recorder.load();
+        const heard = vi.fn();
+        recorder.onChange(heard);
+
+        recorder._adoptPulled('me', [
+            { d: '2026-09-26', keys: { '/items/key': 2 } },
+            { d: '2026-09-27', gathering: { 7: { a: '/actions/milking/cow', stretches: [stretch(3000, 16)] } } },
+        ]);
+
+        const rows = await recorder.load();
+        expect(rows.map((entry) => entry.d)).toEqual(['2026-09-26', '2026-09-27']);
+        expect(await recorder.getRunGathering('7')).toMatchObject({ gained: { '/items/milk': 16 }, to: 3000 });
+        expect(heard).toHaveBeenCalled();
+    });
+
+    test('rows for another character are not taken in', async () => {
+        hoisted.loaded = [];
+        hoisted.game.charId = 'me';
+        recorder.cleanup();
+        recorder._rows = [];
+        recorder._charId = null;
+        recorder._loading = null;
+        await recorder.initialize();
+        await recorder.load();
+
+        recorder._adoptPulled('someone-else', [{ d: '2026-09-26', keys: { '/items/key': 2 } }]);
+
+        expect(await recorder.load()).toEqual([]);
+    });
+});
+
 describe('onChange notifications', () => {
     beforeEach(async () => {
         hoisted.saved = [];

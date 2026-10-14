@@ -192,6 +192,9 @@ class LootLogHistory {
             // A deletion also covers any copy no further along than the one
             // deleted: a peer's older snapshot, or a partial row of the same run
             revisionOf: (entry) => Number(entry?.actionCount),
+            // No copy of its own: every merge and read goes through the store's memory, which re-reads
+            // what a pull wrote, and every write is folded, so a pull lands under the running page
+            liveSafe: true,
             label: 'LootLogHistory',
         });
 

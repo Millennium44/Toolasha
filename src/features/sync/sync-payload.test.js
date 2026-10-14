@@ -107,7 +107,7 @@ vi.mock('../../utils/full-backup.js', () => ({
     },
 }));
 
-const { registerSyncMerge, mergeForKey } = await import('../../utils/sync-merge-registry.js');
+const { registerSyncMerge, mergeForKey, onSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 // Imported for their side effect: each registers its own merges at import
 // time, which is exactly how a real page assembles the registry
@@ -549,6 +549,22 @@ describe('applyPayload', () => {
         // The fold keeps this device's map, which then has nothing to write
         expect(importedPayloads[0].stores.settings.script_settingsMap_abc?.sync_token).toBeUndefined();
         expect(storeState.stores.settings.script_settingsMap_abc).toEqual({ chatCommands: { isTrue: true } });
+    });
+
+    test('tells the live-safe records which keys the pull wrote, once it has landed', async () => {
+        const heard = [];
+        const off = onSyncPullApplied((written) => heard.push({ written, imported: importedPayloads.length }));
+        importOutcome.writtenKeys = { xpHistory: ['xpHistory_1'], settings: ['panelSizeMemory'] };
+        try {
+            await applyPayload(JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { a: 1 } } }));
+        } finally {
+            off();
+        }
+
+        // After the import, with the keys the import reported
+        expect(heard).toEqual([
+            { written: { xpHistory: ['xpHistory_1'], settings: ['panelSizeMemory'] }, imported: 1 },
+        ]);
     });
 
     test('ignores device-only data an older build still uploaded', async () => {
