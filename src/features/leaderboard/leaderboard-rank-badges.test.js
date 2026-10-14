@@ -377,6 +377,45 @@ describe('leaderboard rank badges', () => {
         expect(Object.keys(leaderboardRankBadges.boards).sort()).toEqual(['standard|foraging', 'standard|milking']);
     });
 
+    test('a pull during a restart read does not discard a board that has not been saved yet', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const storage = (await import('../../core/storage.js')).default;
+        const { set, tryGet } = storage;
+        // The board is learned while storage refuses writes, so only the record's memory holds it
+        storage.set = async () => false;
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+        });
+        await flush();
+        storage.set = set;
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        storage.tryGet = async (...args) => {
+            await gate;
+            return tryGet(...args);
+        };
+        try {
+            game.settingWatchers.forEach((cb) => cb());
+            await flush();
+            announceSyncPullApplied({ leaderboardHistory: ['rankBoards'] });
+            await flush();
+            release();
+            await flush();
+            await vi.advanceTimersByTimeAsync(10);
+            await flush();
+        } finally {
+            storage.tryGet = tryGet;
+            storage.set = set;
+        }
+
+        expect(leaderboardRankBadges.boards['standard|milking'].rows).toEqual([['Alice', 7]]);
+    });
+
     test('a pull of some other key, or with the feature off, changes nothing', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();
