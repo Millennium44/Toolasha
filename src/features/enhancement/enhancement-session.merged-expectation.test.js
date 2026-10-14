@@ -11,6 +11,7 @@
 import { describe, expect, test } from 'vitest';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import {
+    calibrationObservation,
     createSession,
     extendSession,
     finalizeSession,
@@ -321,6 +322,28 @@ describe('expected attempts and protections for the whole merged path', () => {
         const { expected } = mergedExpectation(merged);
         expect([expected.fromLevel, expected.toLevel]).toEqual([4, 6]);
         expect(expected.expectedAttempts).toBe(Math.round(predict(4, 6, 4, LOW).expectedAttemptsExact));
+    });
+
+    test('merging with the running session keeps its leg live, so the forecast survives the next attempt', () => {
+        const [s1, s2, s3] = fourRuns();
+        // s4 is still running: its forecast is open and it keeps receiving attempts
+        const s4 = run('s4', 6, [], HIGH);
+        s4.state = SessionState.TRACKING;
+        s4.endTime = null;
+        const merged = foldSessions(planSessionMerge([s1, s2, s3, s4]).ordered);
+        expect(merged.state).toBe(SessionState.TRACKING);
+        expect(mergedExpectation(merged).expected).not.toBeNull();
+
+        recordSuccess(merged, 6, 7);
+        const after = mergedExpectation(merged);
+        expect(after.expected).not.toBeNull();
+        expect(after.expected.toLevel).toBe(7);
+        expect(after.successRates[6]).toBeDefined();
+        // Its own attempts are weighted at the level they were made
+        expect(after.successRates[6].legs).toBe(2);
+        // The merged session is still never calibrated, and a later resume starts a fresh leg
+        merged.state = SessionState.COMPLETED;
+        expect(calibrationObservation(merged)).toBeNull();
     });
 
     test('is never stored on the session and the session stays out of calibration', () => {
