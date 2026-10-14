@@ -2641,13 +2641,10 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
     });
     if (!mirror) return null;
     // A worn piece that went into the mirror is not also sold
-    const wornUsed = mirror.consumed.some(
-        (piece) => piece.hrid === candidate.currentHrid && piece.level === (candidate.currentLevel || 0)
-    );
-    const rawCredit =
-        wornUsed || isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
-            ? 0
-            : sellValue(candidate.currentHrid, candidate.currentLevel || 0);
+    const spent = consumedShare(mirror.consumed, candidate.currentHrid, candidate.currentLevel || 0);
+    const rawCredit = isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
+        ? 0
+        : (1 - spent) * sellValue(candidate.currentHrid, candidate.currentLevel || 0);
     const { credit, capped } = capEnhancementCredit(mirror.baseCost, rawCredit);
     return {
         net: mirror.baseCost - credit,
@@ -2899,14 +2896,30 @@ function resaleCredit(candidate, consumed = []) {
     let credit = 0;
     for (const item of removed) {
         if (!item?.hrid) continue;
-        // Refined into the target, so there is nothing left to sell
-        if (consumed.some((piece) => item.hrid === piece.hrid && (item.enhancementLevel || 0) === piece.level)) {
-            continue;
-        }
+        // Refined into the target, or spent in a mirror, so that share is not left to sell
+        const sold = 1 - consumedShare(consumed, item.hrid, item.enhancementLevel || 0);
+        if (sold <= 0) continue;
         credit +=
-            resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0;
+            sold *
+            (resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0);
     }
     return credit;
+}
+
+/**
+ * The share of a piece a route spends, 1 for a piece wholly refined or mirrored away.
+ * A mirror step the chain may skip (Blessed Tea) spends its lower input only some of the time.
+ * @param {Array<{hrid: string, level: number, share?: number}>} consumed - Pieces a route spends
+ * @param {string} hrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {number} Share spent, 0 to 1
+ */
+function consumedShare(consumed, hrid, level) {
+    let share = 0;
+    for (const piece of consumed || []) {
+        if (piece.hrid === hrid && piece.level === level) share += piece.share ?? 1;
+    }
+    return Math.min(1, share);
 }
 
 /**
@@ -3150,14 +3163,23 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
         const pay = (useUpper ? 0 : best[level - 1]) + (stepOdds > 0 ? stepOdds * (lowerPay + mirrorPrice) : 0);
         const forfeit = (useUpper ? upper.forfeit : 0) + (useLower ? stepOdds * lower.forfeit : 0);
         if (!Number.isFinite(pay) || pay + forfeit >= plan.pay + plan.forfeit) continue;
-        plan = { pay, forfeit, used: [useUpper ? upper : null, useLower ? lower : null].filter(Boolean) };
+        plan = {
+            pay,
+            forfeit,
+            // The lower input is only spent when the step is run; the upper one always is
+            used: [
+                useUpper ? { copy: upper, share: 1 } : null,
+                useLower ? { copy: lower, share: stepOdds } : null,
+            ].filter(Boolean),
+        };
     }
     if (!Number.isFinite(plan.pay) || !(plan.pay + plan.forfeit < viaOrdinary)) return null;
     return {
         baseCost: plan.pay,
         forfeited: plan.forfeit,
-        consumed: plan.used.filter((copy) => copy.piece).map((copy) => copy.piece),
-        heldLevels: plan.used.map((copy) => copy.level),
+        // `share` is how much of the worn piece the build is expected to spend; the rest is still sold
+        consumed: plan.used.filter((use) => use.copy.piece).map((use) => ({ ...use.copy.piece, share: use.share })),
+        heldLevels: plan.used.map((use) => use.copy.level),
         mirrorPrice,
     };
 }
@@ -3233,7 +3255,9 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
         // Judged after resale: refining a worn base gives up what that base would have sold for
         const forfeited = (refine.consumed || []).reduce(
             (sum, piece) =>
-                sum + (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
+                sum +
+                (piece.share ?? 1) *
+                    (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
             0
         );
         if (direct.price == null || refine.price + forfeited < direct.price) chosen = refine;
@@ -3825,9 +3849,9 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         hrid: item.hrid,
         name: nameOf(item.hrid),
         enhancementLevel: item.enhancementLevel || 0,
-        price: refineConsumed.some((piece) => item.hrid === piece.hrid && (item.enhancementLevel || 0) === piece.level)
-            ? 0
-            : resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0,
+        price:
+            (1 - consumedShare(refineConsumed, item.hrid, item.enhancementLevel || 0)) *
+            (resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0),
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
