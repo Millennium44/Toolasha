@@ -9,7 +9,7 @@
  * enhancing sweep stood in for.
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 const state = vi.hoisted(() => ({ items: [] }));
 
@@ -42,7 +42,7 @@ const ITEM_DETAIL_MAP = {
         itemLevel: 80,
         equipmentDetail: {
             type: BACK,
-            combatStats: { rangedDamage: 0.1, rangedAccuracy: 0.1, combatStyleHrids: ['/combat_styles/ranged'] },
+            combatStats: { criticalRate: 0.05, rangedDamage: 0.1, rangedAccuracy: 0.1, evasions: 0.1 },
         },
         enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }],
     },
@@ -145,6 +145,7 @@ const {
     describeCheckedSwap,
     evaluateSkillingSwaps,
     resolveEquipmentHrid,
+    sanitizeSwapOptions,
     sanitizeSwapQueues,
     searchEquipmentItems,
 } = await import('./lab-swap-check.js');
@@ -277,45 +278,161 @@ describe('combat: who a checked swap reaches', () => {
         expect(quiver.reach).toBe(1);
     });
 
-    test('armor with another style’s stats still goes in the slot, as a downgrade if need be (Magician’s Hat)', () => {
-        // The shape the live game data gives it: head slot, magic stats, no combatStyleHrids
-        ITEM_DETAIL_MAP['/items/magicians_hat'] = {
-            hrid: '/items/magicians_hat',
-            name: 'Magician’s Hat',
-            itemLevel: 20,
-            equipmentDetail: {
-                type: '/equipment_types/head',
-                combatStats: { abilityDamage: 0.1, abilityHaste: 5, magicAccuracy: 0.05, magicDamage: 0.05 },
-            },
-        };
-        ITEM_DETAIL_MAP['/items/corsair_helmet_refined'] = {
-            hrid: '/items/corsair_helmet_refined',
-            name: 'Corsair Helmet ★',
-            itemLevel: 90,
-            equipmentDetail: { type: '/equipment_types/head', combatStats: { slashDamage: 0.1 } },
-        };
-        const melee = wearing({
-            '/equipment_types/head': piece('/items/corsair_helmet_refined', 20),
-            [MAIN]: piece(SWORD, 20),
+    describe('relevance by the item own offensive stats (live shapes)', () => {
+        const HEAD = '/equipment_types/head';
+        const HAT = '/items/magicians_hat';
+        const HELMET = '/items/corsair_helmet_refined';
+        const PLAIN = '/items/plain_hood';
+        beforeAll(() => {
+            ITEM_DETAIL_MAP[HAT] = {
+                hrid: HAT,
+                name: 'Magician Hat',
+                equipmentDetail: {
+                    type: HEAD,
+                    combatStats: {
+                        abilityDamage: 0.1,
+                        abilityHaste: 5,
+                        magicAccuracy: 0.05,
+                        magicDamage: 0.05,
+                        evasions: 1,
+                    },
+                },
+            };
+            ITEM_DETAIL_MAP[HELMET] = {
+                hrid: HELMET,
+                name: 'Corsair Helmet',
+                equipmentDetail: { type: HEAD, combatStats: { slashDamage: 0.1 } },
+            };
+            ITEM_DETAIL_MAP[PLAIN] = {
+                hrid: PLAIN,
+                name: 'Plain Hood',
+                equipmentDetail: { type: HEAD, combatStats: { armor: 3, stabEvasion: 3 } },
+            };
+        });
+        const melee = () => wearing({ [HEAD]: piece(HELMET, 20), [MAIN]: piece(SWORD, 20), [BACK]: piece(CAPE, 5) });
+        const ranged = () => wearing({ [TWO]: piece(BOW, 3), [BACK]: piece(CAPE, 5) });
+        const magic = () => wearing({ [TWO]: piece(STAFF, 3) });
+        const reach = (hrid, dtos, options) =>
+            dtos.map((dto) =>
+                advisor.candidateAppliesToDTO(
+                    buildCombatSwapCandidate({ hrid, level: 10 }, dtos, gameData, true, options),
+                    dto,
+                    gameData
+                )
+            );
+
+        test('a Magician Hat is not in a melee loadout by default, and is with All loadouts on', () => {
+            const loadouts = [melee(), magic(), ranged()];
+            expect(reach(HAT, loadouts)).toEqual([false, true, false]);
+            expect(buildCombatSwapCandidate({ hrid: HAT, level: 10 }, [melee()], gameData).reach).toBe(0);
+
+            const forced = buildCombatSwapCandidate({ hrid: HAT, level: 10 }, [melee()], gameData, true, {
+                allLoadouts: true,
+            });
+            expect(forced.reach).toBe(1);
+            // A downgrade, shown because it was asked for
+            expect(advisor.applyCandidateToDTO(melee(), forced).equipment[HEAD]).toEqual({
+                hrid: HAT,
+                enhancementLevel: 10,
+            });
         });
 
-        const hat = buildCombatSwapCandidate({ hrid: '/items/magicians_hat', level: 10 }, [melee], gameData);
-
-        expect(hat.reach).toBe(1);
-        expect(advisor.candidateAppliesToDTO(hat, melee, gameData)).toBe(true);
-        expect(advisor.applyCandidateToDTO(melee, hat).equipment['/equipment_types/head']).toEqual({
-            hrid: '/items/magicians_hat',
-            enhancementLevel: 10,
+        test('a quiver is ranged, a Sinister Cape is melee, armor with no style stats goes everywhere', () => {
+            const loadouts = [melee(), magic(), ranged()];
+            expect(reach(QUIVER, loadouts)).toEqual([false, false, true]);
+            // The ranged loadout already wears the cape, and enhancing a worn piece is always in order
+            expect(reach(CAPE, loadouts)).toEqual([true, false, true]);
+            expect(reach(PLAIN, loadouts)).toEqual([true, true, true]);
         });
-        // A magic weapon is still kept out of a melee loadout
-        ITEM_DETAIL_MAP['/items/magic_wand'] = {
-            hrid: '/items/magic_wand',
-            name: 'Magic Wand',
-            equipmentDetail: { type: MAIN, combatStats: { magicDamage: 5 } },
-        };
-        expect(buildCombatSwapCandidate({ hrid: '/items/magic_wand', level: 1 }, [melee], gameData).reach).toBe(0);
-        // A quiver names its style, so it is kept out too
-        expect(buildCombatSwapCandidate({ hrid: QUIVER, level: 10 }, [melee], gameData).reach).toBe(0);
+
+        test('All loadouts does not override the hand rules or an item with no combat stats', () => {
+            const bowLoadout = wearing({ [TWO]: piece(BOW, 3) });
+            const options = { allLoadouts: true };
+            expect(
+                buildCombatSwapCandidate({ hrid: SWORD, level: 3 }, [bowLoadout], gameData, true, options).reach
+            ).toBe(0);
+            expect(
+                buildCombatSwapCandidate({ hrid: MILKING_TOOL, level: 3 }, [melee()], gameData, true, options).reach
+            ).toBe(0);
+        });
+
+        test('a higher level of a worn non-combat tool is still in no loadout', () => {
+            // The same-item shortcut used to skip the combat-stats check
+            const tool = '/equipment_types/milking_tool';
+            const wearingTool = wearing({ [tool]: piece(MILKING_TOOL, 3) });
+            const candidate = buildCombatSwapCandidate({ hrid: MILKING_TOOL, level: 10 }, [wearingTool], gameData);
+            expect(candidate.reach).toBe(0);
+            expect(advisor.candidateAppliesToDTO(candidate, wearingTool, gameData)).toBe(false);
+        });
+    });
+
+    describe('a copy already worn at the target level is owned', () => {
+        test('combat: priced at nothing when another loadout wears it that high', () => {
+            const low = wearing({ [BACK]: piece(CAPE, 5) });
+            const high = wearing({ [BACK]: piece(CAPE, 7) });
+            const alone = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [low], gameData);
+            const withOwned = buildCombatSwapCandidate({ hrid: CAPE, level: 7 }, [low, high], gameData);
+
+            expect(alone.cost).toBeGreaterThan(0);
+            expect(withOwned.cost).toBe(0);
+            expect(withOwned.caveat).toContain('already wear a copy');
+            // It is still only applied where it is needed
+            expect(withOwned.reach).toBe(1);
+        });
+
+        test('skilling: a kit already wearing it makes the others free', () => {
+            const TOOL = '/equipment_types/milking_tool';
+            const context = {
+                dto: { equipment: {} },
+                skillEquipmentMap: {
+                    '/skills/milking': { [TOOL]: piece(MILKING_TOOL, 2) },
+                    '/skills/foraging': { [TOOL]: piece(MILKING_TOOL, 9) },
+                },
+                skills: ['/skills/milking', '/skills/foraging'],
+            };
+            const candidate = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 7 }, context, gameData);
+            expect(candidate.skillKeys).toEqual(['/skills/milking']);
+            expect(candidate.cost).toBe(0);
+            const bought = buildSkillingSwapCandidate(
+                { hrid: MILKING_TOOL, level: 7 },
+                { ...context, skills: ['/skills/milking'] },
+                gameData
+            );
+            expect(bought.cost).toBeGreaterThan(0);
+        });
+    });
+
+    describe('skilling: the item must have skilling stats, All loadouts or not', () => {
+        test('a combat cape reaches no kit even with All loadouts, a tool for another skill does with it', () => {
+            const TOOL = '/equipment_types/milking_tool';
+            const context = {
+                dto: { equipment: {} },
+                skillEquipmentMap: { '/skills/foraging': {} },
+                skills: ['/skills/foraging'],
+            };
+            expect(
+                buildSkillingSwapCandidate({ hrid: CAPE, level: 5 }, context, gameData, true, { allLoadouts: true })
+            ).toBeNull();
+            expect(buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 5 }, context, gameData)).toBeNull();
+            const forced = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 5 }, context, gameData, true, {
+                allLoadouts: true,
+            });
+            expect(forced.skillKeys).toEqual(['/skills/foraging']);
+            expect(forced.members[0].slot).toBe(TOOL);
+        });
+    });
+
+    test('the remembered options come back in shape', () => {
+        expect(sanitizeSwapOptions(null)).toEqual({
+            all: { combat: false, skilling: false },
+            open: { combat: null, skilling: null },
+        });
+        expect(
+            sanitizeSwapOptions({ all: { combat: true, skilling: 'x' }, open: { combat: false, skilling: 3 } })
+        ).toEqual({
+            all: { combat: true, skilling: false },
+            open: { combat: false, skilling: null },
+        });
     });
 
     test('a piece with no combat stats is in no loadout', () => {

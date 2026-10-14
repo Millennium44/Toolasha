@@ -4118,7 +4118,10 @@ describe('Check a swap', () => {
         type('skilling', 'Sinister Cape', '3');
         ui.panel.querySelector('#mwi-labsim-swap-add-skilling').click();
         await settle();
-        expect(storage.written['labSimCheckedSwaps_me']).toEqual({ combat: [], skilling: [{ hrid: CAPE, level: 3 }] });
+        expect(storage.written['labSimCheckedSwaps_me']).toMatchObject({
+            combat: [],
+            skilling: [{ hrid: CAPE, level: 3 }],
+        });
 
         // A fresh panel for the same character reads it back
         const saved = storage.written['labSimCheckedSwaps_me'];
@@ -4248,6 +4251,92 @@ describe('Check a swap', () => {
         game.loadoutEquipment = {};
         game.monsters = [];
         game.skipLevels = {};
+    });
+
+    test('the section collapses from its header, starts open with a queue and remembers what was chosen', async () => {
+        const body = () => ui.panel.querySelector('#mwi-labsim-swap-body-combat');
+        const toggle = () => ui.panel.querySelector('#mwi-labsim-swap-toggle-combat').textContent;
+        const header = () => ui.panel.querySelector('#mwi-labsim-swap-header-combat');
+
+        // Empty queue, nothing ever chosen: closed
+        expect(body().style.display).toBe('none');
+        expect(toggle()).toBe('▶');
+        header().click();
+        expect(body().style.display).toBe('block');
+        expect(toggle()).toBe('▼');
+        await settle();
+        expect(storage.written['labSimCheckedSwaps_me'].options.open).toEqual({ combat: true, skilling: null });
+
+        // Remembered closed, even with a queue
+        header().click();
+        await settle();
+        const saved = { ...storage.written['labSimCheckedSwaps_me'], combat: [{ hrid: CAPE, level: 7 }] };
+        expect(saved.options.open.combat).toBe(false);
+        ui.destroy();
+        storage.values['labSimCheckedSwaps_me'] = saved;
+        ui.buildPanel();
+        await settle();
+        expect(body().style.display).toBe('none');
+        expect(ui.panel.querySelector('#mwi-labsim-swap-count-combat').textContent).toBe('1 queued');
+
+        // Never chosen, with a queue: open
+        ui.destroy();
+        storage.values['labSimCheckedSwaps_me'] = { combat: [{ hrid: CAPE, level: 7 }], skilling: [] };
+        ui.buildPanel();
+        await settle();
+        expect(body().style.display).toBe('block');
+        expect(chips('combat')).toEqual(['Sinister Cape +7']);
+    });
+
+    test('All loadouts is remembered per character and reaches the candidates', async () => {
+        const box = () => ui.panel.querySelector('#mwi-labsim-swap-all-combat');
+        expect(box().checked).toBe(false);
+        box().checked = true;
+        box().dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+        const saved = storage.written['labSimCheckedSwaps_me'];
+        expect(saved.options.all.combat).toBe(true);
+
+        ui.destroy();
+        storage.values['labSimCheckedSwaps_me'] = saved;
+        ui.buildPanel();
+        await settle();
+        expect(box().checked).toBe(true);
+        expect(ui._swapOptions.all.combat).toBe(true);
+    });
+
+    test('the Configure fight is checked against the edited player at the configured level, not the assigned loadout', async () => {
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        // No skip level at all for the monster: the assigned-loadout path would find no fight
+        game.skipLevels = {};
+        game.loadoutEquipment = {};
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [] }];
+        game.editedDTOs = {
+            p1: { hrid: 'p1', equipment: { [BACK]: { hrid: CAPE, enhancementLevel: 5 } }, abilities: [] },
+        };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        ui.panel.querySelector('#mwi-labsim-level').value = '170';
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis');
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+
+        await ui._onCheckSwapsCombat();
+
+        expect(allSpy).toHaveBeenCalledTimes(1);
+        const { fights, extraCandidates } = allSpy.mock.calls[0][0];
+        expect(fights).toHaveLength(1);
+        expect(fights[0]).toMatchObject({ monsterHrid: '/monsters/mimic', roomLevel: 170 });
+        expect(fights[0].dto.equipment[BACK]).toEqual({ hrid: CAPE, enhancementLevel: 5 });
+        expect(extraCandidates[0]).toMatchObject({ checkedSwap: true, currentLevel: 5, upgradeLevel: 7 });
+        allSpy.mockRestore();
+        game.editedDTOs = null;
+        game.players = [];
+        game.monsters = [];
     });
 
     test('the checked combat table has the generated columns and a per-fight breakdown on click', () => {

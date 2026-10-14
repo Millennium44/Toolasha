@@ -29,6 +29,19 @@ import { affectsSkill, isCombatOnlyItem } from './skilling-gear-candidates.js';
 /** The highest enhancement level a swap may ask for */
 export const MAX_SWAP_LEVEL = 20;
 
+const ALL_SKILLS = [
+    '/skills/milking',
+    '/skills/foraging',
+    '/skills/woodcutting',
+    '/skills/cheesesmithing',
+    '/skills/crafting',
+    '/skills/tailoring',
+    '/skills/cooking',
+    '/skills/brewing',
+    '/skills/alchemy',
+    '/skills/enhancing',
+];
+
 /** The most swaps a tab keeps queued; each one costs a full set of simulations */
 export const MAX_QUEUED_SWAPS = 12;
 
@@ -79,6 +92,21 @@ export function sanitizeSwapQueues(raw) {
         return out;
     };
     return { combat: clean(raw?.combat), skilling: clean(raw?.skilling) };
+}
+
+/**
+ * Bring the remembered Check a swap options back into shape: for each tab, whether
+ * "All loadouts" is ticked and whether the section was left open (null when it was
+ * never toggled, so the default applies).
+ * @param {*} raw - The stored `options`
+ * @returns {{all: {combat: boolean, skilling: boolean}, open: {combat: boolean|null, skilling: boolean|null}}}
+ */
+export function sanitizeSwapOptions(raw) {
+    const flag = (value) => (typeof value === 'boolean' ? value : null);
+    return {
+        all: { combat: raw?.all?.combat === true, skilling: raw?.all?.skilling === true },
+        open: { combat: flag(raw?.open?.combat), skilling: flag(raw?.open?.skilling) },
+    };
 }
 
 /**
@@ -247,6 +275,20 @@ function routeCaveat(route) {
     return 'Checked by hand. Priced as buying it at this level; nothing in the slot is sold.';
 }
 
+const OWNED_CAVEAT =
+    'Checked by hand. You already wear a copy at this level in another loadout, and the loadouts are ' +
+    'alternatives, so the piece is moved and nothing is bought.';
+
+/**
+ * Whether a worn piece is this item at the level asked for or higher.
+ * @param {Object|null|undefined} piece - `{ hrid, enhancementLevel }`
+ * @param {{hrid: string, level: number}} swap
+ * @returns {boolean}
+ */
+function wornAtLeast(piece, swap) {
+    return piece?.hrid === swap.hrid && (piece.enhancementLevel || 0) >= swap.level;
+}
+
 /**
  * A checked swap as a whole-run combat candidate.
  *
@@ -259,12 +301,14 @@ function routeCaveat(route) {
  * @param {Array<Object>} dtos - The loadout of every fight in the run
  * @param {Object} gameData - Game data payload
  * @param {boolean} [isSelf=true] - Whether the loadouts are the live character's
+ * @param {Object} [options] - `{ allLoadouts }`: reach every loadout with the slot, whatever its style
  * @returns {Object|null} A candidate, or null when the item has no equipment slot
  */
-export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true) {
+export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, options = {}) {
     const slot = swapSlot(swap.hrid, gameData);
     if (!slot) return null;
-    const base = { slot, upgradeHrid: swap.hrid, upgradeLevel: swap.level };
+    const allLoadouts = Boolean(options.allLoadouts);
+    const base = { slot, upgradeHrid: swap.hrid, upgradeLevel: swap.level, allLoadouts };
     const reached = (dtos || []).filter((dto) => checkedSwapAppliesToDTO(base, dto, gameData));
     const worn = reached.map((dto) => {
         const piece = dto.equipment?.[slot];
@@ -280,10 +324,18 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true) {
         description: route.description,
         type: route.type,
         checkedSwap: true,
+        allLoadouts,
         caveat: routeCaveat(route.route),
         reach: reached.length,
     };
-    candidate.cost = calculateUpgradeCost(candidate, gameData, isSelf);
+    // One physical piece serves every loadout (they are alternatives, not worn
+    // together), so a copy already worn at this level in any loadout is owned
+    if ((dtos || []).some((dto) => wornAtLeast(dto?.equipment?.[slot], swap))) {
+        candidate.cost = 0;
+        candidate.caveat = OWNED_CAVEAT;
+    } else {
+        candidate.cost = calculateUpgradeCost(candidate, gameData, isSelf);
+    }
     return candidate;
 }
 
@@ -303,20 +355,29 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true) {
  * @param {Object} context - `{ dto, skillEquipmentMap, skills }` where `skills` are the skill hrids in scope
  * @param {Object} gameData - Game data payload
  * @param {boolean} [isSelf=true] - Whether the kits are the live character's
+ * @param {Object} [options] - `{ allLoadouts }`: reach every kit in scope, whichever skill the item is for
  * @returns {Object|null} A merged candidate, or null when no kit in scope can feel the item
  */
-export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = true) {
+export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = true, options = {}) {
     const detail = gameData?.itemDetailMap?.[swap.hrid];
     const slot = detail?.equipmentDetail?.type;
     if (!slot) return null;
     const { dto, skillEquipmentMap = {}, skills = [] } = context;
 
+    // "All loadouts" waives which skill an item is for, but not whether it is for
+    // any skill at all: a piece with no skilling stats moves no room
+    const allLoadouts = Boolean(options.allLoadouts);
+    if (allLoadouts && !ALL_SKILLS.some((skill) => affectsSkill(detail, skill))) return null;
     const reached = [];
+    let owned = false;
     for (const skill of skills) {
-        if (!affectsSkill(detail, skill)) continue;
         const kit = skillEquipmentMap[skill] || dto?.equipment || {};
         const piece = kit[slot];
-        if (piece?.hrid === swap.hrid && (piece.enhancementLevel || 0) >= swap.level) continue;
+        if (wornAtLeast(piece, swap)) {
+            owned = true;
+            continue;
+        }
+        if (!allLoadouts && !affectsSkill(detail, skill)) continue;
         reached.push({ skill, piece });
     }
     if (!reached.length) return null;
@@ -354,8 +415,9 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         priced.keptItems = [{ hrid: route.currentHrid, enhancementLevel: route.currentLevel }];
         priced.removedItems = [];
     }
-    const cost = calculateUpgradeCost(priced, gameData, isSelf);
-    const costDetail = explainLabCandidateCost(priced, gameData, isSelf);
+    // A kit already wearing the piece at this level owns it; the others reuse that copy
+    const cost = owned ? 0 : calculateUpgradeCost(priced, gameData, isSelf);
+    const costDetail = owned ? null : explainLabCandidateCost(priced, gameData, isSelf);
 
     return {
         ...priced,
@@ -365,7 +427,8 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         members,
         merged: true,
         checkedSwap: true,
-        caveat: routeCaveat(route.route),
+        caveat: owned ? OWNED_CAVEAT : routeCaveat(route.route),
+        allLoadouts,
         cost,
         costDetail,
     };
@@ -389,6 +452,7 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
  * @param {Object} params.gameData - Game data payload
  * @param {Function} [params.abortSignal] - Polled between swaps
  * @param {Function} [params.onProgress] - `({ current, total, description })`
+ * @param {boolean} [params.allLoadouts=false] - Waive which skill each item is for
  * @param {function(): Promise<void>} [params.yieldFn] - Awaited between swaps so the page can paint
  * @returns {Promise<{baseline: {clearRate: number, xpPerRoom: number}, rows: Array<Object>, unreached: Array<Object>}>}
  *   `unreached` are the swaps no kit in scope can feel
@@ -403,6 +467,7 @@ export async function evaluateSkillingSwaps({
     gameData,
     abortSignal = null,
     onProgress = null,
+    allLoadouts = false,
     yieldFn = () => new Promise((resolve) => setTimeout(resolve, 0)),
 }) {
     const baselineRates = evaluate(baseSetup, roomLevel);
@@ -417,7 +482,9 @@ export async function evaluateSkillingSwaps({
         const candidate = buildSkillingSwapCandidate(
             swap,
             { dto: baseSetup.dto, skillEquipmentMap: baseSetup.skillEquipmentMap, skills },
-            gameData
+            gameData,
+            true,
+            { allLoadouts }
         );
         current++;
         if (!candidate) {
