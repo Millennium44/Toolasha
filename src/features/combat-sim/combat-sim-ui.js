@@ -853,6 +853,14 @@ export function upgradeCostCell(result) {
  */
 function ladderSentence(ladder, total = null) {
     if (!ladder) return '';
+    if (ladder.refine?.mirror) {
+        return (
+            `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} base copy into a +${ladder.toLevel} ` +
+            `(${formatKMB(ladder.refine.mirror.baseCost)} with a ${formatKMB(ladder.refine.mirror.mirrorPrice)} ` +
+            `Philosopher's Mirror), then refine it: ${(ladder.refine.lines || []).join(' + ')} = ` +
+            `${formatKMB(ladder.refine.materialCost)}.`
+        );
+    }
     if (ladder.refine) {
         const where = ladder.fromEquipped ? 'the one you are wearing' : 'your spare';
         const enhance =

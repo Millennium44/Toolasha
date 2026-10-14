@@ -30,6 +30,7 @@ import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
+import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID, cheapestWithMirror } from '../../utils/mirror-route.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
@@ -2653,14 +2654,19 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
 
     if (candidate.type === 'cross_slot') {
         let buyCost = 0;
+        const consumedPieces = [];
         for (const item of Object.values(candidate.addedSlots)) {
-            const { price } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, gameData, { isSelf });
+            const { price, consumed } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, gameData, {
+                isSelf,
+                candidate,
+            });
             if (price === null) {
                 return null; // Unknown acquisition cost — don't rank as free
             }
             buyCost += price;
+            consumedPieces.push(...(consumed || []));
         }
-        return buyCost - resaleCredit(candidate);
+        return buyCost - resaleCredit(candidate, consumedPieces);
     }
 
     if (candidate.type === 'enhancement') {
@@ -2742,10 +2748,10 @@ function capEnhancementCredit(ask, bid) {
  * price depends on which branch costed it is a candidate nobody can check.
  *
  * @param {Object} candidate - Upgrade candidate
- * @param {{hrid: string, level: number}|null} [consumed] - A worn piece the purchase is made from (a refine)
+ * @param {Array<{hrid: string, level: number}>} [consumed] - Worn pieces the purchase is made from (a refine)
  * @returns {number} Total resale credit, 0 when nothing is being sold
  */
-function resaleCredit(candidate, consumed = null) {
+function resaleCredit(candidate, consumed = []) {
     const removed =
         candidate.removedItems ||
         (candidate.currentHrid ? [{ hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel }] : []);
@@ -2754,7 +2760,9 @@ function resaleCredit(candidate, consumed = null) {
     for (const item of removed) {
         if (!item?.hrid) continue;
         // Refined into the target, so there is nothing left to sell
-        if (consumed && item.hrid === consumed.hrid && (item.enhancementLevel || 0) === consumed.level) continue;
+        if (consumed.some((piece) => item.hrid === piece.hrid && (item.enhancementLevel || 0) === piece.level)) {
+            continue;
+        }
         credit +=
             resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0;
     }
@@ -2858,11 +2866,14 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
     if (!baseHrid) return null;
 
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
-    const wornIsReplaced = candidate?.currentHrid === baseHrid;
+    // A worn copy is a base to refine only when this very row takes it off: a swap that replaces the
+    // piece is exactly consuming it, and a row about some other slot must leave it on
+    const replaced = candidate ? removedPieces(candidate) : [];
     const copies = copiesForPricing(baseHrid, { isSelf }).filter(
-        (copy) => (!copy.equipped || wornIsReplaced) && copy.level >= MIN_REFINE_BASE_LEVEL
+        (copy) =>
+            copy.level >= MIN_REFINE_BASE_LEVEL &&
+            (!copy.equipped || replaced.some((piece) => piece.hrid === baseHrid && piece.level === copy.level))
     );
-    if (!copies.length) return null;
 
     const materials = computeRefinementCraftCost(itemHrid, { includeBase: false });
     if (!materials) return null;
@@ -2875,12 +2886,37 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
         const price = materials.cost + Math.max(0, enhance);
         if (!best || price < best.price) best = { price, copy, enhance: Math.max(0, enhance) };
     }
+
+    const mirror = resolveMirrorBase(baseHrid, target, gameData, { isSelf });
+    if (mirror && (!best || materials.cost + mirror.baseCost < best.price)) {
+        return {
+            price: materials.cost + mirror.baseCost,
+            source: 'refine',
+            enhanceSource: describeEnhancementSource(enhancementSweepParams(baseHrid)),
+            ladder: {
+                fromLevel: target - 1,
+                toLevel: target,
+                fresh: false,
+                alreadyHeld: false,
+                fromEquipped: false,
+                isSelf: true,
+                baseCost: 0,
+                refine: {
+                    baseHrid,
+                    materialCost: materials.cost,
+                    enhanceCost: 0,
+                    lines: materials.lines,
+                    mirror: { baseCost: mirror.baseCost, mirrorPrice: mirror.mirrorPrice },
+                },
+            },
+        };
+    }
     if (!best) return null;
 
     const toLevel = Math.max(target, best.copy.level);
     return {
         // A worn piece turned into the star item is not also sold, so its resale credit must not be taken
-        ...(best.copy.equipped ? { consumed: { hrid: baseHrid, level: best.copy.level } } : {}),
+        ...(best.copy.equipped ? { consumed: [{ hrid: baseHrid, level: best.copy.level }] } : {}),
         price: best.price,
         source: 'refine',
         enhanceSource: best.enhance > 0 ? describeEnhancementSource(enhancementSweepParams(itemHrid)) : undefined,
@@ -2903,22 +2939,79 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
 }
 
 /**
- * Resolve the buy price of an item at a given enhancement level: the cheaper of
- * refining a held base copy ({@link resolveRefineRoute}) and the ordinary route.
+ * What the base item costs to hold at a level when a Philosopher's Mirror may build it: a +L made from
+ * a +(L-1) and a +(L-2) copy of the base item (game client `getPhilosophersMirrorCost`; a refined
+ * item's copy is its unrefined `baseItemHrids[0]`), each copy the cheapest way to hold its level.
+ * Only a route the mirror makes cheaper than the ordinary one is returned: the ordinary base price
+ * is not a mirror route and the caller already has it. The arithmetic is {@link cheapestWithMirror},
+ * the same the enhancement panel's mirror column uses.
+ *
+ * Not offered on the test server with the Tester shop priced in, which already prices its own
+ * mirroring (see `tester-shop.js`).
+ *
+ * @param {string} baseHrid - The unrefined base item
+ * @param {number} level - Level of base wanted
+ * @param {Object} gameData - Game data payload
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the live character's copies apply
+ * @returns {{baseCost: number, mirrorPrice: number}|null} Null when no mirror route beats the ordinary one
+ */
+function resolveMirrorBase(baseHrid, level, gameData, { isSelf = true } = {}) {
+    if (level < Math.max(MIRROR_FIRST_LEVEL, MIN_REFINE_BASE_LEVEL) || testerShopEnabled()) return null;
+    const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
+    if (!(mirrorPrice > 0)) return null;
+
+    const ordinary = [];
+    for (let k = 0; k <= level; k++) {
+        ordinary[k] = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf }).price;
+    }
+    const { best, mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice);
+    const viaMirror = mirrorTotals[level];
+    const viaOrdinary = Number.isFinite(ordinary[level]) ? ordinary[level] : Infinity;
+    if (!Number.isFinite(viaMirror) || !(viaMirror < viaOrdinary)) return null;
+    return { baseCost: best[level], mirrorPrice };
+}
+
+/**
+ * The pieces a candidate takes off, as hrid and level.
+ * @param {Object} candidate - Upgrade candidate
+ * @returns {Array<{hrid: string, level: number}>} Pieces removed; the single replaced piece when the
+ *   candidate lists none
+ */
+function removedPieces(candidate) {
+    const removed =
+        candidate.removedItems ||
+        (candidate.currentHrid ? [{ hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel }] : []);
+    return removed
+        .filter((item) => item?.hrid)
+        .map((item) => ({ hrid: item.hrid, level: Math.max(0, Math.floor(Number(item.enhancementLevel) || 0)) }));
+}
+
+/**
+ * Resolve the buy price of an item at a given enhancement level: the cheaper, after resale, of refining
+ * a base copy ({@link resolveRefineRoute}) and the ordinary route.
  * See {@link resolveUpgradeBuyPriceDirect} for the ordinary route's rules.
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Target enhancement level
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
  * @param {boolean} [options.isSelf=true] - Whether the row is the live character's
+ * @param {Object} [options.candidate] - The row being priced, for which pieces it takes off
  * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined,
- *   ladder: Object|undefined}} Buy price in gold, its basis, and the copy it was derived from
+ *   ladder: Object|undefined, consumed: Array|undefined}} Buy price in gold, its basis, and what it was derived from
  */
 function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = {}) {
     const direct = resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, options);
     const refine = resolveRefineRoute(itemHrid, enhancementLevel, gameData, options);
-    if (refine && (direct.price == null || refine.price < direct.price)) return refine;
-    return direct;
+    if (!refine) return direct;
+    if (direct.price == null) return refine;
+    // Judged after resale: refining a worn base gives up what that base would have sold for
+    const forfeited = (refine.consumed || []).reduce(
+        (sum, piece) =>
+            sum + (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
+        0
+    );
+    return refine.price + forfeited < direct.price ? refine : direct;
 }
 
 /**
@@ -3358,15 +3451,16 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     }
 
     const buys = [];
-    let refineConsumed = null;
+    const refineConsumed = [];
     if (candidate.addedSlots) {
         for (const item of Object.values(candidate.addedSlots)) {
-            const { price, source, enhanceSource, ladder } = resolveUpgradeBuyPrice(
+            const { price, source, enhanceSource, ladder, consumed } = resolveUpgradeBuyPrice(
                 item.hrid,
                 item.enhancementLevel || 0,
                 gameData,
-                { isSelf }
+                { isSelf, candidate }
             );
+            refineConsumed.push(...(consumed || []));
             buys.push({
                 hrid: item.hrid,
                 name: nameOf(item.hrid),
@@ -3384,7 +3478,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
             gameData,
             { isSelf, candidate }
         );
-        refineConsumed = consumed || null;
+        refineConsumed.push(...(consumed || []));
         buys.push({
             hrid: candidate.upgradeHrid,
             name: nameOf(candidate.upgradeHrid),
@@ -3403,11 +3497,9 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
         hrid: item.hrid,
         name: nameOf(item.hrid),
         enhancementLevel: item.enhancementLevel || 0,
-        price:
-            refineConsumed && item.hrid === refineConsumed.hrid && (item.enhancementLevel || 0) === refineConsumed.level
-                ? 0
-                : resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ||
-                  0,
+        price: refineConsumed.some((piece) => item.hrid === piece.hrid && (item.enhancementLevel || 0) === piece.level)
+            ? 0
+            : resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0,
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);

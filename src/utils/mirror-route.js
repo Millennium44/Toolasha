@@ -11,6 +11,9 @@
  * Shared by the enhancement panel's mirror column and the upgrade advisor so the two cannot drift.
  */
 
+/** Philosopher's Mirror item hrid */
+export const MIRROR_ITEM_HRID = '/items/philosophers_mirror';
+
 /** The first level a mirror can make: it needs a +2 item to run on */
 export const MIRROR_FIRST_LEVEL = 3;
 
