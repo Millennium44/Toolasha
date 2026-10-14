@@ -75,6 +75,7 @@ const {
     buildKeepChipHTML,
 } = await import('./self-use-wanted.js');
 const { ownsKey } = await import('../sync/sync-ownership.js');
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 beforeEach(() => {
     state.charId = 'main';
@@ -100,6 +101,36 @@ const otherTabWrites = (key, value, storeName = 'settings') => {
 const settle = async () => {
     for (let i = 0; i < 10; i++) await Promise.resolve();
 };
+
+describe('a sync pull', () => {
+    test('re-reads the marks and tells the listeners, which another tab write announcement would not', async () => {
+        await selfUseWanted.load();
+        const listener = vi.fn();
+        selfUseWanted.onChange(listener);
+        // The pull writes through this tab's own storage: no remote `onWrite` announcement follows
+        state.stored.selfUseWanted_main = rec(['/items/frenzy']);
+
+        announceSyncPullApplied({ settings: ['selfUseWanted_main'] });
+        await settle();
+
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy']);
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    test('another character, another store, or an unloaded cache is left alone', async () => {
+        state.stored.selfUseWanted_main = rec(['/items/frenzy']);
+        announceSyncPullApplied({ settings: ['selfUseWanted_main'] });
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual([]);
+
+        await selfUseWanted.load();
+        state.stored.selfUseWanted_main = rec(['/items/puncture']);
+        announceSyncPullApplied({ settings: ['selfUseWanted_other'] });
+        announceSyncPullApplied({ other: ['selfUseWanted_main'] });
+        await settle();
+        expect(selfUseWanted.getCached()).toEqual(['/items/frenzy']);
+    });
+});
 
 describe('another tab', () => {
     test('two writes heard before either re-read answers: the later read wins whatever order they land', async () => {
