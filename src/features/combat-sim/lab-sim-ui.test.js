@@ -3739,6 +3739,48 @@ describe('the Skilling tab’s room levels, goal planner and Sim together', () =
         expect(container.querySelectorAll('input[data-skilling-pick]').length).toBe(1);
     });
 
+    test('changing the Floor re-marks the table on screen; changing Target clear flags the levels stale', () => {
+        const row = tableRow({
+            candidate: { description: 'Deep' },
+            roomLevelMeasured: true,
+            roomLevelDelta: 20,
+            maxRoomLevel: 60,
+            floorReached: 2,
+        });
+        const analysisResult = {
+            baseline: { clearRate: 0.5 },
+            roomLevels: {
+                baselineLevel: 40,
+                baselineFloor: 1,
+                baselineCleared: true,
+                shortlistSize: 6,
+                threshold: 0.7,
+                targetFloor: 3,
+            },
+            results: [row],
+        };
+        const container = ui.panel.querySelector('#mwi-labsim-skilling-results');
+        ui._renderSkillingUpgradeResults(analysisResult, container);
+        ui._skillingAnalysis = { analysisResult };
+        expect(container.querySelector('[data-reaches-target]').dataset.reachesTarget).toBe('0');
+
+        clearInput().value = '70';
+        floorInput().value = '2';
+        change(floorInput());
+
+        expect(container.querySelector('[data-reaches-target]').dataset.reachesTarget).toBe('1');
+        expect(container.textContent).toContain('Floor 2 needs room level 60');
+        expect(container.textContent).not.toContain('re-measure');
+
+        clearInput().value = '55';
+        change(clearInput());
+        expect(container.textContent).toContain('re-run Analyze Upgrades to re-measure');
+
+        clearInput().value = '70';
+        change(clearInput());
+        expect(container.textContent).not.toContain('re-measure');
+    });
+
     test('measured rows show levels and floor, target-reaching rows are marked, unmeasured read a dash', () => {
         const container = document.createElement('div');
         const results = [

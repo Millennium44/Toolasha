@@ -1621,7 +1621,7 @@ class LabSimUI {
         for (const id of ['room-levels', 'target-clear', 'target-floor']) {
             this.panel
                 .querySelector(`#mwi-labsim-skilling-${id}`)
-                .addEventListener('change', () => this._saveSkillingGoalInputs());
+                .addEventListener('change', () => this._onSkillingGoalInputsChanged());
         }
 
         this._populateMonsters();
@@ -3656,6 +3656,25 @@ class LabSimUI {
         return Math.max(0, parseInt(this.panel?.querySelector('#mwi-labsim-skilling-target-floor')?.value, 10) || 0);
     }
 
+    /**
+     * A goal input changed: remember it, and bring a table already on screen in
+     * line with it. The Floor marks are re-drawn against the new floor. The level
+     * figures were measured against the old Target clear %, so a different one
+     * flags them stale rather than leaving a summary that quotes a bar no longer
+     * in the box.
+     * @private
+     */
+    _onSkillingGoalInputsChanged() {
+        void this._saveSkillingGoalInputs();
+        const context = this._skillingAnalysis;
+        const roomLevels = context?.analysisResult?.roomLevels;
+        const resultsEl = this.panel?.querySelector('#mwi-labsim-skilling-results');
+        if (!roomLevels || !resultsEl || this._skillingRunning) return;
+        roomLevels.targetFloor = this._getSkillingTargetFloor();
+        roomLevels.stale = Math.abs((roomLevels.threshold || 0) - this._getSkillingTargetClear()) > 1e-9;
+        this._renderSkillingUpgradeResults(context.analysisResult, resultsEl);
+    }
+
     /** @private */
     async _saveSkillingGoalInputs() {
         try {
@@ -5410,7 +5429,7 @@ class LabSimUI {
     }
 
     /**
-     * Every room an analysed upgrade was weighed against: before to after, or
+     * Every room an analyzed upgrade was weighed against: before to after, or
      * "unaffected" where its stats do nothing in that room.
      * @param {Object|undefined} result - A skilling result row
      * @returns {string} HTML, empty when there is no analysis to measure against
@@ -6570,6 +6589,11 @@ class LabSimUI {
                 );
             }
             if (roomLevels.aborted) parts.push('Stopped early: the rows below it were never searched.');
+            if (roomLevels.stale) {
+                parts.push(
+                    '<b>Target clear % has changed since these levels were measured: re-run Analyze Upgrades to re-measure.</b>'
+                );
+            }
             return (
                 `<div data-skilling-room-level-summary style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; line-height:1.5; ` +
                 `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
