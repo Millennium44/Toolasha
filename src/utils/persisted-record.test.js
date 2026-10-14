@@ -942,6 +942,16 @@ describe('onPulled', () => {
         await vi.waitFor(() => expect(adopted.sort()).toEqual([1, 2]));
     });
 
+    test('a released record is no longer told of pulls', async () => {
+        const onPulled = vi.fn();
+        const record = withHook(onPulled);
+        await record.load();
+        record.release();
+        announceSyncPullApplied({ settings: [LOG] });
+        await Promise.resolve();
+        expect(onPulled).not.toHaveBeenCalled();
+    });
+
     test('an owner that throws is logged and does not stop the other records', async () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         const second = vi.fn();
