@@ -11,11 +11,19 @@ const state = vi.hoisted(() => ({
     sweeps: [],
     /** Extra init_client_data maps (shops) */
     shops: {},
+    /** Philosopher's Mirror buy price: dear by default, so a mirror route only shows when a test wants it */
+    mirrorPrice: 1_000_000_000,
+    /** What the star item is worth as a craft estimate, and what the base sells for */
+    starPrice: 500_000_000,
+    baseSell: 300_000,
+    /** Enhance cost of one climb, in gold; linear by default */
+    climb: (from, to) => (to - from) * 1_000_000,
 }));
 
 const CAPE = '/items/sinister_cape_refined';
 const BASE = '/items/sinister_cape';
 const SHARD = '/items/sinister_refinement_shard';
+const MIRROR = '/items/philosophers_mirror';
 const SWORD = '/items/cheese_sword';
 const CHAR = 161296;
 
@@ -77,7 +85,7 @@ vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, t
 vi.mock('./direct-enhancement-cost.js', () => ({
     calculateDirectEnhancementCost: (itemHrid, from, to) => {
         state.sweeps.push({ itemHrid, from, to });
-        return (to - from) * 1_000_000;
+        return state.climb(from, to);
     },
     enhancementSweepParams: () => ({}),
 }));
@@ -85,7 +93,16 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancem
 vi.mock('../../utils/profit-helpers.js', () => ({
     // A cape base with no listing: the craft estimate the ordinary +0 path returns
     resolveItemPrice: vi.fn((hrid) => ({
-        price: hrid === CAPE ? 500_000_000 : hrid === SHARD ? 2_000_000 : hrid === BASE ? 300_000 : 1,
+        price:
+            hrid === CAPE
+                ? state.starPrice
+                : hrid === SHARD
+                  ? 2_000_000
+                  : hrid === BASE
+                    ? state.baseSell
+                    : hrid === MIRROR
+                      ? state.mirrorPrice
+                      : 1,
     })),
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -95,6 +112,7 @@ vi.mock('../../utils/market-data.js', () => ({
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
 const { calculateUpgradeCost, explainUpgradeCost } = await import('./upgrade-advisor.js');
+const { cheapestWithMirror } = await import('../../utils/mirror-route.js');
 
 function stack(itemHrid, level, location = '/item_locations/inventory', count = 1) {
     return {
@@ -123,6 +141,10 @@ describe('refined target priced from a held base', () => {
         state.items = [];
         state.sweeps = [];
         state.shops = {};
+        state.mirrorPrice = 1_000_000_000;
+        state.starPrice = 500_000_000;
+        state.baseSell = 300_000;
+        state.climb = (from, to) => (to - from) * 1_000_000;
     });
 
     test('a spare +5 base is refined, then enhanced +5 to +7 on the star item', () => {
@@ -183,5 +205,64 @@ describe('refined target priced from a held base', () => {
     test('a base listed on the marketplace alone does not make a refine route', () => {
         state.items = [stack(BASE, 10, '/item_locations/marketplace')];
         expect(explainUpgradeCost(tier(7), gameData).buys[0].source).toBe('enhance');
+    });
+
+    test('a cross-slot swap (lab armor) refines the worn base it takes off', () => {
+        state.items = [stack(BASE, 7, '/item_locations/back')];
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/back': { hrid: CAPE, enhancementLevel: 7 } },
+            removedItems: [{ hrid: BASE, enhancementLevel: 7 }],
+        };
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(SHARDS);
+        expect(detail.net).toBe(SHARDS);
+        expect(detail.buys[0].source).toBe('refine');
+        expect(detail.credit).toBe(0);
+    });
+
+    test('a cross-slot swap that does not take the base off leaves it worn', () => {
+        state.items = [stack(BASE, 7, '/item_locations/back')];
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/back': { hrid: CAPE, enhancementLevel: 7 } },
+            removedItems: [],
+        };
+        expect(explainUpgradeCost(candidate, gameData).buys[0].source).toBe('enhance');
+    });
+
+    test('routes are compared after resale: buying and selling the worn base beats refining it', () => {
+        // Buying directly: 203M star craft + 7M enhance = 210M. Refining: 200M shards, but the worn
+        // base would have sold for 100M, so refining is really 300M against 210M - 100M = 110M.
+        state.starPrice = 203_000_000;
+        state.baseSell = 100_000_000;
+        state.items = [stack(BASE, 7, '/item_locations/back')];
+        const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(110_000_000);
+        expect(explainUpgradeCost(candidate, gameData).buys[0].source).toBe('enhance');
+    });
+
+    describe('Philosophers Mirror', () => {
+        // Each climb doubles, so mirroring two cheaper copies beats climbing, as at +14/+15 in game
+        beforeEach(() => {
+            state.climb = (from, to) => (2 ** to - 2 ** from) * 1_000_000;
+            state.mirrorPrice = 1_000_000;
+        });
+
+        test('a star target is built from a mirrored base, then refined', () => {
+            const detail = explainUpgradeCost(tier(7), gameData);
+            // Base copies: +0 is 0.3M; a climb to +k adds (2^k - 1)M. The mirror ladder, in millions.
+            const ordinary = Array.from({ length: 8 }, (_, k) => 0.3 + (2 ** k - 1)).map((m) => m * 1e6);
+            const { best } = cheapestWithMirror(ordinary, 1_000_000);
+            expect(best[7]).toBeLessThan(ordinary[7]);
+            expect(detail.buys[0]).toMatchObject({ source: 'refine' });
+            expect(detail.buys[0].price).toBeCloseTo(SHARDS + best[7], 0);
+            expect(detail.ladder.refine.mirror).toBeTruthy();
+        });
+
+        test('a dear mirror leaves the ordinary route alone', () => {
+            state.mirrorPrice = 1_000_000_000;
+            expect(explainUpgradeCost(tier(7), gameData).buys[0].source).toBe('enhance');
+        });
     });
 });
