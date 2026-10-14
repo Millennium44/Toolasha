@@ -491,17 +491,11 @@ class DungeonTokenTooltips {
         const [first, ...rest] = held.parts;
         // Items, not purchases: one purchase can hand over several (1 token -> 10 essences)
         const spent = (part) => `${formatWithSeparator(part.purchases * part.outputCount)} × ${part.name}`;
-        let what = spent(first);
-        if (rest.length === 1) {
-            what += ` + ${formatWithSeparator(rest[0].tokens)} tokens as ${rest[0].name}`;
-        } else if (rest.length > 1) {
-            const tokens = rest.reduce((sum, part) => sum + part.tokens, 0);
-            what += ` + ${formatWithSeparator(tokens)} tokens as ${rest.map((part) => part.name).join(', ')}`;
-        }
-        if (held.unspent > 0) what += ` (${formatWithSeparator(held.unspent)} unspent)`;
+        const what = [first, ...rest].map(spent).join(' + ');
+        const unspent = held.unspent > 0 ? ` (${formatWithSeparator(held.unspent)} unspent)` : '';
         return (
             `<div style="margin-top: 4px;" title="${title}">Your ${formatWithSeparator(amount)} tokens ` +
-            `≈ <strong>${formatKMB(held.total)}</strong> as ${what}</div>`
+            `≈ <strong>${formatKMB(held.total)}</strong> as ${what}${unspent}</div>`
         );
     }
 

@@ -11798,10 +11798,12 @@ class CombatSimUI {
         // Gold per hour of tokens per 0.01% of each metric: what carrying the scroll adds, and only when
         // that clears the run's error. A scroll already carried measures the loss of dropping it, so
         // the sign is flipped to read as what it adds.
+        // What carrying the scroll adds, whichever way it was measured
+        const added = (r, key) => (r.candidate?.measuresLoss ? -(r.deltas?.[key] ?? 0) : (r.deltas?.[key] ?? 0));
         for (const { r, p } of priced) {
             r.scrollGoldPer = {};
             for (const key of ['dps', 'xp', 'profit']) {
-                const delta = r.candidate?.measuresLoss ? -(r.deltas?.[key] ?? 0) : (r.deltas?.[key] ?? 0);
+                const delta = added(r, key);
                 r.scrollGoldPer[key] = scrollGoldPerStep(p.costPerHour, delta, upgradeNoiseFor(r, key).significant);
             }
             r.scrollNetPerHour = p.netPerHour;
@@ -11832,11 +11834,11 @@ class CombatSimUI {
                 case 'gain':
                     return -pricedByRow.get(r).gainPerHour;
                 case 'dps':
-                    return -(r.deltas?.dps ?? 0);
+                    return -added(r, 'dps');
                 case 'profit':
-                    return -(r.deltas?.profit ?? 0);
+                    return -added(r, 'profit');
                 case 'xp':
-                    return -(r.deltas?.xp ?? 0);
+                    return -added(r, 'xp');
                 case 'gDps':
                     return finiteOrNull(r.scrollGoldPer.dps);
                 case 'gXp':
@@ -11857,7 +11859,7 @@ class CombatSimUI {
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
         // Greyed when the delta is inside the run's own error, as in the unpriced table
         const cell = (r, key) => {
-            const value = r.deltas?.[key];
+            const value = added(r, key);
             if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return '<span style="color:#888;">—</span>';
             const { significant } = upgradeNoiseFor(r, key);
             const color = !significant ? '#888' : value > 0 ? '#8bc34a' : '#f44336';
