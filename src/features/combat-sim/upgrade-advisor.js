@@ -2637,7 +2637,7 @@ function enhancementMirrorRoute(candidate, gameData) {
     if (!mirror) return null;
     const credit = isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
         ? 0
-        : sellValue(candidate.currentHrid, candidate.currentLevel || 0);
+        : capEnhancementCredit(mirror.baseCost, sellValue(candidate.currentHrid, candidate.currentLevel || 0)).credit;
     return { net: mirror.baseCost - credit, baseCost: mirror.baseCost, credit, mirrorPrice: mirror.mirrorPrice };
 }
 
@@ -2694,9 +2694,10 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     if (candidate.type === 'cross_slot') {
         let buyCost = 0;
+        let built = false;
         const consumedPieces = [];
         for (const item of Object.values(candidate.addedSlots)) {
-            const { price, consumed } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, gameData, {
+            const { price, consumed, source } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, gameData, {
                 isSelf,
                 candidate,
             });
@@ -2704,9 +2705,10 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                 return null; // Unknown acquisition cost — don't rank as free
             }
             buyCost += price;
+            built = built || isBuiltRoute(source);
             consumedPieces.push(...(consumed || []));
         }
-        return buyCost - resaleCredit(candidate, consumedPieces);
+        return buyCost - cappedResale(resaleCredit(candidate, consumedPieces), buyCost, built);
     }
 
     if (candidate.type === 'enhancement') {
@@ -2737,20 +2739,43 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
     }
 
     // Tier upgrade: buy new item at target enhancement - sell current item
-    const { price: buyPrice, consumed } = resolveUpgradeBuyPrice(
-        candidate.upgradeHrid,
-        candidate.upgradeLevel,
-        gameData,
-        {
-            isSelf,
-            candidate,
-        }
-    );
+    const {
+        price: buyPrice,
+        consumed,
+        source: buySource,
+    } = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, gameData, {
+        isSelf,
+        candidate,
+    });
     if (buyPrice === null) {
         return null; // Unknown acquisition cost — don't rank as free
     }
 
-    return buyPrice - resaleCredit(candidate, consumed);
+    return buyPrice - cappedResale(resaleCredit(candidate, consumed), buyPrice, isBuiltRoute(buySource));
+}
+
+/**
+ * Whether a buy price came from building the piece (a refine or a mirror) rather than from a quote.
+ * @param {string|null|undefined} source - Cost source of the buy
+ * @returns {boolean} True for `refine` and `mirror`
+ */
+function isBuiltRoute(source) {
+    return source === 'refine' || source === 'mirror';
+}
+
+/**
+ * A resale credit held to what the purchase costs when the purchase is a built route.
+ * Built routes price their own inputs, so one stale or troll bid on the piece being replaced must not
+ * drag a row far below zero and to the top of every ranking; the same cut `capEnhancementCredit`
+ * makes for the market route. Quoted buys keep the uncapped credit: a swap whose resale beats its
+ * purchase hands gold back, as documented there.
+ * @param {number} credit - Resale credit
+ * @param {number} spend - What the purchase costs
+ * @param {boolean} built - Whether the purchase is a refine or a mirror build
+ * @returns {number} Credit to apply
+ */
+function cappedResale(credit, spend, built) {
+    return built && credit > spend ? Math.max(0, spend) : credit;
 }
 
 /**
@@ -3644,7 +3669,15 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
     const gross = unpriced.length > 0 ? null : buys.reduce((sum, buy) => sum + buy.price, 0);
-    const credit = credits.reduce((sum, entry) => sum + entry.price, 0);
+    const rawCredit = credits.reduce((sum, entry) => sum + entry.price, 0);
+    const credit =
+        gross === null
+            ? rawCredit
+            : cappedResale(
+                  rawCredit,
+                  gross,
+                  buys.some((b) => isBuiltRoute(b.source))
+              );
 
     // Whose enhancing stats a sweep behind this figure ran on. A total is as
     // shaky as its shakiest part, so the first sweep found stands for the row
