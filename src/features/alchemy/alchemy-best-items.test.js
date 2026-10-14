@@ -166,6 +166,7 @@ const tooltip = vi.hoisted(() => ({
     keepListeners: [],
     inventoryListeners: [],
     worn: {},
+    reservationListeners: [],
 }));
 
 vi.mock('../market/tooltip-prices.js', () => ({
@@ -195,6 +196,12 @@ vi.mock('../market/self-use-wanted.js', () => ({
 
 vi.mock('../../utils/inventory-reservations.js', () => ({
     effectiveInventory: (hrid) => tooltip.held[hrid] ?? 0,
+    onReservationsChanged: (cb) => {
+        tooltip.reservationListeners.push(cb);
+        return () => {
+            tooltip.reservationListeners = tooltip.reservationListeners.filter((c) => c !== cb);
+        };
+    },
 }));
 
 vi.mock('../../utils/asset-manifest.js', () => ({
@@ -1848,6 +1855,30 @@ describe('the Chain/hr (own stock) sort', () => {
             expect(tooltip.envCalls).toBe(sweeps + 1);
             expect(cells()[0].textContent).toBe(formatKMB(900));
             bestItems.unsubscribePricingChanges();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a reservation change redraws the open own-stock table, with no items_updated', async () => {
+        vi.useFakeTimers();
+        try {
+            tooltip.held = { '/items/a': 3, '/items/b': 2 };
+            tooltip.chains = { '/items/a': chain(100), '/items/b': chain(7000) };
+            await open([row('a', 1), row('b', 1)]);
+            bestItems.modal.style.display = 'flex';
+            bestItems.subscribePricingChanges();
+            expect(names().sort()).toEqual(['a', 'b']);
+
+            // A plan claimed every copy of b
+            tooltip.held = { '/items/a': 3 };
+            for (const cb of tooltip.reservationListeners) cb();
+            await vi.advanceTimersByTimeAsync(500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(names()).toEqual(['a']);
+
+            bestItems.unsubscribePricingChanges();
+            expect(tooltip.reservationListeners).toHaveLength(0);
         } finally {
             vi.useRealTimers();
         }
