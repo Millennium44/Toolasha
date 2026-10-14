@@ -2912,6 +2912,9 @@ function resaleCredit(candidate, consumed = []) {
     return credit;
 }
 
+/** Resale credit above this multiple of a route's spend is read as an outlier bid, not a windfall */
+const OUTLIER_CREDIT_RATIO = 2;
+
 /**
  * The share of a piece a route spends, 1 for a piece wholly refined or mirrored away.
  * A mirror step the chain may skip (Blessed Tea) spends its lower input only some of the time.
@@ -3277,18 +3280,23 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
         minLevel: MIRROR_FIRST_LEVEL,
         held: mirrorHeldInputs(itemHrid, { isSelf: options.isSelf !== false, candidate: options.candidate || null }),
     });
-    // Against a market quote a tier swap is judged on the final net, after the resale of what it takes
-    // off: a quote keeps the whole credit and a built route's credit is capped at its spend, so a dear
-    // piece sold into a high bid can leave the quote the cheaper way even when the build is cheaper
-    // gross. Any other basis (a sweep, a craft estimate) is already capped like a build, and a row with
-    // several bought pieces cannot split one credit among them, so those compare the gross figures.
+    // A tier swap is judged on the final net, after the resale of what it takes off, because the final
+    // path caps the credit of a built route at its spend and leaves any other route's uncapped: a dear
+    // piece sold into a high bid can leave a quote or a sweep the cheaper way even when the build is
+    // cheaper gross. Only an uncapped credit more than OUTLIER_CREDIT_RATIO times the spend is read as a
+    // stale or troll bid rather than a windfall: such a route is compared as if capped, and a tie then
+    // goes to the build, which really is capped. (A market quote keeps its credit whatever it is, as the
+    // final path does.) A row with several bought pieces cannot split one credit among them and
+    // compares the gross figures.
     const candidate = options.candidate;
-    const netOf = (route) => {
-        if (chosen.source !== 'market' || !candidate || candidate.addedSlots) {
-            return route.price + (route.forfeited || 0);
-        }
+    const judge = (route) => {
+        if (!candidate || candidate.addedSlots) return { net: route.price + (route.forfeited || 0), outlier: false };
         const credit = resaleCredit(candidate, route.consumed);
-        return route.price - cappedResale(credit, route.price, isBuiltRoute(route.source));
+        if (isBuiltRoute(route.source)) return { net: route.price - cappedResale(credit, route.price, true) };
+        if (route.source !== 'market' && credit > OUTLIER_CREDIT_RATIO * route.price) {
+            return { net: route.price - Math.max(0, route.price), outlier: true };
+        }
+        return { net: route.price - credit, outlier: false };
     };
     const viaMirror = mirror && {
         // A worn piece that went into the mirror is not also sold
@@ -3297,7 +3305,13 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
         forfeited: mirror.forfeited,
         source: 'mirror',
     };
-    if (viaMirror && (chosen.price == null || netOf(viaMirror) < netOf(chosen))) {
+    const mirrorWins = () => {
+        if (chosen.price == null) return true;
+        const built = judge(viaMirror).net;
+        const other = judge(chosen);
+        return other.outlier ? built <= other.net : built < other.net;
+    };
+    if (viaMirror && mirrorWins()) {
         const { forfeited: _forfeited, ...route } = viaMirror;
         return {
             ...route,

@@ -512,6 +512,29 @@ describe('refined target priced from a held base', () => {
             expect(explainUpgradeCost(swap, gameData).buys[0].source).toBe('mirror');
         });
 
+        test('a tier swap keeps a sweep-priced buy when its resale makes it the cheaper net, short of an outlier bid', () => {
+            // No listing: the +7 is a 127M climb. A mirror build is about 41M gross and nets 0 (credit
+            // capped at its spend); the climb nets 127M - 150M = -23M with the 150M bid kept whole.
+            state.noAsk = true;
+            state.swordSell = 150_000_000;
+            const swap = {
+                type: 'tier',
+                upgradeHrid: SWORD,
+                upgradeLevel: 7,
+                removedItems: [{ hrid: SWORD, enhancementLevel: 6 }],
+            };
+            const detail = explainUpgradeCost(swap, gameData);
+            expect(detail.buys[0].source).toBe('sim');
+            expect(detail.net).toBeCloseTo(-23_000_000 + 1, 0);
+            expect(calculateUpgradeCost(swap, gameData)).toBeCloseTo(detail.net, 0);
+
+            // Past twice the spend the bid is an outlier: the build wins and the row cannot go negative
+            state.swordSell = 312_000_000_000;
+            const outlier = explainUpgradeCost(swap, gameData);
+            expect(outlier.buys[0].source).toBe('mirror');
+            expect(outlier.net).toBeGreaterThanOrEqual(0);
+        });
+
         test('below +3 a mirror cannot run, and a dear mirror changes nothing', () => {
             expect(explainUpgradeCost(sword(2), gameData).buys[0].source).toBe('sim');
             state.mirrorPrice = 1_000_000_000;
