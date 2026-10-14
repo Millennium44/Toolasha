@@ -84,7 +84,9 @@ vi.mock('./direct-enhancement-cost.js', () => ({
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     // A cape base with no listing: the craft estimate the ordinary +0 path returns
-    resolveItemPrice: vi.fn((hrid) => ({ price: hrid === CAPE ? 500_000_000 : hrid === SHARD ? 2_000_000 : 1 })),
+    resolveItemPrice: vi.fn((hrid) => ({
+        price: hrid === CAPE ? 500_000_000 : hrid === SHARD ? 2_000_000 : hrid === BASE ? 300_000 : 1,
+    })),
 }));
 vi.mock('../../utils/market-data.js', () => ({
     // Every level of everything has an ask; a cape must never use one
@@ -146,5 +148,27 @@ describe('refined target priced from a held base', () => {
     test('a spare base above the target costs the shards alone', () => {
         state.items = [stack(BASE, 9)];
         expect(calculateUpgradeCost(tier(7), gameData)).toBe(SHARDS);
+    });
+
+    test('the worn base the row replaces is refined as it stands: shards only, no resale credit', () => {
+        state.items = [stack(BASE, 7, '/item_locations/back')];
+        const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(SHARDS);
+        expect(detail.net).toBe(SHARDS);
+        expect(detail.credit).toBe(0);
+        expect(detail.ladder).toMatchObject({ fromLevel: 7, toLevel: 7, fromEquipped: true });
+        expect(detail.source).toBe('refine');
+    });
+
+    test('a worn base the row does not replace is not consumed', () => {
+        state.items = [stack(BASE, 7, '/item_locations/back')];
+        expect(explainUpgradeCost(tier(7), gameData).buys[0].source).toBe('enhance');
+    });
+
+    test('worn +7 and spare +5: the worn one is the cheaper base', () => {
+        state.items = [stack(BASE, 7, '/item_locations/back'), stack(BASE, 5)];
+        const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(SHARDS);
     });
 });
