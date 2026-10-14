@@ -4,7 +4,7 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ handler: null, prices: {} }));
+const state = vi.hoisted(() => ({ handler: null, prices: {}, inventory: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: { isFeatureEnabled: () => true, getSetting: () => true, COLOR_TOOLTIP_INFO: '#abc' },
@@ -19,6 +19,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
+        getInventory: () => state.inventory,
         getInitClientData: () => ({
             itemDetailMap: {
                 '/items/labyrinth_token': { name: 'Labyrinth Token' },
@@ -71,6 +72,7 @@ function labyrinthTooltip(amountText) {
 
 beforeEach(async () => {
     document.body.innerHTML = '';
+    state.inventory = [];
     state.prices = {
         '/items/pathseeker_lodestone': { ask: 6_800_000, bid: 6_000_000 },
         '/items/labyrinth_essence': { ask: 100, bid: 90 },
@@ -119,5 +121,40 @@ describe('held token total', () => {
         state.handler(el);
         await Promise.resolve();
         expect(el.querySelector('.dungeon-token-shop-injected').textContent).not.toContain('Your ');
+    });
+});
+
+describe('held count from game state', () => {
+    test('a non-English tooltip with no "Amount:" text still gets the total', async () => {
+        state.inventory = [
+            { itemHrid: '/items/labyrinth_token', itemLocationHrid: '/item_locations/inventory', count: 22657 },
+        ];
+        const el = labyrinthTooltip('数量: 22,657');
+        state.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain(
+            'Your 22,657 tokens ≈ 154.1M as Pathseeker Lodestone'
+        );
+    });
+
+    test('the inventory count wins over the tooltip text', async () => {
+        state.inventory = [
+            { itemHrid: '/items/labyrinth_token', itemLocationHrid: '/item_locations/inventory', count: 100 },
+        ];
+        const el = labyrinthTooltip('Amount: 22,657');
+        state.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain('Your 100 tokens');
+    });
+
+    test('the title states its basis and makes no net-worth match claim', async () => {
+        const el = labyrinthTooltip('Amount: 22,657');
+        state.handler(el);
+        await Promise.resolve();
+        const line = [...el.querySelectorAll('.dungeon-token-shop-injected div')].find((d) =>
+            d.textContent.startsWith('Your')
+        );
+        expect(line.getAttribute('title')).toContain('ask price before tax');
+        expect(line.getAttribute('title')).not.toContain('counts tokens at this same');
     });
 });

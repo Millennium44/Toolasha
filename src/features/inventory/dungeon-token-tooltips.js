@@ -13,7 +13,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { heldTokensWorth } from '../../utils/token-worth.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { dungeonShopOffers } from './dungeon-shop-offers.js';
+import { dungeonShopOffers, ownedTokenCount } from './dungeon-shop-offers.js';
 
 /**
  * Token types and their shop data sources
@@ -165,7 +165,14 @@ class DungeonTokenTooltips {
         const shopItems = this._getDungeonShopItems(tokenHrid);
         if (!shopItems || shopItems.length === 0) return;
 
-        this._injectShopTable(tooltipElement, shopItems, 'Token Shop Value:', 'Gold/Token', isCollectionTooltip);
+        this._injectShopTable(
+            tooltipElement,
+            shopItems,
+            'Token Shop Value:',
+            'Gold/Token',
+            isCollectionTooltip,
+            tokenHrid
+        );
         // A tooltip closes as the pointer leaves it, so the planner cannot be a
         // button here; the line says where the button is instead
         if (config.getSetting('dungeonShopPlanner', true)) {
@@ -189,7 +196,14 @@ class DungeonTokenTooltips {
         const shopItems = this._getTaskShopItems();
         if (!shopItems || shopItems.length === 0) return;
 
-        this._injectShopTable(tooltipElement, shopItems, 'Task Shop Value:', 'Gold/Token', isCollectionTooltip);
+        this._injectShopTable(
+            tooltipElement,
+            shopItems,
+            'Task Shop Value:',
+            'Gold/Token',
+            isCollectionTooltip,
+            TASK_TOKEN
+        );
         dom.fixTooltipOverflow(tooltipElement);
     }
 
@@ -200,7 +214,14 @@ class DungeonTokenTooltips {
         const shopItems = this._getLabyrinthShopItems();
         if (!shopItems || shopItems.length === 0) return;
 
-        this._injectShopTable(tooltipElement, shopItems, 'Labyrinth Shop Value:', 'Gold/Token', isCollectionTooltip);
+        this._injectShopTable(
+            tooltipElement,
+            shopItems,
+            'Labyrinth Shop Value:',
+            'Gold/Token',
+            isCollectionTooltip,
+            LABYRINTH_TOKEN
+        );
         dom.fixTooltipOverflow(tooltipElement);
     }
 
@@ -382,8 +403,9 @@ class DungeonTokenTooltips {
      * @param {string} title - Table title
      * @param {string} efficiencyLabel - Label for the efficiency column
      * @param {boolean} isCollectionTooltip - True if collection tooltip
+     * @param {string|null} [tokenHrid] - The token this tooltip is for, to read the held count from game state
      */
-    _injectShopTable(tooltipElement, shopItems, title, efficiencyLabel, isCollectionTooltip = false) {
+    _injectShopTable(tooltipElement, shopItems, title, efficiencyLabel, isCollectionTooltip = false, tokenHrid = null) {
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
             : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
@@ -426,15 +448,15 @@ class DungeonTokenTooltips {
 
         html += '</table>';
 
-        // The stack the game's own "Amount:" line reports, totalled at the best row. Read before
-        // this block is appended, so nothing injected can be mistaken for it.
-        const amount = this._heldAmount(tooltipText.textContent);
+        // The stack held, from the inventory so a non-English client works; the tooltip's own
+        // "Amount:" line is only a fallback (read before this block is appended).
+        const amount = (tokenHrid && ownedTokenCount(tokenHrid)) || this._heldAmount(tooltipText.textContent);
         const held = heldTokensWorth(amount, shopItems[0]);
         if (held) {
             const title =
-                'Assumes the whole stack goes into this one item. The shop may cap how many can be bought, and ' +
-                'selling that many would move the market, so treat it as an upper bound. Net worth counts tokens ' +
-                'at this same best row, priced by your profit pricing mode (the ask, by default).';
+                "At the table's best row, ask price before tax, assuming the whole stack goes into that one item. " +
+                'The shop may cap how many can be bought, and selling that many would move the market, so treat it ' +
+                'as an upper bound. Net worth values tokens by its own rules and can differ.';
             html +=
                 `<div style="margin-top: 4px;" title="${title}">Your ${formatWithSeparator(amount)} tokens ` +
                 `≈ <strong>${formatKMB(held.total)}</strong> as ${shopItems[0].name} ` +
