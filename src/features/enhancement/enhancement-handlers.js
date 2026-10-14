@@ -498,7 +498,7 @@ async function trackMirrorCosts(itemHrid, fromLevel) {
     const copyLevel = Math.max(0, fromLevel - 1);
     const copyPrice = copyLevel === 0 ? getEnhancementMaterialPrice(baseHrid, 'ask') : unitPrice(baseHrid, copyLevel);
     await enhancementTracker.trackMaterialCost(baseHrid, 1, copyPrice);
-    await enhancementTracker.trackProtectionCost(PHILOSOPHERS_MIRROR_HRID, unitPrice(PHILOSOPHERS_MIRROR_HRID));
+    await enhancementTracker.trackMirrorCost(unitPrice(PHILOSOPHERS_MIRROR_HRID));
 }
 
 /**

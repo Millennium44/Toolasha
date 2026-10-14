@@ -11,7 +11,9 @@ import {
     getCurrentLegCounters,
     mergedExpectation,
     hasPredictionLegs,
-    getProtectionBreakdown,
+    getProtectionUsage,
+    PHILOSOPHERS_MIRROR_HRID,
+    getMirrorUsage,
     mergeSessions,
 } from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
@@ -131,7 +133,8 @@ export function enhancementSessionText(
         `Attempts: ${session.totalAttempts || 0} ` +
             `(${session.totalSuccesses || 0} success, ${session.totalBlessed || 0} blessed, ` +
             `${session.totalFailures || 0} fail)`,
-        `Protections used: ${session.protectionCount || 0}`,
+        `Protections used: ${getProtectionUsage(session).count}`,
+        ...(getMirrorUsage(session).count > 0 ? [`Philosopher's Mirrors used: ${getMirrorUsage(session).count}`] : []),
         `Total cost: ${formatNum(session.totalCost || 0)}`,
     ];
 
@@ -1205,7 +1208,7 @@ class EnhancementUI {
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${color};">
                 <div><span>Attempt Factor:</span><strong> ${factor(session.totalAttempts || 0, expAtt)}</strong></div>
-                <div><span>Prot Factor:</span><strong> ${factor(session.protectionCount || 0, expProt)}</strong></div>
+                <div><span>Prot Factor:</span><strong> ${factor(getProtectionUsage(session).count, expProt)}</strong></div>
             </div>
             ${costHTML}
             </div>`;
@@ -1268,7 +1271,7 @@ class EnhancementUI {
                 </div>
                 <div style="font-size: 13px; margin-top: 4px;">
                     <span>Prots Used:</span>
-                    <strong> ${session.protectionCount || 0}</strong>
+                    <strong> ${getProtectionUsage(session).count}</strong>
                 </div>
             </div>`;
 
@@ -1823,9 +1826,12 @@ class EnhancementUI {
         // Check if there are any costs to display
         const hasMaterials = session.materialCosts && Object.keys(session.materialCosts).length > 0;
         const hasCoins = session.coinCost > 0;
-        const hasProtection = session.protectionCost > 0;
+        const protections = getProtectionUsage(session);
+        const mirrors = getMirrorUsage(session);
+        const hasProtection = protections.cost > 0;
+        const hasMirror = mirrors.count > 0;
 
-        if (!hasMaterials && !hasCoins && !hasProtection) {
+        if (!hasMaterials && !hasCoins && !hasProtection && !hasMirror) {
             return '';
         }
 
@@ -1881,7 +1887,7 @@ class EnhancementUI {
         // Protection costs
         if (hasProtection) {
             // One row per protection item: a merged session can hold runs protected by different ones
-            for (const [hrid, entry] of Object.entries(getProtectionBreakdown(session))) {
+            for (const [hrid, entry] of Object.entries(protections.breakdown)) {
                 const protectionItemName = hrid ? gameData?.itemDetailMap?.[hrid]?.name || 'Protection' : 'Protection';
 
                 html += `
@@ -1891,6 +1897,18 @@ class EnhancementUI {
                 </div>
             `;
             }
+        }
+
+        // Philosopher's Mirrors are consumed, not a protection: a line of their own
+        if (hasMirror) {
+            const mirrorName = gameData?.itemDetailMap?.[PHILOSOPHERS_MIRROR_HRID]?.name || "Philosopher's Mirror";
+
+            html += `
+                <div class="enh-mirror-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${mirrorName} (${mirrors.count}×):</span>
+                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(mirrors.cost)}</span>
+                </div>
+            `;
         }
 
         html += '</div>'; // Close details

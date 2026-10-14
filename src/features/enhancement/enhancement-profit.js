@@ -12,6 +12,7 @@
  */
 
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { getMirrorUsage, getProtectionUsage } from './enhancement-session.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 /**
@@ -27,7 +28,10 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 export function hasUnpricedInput(session) {
     if (session?.hasUnpricedInput === true) return true;
     if (Object.values(session?.materialCosts || {}).some((m) => m.count > 0 && !(m.totalCost > 0))) return true;
-    return (session?.protectionCount || 0) > 0 && !((session?.protectionCost || 0) > 0);
+    const protections = getProtectionUsage(session);
+    if (protections.count > 0 && !(protections.cost > 0)) return true;
+    const mirrors = getMirrorUsage(session);
+    return mirrors.count > 0 && !(mirrors.cost > 0);
 }
 
 /**
@@ -59,19 +63,20 @@ export function costVsExpected(session, leg = null, summed = null) {
 
     const materialActual = Object.values(session.materialCosts || {}).reduce((sum, m) => sum + (m.totalCost || 0), 0);
     const coinActual = session.coinCost || 0;
-    const protActual = session.protectionCost || 0;
-    const protCount = session.protectionCount || 0;
+    // Mirrors are spent per attempt like the base-item copy beside them; only protections are per protect
+    const mirrorActual = getMirrorUsage(session).cost;
+    const { cost: protActual, count: protCount } = getProtectionUsage(session);
 
     if (hasUnpricedInput(session)) return null;
 
     // Materials and coins are spent per attempt; protection per protect.
-    const perAttempt = (materialActual + coinActual) / totalAttempts;
+    const perAttempt = (materialActual + coinActual + mirrorActual) / totalAttempts;
     const protUnit = protCount > 0 ? protActual / protCount : 0;
 
     const materialExpected = perAttempt * expAtt;
     const protExpected = protUnit * expProt;
     const expectedCost = materialExpected + protExpected;
-    const actualCost = materialActual + coinActual + protActual;
+    const actualCost = materialActual + coinActual + mirrorActual + protActual;
     if (expectedCost <= 0) return null;
 
     return {
@@ -79,7 +84,7 @@ export function costVsExpected(session, leg = null, summed = null) {
         expectedCost,
         diff: expectedCost - actualCost, // positive → came in below expected (lucky)
         factor: actualCost / expectedCost,
-        materialActual: materialActual + coinActual,
+        materialActual: materialActual + coinActual + mirrorActual,
         materialExpected,
         protActual,
         protExpected,

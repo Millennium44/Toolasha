@@ -67,6 +67,7 @@ import {
     onWelcomeBackModal,
     placeInWelcomeBackModal,
 } from '../../utils/welcome-back-modal.js';
+import { getProtectionUsage } from '../enhancement/enhancement-session.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -575,7 +576,7 @@ export function enhancementFact(session, now) {
         itemName: session.itemName,
         currentLevel: session.currentLevel,
         targetLevel: session.targetLevel,
-        protectionsUsed: session.protectionCount || 0,
+        protectionsUsed: getProtectionUsage(session).count,
     };
 }
 

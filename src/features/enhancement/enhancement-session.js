@@ -3,6 +3,9 @@
  * Represents a single enhancement tracking session for one item
  */
 
+/** The Philosopher's Mirror: consumed every mirror attempt, so a consumable cost and not a protection */
+export const PHILOSOPHERS_MIRROR_HRID = '/items/philosophers_mirror';
+
 /**
  * Session states
  */
@@ -60,6 +63,10 @@ export function createSession(itemHrid, itemName, startLevel, targetLevel, prote
         protectionCost: 0,
         protectionCount: 0,
         protectionItemHrid: null, // Track which protection item is being used
+        // Philosopher's Mirrors consumed, kept apart from protections (an older session holds them in
+        // the protection fields and breakdown instead — see getMirrorUsage)
+        mirrorCost: 0,
+        mirrorCount: 0,
         totalCost: 0,
 
         // Statistics
@@ -281,6 +288,57 @@ export function addProtectionCost(session, protectionItemHrid, cost) {
 }
 
 /**
+ * Add one Philosopher's Mirror to the session's cost. It counts toward the total cost and the
+ * unpriced-input flag, but not toward protections.
+ * @param {Object} session - Session object
+ * @param {number} cost - Mirror cost
+ */
+export function addMirrorCost(session, cost) {
+    if (!(cost > 0)) session.hasUnpricedInput = true;
+    session.mirrorCost = (session.mirrorCost || 0) + cost;
+    session.mirrorCount = (session.mirrorCount || 0) + 1;
+    recalculateTotalCost(session);
+}
+
+/**
+ * The Philosopher's Mirrors a session consumed. Sessions recorded before mirrors had their own
+ * fields hold them in the protection count, cost and breakdown, so the breakdown's mirror entry
+ * is read as well; the stored data is left as it is.
+ * @param {Object} session - Session object
+ * @returns {{count: number, cost: number, legacyCount: number, legacyCost: number}} Totals, and
+ *   the share of them that sits inside the protection fields
+ */
+export function getMirrorUsage(session) {
+    const legacy = getProtectionBreakdown(session)[PHILOSOPHERS_MIRROR_HRID];
+    const legacyCount = legacy?.count || 0;
+    const legacyCost = legacy?.totalCost || 0;
+    return {
+        count: (session?.mirrorCount || 0) + legacyCount,
+        cost: (session?.mirrorCost || 0) + legacyCost,
+        legacyCount,
+        legacyCost,
+    };
+}
+
+/**
+ * The protections a session consumed, mirrors excluded. The stored protection fields of an older
+ * session include its mirrors; they are taken back out here.
+ * @param {Object} session - Session object
+ * @returns {{count: number, cost: number, breakdown: Object<string, {count: number, totalCost: number}>}}
+ *   `breakdown` is keyed like {@link getProtectionBreakdown}, without the mirror
+ */
+export function getProtectionUsage(session) {
+    const mirror = getMirrorUsage(session);
+    const breakdown = { ...getProtectionBreakdown(session) };
+    delete breakdown[PHILOSOPHERS_MIRROR_HRID];
+    return {
+        count: Math.max(0, (session?.protectionCount || 0) - mirror.legacyCount),
+        cost: Math.max(0, (session?.protectionCost || 0) - mirror.legacyCost),
+        breakdown,
+    };
+}
+
+/**
  * The protection a session consumed, per protection item. A session that never mixed items has
  * no stored breakdown; its one item carries the whole count and cost.
  * @param {Object} session - Session object
@@ -305,7 +363,7 @@ export function getProtectionBreakdown(session) {
 function recalculateTotalCost(session) {
     const materialTotal = Object.values(session.materialCosts).reduce((sum, m) => sum + m.totalCost, 0);
 
-    session.totalCost = materialTotal + session.coinCost + session.protectionCost;
+    session.totalCost = materialTotal + session.coinCost + session.protectionCost + (session.mirrorCost || 0);
 }
 
 /**
@@ -558,7 +616,7 @@ export function resumeSession(session, now = Date.now(), options = {}) {
         session.predictions = null;
         session.extensionBaseline = {
             totalAttempts: session.totalAttempts || 0,
-            protectionCount: session.protectionCount || 0,
+            protectionCount: getProtectionUsage(session).count,
         };
     }
     // The run began no earlier than the last one ended and no later than now
@@ -720,6 +778,8 @@ export function foldSessions(ordered) {
         newest.coinCount = (newest.coinCount || 0) + (session.coinCount || 0);
         newest.protectionCost = (newest.protectionCost || 0) + (session.protectionCost || 0);
         newest.protectionCount = (newest.protectionCount || 0) + (session.protectionCount || 0);
+        newest.mirrorCost = (newest.mirrorCost || 0) + (session.mirrorCost || 0);
+        newest.mirrorCount = (newest.mirrorCount || 0) + (session.mirrorCount || 0);
         newest.hasUnpricedInput = newest.hasUnpricedInput === true || session.hasUnpricedInput === true;
         newest.longestSuccessStreak = Math.max(newest.longestSuccessStreak || 0, session.longestSuccessStreak || 0);
         newest.longestFailureStreak = Math.max(newest.longestFailureStreak || 0, session.longestFailureStreak || 0);
@@ -783,7 +843,7 @@ export function foldSessions(ordered) {
         // the folded runs, so the baseline sits at the totals those runs added
         newest.extensionBaseline = {
             totalAttempts: older.reduce((sum, s) => sum + (s.totalAttempts || 0), liveBaseline.totalAttempts),
-            protectionCount: older.reduce((sum, s) => sum + (s.protectionCount || 0), liveBaseline.protectionCount),
+            protectionCount: older.reduce((sum, s) => sum + getProtectionUsage(s).count, liveBaseline.protectionCount),
         };
         newest.mergedLiveLeg = true;
     } else {
@@ -1221,7 +1281,7 @@ export function extendSession(session, newTargetLevel, now = Date.now()) {
     session.lastUpdateTime = now;
     session.extensionBaseline = {
         totalAttempts: session.totalAttempts || 0,
-        protectionCount: session.protectionCount || 0,
+        protectionCount: getProtectionUsage(session).count,
     };
 }
 
@@ -1234,7 +1294,7 @@ export function extendSession(session, newTargetLevel, now = Date.now()) {
 export function getCurrentLegCounters(session) {
     const baseline = session?.extensionBaseline;
     const attempts = (session?.totalAttempts || 0) - (baseline?.totalAttempts || 0);
-    const protections = (session?.protectionCount || 0) - (baseline?.protectionCount || 0);
+    const protections = getProtectionUsage(session).count - (baseline?.protectionCount || 0);
 
     return {
         attempts: Math.max(0, attempts),
@@ -1279,6 +1339,8 @@ export function mergeSessions(sessions) {
         coinCost: 0,
         coinCount: 0,
         protectionCost: 0,
+        mirrorCount: 0,
+        mirrorCost: 0,
         totalCost: 0,
         durationSeconds: 0,
         currentLevel: 0,
@@ -1307,17 +1369,21 @@ export function mergeSessions(sessions) {
         agg.totalFailures += session.totalFailures || 0;
         agg.totalBlessed += session.totalBlessed || 0;
         agg.totalXP += session.totalXP || 0;
-        agg.protectionCount += session.protectionCount || 0;
+        const protections = getProtectionUsage(session);
+        const mirrors = getMirrorUsage(session);
+        agg.protectionCount += protections.count;
+        agg.mirrorCount += mirrors.count;
+        agg.mirrorCost += mirrors.cost;
         agg.coinCost += session.coinCost || 0;
         agg.coinCount += session.coinCount || 0;
-        agg.protectionCost += session.protectionCost || 0;
+        agg.protectionCost += protections.cost;
         agg.totalCost += session.totalCost || 0;
         agg.hasUnpricedInput ||= session.hasUnpricedInput === true;
         agg.durationSeconds += getSessionDuration(session);
         if (!agg.protectionItemHrid && session.protectionItemHrid) {
             agg.protectionItemHrid = session.protectionItemHrid;
         }
-        for (const [hrid, entry] of Object.entries(getProtectionBreakdown(session))) {
+        for (const [hrid, entry] of Object.entries(protections.breakdown)) {
             const into = (protection[hrid] ||= { count: 0, totalCost: 0 });
             into.count += entry.count || 0;
             into.totalCost += entry.totalCost || 0;

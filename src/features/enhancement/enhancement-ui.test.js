@@ -189,3 +189,34 @@ describe('resizability', () => {
         expect(panel.querySelector('.toolasha-resize-grip').style.display).toBe('');
     });
 });
+
+describe("cost details list the Philosopher's Mirror on its own line", () => {
+    test('a recorded session shows its mirror apart from the protection rows', () => {
+        const html = enhancementUI.generateMaterialCostsHTML(
+            sessionFixture({
+                id: 'old',
+                protectionCount: 5,
+                protectionCost: 272000,
+                protectionItemHrid: '/items/mirror_of_protection',
+                protectionBreakdown: {
+                    '/items/mirror_of_protection': { count: 2, totalCost: 2000 },
+                    '/items/philosophers_mirror': { count: 3, totalCost: 270000 },
+                },
+                totalCost: 272000,
+            })
+        );
+
+        expect(html.match(/enh-protection-row/g)).toHaveLength(1);
+        expect(html).toContain('enh-mirror-row');
+        expect(html).toContain("Philosopher's Mirror (3×)");
+    });
+
+    test('a new session shows its mirror even with no protection spent', () => {
+        const html = enhancementUI.generateMaterialCostsHTML(
+            sessionFixture({ id: 'new', mirrorCount: 2, mirrorCost: 180000, totalCost: 180000 })
+        );
+
+        expect(html).not.toContain('enh-protection-row');
+        expect(html).toContain("Philosopher's Mirror (2×)");
+    });
+});
