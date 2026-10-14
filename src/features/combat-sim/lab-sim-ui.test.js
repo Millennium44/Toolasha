@@ -59,6 +59,8 @@ const game = vi.hoisted(() => ({
     characterId: 'me',
     /** Whether the opt-in "remember upgrade results" setting is on */
     rememberUpgradeResults: false,
+    /** Clear rate a skilling room loses per room level; 0 keeps it level-blind */
+    levelPenalty: 0,
 }));
 const sim = vi.hoisted(() => ({
     cancelled: 0,
@@ -298,7 +300,10 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
             return metrics;
         },
         computeSkillingClearWithParams: (metrics, baseLevel, roomLevel) => ({
-            clearChance: Math.min(1, 0.5 + metrics.efficiencyBonus + metrics.gatheringBonus),
+            clearChance: Math.max(
+                0,
+                Math.min(1, 0.5 + metrics.efficiencyBonus + metrics.gatheringBonus - roomLevel * game.levelPenalty)
+            ),
             xpPerRoom: roomLevel * 50 * (1 + metrics.experienceBonus),
             baseLevel,
             effectiveLevel: baseLevel,
@@ -306,7 +311,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
             attempts: 10,
         }),
         computeEnhancingClearWithParams: (metrics, baseLevel, roomLevel) => ({
-            clearChance: Math.min(1, 0.5 + metrics.actionSpeedBonus),
+            clearChance: Math.max(0, Math.min(1, 0.5 + metrics.actionSpeedBonus - roomLevel * game.levelPenalty)),
             xpPerRoom: roomLevel * 50 * (1 + metrics.experienceBonus),
             baseLevel,
             effectiveLevel: baseLevel,
@@ -3648,5 +3653,271 @@ describe('a skilling analysis left running by a character switch', () => {
         expect(ui._skillingSortHandler).toBeNull();
 
         spy.mockRestore();
+    });
+});
+
+describe('the Skilling tab’s room levels, goal planner and Sim together', () => {
+    const roomLevelsBox = () => ui.panel.querySelector('#mwi-labsim-skilling-room-levels');
+    const clearInput = () => ui.panel.querySelector('#mwi-labsim-skilling-target-clear');
+    const floorInput = () => ui.panel.querySelector('#mwi-labsim-skilling-target-floor');
+    const goalResults = () => ui.panel.querySelector('#mwi-labsim-skilling-goal-results');
+    const change = (el) => el.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+    const tableRow = (over = {}) => ({
+        costType: 'gold',
+        cost: 1000,
+        clearRate: 0.6,
+        clearRateDelta: 0.1,
+        metricType: 'clearRate',
+        ...over,
+        candidate: { type: 'enhancement', slot: '/equipment_types/body', description: 'Plain', ...over.candidate },
+    });
+
+    beforeEach(async () => {
+        storage.written = {};
+        storage.values = {};
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('skilling');
+        await settle();
+    });
+
+    afterEach(() => {
+        game.levelPenalty = 0;
+        game.editedDTOs = null;
+        game.players = [];
+        ui.destroy();
+    });
+
+    test('the room-level options start off, and the Target clear box starts at the shared setting', () => {
+        expect(roomLevelsBox().checked).toBe(false);
+        expect(clearInput().value).toBe('70');
+        expect(floorInput().value).toBe('');
+    });
+
+    test('they are remembered per character like the tab’s other inputs', async () => {
+        roomLevelsBox().checked = true;
+        change(roomLevelsBox());
+        clearInput().value = '55';
+        change(clearInput());
+        floorInput().value = '4';
+        change(floorInput());
+        await settle();
+
+        expect(storage.written.labSimSkillingRoomLevels_me).toBe(true);
+        expect(storage.written.labSimSkillingTargetClear_me).toBe(55);
+        expect(storage.written.labSimSkillingTargetFloor_me).toBe(4);
+    });
+
+    test('and put back when the tab opens', async () => {
+        storage.values = {
+            labSimSkillingRoomLevels_me: true,
+            labSimSkillingTargetClear_me: 80,
+            labSimSkillingTargetFloor_me: 3,
+        };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('skilling');
+        await settle();
+
+        expect(roomLevelsBox().checked).toBe(true);
+        expect(clearInput().value).toBe('80');
+        expect(floorInput().value).toBe('3');
+    });
+
+    test('with the options off the tables keep their columns and gain only the pick boxes', () => {
+        const container = document.createElement('div');
+        ui._renderSkillingUpgradeResults(
+            { baseline: { clearRate: 0.5 }, results: [tableRow({ candidate: { description: 'Hat' } })] },
+            container
+        );
+
+        expect(container.querySelectorAll('th').length).toBe(6);
+        expect(container.textContent).not.toContain('Levels');
+        expect(container.querySelector('[data-skilling-room-level-summary]')).toBeNull();
+        expect(container.querySelectorAll('input[data-skilling-pick]').length).toBe(1);
+    });
+
+    test('measured rows show levels and floor, target-reaching rows are marked, unmeasured read a dash', () => {
+        const container = document.createElement('div');
+        const results = [
+            tableRow({
+                candidate: { description: 'Deep' },
+                roomLevelMeasured: true,
+                roomLevelDelta: 20,
+                maxRoomLevel: 60,
+                floorReached: 2,
+            }),
+            tableRow({
+                candidate: { description: 'Shallow', slot: '/equipment_types/legs' },
+                roomLevelMeasured: true,
+                roomLevelDelta: 2,
+                maxRoomLevel: 42,
+                floorReached: 1,
+            }),
+            tableRow({ candidate: { description: 'Unsearched', slot: '/equipment_types/head' } }),
+        ];
+        ui._renderSkillingUpgradeResults(
+            {
+                baseline: { clearRate: 0.5 },
+                roomLevels: {
+                    baselineLevel: 40,
+                    baselineFloor: 1,
+                    baselineCleared: true,
+                    shortlistSize: 6,
+                    threshold: 0.7,
+                    targetFloor: 2,
+                },
+                results,
+            },
+            container
+        );
+
+        const rows = [...container.querySelectorAll('tbody tr')];
+        const byName = (name) => rows.find((tr) => tr.textContent.includes(name));
+        expect(byName('Deep').textContent).toContain('+20');
+        expect(byName('Deep').querySelector('[data-reaches-target]').dataset.reachesTarget).toBe('1');
+        expect(byName('Shallow').querySelector('[data-reaches-target]').dataset.reachesTarget).toBe('0');
+        expect(byName('Unsearched').textContent).toContain('—');
+        expect(byName('Unsearched').textContent).not.toContain('+0');
+        expect(container.textContent).toContain('Floor 2 needs room level 60');
+    });
+
+    describe('against the skilling model', () => {
+        const dto = () => ({
+            cookingLevel: 100,
+            foragingLevel: 100,
+            equipment: {},
+            houseRooms: {},
+            tokenUpgrades: {},
+            communityBuffLevels: { productionEfficiency: 5, experience: 4 },
+        });
+
+        /** Run Analyze Upgrades for Cooking with the shared advisor stubbed out. */
+        const analyze = async () => {
+            game.players = [{ hrid: 'p1' }];
+            game.editedDTOs = { p1: dto() };
+            const filter = ui.panel.querySelector('#mwi-labsim-skilling-filter');
+            filter.value = '/skills/cooking';
+            ui.panel.querySelector('#mwi-labsim-skilling-useskip').checked = false;
+            ui.panel.querySelector('#mwi-labsim-skilling-level').value = '10';
+            // Several levels at once: a single one is worth less than a room level
+            ui.panel.querySelector('#mwi-labsim-skilling-community-level').value = '10';
+            const spy = vi
+                .spyOn(upgradeAdvisor, 'runSkillingUpgradeAnalysis')
+                .mockResolvedValue({ baseline: { clearRate: 0.4, xpPerRoom: 500 }, results: [] });
+            await ui._onSkillingUpgradeAnalyze();
+            spy.mockRestore();
+        };
+
+        beforeEach(() => {
+            game.levelPenalty = 0.01;
+        });
+
+        test('Analyze Upgrades measures the shortlist in room levels when asked', async () => {
+            roomLevelsBox().checked = true;
+            clearInput().value = '30';
+            floorInput().value = '1';
+            await analyze();
+
+            const { analysisResult } = ui._skillingAnalysis;
+            const summary = analysisResult.roomLevels;
+            // The efficiency level already bought adds 0.15: 0.65 - 0.01 L >= 0.3 holds through level 35
+            expect(summary.baselineLevel).toBe(35);
+            expect(summary.baselineFloor).toBe(0);
+            expect(summary.targetFloor).toBe(1);
+            const efficiency = analysisResult.results.find((r) => r.candidate.buffKey === 'productionEfficiency');
+            expect(efficiency.roomLevelMeasured).toBe(true);
+            expect(efficiency.maxRoomLevel).toBeGreaterThan(35);
+            // The Experience buff changes what a room pays, never whether it clears
+            const xp = analysisResult.results.find((r) => r.candidate.buffKey === 'experience');
+            expect(xp.roomLevelMeasured).toBe(false);
+            expect(ui.panel.querySelector('#mwi-labsim-skilling-results').textContent).toContain('Levels');
+        });
+
+        test('with Room levels off nothing is searched and the table has no level columns', async () => {
+            await analyze();
+
+            expect(ui._skillingAnalysis.analysisResult.roomLevels).toBeUndefined();
+            expect(ui.panel.querySelector('#mwi-labsim-skilling-results').textContent).not.toContain('Levels');
+        });
+
+        test('Plan to goal needs an analysis first', async () => {
+            await ui._onSkillingPlan();
+
+            expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toContain('Analyze Upgrades first');
+        });
+
+        test('Plan to goal buys toward the Target clear % and shows the step table', async () => {
+            await analyze();
+            clearInput().value = '56';
+            floorInput().value = '';
+            await ui._onSkillingPlan();
+
+            expect(goalResults().querySelectorAll('[data-plan-step]').length).toBeGreaterThanOrEqual(1);
+            expect(goalResults().querySelector('[data-plan-verdict]').textContent).toMatch(/Goal reached at total/);
+            expect(goalResults().innerHTML).toContain('Step cost');
+        });
+
+        test('a goal no candidate can reach says so', async () => {
+            await analyze();
+            clearInput().value = '100';
+            await ui._onSkillingPlan();
+
+            expect(goalResults().querySelector('[data-plan-verdict]').textContent).toContain(
+                'Not reachable with these candidates'
+            );
+        });
+
+        test('Sim together applies the ticked rows at once and reports the combined result', async () => {
+            await analyze();
+            const boxes = [...ui.panel.querySelectorAll('input[data-skilling-pick]')];
+            expect(boxes.length).toBeGreaterThan(0);
+            boxes[0].click();
+            await ui._onSkillingCombine();
+
+            expect(goalResults().textContent).toContain('Upgrades together');
+            expect(goalResults().querySelector('[data-combo-clear]')).not.toBeNull();
+            expect(ui.panel.querySelector('#mwi-labsim-skilling-checked-count').textContent).toBe('1 checked');
+        });
+
+        test('with nothing ticked it asks for a row rather than simming nothing', async () => {
+            await analyze();
+            await ui._onSkillingCombine();
+
+            expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toContain('Tick at least one');
+        });
+    });
+
+    test('ticking two rows for one slot says the later one was taken', async () => {
+        const rows = [
+            tableRow({ candidate: { description: 'Top A', upgradeHrid: '/items/a', currentHrid: '/items/x' } }),
+            tableRow({ candidate: { description: 'Top B', upgradeHrid: '/items/b', currentHrid: '/items/x' } }),
+        ];
+        const analysisResult = { baseline: { clearRate: 0.5, xpPerRoom: 100 }, results: rows };
+        const container = ui.panel.querySelector('#mwi-labsim-skilling-results');
+        ui._renderSkillingUpgradeResults(analysisResult, container);
+        ui._skillingAnalysis = {
+            analysisResult,
+            roomLevel: 10,
+            targetSkill: null,
+            baseSetup: {
+                dto: { equipment: { '/equipment_types/body': { hrid: '/items/x', enhancementLevel: 0 } } },
+                skillEquipmentMap: {},
+            },
+            evaluate: (setup) => ({
+                clearRate: setup.dto.equipment['/equipment_types/body']?.hrid === '/items/b' ? 0.7 : 0.5,
+                xpPerRoom: 100,
+            }),
+            skills: [],
+        };
+
+        for (const box of container.querySelectorAll('input[data-skilling-pick]')) box.click();
+        await ui._onSkillingCombine();
+
+        expect(goalResults().querySelector('[data-combo-conflict]').textContent).toContain('the later one was taken');
+        expect(goalResults().querySelector('[data-combo-clear]').textContent).toBe('70.0%');
+        expect(goalResults().textContent).toContain('Top B');
     });
 });
