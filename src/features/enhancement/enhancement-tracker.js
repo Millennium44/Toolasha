@@ -197,14 +197,18 @@ class EnhancementTracker {
 
     /**
      * The session a new run should continue, when it is the most recent one and the run picks up
-     * exactly where it ended (see {@link canResumeSession}). Only with the auto-resume setting on.
+     * exactly where it ended (see {@link canResumeSession}). Only with the auto-resume setting on;
+     * the auto-combine setting decides whether a different protection item still counts as a match.
      * @param {Object} run - `{itemHrid, startLevel, targetLevel, protectFrom, protectionItemHrid}`
      * @returns {string|null} Session ID, or null
      */
     findResumableSession(run) {
         if (config.getSetting('enhancementTracker_autoResume') !== true) return null;
+        // On unless switched off: a run that differs only in the protection item still continues
+        // the session, which then keeps the protection per item
+        const combineProtectionItems = config.getSetting('enhancementTracker_autoCombine') !== false;
         const latest = this.getMostRecentSession();
-        return latest && canResumeSession(latest, run) ? latest.id : null;
+        return latest && canResumeSession(latest, run, { combineProtectionItems }) ? latest.id : null;
     }
 
     /**

@@ -511,6 +511,23 @@ describe('canResumeSession and resumeSession', () => {
         expect(canResumeSession(seven, run({ itemHrid: '/items/holy_brush' }))).toBe(false);
     });
 
+    test('combining protection items lets a run with a different one continue, and nothing else', () => {
+        const { seven } = spatulaRuns();
+        const combine = { combineProtectionItems: true };
+        const other = '/items/holy_brush';
+        expect(canResumeSession(seven, run({ protectionItemHrid: other }))).toBe(false);
+        expect(canResumeSession(seven, run({ protectionItemHrid: other }), combine)).toBe(true);
+        // Everything else still has to match
+        expect(canResumeSession(seven, run({ protectionItemHrid: other, startLevel: 2 }), combine)).toBe(false);
+        expect(canResumeSession(seven, run({ protectionItemHrid: other, targetLevel: 10 }), combine)).toBe(false);
+        expect(canResumeSession(seven, run({ protectionItemHrid: other, protectFrom: 6 }), combine)).toBe(false);
+        expect(
+            canResumeSession(seven, run({ protectionItemHrid: other, itemHrid: '/items/holy_brush' }), combine)
+        ).toBe(false);
+        seven.currentLevel = 8;
+        expect(canResumeSession(seven, run({ protectionItemHrid: other, startLevel: 8 }), combine)).toBe(false);
+    });
+
     test('a running session or one that reached its target is not resumed', () => {
         const { seven, eight } = spatulaRuns();
         expect(canResumeSession(eight, run({ startLevel: 4 }))).toBe(false);

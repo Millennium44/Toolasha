@@ -38,6 +38,7 @@ vi.mock('../../core/data-manager.js', () => ({
                     ],
                 },
                 '/items/mirror_of_protection': { name: 'Mirror of Protection', sellPrice: 1250 },
+                '/items/holy_brush': { name: 'Holy Brush', sellPrice: 700 },
             },
         }),
         getCurrentActions: () => state.actions,
@@ -250,6 +251,66 @@ describe('auto-resume', () => {
         advance(10_000);
         await attempt(a3, 5, 1);
         expect(Object.keys(tracker.sessions)).toHaveLength(3);
+    });
+
+    describe('a run that loads a different protection item', () => {
+        const BRUSH = '/items/holy_brush';
+        const brushRow = (id, level, count, extra = {}) =>
+            row(id, level, count, { secondaryItemHash: `30404::/item_locations/inventory::${BRUSH}::0`, ...extra });
+
+        /** From the +3 the first run ended at: up to +5, then a protected failure back to +4 */
+        async function secondRunWithBrush() {
+            advance(600_000);
+            const a2 = brushRow('a2', 3, 0);
+            await queueRun(a2);
+            advance(10_000);
+            await attempt(a2, 4, 1);
+            advance(10_000);
+            await attempt(a2, 5, 2);
+            advance(10_000);
+            await attempt(a2, 4, 3);
+            return a2;
+        }
+
+        test('continues the session, which then keeps the protection per item', async () => {
+            const first = await firstRunEndingAtThree();
+            const mirrorsBefore = first.protectionCount;
+            await secondRunWithBrush();
+
+            expect(Object.keys(tracker.sessions)).toHaveLength(1);
+            expect(tracker.currentSessionId).toBe(first.id);
+            expect(first.totalAttempts).toBe(8);
+            expect(first.protectionBreakdown['/items/mirror_of_protection'].count).toBe(mirrorsBefore);
+            expect(first.protectionBreakdown[BRUSH]).toEqual({ count: 1, totalCost: 700 });
+            expect(first.protectionCount).toBe(mirrorsBefore + 1);
+            expect(first.lastAttempt.protectionItemHrid).toBe(BRUSH);
+        });
+
+        test('is a new session with the combine setting off, while same-item auto-resume still works', async () => {
+            state.settings.enhancementTracker_autoCombine = false;
+            const first = await firstRunEndingAtThree();
+            await secondRunWithBrush();
+            expect(Object.keys(tracker.sessions)).toHaveLength(2);
+            expect(first.totalAttempts).toBe(5);
+        });
+
+        test('is a new session when the auto-resume setting is off, whatever the combine setting says', async () => {
+            state.settings.enhancementTracker_autoResume = false;
+            state.settings.enhancementTracker_autoCombine = true;
+            await firstRunEndingAtThree();
+            await secondRunWithBrush();
+            expect(Object.keys(tracker.sessions)).toHaveLength(2);
+        });
+
+        test('is a new session when the protect-from level or target differs', async () => {
+            await firstRunEndingAtThree();
+            advance(600_000);
+            const a2 = brushRow('a2', 3, 0, { enhancingProtectionMinLevel: 6 });
+            await queueRun(a2);
+            advance(10_000);
+            await attempt(a2, 4, 1);
+            expect(Object.keys(tracker.sessions)).toHaveLength(2);
+        });
     });
 
     test('with the setting off (the default), every new run is its own session', async () => {
