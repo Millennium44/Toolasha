@@ -2103,6 +2103,22 @@ describe('keys a retention rule drops are neither uploaded nor written back', ()
         expect(Object.keys(importedPayloads[0].stores[DAY])).toHaveLength(5);
     });
 
+    test('the pull announcement names the displaced keys it deleted, so live records can drop them', async () => {
+        storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
+        const gist = snapshots('32030', T0 + 20 * 3_600_000, 10);
+        const heard = [];
+        const off = onSyncPullApplied((written, deleted) => heard.push(deleted));
+        try {
+            await applyPayload(payloadOf({ [DAY]: gist }), { mode: 'merge', baseline: {} });
+        } finally {
+            off();
+        }
+
+        expect(heard).toHaveLength(1);
+        expect(heard[0][DAY]).toHaveLength(5);
+        for (const key of heard[0][DAY]) expect(storeState.stores[DAY][key]).toBeUndefined();
+    });
+
     test('displaced snapshots are deleted past a latch an earlier pull left on the store', async () => {
         storeState.stores[DAY] = { ...snapshots('32030', T0, 25) };
         storeState.latched = new Set([DAY]);

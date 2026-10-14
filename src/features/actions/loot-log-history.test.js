@@ -51,7 +51,7 @@ vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId:
 const { default: lootLogHistory, MAX_ENTRIES } = await import('./loot-log-history.js');
 const { lootEntryIdentity } = await import('./loot-log-analytics.js');
 const { createChunkedHistory, timeChunkId } = await import('../../utils/chunked-history.js');
-const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+const { mergeForKey, announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 /**
  * A loot log entry as the game sends it.
@@ -334,6 +334,23 @@ describe('the cap floor, for sync', () => {
         await lootLogHistory.mergeAndSave([entry(9999, '2027-01-01T00:00:00Z')]);
 
         expect(floors()).toEqual(['lootLogRecFloor_char-1_2026-01-01T02']);
+    });
+
+    test('a pull that moves the floor and deletes the older hour drops its entries from memory', async () => {
+        await lootLogHistory.mergeAndSave([entry(1, '2026-01-01T00:10:00Z'), entry(2, '2026-01-01T05:10:00Z')]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(await lootLogHistory.getHistoricalEntries(new Set())).toHaveLength(2);
+
+        storageMock.store.set('lootLogRecFloor_char-1_2026-01-01T05', { floor: '2026-01-01T05' });
+        storageMock.store.delete('lootLogRec_char-1_2026-01-01T00');
+        announceSyncPullApplied(
+            { lootLogHistory: ['lootLogRecFloor_char-1_2026-01-01T05'] },
+            { lootLogHistory: ['lootLogRec_char-1_2026-01-01T00'] }
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const left = await lootLogHistory.getHistoricalEntries(new Set());
+        expect(left.map((e) => e.characterActionId)).toEqual([2]);
     });
 
     test('a history within the cap records no floor', async () => {

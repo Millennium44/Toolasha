@@ -265,7 +265,7 @@ export function isLiveSafeKey(store, key) {
     return mergeForKey(store, key)?.liveSafe === true;
 }
 
-/** @type {Set<(written: Record<string, Array<string>>) => (void|Promise<void>)>} */
+/** @type {Set<(written: Record<string, Array<string>>, deleted?: Record<string, Array<string>>) => (void|Promise<void>)>} */
 const pullListeners = new Set();
 
 /**
@@ -274,10 +274,10 @@ const pullListeners = new Set();
  * A `liveSafe` record is adopted under a running page without a reload, which
  * leaves the page's in-memory copy of it behind the stored one. Its owner
  * subscribes here to read what the pull brought. The listener is handed the
- * keys the pull wrote, by store, and decides for itself whether any are its
- * own. It runs after the pull's writes (and any retention deletes) are done,
+ * keys the pull wrote, by store, and (second argument) the keys its retention
+ * rule deleted, by store, and decides for itself whether any are its own. It runs after the pull's writes (and any retention deletes) are done,
  * must not throw, and is not awaited.
- * @param {(written: Record<string, Array<string>>) => (void|Promise<void>)} listener - Called per pull
+ * @param {(written: Record<string, Array<string>>, deleted?: Record<string, Array<string>>) => (void|Promise<void>)} listener - Called per pull
  * @returns {() => void} Unsubscribe
  */
 export function onSyncPullApplied(listener) {
@@ -288,12 +288,13 @@ export function onSyncPullApplied(listener) {
 /**
  * Tell the subscribers a pull has landed. Called by the sync once per applied pull.
  * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+ * @param {Record<string, Array<string>>} [deleted] - The keys the pull's retention rule deleted, by store
  * @returns {void}
  */
-export function announceSyncPullApplied(written) {
+export function announceSyncPullApplied(written, deleted = {}) {
     for (const listener of [...pullListeners]) {
         // Fire and forget: one listener's failure must not hold up or break the others
-        runPullListener(listener, written || {});
+        runPullListener(listener, written || {}, deleted || {});
     }
 }
 
@@ -301,11 +302,12 @@ export function announceSyncPullApplied(written) {
  * Run one pull listener, isolating a throw or a rejection.
  * @param {Function} listener - The subscriber
  * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+ * @param {Record<string, Array<string>>} deleted - The keys the pull deleted, by store
  * @returns {Promise<void>}
  */
-async function runPullListener(listener, written) {
+async function runPullListener(listener, written, deleted) {
     try {
-        await listener(written);
+        await listener(written, deleted);
     } catch (error) {
         console.error('[SyncMergeRegistry] A pull listener failed:', error);
     }
