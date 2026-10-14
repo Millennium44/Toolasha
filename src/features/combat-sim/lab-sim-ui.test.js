@@ -4464,6 +4464,35 @@ describe('Check a swap', () => {
         game.monsters = [];
     });
 
+    test('a stale Skilling task after a rebuild for the same character is aborted and reports nothing', async () => {
+        ui.buildPanel();
+        await settle();
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        let sawAborted = null;
+        const stale = ui._runSkillingTask(async (onProgress, isAborted) => {
+            await gate;
+            sawAborted = isAborted();
+            onProgress({ current: 1, total: 2, description: 'late progress' });
+            throw new Error('late failure');
+        });
+
+        // Same character, new panel, with its own skilling run flag already reset
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._setStatus('fresh panel status');
+        const progressText = ui.panel.querySelector('#mwi-labsim-skilling-progress-text').textContent;
+        release();
+        await stale;
+
+        expect(sawAborted).toBe(true);
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-progress-text').textContent).toBe(progressText);
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toBe('fresh panel status');
+    });
+
     test('the same for the Skilling task runner', async () => {
         ui.buildPanel();
         await settle();
