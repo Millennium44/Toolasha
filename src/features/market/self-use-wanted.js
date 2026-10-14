@@ -32,7 +32,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
-import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { registerSyncMerge, onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 
 /** Storage key base; the key is `${STORAGE_KEY_PREFIX}_${characterId}` */
 export const STORAGE_KEY_PREFIX = 'selfUseWanted';
@@ -216,6 +216,9 @@ let adoptedReloadSeq = 0;
 /** Unsubscribe from `storage.onWrite`, while listening */
 let unsubscribeWrites = null;
 
+/** Unsubscribe from the sync's pull announcement, while listening */
+let unsubscribePulls = null;
+
 /**
  * Hear other tabs' writes to the cached character's key, and reload it when
  * one lands: a mark made in another tab otherwise never reached this tab's
@@ -223,6 +226,16 @@ let unsubscribeWrites = null;
  * which could not hear anything, so it reloads too.
  */
 function watchOtherTabs() {
+    // A sync pull writes through this tab's own storage, which `onWrite` reports as local and the watch below
+    // ignores; the pull announces itself instead. The cache is display only (every writer folds on the stored
+    // value), so a re-read of the stored list is the whole refresh.
+    if (!unsubscribePulls) {
+        unsubscribePulls = onSyncPullApplied((written) => {
+            if (cache === null || cacheCharId === null) return;
+            const keys = written?.settings;
+            if (Array.isArray(keys) && keys.includes(keyFor(cacheCharId))) return reloadFromStorage();
+        });
+    }
     if (unsubscribeWrites || typeof storage.onWrite !== 'function') return;
     unsubscribeWrites = storage.onWrite(({ storeName, keys, origin } = {}) => {
         if (origin !== 'remote' && storeName !== null) return;
@@ -242,6 +255,8 @@ function watchOtherTabs() {
 function stopWatching() {
     unsubscribeWrites?.();
     unsubscribeWrites = null;
+    unsubscribePulls?.();
+    unsubscribePulls = null;
     cache = null;
     cacheCharId = null;
     cacheGeneration += 1;
