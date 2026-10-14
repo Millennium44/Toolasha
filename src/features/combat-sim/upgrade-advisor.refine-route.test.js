@@ -434,6 +434,18 @@ describe('refined target priced from a held base', () => {
             expect(detail.net).toBeCloseTo(48_000_000 + best[5] + 1_000_000, 0);
         });
 
+        test('Blessed Tea: an enhance that overshoots onto +L never needs the base copy or the mirror', () => {
+            state.sweepParams = { teas: { blessed: true }, blessedTeaBonus: 0.5, guzzlingBonus: 1 };
+            state.items = [stack(CAPE, 4, '/item_locations/back')];
+            const ordinaryBase = Array.from({ length: 6 }, (_, k) => 300_000 + (2 ** k - 1) * 1e6);
+            const { best } = cheapestWithMirror(ordinaryBase, 1_000_000, 0.5);
+            // +4 to the +6 input is 48M; its last step is a +2 half the time (given the chain stood on +5,
+            // also half the time), leaving the other 75% to run the base copy and the mirror
+            const detail = explainUpgradeCost(breakpoint(CAPE, 4, 7), gameData);
+            expect(detail.source).toBe('mirror');
+            expect(detail.net).toBeCloseTo(48_000_000 + 0.75 * (best[5] + 1_000_000), 0);
+        });
+
         test('refined gear gets no mirror route when the mirror is dear', () => {
             state.mirrorPrice = 1_000_000_000;
             state.items = [stack(CAPE, 6, '/item_locations/back')];
