@@ -118,6 +118,9 @@ function selfUseTitle() {
     );
 }
 
+/** Which figure the "Instead of buying" headline highlights: perUnit (default), perHour or grossPerHour */
+const INSTEAD_HEADLINE_SETTING = 'itemTooltip_alchemyInsteadHeadline';
+
 /** The "Instead of buying" section's class */
 const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
 
@@ -966,17 +969,40 @@ class TooltipPrices {
         for (const alt of alternatives) {
             const verb = ['decompose', 'coinify'].includes(alt.actionType) ? alt.actionType : 'transmute';
             const atLeast = alt.partlyUnpriced ? '≥' : '';
-            let rate = '';
-            if (alt.savingPerHour !== null && alt.secondsPerUnit > 0) {
-                // A saving per hour spent on alchemy: it only applies if that many units are used
-                const units = formatInsteadUnitsPerHour(3600 / alt.secondsPerUnit);
-                rate =
-                    alt.timeCostPerUnit > 0
+            const mode = config.getSettingValue(INSTEAD_HEADLINE_SETTING, 'perUnit');
+            const hasRate = alt.savingPerHour !== null && alt.savingPerHour !== undefined && alt.secondsPerUnit > 0;
+            const units = hasRate ? formatInsteadUnitsPerHour(3600 / alt.secondsPerUnit) : '';
+            const overRate = alt.timeCostPerUnit > 0;
+            // The plain hourly figure: the same route before the time value is taken off
+            const grossPerHour = hasRate ? ((alt.saving + alt.timeCostPerUnit) * 3600) / alt.secondsPerUnit : null;
+            const mark = (figure, value) => {
+                const color = value < 0 ? config.COLOR_TOOLTIP_LOSS : config.COLOR_TOOLTIP_PROFIT;
+                return `<span style="color: ${color}; font-weight: bold;">${figure}</span>`;
+            };
+            const perUnitText = `${atLeast}${formatKMB(alt.saving)}/unit`;
+            const overRateText = `${atLeast || (overRate ? '+' : '')}${formatKMB(alt.savingPerHour)}/hr of alchemy${
+                overRate ? ' over your gold rate' : ''
+            }`;
+            let headline;
+            const extra = [];
+            if (hasRate && mode === 'perHour') {
+                headline = ` — ${mark(overRateText, alt.savingPerHour)}, using ~${units}/hr · saves ${perUnitText}`;
+                if (overRate) extra.push(`alchemy ${atLeast}${formatKMB(grossPerHour)}/hr before time value`);
+            } else if (hasRate && mode === 'grossPerHour') {
+                const grossText = `${atLeast}${formatKMB(grossPerHour)}/hr of alchemy`;
+                headline = ` — ${mark(grossText, grossPerHour)}, using ~${units}/hr · saves ${perUnitText}`;
+                if (overRate) extra.push(`${atLeast || '+'}${formatKMB(alt.savingPerHour)}/hr over your gold rate`);
+            } else {
+                headline = ` — saves ${mark(perUnitText, alt.saving)}`;
+                if (hasRate) {
+                    headline += overRate
                         ? ` — ${atLeast || '+'}${formatKMB(alt.savingPerHour)}/hr of alchemy over your gold rate, using ~${units}/hr`
                         : ` — ${atLeast}${formatKMB(alt.savingPerHour)} per hour of alchemy if you use ~${units}/hr`;
+                    if (overRate) extra.push(`alchemy ${atLeast}${formatKMB(grossPerHour)}/hr before time value`);
+                }
             }
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
-            html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)} — saves ${atLeast}${formatKMB(alt.saving)}/unit${rate}`;
+            html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)}${headline}`;
             html += '</div>';
             // By-products worth more than the input make the route pay to run: say gain, not a minus sign.
             // An unpriced output makes the cost an upper bound, so the gain is a lower bound
@@ -984,7 +1010,7 @@ class TooltipPrices {
                 alt.costPerUnit < 0
                     ? `gains ${atLeast}${formatKMB(-alt.costPerUnit)}/unit`
                     : `${alt.partlyUnpriced ? '≤' : ''}${formatKMB(alt.costPerUnit)}/unit`;
-            const parts = [`${costText} vs ${formatKMB(targetAsk)} ${buySideWord()}`];
+            const parts = [`${costText} vs ${formatKMB(targetAsk)} ${buySideWord()}`, ...extra];
             if (alt.timeCostPerUnit > 0) parts.push(`+${formatKMB(alt.timeCostPerUnit)} time`);
             // Under 10 s one decimal, so a 0.3 s unit does not read "0s"; from 10 s on the usual format
             const perUnit =
