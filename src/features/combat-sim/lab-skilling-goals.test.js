@@ -7,7 +7,7 @@
  * them is checking that both landed together, not that a sum was taken.
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 import {
     applySkillingCandidate,
     averageSkillingResults,
@@ -31,6 +31,7 @@ import {
     uniformRoomLevels,
 } from './lab-skilling-goals.js';
 import { measureRoomLevelGains } from './labyrinth-upgrade-levels.js';
+import * as upgradeAdvisor from './upgrade-advisor.js';
 
 const ALL = ['/skills/milking', '/skills/foraging', '/skills/woodcutting'];
 const BODY = '/equipment_types/body';
@@ -501,7 +502,7 @@ describe('planning to a goal', () => {
         );
         const html = renderPlanHtml(result, { goalText: '55% clear' });
 
-        expect(html).toContain('Goal reached at total 250 gold');
+        expect(html).toContain('Best plan found reaches the goal at total 250 gold');
         expect(html).toContain('data-plan-step="1"');
     });
 
@@ -549,15 +550,20 @@ describe('planning to a goal', () => {
         expect(renderPlanHtml(result, { goalText: 'x' })).toContain('Stopped early');
     });
 
-    test('simulations per plan are bounded by the pool, not the whole table', async () => {
-        const rows = Array.from({ length: 40 }, (_, i) =>
-            gearRow('/items/top_a', `/equipment_types/slot_${i}`, 100 + i, 0.001)
-        );
-        const result = await plan(rows, 0.99, { candidateCap: 5 });
+    test('simulations per plan are bounded: one ranking pass, then the pool per step', async () => {
+        const setup = baseSetup();
+        const rows = Array.from({ length: 40 }, (_, i) => {
+            setup.dto.equipment[`/equipment_types/slot_${i}`] = { hrid: '/items/old_body', enhancementLevel: 0 };
+            return gearRow('/items/old_body', `/equipment_types/slot_${i}`, 100 + i, 0.001, {
+                upgradeHrid: '/items/old_body',
+                upgradeLevel: 1,
+            });
+        });
+        const result = await plan(rows, 0.99, { candidateCap: 5, baseSetup: setup });
 
         expect(result.poolSize).toBe(5);
-        // One baseline, then at most five trials a step over at most five steps
-        expect(result.sims).toBeLessThanOrEqual(1 + 5 * 5);
+        // One baseline, one ranking sim per row, then at most five trials a step over five steps
+        expect(result.sims).toBeLessThanOrEqual(1 + 40 + 5 * 5);
     });
 });
 
@@ -797,5 +803,172 @@ describe('one row per physical item', () => {
         expect(merged.breakdownLines).toHaveLength(4);
         const neck = result.results.find((r) => r.candidate.slot === '/equipment_types/neck');
         expect(neck.rooms.affected).toBe(0);
+    });
+});
+
+describe('plan quality at the goal level', () => {
+    const SLOTS = { a: '/equipment_types/body', b: '/equipment_types/legs', c: '/equipment_types/feet' };
+    const BONUS = { '/items/a': 0.3, '/items/b': 0.2, '/items/c': 0.2 };
+    const setup = () => ({
+        dto: {
+            equipment: Object.fromEntries(
+                Object.values(SLOTS).map((slot) => [slot, { hrid: '/items/none', enhancementLevel: 0 }])
+            ),
+        },
+        skillEquipmentMap: {},
+    });
+    const evaluateBonus = (s, level) => {
+        const levelValue = typeof level === 'object' ? Math.max(...Object.values(level)) : level;
+        const gear = Object.values(s.dto.equipment).reduce((sum, w) => sum + (BONUS[w.hrid] || 0), 0);
+        return { clearRate: Math.min(1, Math.max(0, 1 - levelValue / 100 + gear)), xpPerRoom: 0 };
+    };
+    const swap = (key, cost, delta) =>
+        gearRow(`/items/${key}`, SLOTS[key], cost, delta, { currentHrid: '/items/none', description: `Get ${key}` });
+
+    test('a row that shows no gain at the analyzed level is still weighed at the floor’s exit level', async () => {
+        // The table was measured where the character already clears everything, so every
+        // delta reads 0 there; at the goal's level they matter
+        const rows = [swap('a', 400, 0), swap('b', 300, 0)];
+        const result = await planSkillingGoal({
+            baseSetup: setup(),
+            rows,
+            evaluate: evaluateBonus,
+            goalRoomLevel: 90,
+            goalRate: 0.2,
+            yieldFn: async () => {},
+        });
+
+        expect(result.reached).toBe(true);
+        expect(result.steps.map((s) => s.row)).toEqual([rows[1]]);
+    });
+
+    test('a better pair beats the greedy pick: a 4-cost 0.30 upgrade over two 3-cost 0.20 ones for 0.40', async () => {
+        const rows = [swap('a', 4, 0.3), swap('b', 3, 0.2), swap('c', 3, 0.2)];
+        const result = await planSkillingGoal({
+            baseSetup: setup(),
+            rows,
+            evaluate: evaluateBonus,
+            // Base is 0.1 at this level; the goal is 0.5
+            goalRoomLevel: 90,
+            goalRate: 0.5,
+            yieldFn: async () => {},
+        });
+
+        expect(result.reached).toBe(true);
+        expect(result.improved).toBe(true);
+        expect(result.totals.gold).toBe(6);
+        expect(result.steps.map((s) => s.row).sort()).toEqual([rows[1], rows[2]].sort());
+        expect(result.improveSims).toBeGreaterThan(0);
+        expect(result.steps.at(-1).clearRate).toBeGreaterThanOrEqual(0.5 - 1e-9);
+        const html = renderPlanHtml(result, { goalText: '50%' });
+        expect(html).toContain('Best plan found');
+        expect(html).toContain(`${result.sims} simulations`);
+    });
+
+    test('the improvement pass is bounded', async () => {
+        const rows = [swap('a', 4, 0.3), swap('b', 3, 0.2), swap('c', 3, 0.2)];
+        const result = await planSkillingGoal({
+            baseSetup: setup(),
+            rows,
+            evaluate: evaluateBonus,
+            goalRoomLevel: 90,
+            goalRate: 0.5,
+            yieldFn: async () => {},
+        });
+
+        expect(result.improveSims).toBeLessThanOrEqual(120);
+    });
+});
+
+describe('pricing a merged multi-skill item once', () => {
+    const BACK = '/equipment_types/back';
+    const piece = (skill, current, over = {}) => ({
+        costType: 'gold',
+        cost: 900,
+        clearRateDelta: 0.01,
+        metricType: 'clearRate',
+        ...over,
+        candidate: {
+            type: 'skilling_gear',
+            skillKey: skill,
+            slot: BACK,
+            currentHrid: current,
+            currentLevel: 0,
+            upgradeHrid: '/items/cape',
+            upgradeLevel: 5,
+            description: `Cape (${skill.replace('/skills/', '')})`,
+            ...over.candidate,
+        },
+    });
+    const kit = (hrid) => ({ [BACK]: { hrid, enhancementLevel: 0 } });
+    const setup = () => ({
+        dto: { equipment: kit('/items/c0') },
+        skillEquipmentMap: {
+            '/skills/milking': kit('/items/c1'),
+            '/skills/foraging': kit('/items/c2'),
+            '/skills/woodcutting': kit('/items/c3'),
+        },
+    });
+    const evaluate = () => ({ clearRate: 0.5, xpPerRoom: 0, perSkill: [] });
+
+    test('the single purchase is credited with every distinct piece the kits give up', () => {
+        // Each part alone: buy 1000, sell its own piece for 100 = 900. Bought once, three
+        // different pieces go back: 1000 - 300
+        const price = vi
+            .spyOn(upgradeAdvisor, 'calculateUpgradeCost')
+            .mockImplementation((candidate) => 1000 - 100 * (candidate.removedItems?.length || 0));
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const result = {
+            results: [
+                piece('/skills/milking', '/items/c1'),
+                piece('/skills/foraging', '/items/c2'),
+                piece('/skills/woodcutting', '/items/c3'),
+            ],
+        };
+        mergeMultiSkillGearRows({ analysisResult: result, baseSetup: setup(), evaluate, roomLevel: 50, gameData: {} });
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results).toHaveLength(1);
+        expect(result.results[0].cost).toBe(700);
+    });
+
+    test('a displaced piece shared by several kits is credited once', () => {
+        const price = vi
+            .spyOn(upgradeAdvisor, 'calculateUpgradeCost')
+            .mockImplementation((candidate) => 1000 - 100 * (candidate.removedItems?.length || 0));
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const result = { results: [piece('/skills/milking', '/items/c1'), piece('/skills/foraging', '/items/c1')] };
+        mergeMultiSkillGearRows({ analysisResult: result, baseSetup: setup(), evaluate, roomLevel: 50, gameData: {} });
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results[0].cost).toBe(900);
+    });
+
+    test('enhancing a copy already owned competes, and the cheaper route wins', () => {
+        const price = vi.spyOn(upgradeAdvisor, 'calculateUpgradeCost').mockReturnValue(5000);
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const owned = piece('/skills/milking', '/items/cape', {
+            cost: 400,
+            candidate: { type: 'enhancement', currentLevel: 2 },
+        });
+        const result = { results: [owned, piece('/skills/foraging', '/items/c2')] };
+        mergeMultiSkillGearRows({ analysisResult: result, baseSetup: setup(), evaluate, roomLevel: 50, gameData: {} });
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results[0].cost).toBe(400);
+    });
+
+    test('with no price anywhere the merged row is unpriced, not free', () => {
+        const price = vi.spyOn(upgradeAdvisor, 'calculateUpgradeCost').mockReturnValue(null);
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const result = { results: [piece('/skills/milking', '/items/c1'), piece('/skills/foraging', '/items/c2')] };
+        mergeMultiSkillGearRows({ analysisResult: result, baseSetup: setup(), evaluate, roomLevel: 50, gameData: {} });
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results[0].cost).toBeNull();
     });
 });
