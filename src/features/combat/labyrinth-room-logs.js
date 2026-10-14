@@ -284,6 +284,8 @@ class LabyrinthRoomLogs {
         this.renderToken = 0;
         this.resetArmed = false;
         this.tabButton = null;
+        /** Unsubscribe from the fight pool's pull notification, while initialized */
+        this.unlistenPool = null;
         this.unregisterTab = null;
         this.unregisterReady = null;
         this.xpHandlers = [];
@@ -411,6 +413,10 @@ class LabyrinthRoomLogs {
         // would hand them to whoever has arrived.
         if (!stillOurs(ticket)) return;
         this.adoptMerged();
+
+        // A sync pull that changes the fight pool redraws an open Pool view
+        this.unlistenPool?.();
+        this.unlistenPool = labFightRecorder.onPoolChanged?.(() => this.renderIfOpen({ fightRecord: true })) ?? null;
 
         // Bring the accumulated calibration fights back into memory, so the pool
         // survives a reload rather than starting empty each session
@@ -550,6 +556,8 @@ class LabyrinthRoomLogs {
         this.tabButton = null;
         document.getElementById(PANEL_ID)?.remove();
         this.panel = null;
+        this.unlistenPool?.();
+        this.unlistenPool = null;
         this.labContext = null;
         this.roomData = null;
         // Let the room this teardown just finalized actually land before the

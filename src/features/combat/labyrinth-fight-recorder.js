@@ -557,9 +557,33 @@ async function refreshFromPull() {
         record.set(storedRecord(internReplayBuilds(held), clearedAtOf(record.get())));
         if (!(await record.load()) || started !== poolGeneration) return;
         if (attempts !== held || attempts.length !== heldLength) continue;
-        attempts = entriesOf(readStored(record.get()));
+        const next = entriesOf(readStored(record.get()));
+        const changed = next.map(attemptIdentity).join() !== attempts.map(attemptIdentity).join();
+        attempts = next;
+        if (changed) {
+            for (const listener of [...poolListeners]) {
+                try {
+                    listener();
+                } catch (error) {
+                    console.error('[LabyrinthFightRecorder] A pool listener threw:', error);
+                }
+            }
+        }
         return;
     }
+}
+
+/** Who wants to hear that a sync pull changed the pool (the room log's Pool view); no import of them here */
+const poolListeners = new Set();
+
+/**
+ * Be told when a sync pull brought fights in or took them out.
+ * @param {() => void} listener - Called after the pool in memory changed
+ * @returns {() => void} Unsubscribe
+ */
+export function onPoolChanged(listener) {
+    poolListeners.add(listener);
+    return () => poolListeners.delete(listener);
 }
 
 /**
@@ -965,6 +989,7 @@ export function downloadRecording(extra = {}) {
 }
 
 export default {
+    onPoolChanged,
     load,
     forget,
     noteAttempt,
