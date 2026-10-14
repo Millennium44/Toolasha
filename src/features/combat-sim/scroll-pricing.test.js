@@ -27,7 +27,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => game.prices[hrid] ?? null,
 }));
 
-const { scrollTokenRate, priceScrollRow } = await import('./scroll-pricing.js');
+const { scrollTokenRate, priceScrollRow, scrollGoldPerStep } = await import('./scroll-pricing.js');
 const { priceScrollByTokens } = await import('../../utils/token-worth.js');
 
 /** A scroll result row as the advisor produces it. */
@@ -142,5 +142,19 @@ describe('scrollTokenRate under a bid-side mode', () => {
         expect(scrollTokenRate().value).toBeCloseTo(4800, 6);
         game.settings = { profitCalc_pricingMode: 'conservative' };
         expect(scrollTokenRate().value).toBeCloseTo(4800, 6);
+    });
+});
+
+describe('scrollGoldPerStep', () => {
+    test('is the token cost per hour over the number of 0.01% steps the scroll adds', () => {
+        // 408K/hr of tokens for +4% = 400 steps of 0.01%
+        expect(scrollGoldPerStep(408_000, 4)).toBeCloseTo(1020, 6);
+    });
+
+    test('has no figure for no gain, a loss, or a delta inside the noise', () => {
+        expect(scrollGoldPerStep(408_000, 0)).toBe(Infinity);
+        expect(scrollGoldPerStep(408_000, -2)).toBe(Infinity);
+        expect(scrollGoldPerStep(408_000, 4, false)).toBe(Infinity);
+        expect(scrollGoldPerStep(408_000, Number.NaN)).toBe(Infinity);
     });
 });

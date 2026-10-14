@@ -1703,6 +1703,87 @@ describe('the panel', () => {
                 );
             });
 
+            describe('Score', () => {
+                // After-tax rate 6,800/token: 30 tokens x 2 an hour = 408K/hr of tokens
+                const withDeltas = (description, deltas, significantBy = {}) => ({
+                    ...scroll(description, 1_000_000),
+                    deltas: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0, ...deltas },
+                    significantBy,
+                });
+                const scoreCells = () =>
+                    Object.fromEntries(
+                        [...ui.panel.querySelectorAll('[data-scroll-row]')].map((tr) => [
+                            tr.querySelector('td').textContent.trim(),
+                            tr.querySelector('[data-scroll-score]').textContent,
+                        ])
+                    );
+                const scrolls = () => [
+                    // Wins DPS and EXP, loses profit to B
+                    withDeltas('Add Scroll of Attack Speed (+15%)', { dps: 4, xp: 4, profit: 1 }),
+                    withDeltas('Add Scroll of Combat Drop (+15%)', { dps: 1, xp: 1, profit: 3 }),
+                ];
+                const render = (results) =>
+                    ui._renderUpgradeResults({ baseline: BASELINE, results, food: null, scrollTokenRate: rate });
+
+                test('blends every category: a scroll that wins DPS and EXP beats one that wins only profit', () => {
+                    render(scrolls());
+
+                    // Gold/hr per 0.01%: A 1,020 / 1,020 / 4,080, B 4,080 / 4,080 / 1,360.
+                    // % of best: A 100, 100, 33 -> 78; B 25, 25, 100 -> 50. Profit alone would rank B first.
+                    expect(scoreCells()).toEqual({
+                        'Add Scroll of Attack Speed (+15%)': '78',
+                        'Add Scroll of Combat Drop (+15%)': '50',
+                    });
+                    // Default sort is Score, best first
+                    const order = [...ui.panel.querySelectorAll('[data-scroll-row]')].map((tr) =>
+                        tr.querySelector('td').textContent.trim()
+                    );
+                    expect(order[0]).toBe('Add Scroll of Attack Speed (+15%)');
+                });
+
+                test('a metric with no clear gain shows a dash and is left out of the score', () => {
+                    const only = withDeltas('Add Scroll of Damage (+8%)', { dps: 2, xp: 0, profit: 2 }, { dps: false });
+                    render([only]);
+
+                    const cell = (key) => ui.panel.querySelector(`[data-scroll-gold-per="${key}"]`).textContent;
+                    expect(cell('dps')).toBe('—');
+                    expect(cell('xp')).toBe('—');
+                    expect(cell('profit')).not.toBe('—');
+                    expect(Object.keys(only.scoreParts)).toEqual(['profit']);
+                });
+
+                test('the scored-metrics choice applies', () => {
+                    ui._upgradeScoreKeys = ['profit'];
+                    render(scrolls());
+                    ui._upgradeScoreKeys = null;
+
+                    // Profit alone: B is best
+                    expect(scoreCells()).toEqual({
+                        'Add Scroll of Attack Speed (+15%)': '33',
+                        'Add Scroll of Combat Drop (+15%)': '100',
+                    });
+                });
+
+                test('the Scrolls scale choice is respected', () => {
+                    ui._scrollScoreScale = '5';
+                    render(scrolls());
+                    ui._scrollScoreScale = undefined;
+
+                    expect(ui.panel.querySelector('[data-scroll-sort-key="score"]').textContent).toContain('Top 5');
+                    // Placing points, not percentages of the best
+                    expect(scoreCells()).not.toEqual({
+                        'Add Scroll of Attack Speed (+15%)': '78',
+                        'Add Scroll of Combat Drop (+15%)': '50',
+                    });
+                });
+
+                test('the Score header says what it ranks by', () => {
+                    render(scrolls());
+                    const title = ui.panel.querySelector('[data-scroll-sort-key="score"]').getAttribute('title');
+                    expect(title).toContain('against each other by gold per hour of tokens per 0.01%');
+                });
+            });
+
             test('with no shop price they stay in the unpriced box', () => {
                 const rows = [scroll('Add Scroll of Attack Speed (+15%)', 1_200_000)];
                 ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
@@ -2404,13 +2485,13 @@ describe('the remembered upgrade analysis across a character switch', () => {
             cost: null,
         };
 
-        async function restoreWith(extra) {
+        async function restoreWith(extra, rows = [scrollRow]) {
             const { default: config } = await import('../../core/config.js');
             vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
                 key === 'combatSim_rememberUpgradeResults' ? true : fallback
             );
             mocks.store.set('combatExport:combatSimUpgradeResults_char1', {
-                data: { baseline: BASELINE, results: [scrollRow], ...extra },
+                data: { baseline: BASELINE, results: rows, ...extra },
                 savedAt: 1,
             });
             ui.buildPanel();
@@ -2426,6 +2507,36 @@ describe('the remembered upgrade analysis across a character switch', () => {
             const line = container.querySelector('[data-scroll-row]').textContent;
             expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone, after tax)');
             expect(line).not.toContain('Something Else');
+        });
+
+        test('a restored run with a stored rate scores the same as the fresh run', async () => {
+            const rows = () => [
+                {
+                    ...scrollRow,
+                    candidate: { ...scrollRow.candidate, description: 'A' },
+                    deltas: { dps: 4, xp: 4, profit: 1, deaths: 0, encounters: 0 },
+                },
+                {
+                    ...scrollRow,
+                    candidate: { ...scrollRow.candidate, description: 'B' },
+                    deltas: { dps: 1, xp: 1, profit: 3, deaths: 0, encounters: 0 },
+                },
+            ];
+            const scores = (container) =>
+                [...container.querySelectorAll('[data-scroll-row]')].map(
+                    (tr) => tr.querySelector('[data-scroll-score]').textContent
+                );
+
+            mocks.scrollRate = { ...stored, value: 1000 };
+            const container = await restoreWith({ scrollTokenRate: stored }, rows());
+            mocks.scrollRate = null;
+            const restored = scores(container);
+
+            ui._renderUpgradeResults({ baseline: BASELINE, results: rows(), food: null, scrollTokenRate: stored });
+            const fresh = scores(container);
+
+            expect(fresh.length).toBe(2);
+            expect(restored).toEqual(fresh);
         });
 
         test('a legacy run with no stored rate leaves scrolls unpriced, whatever the live rate is', async () => {
