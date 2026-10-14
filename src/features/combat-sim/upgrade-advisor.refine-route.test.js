@@ -38,6 +38,7 @@ const ITEM_DETAIL_MAP = {
     [CAPE]: {
         hrid: CAPE,
         name: 'Sinister Cape ★',
+        baseItemHrids: [BASE],
         equipmentDetail: { type: '/equipment_types/back' },
         enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }],
     },
@@ -386,6 +387,35 @@ describe('refined target priced from a held base', () => {
             expect(detail.net).toBeLessThan(64_000_000);
             expect(calculateUpgradeCost(candidate, gameData)).toBe(detail.net);
             expect(detail.ladder.mirror).toBeTruthy();
+        });
+
+        test('an enhancement row on worn refined gear mirrors the refined +(L-1) with a base +(L-2)', () => {
+            // The worn star cape is the +6 the mirror runs on; the other input is an unrefined base +5
+            state.items = [stack(CAPE, 6, '/item_locations/back')];
+            const candidate = breakpoint(CAPE, 6, 7);
+            const ordinaryBase = Array.from({ length: 6 }, (_, k) => 300_000 + (2 ** k - 1) * 1e6);
+            const { best } = cheapestWithMirror(ordinaryBase, 1_000_000);
+            const detail = explainUpgradeCost(candidate, gameData);
+            expect(detail.source).toBe('mirror');
+            expect(detail.net).toBeCloseTo(best[5] + 1_000_000, 0);
+            expect(detail.credit).toBe(0);
+            expect(calculateUpgradeCost(candidate, gameData)).toBeCloseTo(detail.net, 0);
+        });
+
+        test('refined gear one level short of the mirror input enhances up to it first', () => {
+            state.items = [stack(CAPE, 4, '/item_locations/back')];
+            const ordinaryBase = Array.from({ length: 6 }, (_, k) => 300_000 + (2 ** k - 1) * 1e6);
+            const { best } = cheapestWithMirror(ordinaryBase, 1_000_000);
+            // +4 to the +6 input costs 2^6 - 2^4 = 48M, then the base +5 and the mirror
+            const detail = explainUpgradeCost(breakpoint(CAPE, 4, 7), gameData);
+            expect(detail.source).toBe('mirror');
+            expect(detail.net).toBeCloseTo(48_000_000 + best[5] + 1_000_000, 0);
+        });
+
+        test('refined gear gets no mirror route when the mirror is dear', () => {
+            state.mirrorPrice = 1_000_000_000;
+            state.items = [stack(CAPE, 6, '/item_locations/back')];
+            expect(explainUpgradeCost(breakpoint(CAPE, 6, 7), gameData).source).not.toBe('mirror');
         });
 
         test('an enhancement row on a worn cape weighs a mirror build too', () => {

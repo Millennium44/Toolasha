@@ -2621,9 +2621,9 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
  *
  * The generated "next breakpoint" row (`type: 'enhancement'`) is priced as an enhance or a market delta
  * on the worn piece; a +(L-1) and a +(L-2) copy plus a mirror is another way to hold a +L, and the
- * worn piece is then sold. The inputs are priced as fresh acquisitions (see `resolveMirrorBase`), and a
- * piece nobody can sell gets no credit. Refined pieces are left to the refine route: their mirror copy
- * is the unrefined base.
+ * worn piece is then sold. The inputs are held copies where the row offers them and fresh acquisitions
+ * otherwise (see `resolveMirrorBase`), and a piece nobody can sell gets no credit. A refined piece is a
+ * different build, see {@link refinedEnhancementMirrorRoute}.
  *
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
@@ -2633,7 +2633,7 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
  */
 function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
     if (candidate?.type !== 'enhancement' || !candidate.currentHrid) return null;
-    if (candidate.currentHrid.endsWith('_refined')) return null;
+    if (candidate.currentHrid.endsWith('_refined')) return refinedEnhancementMirrorRoute(candidate, gameData, isSelf);
     const level = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
     const mirror = resolveMirrorBase(candidate.currentHrid, level, gameData, {
         held: mirrorHeldInputs(candidate.currentHrid, { isSelf, candidate }),
@@ -2655,6 +2655,54 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
         mirrorPrice: mirror.mirrorPrice,
         heldLevels: mirror.heldLevels,
     };
+}
+
+/**
+ * The mirror route for an enhancement row on a refined piece.
+ *
+ * A refined piece cannot be bought at a level, but a mirror still builds one: the game consumes the
+ * refined +(L-1) it runs on and an unrefined copy of its base item at +(L-2) (`baseItemHrids[0]`, as
+ * `trackMirrorCosts` reads it). So the route is the worn piece enhanced to +(L-1) (nothing when it is
+ * already there), plus the cheapest base copy at +(L-2), plus a mirror. The worn piece goes into the
+ * mirror, so it is never also sold and the route carries no credit; the caller compares it with the
+ * ordinary route's net.
+ *
+ * @param {Object} candidate - An `enhancement` row on a `_refined` piece
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's, so their spare bases serve
+ * @returns {{net: number, baseCost: number, credit: number, mirrorPrice: number, heldLevels: number[]}|null}
+ *   Null when the mirror cannot run, a part has no price, or the build is not offered
+ */
+function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
+    if (testerShopEnabled()) return null;
+    const refinedHrid = candidate.currentHrid;
+    const from = Math.max(0, Math.floor(Number(candidate.currentLevel) || 0));
+    const level = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
+    // The mirror runs on a +2 or better, so the first level it makes is +3
+    if (level < MIRROR_FIRST_LEVEL || level - 1 < from) return null;
+    const baseHrid =
+        gameData?.itemDetailMap?.[refinedHrid]?.baseItemHrids?.[0] ||
+        findRefinementAction(refinedHrid)?.upgradeItemHrid;
+    if (!baseHrid) return null;
+    const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
+    if (!(mirrorPrice > 0)) return null;
+
+    const primary = level - 1 > from ? calculateDirectEnhancementCost(refinedHrid, from, level - 1, gameData) : 0;
+    if (primary == null) return null;
+
+    // The unrefined +(L-2): a spare of exactly that level, else the cheaper of buying it and building it
+    const copyLevel = level - 2;
+    const spares = mirrorHeldInputs(baseHrid, { isSelf, candidate }).filter((copy) => !copy.piece);
+    const spare = spares.find((copy) => copy.level === copyLevel);
+    let copyCost = 0;
+    if (!spare) {
+        const built = resolveMirrorBase(baseHrid, copyLevel, gameData, { held: spares });
+        const bought = resolveUpgradeBuyPriceDirect(baseHrid, copyLevel, gameData, { isSelf: false }).price;
+        copyCost = built ? Math.min(built.baseCost, bought ?? Infinity) : bought;
+        if (!Number.isFinite(copyCost)) return null;
+    }
+    const total = Math.max(0, primary) + copyCost + mirrorPrice;
+    return { net: total, baseCost: total, credit: 0, mirrorPrice, heldLevels: spare ? [copyLevel] : [] };
 }
 
 /**
