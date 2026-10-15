@@ -77,7 +77,7 @@ function hotLedger() {
         id: `run${i}`,
         actionHrid: '/actions/milking/cow',
         actionType: 'milking',
-        t: 1_700_000_000_000 + i * 3_600_000,
+        t: Date.now() - 20 * 24 * 3_600_000 + i * 3_600_000,
         predicted: 100_000,
         actual: 88_000,
     }));

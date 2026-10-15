@@ -46,6 +46,10 @@ export const CACHE_TTL_MS = 60 * 1000;
 /** Runs needed before a badge says anything — the panel's own floor */
 export const BADGE_MIN_SAMPLES = DEFAULT_MIN_SAMPLES;
 
+/** Only runs recorded this recently count toward a badge — older ones measure a stale build and market */
+export const BADGE_WINDOW_DAYS = 30;
+export const BADGE_WINDOW_MS = BADGE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
 /** Inside this the forecast counts as on target */
 export const ON_TARGET_PERCENT = 5;
 
@@ -157,8 +161,15 @@ export function describeBadge(group, { minSamples = BADGE_MIN_SAMPLES, label = n
     } else {
         meaning = `${what} has run cold: the typical run paid ${rounded}% MORE than predicted.`;
     }
+    let measured;
+    if (group.windowDays) {
+        const gear = group.gearMatched ? ' in the gear the forecast was made for' : '';
+        measured = `Measured over the last ${group.windowDays} days, ${samples} finished runs${gear}${window}, median of the per-run gaps.`;
+    } else {
+        measured = `Measured over the last ${samples} finished runs${window}, median of the per-run gaps.`;
+    }
     const title =
-        `${meaning}\nMeasured over the last ${samples} finished runs${window}, median of the per-run gaps.` +
+        `${meaning}\n${measured}` +
         '\nFrom the Prediction Calibration ledger — open that panel for every skill measured.';
 
     return { text, tone, color: BADGE_COLORS[tone], title, deviation, samples };
@@ -305,10 +316,16 @@ export function getCalibrationGroup(actionType, { actionHrid = null, difficultyT
     const key = `${type}|${actionHrid || ''}|${difficultyTier ?? ''}`;
     if (cache.summaries.has(key)) return cache.summaries.get(key);
 
+    const cutoff = Date.now() - BADGE_WINDOW_MS;
+    // Combat pairs measured in gear other than the forecast's (or not signed at all) measure a different build
+    const gearMatched = type === 'combat';
     const matching = records.filter(
         (record) =>
             record &&
             record.actionType === type &&
+            Number.isFinite(record.t) &&
+            record.t >= cutoff &&
+            (!gearMatched || record.fingerprintMatch === true) &&
             (actionHrid === null || record.actionHrid === actionHrid) &&
             (difficultyTier === null || (record.difficultyTier ?? 0) === difficultyTier)
     );
@@ -319,6 +336,8 @@ export function getCalibrationGroup(actionType, { actionHrid = null, difficultyT
         if (group) {
             group = {
                 ...group,
+                windowDays: BADGE_WINDOW_DAYS,
+                gearMatched,
                 firstAt: matching.reduce((earliest, r) => (r.t && r.t < earliest ? r.t : earliest), Infinity),
             };
             if (!Number.isFinite(group.firstAt)) group.firstAt = null;

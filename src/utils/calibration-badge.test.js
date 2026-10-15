@@ -48,6 +48,8 @@ const {
     BADGE_MIN_SAMPLES,
 } = await import('./calibration-badge.js');
 
+const DAY = 24 * 3_600_000;
+
 /**
  * A ledger of `n` runs for one action, each paying `ratio` x the forecast.
  * @param {string} actionHrid - The action
@@ -56,7 +58,7 @@ const {
  * @param {number} [start] - First timestamp
  * @returns {Array<Object>}
  */
-function runs(actionHrid, n, ratio, start = 1_700_000_000_000) {
+function runs(actionHrid, n, ratio, start = Date.now() - 20 * DAY) {
     const actionType = actionHrid.split('/')[2];
     return Array.from({ length: n }, (_, i) => ({
         id: `${actionHrid}#${i}`,
@@ -178,8 +180,12 @@ describe('calibrationBadgeFor', () => {
     it('narrows combat to one zone and tier', async () => {
         const zone = '/actions/combat/fly';
         store.ledger = [
-            ...runs(zone, 6, 0.7).map((r) => ({ ...r, difficultyTier: 0 })),
-            ...runs(zone, 6, 1.0, 1_800_000_000_000).map((r) => ({ ...r, difficultyTier: 1 })),
+            ...runs(zone, 6, 0.7).map((r) => ({ ...r, difficultyTier: 0, fingerprintMatch: true })),
+            ...runs(zone, 6, 1.0, Date.now() - 10 * DAY).map((r) => ({
+                ...r,
+                difficultyTier: 1,
+                fingerprintMatch: true,
+            })),
         ];
         await loadCalibrationBadges();
 
@@ -197,6 +203,61 @@ describe('calibrationBadgeFor', () => {
         await loadCalibrationBadges();
 
         expect(calibrationBadgeFor('milking', { actionHrid: '/actions/milking/cow' })?.text).toBe('−12% over 10 runs');
+    });
+
+    it('counts only gear-matched combat pairs, and ignores the flag for other skills', async () => {
+        const zone = '/actions/combat/fly';
+        store.ledger = [
+            ...runs(zone, 5, 0.8).map((r) => ({ ...r, fingerprintMatch: true })),
+            ...runs(zone, 20, 0.3).map((r) => ({ ...r, fingerprintMatch: false })),
+            ...runs(zone, 20, 0.3).map((r) => ({ ...r, fingerprintMatch: null })),
+            ...runs('/actions/milking/cow', 6, 0.9).map((r) => ({ ...r, id: `m${r.id}` })),
+        ];
+        await loadCalibrationBadges();
+        const badge = calibrationBadgeFor('combat');
+        expect(badge.samples).toBe(5);
+        expect(badge.text).toBe('−20% over 5 runs');
+        // Milking records carry no fingerprintMatch and still count
+        expect(calibrationBadgeFor('milking').samples).toBe(6);
+    });
+
+    it('excludes records older than 30 days', async () => {
+        store.ledger = [
+            ...runs('/actions/milking/cow', 6, 0.8),
+            ...runs('/actions/milking/cow', 30, 0.1, Date.now() - 40 * DAY),
+        ];
+        await loadCalibrationBadges();
+        const badge = calibrationBadgeFor('milking');
+        expect(badge.samples).toBe(6);
+        expect(badge.text).toBe('−20% over 6 runs');
+    });
+
+    it('gives no badge when filtering leaves fewer than the floor', async () => {
+        const zone = '/actions/combat/fly';
+        store.ledger = [
+            ...runs(zone, BADGE_MIN_SAMPLES - 1, 0.8).map((r) => ({ ...r, fingerprintMatch: true })),
+            ...runs(zone, 40, 0.8).map((r) => ({ ...r, fingerprintMatch: false })),
+            ...runs('/actions/milking/cow', BADGE_MIN_SAMPLES - 1, 0.8),
+            ...runs('/actions/milking/cow', 40, 0.8, Date.now() - 45 * DAY),
+        ];
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('combat')).toBeNull();
+        expect(calibrationBadgeFor('milking')).toBeNull();
+    });
+
+    it('states the window, the count and the gear scope in the tooltip', async () => {
+        const zone = '/actions/combat/fly';
+        store.ledger = runs(zone, 8, 0.8).map((r) => ({ ...r, fingerprintMatch: true }));
+        await loadCalibrationBadges();
+        const { title } = calibrationBadgeFor('combat');
+        expect(title).toContain(
+            'Measured over the last 30 days, 8 finished runs in the gear the forecast was made for ('
+        );
+        expect(title).toMatch(/\(.+ – .+\)/);
+        store.ledger = runs('/actions/milking/cow', 8, 0.8);
+        invalidateCalibrationBadges();
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('milking').title).toContain('Measured over the last 30 days, 8 finished runs (');
     });
 
     it('is silent when the setting is off', async () => {
