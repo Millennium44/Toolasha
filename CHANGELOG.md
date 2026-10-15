@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Panel Size Memory: no longer grabs the action bar
+
+- Panel Size Memory could save the action progress bar's fill as a "panel size" when you clicked mid-action, then keep pulling the bar back to that width; it now only remembers real drags, ignores progress bars, and drops such a saved entry.
+
 ### Bulk Sell: bids below the tradable range
 
 - Bulk Sell no longer stalls on "sell button not found" when every bid sits below the tradable range: those bids can't be sold into, so it lists the stack at the ask instead (and falls back to a listing if the Sell button is gone).

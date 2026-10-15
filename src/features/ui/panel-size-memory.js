@@ -32,6 +32,21 @@ const SIZE_PROPERTIES = new Set([
     'grid-template-columns',
 ]);
 
+/** How far the pointer must travel before a press counts as a drag, in CSS pixels */
+const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * Whether an element is (or sits inside) one of the game's progress bars. Their
+ * fill width is rewritten continuously while an action runs, so a press made
+ * mid-action would otherwise "remember" the bar at that instant's progress and
+ * replay it on every re-render, dragging the bar back and forth.
+ * @param {Element} element - Element to check
+ * @returns {boolean}
+ */
+export function isProgressBarElement(element) {
+    return Boolean(element?.closest?.('[class*="ProgressBar_"]'));
+}
+
 /**
  * Size-related declarations of an element's inline style.
  * @param {HTMLElement} element - Element to read
@@ -124,6 +139,9 @@ class PanelSizeMemory {
         this.saved = null;
         this.onPointerDown = null;
         this.onPointerUp = null;
+        this.onPointerMove = null;
+        this.pressAt = null;
+        this.moved = false;
     }
 
     /**
@@ -142,20 +160,30 @@ class PanelSizeMemory {
         if (!config.getSetting('panelSizeMemory')) return;
         this.isInitialized = true;
 
-        this.onPointerDown = () => {
+        this.onPointerDown = (event) => {
             this.dragging = true;
             this.pending = null;
+            this.moved = false;
+            this.pressAt = { x: event?.clientX ?? 0, y: event?.clientY ?? 0 };
             this.watchInlineStyles();
+        };
+        this.onPointerMove = (event) => {
+            if (!this.dragging || this.moved || !this.pressAt) return;
+            const dx = (event?.clientX ?? 0) - this.pressAt.x;
+            const dy = (event?.clientY ?? 0) - this.pressAt.y;
+            if (Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) this.moved = true;
         };
         this.onPointerUp = () => {
             this.dragging = false;
             this.unwatchInlineStyles();
-            if (this.pending) {
-                this.persist(this.pending);
-                this.pending = null;
-            }
+            // A press that never moved is a click, not a divider drag: whatever the
+            // game restyled meanwhile (an action bar filling) is not a size the player chose
+            if (this.pending && this.moved) this.persist(this.pending);
+            this.pending = null;
+            this.pressAt = null;
         };
         document.addEventListener('pointerdown', this.onPointerDown, true);
+        document.addEventListener('pointermove', this.onPointerMove, true);
         document.addEventListener('pointerup', this.onPointerUp, true);
 
         this.restore();
@@ -204,6 +232,12 @@ class PanelSizeMemory {
         // Torn down while the read was in flight, or a drag already produced a
         // newer size — either way the stored one is stale now.
         if (!this.isInitialized || this.saved || this.dragging) return;
+        // An entry captured from a progress bar (saved before progress bars were excluded) is
+        // not a panel size; replaying it fought the game's own fill. Forget it.
+        if (saved?.signature?.includes('ProgressBar_')) {
+            this.reset();
+            return;
+        }
         this.saved = saved;
         if (saved) this._watchDom();
         this.restore();
@@ -227,6 +261,7 @@ class PanelSizeMemory {
             for (const mutation of mutations) {
                 const element = mutation.target;
                 if (!(element instanceof HTMLElement)) continue;
+                if (isProgressBarElement(element)) continue;
                 const styles = readSizeStyles(element);
                 if (Object.keys(styles).length === 0) continue;
                 const path = buildElementPath(element, root);
@@ -277,6 +312,7 @@ class PanelSizeMemory {
         const element = resolveElementPath(entry.path, root);
         if (!element) return;
         if (elementSignature(element) !== entry.signature) return;
+        if (isProgressBarElement(element)) return;
 
         for (const [property, value] of Object.entries(entry.styles)) {
             if (element.style.getPropertyValue(property) === value) continue;
@@ -315,6 +351,10 @@ class PanelSizeMemory {
         if (this.onPointerUp) {
             document.removeEventListener('pointerup', this.onPointerUp, true);
             this.onPointerUp = null;
+        }
+        if (this.onPointerMove) {
+            document.removeEventListener('pointermove', this.onPointerMove, true);
+            this.onPointerMove = null;
         }
         this.dragging = false;
         this.pending = null;

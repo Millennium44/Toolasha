@@ -119,3 +119,63 @@ describe('the inline-style observer only runs during a drag', () => {
         expect(instance.observer).toBeNull();
     });
 });
+
+describe('only a real divider drag is remembered, never a progress bar', () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const pointer = (type, x = 0, y = 0) => {
+        const event = new Event(type);
+        Object.assign(event, { clientX: x, clientY: y });
+        document.dispatchEvent(event);
+    };
+
+    test('a click that never moves saves nothing, even when the page restyles meanwhile', async () => {
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        document.querySelector('.Panel').style.width = '300px';
+        await settle();
+        pointer('pointerup', 10, 10);
+        expect(instance.saved).toBeNull();
+    });
+
+    test('a progress bar filling during a drag is not taken for the dragged size', async () => {
+        document.body.innerHTML =
+            '<div id="root"><div class="ProgressBar_progressBar__x"><div class="ProgressBar_innerBar__y"></div></div></div>';
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        pointer('pointermove', 40, 10);
+        document.querySelector('.ProgressBar_innerBar__y').style.width = '31.7016%';
+        await settle();
+        pointer('pointerup', 40, 10);
+        expect(instance.saved).toBeNull();
+    });
+
+    test('a real drag is still remembered', async () => {
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        pointer('pointermove', 60, 10);
+        document.querySelector('.Panel').style.width = '420px';
+        await settle();
+        pointer('pointerup', 60, 10);
+        expect(instance.saved?.styles).toEqual({ width: '420px' });
+    });
+
+    test('a saved progress-bar entry from before the fix is dropped, not replayed', async () => {
+        document.body.innerHTML =
+            '<div id="root"><div class="ProgressBar_progressBar__x"><div class="ProgressBar_innerBar__y"></div></div></div>';
+        panelSizeMemory.initialize();
+        state.release({
+            path: 'div:nth-of-type(1)>div:nth-of-type(1)',
+            signature: 'div|ProgressBar_innerBar',
+            styles: { width: '31.7016%' },
+        });
+        await settle();
+        expect(document.querySelector('.ProgressBar_innerBar__y').style.width).toBe('');
+        expect(instance.saved).toBeNull();
+    });
+});
