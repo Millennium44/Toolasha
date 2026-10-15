@@ -30,6 +30,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - After a sync pull, panels now re-read their settings only once every write held during the pull has landed, so a Lab Sim comparison run deleted mid-pull can no longer come back; and a Lab Sim upgrade-selection restore interrupted by a character switch no longer carries one character's choices onto the other.
 
+### Audit round: swap and mirror pricing
+
+- A checked skilling swap now sees every kit, not just the skills in scope, so a piece another kit already wears is counted as owned and isn't sold; a checked combat swap of an owned copy no longer shows a purchase breakdown; a mirror or refine route no longer spends a bag copy and credits its resale too; and a mirror-then-refine row's Market bill includes the Philosopher's Mirror.
+
 <!-- shipped in 3.70.0 -->
 
 ### Settings: reset to defaults turns off device-wide switches
