@@ -853,8 +853,11 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
 function chooseRowPerLoadout(rows, baseline, contextFights) {
     const groups = new Map();
     baseline.fights.forEach((_baseFight, i) => {
-        const id = Number(contextFights?.[i]?.loadoutId) || 0;
-        const key = id > 0 ? `loadout:${id}` : `fight:${i}`;
+        // 0 is the worn gear, which every fight without a saved loadout shares; a fight that says
+        // nothing about its loadout (undefined or null) stands alone
+        const raw = contextFights?.[i]?.loadoutId;
+        const id = Number(raw) || 0;
+        const key = raw === undefined || raw === null ? `fight:${i}` : id > 0 ? `loadout:${id}` : 'current-gear';
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(i);
     });
@@ -868,7 +871,10 @@ function chooseRowPerLoadout(rows, baseline, contextFights) {
                 const fight = row.fights[i];
                 return sum + expectedFightAttempts(fight?.applied ? fight.winRate : baseline.fights[i].winRate);
             }, 0);
-            if (attempts < bestAttempts) {
+            // Keeping the current order is free and exact, so it wins a tie
+            const tiesForKeep =
+                attempts === bestAttempts && row.candidate?.keepCurrent && !bestRow?.candidate?.keepCurrent;
+            if (attempts < bestAttempts || tiesForKeep) {
                 bestAttempts = attempts;
                 bestRow = row;
             }
@@ -918,6 +924,17 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
         const fights = baseline.fights.map((baseFight, i) => {
             const bestRow = chosenRowByFight[i];
             const best = bestRow ? bestRow.fights[i] : null;
+            if (best && bestRow.candidate.keepCurrent) {
+                // The order the loadout has now is its best: no change, measured by the baseline itself
+                return {
+                    ...best,
+                    winRate: baseFight.winRate,
+                    trials: baseFight.trials ?? best.trials,
+                    winRateDelta: 0,
+                    note: bestRow.candidate.fightNote,
+                    chosenOption: bestRow.candidate,
+                };
+            }
             if (best) {
                 const option = bestRow.candidate;
                 return option.fightNote
@@ -970,6 +987,7 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
         delete candidate.order;
         delete candidate.partLabel;
         delete candidate.fightNote;
+        delete candidate.keepCurrent;
         for (const fight of fights) delete fight.chosenOption;
 
         const attemptsSaved = -attemptsDelta;
@@ -1033,7 +1051,8 @@ export function consistentAbilityOrders(hrids, zeroCooldown) {
  * The "Ability order" check as combat candidates: for each distinct set of
  * ordinary abilities in the reached loadouts, every consistent order other than
  * the one a loadout has now (one candidate per set and order; a candidate reaches
- * the loadouts with that set in another order). The special slot stays put. Free
+ * the loadouts with that set in another order), plus a "keep" candidate for each
+ * current order so the loadout may stay as it is. The special slot stays put. Free
  * of cost. `mergeCheckedAbilityRows` keeps the best order per loadout.
  *
  * @param {Array<Object>} dtos - The loadout of every fight in the run
@@ -1046,12 +1065,38 @@ export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true)
     const zero = zeroCooldownAbilities(gameData);
     const nameOf = (hrid) => swapItemName(hrid, gameData);
     const byId = new Map();
+    const keeps = new Map();
     for (const dto of loadouts) {
         const current = (dto.abilities || [])
             .slice(1)
             .filter(Boolean)
             .map((ability) => ability.hrid);
         if (current.length < 2) continue;
+        const keepId = `keep:${current.join('>')}`;
+        if (!keeps.has(keepId)) {
+            const keepText = 'Order: current order is best';
+            keeps.set(keepId, {
+                type: 'ability_order',
+                slot: 'ability_1',
+                checkedAbility: true,
+                abilityOrder: true,
+                keepCurrent: true,
+                checkedAbilityKey: 'ability_order',
+                poolKey: `checked_ability_order:${keepId}`,
+                order: current,
+                upgradeHrid: ABILITY_ORDER_HRID,
+                upgradeLevel: 0,
+                description: 'Ability order',
+                partLabel: keepText,
+                fightNote: keepText,
+                cost: 0,
+                noPurchase: true,
+                isSelf,
+                caveat:
+                    'Checked by hand. Every order of the ordinary abilities was tried (the special slot fixed, ' +
+                    'always-ready abilities last); each loadout shows the best. Costs nothing: set it in the game.',
+            });
+        }
         for (const order of consistentAbilityOrders(current, zero)) {
             if (order.join('|') === current.join('|')) continue;
             const id = `${[...current].sort().join('|')}=>${order.join('>')}`;
@@ -1079,7 +1124,7 @@ export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true)
             });
         }
     }
-    const candidates = [...byId.values()];
+    const candidates = [...byId.values(), ...keeps.values()];
     const reach = loadouts.filter((dto) =>
         candidates.some((option) => checkedAbilityAppliesToDTO(option, dto, gameData))
     ).length;

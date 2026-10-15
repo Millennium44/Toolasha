@@ -411,6 +411,48 @@ describe('the whole run: best replacement per loadout', () => {
         expect(row.candidate.description).toMatch(/\(replaces Smack\)$/);
     });
 
+    test('fights on the worn gear (loadoutId 0) share one choice too', async () => {
+        // Replacing Smack is far better against the mimic and slightly worse against the cyclops
+        // than replacing Poke, but Smack wins on summed attempts, so both fights must use it
+        const winRates = {
+            '/monsters/mimic': { [SMACK]: 0.9, [POKE]: 0.5 },
+            '/monsters/cyclops': { [SMACK]: 0.3, [POKE]: 0.35 },
+        };
+        state.sim = async ({ playerDTOs, monsterHrid }) => {
+            const abilities = playerDTOs[0].abilities.filter(Boolean);
+            const has = (hrid) => abilities.some((entry) => entry.hrid === hrid);
+            let win = 0.2;
+            if (!has(QUICK_STRIKE)) win = 0.1;
+            else if (!has(SMACK)) win = winRates[monsterHrid][SMACK];
+            else if (!has(POKE)) win = winRates[monsterHrid][POKE];
+            return { encounters: win * 1000, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 };
+        };
+        const shared = fourAbilities();
+        const fights = [
+            { ...fight('mimic', shared), loadoutId: 0 },
+            { ...fight('cyclops', fourAbilities()), loadoutId: 0 },
+        ];
+        const built = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [shared], gameData);
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        const row = mergeCheckedAbilityRows(raw, gameData).results[0];
+        expect(row.fights.map((entry) => entry.replaced)).toEqual(['Smack', 'Smack']);
+        expect(row.fights.map((entry) => entry.winRate)).toEqual([0.9, 0.3]);
+        expect(row.expectedAttempts).toBeCloseTo(1 / 0.9 + 1 / 0.3, 5);
+        expect(row.candidate.description).toMatch(/\(replaces Smack\)$/);
+    });
+
     test('a loadout already casting the ability keeps its baseline and says why', async () => {
         state.sim = async () => ({ encounters: 500, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 });
         const casting = loadout([
@@ -465,7 +507,7 @@ describe('the ability order check', () => {
         expect(orders.every((order) => order[3] === FIREBALL)).toBe(true);
     });
 
-    test('four ordinary abilities give 23 alternatives, with the special slot untouched', () => {
+    test('four ordinary abilities give 23 alternatives and a keep option, with the special slot untouched', () => {
         const dto = loadout([
             ability(FIERCE_AURA, 10),
             ability(SMACK, 12),
@@ -474,7 +516,8 @@ describe('the ability order check', () => {
             ability(QUICK_STRIKE, 18),
         ]);
         const built = buildCombatAbilityCheck({ hrid: ABILITY_ORDER_HRID, level: 0 }, [dto], gameData);
-        expect(built.candidates).toHaveLength(23);
+        expect(built.candidates).toHaveLength(24);
+        expect(built.candidates.filter((option) => option.keepCurrent)).toHaveLength(1);
         for (const option of built.candidates) {
             expect(advisor.candidateAppliesToDTO(option, dto, gameData)).toBe(true);
             expect(advisor.applyCandidateToDTO(dto, option).abilities[0].hrid).toBe(FIERCE_AURA);
@@ -493,7 +536,7 @@ describe('the ability order check', () => {
         };
         const dto = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(FIREBALL, 16)]);
         const built = buildCombatAbilityCheck({ hrid: ABILITY_ORDER_HRID, level: 0 }, [dto], gameData);
-        expect(built.candidates).toHaveLength(1);
+        expect(built.candidates).toHaveLength(2);
         const raw = await advisor.runLabyrinthAllFightsAnalysis(
             {
                 fights: [
@@ -527,6 +570,57 @@ describe('the ability order check', () => {
             'Smack',
             'Fireball',
         ]);
+    });
+});
+
+describe('the ability order check keeps the current order when it is best', () => {
+    const runOrder = async (dto, win) => {
+        state.sim = async ({ playerDTOs }) => ({
+            encounters: win(playerDTOs[0].abilities[1].hrid) * 1000,
+            labyAttemptCount: 1000,
+            experienceGained: {},
+            simulatedTime: 1,
+        });
+        const built = orderApi.buildCombatAbilityCheck(
+            { hrid: orderApi.ABILITY_ORDER_HRID, level: 0 },
+            [dto],
+            gameData
+        );
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/mimic', monsterName: 'mimic', roomLevel: 50, dto, loadoutName: 'mimic' },
+                ],
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        return { built, row: mergeCheckedAbilityRows(raw, gameData).results[0] };
+    };
+
+    test('the current order stays when no alternative beats it', async () => {
+        const dto = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(FIREBALL, 16)]);
+        // Smack first is the current order and is best; the alternative is worse
+        const { row } = await runOrder(dto, (first) => (first === SMACK ? 0.7 : 0.4));
+        expect(row.candidate.description).toBe('Ability order (Order: current order is best)');
+        expect(row.fights[0].note).toBe('Order: current order is best');
+        expect(row.fights[0].winRateDelta).toBe(0);
+        expect(row.attemptsDelta).toBe(0);
+        expect(row.appliedFights).toBe(1);
+    });
+
+    test('a loadout with one legal order is reached and reports the current order', async () => {
+        const dto = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(FIREBALL, 16)]);
+        const { built, row } = await runOrder(dto, () => 0.5);
+        expect(built.candidates.length).toBeGreaterThan(0);
+        expect(row.candidate.description).toBe('Ability order (Order: current order is best)');
+        expect(row.attemptsDelta).toBe(0);
     });
 });
 
