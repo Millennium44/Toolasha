@@ -20,6 +20,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 // so a `guild shrine guild-allowed cap` test spies on individual exports
 // rather than replacing the whole module.
 import * as upgradeAdvisor from './upgrade-advisor.js';
+// Real too; the trigger tuning tests spy on its runner
+import * as labTriggerOptimizer from './lab-trigger-optimizer.js';
 
 const geometry = vi.hoisted(() => ({ saved: null, wasOpen: false, restoreCalls: [], saveCalls: [], openCalls: [] }));
 const game = vi.hoisted(() => ({
@@ -4996,5 +4998,206 @@ describe('Check a swap', () => {
         // Its click handler is its own: the generated table's is left where it was
         expect(ui._skillingSortHandler).toBe(generatedHandler);
         expect(ui._skillingSwapSortHandler).toEqual(expect.any(Function));
+    });
+});
+
+describe('Tune triggers', () => {
+    const FIREBALL = '/abilities/fireball';
+    const TARGET = '/combat_trigger_dependencies/targeted_enemy';
+    const HP = '/combat_trigger_conditions/current_hp';
+    const GTE = '/combat_trigger_comparators/greater_than_equal';
+
+    beforeEach(async () => {
+        game.characterId = 'me';
+        game.monsters = [
+            { hrid: '/monsters/cyclops', name: 'Cyclops' },
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/jerry', name: 'Jerry' },
+        ];
+        game.skipLevels = { '/monsters/cyclops': 120, '/monsters/mimic': 130, '/monsters/jerry': 110 };
+        // Cyclops and Mimic share the Mage loadout; Jerry has none and fights in the worn gear
+        game.loadoutByMonster = { '/monsters/cyclops': 3, '/monsters/mimic': 3 };
+        game.loadoutNames = { 3: 'Mage' };
+        game.loadoutAbilities = { 3: [null, { hrid: FIREBALL, level: 30, triggers: null }] };
+        game.loadoutEquipment = {
+            3: { '/equipment_types/two_hand': { hrid: '/items/rippling_trident', enhancementLevel: 5 } },
+        };
+        game.abilityDetailMap = {
+            [FIREBALL]: {
+                name: 'Fireball',
+                defaultCombatTriggers: [{ dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 1 }],
+            },
+        };
+        storage.written = {};
+        storage.values = {};
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        game.characterId = 'me';
+        game.monsters = [];
+        game.skipLevels = {};
+        game.loadoutByMonster = {};
+        game.loadoutNames = {};
+        game.loadoutAbilities = {};
+        game.loadoutEquipment = {};
+        game.abilityDetailMap = {};
+        storage.values = {};
+        ui.destroy();
+    });
+
+    /** What the runner hands back for the Mage loadout: Fireball held until the target has 300 HP */
+    const finishedRun = () => ({
+        groups: [
+            {
+                key: 'loadout:3',
+                name: 'Mage',
+                fights: [
+                    {
+                        monsterHrid: '/monsters/cyclops',
+                        monsterName: 'Cyclops',
+                        roomLevel: 120,
+                        winRate: 0.5,
+                        tunedWinRate: 0.8,
+                    },
+                    {
+                        monsterHrid: '/monsters/mimic',
+                        monsterName: 'Mimic',
+                        roomLevel: 130,
+                        winRate: 0.9,
+                        tunedWinRate: 0.9,
+                    },
+                ],
+                baselineAttempts: 3.11,
+                tunedAttempts: 2.36,
+                result: {
+                    changes: [
+                        {
+                            key: `player1|abilities|${FIREBALL}|0`,
+                            slotType: 'abilities',
+                            itemHrid: FIREBALL,
+                            itemName: 'Fireball',
+                            rowIndex: 0,
+                            dependencyHrid: TARGET,
+                            conditionHrid: HP,
+                            comparatorHrid: GTE,
+                            from: 1,
+                            to: 300,
+                            deltaScore: 0.75,
+                            se: 0.1,
+                        },
+                    ],
+                    rejected: [],
+                    unused: [],
+                    combined: { deltaScore: 0.75, se: 0.08, seeds: 8 },
+                    reliable: true,
+                },
+            },
+        ],
+        simCount: 1234,
+        stopped: false,
+        precision: 'standard',
+        include: 'both',
+        minGain: 0.02,
+    });
+    const results = () => ui.panel.querySelector('#mwi-labsim-trigger-results');
+    const status = () => ui.panel.querySelector('#mwi-labsim-status').textContent;
+
+    test('opening the section lists one checkbox per loadout, ticked, with the cost before any run', () => {
+        ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        const boxes = [...ui.panel.querySelectorAll('[data-lab-trigger-group]')];
+        expect(boxes.map((b) => [b.dataset.labTriggerGroup, b.checked])).toEqual([
+            ['loadout:3', true],
+            ['current', true],
+        ]);
+        expect(ui.panel.querySelector('#mwi-labsim-trigger-loadouts').textContent).toContain('Current gear');
+        expect(ui.panel.querySelector('#mwi-labsim-trigger-estimate').textContent).toMatch(/About [\d,]+ fight sims/);
+    });
+
+    test('the run groups fights by loadout and draws each change as old → new', async () => {
+        const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+        // The worn gear has no tunable row here, so only Mage is ticked
+        ui._triggerChoices.skipped = ['current'];
+        await ui._onTuneTriggers();
+
+        const params = spy.mock.calls[0][0];
+        expect(params.groups.map((g) => [g.key, g.fights.map((f) => f.monsterName)])).toEqual([
+            ['loadout:3', ['Cyclops', 'Mimic']],
+        ]);
+        expect(params.groups[0].fights[0].dto.equipment['/equipment_types/two_hand'].hrid).toBe(
+            '/items/rippling_trident'
+        );
+        const text = results().textContent;
+        expect(results().style.display).toBe('block');
+        expect(text).toContain('Mage');
+        expect(text).toContain('Fireball');
+        expect(text).toMatch(/current hp ≥ 1\s*→ 300/i);
+        expect(text).toContain('saves 0.75 ± 0.10 attempts');
+        expect(text).toContain('3.11 → 2.36');
+        expect(text).toContain('+30.0 pp');
+        expect(text).toContain('set these values in the game by hand');
+        expect(status()).toContain('1 change found');
+    });
+
+    test('a Stop mid-run draws nothing', async () => {
+        let finish;
+        vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockImplementation(
+            () => new Promise((resolve) => (finish = resolve))
+        );
+        const running = ui._onTuneTriggers();
+        await settle();
+        ui.panel.querySelector('#mwi-labsim-upgrade-stop').click();
+        finish(finishedRun());
+        await running;
+        expect(results().innerHTML).toBe('');
+        expect(results().style.display).toBe('none');
+        expect(status()).toContain('stopped');
+        expect(ui._upgradeRunning).toBe(false);
+    });
+
+    test('a character switch mid-run draws nothing into the arriving panel', async () => {
+        let finish;
+        let abortSignal;
+        vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockImplementation((_params, _progress, options) => {
+            abortSignal = options.abortSignal;
+            return new Promise((resolve) => (finish = resolve));
+        });
+        const running = ui._onTuneTriggers();
+        await settle();
+        // The switch: the old panel torn down, the next character's built
+        game.characterId = 'alt';
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        expect(abortSignal()).toBe(true);
+        finish(finishedRun());
+        await running;
+        expect(results().innerHTML).toBe('');
+        expect(status()).not.toContain('Trigger tuning');
+    });
+
+    test('the choices are remembered per character, and a pull brings them back', async () => {
+        ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        const include = ui.panel.querySelector('#mwi-labsim-trigger-include');
+        include.value = 'abilities';
+        include.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const box = ui.panel.querySelector('[data-lab-trigger-group="current"]');
+        box.checked = false;
+        box.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+        expect(storage.written['labSimTriggerChoices_me']).toMatchObject({
+            open: true,
+            include: 'abilities',
+            skipped: ['current'],
+        });
+
+        storage.values['labSimTriggerChoices_me'] = { open: true, include: 'consumables', precision: 'precise' };
+        await ui._adoptPulledSettings({ settings: ['labSimTriggerChoices_me'] });
+        expect(ui.panel.querySelector('#mwi-labsim-trigger-include').value).toBe('consumables');
+        expect(ui.panel.querySelector('#mwi-labsim-trigger-precision').value).toBe('precise');
+        expect(ui.panel.querySelector('[data-lab-trigger-group="current"]').checked).toBe(true);
     });
 });

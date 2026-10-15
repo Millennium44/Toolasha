@@ -45,6 +45,7 @@ import {
     unusedTunables,
     successiveHalving,
     runTriggerSearch,
+    LAB_OBJECTIVE,
     estimateTriggerSims,
     buildEditorChanges,
     describeRow,
@@ -480,6 +481,7 @@ describe('balancedScore', () => {
             deaths: 3,
             dps: 4,
             encounters: 7,
+            attempts: 0,
         });
         sample.perPlayer.a.revenue = 5;
         sample.perPlayer.b.cost = 6;
@@ -491,6 +493,7 @@ describe('balancedScore', () => {
             deaths: 33,
             dps: 44,
             encounters: 7,
+            attempts: 0,
         });
     });
 });
@@ -538,8 +541,20 @@ describe('objectiveScore', () => {
         expect(objectiveScore(m, base, 'nonsense')).toBeCloseTo(balancedScore(m, base), 10);
     });
 
-    test('the choices are Balanced, XP/h and Profit/h', () => {
+    test('the choices are Balanced, XP/h and Profit/h; the Lab Sim objective is not one of them', () => {
         expect(OBJECTIVES.map((o) => o.key)).toEqual(['balanced', 'xp', 'profit']);
+        expect(OBJECTIVES.map((o) => o.key)).not.toContain(LAB_OBJECTIVE);
+    });
+
+    test('the lab objective is the drop in expected attempts, with no deaths term', () => {
+        const labBase = { ...base, attempts: 12.5 };
+        // 1/0.8 + 1/0.5 + ... : fewer attempts is a positive score, in attempts
+        expect(objectiveScore({ ...base, attempts: 11.25, deaths: 9 }, labBase, LAB_OBJECTIVE)).toBeCloseTo(1.25, 10);
+        expect(objectiveScore({ ...base, attempts: 13 }, labBase, LAB_OBJECTIVE)).toBeCloseTo(-0.5, 10);
+    });
+
+    test('scope metrics carry a sample-level attempts figure', () => {
+        expect(scopeMetrics({ attempts: 3.5, perPlayer: {} }, ['a']).attempts).toBe(3.5);
     });
 });
 

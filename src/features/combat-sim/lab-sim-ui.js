@@ -40,6 +40,14 @@ import {
     MAX_HOUSE_LEVEL,
     MAX_GUILD_SHRINE_LEVEL,
 } from './upgrade-advisor.js';
+import { estimateLabTriggerRun, groupFightsByLoadout, runLabTriggerOptimization } from './lab-trigger-optimizer.js';
+import {
+    describeLabTriggerEstimate,
+    labTriggerLoadoutsHtml,
+    labTriggerOptionsHtml,
+    renderLabTriggerResultsHtml,
+    sanitizeLabTriggerChoices,
+} from './lab-trigger-view.js';
 import {
     LAB_COMPARISON_BASELINE_KEY,
     LAB_COMPARISON_KEY,
@@ -166,6 +174,8 @@ const MIN_PANEL_HEIGHT = 300;
  * Per character, since what is worth checking depends on what that character wears.
  */
 const CHECKED_SWAPS_KEY = 'labSimCheckedSwaps';
+/** The Tune triggers section's choices (open, include, precision, unticked loadouts), per character */
+const TRIGGER_CHOICES_KEY = 'labSimTriggerChoices';
 
 /** Which candidate sets the Upgrade tab has checked. */
 const UPGRADE_DIMENSIONS_KEY = 'labSimUpgradeDimensions';
@@ -751,6 +761,8 @@ class LabSimUI {
         // table is in (kept apart from the generated table's)
         this._checkedSwaps = { combat: [], skilling: [] };
         this._swapOptions = sanitizeSwapOptions(null);
+        // The Tune triggers section's choices; read back from storage on each build
+        this._triggerChoices = sanitizeLabTriggerChoices(null);
         this._checkedSwapSort = null;
         this._skillingSwapSortHandler = null;
         this._skillLoadouts = {};
@@ -1229,6 +1241,12 @@ class LabSimUI {
         swapResultsCombat.style.cssText =
             'display:none; flex:0 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
 
+        // Tune triggers: its own results box, kept apart from both tables so neither run clears the other
+        const triggerBar = this._buildTriggerBar();
+        const triggerResults = document.createElement('div');
+        triggerResults.id = 'mwi-labsim-trigger-results';
+        triggerResults.style.cssText = 'display:none; flex:0 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
+
         const upgradeResults = document.createElement('div');
         upgradeResults.id = 'mwi-labsim-upgrade-results';
         upgradeResults.style.cssText = 'flex:1 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
@@ -1241,8 +1259,10 @@ class LabSimUI {
         upgradeContent.appendChild(labHouseTargets);
         upgradeContent.appendChild(labShrineTargets);
         upgradeContent.appendChild(swapBarCombat);
+        upgradeContent.appendChild(triggerBar);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(swapResultsCombat);
+        upgradeContent.appendChild(triggerResults);
         upgradeContent.appendChild(this._buildUpgradesHeader('combat'));
         upgradeContent.appendChild(upgradeResults);
 
@@ -1628,6 +1648,8 @@ class LabSimUI {
         this.panel.querySelector('#mwi-labsim-allfights-useskip').addEventListener('change', () => {
             this._populateUpgradeTargets(this._getChosenTargets());
             this._onUpgradeSelectionChanged();
+            // The trigger tuning's fights take their room levels from the same box
+            if (this._triggerChoices.open) this._refreshTriggerLoadouts();
         });
         this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
             this._refreshLevelSourceReadout();
@@ -1653,6 +1675,8 @@ class LabSimUI {
         void this._restoreUpgradeResults();
         this._wireSwapBars();
         void this._restoreCheckedSwaps();
+        this._wireTriggerBar();
+        void this._restoreTriggerChoices();
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -2273,6 +2297,7 @@ class LabSimUI {
             }
             if (has('tokenBuffLevels')) work.push(this._restoreTokenBuffLevels());
             if (has('checkedSwaps')) work.push(this._restoreCheckedSwaps({ replace: true }));
+            if (has('triggerChoices')) work.push(this._restoreTriggerChoices());
             if (has('comparisonRuns', 'comparisonBaseline')) {
                 work.push(
                     (async () => {
@@ -3247,6 +3272,288 @@ class LabSimUI {
             </div>
         `;
         return bar;
+    }
+
+    /**
+     * The "Tune triggers" section: which loadouts, which rows, how precise, and the cost before it runs.
+     * @returns {HTMLElement}
+     * @private
+     */
+    _buildTriggerBar() {
+        const bar = document.createElement('div');
+        bar.id = 'mwi-labsim-trigger-bar';
+        bar.style.cssText = 'padding:6px 14px; border-bottom:1px solid #222; flex-shrink:0;';
+        const selectStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+        const buttonStyle =
+            'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; ' +
+            'padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;';
+        const what =
+            'Tune the numbers in each loadout’s trigger rows (how much enemy HP an ability waits for, how low ' +
+            'your HP or MP gets before a food or drink fires) to need fewer attempts in the labyrinth fights the ' +
+            'loadout is assigned to. Only simulates: set any change in the game by hand.';
+        bar.innerHTML = `
+            <div id="mwi-labsim-trigger-header" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
+                title="${escapeHtmlAttribute(what)}">
+                <span id="mwi-labsim-trigger-toggle" style="font-size:10px; color:#888;">▶</span>
+                <span style="color:${ACCENT}; font-weight:700; font-size:12px;">Tune triggers</span>
+            </div>
+            <div id="mwi-labsim-trigger-body" style="display:none; margin-top:4px;">
+                <div id="mwi-labsim-trigger-loadouts" style="display:flex; flex-wrap:wrap; gap:4px 12px;"></div>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:4px;">
+                    ${labTriggerOptionsHtml(this._triggerChoices, selectStyle)}
+                    <button id="mwi-labsim-trigger-run" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Tune</button>
+                    <span id="mwi-labsim-trigger-estimate" style="color:#666; font-size:11px;"></span>
+                </div>
+            </div>
+        `;
+        return bar;
+    }
+
+    /**
+     * Wire the Tune triggers section.
+     * @private
+     */
+    _wireTriggerBar() {
+        this.panel.querySelector('#mwi-labsim-trigger-header')?.addEventListener('click', () => {
+            this._triggerChoices.open = !this._triggerChoices.open;
+            this._applyTriggerSectionState();
+            void this._saveTriggerChoices();
+        });
+        const body = this.panel.querySelector('#mwi-labsim-trigger-body');
+        body?.addEventListener('change', (event) => {
+            const target = event.target;
+            if (target?.id === 'mwi-labsim-trigger-include') this._triggerChoices.include = target.value;
+            else if (target?.id === 'mwi-labsim-trigger-precision') this._triggerChoices.precision = target.value;
+            else if (target?.dataset?.labTriggerGroup) {
+                const skipped = new Set(this._triggerChoices.skipped);
+                if (target.checked) skipped.delete(target.dataset.labTriggerGroup);
+                else skipped.add(target.dataset.labTriggerGroup);
+                this._triggerChoices.skipped = [...skipped];
+            } else return;
+            this._refreshTriggerEstimate();
+            void this._saveTriggerChoices();
+        });
+        this.panel.querySelector('#mwi-labsim-trigger-run')?.addEventListener('click', () => this._onTuneTriggers());
+    }
+
+    /**
+     * Draw the section open or closed, with its controls set from the remembered choices; opening it
+     * lists the loadouts the labyrinth fights wear now.
+     * @private
+     */
+    _applyTriggerSectionState() {
+        const open = this._triggerChoices.open;
+        const body = this.panel?.querySelector('#mwi-labsim-trigger-body');
+        if (body) body.style.display = open ? 'block' : 'none';
+        const toggle = this.panel?.querySelector('#mwi-labsim-trigger-toggle');
+        if (toggle) toggle.textContent = open ? '▼' : '▶';
+        const include = this.panel?.querySelector('#mwi-labsim-trigger-include');
+        if (include) include.value = this._triggerChoices.include;
+        const precision = this.panel?.querySelector('#mwi-labsim-trigger-precision');
+        if (precision) precision.value = this._triggerChoices.precision;
+        if (open) this._refreshTriggerLoadouts();
+    }
+
+    /**
+     * The labyrinth fights grouped by the loadout each wears, at the room levels the Upgrade tab's
+     * whole-run analysis uses.
+     * @returns {Array<Object>} From `groupFightsByLoadout`
+     * @private
+     */
+    _triggerGroups() {
+        const useSkipLevels = this.panel?.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+        return groupFightsByLoadout(this._collectLabyrinthFights(useSkipLevels));
+    }
+
+    /**
+     * List the loadout checkboxes and the cost line.
+     * @private
+     */
+    _refreshTriggerLoadouts() {
+        const box = this.panel?.querySelector('#mwi-labsim-trigger-loadouts');
+        if (!box) return;
+        try {
+            box.innerHTML = labTriggerLoadoutsHtml(this._triggerGroups(), new Set(this._triggerChoices.skipped));
+        } catch (error) {
+            console.error('[LabSimUI] Listing trigger loadouts failed:', error);
+        }
+        this._refreshTriggerEstimate();
+    }
+
+    /**
+     * The ticked loadout groups, as the remembered choices say.
+     * @returns {Array<Object>}
+     * @private
+     */
+    _chosenTriggerGroups() {
+        const skipped = new Set(this._triggerChoices.skipped);
+        return this._triggerGroups().filter((group) => !skipped.has(group.key));
+    }
+
+    /**
+     * Say what a run would cost, before it is started.
+     * @private
+     */
+    _refreshTriggerEstimate() {
+        const el = this.panel?.querySelector('#mwi-labsim-trigger-estimate');
+        if (!el) return;
+        try {
+            const gameData = buildGameDataPayload();
+            el.textContent = gameData
+                ? describeLabTriggerEstimate(
+                      estimateLabTriggerRun({
+                          groups: this._chosenTriggerGroups(),
+                          gameData,
+                          include: this._triggerChoices.include,
+                          precision: this._triggerChoices.precision,
+                      })
+                  )
+                : '';
+        } catch (error) {
+            console.error('[LabSimUI] Estimating trigger tuning failed:', error);
+            el.textContent = '';
+        }
+    }
+
+    /**
+     * Remember the section's choices for this character.
+     * @private
+     */
+    async _saveTriggerChoices() {
+        try {
+            await writeScoped(TRIGGER_CHOICES_KEY, { ...this._triggerChoices }, 'settings');
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save trigger tuning choices:', error);
+        }
+    }
+
+    /**
+     * Read this character's choices back, on a build and when a sync pull brings them.
+     * @private
+     */
+    async _restoreTriggerChoices() {
+        const ownerId = dataManager.getCurrentCharacterId();
+        let saved = null;
+        try {
+            saved = await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[LabSimUI] Failed to restore trigger tuning choices:', error);
+            return;
+        }
+        if (!this.panel || !this._stillSameCharacter(ownerId)) return;
+        this._triggerChoices = sanitizeLabTriggerChoices(saved);
+        this._applyTriggerSectionState();
+    }
+
+    /**
+     * Tune the ticked loadouts' triggers against their labyrinth fights. Show-only: nothing is
+     * written anywhere but the results box, and nothing reaches the game.
+     * @private
+     */
+    async _onTuneTriggers() {
+        if (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning) return;
+        this._upgradeRunning = true;
+        // A teardown (character switch) bumps the token, after which this run is stale
+        const runToken = ++this._runStartToken;
+        const ownerId = dataManager.getCurrentCharacterId();
+        const isCurrent = () =>
+            runToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
+        const resultsEl = this.panel.querySelector('#mwi-labsim-trigger-results');
+        const progressEl = this.panel.querySelector('#mwi-labsim-upgrade-progress');
+        const runBtn = this.panel.querySelector('#mwi-labsim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-labsim-upgrade-stop');
+        const tuneBtn = this.panel.querySelector('#mwi-labsim-trigger-run');
+        const finish = () => {
+            if (progressEl) progressEl.style.display = 'none';
+            if (runBtn) runBtn.style.display = '';
+            if (stopBtn) stopBtn.style.display = 'none';
+            if (tuneBtn) tuneBtn.disabled = false;
+            if (runToken === this._runStartToken) this._upgradeRunning = false;
+        };
+
+        try {
+            const gameData = buildGameDataPayload();
+            if (!gameData) {
+                this._setStatus('No game data available.');
+                return;
+            }
+            const groups = this._chosenTriggerGroups();
+            if (!groups.length) {
+                this._setStatus(
+                    'No loadout to tune. Tick one, or set combat skip levels in the game so fights have room levels.'
+                );
+                return;
+            }
+            const { include, precision } = this._triggerChoices;
+            const estimate = estimateLabTriggerRun({ groups, gameData, include, precision });
+            if (estimate.sims === 0) {
+                this._setStatus('No tunable trigger rows in the ticked loadouts.');
+                return;
+            }
+
+            if (progressEl) progressEl.style.display = 'block';
+            if (runBtn) runBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'inline-block';
+            if (tuneBtn) tuneBtn.disabled = true;
+            if (resultsEl) {
+                resultsEl.innerHTML = '';
+                resultsEl.style.display = 'none';
+            }
+            this._upgradeAborted = false;
+            this._setStatus(`Tuning triggers: ${describeLabTriggerEstimate(estimate)} Stop cancels at any point.`);
+
+            const eta = createEtaTracker();
+            const run = await runLabTriggerOptimization(
+                {
+                    gameData,
+                    groups,
+                    crates: this.getSelectedCrates(),
+                    communityBuffs: getCommunityBuffs(),
+                    labyrinthCombatBuffs: this._labyrinthCombatBuffs(),
+                    precision,
+                    include,
+                },
+                ({ current, total, description }) => {
+                    if (!isCurrent() || this._upgradeAborted) return;
+                    const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
+                    const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
+                    const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+                    if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                    if (text) {
+                        text.textContent =
+                            `${current} / ${total}` +
+                            (remaining ? ` · ${remaining}` : '') +
+                            (description ? `: ${description}` : '');
+                    }
+                },
+                { abortSignal: () => !isCurrent() || this._upgradeAborted }
+            );
+
+            // A stopped run, or one that now belongs to another character, draws nothing
+            if (!isCurrent()) return;
+            if (this._upgradeAborted || run.stopped) {
+                this._setStatus('Trigger tuning stopped.');
+                return;
+            }
+            if (resultsEl) {
+                resultsEl.innerHTML = renderLabTriggerResultsHtml(run, gameData);
+                resultsEl.style.display = 'block';
+            }
+            const changes = run.groups.reduce((sum, group) => sum + (group.result?.changes?.length || 0), 0);
+            this._setStatus(
+                changes > 0
+                    ? `Trigger tuning complete: ${changes} change${changes === 1 ? '' : 's'} found. Set them in the game by hand.`
+                    : 'Trigger tuning complete: nothing clearly better found.'
+            );
+        } catch (error) {
+            if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
+                console.error('[LabSimUI] Trigger tuning failed:', error);
+                this._setStatus('Trigger tuning failed: ' + error.message);
+            }
+        } finally {
+            finish();
+        }
     }
 
     /**
@@ -5188,7 +5495,8 @@ class LabSimUI {
      * which case an active run's live room levels take precedence.
      * @private
      * @param {boolean} [useSkipLevels=true]
-     * @returns {Array<{monsterHrid: string, monsterName: string, roomLevel: number, dto: Object, loadoutName: string}>}
+     * @returns {Array<{monsterHrid: string, monsterName: string, roomLevel: number, dto: Object, loadoutName: string,
+     *   loadoutId: number}>}
      */
     _collectLabyrinthFights(useSkipLevels = true) {
         const fights = [];
@@ -5200,10 +5508,18 @@ class LabSimUI {
             const loadoutId = (labyrinthClearRate() || bundledLabyrinthClearRate).getLabyrinthLoadoutId(monster.hrid);
             const dto = (labyrinthClearRate() || bundledLabyrinthClearRate).buildLabyrinthPlayerDTO(loadoutId);
             if (!dto) continue;
-            const loadoutName =
-                (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots[loadoutId]?.name ||
-                (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
-            fights.push({ monsterHrid: monster.hrid, monsterName: monster.name, roomLevel, dto, loadoutName });
+            const snapshot = (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots[loadoutId];
+            const loadoutName = snapshot?.name || (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
+            fights.push({
+                monsterHrid: monster.hrid,
+                monsterName: monster.name,
+                roomLevel,
+                dto,
+                loadoutName,
+                // Which saved loadout the fight wears, 0 for the worn gear: an id the store does not hold
+                // builds the worn gear too (`buildLabyrinthPlayerDTO`). Read by the trigger tuning's grouping.
+                loadoutId: snapshot ? Number(loadoutId) || 0 : 0,
+            });
         }
         return fights;
     }
@@ -8130,6 +8446,7 @@ class LabSimUI {
         // reads its own back from storage
         this._checkedSwaps = { combat: [], skilling: [] };
         this._swapOptions = sanitizeSwapOptions(null);
+        this._triggerChoices = sanitizeLabTriggerChoices(null);
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;

@@ -38,13 +38,13 @@ import {
 const MAX_CONCURRENCY = 6;
 
 /** Seeds one stream can hold; stream N's seeds are indices N * this + k */
-const STREAM_WIDTH = 64;
+export const STREAM_WIDTH = 64;
 
 /**
  * How many sims may be in flight at once.
  * @returns {number}
  */
-function concurrency() {
+export function concurrency() {
     const budget = getMaxWorkers();
     if (config.getSetting('combatSim_uncapThreads')) return Math.max(1, budget);
     return Math.max(1, Math.min(budget, MAX_CONCURRENCY));
@@ -55,7 +55,7 @@ function concurrency() {
  * @param {number} limit - Tasks at once
  * @returns {Function} `(task) => Promise` that runs the task when a slot is free
  */
-function createLimiter(limit) {
+export function createLimiter(limit) {
     let running = 0;
     const waiting = [];
     const release = () => {
@@ -168,7 +168,7 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { pr
  * @param {Array<string>} hrids - Players
  * @returns {Object} hrid → ability/item hrid → count
  */
-function triggerUseFromResult(simResult, hrids) {
+export function triggerUseFromResult(simResult, hrids) {
     const out = {};
     for (const hrid of hrids) {
         const use = { ...(simResult.triggerChecks?.[hrid] || {}) };

@@ -61,6 +61,7 @@ const KEYS = [
     ['settings', 'labSimSkillingTargetFloor'],
     ['settings', 'labSimTokenBuffLevels'],
     ['settings', 'labSimCheckedSwaps'],
+    ['settings', 'labSimTriggerChoices'],
     ['settings', 'labSimSkillingLoadouts'],
     ['settings', 'labSimComparisonRuns'],
     ['settings', 'labSimComparisonBaseline'],
