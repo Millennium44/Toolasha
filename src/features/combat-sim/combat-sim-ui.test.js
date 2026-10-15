@@ -9823,6 +9823,19 @@ describe('a refine row hands off the refinement material', () => {
         expect(container.querySelector('[data-buy-action="enhance"]')).toBeNull();
     });
 
+    test('a refine whose base is built with a mirror puts the mirror on the bill', () => {
+        const row = refineRow();
+        row.costDetail.ladder.refine.mirror = { baseCost: 900_000_000, mirrorPrice: 600_000_000, heldLevels: [6] };
+        const market = render(row).querySelector('[data-buy-action="market"]');
+        expect(JSON.parse(market.getAttribute('data-buy-materials'))).toEqual([
+            { itemHrid: SHARD, count: 89 },
+            { itemHrid: '/items/philosophers_mirror', count: 1 },
+        ]);
+        // The shard stays the item Watch and Market open on
+        expect(market.getAttribute('data-buy-hrid')).toBe(SHARD);
+        expect(market.title).toContain('philosophers mirror');
+    });
+
     test('a refine priced for another player still gets the shard buttons', () => {
         const row = refineRow();
         row.costDetail.ladder.isSelf = false;
