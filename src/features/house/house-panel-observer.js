@@ -172,7 +172,17 @@ class HousePanelObserver {
                 // Only a different room is a switch. A refresh of the same room (inventory,
                 // price, upgrade) is driven by the cost display's own listeners.
                 const houseRoomHrid = this.identifyRoomFromModal(modalContent);
-                if (!houseRoomHrid || houseRoomHrid === lastRoomHrid) return;
+                if (!houseRoomHrid) return;
+                if (houseRoomHrid === lastRoomHrid) {
+                    // A native re-render of the same room (a late costs section, an upgrade
+                    // replacing the children) can drop our column. Restore it only when it is
+                    // missing: once it is back the check is false, so this cannot loop.
+                    const costs = modalContent.querySelector('[class*="HousePanel_costs"]');
+                    if (costs && !modalContent.querySelector('.mwi-house-to-level')) {
+                        this.processModalContent(modalContent);
+                    }
+                    return;
+                }
 
                 for (const mutation of mutations) {
                     if (mutation.type === 'childList' || mutation.type === 'characterData') {
