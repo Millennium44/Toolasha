@@ -3985,6 +3985,43 @@ describe('the panel, end to end', () => {
             expect(guildTrials.workBases['trial badger'].baseWork).toBeCloseTo(BADGER / 1.47, 6);
         });
 
+        test('an old tier’s pool under an advanced floor neither relearns nor persists a base', async () => {
+            // T1's whole wave is grafted; T2 opens and the stream's first pool
+            // names one Badger, which is refused — so the newest pool sample is
+            // still T1's while the stream's floor already says T2
+            const held = { baseWork: BADGER / 1.47, scale: 'monster', version: 2, learnedAt: 1 };
+            guildTrials.workBases = { 'trial badger': { ...held } };
+            game.store.guildTrialsWorkBases = { 'trial badger': { ...held } };
+
+            stream(785_760, 2);
+            fire(trialsTab());
+            step();
+            game.breakdown = {
+                pool: { current: 529_000, max: 529_920, slots: 1, tier: 2, at: Date.now(), encounter: 'badger' },
+            };
+            fire(trialsTab());
+
+            const record = guildTrials.record.tiles['combat::trial badger'];
+            expect(record.samples).toHaveLength(1);
+            expect(record.samples[0].readings[0]).toMatchObject({ source: 'pool', slots: 2, tier: 1 });
+
+            const tile = { name: 'Trial Badger', kind: 'combat' };
+            const analysis = analyseTrial(record, {
+                participants: 47,
+                phase: 'live',
+                workBase: guildTrials._workBase(record),
+                liveTierFloor: guildTrials._liveTierFloor(record),
+                waveCount: 2,
+                now: clock,
+            });
+            expect(analysis.tier).toBe(2);
+
+            guildTrials._learnWorkBase(tile, record, analysis, 47, clock);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(guildTrials.workBases['trial badger']).toEqual(held);
+            expect(game.store.guildTrialsWorkBases['trial badger']).toEqual(held);
+        });
+
         test('a held base that contradicts the stream’s fresh tier is relearned', () => {
             const tile = { name: 'Trial Badger', kind: 'combat' };
             // Half a Badger: it explains one Badger's 485,760 as T12, the same
@@ -3997,7 +4034,10 @@ describe('the panel, end to end', () => {
                 samples: [
                     {
                         t: now,
-                        readings: [{ current: 960_000, max: 2 * BADGER, source: 'pool', slots: 2, waveCount: 2 }],
+                        // The graft states the tier the stream gave with it
+                        readings: [
+                            { current: 960_000, max: 2 * BADGER, source: 'pool', slots: 2, waveCount: 2, tier: 1 },
+                        ],
                     },
                 ],
             };
