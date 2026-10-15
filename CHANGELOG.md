@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers round (2026-10-15)
+
+- Lab Sim combat Check a swap counts a piece as owned, or still worn, when any of your loadouts has it, not only the loadouts of the fights you picked.
+- Lab Sim upgrade costs charge a copy another loadout wears at its resale when a mirror or refine route uses it, instead of treating it as a free spare; the mirror-then-refine Market button now also buys the enhanced base copies the route needs.
+- A protection item with no market quote shows as "no price" in the enhancing panel and marks a tracked session unpriced, instead of counting at its NPC vendor price.
+- A scroll whose net is exactly 0 reads break-even, not "−0 loss", and a Tune triggers section left open relists loadouts when you come back to the Upgrade tab.
+
 ### Market History: follows the item under a game window
 
 - The History chart now switches to the item the popout marketplace opens even while a game window is still open underneath it; before, it stayed on the previous item until that window closed.
