@@ -3386,11 +3386,15 @@ export function buildOtherLoadoutClaims(fights = null) {
             if (seen.has(identity)) continue;
             seen.add(identity);
         }
+        // Loadouts are alternatives — only one is worn at a time — so one physical copy serves every
+        // loadout that wears it: a claim is the most copies any one loadout needs, not the sum
+        const own = new Map();
         for (const equip of Object.values(fight?.dto?.equipment || {})) {
             if (!equip?.hrid) continue;
             const key = claimKey(equip.hrid, equip.enhancementLevel);
-            claims.set(key, (claims.get(key) || 0) + 1);
+            own.set(key, (own.get(key) || 0) + 1);
         }
+        for (const [key, count] of own) claims.set(key, Math.max(claims.get(key) || 0, count));
     }
     return claims.size ? claims : null;
 }

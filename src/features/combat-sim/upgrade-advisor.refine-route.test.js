@@ -225,14 +225,34 @@ describe('refined target priced from a held base', () => {
         expect(calculateUpgradeCost(tier(7), gameData)).toBe(SHARDS + 2_000_000);
     });
 
-    test('two saved loadouts that share a name each claim their pieces', () => {
+    test('two saved loadouts that share a name are told apart by id', () => {
         const wears = (level) => ({ equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: level } } });
         const claims = buildOtherLoadoutClaims([
             { loadoutName: 'Lab', loadoutId: 1, dto: wears(5) },
-            { loadoutName: 'Lab', loadoutId: 2, dto: wears(5) },
-            { loadoutName: 'Lab', loadoutId: 2, dto: wears(5) },
+            { loadoutName: 'Lab', loadoutId: 2, dto: wears(6) },
+            { loadoutName: 'Lab', loadoutId: 2, dto: wears(6) },
         ]);
-        expect(claims.get(`${BASE}@5`)).toBe(2);
+        expect(claims.get(`${BASE}@5`)).toBe(1);
+        expect(claims.get(`${BASE}@6`)).toBe(1);
+    });
+
+    test('loadouts are alternatives: one copy serves every loadout wearing it, two slots in one need two', () => {
+        const ring = '/items/test_ring';
+        const claims = buildOtherLoadoutClaims([
+            { loadoutId: 1, dto: { equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: 5 } } } },
+            { loadoutId: 2, dto: { equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: 5 } } } },
+            {
+                loadoutId: 3,
+                dto: {
+                    equipment: {
+                        '/equipment_types/ring': { hrid: ring, enhancementLevel: 3 },
+                        '/equipment_types/earrings': { hrid: ring, enhancementLevel: 3 },
+                    },
+                },
+            },
+        ]);
+        expect(claims.get(`${BASE}@5`)).toBe(1);
+        expect(claims.get(`${ring}@3`)).toBe(2);
     });
 
     test('no base held: the old fresh-base route is unchanged', () => {
@@ -520,12 +540,9 @@ describe('refined target priced from a held base', () => {
                     const row = claimedBy(sword(7), [wears('B'), wears('C')]);
                     const detail = explainUpgradeCost(row, gameData);
                     expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
-                    // Three loadouts wearing one leave nothing free
+                    // Loadouts are alternatives: three wearing a +6 still need just one copy between them
                     const all = claimedBy(sword(7), [wears('B'), wears('C'), wears('D')]);
-                    expect(explainUpgradeCost(all, gameData).buys[0].price).toBeCloseTo(
-                        best[5] + 1_000_000 + 5_000_000,
-                        0
-                    );
+                    expect(explainUpgradeCost(all, gameData).buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
                 });
 
                 test('a checked swap priced before the claims existed is priced again with them', async () => {
@@ -584,8 +601,9 @@ describe('refined target priced from a held base', () => {
                     expect(row.cost).toBeCloseTo(row.costDetail.net, 0);
                 });
 
-                test('the copy a loadout wears while equipped is not claimed twice', () => {
-                    // A wears the +6 right now (equipped); B wearing one too needs a second, which the bag lacks
+                test('the copy one loadout wears while equipped also serves another loadout', () => {
+                    // A wears the +6 right now (equipped); B wears one too, but loadouts are alternatives, so the
+                    // equipped copy serves both and the bag copy is a free spare
                     state.swordSell = 5_000_000;
                     state.items = [wornSword(6), stack(SWORD, 6)];
                     const row = claimedBy(sword(7), [
@@ -596,7 +614,7 @@ describe('refined target priced from a held base', () => {
                         fightsWhereBWears(6)[1],
                     ]);
                     const detail = explainUpgradeCost(row, gameData);
-                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
+                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
                 });
 
                 test('nothing is claimed outside an analysis, even while one is in flight', async () => {
