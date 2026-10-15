@@ -173,8 +173,8 @@ function tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide = null)
 /**
  * A shop line's costs, whichever shape the shop keeps them in.
  *
- * The dungeon and task shops carry a `costs` array; the labyrinth shop carries a
- * single `cost`. Same idea, two spellings.
+ * The dungeon shop carries a `costs` array; the task and labyrinth shops carry a
+ * single `cost` (task shop verified live 2026-10-15). Same idea, two spellings.
  *
  * @param {Object} line - A shop line
  * @returns {Array<{itemHrid: string, count: number}>}

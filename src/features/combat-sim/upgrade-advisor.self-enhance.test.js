@@ -154,7 +154,7 @@ describe('self-enhanced upgrade pricing', () => {
         // 10 tokens at an ask of 999M each would be absurd; the token is valued by its own shop's best line
         state.shops = {
             taskShopItemDetailMap: {
-                a: { itemHrid: CAPE, costs: [{ itemHrid: '/items/task_token', count: 100 }] },
+                a: { itemHrid: CAPE, cost: { itemHrid: '/items/task_token', count: 100 } },
             },
         };
         const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
