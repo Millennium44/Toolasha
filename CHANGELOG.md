@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: collapsible checked swaps
+
+- The Lab Sim's Checked swaps results collapse from their heading like Upgrades (remembered per tab), and a kept piece worth nothing no longer prints "resale of 0"; an unpriced one says no price.
+
 <!-- shipped in 3.71.1 -->
 
 ### House: upgrade window no longer freezes the tab
