@@ -247,6 +247,55 @@ describe('renderTriggerResultsHtml', () => {
     });
 });
 
+describe('best found when nothing is accepted', () => {
+    const best = (over = {}) => change({ key: 'k1', deltaScore: 0.3, se: 0.9, ...over });
+
+    test('a run with no accepted change shows the best candidate in the objective score points', () => {
+        const html = renderTriggerResultsHtml(
+            { scope: 'me', objective: 'xp', changes: [], unchanged: [], bestMeasured: best(), simCount: 9 },
+            gameData
+        );
+        expect(html).toContain('Best found: Fireball — Targeted enemy: Current HP ≥ 600 (was 1), Δscore +0.3 ± 0.9');
+        expect(html).toContain('within noise, not a recommendation');
+        expect(html).not.toContain('mwi-csim-trigger-apply');
+    });
+
+    test('a rejected all-together check keeps the best-found line', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                changes: [],
+                reliable: false,
+                bestMeasured: best({ deltaScore: -0 + 1.25 }),
+                unchanged: [],
+                simCount: 9,
+            },
+            gameData
+        );
+        expect(html).toContain('No reliable improvement found.');
+        expect(html).toContain('Best found: Fireball');
+        expect(html).toContain('Δscore +1.3');
+    });
+
+    test('says the current setting measured best when no candidate beat it', () => {
+        const html = renderTriggerResultsHtml(
+            { scope: 'me', changes: [], bestMeasured: best({ deltaScore: -0.4 }), unchanged: [], simCount: 9 },
+            gameData
+        );
+        expect(html).toContain('Current setting measured best.');
+        expect(html).not.toContain('Best found:');
+    });
+
+    test('accepted changes render as before, with no best-found line', () => {
+        const html = renderTriggerResultsHtml(
+            { scope: 'me', changes: [change()], bestMeasured: best(), unchanged: [], simCount: 9 },
+            gameData
+        );
+        expect(html).not.toContain('Best found');
+        expect(html).toContain('Δscore +7.3 ± 1.5');
+    });
+});
+
 describe('triggerChipOptionsHtml', () => {
     test('offers Optimize for: Balanced (selected), XP/h and Profit/h', () => {
         const html = triggerChipOptionsHtml();

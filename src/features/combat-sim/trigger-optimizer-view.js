@@ -88,6 +88,25 @@ const fmtRate = (v) => sign(v, formatKMB(Math.round(v)));
 const fmtDeaths = (v) => sign(v, v.toFixed(3));
 const fmtSe = (v) => (Number.isFinite(v) ? v.toFixed(1) : '?');
 
+/**
+ * The best candidate the search measured when no change was accepted, said plainly as not a
+ * recommendation: the candidate with its gain in the objective's own score points (the unit the
+ * accepted changes use), or that the current setting measured best. Display only.
+ * @param {Object|null|undefined} best - `result.bestMeasured`: a tunable plus `from`, `to`, `deltaScore`, `se`
+ * @param {Object} gameData - Game data payload (display names)
+ * @returns {string} HTML ('' when nothing was measured)
+ */
+export function triggerBestHtml(best, gameData) {
+    if (!best || !Number.isFinite(best.deltaScore)) return '';
+    const text =
+        best.deltaScore > 0
+            ? `Best found: ${esc(best.itemName)} — ${esc(describeRow(best, gameData, best.to))} ` +
+              `(was ${esc(best.from)}), Δscore ${esc(fmtScore(best.deltaScore))} ± ${esc(fmtSe(best.se))} ` +
+              '(within noise, not a recommendation).'
+            : 'Current setting measured best.';
+    return `<div style="color:#888; font-size:11px; margin:2px 0 0 8px;" data-csim-trigger-best="${esc(best.key)}">${text}</div>`;
+}
+
 function deltaCells(c, profitKnown = true) {
     // A profit figure with an unpriced item or a failed valuation in it is not shown as if it were one
     const profit = profitKnown ? fmtRate(c.deltaProfit) : '? (not valued)';
@@ -188,7 +207,8 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             '<div style="color:#ff9800; font-size:12px; font-weight:600;">No reliable improvement found.</div>' +
             '<div style="color:#aaa; font-size:12px; margin-top:2px;">Some values looked better in single runs, ' +
             'but the combination did not beat your current triggers on fresh seeds by a clear margin, so none ' +
-            'are recommended.</div>';
+            'are recommended.</div>' +
+            triggerBestHtml(result.bestMeasured, gameData);
     } else if (changes.length === 0 && allUnused) {
         body +=
             '<div style="color:#e0e0e0; font-size:12px;">None of these triggers came into play in this fight, ' +
@@ -196,6 +216,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
     } else if (changes.length === 0) {
         body += '<div style="color:#e0e0e0; font-size:12px;">No change beat the current thresholds by a clear margin.';
         body += ' Your triggers are already about as good as this search can tell.</div>';
+        body += triggerBestHtml(result.bestMeasured, gameData);
     }
     for (const { name, rows } of players.values()) {
         if (showNames)

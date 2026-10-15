@@ -142,6 +142,21 @@ describe('compactTriggerResult', () => {
         expect(compact.valuationFailed).toBe(false);
         expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(result()).length);
     });
+
+    test('keeps the best-found candidate, trimmed to the fields the line reads', () => {
+        const bestMeasured = {
+            ...result().changes[0],
+            key: 'k',
+            deltaScore: 0.4,
+            se: 0.5,
+            baseRows: [{}],
+            stage: 'confirm',
+        };
+        const compact = compactTriggerResult({ ...result(), changes: [], bestMeasured });
+        expect(compact.bestMeasured).toMatchObject({ key: 'k', deltaScore: 0.4, se: 0.5, from: 1, to: 600 });
+        expect(compact.bestMeasured.baseRows).toBeUndefined();
+        expect(compactTriggerResult(result()).bestMeasured).toBeUndefined();
+    });
 });
 
 describe('saving and loading', () => {
