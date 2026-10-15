@@ -82,7 +82,8 @@ import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
 import {
     MAX_SWAP_LEVEL,
     MAX_QUEUED_SWAPS,
-    buildCombatAbilityCandidates,
+    ABILITY_ORDER_HRID,
+    buildCombatAbilityCheck,
     buildCombatSwapCandidate,
     checkedSwapKey,
     clampLevelFor,
@@ -3326,6 +3327,7 @@ class LabSimUI {
                 <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${MAX_SWAP_LEVEL}" step="1"
                     placeholder="Lv" title="${kind === 'combat' ? 'Enhancement level to check (the ability level, for an ability)' : 'Enhancement level to check'}" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
+                ${kind === 'combat' ? `<button id="mwi-labsim-swap-order-combat" style="${buttonStyle}" title="Queue a check of every order of each loadout’s ordinary abilities (special slot fixed, always-ready abilities last). Costs nothing.">Ability order</button>` : ''}
                 <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
                 <button id="mwi-labsim-swap-clear-${kind}" style="${buttonStyle}" title="Hide and empty the checked swaps table. The queue stays.">Clear</button>
                 <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
@@ -3653,6 +3655,9 @@ class LabSimUI {
                 .querySelector(`#mwi-labsim-swap-add-${kind}`)
                 ?.addEventListener('click', () => this._onAddSwap(kind));
             this.panel
+                .querySelector(`#mwi-labsim-swap-order-${kind}`)
+                ?.addEventListener('click', () => this._queueSwap(kind, { hrid: ABILITY_ORDER_HRID, level: 0 }));
+            this.panel
                 .querySelector(`#mwi-labsim-swap-check-${kind}`)
                 ?.addEventListener('click', () =>
                     kind === 'combat' ? this._onCheckSwapsCombat() : this._onCheckSwapsSkilling()
@@ -3869,22 +3874,32 @@ class LabSimUI {
             );
             return;
         }
-        const swap = { hrid, level: clampLevelFor(hrid, levelBox?.value) };
+        if (this._queueSwap(kind, { hrid, level: clampLevelFor(hrid, levelBox?.value) })) itemBox.value = '';
+        this._fillSwapSuggestions(kind);
+    }
+
+    /**
+     * Put a swap on a tab's queue, unless it is a repeat or the queue is full.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @param {{hrid: string, level: number}} swap - What to queue
+     * @returns {boolean} Whether it was queued
+     * @private
+     */
+    _queueSwap(kind, swap) {
         const queue = this._checkedSwaps[kind];
         if (queue.some((queued) => checkedSwapKey(queued) === checkedSwapKey(swap))) {
             this._setSwapNote(kind, 'Already queued.', true);
-            return;
+            return false;
         }
         if (queue.length >= MAX_QUEUED_SWAPS) {
             this._setSwapNote(kind, `At most ${MAX_QUEUED_SWAPS} swaps at a time. Remove one first.`, true);
-            return;
+            return false;
         }
         queue.push(swap);
-        itemBox.value = '';
-        this._fillSwapSuggestions(kind);
         this._setSwapNote(kind, '');
         this._renderSwapChips(kind);
         void this._saveCheckedSwaps();
+        return true;
     }
 
     /**
@@ -4122,7 +4137,7 @@ class LabSimUI {
             for (const swap of queue) {
                 if (isAbilitySwap(swap)) {
                     // One candidate per way onto the bar; the rows are folded back into one afterwards
-                    const built = buildCombatAbilityCandidates(swap, fightDTOs, gameData, isSelf, {
+                    const built = buildCombatAbilityCheck(swap, fightDTOs, gameData, isSelf, {
                         allLoadouts: this._swapOptions.all.combat,
                     });
                     if (built?.candidates.length) candidates.push(...built.candidates);
@@ -6065,7 +6080,7 @@ class LabSimUI {
                         : `${pct(base.winRate)} → ${pct(fight.winRate)}
                         <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
                         <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +
-                          `${fight.replaced ? `, over ${fight.replaced}` : ''}</span>`;
+                          `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
                 fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                     <span style="color:#aaa;">${fight.monsterName} <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${outcome}</span>

@@ -54,6 +54,9 @@ const ALL_SKILLS = [
 /** Abilities are checked by their hrid, which starts with this */
 const ABILITY_PREFIX = '/abilities/';
 
+/** The queued "Ability order" check: not an ability, but kept in the same queue (it starts with the ability prefix) */
+export const ABILITY_ORDER_HRID = '/abilities/__order__';
+
 /** The highest ability level a swap may ask for (the game's cap) */
 export const MAX_ABILITY_SWAP_LEVEL = 200;
 
@@ -84,6 +87,7 @@ export function clampAbilityLevel(value) {
  * @returns {number}
  */
 export function clampLevelFor(hrid, value) {
+    if (hrid === ABILITY_ORDER_HRID) return 0;
     return String(hrid || '').startsWith(ABILITY_PREFIX) ? clampAbilityLevel(value) : clampSwapLevel(value);
 }
 
@@ -168,6 +172,7 @@ export function sanitizeSwapOptions(raw) {
  * @returns {string}
  */
 export function swapItemName(hrid, gameData) {
+    if (hrid === ABILITY_ORDER_HRID) return 'Ability order';
     return (
         gameData?.itemDetailMap?.[hrid]?.name ||
         gameData?.abilityDetailMap?.[hrid]?.name ||
@@ -185,6 +190,7 @@ export function swapItemName(hrid, gameData) {
  * @returns {string}
  */
 export function describeCheckedSwap(swap, gameData) {
+    if (swap.hrid === ABILITY_ORDER_HRID) return 'Ability order';
     // An ability has a level, not an enhancement: "Critical Aura 7"
     if (isAbilitySwap(swap)) return `${swapItemName(swap.hrid, gameData)} ${swap.level}`;
     return `${swapItemName(swap.hrid, gameData)} +${swap.level}`;
@@ -315,6 +321,7 @@ export function resolveAbilityHrid(gameData, text) {
  * @returns {string|null} Item hrid or ability hrid
  */
 export function resolveSwapHrid(gameData, text) {
+    if (/^(ability |abilities )?order$/i.test(String(text || '').trim())) return ABILITY_ORDER_HRID;
     return resolveEquipmentHrid(gameData, text) || resolveAbilityHrid(gameData, text);
 }
 
@@ -870,7 +877,12 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
                     bestRow = row;
                 }
             }
-            if (best) return { ...best, replaced: bestRow.candidate.optionLabel, chosenOption: bestRow.candidate };
+            if (best) {
+                const option = bestRow.candidate;
+                return option.fightNote
+                    ? { ...best, note: option.fightNote, chosenOption: option }
+                    : { ...best, replaced: option.optionLabel, chosenOption: option };
+            }
             const dto = analysis.context?.fights?.[i]?.dto;
             const owned = (dto?.abilities || []).find((ability) => ability?.hrid === first.upgradeHrid);
             const skip =
@@ -914,6 +926,9 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
         delete candidate.currentHrid;
         delete candidate.fillsFreeSlot;
         delete candidate.levelUp;
+        delete candidate.order;
+        delete candidate.partLabel;
+        delete candidate.fightNote;
         for (const fight of fights) delete fight.chosenOption;
 
         const attemptsSaved = -attemptsDelta;
@@ -922,7 +937,9 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
             fights,
             costType: 'gold',
             tokenCost: null,
-            costDetail: explainLabCandidateCost({ ...first }, gameData, first.isSelf !== false),
+            costDetail: first.abilityOrder
+                ? null
+                : explainLabCandidateCost({ ...first }, gameData, first.isSelf !== false),
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baseline.runClearChance,
@@ -947,4 +964,97 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
         );
     });
     return { ...analysis, results };
+}
+
+/**
+ * Every order a set of ordinary abilities may be cast in: the ones with a
+ * cooldown in any order, then the always-ready ones (no cooldown) in any order,
+ * since the game casts the first ready ability in slot order and anything after
+ * an always-ready one never gets to cast.
+ * @param {string[]} hrids - The ordinary abilities, current order
+ * @param {Set<string>|string[]} zeroCooldown - Ability hrids with no cooldown
+ * @returns {string[][]} Every consistent order, including the current one if it is consistent
+ */
+export function consistentAbilityOrders(hrids, zeroCooldown) {
+    const zero = new Set(zeroCooldown);
+    const permutations = (items) =>
+        items.length <= 1
+            ? [items]
+            : items.flatMap((item, i) =>
+                  permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest])
+              );
+    const cooling = permutations(hrids.filter((hrid) => !zero.has(hrid)));
+    const ready = permutations(hrids.filter((hrid) => zero.has(hrid)));
+    return cooling.flatMap((front) => ready.map((back) => [...front, ...back]));
+}
+
+/**
+ * The "Ability order" check as combat candidates: for each distinct set of
+ * ordinary abilities in the reached loadouts, every consistent order other than
+ * the one a loadout has now (one candidate per set and order; a candidate reaches
+ * the loadouts with that set in another order). The special slot stays put. Free
+ * of cost. `mergeCheckedAbilityRows` keeps the best order per loadout.
+ *
+ * @param {Array<Object>} dtos - The loadout of every fight in the run
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - Whether the loadouts are the live character's
+ * @returns {{candidates: Array<Object>, reach: number, alreadyEquipped: number, key: string}}
+ */
+export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true) {
+    const loadouts = (dtos || []).filter(Boolean);
+    const zero = zeroCooldownAbilities(gameData);
+    const nameOf = (hrid) => swapItemName(hrid, gameData);
+    const byId = new Map();
+    for (const dto of loadouts) {
+        const current = (dto.abilities || [])
+            .slice(1)
+            .filter(Boolean)
+            .map((ability) => ability.hrid);
+        if (current.length < 2) continue;
+        for (const order of consistentAbilityOrders(current, zero)) {
+            if (order.join('|') === current.join('|')) continue;
+            const id = `${[...current].sort().join('|')}=>${order.join('>')}`;
+            if (byId.has(id)) continue;
+            const text = `Order: ${order.map(nameOf).join(' → ')}`;
+            byId.set(id, {
+                type: 'ability_order',
+                slot: 'ability_1',
+                checkedAbility: true,
+                abilityOrder: true,
+                checkedAbilityKey: 'ability_order',
+                poolKey: `checked_ability_order:${id}`,
+                order,
+                upgradeHrid: ABILITY_ORDER_HRID,
+                upgradeLevel: 0,
+                description: 'Ability order',
+                partLabel: text,
+                fightNote: text,
+                cost: 0,
+                noPurchase: true,
+                isSelf,
+                caveat:
+                    'Checked by hand. Every order of the ordinary abilities was tried (the special slot fixed, ' +
+                    'always-ready abilities last); each loadout shows the best. Costs nothing: set it in the game.',
+            });
+        }
+    }
+    const candidates = [...byId.values()];
+    const reach = loadouts.filter((dto) =>
+        candidates.some((option) => checkedAbilityAppliesToDTO(option, dto, gameData))
+    ).length;
+    return { candidates, reach, alreadyEquipped: 0, key: 'ability_order' };
+}
+
+/**
+ * Build whatever a queued ability-kind swap means: an ability, or the order check.
+ * @param {{hrid: string, level: number}} swap - The queued entry
+ * @param {Array<Object>} dtos - The loadout of every fight in the run
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - Whether the loadouts are the live character's
+ * @param {Object} [options] - `{ allLoadouts }`
+ * @returns {{candidates: Array<Object>, reach: number, alreadyEquipped: number, key: string}|null}
+ */
+export function buildCombatAbilityCheck(swap, dtos, gameData, isSelf = true, options = {}) {
+    if (swap.hrid === ABILITY_ORDER_HRID) return buildCombatAbilityOrderCandidates(dtos, gameData, isSelf);
+    return buildCombatAbilityCandidates(swap, dtos, gameData, isSelf, options);
 }
