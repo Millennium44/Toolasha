@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk Sell: bids below the tradable range
+
+- Bulk Sell no longer stalls on "sell button not found" when every bid sits below the tradable range: those bids can't be sold into, so it lists the stack at the ask instead (and falls back to a listing if the Sell button is gone).
+
 ### Leftovers round (2026-10-15)
 
 - Lab Sim combat Check a swap counts a piece as owned, or still worn, when any of your loadouts has it, not only the loadouts of the fights you picked.

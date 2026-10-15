@@ -1938,7 +1938,13 @@ class BulkSellAssistant {
      */
     _decideAndOpen(book) {
         const asks = book?.asks || [];
-        const bids = book?.bids || [];
+        // A bid below the tradable range can't be insta-sold into — the game puts it under "Outside
+        // current tradable range" and its Sell button holds an hourglass icon rather than text — so only
+        // bids at or above the range minimum count toward insta-selling. With none left the item lists.
+        const bids = (book?.bids || []).filter((row) => {
+            const clamped = clampToBand(row.price, this.current.itemHrid, this.current.enhancementLevel);
+            return !(clamped > row.price);
+        });
         if (!asks.length && !bids.length) {
             this._skip('no orders');
             return;
@@ -2054,7 +2060,28 @@ class BulkSellAssistant {
             this.state = 'awaiting_confirm';
             this._render();
             this._watchClose();
-        }).catch(() => this._skip('sell button not found'));
+        }).catch(() => {
+            if (!insta) {
+                this._skip('sell button not found');
+                return;
+            }
+            // The insta Sell button wasn't there (the bid moved, or went out of range): list instead
+            this.decision = {
+                insta: false,
+                price: askPrice || bidPrice || 0,
+                avgPrice: null,
+                reason: 'no sellable bid',
+            };
+            marketplaceShortcuts
+                .clickListingButton('+ New Sell Listing', 'Button_sell')
+                .then(() => {
+                    if (this.state !== 'preparing') return;
+                    this.state = 'awaiting_confirm';
+                    this._render();
+                    this._watchClose();
+                })
+                .catch(() => this._skip('sell button not found'));
+        });
     }
 
     /**

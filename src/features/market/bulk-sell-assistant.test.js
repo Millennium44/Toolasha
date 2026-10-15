@@ -622,6 +622,48 @@ describe('the insta-vs-listing decision', () => {
             expect(bulkSell.decision.price).toBe(55);
         });
 
+        test('bids all below the tradable minimum are not insta-sold into: it lists at the banded ask', () => {
+            // The live case: range 74–93, every bid 73 and under sits under "Outside current tradable
+            // range" with an hourglass Sell button the assistant can never press
+            band.value = { min: 74, max: 93 };
+            // Supply outweighs demand, so without the range check the supply rule would insta-sell
+            settings['market_bulkSellSupplyRatio'] = 1;
+            bulkSell._decideAndOpen({
+                asks: [
+                    {
+                        price: 81,
+                        orderQuantity: 5_000_000,
+                        filledQuantity: 0,
+                        createdTimestamp: new Date().toISOString(),
+                    },
+                ],
+                bids: [
+                    { price: 73, orderQuantity: 600_000, filledQuantity: 0 },
+                    { price: 72, orderQuantity: 1_593_000, filledQuantity: 0 },
+                ],
+            });
+            expect(bulkSell.decision.insta).toBe(false);
+            expect(bulkSell.decision.price).toBe(81);
+            expect(shortcuts.insta).toHaveLength(0);
+            expect(shortcuts.listing).toHaveLength(1);
+        });
+
+        test('only the in-range bids are walked for an insta sell', () => {
+            band.value = { min: 74, max: 93 };
+            settings['market_bulkSellMaxSpreadPct'] = 100;
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 20 };
+            bulkSell._decideAndOpen({
+                asks: [{ price: 81, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+                bids: [
+                    { price: 75, orderQuantity: 10, filledQuantity: 0 },
+                    { price: 73, orderQuantity: 100, filledQuantity: 0 },
+                ],
+            });
+            expect(bulkSell.decision.insta).toBe(true);
+            // Walks to 75 and stops: the 73 bid can't be reached
+            expect(bulkSell.decision.price).toBe(75);
+        });
+
         test('the insta price stays the real resting bid, wherever it sits', () => {
             // A bid above the band still pays what it says — insta fills
             // against the actual order, not against a theory of it
