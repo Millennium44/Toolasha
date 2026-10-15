@@ -81,6 +81,7 @@ import {
 import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
 import {
     MAX_SWAP_LEVEL,
+    MAX_ABILITY_SWAP_LEVEL,
     MAX_QUEUED_SWAPS,
     ABILITY_ORDER_HRID,
     buildCombatAbilityCheck,
@@ -3324,7 +3325,7 @@ class LabSimUI {
                     placeholder="${kind === 'combat' ? 'Item or ability, e.g. Sinister Cape' : 'Item name, e.g. Sinister Cape'}" style="${inputStyle} width:210px; max-width:100%;">
                 <datalist id="mwi-labsim-swap-items-${kind}"></datalist>
                 <span style="color:#888; font-size:12px;">+</span>
-                <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${MAX_SWAP_LEVEL}" step="1"
+                <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${kind === 'combat' ? MAX_ABILITY_SWAP_LEVEL : MAX_SWAP_LEVEL}" step="1"
                     placeholder="Lv" title="${kind === 'combat' ? 'Enhancement level to check (the ability level, for an ability)' : 'Enhancement level to check'}" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
                 ${kind === 'combat' ? `<button id="mwi-labsim-swap-order-combat" style="${buttonStyle}" title="Queue a check of every order of each loadout’s ordinary abilities (special slot fixed, always-ready abilities last). Costs nothing.">Ability order</button>` : ''}
