@@ -4078,6 +4078,26 @@ describe('upgrade row handoff', () => {
         expect(upgradeRowActionsHtml(candidate({ type: 'combat_level' }))).toBe('');
     });
 
+    test('an ability-order row is free and draws no Save, Watch or Market buttons', () => {
+        const row = {
+            cost: 0,
+            costDetail: { buys: [], credits: [], gross: 0, credit: 0, net: 0, unpriced: [], source: null },
+            candidate: {
+                type: 'ability_order',
+                slot: 'ability_1',
+                checkedAbility: true,
+                abilityOrder: true,
+                noPurchase: true,
+                upgradeHrid: '/abilities/__order__',
+                upgradeLevel: 0,
+                order: ['/abilities/a', '/abilities/b'],
+                description: 'Order: A → B',
+            },
+        };
+        expect(upgradeRowActionsHtml(row)).toBe('');
+        expect(upgradeCostCell(row).text).toBe('free');
+    });
+
     test('the buttons add the item to savings and to the watchlist', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(
@@ -10013,6 +10033,26 @@ describe('the Triggers option', () => {
             .filter((box) => box.checked)
             .map((box) => box.getAttribute('data-upgrade-mode'));
         expect(checked).toEqual(['triggers']);
+    });
+
+    test('a remembered set saved before Ability order existed still loads, with it unchecked', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('combatSimUpgradeModes', ['equipment', 'ability_swap']);
+        ui.buildPanel();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const checked = [...ui.panel.querySelectorAll('[data-upgrade-mode]')]
+            .filter((box) => box.checked)
+            .map((box) => box.getAttribute('data-upgrade-mode'));
+        expect(checked).toEqual(['equipment', 'ability_swap']);
+        expect(ui.panel.querySelector('[data-upgrade-mode="ability_order"]')).not.toBeNull();
+    });
+
+    test('a remembered set naming Ability order restores it as checked', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('combatSimUpgradeModes', ['equipment', 'ability_order']);
+        ui.buildPanel();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(ui.panel.querySelector('[data-upgrade-mode="ability_order"]').checked).toBe(true);
     });
 
     test('a pulled set naming no offered mode puts the defaults back over the pre-pull picks', async () => {

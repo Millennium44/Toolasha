@@ -19,6 +19,7 @@ import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
+import { ABILITY_ORDER_HRID, consistentAbilityOrders, zeroCooldownAbilities } from './ability-order.js';
 import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
@@ -1498,6 +1499,10 @@ export function generateCandidates(
         );
     }
 
+    if (mode === 'ability_order') {
+        candidates.push(...generateAbilityOrderCandidates(playerDTO, gameData, options.isSelf !== false));
+    }
+
     if (mode === 'drink') {
         candidates.push(...generateDrinkCandidates(playerDTO, gameData));
     }
@@ -1673,6 +1678,57 @@ function houseRoomPredicate(options = {}) {
 }
 
 /**
+ * Every other order the ordinary abilities may be cast in, as free candidates.
+ *
+ * The first slot is the special slot and stays where it is; abilities with no
+ * cooldown stay last (the game casts the first ready ability in slot order, so
+ * anything behind an always-ready one never casts); every other arrangement of
+ * the rest is tried. The loadout's current order is the baseline, not a row.
+ * Each ability keeps its level and triggers when it moves.
+ *
+ * @param {Object} playerDTO - Player DTO
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - Whether the loadout is the live character's
+ * @returns {Array<Object>} Candidates of type 'ability_order', none when fewer than two ordinary abilities
+ */
+export function generateAbilityOrderCandidates(playerDTO, gameData, isSelf = true) {
+    const current = (playerDTO?.abilities || [])
+        .slice(1)
+        .filter(Boolean)
+        .map((ability) => ability.hrid);
+    if (current.length < 2) return [];
+    const nameOf = (hrid) => gameData?.abilityDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
+    const caveat =
+        'Every order of the ordinary abilities was tried (the special slot fixed, always-ready abilities last). ' +
+        'Costs nothing: set it in the game.';
+    return consistentAbilityOrders(current, zeroCooldownAbilities(gameData))
+        .filter((order) => order.join('|') !== current.join('|'))
+        .map((order) => {
+            const text = `Order: ${order.map(nameOf).join(' → ')}`;
+            return {
+                type: 'ability_order',
+                slot: 'ability_1',
+                checkedAbility: true,
+                abilityOrder: true,
+                checkedAbilityKey: 'ability_order',
+                poolKey: `checked_ability_order:${[...current].sort().join('|')}=>${order.join('>')}`,
+                order,
+                currentHrid: null,
+                currentLevel: 0,
+                upgradeHrid: ABILITY_ORDER_HRID,
+                upgradeLevel: 0,
+                description: text,
+                partLabel: text,
+                fightNote: text,
+                cost: 0,
+                noPurchase: true,
+                isSelf,
+                caveat,
+            };
+        });
+}
+
+/**
  * Canonical key for what a candidate actually equips, used to deduplicate.
  *
  * Keyed on the full slot assignment rather than one representative slot: a
@@ -1684,6 +1740,7 @@ function houseRoomPredicate(options = {}) {
  * @returns {string} Key describing the resulting equipment change
  */
 export function candidateAssignmentKey(candidate) {
+    if (candidate.abilityOrder) return `ability_order:${candidate.order.join('>')}`;
     if (candidate.addedSlots) {
         const added = Object.entries(candidate.addedSlots)
             .map(([slot, item]) => `${slot}=${item.hrid}@${item.enhancementLevel || 0}`)
@@ -2739,6 +2796,9 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
  * @returns {number|null} Net cost
  */
 function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
+    // Re-ordering the bar buys nothing
+    if (candidate.abilityOrder) return 0;
+
     // Combat skill levels cost XP and time, not gold
     if (candidate.type === 'combat_level') {
         return null;
@@ -3921,6 +3981,9 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
  * @returns {Object} The breakdown
  */
 function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
+    if (candidate.abilityOrder) {
+        return { buys: [], credits: [], gross: 0, credit: 0, net: 0, unpriced: [], creditApplied: false, source: null };
+    }
     if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData, isSelf);
     if (candidate.type === 'guild_shrine') return explainGuildShrineCost(candidate);
     if (candidate.type === 'drink') {
@@ -4310,7 +4373,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         // Clone playerDTOs and apply candidate upgrade
         const modifiedDTOs = JSON.parse(JSON.stringify(playerDTOs));
 
-        if (candidate.slot.startsWith('ability_')) {
+        if (candidate.checkedAbility) {
+            // A re-ordering: the same entries, levels and triggers intact, in the new order
+            modifiedDTOs[playerIndex] = applyCheckedAbilityToDTO(modifiedDTOs[playerIndex], candidate);
+        } else if (candidate.slot.startsWith('ability_')) {
             // Ability upgrade/swap
             const slotIdx = parseInt(candidate.slot.split('_')[1]);
             const existingAbility = modifiedDTOs[playerIndex].abilities[slotIdx];
@@ -5983,6 +6049,9 @@ export function conflictKeys(candidate) {
     // Two coffees of one buff family cannot both be up, whichever slots they
     // would sit in — the game's own conflict rule, keyed the same way
     if (candidate.type === 'drink') return [`drink:${candidate.buffFamily}`];
+    // A re-ordering and anything that changes which abilities are on the bar (a swap, a level)
+    // cannot both be taken: the order names the exact set it applies to
+    if (candidate.abilityOrder) return ['ability_order', ...candidate.order.map((hrid) => `ability:${hrid}`)];
     if (candidate.slot?.startsWith('ability_')) {
         const keys = [`ability:${candidate.upgradeHrid}`];
         // `replacesHrid` is absent on a free-slot fill, which displaces nothing

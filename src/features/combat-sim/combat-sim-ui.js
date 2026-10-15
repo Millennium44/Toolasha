@@ -2783,6 +2783,15 @@ const UPGRADE_MODES = [
             'are worth trying by hand, not a verdict.',
     },
     {
+        key: 'ability_order',
+        label: 'Ability order',
+        defaultOn: false,
+        title:
+            'Re-ordering your equipped abilities. Every other order of the ordinary abilities is simulated: the ' +
+            'first (special) slot stays put, abilities with no cooldown stay last, and each ability keeps its ' +
+            'level and triggers. Costs nothing, so each row is free: set the order in the game.',
+    },
+    {
         key: 'combat_level',
         label: 'Combat Lv',
         defaultOn: false,
