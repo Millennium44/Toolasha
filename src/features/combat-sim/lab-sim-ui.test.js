@@ -4667,6 +4667,41 @@ describe('Check a swap', () => {
         game.monsters = [];
     });
 
+    test('the live character Configure fight still owns what its saved loadouts wear', async () => {
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = {};
+        game.loadoutNames = { 2: 'Spare Lab' };
+        game.loadoutEquipment = { 2: { [BACK]: { hrid: CAPE, enhancementLevel: 7 } } };
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [] }];
+        game.editedDTOs = {
+            p1: { hrid: 'p1', equipment: { [BACK]: { hrid: CAPE, enhancementLevel: 5 } }, abilities: [] },
+        };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        ui.panel.querySelector('#mwi-labsim-level').value = '170';
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis');
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+
+        await ui._onCheckSwapsCombat();
+
+        const params = allSpy.mock.calls[0][0];
+        expect(params.fights).toHaveLength(1);
+        expect((params.claimLoadouts || []).some((entry) => entry.loadoutId === 2)).toBe(true);
+        // The +7 is worn by a saved loadout, so the swap buys nothing
+        expect(params.extraCandidates[0]).toMatchObject({ noPurchase: true, cost: 0 });
+        allSpy.mockRestore();
+        game.editedDTOs = null;
+        game.players = [];
+        game.monsters = [];
+        game.loadoutNames = {};
+        game.loadoutEquipment = {};
+    });
+
     test('a Configure fight that is a party member is priced without the live character spare copies', async () => {
         game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
         game.skipLevels = {};

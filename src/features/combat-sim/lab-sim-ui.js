@@ -4087,6 +4087,12 @@ class LabSimUI {
                         loadoutName: 'Configure fight',
                     },
                 ];
+                // The live character's own fight still owns what its saved loadouts hold; a party
+                // member's DTO says nothing about the character's stock, so it keeps just itself
+                if (isSelf) {
+                    claimLoadouts = this._collectOwnedLoadouts(fights);
+                    ownershipDtos = claimLoadouts.map((entry) => entry.dto);
+                }
             } else {
                 const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
                 const chosen = new Set(plan.monsterHrids);
