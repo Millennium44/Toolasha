@@ -123,4 +123,40 @@ describe('guild member skills and a sync pull', () => {
         expect(guildMemberSkills.captures.ada.skills['/skills/alchemy']).toBe(50);
         expect(told).not.toHaveBeenCalled();
     });
+
+    test('a rename save that lands before the pull is adopted keeps the members the pull brought', async () => {
+        guildMemberSkills._onProfile({
+            profile: {
+                sharableCharacter: { id: 'Ada-id', name: 'Adalina' },
+                characterSkills: [{ skillHrid: '/skills/alchemy', level: 55, characterID: 'Ada-id' }],
+            },
+        });
+        await vi.waitFor(() => expect(stored().adalina).toBeTruthy());
+        // The pull brings a new member; memory has not adopted it yet when the rename (Adalina -> Ada) is saved
+        db.stores.get('guildHistory').set(KEY, { ...stored(), bo: capture('Bo', 40, Date.now() + 1) });
+        guildMemberSkills._onProfile({
+            profile: {
+                sharableCharacter: { id: 'Ada-id', name: 'Ada' },
+                characterSkills: [{ skillHrid: '/skills/alchemy', level: 60, characterID: 'Ada-id' }],
+            },
+        });
+        await vi.waitFor(() => expect(stored().ada).toBeTruthy());
+
+        expect(stored().bo).toBeTruthy();
+        expect(stored().adalina).toBeUndefined();
+    });
+
+    test('a redo mark survives a save and a pull, without moving the capture date', async () => {
+        guildMemberSkills.redoMember('Ada', 5000);
+        expect(guildMemberSkills.captures.ada.at).toBe(1000);
+        await guildMemberSkills.record.save();
+
+        // Storage still has the unmarked capture from before: the fold must not drop the mark
+        db.stores.get('guildHistory').set(KEY, { ada: capture('Ada', 50, 1000) });
+        await guildMemberSkills.record.load();
+
+        expect(guildMemberSkills.captures.ada.redoRequestedAt).toBe(5000);
+        expect(guildMemberSkills.captures.ada.at).toBe(1000);
+        expect(guildMemberSkills.progress(6000).logged).toBe(0);
+    });
 });
