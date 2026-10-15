@@ -5618,6 +5618,24 @@ describe('the all-fights Combat levels table', () => {
         }
     });
 
+    test('the generated results put Export CSV in the Upgrades header row, and it does not collapse it', () => {
+        const results = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+        const inner = document.createElement('div');
+        results.appendChild(inner);
+        ui._renderAllFightsResults(analysis([gear, defense()]), inner);
+
+        const header = ui.panel.querySelector('#mwi-labsim-upgrades-header-combat');
+        const button = header.querySelector('[data-csv-export]');
+        expect(button?.textContent).toBe('Export CSV');
+        expect(results.querySelector('[data-csv-export]')).toBeNull();
+        const toggle = () => ui.panel.querySelector('#mwi-labsim-upgrades-toggle-combat').textContent;
+        const before = toggle();
+        button.click();
+        expect(toggle()).toBe(before);
+        expect(csv.saved).toHaveLength(1);
+        inner.remove();
+    });
+
     test('the CSV keeps the level rows, typed, with their hours', () => {
         ui._renderAllFightsResults(analysis([gear, defense()]), container);
 

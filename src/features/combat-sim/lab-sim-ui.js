@@ -5680,6 +5680,21 @@ class LabSimUI {
             }
         });
 
+        // The generated results' button rides in their "Upgrades" header row, beside the title,
+        // rather than taking a row of its own above the table
+        const resultsRoot = container.closest?.('#mwi-labsim-upgrade-results, #mwi-labsim-skilling-results');
+        const kind = resultsRoot?.id === 'mwi-labsim-skilling-results' ? 'skilling' : 'combat';
+        const header = resultsRoot ? this.panel?.querySelector(`#mwi-labsim-upgrades-header-${kind}`) : null;
+        if (header) {
+            header.querySelector('[data-csv-export]')?.remove();
+            button.dataset.csvExport = stem;
+            button.style.marginLeft = 'auto';
+            // A click on the button must not also collapse the section its header toggles
+            button.addEventListener('click', (event) => event.stopPropagation());
+            header.appendChild(button);
+            return;
+        }
+
         bar.appendChild(button);
         container.parentNode?.insertBefore(bar, container);
     }

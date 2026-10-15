@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: Export CSV beside Upgrades
+
+- The Upgrade and Skilling tabs' Export CSV button sits in the Upgrades header row instead of a row of its own above the table.
+
 ### Lab Sim: trigger tuning is abilities only
 
 - The labyrinth allows no food or drink, so Tune triggers no longer tunes or searches their triggers (it only measured noise); the include choice is gone and the cost estimate counts ability slots only.
