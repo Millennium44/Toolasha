@@ -17,6 +17,14 @@ import { runLabyrinthSimulation } from './combat-sim-runner.js';
 import Monster from './engine/monster.js';
 import { getGameData, setGameData } from './engine/game-data.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
+import {
+    MAX_CONDITION_SIMS,
+    applyTriggerRows,
+    buildConditionCandidates,
+    conditionSlots,
+    estimateConditionSimsPerFight,
+    runConditionSearch,
+} from './lab-condition-search.js';
 import { STREAM_WIDTH, concurrency, createLimiter, triggerUseFromResult } from './trigger-optimizer.js';
 import {
     PRECISIONS,
@@ -126,27 +134,72 @@ export function groupTunables(group, gameData, include = 'both') {
 }
 
 /**
+ * The single conditions the condition search would screen per slot of a group, for the estimate. The
+ * pools are not known before the run; any positive figure yields the same number of rows.
+ * @param {Object} group - From `groupFightsByLoadout`
+ * @param {Object} gameData - Game data payload
+ * @param {string} include - 'both', 'abilities' or 'consumables'
+ * @returns {Array<number>} One count per searchable slot
+ */
+export function groupConditionCounts(group, gameData, include = 'both') {
+    const dto = group?.fights?.[0]?.dto;
+    if (!dto) return [];
+    const monsterHrids = [...new Set(group.fights.map((f) => f.monsterHrid))];
+    return conditionSlots(dto, gameData, include).map(
+        (slot) =>
+            buildConditionCandidates({
+                slot,
+                dto,
+                gameData,
+                monsterHrids,
+                pools: { hp: 1000, mp: 1000 },
+                enemyHp: 1000,
+            }).length
+    );
+}
+
+/**
  * What a run will cost, before it starts: the search's own sim estimate per group, times the
- * group's fights, and how many attempts each of those fight sims plays.
+ * group's fights, and how many attempts each of those fight sims plays. With `searchConditions`, the
+ * condition search's ceiling is counted apart (`conditionSims`), capped at `MAX_CONDITION_SIMS`.
  * @param {Object} params
  * @param {Array<Object>} params.groups - From `groupFightsByLoadout`, the ones to tune
  * @param {Object} params.gameData - Game data payload
  * @param {string} [params.include] - 'both', 'abilities' or 'consumables'
  * @param {string} [params.precision] - A PRECISIONS key
- * @returns {{groups: Array<{key: string, tunables: number, fights: number, sims: number}>, sims: number,
- *   trials: {first: number, confirm: number}}}
+ * @param {boolean} [params.searchConditions] - Whether the condition search runs too
+ * @returns {{groups: Array<{key: string, tunables: number, fights: number, sims: number, conditionSlots: number,
+ *   conditionSims: number}>, sims: number, conditionSims: number, trials: {first: number, confirm: number}}}
  */
-export function estimateLabTriggerRun({ groups, gameData, include = 'both', precision = DEFAULT_PRECISION }) {
+export function estimateLabTriggerRun({
+    groups,
+    gameData,
+    include = 'both',
+    precision = DEFAULT_PRECISION,
+    searchConditions = false,
+}) {
     const p = PRECISIONS[precision] || PRECISIONS[DEFAULT_PRECISION];
     const hoursPerSeed = p.pointHours / p.seeds;
     const perGroup = (groups || []).map((group) => {
         const tunables = groupTunables(group, gameData, include).length;
         const fights = group.fights.length;
-        return { key: group.key, tunables, fights, sims: tunables ? estimateTriggerSims(tunables, p.key) * fights : 0 };
+        const counts = searchConditions ? groupConditionCounts(group, gameData, include) : [];
+        return {
+            key: group.key,
+            tunables,
+            fights,
+            sims: tunables ? estimateTriggerSims(tunables, p.key) * fights : 0,
+            conditionSlots: counts.length,
+            conditionSims: estimateConditionSimsPerFight(counts, p) * fights,
+        };
     });
     return {
         groups: perGroup,
         sims: perGroup.reduce((sum, g) => sum + g.sims, 0),
+        conditionSims: Math.min(
+            MAX_CONDITION_SIMS,
+            perGroup.reduce((sum, g) => sum + g.conditionSims, 0)
+        ),
         trials: { first: labTrials(hoursPerSeed), confirm: labTrials(hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH) },
     };
 }
@@ -261,6 +314,10 @@ function pooledWinRates(samples, count) {
 
 /**
  * Tune the triggers of each loadout group against its own labyrinth fights.
+ *
+ * With `searchConditions`, each group then runs the condition search (`lab-condition-search.js`) on top
+ * of whatever thresholds the tuner accepted, so its all-together check compares one coherent trigger set
+ * against the rows the search started from.
  * @param {Object} params
  * @param {Object} params.gameData - Game data payload
  * @param {Array<Object>} params.groups - From `groupFightsByLoadout`, the ones to tune
@@ -270,12 +327,16 @@ function pooledWinRates(samples, count) {
  * @param {string} [params.precision] - A PRECISIONS key
  * @param {string} [params.include] - 'both', 'abilities' or 'consumables'
  * @param {number} [params.minGain] - Smallest gain worth offering, in attempts
+ * @param {boolean} [params.searchConditions] - Also search new trigger conditions (slow)
+ * @param {number} [params.maxConditionSims] - Ceiling on the condition search's fight sims for the run
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
- * @returns {Promise<Object>} `{ groups, simCount, stopped, precision, include, minGain }`; each group
- *   `{ key, name, fights, result, baselineAttempts, tunedAttempts }` with `result` the search's
- *   (null when stopped before its baseline), and each fight `{ monsterHrid, monsterName, roomLevel,
- *   winRate, tunedWinRate }` (`tunedWinRate` only where an all-together check ran)
+ * @returns {Promise<Object>} `{ groups, simCount, stopped, precision, include, minGain, searchConditions }`; each
+ *   group `{ key, name, fights, result, baselineAttempts, tunedAttempts, conditions? }` with `result` the
+ *   search's (null when stopped before its baseline), each fight `{ monsterHrid, monsterName, roomLevel,
+ *   winRate, tunedWinRate }` (`tunedWinRate` only where an all-together check ran), and `conditions` the
+ *   condition search's (`runConditionSearch` less its samples) plus `fights` (per-fight win rates of its
+ *   all-together check) and `afterThresholds` (it started from the tuner's accepted values)
  */
 export async function runLabTriggerOptimization(params, onProgress, options = {}) {
     const {
@@ -287,17 +348,21 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         precision: precisionKey = DEFAULT_PRECISION,
         include = 'both',
         minGain = LAB_MIN_GAIN,
+        searchConditions = false,
+        maxConditionSims = MAX_CONDITION_SIMS,
     } = params;
     const { abortSignal } = options;
     const precision = PRECISIONS[precisionKey] || PRECISIONS[DEFAULT_PRECISION];
+    const hoursPerSeed = precision.pointHours / precision.seeds;
     const zoneHrid =
         Object.keys(gameData?.actionDetailMap || {}).find((k) => k.includes('/actions/combat/')) ||
         '/actions/combat/fly';
-    const total = Math.max(1, estimateLabTriggerRun({ groups, gameData, include, precision: precision.key }).sims);
+    const estimate = estimateLabTriggerRun({ groups, gameData, include, precision: precision.key, searchConditions });
+    const total = Math.max(1, estimate.sims + estimate.conditionSims);
     const limit = createLimiter(concurrency());
     const hpOf = labMonsterMaxHpReader(gameData);
-    // One object rather than two `let`s: every group's measure closes over it
-    const tally = { sims: 0, failed: false };
+    // One object rather than separate `let`s: every group's measure closes over it
+    const tally = { sims: 0, conditionSims: 0, failed: false };
     const stopped = () => tally.failed || Boolean(abortSignal?.());
     const report = (description) => onProgress?.({ current: Math.min(tally.sims, total), total, description });
 
@@ -312,10 +377,6 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
             monsterName: f.monsterName,
             roomLevel: f.roomLevel,
         }));
-        if (tunables.length === 0) {
-            out.push({ key: group.key, name: group.name, fights: meta, result: { noTunables: true, changes: [] } });
-            continue;
-        }
 
         const baseSeed = randomSeed();
         const streamIds = new Map();
@@ -323,20 +384,14 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
             if (!streamIds.has(name)) streamIds.set(name, streamIds.size);
             return streamIds.get(name);
         };
-        const signature = (overrides) =>
-            JSON.stringify(
-                tunables
-                    .filter((t) => overrides[t.key] !== undefined && overrides[t.key] !== t.original)
-                    .map((t) => [t.key, overrides[t.key]])
-            );
         const cache = new Map();
-        // The baseline and the all-together batches, by stream and setup, for the per-fight figures
-        const kept = new Map();
 
-        const measure = (overrides, hours, stream, count, offset = 0) => {
-            const id = `${signature(overrides)}|${hours}|${stream}|${count}|${offset}`;
+        /**
+         * One batch of seeds: every fight of the group on each seed, each fight in the DTO `dtoOf` builds
+         * for it. Both searches measure through this, so their streams never share seeds.
+         */
+        const runSeeds = (id, dtoOf, trials, stream, count, offset) => {
             if (cache.has(id)) return cache.get(id);
-            const trials = labTrials(hours);
             const ceiling = (trials * CEILING_SECONDS_PER_TRIAL) / 3600;
             const base = streamId(stream) * STREAM_WIDTH;
             const runs = Array.from({ length: count }, async (_, k) => {
@@ -348,7 +403,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
                             try {
                                 const simResult = await runLabyrinthSimulation({
                                     gameData,
-                                    playerDTOs: applyTriggerValues([fight.dto], tunables, overrides),
+                                    playerDTOs: [dtoOf(fight)],
                                     zoneHrid,
                                     monsterHrid: fight.monsterHrid,
                                     roomLevel: fight.roomLevel,
@@ -379,54 +434,152 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
                 return samples.some((s) => !s) ? null : samples;
             })();
             cache.set(id, batch);
-            if (stream === 'baseline' || stream === 'final') kept.set(`${stream}|${signature(overrides)}`, batch);
             return batch;
         };
 
-        const enemyHp = Math.max(0, ...fights.map((f) => hpOf(f.monsterHrid, f.roomLevel)));
-        const result = await runTriggerSearch({
-            tunables,
-            scopeHrids: [hrid],
-            measure,
-            precision,
-            maxEnemies: 1,
-            enemyHp: enemyHp > 0 ? { single: enemyHp, total: enemyHp } : null,
-            minGain,
-            objective: LAB_OBJECTIVE,
-            onProgress: ({ description }) =>
-                report(`${group.name}: ${String(description || '').replace(/^Triggers: /, '')}`),
-            aborted: stopped,
-        });
-        if (!result) {
-            out.push({ key: group.key, name: group.name, fights: meta, result: null });
-            break;
+        let result = null;
+        let groupOut;
+        if (tunables.length === 0) {
+            result = { noTunables: true, changes: [] };
+            groupOut = { key: group.key, name: group.name, fights: meta, result };
+        } else {
+            const signature = (overrides) =>
+                JSON.stringify(
+                    tunables
+                        .filter((t) => overrides[t.key] !== undefined && overrides[t.key] !== t.original)
+                        .map((t) => [t.key, overrides[t.key]])
+                );
+            // The baseline and the all-together batches, by stream and setup, for the per-fight figures
+            const kept = new Map();
+            const measure = (overrides, hours, stream, count, offset = 0) => {
+                const batch = runSeeds(
+                    `${signature(overrides)}|${hours}|${stream}|${count}|${offset}`,
+                    (fight) => applyTriggerValues([fight.dto], tunables, overrides)[0],
+                    labTrials(hours),
+                    stream,
+                    count,
+                    offset
+                );
+                if (stream === 'baseline' || stream === 'final') kept.set(`${stream}|${signature(overrides)}`, batch);
+                return batch;
+            };
+
+            const enemyHp = Math.max(0, ...fights.map((f) => hpOf(f.monsterHrid, f.roomLevel)));
+            result = await runTriggerSearch({
+                tunables,
+                scopeHrids: [hrid],
+                measure,
+                precision,
+                maxEnemies: 1,
+                enemyHp: enemyHp > 0 ? { single: enemyHp, total: enemyHp } : null,
+                minGain,
+                objective: LAB_OBJECTIVE,
+                onProgress: ({ description }) =>
+                    report(`${group.name}: ${String(description || '').replace(/^Triggers: /, '')}`),
+                aborted: stopped,
+            });
+            if (!result) {
+                out.push({ key: group.key, name: group.name, fights: meta, result: null });
+                break;
+            }
+
+            // Per-fight figures: the all-together check's two sides when it ran, else the baseline
+            const proposed = result.changes.length > 0 ? result.changes : result.rejected || [];
+            const tunedSig = signature(Object.fromEntries(proposed.map((c) => [c.key, c.to])));
+            const finalOrig = result.combined ? await kept.get(`final|${signature({})}`) : null;
+            const finalTuned = result.combined ? await kept.get(`final|${tunedSig}`) : null;
+            const baseline = await kept.get(`baseline|${signature({})}`);
+            const before = pooledWinRates(finalOrig || baseline, fights.length);
+            const after = finalTuned ? pooledWinRates(finalTuned, fights.length) : fights.map(() => null);
+            // The totals are what the search scored: the mean over seeds of each seed's attempts, on its
+            // half-win floor, so "before − after" is the saving the all-together check reports. The
+            // per-fight win rates above are pooled, which suits a rate but not this figure.
+            const meanAttempts = (samples) =>
+                samples?.length
+                    ? samples.reduce((s, sample) => s + (Number(sample?.attempts) || 0), 0) / samples.length
+                    : null;
+            groupOut = {
+                key: group.key,
+                name: group.name,
+                fights: meta.map((m, i) => ({ ...m, winRate: before[i], tunedWinRate: after[i] })),
+                result: { ...result, minGain, precision: precision.key, include, tunableCount: tunables.length },
+                baselineAttempts: meanAttempts(finalOrig || baseline),
+                tunedAttempts: finalTuned ? meanAttempts(finalTuned) : null,
+            };
         }
 
-        // Per-fight figures: the all-together check's two sides when it ran, else the baseline
-        const proposed = result.changes.length > 0 ? result.changes : result.rejected || [];
-        const tunedSig = signature(Object.fromEntries(proposed.map((c) => [c.key, c.to])));
-        const finalOrig = result.combined ? await kept.get(`final|${signature({})}`) : null;
-        const finalTuned = result.combined ? await kept.get(`final|${tunedSig}`) : null;
-        const baseline = await kept.get(`baseline|${signature({})}`);
-        const before = pooledWinRates(finalOrig || baseline, fights.length);
-        const after = finalTuned ? pooledWinRates(finalTuned, fights.length) : fights.map(() => null);
-        // The totals are what the search scored: the mean over seeds of each seed's attempts, on its
-        // half-win floor, so "before − after" is the saving the all-together check reports. The
-        // per-fight win rates above are pooled, which suits a rate but not this figure.
-        const meanAttempts = (samples) =>
-            samples?.length
-                ? samples.reduce((s, sample) => s + (Number(sample?.attempts) || 0), 0) / samples.length
-                : null;
-        out.push({
-            key: group.key,
-            name: group.name,
-            fights: meta.map((m, i) => ({ ...m, winRate: before[i], tunedWinRate: after[i] })),
-            result: { ...result, minGain, precision: precision.key, include, tunableCount: tunables.length },
-            baselineAttempts: meanAttempts(finalOrig || baseline),
-            tunedAttempts: finalTuned ? meanAttempts(finalTuned) : null,
-        });
-        if (result.stopped) break;
+        if (searchConditions && !result.stopped && !stopped()) {
+            // Start from the thresholds the tuner accepted, so the two searches' changes are one setup
+            const tuned = Object.fromEntries((result.changes || []).map((c) => [c.key, c.to]));
+            const startDto = (fight) =>
+                tunables.length ? applyTriggerValues([fight.dto], tunables, tuned)[0] : fight.dto;
+            const slots = conditionSlots(startDto(fights[0]), gameData, include);
+            const monsterHrids = [...new Set(fights.map((f) => f.monsterHrid))];
+            const enemyHp = Math.max(0, ...fights.map((f) => hpOf(f.monsterHrid, f.roomLevel)));
+            const confirmHours = hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH;
+            const trialsFor = {
+                screen: LAB_MIN_TRIALS,
+                pair: labTrials(hoursPerSeed),
+                confirm: labTrials(confirmHours),
+            };
+            trialsFor.final = trialsFor.confirm;
+            const editsKey = (edits) =>
+                JSON.stringify(
+                    Object.keys(edits)
+                        .sort()
+                        .map((k) => [k, edits[k]])
+                );
+            const conditionMeasure = (edits, { stream, count, offset = 0, stage }) => {
+                const trials = trialsFor[stage] || trialsFor.confirm;
+                const id = `cond|${editsKey(edits)}|${trials}|${stream}|${count}|${offset}`;
+                if (!cache.has(id)) tally.conditionSims += count * fights.length;
+                return runSeeds(id, (fight) => applyTriggerRows(startDto(fight), edits), trials, stream, count, offset);
+            };
+            const search = await runConditionSearch({
+                slots,
+                candidatesFor: (slot, referenceSamples) =>
+                    buildConditionCandidates({
+                        slot,
+                        dto: startDto(fights[0]),
+                        gameData,
+                        monsterHrids,
+                        pools: referenceSamples?.find((s) => s?.pools?.[hrid])?.pools?.[hrid],
+                        enemyHp,
+                    }),
+                measure: conditionMeasure,
+                precision,
+                minGain,
+                aborted: stopped,
+                overBudget: () => tally.conditionSims >= maxConditionSims,
+                onProgress: ({ description }) =>
+                    report(`${group.name}: ${String(description || '').replace(/^Conditions: /, 'conditions, ')}`),
+            });
+            const { finalSamples, ...conditions } = search;
+            const before = finalSamples ? pooledWinRates(finalSamples.before, fights.length) : null;
+            const after = finalSamples ? pooledWinRates(finalSamples.after, fights.length) : null;
+            groupOut.conditions = {
+                ...conditions,
+                slotCount: slots.length,
+                afterThresholds: Object.keys(tuned).length > 0,
+                fights: meta.map((m, i) => ({
+                    ...m,
+                    winRate: before ? before[i] : null,
+                    tunedWinRate: after ? after[i] : null,
+                })),
+            };
+        }
+
+        out.push(groupOut);
+        if (result.stopped || groupOut.conditions?.stopped) break;
     }
 
-    return { groups: out, simCount: tally.sims, stopped: stopped(), precision: precision.key, include, minGain };
+    return {
+        groups: out,
+        simCount: tally.sims,
+        stopped: stopped(),
+        precision: precision.key,
+        include,
+        minGain,
+        searchConditions,
+    };
 }

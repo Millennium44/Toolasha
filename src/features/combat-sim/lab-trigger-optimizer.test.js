@@ -33,6 +33,7 @@ const {
     LAB_MIN_GAIN,
 } = await import('./lab-trigger-optimizer.js');
 const { estimateTriggerSims, PRECISIONS } = await import('./trigger-tuning.js');
+const { TRIAL_GAME_DATA } = await import('./engine/guild-trial-game-data.fixture.js');
 
 const HOUR_NS = 3600 * 1e9;
 const FIREBALL = '/abilities/fireball';
@@ -319,5 +320,122 @@ describe('runLabTriggerOptimization', () => {
         });
         expect(run.stopped).toBe(true);
         expect(run.groups[0].result).toBeNull();
+    });
+});
+
+describe('runLabTriggerOptimization with the condition search', () => {
+    const COFFEE = '/items/attack_coffee';
+    const WASP = '/monsters/trial_wasp';
+    const FRENZY_ON = {
+        dependencyHrid: TARGET,
+        conditionHrid: '/combat_trigger_conditions/frenzy',
+        comparatorHrid: '/combat_trigger_comparators/is_active',
+        value: 0,
+    };
+    const condGameData = {
+        ...TRIAL_GAME_DATA,
+        ...gameData,
+        abilityDetailMap: { ...TRIAL_GAME_DATA.abilityDetailMap, ...gameData.abilityDetailMap },
+        itemDetailMap: {
+            ...gameData.itemDetailMap,
+            [COFFEE]: {
+                name: 'Attack Coffee',
+                consumableDetail: {
+                    buffs: [{ uniqueHrid: '/buff_uniques/attack_coffee' }],
+                    defaultCombatTriggers: [
+                        {
+                            dependencyHrid: SELF,
+                            conditionHrid: '/combat_trigger_conditions/attack_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+            },
+        },
+    };
+    const coffeeGroups = () =>
+        groupFightsByLoadout([
+            {
+                monsterHrid: WASP,
+                monsterName: 'Trial Wasp',
+                roomLevel: 100,
+                loadoutId: 3,
+                loadoutName: 'Mage',
+                dto: { ...loadoutDTO(), drinks: [{ hrid: COFFEE, triggers: null }, null, null] },
+            },
+        ]);
+    /** A stub labyrinth where the coffee pays off only when drunk while the wasp is frenzied */
+    const frenzyCoffee = (params) => {
+        const base = labyrinth(() => 0)(params);
+        const rows = params.playerDTOs[0].drinks[0].triggers || [];
+        const frenzied = rows.some(
+            (r) =>
+                r.dependencyHrid === TARGET &&
+                r.conditionHrid === FRENZY_ON.conditionHrid &&
+                r.comparatorHrid === FRENZY_ON.comparatorHrid
+        );
+        const trials = params.precision.maxTrials;
+        const wins = Math.max(0, Math.min(trials, trials * (frenzied ? 0.85 : 0.6) + jitter(params.seed) * 2));
+        return { ...base, encounters: wins, deaths: { player1: trials - wins } };
+    };
+
+    test('finds a condition the threshold tuner cannot, and reports it with per-fight win rates', async () => {
+        sims.respond = frenzyCoffee;
+        const groups = coffeeGroups();
+        const estimate = estimateLabTriggerRun({
+            groups,
+            gameData: condGameData,
+            include: 'consumables',
+            precision: 'quick',
+            searchConditions: true,
+        });
+        expect(estimate.sims).toBe(0);
+        expect(estimate.conditionSims).toBeGreaterThan(0);
+
+        const run = await runLabTriggerOptimization({
+            gameData: condGameData,
+            groups,
+            include: 'consumables',
+            precision: 'quick',
+            searchConditions: true,
+        });
+        const [group] = run.groups;
+        // Nothing for the threshold tuner: the coffee's only row is an is_inactive one
+        expect(group.result.noTunables).toBe(true);
+        const { conditions } = group;
+        expect(conditions.reliable).toBe(true);
+        expect(conditions.changes).toHaveLength(1);
+        expect(conditions.changes[0].itemHrid).toBe(COFFEE);
+        expect(conditions.changes[0].toRows).toContainEqual(FRENZY_ON);
+        expect(conditions.fights[0].tunedWinRate - conditions.fights[0].winRate).toBeGreaterThan(0.15);
+        // Within the stated ceiling, and every sim a fixed attempt count
+        expect(sims.calls.length).toBeLessThanOrEqual(estimate.conditionSims);
+        for (const call of sims.calls) expect(call.precision.minTrials).toBe(call.precision.maxTrials);
+    });
+
+    test('the sim cap stops the condition search where it stands', async () => {
+        sims.respond = frenzyCoffee;
+        const run = await runLabTriggerOptimization({
+            gameData: condGameData,
+            groups: coffeeGroups(),
+            include: 'consumables',
+            precision: 'quick',
+            searchConditions: true,
+            maxConditionSims: 1,
+        });
+        expect(run.groups[0].conditions.capped).toBe(true);
+        expect(run.groups[0].conditions.changes).toEqual([]);
+    });
+
+    test('off by default: no condition search runs', async () => {
+        sims.respond = frenzyCoffee;
+        const run = await runLabTriggerOptimization({
+            gameData: condGameData,
+            groups: coffeeGroups(),
+            include: 'consumables',
+        });
+        expect(run.groups[0].conditions).toBeUndefined();
+        expect(sims.calls).toHaveLength(0);
     });
 });
