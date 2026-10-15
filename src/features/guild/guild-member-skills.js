@@ -221,7 +221,8 @@ export function dropRenamedDuplicates(captures) {
         const id = capture?.characterId;
         if (id === null || id === undefined) continue;
         const held = newest.get(id);
-        if (held === undefined || (Number(capture?.at) || 0) > (Number(captures[held]?.at) || 0)) newest.set(id, key);
+        // A tie goes to the later entry, which is the one added last (the incoming or just-captured name)
+        if (held === undefined || (Number(capture?.at) || 0) >= (Number(captures[held]?.at) || 0)) newest.set(id, key);
     }
 
     const winners = new Set(newest.values());
@@ -260,7 +261,11 @@ export function mergeMemberSkillCaptures(local, incoming) {
     const merged = { ...base };
     for (const [key, capture] of Object.entries(fresh)) {
         const held = merged[key];
-        merged[key] = held && (Number(held.at) || 0) > (Number(capture?.at) || 0) ? held : capture;
+        const winner = held && (Number(held.at) || 0) > (Number(capture?.at) || 0) ? held : capture;
+        // A redo mark is a request, not a reading: the latest one survives whichever capture wins, and it
+        // lapses on its own once a capture newer than it exists (see `nextMemberToLog`)
+        const redoAt = Math.max(Number(held?.redoRequestedAt) || 0, Number(capture?.redoRequestedAt) || 0);
+        merged[key] = redoAt > (Number(winner?.redoRequestedAt) || 0) ? { ...winner, redoRequestedAt: redoAt } : winner;
     }
     return dropRenamedDuplicates(merged);
 }
@@ -371,7 +376,9 @@ export function nextMemberToLog(members, captures = {}, now = Date.now(), reques
     const held = (name) => {
         const capture = captures?.[String(name).toLowerCase()] || null;
         if (!capture) return null;
-        return (capture.at || 0) <= dueBefore ? null : capture;
+        if ((capture.at || 0) <= dueBefore) return null;
+        // A single-member redo: due until a capture newer than the request exists
+        return (Number(capture.redoRequestedAt) || 0) >= (capture.at || 0) ? null : capture;
     };
     const awaiting = (name) => now - (Number(requests?.[String(name).toLowerCase()]) || 0) < REQUEST_TIMEOUT_MS;
 
@@ -606,14 +613,10 @@ class GuildMemberSkills {
      * a different member (in this guild or, since captures are stored one
      * guild at a time, any other) is ever at risk.
      *
-     * A prune has to be saved with `overwrite: true`. This record's merge
-     * (`mergeMaps()`) folds stored keys under memory but keeps any stored key
-     * memory does not have — exactly right for two tabs each capturing a
-     * different member, and exactly wrong for a deletion: the ordinary
-     * `save()` would read the old name straight back out of storage on this
-     * very write, since memory no longer naming it looks identical to memory
-     * never having touched it. `leaderboard-xp-tracker.js`'s stale-series purge
-     * takes the same `overwrite: true` for the same reason.
+     * The prune is saved as an ordinary fold, never an `overwrite` write: this key is live-safe, so a whole-map
+     * write could erase members a sync pull brought in after memory was last read. The old name is dropped by the
+     * record's merge instead (`dropRenamedDuplicates` keeps only the newest capture per `characterId`), and the
+     * capture just taken is the newest there is, so the old name goes from storage on this same save.
      *
      * @param {Object} message - `profile_shared`
      */
@@ -624,10 +627,9 @@ class GuildMemberSkills {
 
             const key = capture.name.toLowerCase();
             const pruned = pruneRenamedEntries(this.captures, capture, key);
-            const renamed = pruned !== this.captures;
             this.captures = { ...pruned, [key]: capture };
             this._notifyChanged();
-            const saved = renamed ? this.record.save({ overwrite: true }) : this.record.save();
+            const saved = this.record.save();
             saved.catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
         } catch (error) {
             console.error('[GuildMemberSkills] Reading an opened profile failed:', error);
@@ -668,9 +670,9 @@ class GuildMemberSkills {
         const capture = this.captures[key];
         if (!capture) return;
 
-        // Dated back out of the fresh window rather than deleted: the levels are
-        // still the best answer available until a newer profile arrives
-        this.captures = { ...this.captures, [key]: { ...capture, at: 0, redoRequestedAt: at } };
+        // Marked due rather than deleted or re-dated: the levels (and the `at` they were read at) are still the
+        // best answer available until a newer profile arrives, and `at` is what the sync merge ranks by
+        this.captures = { ...this.captures, [key]: { ...capture, redoRequestedAt: at } };
         delete this.requests[key];
     }
 
