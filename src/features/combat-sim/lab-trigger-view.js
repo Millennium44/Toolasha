@@ -154,7 +154,9 @@ function groupHtml(group, gameData) {
         const good = result.reliable !== false && c.deltaScore > 0;
         body +=
             `<div style="font-size:12px; margin-top:6px;"><b>All changes together</b> (fresh seeds, ${esc(c.seeds)} runs): ` +
-            `<span style="color:${good ? '#4caf50' : '#ff9800'};">expected attempts ` +
+            `<span style="color:${good ? '#4caf50' : '#ff9800'};" title="Means across the check's seeds: each seed's ` +
+            `expected attempts for these fights, averaged. A fight a seed never won counts as half a win.">` +
+            `expected attempts (mean of ${esc(c.seeds)} seeds) ` +
             `${esc(attempts(group.baselineAttempts))} → ${esc(attempts(group.tunedAttempts))}, ` +
             `saves ${esc(attempts(c.deltaScore))} ± ${esc(se(c.se))}</span></div>`;
     } else if (changes.length > 0) {
