@@ -738,9 +738,12 @@ registerSyncMerge({
     merge: (local, incoming) => mergeConfigs(local, incoming),
     localWinsOnPull: true,
     label: 'Custom inventory tabs',
-    // The panel re-reads its config on a pull (`CustomTabsUI._adoptPulledConfig`) and the bulk-sell assistant loads
-    // it fresh each time, so the held copy is replaced before any save can write it back over the pulled one
-    liveSafe: true,
+    // Deliberately NOT live-safe: a pull latches this key and asks for a reload. Every save writes the held config
+    // whole (the curated record trusts memory), so an edit landing between a restore releasing its hold and the
+    // panel adopting the pull would erase the pulled tabs. Folding every save through `mergeConfigs` is not an
+    // option: it never lets a tombstone delete an UNSTAMPED (pre-3.22.0) tab, so deleting a legacy tab would be
+    // undone by the next save. `CustomTabsUI._adoptPulledConfig` stays as a harmless refresh for a pull that lands
+    // without a latch (a latched write is refused until reload, so it never sees one).
 });
 
 /**

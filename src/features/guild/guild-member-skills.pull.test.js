@@ -58,6 +58,7 @@ beforeEach(async () => {
     db.stores.clear();
     guildMemberSkills.forget();
     guildMemberSkills.initialized = false;
+    db.stores.set('settings', new Map());
     db.stores.set('guildHistory', new Map([[KEY, { ada: capture('Ada', 50, 1000) }]]));
     await guildMemberSkills.initialize(GUILD);
 });
@@ -68,13 +69,14 @@ afterEach(() => {
 });
 
 describe('guild member skills and a sync pull', () => {
-    test('both keys resolve as live-safe in the forms the game produces', () => {
+    test('the guild key resolves as live-safe in the forms the game produces', () => {
         expect(isLiveSafeKey('guildHistory', 'guildMemberSkills_default')).toBe(true);
         expect(isLiveSafeKey('guildHistory', KEY)).toBe(true);
-        expect(isLiveSafeKey('settings', '603281_inventoryTabs_config')).toBe(true);
+        // Custom tabs deliberately latch: see the note on its registration
+        expect(isLiveSafeKey('settings', '603281_inventoryTabs_config')).toBe(false);
     });
 
-    test('a restore with liveSafeMerge latches neither key', async () => {
+    test('a restore with liveSafeMerge latches only the custom tabs key', async () => {
         const payload = {
             formatVersion: 1,
             stores: {
@@ -83,7 +85,16 @@ describe('guild member skills and a sync pull', () => {
             },
         };
         const result = await importEverything(payload, { liveSafeMerge: true });
-        expect(result.latched).toBe(0);
+        expect(result.latched).toBe(1);
+
+        const guildOnly = await importEverything(
+            {
+                formatVersion: 1,
+                stores: { guildHistory: { guildMemberSkills_default: { ada: capture('Ada', 61, 2100) } } },
+            },
+            { liveSafeMerge: true }
+        );
+        expect(guildOnly.latched).toBe(0);
     });
 
     test('a pull refreshes the in-memory captures and tells the listeners', async () => {
