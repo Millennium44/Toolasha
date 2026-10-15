@@ -328,6 +328,23 @@ function xp(value) {
 }
 
 /**
+ * Point the shared member-skills store at the roster's guild.
+ *
+ * Guild Trials binds the store when it is on, but the roster is gated on its
+ * own setting: with Guild Trials off the store would lazily open its
+ * guild-less default bucket, the skill table would read empty after a reload,
+ * and new captures would be filed there. A no-op when the store is already
+ * bound to this guild.
+ * @param {Object} capture - The member-skills store
+ * @param {string|null} guildName - The roster's guild
+ */
+export function bindCaptureToGuild(capture, guildName) {
+    if (!guildName || !capture) return;
+    if (!capture.initialized) capture.initialize?.(guildName)?.catch?.(() => {});
+    else if (capture.guildName !== guildName) capture.setGuildName?.(guildName)?.catch?.(() => {});
+}
+
+/**
  * The profile cycler: one click, one guildmate's skills.
  *
  * A skilling trial's forecast needs the party's skill levels, and the only place
@@ -782,6 +799,7 @@ export const guildRosterPanel = createPanel({
             }
         }
 
+        bindCaptureToGuild(guildMemberSkills, guildName);
         drawProfileCycler(body);
         drawGuildSkillTotals(body);
         drawSeenLoadouts(body);

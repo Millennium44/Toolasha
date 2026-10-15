@@ -43,6 +43,18 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: (definition) => tracker.rows.push(definition) }));
 vi.mock('./guild-member-skills.js', () => ({
     default: {
+        get initialized() {
+            return tracker.skillsBound !== undefined;
+        },
+        get guildName() {
+            return tracker.skillsBound ?? null;
+        },
+        initialize: async (name) => {
+            tracker.skillsBound = name;
+        },
+        setGuildName: async (name) => {
+            tracker.skillsBound = name;
+        },
         onChanged: () => () => {},
         progress: () => tracker.cycler,
         nextBattleUnit: () => tracker.unit ?? null,
@@ -593,6 +605,12 @@ describe('the panel and tile', () => {
         expect(text).toContain('Bob');
         expect(text).toContain('Gone quiet (1)');
         expect(text).toContain('Projected in 7d');
+    });
+
+    test('binds the member-skills store to the roster guild, without Guild Trials doing it', () => {
+        delete tracker.skillsBound;
+        guildRosterPanel.show({ remember: false });
+        expect(tracker.skillsBound).toBe('Milky Way');
     });
 
     test('a departed member is drawn nowhere, not even in Gone quiet', () => {
