@@ -135,6 +135,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./trigger-optimizer.js', () => ({
+    STREAM_WIDTH: 64,
+    concurrency: () => 1,
+    createLimiter: () => (task) => task(),
+    triggerUseFromResult: () => ({}),
     monsterMaxHpReader: () => () => 0,
     runTriggerOptimization: async (params) => {
         mocks.triggerRuns.push(params);

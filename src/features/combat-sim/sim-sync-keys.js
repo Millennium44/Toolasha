@@ -33,6 +33,7 @@ export const LAB_SIM_KEYS = Object.freeze({
     skillingTargetFloor: 'labSimSkillingTargetFloor',
     tokenBuffLevels: 'labSimTokenBuffLevels',
     checkedSwaps: 'labSimCheckedSwaps',
+    triggerChoices: 'labSimTriggerChoices',
 });
 
 /** The Combat Sim panel's keys in `settings`: per character unless marked global */
@@ -136,6 +137,7 @@ const LAB_LABELS = {
     skillingTargetFloor: 'Lab Sim skilling target floor',
     tokenBuffLevels: 'Lab Sim token levels',
     checkedSwaps: 'Lab Sim checked swaps',
+    triggerChoices: 'Lab Sim trigger tuning choices',
 };
 for (const [name, base] of Object.entries(LAB_SIM_KEYS)) register('settings', base, incomingWins, LAB_LABELS[name]);
 

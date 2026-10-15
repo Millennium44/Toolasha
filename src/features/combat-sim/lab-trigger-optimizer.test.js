@@ -1,0 +1,305 @@
+/**
+ * Lab Sim trigger tuning: fights grouped per loadout, the measurement the search is handed (one
+ * sample per seed across all of a loadout's fights, a fixed attempt count, the same seeds for
+ * every setup), and the lab objective end to end — it prefers the threshold that lowers
+ * Σ 1/win rate across the loadout's fights and rejects a "gain" that is only noise. The labyrinth
+ * simulator itself is a stub.
+ */
+
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+
+const sims = vi.hoisted(() => ({ calls: [], respond: null }));
+
+vi.mock('./combat-sim-runner.js', () => ({
+    runSimulation: vi.fn(),
+    runLabyrinthSimulation: vi.fn(async (params) => {
+        sims.calls.push(params);
+        return sims.respond(params);
+    }),
+    getMaxWorkers: () => 4,
+}));
+vi.mock('./combat-sim-adapter.js', () => ({ calculateSimRevenue: () => ({ netPerHour: 0 }) }));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
+
+const {
+    groupFightsByLoadout,
+    runLabTriggerOptimization,
+    estimateLabTriggerRun,
+    labSampleFromResults,
+    labTrials,
+    CURRENT_GEAR_KEY,
+    LAB_MIN_GAIN,
+} = await import('./lab-trigger-optimizer.js');
+const { estimateTriggerSims, PRECISIONS } = await import('./trigger-tuning.js');
+
+const HOUR_NS = 3600 * 1e9;
+const FIREBALL = '/abilities/fireball';
+const DONUT = '/items/donut';
+const TARGET = '/combat_trigger_dependencies/targeted_enemy';
+const SELF = '/combat_trigger_dependencies/self';
+const HP = '/combat_trigger_conditions/current_hp';
+const MISSING_HP = '/combat_trigger_conditions/missing_hp';
+const GTE = '/combat_trigger_comparators/greater_than_equal';
+const FIRE_KEY = `player1|abilities|${FIREBALL}|0`;
+
+const gameData = {
+    abilityDetailMap: {
+        [FIREBALL]: {
+            name: 'Fireball',
+            defaultCombatTriggers: [{ dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 1 }],
+        },
+    },
+    itemDetailMap: {
+        [DONUT]: {
+            name: 'Donut',
+            consumableDetail: {
+                defaultCombatTriggers: [
+                    { dependencyHrid: SELF, conditionHrid: MISSING_HP, comparatorHrid: GTE, value: 100 },
+                ],
+            },
+        },
+    },
+    actionDetailMap: { '/actions/combat/fly': {} },
+};
+
+/** A labyrinth loadout's DTO, in the shape `buildLabyrinthPlayerDTO` produces */
+const loadoutDTO = ({ food = false } = {}) => ({
+    hrid: 'player1',
+    equipment: {
+        '/equipment_types/two_hand': { hrid: '/items/rippling_trident', enhancementLevel: 5 },
+        '/equipment_types/body': { hrid: '/items/sorcerer_robe_top', enhancementLevel: 3 },
+    },
+    abilities: [null, { hrid: FIREBALL, level: 30, triggers: null }, null, null, null],
+    food: [food ? { hrid: DONUT, triggers: null } : null, null, null],
+    drinks: [null, null, null],
+});
+
+const fight = (monster, loadoutId, loadoutName, extra = {}) => ({
+    monsterHrid: `/monsters/${monster}`,
+    monsterName: monster,
+    roomLevel: 100,
+    dto: loadoutDTO(),
+    loadoutName,
+    loadoutId,
+    ...extra,
+});
+
+/** A repeatable number in [-1, 1) from a seed and a salt */
+function jitter(seed, salt = '') {
+    let h = 2166136261 ^ (Number(seed) >>> 0);
+    const text = String(salt);
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+    h = Math.imul(h ^ (h >>> 13), 0x5bd1e995);
+    return ((h ^ (h >>> 15)) >>> 0) / 2147483648 - 1;
+}
+
+/**
+ * A stub labyrinth: `winRate(monsterHrid, fireballThreshold)` decides each fight's win rate.
+ * Every seed adds the same luck to every setup (that is what pairing buys), plus `noise` wins
+ * that differ between setups on the same seed.
+ */
+function labyrinth(winRate, { noise = 0, seedLuck = 3 } = {}) {
+    return (params) => {
+        const trials = params.precision.maxTrials;
+        const threshold = params.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
+        const p = winRate(params.monsterHrid, threshold);
+        const luck = jitter(params.seed) * seedLuck + jitter(params.seed, threshold) * noise;
+        // Not rounded: a stub may report fractional wins, which keeps small effects visible
+        const wins = Math.max(0, Math.min(trials, trials * p + luck));
+        return {
+            labyAttemptCount: trials,
+            encounters: wins,
+            simulatedTime: trials * 40 * 1e9,
+            experienceGained: { player1: { magic: 10 * trials } },
+            deaths: { player1: trials - wins },
+            totalDamageDealt: { player1: 100 * trials * 40 },
+            playerPools: { player1: { maxHitpoints: 2000, maxManapoints: 1500 } },
+            triggerChecks: { player1: { [FIREBALL]: 50 } },
+        };
+    };
+}
+
+beforeEach(() => {
+    sims.calls = [];
+});
+
+describe('groupFightsByLoadout', () => {
+    test('one group per saved loadout, the worn gear its own "current gear" group, in fight order', () => {
+        const groups = groupFightsByLoadout([
+            fight('cyclops', 3, 'Mage'),
+            fight('mimic', 0, 'Current gear'),
+            fight('gobbo', 3, 'Mage'),
+            fight('jerry', 7, 'Tank'),
+            fight('stalactite', null, 'Current gear'),
+        ]);
+        expect(groups.map((g) => [g.key, g.name, g.fights.map((f) => f.monsterName)])).toEqual([
+            ['loadout:3', 'Mage', ['cyclops', 'gobbo']],
+            [CURRENT_GEAR_KEY, 'Current gear', ['mimic', 'stalactite']],
+            ['loadout:7', 'Tank', ['jerry']],
+        ]);
+    });
+
+    test('two loadouts that share a name stay apart, keyed by id', () => {
+        const groups = groupFightsByLoadout([fight('cyclops', 3, 'Mage'), fight('mimic', 4, 'Mage')]);
+        expect(groups.map((g) => g.key)).toEqual(['loadout:3', 'loadout:4']);
+    });
+});
+
+describe('the cost estimate', () => {
+    test("is the search's own estimate per loadout, times that loadout's fights", () => {
+        const groups = groupFightsByLoadout([
+            fight('cyclops', 3, 'Mage'),
+            fight('gobbo', 3, 'Mage'),
+            fight('jerry', 7, 'Tank', { dto: loadoutDTO({ food: true }) }),
+        ]);
+        const estimate = estimateLabTriggerRun({ groups, gameData, include: 'both', precision: 'quick' });
+        expect(estimate.groups.map((g) => [g.tunables, g.fights])).toEqual([
+            [1, 2],
+            [2, 1],
+        ]);
+        expect(estimate.sims).toBe(estimateTriggerSims(1, 'quick') * 2 + estimateTriggerSims(2, 'quick'));
+        expect(estimate.trials.first).toBe(labTrials(PRECISIONS.quick.pointHours / PRECISIONS.quick.seeds));
+        // Abilities only leaves the food out
+        expect(estimateLabTriggerRun({ groups, gameData, include: 'abilities' }).groups[1].tunables).toBe(1);
+    });
+});
+
+describe('a seed sample', () => {
+    test('sums 1/win rate over the fights and reads a fight never won as half a win', () => {
+        const sample = labSampleFromResults(
+            [
+                { labyAttemptCount: 100, encounters: 80, simulatedTime: HOUR_NS },
+                { labyAttemptCount: 100, encounters: 0, simulatedTime: HOUR_NS },
+            ],
+            'player1',
+            100
+        );
+        expect(sample.attempts).toBeCloseTo(1 / 0.8 + 1 / 0.005, 10);
+        expect(sample.fights.map((f) => f.winRate)).toEqual([0.8, 0]);
+        // Nothing to price: a food in a lab loadout is never left untuned for want of a price
+        expect(sample.perPlayer.player1).toMatchObject({ profit: 0, unpriced: [], profitFailed: false });
+    });
+
+    test('trigger reads are summed over the fights, so a food used in one room counts as used', () => {
+        const sample = labSampleFromResults(
+            [
+                { labyAttemptCount: 10, encounters: 5, triggerChecks: { player1: {} } },
+                { labyAttemptCount: 10, encounters: 5, triggerChecks: { player1: { [DONUT]: 4 } } },
+            ],
+            'player1',
+            10
+        );
+        expect(sample.triggerUse.player1[DONUT]).toBe(4);
+    });
+});
+
+describe('runLabTriggerOptimization', () => {
+    const twoFights = () => groupFightsByLoadout([fight('cyclops', 3, 'Mage'), fight('gobbo', 3, 'Mage')]);
+
+    test('every sim plays a fixed number of attempts, and setups compared on a seed share it', async () => {
+        sims.respond = labyrinth(() => 0.7);
+        await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' });
+        for (const call of sims.calls) {
+            expect(call.precision.minTrials).toBe(call.precision.maxTrials);
+            expect(call.labyrinthCombatBuffs).toEqual([]);
+        }
+        // The baseline's seeds: each fight of a seed has its own, and no two seeds share one
+        const seeds = new Set(sims.calls.map((c) => `${c.monsterHrid}|${c.seed}`));
+        const bySeed = new Map();
+        for (const c of sims.calls) {
+            const key = `${c.monsterHrid}|${c.seed}`;
+            const threshold = c.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1;
+            if (!bySeed.has(key)) bySeed.set(key, new Set());
+            bySeed.get(key).add(threshold);
+        }
+        // Some seed was run with more than one threshold: candidates are paired against the reference
+        expect([...bySeed.values()].some((thresholds) => thresholds.size > 1)).toBe(true);
+        expect(seeds.size).toBeGreaterThan(1);
+    });
+
+    test('prefers the threshold that lowers expected attempts across the loadout fights', async () => {
+        // Cyclops wants Fireball held for a monster with at least ~300 HP left; the Gobbo does not care
+        sims.respond = labyrinth((monster, threshold) =>
+            monster === '/monsters/cyclops' ? 0.5 + 0.4 * Math.max(0, 1 - Math.abs(threshold - 300) / 300) : 0.8
+        );
+        const run = await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'standard' });
+        const [group] = run.groups;
+        expect(group.name).toBe('Mage');
+        const { result } = group;
+        expect(result.changes).toHaveLength(1);
+        expect(result.changes[0].key).toBe(FIRE_KEY);
+        expect(result.changes[0].from).toBe(1);
+        expect(Math.abs(result.changes[0].to - 300)).toBeLessThan(80);
+        expect(result.changes[0].deltaScore).toBeGreaterThan(LAB_MIN_GAIN);
+        expect(result.reliable).toBe(true);
+        expect(result.combined.deltaScore).toBeGreaterThan(0);
+        // The per-fight figures come from the all-together check: the Cyclops moves, the Gobbo does not
+        const [cyclops, gobbo] = group.fights;
+        expect(cyclops.tunedWinRate - cyclops.winRate).toBeGreaterThan(0.2);
+        expect(gobbo.tunedWinRate).toBeCloseTo(gobbo.winRate, 2);
+        expect(group.tunedAttempts).toBeLessThan(group.baselineAttempts);
+        expect(run.stopped).toBe(false);
+    });
+
+    test('a "gain" inside the noise is rejected', async () => {
+        // Every threshold wins 70% of the time; only per-setup luck tells them apart
+        sims.respond = labyrinth(() => 0.7, { noise: 4 });
+        const run = await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' });
+        expect(run.groups[0].result.changes).toEqual([]);
+    });
+
+    test('a real gain smaller than the minimum is not offered', async () => {
+        // Noise-free and real: the Cyclops wins 70.5% instead of 70% at 300+, about 0.01 attempts saved
+        const better = (monster, threshold) => (monster === '/monsters/cyclops' && threshold >= 300 ? 0.705 : 0.7);
+        sims.respond = labyrinth(better, { seedLuck: 0 });
+        const run = await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' });
+        expect(run.groups[0].result.changes).toEqual([]);
+        // The control: with a lower bar the same gain is found, so the minimum is what refused it
+        const lowBar = await runLabTriggerOptimization({
+            gameData,
+            groups: twoFights(),
+            precision: 'quick',
+            minGain: 0.005,
+        });
+        expect(lowBar.groups[0].result.changes).toHaveLength(1);
+        expect(lowBar.groups[0].result.changes[0].deltaScore).toBeCloseTo(1 / 0.7 - 1 / 0.705, 6);
+    });
+
+    test('each loadout is tuned once, against its own fights only', async () => {
+        sims.respond = labyrinth(() => 0.7);
+        const groups = groupFightsByLoadout([
+            fight('cyclops', 3, 'Mage'),
+            fight('jerry', 7, 'Tank'),
+            fight('gobbo', 3, 'Mage'),
+        ]);
+        const run = await runLabTriggerOptimization({ gameData, groups, precision: 'quick' });
+        expect(run.groups.map((g) => [g.name, g.fights.map((f) => f.monsterName)])).toEqual([
+            ['Mage', ['cyclops', 'gobbo']],
+            ['Tank', ['jerry']],
+        ]);
+    });
+
+    test('a loadout with nothing to tune runs no sims', async () => {
+        sims.respond = labyrinth(() => 0.7);
+        const groups = groupFightsByLoadout([
+            fight('cyclops', 3, 'Mage', { dto: { ...loadoutDTO(), abilities: [null, null, null, null, null] } }),
+        ]);
+        const run = await runLabTriggerOptimization({ gameData, groups });
+        expect(run.groups[0].result.noTunables).toBe(true);
+        expect(sims.calls).toHaveLength(0);
+    });
+
+    test('a stop before the baseline finishes returns a stopped run with no result', async () => {
+        sims.respond = labyrinth(() => 0.7);
+        let stop = false;
+        sims.respond = (params) => {
+            stop = true;
+            return labyrinth(() => 0.7)(params);
+        };
+        const run = await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' }, null, {
+            abortSignal: () => stop,
+        });
+        expect(run.stopped).toBe(true);
+        expect(run.groups[0].result).toBeNull();
+    });
+});

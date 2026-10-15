@@ -579,7 +579,17 @@ export function zoneEnemyHp(gameData, zoneHrid, tier, monsterMaxHp) {
  * @returns {{xp: number, profit: number, deaths: number, dps: number, encounters: number}}
  */
 export function scopeMetrics(sample, hrids) {
-    const out = { xp: 0, profit: 0, revenue: 0, cost: 0, deaths: 0, dps: 0, encounters: sample?.encounters || 0 };
+    const out = {
+        xp: 0,
+        profit: 0,
+        revenue: 0,
+        cost: 0,
+        deaths: 0,
+        dps: 0,
+        encounters: sample?.encounters || 0,
+        // Labyrinth samples only (see LAB_OBJECTIVE): expected attempts to clear the sample's fights
+        attempts: Number(sample?.attempts) || 0,
+    };
     for (const hrid of hrids) {
         const p = sample?.perPlayer?.[hrid];
         if (!p) continue;
@@ -693,18 +703,28 @@ export const OBJECTIVES = [
 export const DEFAULT_OBJECTIVE = 'balanced';
 
 /**
+ * The Lab Sim's objective: fewer expected attempts to clear a loadout's labyrinth fights. Internal
+ * to the Lab Sim's trigger run, so it is not in OBJECTIVES (the Combat Sim's chip lists those).
+ * Its samples carry `attempts` (Σ 1/win rate over the fights), and the score is the drop in it.
+ */
+export const LAB_OBJECTIVE = 'lab';
+
+/**
  * The score the search maximizes. Balanced is `balancedScore`; XP/h and Profit/h
  * are the percentage change of that one rate, less the same deaths term, so the
  * minimum gain and the confirmation work in that rate's percent points.
  * @param {Object} metrics - From `scopeMetrics`
  * @param {Object} base - The baseline's `scopeMetrics`
- * @param {string} [objective] - An OBJECTIVES key; anything else is balanced
+ * @param {string} [objective] - An OBJECTIVES key, or LAB_OBJECTIVE (the drop in expected attempts);
+ *   anything else is balanced
  * @param {Object} [options]
  * @param {boolean} [options.withProfit] - False when profit cannot be valued: Balanced leaves the
  *   term out, and Profit/h scores 0 (no signal), so nothing can be recommended on it
  * @returns {number} Score points
  */
 export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE, { withProfit = true } = {}) {
+    // In attempts, not percent points: a death in the labyrinth is a lost attempt, already in the win rate
+    if (objective === LAB_OBJECTIVE) return (base.attempts || 0) - (metrics.attempts || 0);
     if (objective === 'xp') return term(metrics, base, 'xp') + deathsTerm(metrics, base);
     if (objective === 'profit') return withProfit ? term(metrics, base, 'profit') + deathsTerm(metrics, base) : 0;
     return balancedScore(metrics, base, { withProfit });
@@ -1083,7 +1103,8 @@ function metricsMean(samples, hrids) {
  * @param {number} [params.maxEnemies] - Most enemies up at once in the zone (the fallback enemy-HP range)
  * @param {{single: number, total: number}|null} [params.enemyHp] - From `zoneEnemyHp`: the enemy-HP range
  * @param {number} [params.minGain] - Smallest score gain worth offering (the 95% test always applies too)
- * @param {string} [params.objective] - What the score is: 'balanced' (default), 'xp' or 'profit' (`objectiveScore`)
+ * @param {string} [params.objective] - What the score is: 'balanced' (default), 'xp', 'profit' or
+ *   LAB_OBJECTIVE (`objectiveScore`)
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @param {Function} [params.aborted] - `() => boolean`
  * @returns {Promise<Object|null>} See the return below; null when stopped before the baseline.
@@ -1128,6 +1149,7 @@ export async function runTriggerSearch({
             deaths: mean(ms.map((m) => m.deaths)),
             dps: mean(ms.map((m) => m.dps)),
             encounters: mean(ms.map((m) => m.encounters)),
+            attempts: mean(ms.map((m) => m.attempts)),
         };
     })();
     // Profit counts in a comparison only when every sample in it, and the baseline, valued completely.
