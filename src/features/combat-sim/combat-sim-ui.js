@@ -44,7 +44,9 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { normalizeTaskDamageMode } from './engine/task-damage-mode.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
+import { COMBAT_SIM_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
@@ -2808,6 +2810,10 @@ class CombatSimUI {
         this._runStartToken = 0;
         this._upgradeRunning = false;
         this._detachDrag = null;
+        // What the Bestiary plan's grouped save last saw stored, so it writes only the key that changed
+        this._storedValues = new StoredValueMemo();
+        // The singleton lives for the page, so this is never unsubscribed
+        onSyncPullApplied((written) => this._adoptPulledSettings(written));
         this._unsubscribeSkipSkillingRooms = null;
         this._unsubscribeSoloMode?.();
         this._unsubscribeSoloMode = null;
@@ -5127,61 +5133,98 @@ class CombatSimUI {
      */
     async _loadBestiaryPlanPrefs() {
         try {
-            const savedHours = Number(await storage.get(BESTIARY_PLAN_HOURS_KEY, 'settings', null));
+            const read = (key) => storage.get(key, 'settings', null);
+            const savedHours = Number(await read(BESTIARY_PLAN_HOURS_KEY));
             if (savedHours > 0) this._bestiaryPlanHours = savedHours;
-            const savedMode = await storage.get(BESTIARY_PLAN_MODE_KEY, 'settings', null);
+            const savedMode = await read(BESTIARY_PLAN_MODE_KEY);
             if (savedMode === 'points' || savedMode === 'hours' || savedMode === 'total') {
                 this._bestiaryPlanMode = savedMode;
             }
-            const savedPoints = Number(await storage.get(BESTIARY_PLAN_POINTS_KEY, 'settings', null));
+            const savedPoints = Number(await read(BESTIARY_PLAN_POINTS_KEY));
             if (savedPoints > 0) this._bestiaryPlanPoints = savedPoints;
-            const savedTotal = Number(await storage.get(BESTIARY_PLAN_TOTAL_KEY, 'settings', null));
+            const savedTotal = Number(await read(BESTIARY_PLAN_TOTAL_KEY));
             if (savedTotal > 0) this._bestiaryPlanTotal = savedTotal;
             // Unlike hours/points, 0 is a legitimate stored tolerance (the
             // tie-break turned off), so "nothing saved yet" has to be told
             // apart from a saved 0 by checking the raw value, not just the
             // number — `Number(null)` is itself 0 and would pass a `>= 0` guard
-            const rawTolerance = await storage.get(BESTIARY_PLAN_TOLERANCE_KEY, 'settings', null);
+            const rawTolerance = await read(BESTIARY_PLAN_TOLERANCE_KEY);
             const savedTolerance = Number(rawTolerance);
             if (rawTolerance !== null && Number.isFinite(savedTolerance) && savedTolerance >= 0) {
                 this._bestiaryPlanTolerance = savedTolerance;
             }
-            this._includeDungeons = Boolean(await storage.get(ALL_ZONES_DUNGEONS_KEY, 'settings', false));
+            this._includeDungeons = Boolean(await read(ALL_ZONES_DUNGEONS_KEY));
+            // What memory now holds is what storage reads as — the stored values, or the defaults a missing
+            // one reads as — so the save writes only what then changes, never a default over a pulled value
+            for (const [key, value] of Object.entries(this._bestiaryPlanValues())) {
+                this._storedValues.remember(key, value);
+            }
         } catch (error) {
             console.error('[CombatSimUI] Failed to read the Bestiary plan preferences:', error);
         }
     }
 
+    /**
+     * What the Bestiary plan keeps in memory, by the key each is saved under.
+     * @returns {Record<string, *>}
+     * @private
+     */
+    _bestiaryPlanValues() {
+        return {
+            [BESTIARY_PLAN_HOURS_KEY]: this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
+            [BESTIARY_PLAN_MODE_KEY]: this._bestiaryPlanMode || 'hours',
+            [BESTIARY_PLAN_POINTS_KEY]: this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS,
+            [BESTIARY_PLAN_TOTAL_KEY]: this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL,
+            [BESTIARY_PLAN_TOLERANCE_KEY]:
+                this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE,
+            [ALL_ZONES_DUNGEONS_KEY]: Boolean(this._includeDungeons),
+        };
+    }
+
     /** @private */
     async _persistBestiaryPlanPrefs() {
         try {
+            // Every control saves the whole group, so only the keys that differ from what was
+            // last read or written are written: a sync pull's value of the others is not put back
+            const values = this._bestiaryPlanValues();
+            const hours = values[BESTIARY_PLAN_HOURS_KEY];
+            const mode = values[BESTIARY_PLAN_MODE_KEY];
+            const points = values[BESTIARY_PLAN_POINTS_KEY];
+            const total = values[BESTIARY_PLAN_TOTAL_KEY];
+            const tolerance = values[BESTIARY_PLAN_TOLERANCE_KEY];
+            const dungeons = values[ALL_ZONES_DUNGEONS_KEY];
             await Promise.all([
-                storage.set(
-                    BESTIARY_PLAN_HOURS_KEY,
-                    this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
-                    'settings'
-                ),
-                storage.set(BESTIARY_PLAN_MODE_KEY, this._bestiaryPlanMode || 'hours', 'settings'),
-                storage.set(
-                    BESTIARY_PLAN_POINTS_KEY,
-                    this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS,
-                    'settings'
-                ),
-                storage.set(
-                    BESTIARY_PLAN_TOTAL_KEY,
-                    this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL,
-                    'settings'
-                ),
-                storage.set(
-                    BESTIARY_PLAN_TOLERANCE_KEY,
-                    this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE,
-                    'settings'
-                ),
-                storage.set(ALL_ZONES_DUNGEONS_KEY, Boolean(this._includeDungeons), 'settings'),
+                this._noteIfChanged(BESTIARY_PLAN_HOURS_KEY, hours) &&
+                    storage.set(BESTIARY_PLAN_HOURS_KEY, hours, 'settings'),
+                this._noteIfChanged(BESTIARY_PLAN_MODE_KEY, mode) &&
+                    storage.set(BESTIARY_PLAN_MODE_KEY, mode, 'settings'),
+                this._noteIfChanged(BESTIARY_PLAN_POINTS_KEY, points) &&
+                    storage.set(BESTIARY_PLAN_POINTS_KEY, points, 'settings'),
+                this._noteIfChanged(BESTIARY_PLAN_TOTAL_KEY, total) &&
+                    storage.set(BESTIARY_PLAN_TOTAL_KEY, total, 'settings'),
+                this._noteIfChanged(BESTIARY_PLAN_TOLERANCE_KEY, tolerance) &&
+                    storage.set(BESTIARY_PLAN_TOLERANCE_KEY, tolerance, 'settings'),
+                this._noteIfChanged(ALL_ZONES_DUNGEONS_KEY, dungeons) &&
+                    storage.set(ALL_ZONES_DUNGEONS_KEY, dungeons, 'settings'),
             ]);
         } catch (error) {
             console.error('[CombatSimUI] Failed to save the Bestiary plan preferences:', error);
         }
+    }
+
+    /**
+     * Whether one key of a grouped save differs from what this page last saw stored (read by
+     * `_loadBestiaryPlanPrefs`, or written by the save); noted as stored when it does, since
+     * the caller then writes it.
+     * @param {string} key - Storage key in `settings`
+     * @param {*} value - The value in memory
+     * @returns {boolean} True when the key is to be written
+     * @private
+     */
+    _noteIfChanged(key, value) {
+        if (!this._storedValues.differs(key, value)) return false;
+        this._storedValues.remember(key, value);
+        return true;
     }
 
     /**
@@ -9889,16 +9932,20 @@ class CombatSimUI {
             const precision = read(TRIGGER_CHOICE_IDS.precision);
             const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
             const objective = read(TRIGGER_CHOICE_IDS.objective);
-            // A select that is not on the panel keeps its remembered value untouched
-            const saved = (await readScoped(TRIGGER_CHOICES_KEY, 'settings', null)) || {};
-            await writeScoped(TRIGGER_CHOICES_KEY, {
-                ...saved,
-                ...(scope !== undefined ? { scope } : {}),
-                ...(include !== undefined ? { include } : {}),
-                ...(precision !== undefined ? { precision } : {}),
-                ...(Number.isFinite(minGain) ? { minGain } : {}),
-                ...(objective !== undefined ? { objective } : {}),
-            });
+            // A select that is not on the panel keeps its remembered value untouched. Folded in one
+            // transaction against the newest value, a queued write or a sync pull's included
+            await storage.update(
+                characterKey(TRIGGER_CHOICES_KEY),
+                (saved) => ({
+                    ...(saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}),
+                    ...(scope !== undefined ? { scope } : {}),
+                    ...(include !== undefined ? { include } : {}),
+                    ...(precision !== undefined ? { precision } : {}),
+                    ...(Number.isFinite(minGain) ? { minGain } : {}),
+                    ...(objective !== undefined ? { objective } : {}),
+                }),
+                'settings'
+            );
         } catch (error) {
             console.error('[CombatSimUI] Failed to save trigger choices:', error);
         }
@@ -9980,6 +10027,91 @@ class CombatSimUI {
             if (box) box.checked = Boolean(saved);
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore the shrine cap option:', error);
+        }
+    }
+
+    /**
+     * Re-read whatever of this panel's remembered choices a sync pull wrote into memory and
+     * the controls. The keys are registered live-safe in `sim-sync-keys.js`; without this the
+     * page would keep showing — and the next save would write back — the copy from before
+     * the pull. A panel that is not built has nothing to refresh: its next build reads them.
+     * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _adoptPulledSettings(written) {
+        if (!this.panel) return;
+        try {
+            const scoped = new Set(['upgradeModes', 'triggerChoices', 'swapAuraOnly', 'shrineCapToGuild']);
+            const settings = pulledNames(
+                written,
+                'settings',
+                Object.fromEntries(
+                    Object.entries(COMBAT_SIM_KEYS).map(([name, base]) => [
+                        name,
+                        scoped.has(name) ? characterKey(base) : base,
+                    ])
+                )
+            );
+            const results = pulledNames(written, 'combatExport', {
+                upgradeResults: characterKey(UPGRADE_RESULTS_KEY),
+            });
+            const has = (...names) => names.some((name) => settings.has(name));
+            const work = [];
+            if (has('upgradeModes', 'triggerChoices')) {
+                work.push(
+                    (async () => {
+                        await Promise.all([this._restoreUpgradeModes(), this._restoreTriggerChoices()]);
+                        await this._refreshCachedTriggerResult();
+                    })()
+                );
+            }
+            if (has('swapAuraOnly')) work.push(this._restoreSwapAuraOnly());
+            if (has('shrineCapToGuild')) work.push(this._restoreShrineCapToGuild());
+            if (has('allZonesMaxTierFood')) work.push(this._loadMaxTierFoodPref());
+            if (has('allZonesScoreScale')) {
+                work.push(
+                    (async () => {
+                        await this._loadZonesScorePref();
+                        const select = this.panel?.querySelector('#mwi-csim-zones-score-scale');
+                        if (select) select.value = this._allZonesScoreScale;
+                    })()
+                );
+            }
+            if (
+                has(
+                    'bestiaryPlanHours',
+                    'bestiaryPlanMode',
+                    'bestiaryPlanPoints',
+                    'bestiaryPlanTotal',
+                    'bestiaryPlanTolerance',
+                    'allZonesIncludeDungeons'
+                )
+            ) {
+                work.push(
+                    (async () => {
+                        await this._loadBestiaryPlanPrefs();
+                        // The planner draws its inputs from memory, so it is drawn again where it is shown
+                        const box = this.panel?.querySelector('#mwi-csim-bestiary-plan');
+                        if (box?.parentElement) this._renderBestiaryPlanner(box.parentElement);
+                    })()
+                );
+            }
+            if (has('upgradeColumns')) {
+                work.push(
+                    (async () => {
+                        await this._loadUpgradeColumnPrefs();
+                        if (this._upgradeResultsData && !this._isBusy()) {
+                            this._renderUpgradeResults(this._upgradeResultsData);
+                        }
+                    })()
+                );
+            }
+            // Draws only where no result set is in hand; one already shown is display, never saved back
+            if (results.has('upgradeResults')) work.push(this._restoreUpgradeResults());
+            await Promise.all(work);
+        } catch (error) {
+            console.error('[CombatSimUI] Adopting pulled settings failed:', error);
         }
     }
 

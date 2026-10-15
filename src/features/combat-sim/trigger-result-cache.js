@@ -9,6 +9,8 @@
  */
 
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { laterSavedAtWins } from './sim-sync-keys.js';
 
 /** Storage key, in the same character-scoped store as the chip's remembered choices */
 export const TRIGGER_LAST_RESULT_KEY = 'combatSimTriggerLastResult';
@@ -187,3 +189,13 @@ export async function loadTriggerResult(signature) {
         return null;
     }
 }
+
+// Live-safe: every reader goes to storage (`loadTriggerResult`) and every write is a new result, never a
+// cached copy put back. The later save wins, since a result is only offered while it is recent
+registerSyncMerge({
+    store: STORE,
+    base: TRIGGER_LAST_RESULT_KEY,
+    merge: laterSavedAtWins,
+    label: 'Combat Sim last trigger result',
+    liveSafe: true,
+});

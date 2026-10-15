@@ -24,6 +24,7 @@
 
 import storage from '../../core/storage.js';
 import { characterKey } from '../../utils/character-key.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Where recorded runs live, in the shared settings store. */
@@ -491,6 +492,16 @@ export class LabComparisonStore {
     }
 
     /**
+     * Read the runs back again, whatever is in memory: a sync pull has written a newer copy,
+     * and the next change would otherwise write this page's copy back over it.
+     * @returns {Promise<Object[]>} The runs
+     */
+    async reload() {
+        this._loaded = false;
+        return this.load();
+    }
+
+    /**
      * Record a finished run, evicting the oldest once the window is full.
      * @param {Object} entry - From `makeLabRunEntry`
      * @returns {Promise<Object[]>} The runs
@@ -586,3 +597,36 @@ export class LabComparisonStore {
         }
     }
 }
+
+/**
+ * The fold a sync pull applies to the runs and the baseline: the incoming copy, whole.
+ *
+ * Not a union by run id, though runs carry ids: a run removed here (Delete, Clear, or
+ * evicted past the ten kept) leaves no record of its removal, so a union would hand every
+ * removed run straight back from the other side's copy — at the next pull, and at the next
+ * push into the gist. The sync's baseline keeps this device's copy when only this device
+ * moved, so the whole-key rule is the one that lets a removal travel.
+ * @param {*} local - This device's stored value
+ * @param {*} incoming - The other side's value
+ * @returns {*} `incoming`
+ */
+export function mergeLabComparison(local, incoming) {
+    return incoming;
+}
+
+// Live-safe: the lab panel re-reads both keys when a pull writes them (`LabSimUI._adoptPulledSettings`
+// calls `reload()`), and `load()` drops a baseline that names no run it read
+registerSyncMerge({
+    store: 'settings',
+    base: LAB_COMPARISON_KEY,
+    merge: mergeLabComparison,
+    label: 'Lab Sim comparison runs',
+    liveSafe: true,
+});
+registerSyncMerge({
+    store: 'settings',
+    base: LAB_COMPARISON_BASELINE_KEY,
+    merge: mergeLabComparison,
+    label: 'Lab Sim comparison baseline',
+    liveSafe: true,
+});
