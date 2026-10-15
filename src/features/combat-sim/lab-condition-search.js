@@ -378,6 +378,8 @@ const scoreOf = (sample) => -(Number(sample?.attempts) || 0);
  *   (summed over the batch's measure calls) would pass the sim cap. Each batch is checked before it is
  *   launched, with room kept for the all-together check, so the cap is a real bound.
  * @param {Function} [params.onProgress] - Called with `{ description }`
+ * @param {Function} [params.score] - `(sample) => number`, higher is better; defaults to the Lab's fewer
+ *   expected attempts. The Combat Sim passes its objective's score, so the same search maximizes that.
  * @returns {Promise<Object>} `{ changes, bestMeasured, rejected, combined, reliable, stopped, capped, screened,
  *   finalSamples }`; each change `{ key, slotType, slotIndex, itemHrid, itemName, fromRows, toRows, kind,
  *   deltaScore, se }`. `bestMeasured` holds, for each slot not changed, its best candidate in the same shape plus
@@ -393,6 +395,7 @@ export async function runConditionSearch({
     aborted,
     overBudget,
     onProgress,
+    score = scoreOf,
 }) {
     const seeds = precision?.seeds || 4;
     const confirmSeeds = Math.max(CONFIRM_SEEDS_MIN, seeds);
@@ -485,11 +488,11 @@ export async function runConditionSearch({
         );
         if (stopped() || measured.some((m) => !m)) break;
         screened += replacements.length;
-        const refScores = refScreen.map(scoreOf);
+        const refScores = refScreen.map(score);
         // Ranked by screen mean whatever the sign: two halves that only help together can each look
         // slightly worse alone, so a positive mean is not required to earn a place in the pairing stage
         const ranked = replacements
-            .map((entry, i) => ({ ...entry, diff: pairedDiff(measured[i].map(scoreOf), refScores) }))
+            .map((entry, i) => ({ ...entry, diff: pairedDiff(measured[i].map(score), refScores) }))
             .sort((a, b) => b.diff.mean - a.diff.mean);
         if (ranked.length === 0) continue;
         noteBest(slot, ranked[0].rows, ranked[0].kind, ranked[0].diff, 'screen');
@@ -525,10 +528,10 @@ export async function runConditionSearch({
             )
         );
         if (stopped() || !refPair || entryPair.some((m) => !m)) break;
-        const refPairScores = refPair.map(scoreOf);
+        const refPairScores = refPair.map(score);
         let best = null;
         entries.forEach((entry, i) => {
-            const diff = pairedDiff(entryPair[i].map(scoreOf), refPairScores);
+            const diff = pairedDiff(entryPair[i].map(score), refPairScores);
             if (!best || diff.mean > best.diff.mean) best = { ...entry, diff };
         });
         // The pick is inflated by having been chosen; half the bar skips hopeless confirmations
@@ -554,7 +557,7 @@ export async function runConditionSearch({
             if (!moreRef || !moreWin || stopped()) break;
             refSamples = refSamples.concat(moreRef);
             winSamples = winSamples.concat(moreWin);
-            diff = pairedDiff(winSamples.map(scoreOf), refSamples.map(scoreOf));
+            diff = pairedDiff(winSamples.map(score), refSamples.map(score));
             verdict = sequentialVerdict(diff, look, looks.length, minGain);
         }
         if (stopped() || capped) break;
@@ -592,7 +595,7 @@ export async function runConditionSearch({
         measure({ ...accepted }, { stream: 'cfinal', count: confirmSeeds, stage: 'final' }),
     ]);
     if (!before || !after || stopped()) return done();
-    const diff = pairedDiff(after.map(scoreOf), before.map(scoreOf));
+    const diff = pairedDiff(after.map(score), before.map(score));
     const reliable = accepts(diff, minGain);
     const combined = {
         deltaScore: diff.mean,

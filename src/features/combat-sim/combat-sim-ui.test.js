@@ -140,6 +140,7 @@ vi.mock('./trigger-optimizer.js', () => ({
     createLimiter: () => (task) => task(),
     triggerUseFromResult: () => ({}),
     monsterMaxHpReader: () => () => 0,
+    estimateConditionRun: () => ({ slots: 0, counts: [], sims: 0 }),
     runTriggerOptimization: async (params) => {
         mocks.triggerRuns.push(params);
         if (mocks.triggerFail) throw mocks.triggerFail;
@@ -10022,6 +10023,36 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns[0].include).toBe('abilities');
         expect(mocks.triggerRuns[0].objective).toBe('profit');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+    });
+
+    test('the condition search is off by default and is passed to the run only when ticked', async () => {
+        ui.buildPanel();
+        selectZone();
+        onlyTriggers();
+        const box = ui.panel.querySelector('#mwi-csim-trigger-conditions');
+        expect(box.checked).toBe(false);
+        mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+
+        await ui._onUpgradeAnalyze();
+        expect(mocks.triggerRuns[0].searchConditions).toBe(false);
+
+        box.checked = true;
+        await ui._onUpgradeAnalyze();
+        expect(mocks.triggerRuns[1].searchConditions).toBe(true);
+    });
+
+    test('the condition search choice is remembered with the other trigger choices', async () => {
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+        ui.buildPanel();
+        await settle();
+        const box = ui.panel.querySelector('#mwi-csim-trigger-conditions');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-conditions').checked).toBe(true);
     });
 
     test('remembered modes naming Triggers restore it as checked', async () => {

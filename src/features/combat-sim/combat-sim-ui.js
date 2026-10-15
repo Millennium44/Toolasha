@@ -128,7 +128,7 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
-import { runTriggerOptimization } from './trigger-optimizer.js';
+import { estimateConditionRun, runTriggerOptimization } from './trigger-optimizer.js';
 import {
     buildEditorChanges,
     formatChangesText,
@@ -188,6 +188,8 @@ const TRIGGER_CHOICE_IDS = {
     precision: 'mwi-csim-trigger-precision',
     minGain: 'mwi-csim-trigger-mingain',
     objective: 'mwi-csim-trigger-objective',
+    // A checkbox: read and restored through `checked`, not `value`
+    conditions: 'mwi-csim-trigger-conditions',
 };
 /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
 const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
@@ -3615,6 +3617,10 @@ class CombatSimUI {
         // Delegated, so one listener covers the chip's selects
         this.panel.addEventListener('change', (event) => {
             if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) {
+                if (event.target.id === TRIGGER_CHOICE_IDS.conditions && !event.target.checked) {
+                    const costEl = this.panel.querySelector('#mwi-csim-trigger-conditions-cost');
+                    if (costEl) costEl.textContent = '';
+                }
                 this._saveTriggerChoices();
                 this._refreshCachedTriggerResult();
             } else if (event.target?.id === 'mwi-csim-upgrade-player') {
@@ -10042,6 +10048,8 @@ class CombatSimUI {
             const precision = read(TRIGGER_CHOICE_IDS.precision);
             const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
             const objective = read(TRIGGER_CHOICE_IDS.objective);
+            const conditionsBox = this.panel?.querySelector(`#${TRIGGER_CHOICE_IDS.conditions}`);
+            const conditions = conditionsBox ? Boolean(conditionsBox.checked) : undefined;
             // A select that is not on the panel keeps its remembered value untouched. Folded in one
             // transaction against the newest value, a queued write or a sync pull's included.
             // The key is resolved first, and a legacy bare value adopted into it the way the restore
@@ -10057,6 +10065,7 @@ class CombatSimUI {
                     ...(precision !== undefined ? { precision } : {}),
                     ...(Number.isFinite(minGain) ? { minGain } : {}),
                     ...(objective !== undefined ? { objective } : {}),
+                    ...(conditions !== undefined ? { conditions } : {}),
                 }),
                 'settings'
             );
@@ -10084,6 +10093,9 @@ class CombatSimUI {
             );
             apply(TRIGGER_CHOICE_IDS.minGain, saved.minGain, (v) => MIN_GAIN_OPTIONS.includes(v));
             apply(TRIGGER_CHOICE_IDS.objective, saved.objective, (v) => OBJECTIVES.some((o) => o.key === v));
+            // The slow condition search is off unless the player ticked it
+            const conditionsBox = this.panel?.querySelector(`#${TRIGGER_CHOICE_IDS.conditions}`);
+            if (conditionsBox) conditionsBox.checked = saved.conditions === true;
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore trigger choices:', error);
         }
@@ -10524,7 +10536,8 @@ class CombatSimUI {
 
     /**
      * The Triggers chip's choices and the zone, tier and player they apply to, as the run reads them.
-     * @returns {Object} `{ zoneHrid, difficultyTier, playerIndex, scope, include, precision, minGain, objective }`
+     * @returns {Object} `{ zoneHrid, difficultyTier, playerIndex, scope, include, precision, minGain, objective,
+     *   searchConditions }`
      * @private
      */
     _readTriggerChoices() {
@@ -10533,6 +10546,7 @@ class CombatSimUI {
         const minGainValue = parseFloat(value('#mwi-csim-trigger-mingain'));
         const objectiveValue = value('#mwi-csim-trigger-objective');
         return {
+            searchConditions: this.panel?.querySelector('#mwi-csim-trigger-conditions')?.checked === true,
             zoneHrid: value('#mwi-csim-zone'),
             difficultyTier: parseInt(value('#mwi-csim-tier')) || 0,
             playerIndex: parseInt(value('#mwi-csim-upgrade-player')) || 0,
@@ -10667,7 +10681,7 @@ class CombatSimUI {
 
         const ownerId = dataManager.getCurrentCharacterId();
         const choices = this._readTriggerChoices();
-        const { zoneHrid, difficultyTier, scope, include, precision, minGain, objective } = choices;
+        const { zoneHrid, difficultyTier, scope, include, precision, minGain, objective, searchConditions } = choices;
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
             return;
@@ -10736,6 +10750,18 @@ class CombatSimUI {
         try {
             const playerNames = {};
             for (const info of this._editor?.getPlayerInfo?.() || []) playerNames[info.hrid] = info.name;
+            // What the slow search will cost, said before it starts and left beside its checkbox
+            const costEl = this.panel.querySelector('#mwi-csim-trigger-conditions-cost');
+            if (costEl) {
+                const estimate = searchConditions
+                    ? estimateConditionRun({ gameData, dto: playerDTOs[playerIndex], zoneHrid, include, precision })
+                    : null;
+                costEl.textContent = estimate
+                    ? estimate.slots > 0
+                        ? `up to ${estimate.sims.toLocaleString('en-US')} more sims (${estimate.slots} slot${estimate.slots === 1 ? '' : 's'})`
+                        : 'no slot to search'
+                    : '';
+            }
             const result = await runTriggerOptimization(
                 {
                     gameData,
@@ -10749,6 +10775,7 @@ class CombatSimUI {
                     precision,
                     minGain,
                     objective,
+                    searchConditions,
                     playerNames,
                 },
                 ({ current, total, description }) => {

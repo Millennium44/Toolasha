@@ -296,6 +296,68 @@ describe('best found when nothing is accepted', () => {
     });
 });
 
+describe('new conditions block', () => {
+    const rows = (value) => [
+        {
+            dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+            conditionHrid: '/combat_trigger_conditions/current_hp',
+            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+            value,
+        },
+    ];
+    const cond = (over = {}) => ({
+        key: 'abilities|1',
+        slotType: 'abilities',
+        itemName: 'Fireball',
+        fromRows: rows(1),
+        toRows: [...rows(1), ...rows(50)],
+        deltaScore: 5,
+        se: 0.4,
+        ...over,
+    });
+    const render = (conditions, extra = {}) =>
+        renderTriggerResultsHtml(
+            { scope: 'me', changes: [], unchanged: [], simCount: 9, conditions, ...extra },
+            gameData
+        );
+
+    test('lists an accepted condition in the game wording, with was: and the objective score points', () => {
+        const html = render({ changes: [cond()], bestMeasured: [], reliable: true, slotCount: 1 });
+        expect(html).toContain('New conditions');
+        expect(html).toContain('Activate when: Targeted enemy Current HP');
+        expect(html).toContain('was: Activate when: Targeted enemy Current HP');
+        expect(html).toContain('Δscore +5.0 ± 0.4');
+    });
+
+    test('with no accepted condition it shows the best found, or that the current rows measured best', () => {
+        const best = render({ changes: [], bestMeasured: [cond({ deltaScore: 0.6 })], slotCount: 1 });
+        expect(best).toContain('No condition beat the current triggers by a clear margin');
+        expect(best).toContain('Best found: Fireball (ability)');
+        expect(best).toContain('not a recommendation');
+        const current = render({ changes: [], bestMeasured: [cond({ deltaScore: -1 })], slotCount: 1 });
+        expect(current).toContain('Fireball (ability): Current setting measured best.');
+    });
+
+    test('is absent when the search was not run, and still drawn when there were no thresholds to tune', () => {
+        expect(render(undefined)).not.toContain('New conditions');
+        const html = render({ changes: [cond()], bestMeasured: [], reliable: true }, { noTunables: true });
+        expect(html).toContain('Nothing to tune');
+        expect(html).toContain('New conditions');
+    });
+
+    test('says why a skipped search did not run, and when it hit the sim limit', () => {
+        expect(render({ changes: [], skipped: 'cap' })).toContain('sim limit is too small');
+        expect(render({ changes: [], bestMeasured: [], capped: true })).toContain('limit on condition-search sims');
+    });
+
+    test('the chip offers the unchecked "Search new conditions (slow)" box', () => {
+        const html = triggerChipOptionsHtml();
+        expect(html).toContain('id="mwi-csim-trigger-conditions"');
+        expect(html).toContain('Search new conditions (slow)');
+        expect(html).not.toMatch(/id="mwi-csim-trigger-conditions"[^>]*checked/);
+    });
+});
+
 describe('triggerChipOptionsHtml', () => {
     test('offers Optimize for: Balanced (selected), XP/h and Profit/h', () => {
         const html = triggerChipOptionsHtml();

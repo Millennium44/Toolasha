@@ -110,6 +110,7 @@ describe('triggerRunSignature', () => {
             { precision: 'precise' },
             { minGain: 1 },
             { objective: 'profit' },
+            { searchConditions: true },
             { communityBuffs: {} },
             { pricing: { fetchedAt: 2, mode: 'hybrid' } },
         ];
@@ -141,6 +142,37 @@ describe('compactTriggerResult', () => {
         expect(compact.unpriced).toEqual(['/items/donut']);
         expect(compact.valuationFailed).toBe(false);
         expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(result()).length);
+    });
+
+    test('keeps the condition search block, trimmed', () => {
+        const conditions = {
+            changes: [
+                {
+                    key: 'abilities|1',
+                    itemName: 'Fireball',
+                    toRows: [{}],
+                    fromRows: [],
+                    deltaScore: 3,
+                    se: 1,
+                    extra: 1,
+                },
+            ],
+            bestMeasured: [{ key: 'abilities|2', itemName: 'Heal', deltaScore: -1, se: 1 }],
+            combined: { deltaScore: 3, se: 1, seeds: 8, attemptsBefore: 0 },
+            reliable: true,
+            capped: true,
+            slotCount: 2,
+            rejected: [{ key: 'x' }],
+        };
+        const compact = compactTriggerResult({ ...result(), conditions, conditionSimCount: 40 });
+        expect(compact.conditionSimCount).toBe(40);
+        expect(compact.conditions.changes[0]).toMatchObject({ key: 'abilities|1', deltaScore: 3, se: 1 });
+        expect(compact.conditions.changes[0].extra).toBeUndefined();
+        expect(compact.conditions.bestMeasured).toHaveLength(1);
+        expect(compact.conditions.combined).toEqual({ deltaScore: 3, se: 1, seeds: 8 });
+        expect(compact.conditions).toMatchObject({ reliable: true, capped: true, slotCount: 2 });
+        expect(compact.conditions.rejected).toBeUndefined();
+        expect(compactTriggerResult(result()).conditions).toBeUndefined();
     });
 
     test('keeps the best-found candidate, trimmed to the fields the line reads', () => {

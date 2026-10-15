@@ -1,0 +1,233 @@
+/**
+ * The Combat Sim's opt-in "Search new conditions": after the threshold tuner it tries different trigger
+ * conditions (not just different numbers) on the selected player's slots, scored on the run's objective.
+ * The simulator is a stub whose XP rises when Fireball's rows include "my missing HP >= 375".
+ */
+
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+
+const sims = vi.hoisted(() => ({ calls: [], respond: null }));
+
+vi.mock('./combat-sim-runner.js', () => ({
+    runSimulation: vi.fn(async (params) => {
+        sims.calls.push(params);
+        return sims.respond(params);
+    }),
+    getMaxWorkers: () => 4,
+}));
+vi.mock('./combat-sim-adapter.js', () => ({
+    calculateSimRevenue: () => ({ netPerHour: 0 }),
+}));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
+
+const { runTriggerOptimization, estimateConditionRun, zoneMonsterHrids } = await import('./trigger-optimizer.js');
+
+const HOUR_NS = 3600 * 1e9;
+const FIREBALL = '/abilities/fireball';
+const SELF = '/combat_trigger_dependencies/self';
+const TARGET = '/combat_trigger_dependencies/targeted_enemy';
+const HP = '/combat_trigger_conditions/current_hp';
+const MP = '/combat_trigger_conditions/current_mp';
+const MISSING_HP = '/combat_trigger_conditions/missing_hp';
+const MISSING_MP = '/combat_trigger_conditions/missing_mp';
+const GTE = '/combat_trigger_comparators/greater_than_equal';
+const LTE = '/combat_trigger_comparators/less_than_equal';
+
+const gameData = {
+    abilityDetailMap: {
+        [FIREBALL]: {
+            name: 'Fireball',
+            defaultCombatTriggers: [{ dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 1 }],
+        },
+    },
+    itemDetailMap: {},
+    combatTriggerDependencyDetailMap: { [SELF]: { name: 'Me' }, [TARGET]: { name: 'Target enemy' } },
+    combatTriggerConditionDetailMap: {
+        [HP]: { name: 'Hp', isSingleTarget: true, allowedComparatorHrids: [GTE, LTE] },
+        [MP]: { name: 'Mp', isSingleTarget: true, allowedComparatorHrids: [GTE, LTE] },
+        [MISSING_HP]: { name: 'Missing Hp', isSingleTarget: true, allowedComparatorHrids: [GTE, LTE] },
+        [MISSING_MP]: { name: 'Missing Mp', isSingleTarget: true, allowedComparatorHrids: [GTE, LTE] },
+    },
+    combatTriggerComparatorDetailMap: {},
+    actionDetailMap: {},
+};
+
+const dto = () => ({
+    hrid: 'player1',
+    abilities: [null, { hrid: FIREBALL, level: 10, triggers: null }],
+    food: [null, null, null],
+    drinks: [null, null, null],
+});
+
+/** XP is 1000, plus 50 when Fireball keeps its HP row and adds "missing HP >= 375". The threshold of the default row is irrelevant. */
+function respond(params) {
+    const rows = params.playerDTOs[0].abilities[1].triggers || [];
+    const lucky =
+        rows.length === 2 &&
+        rows[0].conditionHrid === HP &&
+        rows[1].conditionHrid === MISSING_HP &&
+        Number(rows[1].value) === 375;
+    return {
+        simulatedTime: params.hours * HOUR_NS,
+        experienceGained: { player1: { magic: (1000 + (lucky ? 50 : 0)) * params.hours } },
+        deaths: { player1: 0 },
+        totalDamageDealt: { player1: 100 * 3600 * params.hours },
+        encounters: 10 * params.hours,
+        playerPools: { player1: { maxHitpoints: 1500, maxManapoints: 800 } },
+    };
+}
+
+const base = {
+    gameData,
+    playerDTOs: [dto()],
+    playerIndex: 0,
+    zoneHrid: '/actions/combat/fly',
+    difficultyTier: 0,
+    communityBuffs: {},
+    precision: 'quick',
+    objective: 'xp',
+};
+
+beforeEach(() => {
+    sims.calls = [];
+    sims.respond = respond;
+});
+
+describe('Combat Sim condition search', () => {
+    test('off by default: no condition sims, no conditions block', async () => {
+        const result = await runTriggerOptimization({ ...base });
+        expect(result.conditions).toBeUndefined();
+        expect(result.conditionSimCount).toBeUndefined();
+        // every sim ran Fireball on its own single row (or the default): nothing was ANDed
+        expect(sims.calls.every((c) => (c.playerDTOs[0].abilities[1].triggers || []).length <= 1)).toBe(true);
+    });
+
+    test('on: finds a "current AND X" condition that beats the current one, in the objective score points', async () => {
+        const result = await runTriggerOptimization({ ...base, searchConditions: true });
+        const found = result.conditions.changes;
+        expect(found).toHaveLength(1);
+        expect(found[0]).toMatchObject({ key: 'abilities|1', itemName: 'Fireball', kind: 'and-current' });
+        expect(found[0].fromRows).toHaveLength(1);
+        expect(found[0].toRows).toHaveLength(2);
+        expect(found[0].toRows[1]).toMatchObject({ dependencyHrid: SELF, conditionHrid: MISSING_HP, value: 375 });
+        // +50 on 1000 EXP/h is +5 points of the XP objective
+        expect(found[0].deltaScore).toBeCloseTo(5, 1);
+        expect(result.conditions.reliable).toBe(true);
+        expect(result.conditions.combined.deltaScore).toBeCloseTo(5, 1);
+        expect(result.conditions.slotCount).toBe(1);
+        expect(result.conditionSimCount).toBeGreaterThan(0);
+        // the sims it counted are the sims it ran on top of the threshold tuner's
+        const withoutConditions = sims.calls.length - result.conditionSimCount;
+        sims.calls = [];
+        await runTriggerOptimization({ ...base });
+        expect(sims.calls.length).toBe(withoutConditions);
+    });
+
+    test('when nothing helps, the best candidate measured is kept for the best-found line', async () => {
+        sims.respond = (params) => ({
+            ...respond(params),
+            experienceGained: { player1: { magic: 1000 * params.hours } },
+        });
+        const result = await runTriggerOptimization({ ...base, searchConditions: true });
+        expect(result.conditions.changes).toHaveLength(0);
+        expect(result.conditions.bestMeasured).toHaveLength(1);
+        expect(Number.isFinite(result.conditions.bestMeasured[0].deltaScore)).toBe(true);
+    });
+
+    test('the sim cap is a real bound on the condition search', async () => {
+        const free = await runTriggerOptimization({ ...base, searchConditions: true });
+        const cap = Math.floor(free.conditionSimCount / 2);
+        sims.calls = [];
+        const capped = await runTriggerOptimization({ ...base, searchConditions: true, maxConditionSims: cap });
+        expect(capped.conditionSimCount).toBeLessThanOrEqual(cap);
+        expect(capped.conditionSimCount).toBeLessThan(free.conditionSimCount);
+        expect(capped.conditions.capped).toBe(true);
+        // and the count is the sims actually launched, not a guess
+        const plain = sims.calls.length - capped.conditionSimCount;
+        sims.calls = [];
+        await runTriggerOptimization({ ...base });
+        expect(sims.calls.length).toBe(plain);
+    });
+
+    test('a cap too small for even the scoring baseline runs no condition sims', async () => {
+        const result = await runTriggerOptimization({ ...base, searchConditions: true, maxConditionSims: 2 });
+        expect(result.conditionSimCount).toBe(0);
+        expect(result.conditions.skipped).toBe('cap');
+    });
+
+    test('Stop before the condition search leaves it unrun; a stop during it reports stopped', async () => {
+        let stopAfter = Infinity;
+        const result = await runTriggerOptimization({ ...base, searchConditions: true }, null, {
+            abortSignal: () => sims.calls.length >= stopAfter,
+        });
+        expect(result.stopped).toBe(false);
+        const full = sims.calls.length;
+        sims.calls = [];
+        stopAfter = full - 20;
+        const stopped = await runTriggerOptimization({ ...base, searchConditions: true }, null, {
+            abortSignal: () => sims.calls.length >= stopAfter,
+        });
+        expect(stopped.stopped).toBe(true);
+        expect(sims.calls.length).toBeLessThan(full);
+    });
+
+    test('with nothing for the threshold tuner, the condition search still runs', async () => {
+        const noRows = {
+            ...dto(),
+            abilities: [
+                null,
+                {
+                    hrid: FIREBALL,
+                    level: 10,
+                    triggers: [{ dependencyHrid: SELF, conditionHrid: HP, comparatorHrid: LTE, value: 0 }],
+                },
+            ],
+        };
+        // a "self HP <= 0" row is not an enemy-HP / pool threshold the tuner moves, so only conditions are searched
+        const result = await runTriggerOptimization({ ...base, playerDTOs: [noRows], searchConditions: true });
+        expect(result.noTunables).toBe(true);
+        expect(result.conditions).toBeDefined();
+        expect(result.conditions.slotCount).toBe(1);
+    });
+
+    test('the estimate counts slots, candidates and a capped sim total', () => {
+        const estimate = estimateConditionRun({ gameData, dto: dto(), zoneHrid: base.zoneHrid, precision: 'quick' });
+        expect(estimate.slots).toBe(1);
+        expect(estimate.counts[0]).toBeGreaterThan(0);
+        expect(estimate.sims).toBeGreaterThan(0);
+        expect(estimateConditionRun({ gameData, dto: dto(), zoneHrid: base.zoneHrid, maxConditionSims: 10 }).sims).toBe(
+            10
+        );
+        expect(estimateConditionRun({ gameData, dto: { ...dto(), abilities: [] }, zoneHrid: base.zoneHrid }).sims).toBe(
+            0
+        );
+    });
+
+    test('zoneMonsterHrids reads random, boss and dungeon spawns once each', () => {
+        const data = {
+            actionDetailMap: {
+                '/actions/combat/z': {
+                    combatZoneInfo: {
+                        fightInfo: {
+                            randomSpawnInfo: {
+                                spawns: [{ combatMonsterHrid: '/monsters/a' }, { combatMonsterHrid: '/monsters/b' }],
+                            },
+                            bossSpawns: [{ combatMonsterHrid: '/monsters/a' }],
+                        },
+                        dungeonInfo: {
+                            randomSpawnInfoMap: { 1: { spawns: [{ combatMonsterHrid: '/monsters/c' }] } },
+                            fixedSpawnsMap: { 2: [{ combatMonsterHrid: '/monsters/d' }] },
+                        },
+                    },
+                },
+            },
+        };
+        expect(zoneMonsterHrids(data, '/actions/combat/z').sort()).toEqual([
+            '/monsters/a',
+            '/monsters/b',
+            '/monsters/c',
+            '/monsters/d',
+        ]);
+        expect(zoneMonsterHrids(data, '/actions/combat/missing')).toEqual([]);
+    });
+});

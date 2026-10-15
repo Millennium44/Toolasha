@@ -21,14 +21,27 @@ import Monster from './engine/monster.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import {
+    MAX_CONDITION_SIMS,
+    applyTriggerRows,
+    buildConditionCandidates,
+    conditionSlots,
+    estimateConditionSimsPerFight,
+    runConditionSearch,
+} from './lab-condition-search.js';
+import {
     PRECISIONS,
     DEFAULT_PRECISION,
     DEFAULT_OBJECTIVE,
     OBJECTIVES,
+    ROUND_GROWTH,
     applyTriggerValues,
     collectTunables,
     estimateTriggerSims,
+    mean,
+    objectiveScore,
+    profitValuation,
     runTriggerSearch,
+    scopeMetrics,
     zoneMaxEnemies,
     zoneEnemyHp,
     MIN_GAIN,
@@ -183,6 +196,68 @@ export function triggerUseFromResult(simResult, hrids) {
 }
 
 /**
+ * Every monster a zone or dungeon can spawn, from its spawn tables.
+ * @param {Object} gameData - Game data payload
+ * @param {string} zoneHrid - Zone action hrid
+ * @returns {Array<string>} Monster hrids, each once
+ */
+export function zoneMonsterHrids(gameData, zoneHrid) {
+    const info = gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+    const hrids = new Set();
+    const add = (spawn) => {
+        if (spawn?.combatMonsterHrid) hrids.add(spawn.combatMonsterHrid);
+    };
+    for (const spawn of info?.fightInfo?.randomSpawnInfo?.spawns || []) add(spawn);
+    for (const spawn of info?.fightInfo?.bossSpawns || []) add(spawn);
+    for (const table of Object.values(info?.dungeonInfo?.randomSpawnInfoMap || {})) {
+        for (const spawn of table?.spawns || []) add(spawn);
+    }
+    for (const wave of Object.values(info?.dungeonInfo?.fixedSpawnsMap || {})) {
+        for (const spawn of wave || []) add(spawn);
+    }
+    return [...hrids];
+}
+
+/**
+ * The condition search's cost before it runs: slots, single conditions per slot, and the most sims it
+ * can run (its own ceiling, capped at `maxConditionSims`). Only the selected player's slots are searched.
+ * @param {Object} params
+ * @param {Object} params.gameData - Game data payload
+ * @param {Object} params.dto - The selected player's DTO
+ * @param {string} params.zoneHrid - Zone
+ * @param {string} [params.include] - 'both', 'abilities' or 'consumables'
+ * @param {string} [params.precision] - A PRECISIONS key
+ * @param {number} [params.maxConditionSims] - Ceiling on the run's condition sims
+ * @returns {{slots: number, counts: Array<number>, sims: number}}
+ */
+export function estimateConditionRun({
+    gameData,
+    dto,
+    zoneHrid,
+    include = 'both',
+    precision = DEFAULT_PRECISION,
+    maxConditionSims = MAX_CONDITION_SIMS,
+}) {
+    const p = PRECISIONS[precision] || PRECISIONS[DEFAULT_PRECISION];
+    const monsterHrids = zoneMonsterHrids(gameData, zoneHrid);
+    const counts = conditionSlots(dto, gameData, include).map(
+        (slot) =>
+            buildConditionCandidates({
+                slot,
+                dto,
+                gameData,
+                monsterHrids,
+                // The pools are not known before the run; any positive figure yields the same number of rows
+                pools: { hp: 1000, mp: 1000 },
+                enemyHp: 1000,
+            }).length
+    );
+    // The scoring baseline adds one batch of seeds
+    const sims = counts.length > 0 ? estimateConditionSimsPerFight(counts, p) + p.seeds : 0;
+    return { slots: counts.length, counts, sims: Math.min(maxConditionSims, sims) };
+}
+
+/**
  * Search for better threshold values on the chosen players' triggers.
  * @param {Object} params
  * @param {Object} params.gameData - Game data payload
@@ -198,10 +273,15 @@ export function triggerUseFromResult(simResult, hrids) {
  * @param {Object} [params.playerNames] - hrid → display name
  * @param {string} [params.include] - 'both', 'abilities' or 'consumables': which kinds of row to tune
  * @param {string} [params.objective] - 'balanced' (default), 'xp' or 'profit': what the score measures
+ * @param {boolean} [params.searchConditions] - Also search new trigger conditions (slow, opt-in): after the
+ *   threshold tuner, for the selected player's abilities and consumables (per `include`)
+ * @param {number} [params.maxConditionSims] - Ceiling on the condition search's sims for the run
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
  * @returns {Promise<Object|null>} The search result plus `scope`, `precision`, `simCount`, `tunableCount`;
- *   `noTunables: true` when nothing qualifies; null when stopped before the baseline finished
+ *   `noTunables: true` when nothing qualifies; null when stopped before the baseline finished. With
+ *   `searchConditions`, also `conditions` (`runConditionSearch`'s result less its samples, plus `slotCount`,
+ *   `afterThresholds`, and `skipped` when it could not run) and `conditionSimCount`
  */
 export async function runTriggerOptimization(params, onProgress, options = {}) {
     const {
@@ -217,6 +297,8 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         playerNames = {},
         include = 'both',
         objective: objectiveKey = DEFAULT_OBJECTIVE,
+        searchConditions = false,
+        maxConditionSims = MAX_CONDITION_SIMS,
     } = params;
     const objective = OBJECTIVES.some((o) => o.key === objectiveKey) ? objectiveKey : DEFAULT_OBJECTIVE;
     const { abortSignal } = options;
@@ -225,7 +307,17 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
 
     const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
     const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
-    if (tunables.length === 0) {
+    const conditionEstimate = searchConditions
+        ? estimateConditionRun({
+              gameData,
+              dto: playerDTOs[playerIndex],
+              zoneHrid,
+              include,
+              precision: precisionKey,
+              maxConditionSims,
+          })
+        : { slots: 0, counts: [], sims: 0 };
+    if (tunables.length === 0 && conditionEstimate.slots === 0) {
         return { noTunables: true, scope: wholeParty ? 'party' : 'me', include, objective, changes: [] };
     }
 
@@ -233,8 +325,13 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const scopeHrids = wholeParty ? allHrids : [playerDTOs[playerIndex].hrid];
     const baseSeed = randomSeed();
     const limit = createLimiter(concurrency());
-    const total = estimateTriggerSims(tunables.length, precision.key);
+    const total = Math.max(
+        1,
+        (tunables.length > 0 ? estimateTriggerSims(tunables.length, precision.key) : 0) + conditionEstimate.sims
+    );
     let simCount = 0;
+    // Sims the condition search launched (a cache hit costs nothing); the cap is on this
+    let conditionSimCount = 0;
     const cache = new Map();
     // Every price is read once and held for the whole run. Sims finish over minutes, and valuing each
     // against whatever the market said when it finished made a price update look like a trigger effect.
@@ -265,11 +362,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
      * @param {number} [offset] - Index of the first seed within the stream
      * @returns {Promise<Array<Object>|null>} One sample per seed; null once stopped
      */
-    const measure = (overrides, hours, stream, count, offset = 0) => {
-        const id = `${signature(overrides)}|${hours}|${stream}|${count}|${offset}`;
+    const runBatch = (id, dtos, hours, stream, count, offset) => {
         if (cache.has(id)) return cache.get(id);
 
-        const dtos = applyTriggerValues(playerDTOs, tunables, overrides);
         const base = streamId(stream) * STREAM_WIDTH;
         const runs = Array.from({ length: count }, (_, k) =>
             limit(async () => {
@@ -310,21 +405,37 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         return batch;
     };
 
-    const result = await runTriggerSearch({
-        tunables,
-        scopeHrids,
-        measure,
-        precision,
-        maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
-        enemyHp: zoneEnemyHp(gameData, zoneHrid, difficultyTier, monsterMaxHpReader(gameData)),
-        minGain,
-        objective,
-        onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
-        aborted: stopped,
-    });
-    if (!result) return null;
+    const measure = (overrides, hours, stream, count, offset = 0) =>
+        runBatch(
+            `${signature(overrides)}|${hours}|${stream}|${count}|${offset}`,
+            applyTriggerValues(playerDTOs, tunables, overrides),
+            hours,
+            stream,
+            count,
+            offset
+        );
 
-    return {
+    let result;
+    if (tunables.length > 0) {
+        result = await runTriggerSearch({
+            tunables,
+            scopeHrids,
+            measure,
+            precision,
+            maxEnemies: zoneMaxEnemies(gameData, zoneHrid),
+            enemyHp: zoneEnemyHp(gameData, zoneHrid, difficultyTier, monsterMaxHpReader(gameData)),
+            minGain,
+            objective,
+            onProgress: ({ description }) => onProgress?.({ current: Math.min(simCount, total), total, description }),
+            aborted: stopped,
+        });
+        if (!result) return null;
+    } else {
+        // Nothing for the threshold tuner; only the condition search has something to do
+        result = { noTunables: true, changes: [], stopped: false };
+    }
+
+    const out = {
         ...result,
         scope: wholeParty ? 'party' : 'me',
         include,
@@ -333,5 +444,100 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         minGain,
         simCount,
         tunableCount: tunables.length,
+    };
+    if (!searchConditions || result.stopped || stopped()) return out;
+
+    // Start from the thresholds the tuner kept, so the two searches' changes are one setup
+    const tuned = Object.fromEntries((result.changes || []).map((c) => [c.key, c.to]));
+    const startDtos = tunables.length > 0 ? applyTriggerValues(playerDTOs, tunables, tuned) : playerDTOs;
+    const startDto = startDtos[playerIndex];
+    const slots = conditionSlots(startDto, gameData, include);
+    const hoursPerSeed = precision.pointHours / precision.seeds;
+    const confirmHours = hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH;
+    const hoursFor = { screen: hoursPerSeed, pair: hoursPerSeed, confirm: confirmHours, final: confirmHours };
+    const tunedSignature = signature(tuned);
+
+    /** One paired-seed batch with some of the selected player's slots given new trigger rows */
+    const conditionBatch = (edits, hours, stream, count, offset = 0) => {
+        const editsKey = JSON.stringify(
+            Object.keys(edits)
+                .sort()
+                .map((k) => [k, edits[k]])
+        );
+        const id = `cond|${editsKey}|${tunedSignature}|${hours}|${stream}|${count}|${offset}`;
+        if (!cache.has(id)) conditionSimCount += count;
+        const dtos = startDtos.map((dto, i) => (i === playerIndex ? applyTriggerRows(startDto, edits) : dto));
+        return runBatch(id, dtos, hours, stream, count, offset);
+    };
+
+    let conditions;
+    // The score is the objective's change against the starting setup, so that setup is measured first, on
+    // its own seeds; both sides of every paired comparison are scored the same way
+    // (a cap smaller than that one batch leaves no room for any search, so it is not run)
+    const canMeasure = slots.length > 0 && maxConditionSims >= precision.seeds;
+    const baseline = canMeasure
+        ? await conditionBatch({}, hoursPerSeed * ROUND_GROWTH, 'cbaseline', precision.seeds)
+        : null;
+    if (slots.length === 0 || !canMeasure) {
+        conditions = {
+            changes: [],
+            rejected: [],
+            bestMeasured: [],
+            skipped: slots.length === 0 ? 'no-slots' : 'cap',
+        };
+    } else if (!baseline || stopped()) {
+        conditions = { changes: [], rejected: [], bestMeasured: [], stopped: true };
+    } else {
+        const baseMetrics = baseline.map((sample) => scopeMetrics(sample, scopeHrids));
+        const baseScope = {};
+        for (const key of ['xp', 'profit', 'revenue', 'cost', 'deaths', 'dps', 'encounters', 'attempts']) {
+            baseScope[key] = mean(baseMetrics.map((m) => m[key]));
+        }
+        const baseComplete = profitValuation([baseline], scopeHrids).complete;
+        if (objective === 'profit' && !baseComplete) {
+            // Profit/h with a baseline that cannot be valued has nothing to optimize
+            conditions = { changes: [], rejected: [], bestMeasured: [], skipped: 'profit' };
+        } else {
+            const score = (sample) =>
+                objectiveScore(scopeMetrics(sample, scopeHrids), baseScope, objective, {
+                    withProfit: baseComplete && profitValuation([[sample]], scopeHrids).complete,
+                });
+            const monsterHrids = zoneMonsterHrids(gameData, zoneHrid);
+            const hpOf = monsterMaxHpReader(gameData);
+            const enemyHp = Math.max(0, ...monsterHrids.map((hrid) => hpOf(hrid, difficultyTier)));
+            const search = await runConditionSearch({
+                slots,
+                candidatesFor: (slot, referenceSamples) =>
+                    buildConditionCandidates({
+                        slot,
+                        dto: startDto,
+                        gameData,
+                        monsterHrids,
+                        pools: referenceSamples?.find((s) => s?.pools?.[startDto.hrid])?.pools?.[startDto.hrid],
+                        enemyHp,
+                    }),
+                measure: (edits, { stream, count, offset = 0, stage }) =>
+                    conditionBatch(edits, hoursFor[stage] || confirmHours, stream, count, offset),
+                precision,
+                minGain,
+                score,
+                aborted: stopped,
+                // Seed runs, as `conditionBatch` counts them (cache hits would cost nothing, so this errs toward
+                // stopping)
+                overBudget: (seedRuns = 0) => conditionSimCount + seedRuns > maxConditionSims,
+                onProgress: ({ description }) =>
+                    onProgress?.({ current: Math.min(simCount, total), total, description }),
+            });
+            // The samples are only for scoring; the result keeps the figures
+            const { finalSamples: _samples, ...rest } = search;
+            conditions = rest;
+        }
+    }
+    return {
+        ...out,
+        stopped: out.stopped || stopped(),
+        simCount,
+        conditionSimCount,
+        conditions: { ...conditions, slotCount: slots.length, afterThresholds: Object.keys(tuned).length > 0 },
     };
 }
