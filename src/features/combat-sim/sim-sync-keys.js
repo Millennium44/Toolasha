@@ -53,7 +53,12 @@ export const COMBAT_SIM_KEYS = Object.freeze({
     bestiaryPlanTolerance: 'combatSimBestiaryPlanTolerance',
 });
 
-/** The sim editor's remembered Loadout pick, per character, in `settings` */
+/**
+ * The sim editor's remembered Loadout pick, per character, in `settings`. Deliberately NOT
+ * live-safe: a built editor never re-reads it (reopening keeps the player's scenario, edits
+ * and all), and applying a pulled loadout under it would throw those edits away. So a pull
+ * of it still latches and asks for a reload, which is when the editor reads it.
+ */
 export const SIM_EDITOR_LOADOUT_KEY = 'simEditorLoadoutName';
 
 /** The remembered upgrade analyses (`upgrade-results-store.js`), per character, in `combatExport` */
@@ -153,11 +158,9 @@ for (const [name, base] of Object.entries(COMBAT_SIM_KEYS)) {
     register('settings', base, name === 'triggerChoices' ? mergeFieldRecord : incomingWins, COMBAT_LABELS[name]);
 }
 
-// The editor writes this only when the player picks a loadout or resets the editor, which is a
-// new choice made on screen, never a cached copy put back; the next editor build reads it fresh
-register('settings', SIM_EDITOR_LOADOUT_KEY, incomingWins, 'Sim editor loadout');
+// `SIM_EDITOR_LOADOUT_KEY` is left unregistered on purpose: see its declaration
 
-// Read fresh whenever a panel opens and drawn only where no table is on screen; never written
+// Read fresh whenever a panel opens; a pull redraws a restored table, never one a run drew; never written
 // back from memory (a save is a new run, a clear writes null)
 register('combatExport', UPGRADE_RESULTS_KEYS.combat, laterSavedAtWins, 'Combat Sim remembered upgrades');
 register('combatExport', UPGRADE_RESULTS_KEYS.lab, laterSavedAtWins, 'Lab Sim remembered upgrades');

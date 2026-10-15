@@ -2266,10 +2266,10 @@ class LabSimUI {
                     })()
                 );
             }
-            // Draws only where no table is on screen; a table already shown is display, never saved back
-            // and never while a run is going or once one has run here: the remembered set would land in its place
+            // A table on screen here is a restored one, so the pulled set (or a pulled clear) takes its place.
+            // Never while a run is going or once one has run here: the remembered set would land in its place
             if (results.has('upgradeResults') && !this._upgradeRunning && !this._upgradeRunStarted) {
-                work.push(this._restoreUpgradeResults());
+                work.push(this._restoreUpgradeResults({ replace: true }));
             }
             await Promise.all(work);
         } catch (error) {
@@ -5778,15 +5778,28 @@ class LabSimUI {
      * and a fresh run has not already drawn its own. Fire-and-forget from panel
      * open; draws into the (possibly hidden) Upgrade tab so the results are there
      * when the tab is next shown.
+     *
+     * `replace` is a sync pull's: the table on screen is itself a restored one (no analysis has
+     * started on this panel), so it gives way to the pulled set, and a pulled clear empties it.
+     * An analysis started while the read was out owns the table, and nothing is drawn.
+     * @param {{replace?: boolean}} [options] - Replace a restored table already shown
      * @private
      */
-    async _restoreUpgradeResults() {
+    async _restoreUpgradeResults({ replace = false } = {}) {
         try {
             const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
-            if (!container || container.querySelector('table')) return;
+            if (!container || (container.querySelector('table') && !replace)) return;
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
-            if (!payload) return;
-            if (!this.panel || container.querySelector('table')) return;
+            if (replace && (this._upgradeRunning || this._upgradeRunStarted)) return;
+            if (!payload) {
+                if (replace && this.panel && container.querySelector('table')) {
+                    this._restoredUpgradeAt = null;
+                    this._restoredUpgradeMeta = null;
+                    container.innerHTML = '';
+                }
+                return;
+            }
+            if (!this.panel || (container.querySelector('table') && !replace)) return;
             this._restoredUpgradeAt = payload.savedAt || null;
             this._restoredUpgradeMeta = { characterName: payload.characterName || null };
             this._renderUpgradeResults(payload.data, container);
