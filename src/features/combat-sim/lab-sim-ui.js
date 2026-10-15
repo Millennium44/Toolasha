@@ -2334,6 +2334,8 @@ class LabSimUI {
         let savedRoomLevels = false;
         let savedTargetFloor = 0;
         let readOk = false;
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
         // The scoped keys this restore reads, resolved before the first await
         const keys = Object.fromEntries(
             [
@@ -2384,7 +2386,9 @@ class LabSimUI {
             selection = sanitizeLabUpgradeSelection(null, null);
         }
 
-        if (!this.panel) return;
+        // A switch during the read rebuilt the panel for the arriving character, whose own restore fills it:
+        // the departing character's selection put on its controls would be saved under the arriving one
+        if (!this.panel || !this._stillSameCharacter(ownerId)) return;
         const wanted = new Set(selection.dimensions);
         const appliedDimensions = [];
         this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
