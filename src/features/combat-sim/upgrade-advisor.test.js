@@ -1241,6 +1241,59 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(result.baseline.fights[0].experienceGained).toBeUndefined();
     });
 
+    test('co-trained levels are character-wide: each goes into every fight, whichever weapon earned it', async () => {
+        const gameData = buildGameData();
+        gameData.levelExperienceTable = Array.from({ length: 201 }, (_, level) => level * level * 100);
+        gameData.itemDetailMap['/items/test_bow'] = {
+            hrid: '/items/test_bow',
+            name: 'Test Bow',
+            equipmentDetail: { type: MAIN_HAND, combatStats: { primaryTraining: '/skills/ranged' } },
+        };
+        buildGameDataPayload.mockReturnValue(gameData);
+        const seen = [];
+        runLabyrinthSimulation.mockImplementation(async ({ playerDTOs }) => {
+            seen.push(playerDTOs[0]);
+            return {
+                labyAttemptCount: 100,
+                encounters: 50,
+                simulatedTime: 3600 * 1e9,
+                experienceGained: { player1: { defense: 100, melee: 60, ranged: 40 } },
+            };
+        });
+        const levels = { staminaLevel: 50, meleeLevel: 50, rangedLevel: 50, defenseLevel: 50, attackLevel: 50 };
+        const sword = { equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } }, ...levels };
+        const bow = { equipment: { [MAIN_HAND]: { hrid: '/items/test_bow', enhancementLevel: 0 } }, ...levels };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: sword },
+                    { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 100, dto: bow },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                combatLevelTargets: { defenseLevel: 55 },
+            },
+            null,
+            {}
+        );
+
+        const defense = result.results.find((r) => r.candidate.skillKey === 'defenseLevel');
+        // 52,500 Defense XP: 60% lands in Melee (level 53), 40% in Ranged (level 52)
+        expect(defense.alongside).toEqual([
+            expect.objectContaining({ skillKey: 'meleeLevel', upgradeLevel: 53, fights: 1 }),
+            expect.objectContaining({ skillKey: 'rangedLevel', upgradeLevel: 52, fights: 1 }),
+        ]);
+        const boosted = seen.filter((d) => d.defenseLevel === 55);
+        expect(boosted).toHaveLength(2);
+        // Both rooms carry both levels, the bow room the Melee the sword room earned and vice versa
+        for (const d of boosted) {
+            expect(d.meleeLevel).toBe(53);
+            expect(d.rangedLevel).toBe(52);
+        }
+    });
+
     test('a combat level with no XP to time it from still comes back, untimed', async () => {
         buildGameDataPayload.mockReturnValue(buildGameData());
         runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });

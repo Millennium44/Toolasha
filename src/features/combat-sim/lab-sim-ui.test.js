@@ -5352,6 +5352,20 @@ describe('the all-fights Combat levels table', () => {
         expect(levelNames()).toEqual(['Defense 125 → 130', 'Melee 138 → 143']);
     });
 
+    test('a row inside the sims noise scores nothing, however good its sample looks', () => {
+        const lucky = level('rangedLevel', 'Ranged', 90, 95, {
+            levelTimeHours: 1,
+            attemptsDelta: -3,
+            avgWinDelta: 0.5,
+            significant: false,
+        });
+        ui._renderAllFightsResults(analysis([lucky, defense()]), container);
+
+        expect(levelRowFor('Ranged').querySelector('[data-level-score]').textContent).toBe('—');
+        expect(levelRowFor('Defense').querySelector('[data-level-score]').textContent).toBe('100');
+        expect(levelNames()[0]).toBe('Defense 125 → 130');
+    });
+
     test('a row that saves nothing shows a dash, and a row from before the fields existed still draws', () => {
         const flat = level('rangedLevel', 'Ranged', 90, 95, { attemptsDelta: 0.2, avgWinDelta: -0.01 });
         ui._renderAllFightsResults(analysis([flat, melee()]), container);

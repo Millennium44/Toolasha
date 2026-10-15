@@ -4497,8 +4497,9 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
  * the XP rates pooled from the baseline sims. The weapon trains its primary
  * skill with 30% of the XP whatever is worn, so each fight's loadout also gets
  * the primary skill's level the same hours would earn (`primaryLevelsAlongside`);
- * a loadout whose primary skill is the one being ground gets nothing extra.
- * Loadouts can wield different weapons, so this is per fight.
+ * Loadouts can wield different weapons; each primary skill other than the one
+ * being ground is worked out once and, levels being character-wide, applied to
+ * every fight.
  *
  * Speedup is left at 1: the labyrinth passes do not measure how much faster the
  * levels make the grind, and "at your current rates" is the honest reading.
@@ -4508,24 +4509,27 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
  * @param {Object} gameData - Game data payload
  * @param {{simulatedTime: number, experienceGained: Object}} pooledXp - Pooled baseline XP
  * @returns {{levelTimeHours: number, primarySkills: string[], isMainSkill: boolean,
- *   alongside: Array<Object>, alongByFight: Array<Object|null>}}
+ *   alongside: Array<Object>, alongByFight: Array<Array<Object>>}}
  */
 function planLevelGrind(candidate, fights, gameData, pooledXp) {
     const levelTimeHours = estimateCombatLevelTime(candidate, pooledXp, gameData, 'player1');
     const primaryPerFight = fights.map((fight) => getPrimaryTrainingSkill(fight.dto, gameData));
-    const alongByFight = fights.map((fight, i) => {
-        const primary = primaryPerFight[i];
-        if (candidate.skillKey === `${primary}Level`) return null;
-        const along = primaryLevelsAlongside(candidate, primary, pooledXp, gameData, 'player1', fight.dto);
-        return along && along.upgradeLevel > along.currentLevel ? along : null;
-    });
+    // Levels are character-wide: what a sword room's grind earns in Melee is
+    // still there in a bow room. So each primary skill is worked out once, from
+    // the pooled rates, and every co-trained level goes into every fight.
+    // `fights` counts the rooms that train it.
     const alongside = [];
-    for (const along of alongByFight) {
-        if (!along) continue;
-        const known = alongside.find((a) => a.skillKey === along.skillKey && a.upgradeLevel === along.upgradeLevel);
-        if (known) known.fights++;
-        else alongside.push({ ...along, fights: 1 });
+    for (const [i, primary] of primaryPerFight.entries()) {
+        if (!primary || candidate.skillKey === `${primary}Level`) continue;
+        const known = alongside.find((a) => a.skillKey === `${primary}Level`);
+        if (known) {
+            known.fights++;
+            continue;
+        }
+        const along = primaryLevelsAlongside(candidate, primary, pooledXp, gameData, 'player1', fights[i].dto);
+        if (along && along.upgradeLevel > along.currentLevel) alongside.push({ ...along, fights: 1 });
     }
+    const alongByFight = fights.map(() => alongside);
     return {
         levelTimeHours,
         primarySkills: [...new Set(primaryPerFight)],
@@ -6835,8 +6839,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 };
             }
             const boostedDTO = isToken ? null : applyCandidateToDTO(fight.dto, candidate);
-            const along = levelGrind?.alongByFight[i];
-            if (along && boostedDTO) boostedDTO[along.skillKey] = along.upgradeLevel;
+            if (boostedDTO) {
+                for (const along of levelGrind?.alongByFight[i] || []) {
+                    boostedDTO[along.skillKey] = Math.max(boostedDTO[along.skillKey] || 0, along.upgradeLevel);
+                }
+            }
             const { winRate, trials } = await simFightWinRate(fight, boostedDTO, fightSeed(i), i, tokenBuffs);
             progress.current++;
             onProgress?.({

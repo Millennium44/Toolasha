@@ -750,15 +750,23 @@ function finiteOrNull(value) {
 /**
  * What the Combat levels table scores on: hours per attempt saved (lower is
  * better) and the average win-rate change (higher is better), counted equally.
+ * A row whose change is inside the sims' noise has no figure in either, so a
+ * lucky sample cannot top the default sort.
  */
+const measuredOnly = (row, value) => (row?.significant === false ? null : value);
 const LEVEL_SCORE_METRICS = [
     {
         key: 'hoursPer',
         label: 'Hours per attempt saved',
         lowerIsBetter: true,
-        value: (row) => levelHoursPerAttemptSaved(row),
+        value: (row) => measuredOnly(row, levelHoursPerAttemptSaved(row)),
     },
-    { key: 'avgWinDelta', label: 'Avg \u0394Win', lowerIsBetter: false, value: (row) => row.avgWinDelta },
+    {
+        key: 'avgWinDelta',
+        label: 'Avg \u0394Win',
+        lowerIsBetter: false,
+        value: (row) => measuredOnly(row, row.avgWinDelta),
+    },
 ];
 
 /** What each Combat levels column sorts by, and which way is the good news. */
@@ -6258,7 +6266,7 @@ class LabSimUI {
                     .map(
                         (a) =>
                             `<div style="color:#777; font-size:10px;">+ ${a.label} ${a.currentLevel} \u2192 ${a.upgradeLevel} along the way${
-                                along.length > 1 || a.fights < total ? ` (${a.fights} of ${total} rooms)` : ''
+                                a.fights < total ? ` (trained in ${a.fights} of ${total} rooms)` : ''
                             }</div>`
                     )
                     .join('');
