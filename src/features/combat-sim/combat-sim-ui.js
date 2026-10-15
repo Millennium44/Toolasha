@@ -12173,7 +12173,7 @@ class CombatSimUI {
         sorted.forEach((r, i) => {
             const p = pricedByRow.get(r);
             const rowKey = upgradeRowKey(r);
-            const netColor = p.worthIt ? '#8bc34a' : '#f44336';
+            const netColor = p.breakEven ? '#aaa' : p.worthIt ? '#8bc34a' : '#f44336';
             const color = scoreColor(r);
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-scroll-row="${i}" data-row-key="${rowKey}">
                 <td style="${nameStyle}">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
@@ -12184,7 +12184,7 @@ class CombatSimUI {
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
                 <td style="${tdStyle}" data-scroll-gold-per="profit">${goldPerCell(r, 'profit')}</td>
                 <td style="${tdStyle}">${p.gainHourText}</td>
-                <td style="${tdStyle} color:${netColor};" title="${p.verdict}">${p.worthIt ? '+' : '−'}${formatKMB(Math.abs(p.netPerHour))}${p.worthIt ? '' : ' loss'}</td>
+                <td style="${tdStyle} color:${netColor};" title="${p.verdict}">${p.netHourText}</td>
                 <td style="${tdStyle}${color ? ` color:${color};` : ''}" data-scroll-score${
                     p.worthIt ? '' : ` data-scroll-loss title="${lossScoreTitle}"`
                 }>${formatScore(r.score)}</td>
