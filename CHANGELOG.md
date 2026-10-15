@@ -22,6 +22,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Skilling tab's upgrade list shows an item once, priced as one purchase at one level for every kit it helps, instead of several rows each quietly raised to its own level while still labeled "+5"; labels name the level you have and the level quoted, and a piece you own is credited once.
 
+### Audit round: guild trial DPS
+
+- A single-boss guild trial's Party DPS, time to clear and pace no longer go blank and restart when you switch between the Trials tab and the fight view.
+
 <!-- shipped in 3.70.0 -->
 
 ### Settings: reset to defaults turns off device-wide switches
