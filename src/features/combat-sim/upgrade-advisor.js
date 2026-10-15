@@ -3310,7 +3310,7 @@ function markTakenCopies(copies, itemHrid, candidate) {
         const match = marked.find((copy) => free(copy) && copy.equipped) || marked.find(free);
         if (match) match.taken = true;
     }
-    markClaimedCopies(marked, itemHrid);
+    markClaimedCopies(marked, itemHrid, candidate?.[LOADOUT_CLAIMS]);
     return marked;
 }
 
@@ -3318,19 +3318,20 @@ function markTakenCopies(copies, itemHrid, candidate) {
  * Mark the bag copies that another loadout wears (`claimed`).
  *
  * A loadout that is not equipped keeps its pieces in the bag, so they look like free spares. The Lab's
- * all-fights analysis knows every loadout it simulates ({@link setOtherLoadoutClaims}); a copy of an
+ * all-fights analysis knows every loadout it simulates ({@link buildOtherLoadoutClaims}); a copy of an
  * item at a level that a loadout wears is one of its claimed copies, and using it as an input takes
  * that piece out of the loadout, so it costs its resale like a worn piece a row takes off. Worn copies
  * and copies a row takes off already satisfy a claim themselves, so only the surplus is left free.
  *
  * @param {Array<Object>} marked - Copies with `taken`, mutated in place
  * @param {string} itemHrid - The item the copies are of
+ * @param {Map<string, number>|undefined} claims - The row's claims, from {@link withLoadoutClaims}
  */
-function markClaimedCopies(marked, itemHrid) {
-    if (!otherLoadoutClaims) return;
+function markClaimedCopies(marked, itemHrid, claims) {
+    if (!claims) return;
     const levels = new Set(marked.map((copy) => copy.level));
     for (const level of levels) {
-        const claimed = otherLoadoutClaims.get(claimKey(itemHrid, level)) || 0;
+        const claimed = claims.get(claimKey(itemHrid, level)) || 0;
         if (claimed <= 0) continue;
         const satisfied = marked.filter((copy) => copy.level === level && (copy.equipped || copy.taken)).length;
         let remaining = claimed - satisfied;
@@ -3343,8 +3344,8 @@ function markClaimedCopies(marked, itemHrid) {
     }
 }
 
-/** @type {Map<string, number>|null} Copies each item and level that the Lab's loadouts wear, while an analysis runs */
-let otherLoadoutClaims = null;
+/** Property a Lab candidate carries its analysis's claims on; not enumerable, so it never leaks into results */
+const LOADOUT_CLAIMS = 'loadoutClaims';
 
 /**
  * @param {string} hrid - Item HRID
@@ -3356,17 +3357,16 @@ function claimKey(hrid, level) {
 }
 
 /**
- * Record what the loadouts of a Lab analysis wear, so a copy of one that sits in the bag is not priced
- * as a free spare. One entry per distinct loadout (fights that share a loadout share its pieces).
- * Pass nothing to clear it; the single-fight Combat Sim has no other loadouts and never sets it.
+ * What the loadouts of a Lab analysis wear, so a copy of one that sits in the bag is not priced as a
+ * free spare. One entry per distinct loadout (fights that share a loadout share its pieces). Pure: the
+ * analysis builds it once and hands it to each row it prices with {@link withLoadoutClaims}; nothing is
+ * kept between analyses, and the single-fight Combat Sim has no other loadouts and never builds one.
  *
  * @param {Array<{dto: Object, loadoutName: string}>|null} [fights] - The analysis's fights
+ * @returns {Map<string, number>|null} Worn copies by item and level, or null when there are none
  */
-export function setOtherLoadoutClaims(fights = null) {
-    if (!Array.isArray(fights) || fights.length === 0) {
-        otherLoadoutClaims = null;
-        return;
-    }
+export function buildOtherLoadoutClaims(fights = null) {
+    if (!Array.isArray(fights) || fights.length === 0) return null;
     const claims = new Map();
     const seen = new Set();
     for (const fight of fights) {
@@ -3381,7 +3381,22 @@ export function setOtherLoadoutClaims(fights = null) {
             claims.set(key, (claims.get(key) || 0) + 1);
         }
     }
-    otherLoadoutClaims = claims.size ? claims : null;
+    return claims.size ? claims : null;
+}
+
+/**
+ * A copy of a candidate that carries an analysis's loadout claims, which the pricing functions read off
+ * the candidate they are already given. The claims ride a non-enumerable property, so spreading the
+ * candidate (a stored result, a re-sorted row) leaves them behind rather than pricing later rows with a
+ * finished analysis's loadouts.
+ *
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Map<string, number>|null} claims - From {@link buildOtherLoadoutClaims}
+ * @returns {Object} The candidate itself when there are no claims, otherwise a copy that carries them
+ */
+export function withLoadoutClaims(candidate, claims) {
+    if (!claims) return candidate;
+    return Object.defineProperty({ ...candidate }, LOADOUT_CLAIMS, { value: claims, enumerable: false });
 }
 
 /**
@@ -6687,23 +6702,6 @@ export function labAllFightsTrialBudget(sims, hours) {
  *   attemptsDelta, avgWinDelta}], budget }
  */
 export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
-    // Every loadout the run simulates, so a bag copy another of them wears is not priced as a free spare
-    setOtherLoadoutClaims(params?.fights);
-    try {
-        return await runLabyrinthAllFightsAnalysisInner(params, onProgress, options);
-    } finally {
-        setOtherLoadoutClaims(null);
-    }
-}
-
-/**
- * The body of {@link runLabyrinthAllFightsAnalysis}.
- * @param {Object} params - As the exported function
- * @param {Function} onProgress - As the exported function
- * @param {Object} options - As the exported function
- * @returns {Promise<Object>} As the exported function
- */
-async function runLabyrinthAllFightsAnalysisInner(params, onProgress, options = {}) {
     const {
         fights,
         crates,
@@ -6814,12 +6812,19 @@ async function runLabyrinthAllFightsAnalysisInner(params, onProgress, options = 
     // fight; a piece of gear is only the fights whose loadout wears the piece it
     // replaces — installing a melee sword into a magic loadout measures a
     // costume change, not an upgrade, and drags the aggregate with it.
+    // Every loadout the run simulates, so a bag copy another of them wears is not priced as a free spare.
+    // Handed to each row below rather than kept anywhere, so overlapping analyses cannot see each other's
+    const loadoutClaims = buildOtherLoadoutClaims(fights);
     const candidates = [...candidatesByKey.values()]
-        .map((candidate) => ({
-            ...candidate,
-            cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
-            appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
-        }))
+        .map((pooled) => {
+            const candidate = withLoadoutClaims(pooled, loadoutClaims);
+            return {
+                ...candidate,
+                cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
+                appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
+            };
+        })
+        .map((row) => withLoadoutClaims(row, loadoutClaims))
         .filter((candidate) => candidate.appliesTo.some(Boolean));
 
     // Labyrinth token buffs. Character-wide and not held in a loadout at all —
