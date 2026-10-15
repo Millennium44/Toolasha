@@ -10139,10 +10139,10 @@ class CombatSimUI {
                     })()
                 );
             }
-            // Draws only where no result set is in hand; one already shown is display, never saved back. Never
-            // while a run is going or once one has run here: the remembered set would land in its place
+            // A table on screen here is a restored one, so the pulled set (or a pulled clear) takes its place.
+            // Never while a run is going or once one has run here: the remembered set would land in its place
             if (results.has('upgradeResults') && !this._isBusy() && !this._upgradeRunStarted) {
-                work.push(this._restoreUpgradeResults());
+                work.push(this._restoreUpgradeResults({ replace: true }));
             }
             // A remembered trigger result for the setup on screen is offered where the box shows one
             if (has('triggerLastResult') && !has('upgradeModes', 'triggerChoices')) {
@@ -12432,14 +12432,30 @@ class CombatSimUI {
      * and a fresh run has not already drawn its own. Fire-and-forget from panel
      * open; draws into the (possibly hidden) Upgrade tab so the results are there
      * when the tab is next shown.
+     *
+     * `replace` is a sync pull's: the table on screen is itself a restored one (no run has
+     * started on this panel), so it gives way to the pulled set, and a pulled clear empties it.
+     * A run started while the read was out owns the table, and nothing is drawn.
+     * @param {{replace?: boolean}} [options] - Replace a restored table already shown
      * @private
      */
-    async _restoreUpgradeResults() {
+    async _restoreUpgradeResults({ replace = false } = {}) {
         try {
-            if (this._upgradeResultsData) return;
+            if (this._upgradeResultsData && !replace) return;
             const payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
-            if (!payload || this._upgradeResultsData) return;
-            if (!this.panel?.querySelector('#mwi-csim-upgrade-results')) return;
+            if (replace && (this._isBusy() || this._upgradeRunStarted)) return;
+            const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
+            if (!payload) {
+                if (replace && this._upgradeResultsData && container) {
+                    this._upgradeResultsData = null;
+                    this._restoredUpgradeAt = null;
+                    this._restoredUpgradeMeta = null;
+                    container.innerHTML = '';
+                }
+                return;
+            }
+            if (this._upgradeResultsData && !replace) return;
+            if (!container) return;
             this._restoredUpgradeAt = payload.savedAt || null;
             this._restoredUpgradeMeta = {
                 characterName: payload.characterName || null,

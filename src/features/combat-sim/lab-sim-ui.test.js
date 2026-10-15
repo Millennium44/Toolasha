@@ -1211,6 +1211,43 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         }
     });
 
+    test('a pulled remembered set replaces a restored table, a pulled clear empties it, a run’s table stays', async () => {
+        game.rememberUpgradeResults = true;
+        // The table itself is not what is under test: each set draws as its label
+        const render = vi.spyOn(ui, '_renderUpgradeResults').mockImplementation((data, container) => {
+            container.innerHTML = `<table><tr><td>${data.label}</td></tr></table>`;
+        });
+        const remembered = (label, savedAt) => ({ data: { results: [{}], label }, savedAt });
+        const pulled = { combatExport: ['labSimUpgradeResults-fullkit_me'] };
+        const container = () => ui.panel.querySelector('#mwi-labsim-upgrade-results');
+        try {
+            container().innerHTML = '';
+            storage.values = { 'labSimUpgradeResults-fullkit_me': remembered('Old remembered', 1) };
+            await ui._restoreUpgradeResults();
+            expect(container().textContent).toContain('Old remembered');
+
+            storage.values = { 'labSimUpgradeResults-fullkit_me': remembered('Pulled newer', 2) };
+            await ui._adoptPulledSettings(pulled);
+            expect(container().textContent).toContain('Pulled newer');
+
+            storage.values = { 'labSimUpgradeResults-fullkit_me': { savedAt: 3, cleared: true } };
+            await ui._adoptPulledSettings(pulled);
+            expect(container().querySelector('table')).toBeNull();
+
+            // A table this panel's own analysis drew is never replaced
+            container().innerHTML = '<table><tr><td>My own run</td></tr></table>';
+            ui._upgradeRunStarted = true;
+            storage.values = { 'labSimUpgradeResults-fullkit_me': remembered('Pulled again', 4) };
+            await ui._adoptPulledSettings(pulled);
+            expect(container().textContent).toContain('My own run');
+        } finally {
+            game.rememberUpgradeResults = false;
+            ui._upgradeRunStarted = false;
+            storage.values = {};
+            render.mockRestore();
+        }
+    });
+
     test('a pull of another character’s selection leaves the controls alone', async () => {
         storage.values = { labSimUpgradeScope_alt: { mode: 'selected', monsters: [] } };
         try {

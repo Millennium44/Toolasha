@@ -10477,6 +10477,51 @@ describe('a sync pull of the panel’s remembered keys', () => {
         expect(restore).not.toHaveBeenCalled();
     });
 
+    describe('over a table already on screen', () => {
+        const KEY = 'combatExport:combatSimUpgradeResults_char1';
+        const remembered = (name, savedAt) => ({
+            data: { baseline: BASELINE, results: [row(name)] },
+            savedAt,
+        });
+        const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+
+        beforeEach(async () => {
+            const { default: config } = await import('../../core/config.js');
+            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+                key === 'combatSim_rememberUpgradeResults' ? true : fallback
+            );
+        });
+
+        test('a pulled newer set replaces a restored table, and a pulled clear empties it', async () => {
+            mocks.store.set(KEY, remembered('Old remembered run', 1));
+            ui.buildPanel();
+            await ui._restoreUpgradeResults();
+            expect(container().textContent).toContain('Old remembered run');
+
+            mocks.store.set(KEY, remembered('Pulled newer run', 2));
+            await ui._adoptPulledSettings(pulledResults);
+            expect(container().textContent).toContain('Pulled newer run');
+            expect(container().textContent).not.toContain('Old remembered run');
+
+            mocks.store.set(KEY, { savedAt: 3, cleared: true });
+            await ui._adoptPulledSettings(pulledResults);
+            expect(container().textContent).not.toContain('Pulled newer run');
+            expect(ui._upgradeResultsData).toBeNull();
+        });
+
+        test('a table this panel’s own run drew stays', async () => {
+            ui.buildPanel();
+            ui._upgradeRunStarted = true;
+            ui._renderUpgradeResults({ baseline: BASELINE, results: [row('My own run')], food: null });
+            mocks.store.set(KEY, remembered('Pulled run', 2));
+
+            await ui._adoptPulledSettings(pulledResults);
+
+            expect(container().textContent).toContain('My own run');
+            expect(container().textContent).not.toContain('Pulled run');
+        });
+    });
+
     test('offers a pulled last trigger result where the box shows one', async () => {
         ui.buildPanel();
         await settle();

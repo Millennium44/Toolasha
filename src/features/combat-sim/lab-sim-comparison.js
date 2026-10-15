@@ -459,8 +459,8 @@ export class LabComparisonStore {
          * @type {{runs: string, baseline: string}|null}
          */
         this._keys = null;
-        /** @type {Object[]|null} Runs recorded while a `reload()` read is out */
-        this._addedDuringReload = null;
+        /** @type {Promise<Object[]>|null} A `reload()` whose read is still out */
+        this._reloading = null;
     }
 
     /**
@@ -500,27 +500,34 @@ export class LabComparisonStore {
      */
     async reload() {
         this._loaded = false;
-        // A run recorded while the read is out was pushed onto the list the read then replaces, and its
-        // own write (queued, so the read cannot see it) would land later with the pre-pull list around it.
-        // It is laid back on top of what was read, and the result written, which supersedes that write
-        const added = [];
-        this._addedDuringReload = added;
+        const reading = this.load();
+        this._reloading = reading;
         try {
-            await this.load();
+            return await reading;
         } finally {
-            if (this._addedDuringReload === added) this._addedDuringReload = null;
+            if (this._reloading === reading) this._reloading = null;
         }
-        const missing = added.filter((entry) => !this.runs.some((run) => run.id === entry.id));
-        if (missing.length > 0) {
-            this.runs.push(...missing);
-            while (this.runs.length > MAX_LAB_COMPARISON_RUNS) {
-                const evicted = this.runs.shift();
-                if (evicted.id === this.baselineId) this.baselineId = null;
+    }
+
+    /**
+     * Wait out a `reload()` whose read is still out, before a change.
+     *
+     * A change made meanwhile would apply to the list the read is about to replace, and its
+     * write (queued, so the read cannot see it) would land later with that pre-pull list in
+     * it: a deleted run back, or the pulled runs overwritten. So every change waits, and then
+     * applies to what the reload read.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _afterReload() {
+        while (this._reloading) {
+            try {
+                await this._reloading;
+            } catch {
+                // `load` reports its own failures; the change still goes ahead
+                return;
             }
-            if (!this.baselineId && this.runs.length > 1) this.baselineId = this.runs[0].id;
-            await this._persist();
         }
-        return this.runs;
     }
 
     /**
@@ -530,8 +537,8 @@ export class LabComparisonStore {
      */
     async add(entry) {
         if (!entry) return this.runs;
+        await this._afterReload();
         this.runs.push(entry);
-        this._addedDuringReload?.push(entry);
         while (this.runs.length > MAX_LAB_COMPARISON_RUNS) {
             const evicted = this.runs.shift();
             if (evicted.id === this.baselineId) this.baselineId = null;
@@ -550,6 +557,7 @@ export class LabComparisonStore {
      * @returns {Promise<void>}
      */
     async setBaseline(id) {
+        await this._afterReload();
         if (!this.runs.some((entry) => entry.id === id)) return;
         this.baselineId = id;
         await this._persist();
@@ -563,6 +571,7 @@ export class LabComparisonStore {
      * @returns {Promise<Object[]>} The runs
      */
     async remove(id) {
+        await this._afterReload();
         const before = this.runs.length;
         this.runs = this.runs.filter((entry) => entry.id !== id);
         if (this.runs.length === before) return this.runs;
@@ -580,6 +589,7 @@ export class LabComparisonStore {
      * @returns {Promise<void>}
      */
     async clear() {
+        await this._afterReload();
         this.runs = [];
         this.baselineId = null;
         await this._persist();

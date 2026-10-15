@@ -80,12 +80,25 @@ const KEYS = [
     ['settings', 'combatSimBestiaryPlanPoints'],
     ['settings', 'combatSimBestiaryPlanTotal'],
     ['settings', 'combatSimBestiaryPlanTolerance'],
-    ['settings', 'simEditorLoadoutName'],
     ['combatExport', 'combatSimUpgradeResults'],
     ['combatExport', 'zoneSimRates'],
 ];
 
+/**
+ * Simulator keys a pull still latches, on purpose: nothing re-reads them under a running page,
+ * so taking a pulled copy without a reload would leave the page on the old one
+ */
+const LATCHED = [
+    // A built editor keeps the player's scenario; a pulled pick is read at the next build
+    ['settings', 'simEditorLoadoutName'],
+];
+
 describe('every simulator key a pull writes is live-safe', () => {
+    test.each(LATCHED)('%s / %s is not, and still latches', (store, base) => {
+        expect(isLiveSafeKey(store, base)).toBe(false);
+        expect(isLiveSafeKey(store, `${base}_123`)).toBe(false);
+    });
+
     test.each(KEYS)('%s / %s, bare and scoped', (store, base) => {
         expect(isLiveSafeKey(store, base)).toBe(true);
         expect(isLiveSafeKey(store, `${base}_123`)).toBe(true);
@@ -95,7 +108,7 @@ describe('every simulator key a pull writes is live-safe', () => {
         const here = dirname(fileURLToPath(import.meta.url));
         // Panel geometry lives in `panelGeometry` / `panelOpenState`, under these names only as ids
         const notStorageKeys = new Set(['labSimPanel', 'combatSimPanel']);
-        const listed = new Set(KEYS.map(([, base]) => base));
+        const listed = new Set([...KEYS.map(([, base]) => base), ...LATCHED.map(([, base]) => base)]);
         const declared = [];
         for (const file of ['lab-sim-ui.js', 'combat-sim-ui.js', 'sim-editor.js']) {
             const text = readFileSync(join(here, file), 'utf8');
@@ -127,7 +140,6 @@ describe('a pull of the simulator keys', () => {
                 combatSimUpgradeModes_123: ['equipment'],
                 combatSimBestiaryPlanHours: 12,
                 combatSimTriggerLastResult_123: { signature: 's', savedAt: 5, result: {} },
-                simEditorLoadoutName_123: 'Tank',
             },
             combatExport: {
                 zoneSimRates_123: { version: 1, rates: {} },
@@ -184,9 +196,10 @@ describe('a pull of the simulator keys', () => {
         };
         try {
             const reloading = comparison.reload();
-            await comparison.add(run('mine', 3));
+            // Waits for the read, so it is let go before either is awaited
+            const adding = comparison.add(run('mine', 3));
             release();
-            await reloading;
+            await Promise.all([reloading, adding]);
         } finally {
             storageMock.get = realGet;
             delete storageMock.set;
@@ -196,6 +209,70 @@ describe('a pull of the simulator keys', () => {
         expect(ids(comparison.runs)).toEqual(['old', 'pulled', 'mine']);
         const lastRuns = writes.filter(([key]) => key === 'labSimComparisonRuns_123').at(-1)[1];
         expect(ids(lastRuns)).toEqual(['old', 'pulled', 'mine']);
+    });
+
+    /**
+     * Run one change while a reload's read is held open, then let the read finish.
+     * @returns {Promise<{comparison: Object, writes: Array}>}
+     */
+    async function changeDuringReload(change) {
+        const run = (id, timestamp) => ({ id, timestamp, settings: {}, metrics: { winRate: 0.5 } });
+        db.get('settings').set('labSimComparisonRuns_123', [run('old', 1), run('gone', 2)]);
+        const comparison = new LabComparisonStore();
+        await comparison.load();
+
+        // The pull has landed: another device deleted `gone` and recorded `pulled`
+        db.get('settings').set('labSimComparisonRuns_123', [run('old', 1), run('pulled', 3)]);
+        const writes = [];
+        const realGet = storageMock.get;
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        storageMock.get = async (...args) => {
+            await gate;
+            return realGet(...args);
+        };
+        storageMock.set = async (key, value) => {
+            writes.push([key, value]);
+            return true;
+        };
+        try {
+            const reloading = comparison.reload();
+            const changing = change(comparison);
+            release();
+            await Promise.all([reloading, changing]);
+        } finally {
+            storageMock.get = realGet;
+            delete storageMock.set;
+        }
+        return { comparison, writes };
+    }
+
+    const ids = (list) => list.map((entry) => entry.id);
+    const lastRunsWrite = (writes) => writes.filter(([key]) => key === 'labSimComparisonRuns_123').at(-1)?.[1];
+
+    test('a run deleted while a reload reads does not bring back the run the pull deleted', async () => {
+        const { comparison, writes } = await changeDuringReload((store) => store.remove('old'));
+
+        expect(ids(comparison.runs)).toEqual(['pulled']);
+        expect(ids(lastRunsWrite(writes))).toEqual(['pulled']);
+    });
+
+    test('a clear while a reload reads leaves nothing, and writes no pre-pull list', async () => {
+        const { comparison, writes } = await changeDuringReload((store) => store.clear());
+
+        expect(comparison.runs).toEqual([]);
+        expect(lastRunsWrite(writes)).toEqual([]);
+        expect(writes.some(([, value]) => Array.isArray(value) && ids(value).includes('gone'))).toBe(false);
+    });
+
+    test('a baseline pinned while a reload reads is pinned on the pulled list', async () => {
+        const { comparison, writes } = await changeDuringReload((store) => store.setBaseline('old'));
+
+        expect(ids(comparison.runs)).toEqual(['old', 'pulled']);
+        expect(comparison.baselineId).toBe('old');
+        expect(writes.some(([, value]) => Array.isArray(value) && ids(value).includes('gone'))).toBe(false);
     });
 });
 
