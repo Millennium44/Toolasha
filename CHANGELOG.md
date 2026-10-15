@@ -5417,6 +5417,19 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.71.1](https://github.com/Millennium44/Toolasha/compare/v3.71.0...v3.71.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* a native same-room re-render that drops the house cost column restores it ([9c7e636](https://github.com/Millennium44/Toolasha/commit/9c7e63635974ce5d3879be24302315c30f5e5c93))
+* house room modal no longer re-renders itself in an endless loop that crashes the tab ([386f34c](https://github.com/Millennium44/Toolasha/commit/386f34c23289f39f44b8ed578985c8046548f175))
+
+
+### Documentation
+
+* changelog for the house upgrade window freeze ([0f387a4](https://github.com/Millennium44/Toolasha/commit/0f387a4078bda386af3a10177342724d8fbeca48))
+
 ## [3.71.0](https://github.com/Millennium44/Toolasha/compare/v3.70.0...v3.71.0) (2026-10-15)
 
 ### Features
