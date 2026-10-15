@@ -186,6 +186,25 @@ function fightsTableHtml(fights, afterLabel) {
 }
 
 /**
+ * The best candidate measured for each condition slot that is not recommended.
+ * @param {Object} conditions - A group's `conditions`
+ * @param {Object} gameData - Game data payload (the trigger names)
+ * @returns {string} HTML
+ */
+function conditionBestsHtml(conditions, gameData) {
+    return (conditions.bestMeasured || [])
+        .map((b) =>
+            bestFoundHtml(
+                b,
+                (x) => `${x.itemName} (${slotWord(x)}), ${describeTriggerRows(x.toRows, gameData)}`,
+                'data-lab-condition-best',
+                `${esc(b.itemName)} (${slotWord(b)}): `
+            )
+        )
+        .join('');
+}
+
+/**
  * The condition search's part of a loadout's block.
  * @param {Object} conditions - A group's `conditions`, from `runLabTriggerOptimization`
  * @param {Object} gameData - Game data payload (the trigger names)
@@ -203,20 +222,13 @@ export function conditionResultsHtml(conditions, gameData) {
     if (conditions.reliable === false) {
         body +=
             '<div style="color:#ff9800; font-size:12px;">Some conditions looked better one at a time, but together ' +
-            'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>';
+            'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>' +
+            conditionBestsHtml(conditions, gameData);
     } else if (changes.length === 0) {
         body += `<div style="color:#aaa; font-size:12px;">No condition beat the current triggers by a clear margin${
             conditions.stopped ? ' before the run was stopped' : ''
         }.</div>`;
-        const slotBests = conditions.bestMeasured || [];
-        for (const b of slotBests) {
-            body += bestFoundHtml(
-                b,
-                (x) => `${x.itemName} (${slotWord(x)}), ${describeTriggerRows(x.toRows, gameData)}`,
-                'data-lab-condition-best',
-                `${esc(b.itemName)} (${slotWord(b)}): `
-            );
-        }
+        body += conditionBestsHtml(conditions, gameData);
     }
     for (const c of changes) {
         body +=
@@ -245,6 +257,22 @@ export function conditionResultsHtml(conditions, gameData) {
 }
 
 /**
+ * The best threshold candidate measured, shown when nothing is recommended.
+ * @param {Object} result - A group's threshold `result`
+ * @param {Object} gameData - Game data payload (display names)
+ * @returns {string} HTML
+ */
+function triggerBestHtml(result, gameData) {
+    return bestFoundHtml(
+        result.bestMeasured,
+        (b) =>
+            `${b.itemName} (${slotWord(b)}), ${describeRow(b, gameData, b.from)} → ${b.to}` +
+            (b.conditionHrid === LOWEST_HP_PCT ? '%' : ''),
+        'data-lab-trigger-best'
+    );
+}
+
+/**
  * One loadout's block.
  * @param {Object} group - From `runLabTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
@@ -269,17 +297,12 @@ function groupHtml(group, gameData) {
         body +=
             '<div style="color:#ff9800; font-size:12px; font-weight:600;">No reliable improvement found.</div>' +
             '<div style="color:#aaa; font-size:12px;">Some values looked better in single runs, but together ' +
-            'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>';
+            'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>' +
+            triggerBestHtml(result, gameData);
     } else if (changes.length === 0) {
         body +=
             '<div style="color:#aaa; font-size:12px;">No change beat the current thresholds by a clear margin.</div>' +
-            bestFoundHtml(
-                result.bestMeasured,
-                (b) =>
-                    `${b.itemName} (${slotWord(b)}), ${describeRow(b, gameData, b.from)} → ${b.to}` +
-                    (b.conditionHrid === LOWEST_HP_PCT ? '%' : ''),
-                'data-lab-trigger-best'
-            );
+            triggerBestHtml(result, gameData);
     }
     for (const c of changes) {
         const before = describeRow(c, gameData, c.from);

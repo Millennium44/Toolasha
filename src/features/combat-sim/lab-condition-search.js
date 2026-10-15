@@ -421,18 +421,23 @@ export async function runConditionSearch({
             stage,
         });
     };
-    const done = (extra = {}) => ({
-        changes,
-        bestMeasured: [...bestBySlot.values()].filter((b) => !accepted[b.key]),
-        rejected: [],
-        combined: null,
-        reliable: null,
-        stopped: stopped(),
-        capped,
-        screened,
-        finalSamples: null,
-        ...extra,
-    });
+    const done = (extra = {}) => {
+        const result = {
+            changes,
+            rejected: [],
+            combined: null,
+            reliable: null,
+            stopped: stopped(),
+            capped,
+            screened,
+            finalSamples: null,
+            ...extra,
+        };
+        // Report every slot not in the FINAL kept changes: slots that passed one at a time but were rejected
+        // by the all-together check are exactly the candidates worth showing
+        const kept = new Set(result.changes.map((c) => c.key));
+        return { ...result, bestMeasured: [...bestBySlot.values()].filter((b) => !kept.has(b.key)) };
+    };
 
     for (const slot of slots || []) {
         if (stopped() || !fits(SCREEN_SEEDS)) break;

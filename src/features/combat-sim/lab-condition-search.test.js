@@ -434,6 +434,27 @@ describe('the staged search', () => {
         expect(['screen', 'pair', 'confirm']).toContain(best.stage);
     });
 
+    test('a slot that passed alone but failed the all-together check is still reported as the best measured', async () => {
+        const base = stubMeasure((rows) => (has2(rows, berserkOn) && rows.length === 1 ? 0.5 : 0));
+        // The fresh-seed check disagrees: the changed setup is much worse there
+        const measure = async (edits, opts) => {
+            const samples = await base.measure(edits, opts);
+            if (opts.stage !== 'final' || Object.keys(edits).length === 0) return samples;
+            return samples.map((x) => ({ ...x, attempts: x.attempts + 5 }));
+        };
+        const result = await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        expect(result.reliable).toBe(false);
+        expect(result.changes).toEqual([]);
+        expect(result.rejected).toHaveLength(1);
+        expect(result.bestMeasured.map((b) => b.key)).toEqual(['drinks|0']);
+    });
+
     test('a slot whose every candidate is worse still reports its best, not above zero by much', async () => {
         const { measure } = stubMeasure((rows) =>
             rows.length === 1 && rowSignature(rows[0]) === rowSignature(current[0]) ? 0 : -0.3
