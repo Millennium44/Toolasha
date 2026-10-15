@@ -1,8 +1,13 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, afterEach } from 'vitest';
 
+import CombatUnit from './engine/combat-unit.js';
+import { setGameData } from './engine/game-data.js';
 import { TRIAL_GAME_DATA } from './engine/guild-trial-game-data.fixture.js';
+import { getSimWarnings, resetSimWarnings } from './engine/sim-warnings.js';
+import Trigger from './engine/trigger.js';
 import {
     CONDITION_CAP,
+    abilityBuffSides,
     SCREEN_SEEDS,
     applyTriggerRows,
     buildConditionCandidates,
@@ -105,6 +110,44 @@ describe('conditionForBuff', () => {
 
     test('a buff no condition reads gives nothing', () => {
         expect(conditionForBuff('/buff_uniques/labyrinth_upgrade_combat_damage', conds)).toBeNull();
+    });
+});
+
+describe('the grammar and the engine agree on buff identity', () => {
+    afterEach(() => {
+        setGameData(null);
+        resetSimWarnings();
+    });
+
+    test('every buff the grammar maps to a condition is one the engine reads as active on its carrier', () => {
+        setGameData(GAME_DATA);
+        resetSimWarnings();
+        const condMap = GAME_DATA.combatTriggerConditionDetailMap;
+        const uniques = new Set();
+        for (const detail of Object.values(GAME_DATA.abilityDetailMap)) {
+            const sides = abilityBuffSides(detail);
+            for (const u of [...sides.own, ...sides.foe]) uniques.add(u);
+        }
+        for (const item of Object.values(ITEMS)) {
+            for (const b of item.consumableDetail.buffs || []) uniques.add(b.uniqueHrid);
+        }
+        let mapped = 0;
+        for (const unique of uniques) {
+            const cond = conditionForBuff(unique, condMap);
+            if (!cond) continue;
+            mapped++;
+            const unit = new CombatUnit();
+            unit.combatDetails.currentHitpoints = 1;
+            const active = new Trigger(SELF, cond, ACTIVE);
+            expect(active.isActive(unit, null, [unit], null, 0), `${unique} before`).toBe(false);
+            unit.addBuff(
+                { uniqueHrid: unique, typeHrid: '/buff_types/armor', ratioBoost: 0, flatBoost: 1, duration: 1e10 },
+                0
+            );
+            expect(active.isActive(unit, null, [unit], null, 1), `${unique} → ${cond}`).toBe(true);
+        }
+        expect(mapped).toBeGreaterThan(20);
+        expect(getSimWarnings()).toEqual([]);
     });
 });
 
