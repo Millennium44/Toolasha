@@ -9,7 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Bulk Sell: bids below the tradable range
 
 - Bulk Sell no longer stalls on "sell button not found" when every bid sits below the tradable range: those bids can't be sold into, so it lists the stack at the ask instead (and falls back to a listing if the Sell button is gone).
-- A vendor sale no longer refuses with "the item menu says N, not the queued M" when the stack grew or shrank since the queue was built: it sells the live stack when the menu matches what inventory holds now.
+- Each step sells the stack as it stands now, not as it was when the queue was built: a stack that grew mid-run is sold whole (market or vendor, so the vendor menu no longer refuses with "the item menu says N, not the queued M"), and one that is gone is skipped.
 
 ### Leftovers round (2026-10-15)
 

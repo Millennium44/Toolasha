@@ -294,6 +294,43 @@ describe('Locked items are never queued', () => {
  * the game's own button (`_onConfirmClick`), since the two moments can be
  * seconds apart with a modal sitting open in between.
  */
+describe('each step sells the stack as it stands now', () => {
+    beforeEach(() => {
+        bulkSell._stop('');
+    });
+    afterEach(() => {
+        bulkSell._stop('');
+        game.items = [];
+    });
+
+    test('a stack that grew since the queue was built is sold whole', () => {
+        bulkSell.queue = [{ itemHrid: '/items/cheese', enhancementLevel: 0, count: 18, name: 'Cheese' }];
+        bulkSell.index = 0;
+        game.items = [{ itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 25 }];
+
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.current.count).toBe(25);
+        expect(bulkSell.state).toBe('preparing');
+    });
+
+    test('a stack that is gone is skipped, not offered for sale', () => {
+        bulkSell.queue = [
+            { itemHrid: '/items/cheese', enhancementLevel: 0, count: 18, name: 'Cheese' },
+            { itemHrid: '/items/milk', enhancementLevel: 0, count: 4, name: 'Milk' },
+        ];
+        bulkSell.index = 0;
+        game.items = [{ itemHrid: '/items/milk', itemLocationHrid: '/item_locations/inventory', count: 4 }];
+
+        bulkSell._prepareCurrent();
+
+        // Skipped before any navigation or sell form: the step moves on and nothing waits on a book
+        expect(bulkSell.index).toBe(1);
+        expect(bulkSell.statusNote).toBe('no longer in inventory');
+        expect(bulkSell.bookTimeout).toBeNull();
+    });
+});
+
 describe('a lock landing mid-run is caught again, not just at the queue build', () => {
     // A run the previous suite started and left open is not this suite's
     beforeEach(() => {

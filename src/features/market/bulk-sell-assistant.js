@@ -1251,15 +1251,7 @@ class BulkSellAssistant {
             // The menu is filled with "All", so a stack that grew (or shrank) since the queue was built shows
             // its live size. That is still the queued stack — taken as the count only when it is exactly what
             // inventory holds of this +0 item right now; anything else is a menu this did not fill.
-            const live = (dataManager.characterItems || [])
-                .filter(
-                    (item) =>
-                        item.itemLocationHrid === '/item_locations/inventory' &&
-                        item.itemHrid === this.current.itemHrid &&
-                        (item.enhancementLevel || 0) === 0
-                )
-                .reduce((sum, item) => sum + (item.count || 0), 0);
-            if (!(quantity > 0) || quantity !== live) {
+            if (!(quantity > 0) || quantity !== this._liveCount()) {
                 return { why: `the item menu says ${quantity}, not the queued ${this.current.count}` };
             }
             this.current.count = quantity;
@@ -1853,6 +1845,22 @@ class BulkSellAssistant {
         this._skip('locked');
     }
 
+    /**
+     * How many of the current step's item, at its enhancement level, sit in inventory right now.
+     * @returns {number}
+     */
+    _liveCount() {
+        const level = this.current?.enhancementLevel || 0;
+        return (dataManager.characterItems || [])
+            .filter(
+                (item) =>
+                    item.itemLocationHrid === '/item_locations/inventory' &&
+                    item.itemHrid === this.current?.itemHrid &&
+                    (item.enhancementLevel || 0) === level
+            )
+            .reduce((sum, item) => sum + (item.count || 0), 0);
+    }
+
     _prepareCurrent() {
         this._clearTransient();
         if (this.index >= this.queue.length) {
@@ -1877,6 +1885,16 @@ class BulkSellAssistant {
             this._skipLockedCurrent();
             return;
         }
+
+        // The stack is sold as it stands now, not as it stood when the queue was built: production or
+        // loot can grow it mid-run (a market sale of the old count would strand the difference, and the
+        // vendor menu's "All" would no longer match). Gone entirely, there is nothing left to sell.
+        const live = this._liveCount();
+        if (live <= 0) {
+            this._skip('no longer in inventory');
+            return;
+        }
+        if (live !== this.current.count) this.current.count = live;
 
         // Vendor check runs BEFORE any marketplace navigation: the item action
         // menu must be the only thing touching the UI, or the navigation's
