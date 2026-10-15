@@ -278,6 +278,8 @@ describe('refined target priced from a held base', () => {
             expect(detail.buys[0]).toMatchObject({ source: 'refine' });
             expect(detail.buys[0].price).toBeCloseTo(SHARDS + best[7], 0);
             expect(detail.ladder.refine.mirror).toBeTruthy();
+            // The shard stack to buy rides the ladder as structured data, for the row's Market button
+            expect(detail.ladder.refine.materials).toEqual([{ itemHrid: SHARD, count: 100 }]);
         });
 
         test('spare +6 and +5 bases are the mirror inputs of a refined +7: shards plus the mirror', () => {

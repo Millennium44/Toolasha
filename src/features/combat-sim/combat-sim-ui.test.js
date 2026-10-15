@@ -9780,6 +9780,75 @@ describe('self-enhanced upgrade rows (capes, quivers)', () => {
     });
 });
 
+describe('a refine row hands off the refinement material', () => {
+    const CAPE = '/items/sinister_cape_refined';
+    const SHARD = '/items/sinister_refinement_shard';
+    const refineRow = (overrides = {}) => ({
+        cost: 174_200_000,
+        costDetail: {
+            source: 'refine',
+            gross: 174_200_000,
+            net: 174_200_000,
+            buys: [],
+            ladder: {
+                fromLevel: 7,
+                toLevel: 7,
+                isSelf: true,
+                refine: { baseHrid: '/items/sinister_cape', materials: [{ itemHrid: SHARD, count: 88.9 }] },
+            },
+        },
+        candidate: {
+            description: 'Sinister Cape +7 → Sinister Cape ★ +7',
+            upgradeHrid: CAPE,
+            upgradeLevel: 7,
+            type: 'equipment',
+        },
+        ...overrides,
+    });
+    const render = (row) => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(row);
+        return container;
+    };
+
+    test('Market and Watch target the shard, Save keeps the star item', () => {
+        const container = render(refineRow());
+        const market = container.querySelector('[data-buy-action="market"]');
+        expect(market.getAttribute('data-buy-hrid')).toBe(SHARD);
+        expect(market.getAttribute('data-buy-level')).toBe('0');
+        expect(JSON.parse(market.getAttribute('data-buy-materials'))).toEqual([{ itemHrid: SHARD, count: 89 }]);
+        expect(market.title).toContain('sinister refinement shard');
+        expect(container.querySelector('[data-buy-action="watch"]').getAttribute('data-buy-hrid')).toBe(SHARD);
+        expect(container.querySelector('[data-buy-action="save"]').getAttribute('data-buy-hrid')).toBe(CAPE);
+        expect(container.querySelector('[data-buy-action="enhance"]')).toBeNull();
+    });
+
+    test('a refine priced for another player still gets the shard buttons', () => {
+        const row = refineRow();
+        row.costDetail.ladder.isSelf = false;
+        expect(render(row).querySelector('[data-buy-action="market"]')).not.toBeNull();
+    });
+
+    test('a refine row marked noPurchase renders nothing', () => {
+        const row = refineRow();
+        row.candidate.noPurchase = true;
+        expect(upgradeRowActionsHtml(row)).toBe('');
+    });
+
+    test('a row with no refine ladder is unchanged', () => {
+        const container = render({
+            cost: 5,
+            candidate: { description: 'Plate', upgradeHrid: '/items/plate', upgradeLevel: 7, type: 'tier' },
+        });
+        expect(container.querySelector('[data-buy-action="market"]').getAttribute('data-buy-hrid')).toBe(
+            '/items/plate'
+        );
+        expect(upgradeRowPurchase(refineRow()).refineMaterials).toEqual([
+            { itemHrid: SHARD, count: 89, name: 'sinister refinement shard' },
+        ]);
+    });
+});
+
 describe('the Triggers option', () => {
     const TARGET = '/combat_trigger_dependencies/targeted_enemy';
     const HP = '/combat_trigger_conditions/current_hp';

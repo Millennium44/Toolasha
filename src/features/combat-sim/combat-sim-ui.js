@@ -1859,8 +1859,13 @@ export { saveAllZonesSnapshot, loadAllZonesSnapshot };
  * is enhanced, not bought, so it gets an Enhance button in place of Watch and
  * Market. See `upgradeRowActionsHtml`.
  *
+ * `refineMaterials` is set for a row priced as a refine: what is bought is the
+ * refinement material (a shard stack), not the ★ item, so Watch and Market aim
+ * at that instead. Save keeps the ★ item, which is the slot being saved for.
+ *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
- * @returns {Object|null} `{itemHrid, enhancementLevel, name, quantity, items, selfEnhance, savable, ability}`,
+ * @returns {Object|null} `{itemHrid, enhancementLevel, name, quantity, items, selfEnhance, refineMaterials, savable,
+ *   ability}`,
  *   or null
  */
 export function upgradeRowPurchase(result) {
@@ -1937,6 +1942,7 @@ export function upgradeRowPurchase(result) {
         quantity: isBook ? abilityBookCount(result) : 1,
         items,
         selfEnhance,
+        refineMaterials: isBook || isConsumable || items ? null : refineMaterialsOf(ladder),
         savable: !isBook && !isConsumable,
         // The gear side's equivalent of `ability.cost`: the price this row was
         // costed at, so the savings list shows the figure that was on screen
@@ -1953,6 +1959,32 @@ export function upgradeRowPurchase(result) {
               }
             : null,
     };
+}
+
+/**
+ * The refinement materials a refine-priced row buys, from its cost ladder.
+ *
+ * A refine consumes a held base copy, so the only things bought are the
+ * materials (coins are not an item and are left out). Counts are rounded up,
+ * since a fraction of a shard cannot be bought; the artisan-reduced figure is
+ * what the ladder carries.
+ *
+ * @param {Object|null} ladder - `costDetail.ladder`
+ * @returns {Array<{itemHrid: string, count: number, name: string}>|null} Null when the row is not a refine
+ */
+function refineMaterialsOf(ladder) {
+    const materials = ladder?.refine?.materials;
+    if (!Array.isArray(materials)) return null;
+    const bought = materials
+        .filter((m) => m?.itemHrid && String(m.itemHrid).startsWith('/items/') && m.itemHrid !== '/items/coin')
+        .map((m) => ({
+            itemHrid: m.itemHrid,
+            count: Math.max(1, Math.ceil(Number(m.count) || 0)),
+            name:
+                dataManager.getItemDetails?.(m.itemHrid)?.name ||
+                String(m.itemHrid).split('/').pop().replace(/_/g, ' '),
+        }));
+    return bought.length ? bought : null;
 }
 
 /**
@@ -2200,6 +2232,22 @@ export function upgradeRowActionsHtml(result) {
             data-ability-cost="${cost}" data-ability-label="${escapeAttribute(buy.ability.label)}"
             title="Save towards ${escapeAttribute(buy.ability.label)} in Equipment Savings"
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
+    }
+
+    // A refine row buys the refinement material, not the ★ item: Watch and
+    // Market aim at the material (the ★ item at that level is never listed), and
+    // Save keeps the slot. Placed ahead of the self-enhance branch, since a
+    // refined cape is both and its Enhance button does not apply to a refine.
+    if (buy.refineMaterials) {
+        const [main] = buy.refineMaterials;
+        const mainAttrs = `data-buy-hrid="${main.itemHrid}" data-buy-level="0" data-buy-quantity="${main.count}"`;
+        const bill = escapeAttribute(
+            JSON.stringify(buy.refineMaterials.map((m) => ({ itemHrid: m.itemHrid, count: m.count })))
+        );
+        const wanted = buy.refineMaterials.map((m) => `${m.count.toLocaleString()} × ${m.name}`).join(' and ');
+        return `${save}<button type="button" ${mainAttrs} data-buy-action="watch" data-buy-cost=""
+            title="${escapeAttribute(`Watch ${main.name} on the market`)}" style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${mainAttrs} data-buy-action="market" data-buy-materials="${bill}"
+            title="${escapeAttribute(`${main.name} on the market. The refine needs ${wanted}`)}" style="${ROW_ACTION_STYLE}">Market</button>`;
     }
 
     // Self-enhanced gear: no Market (no level of it is ever listed, the base

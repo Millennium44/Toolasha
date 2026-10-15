@@ -104,7 +104,9 @@ function defaultPriceBase(itemHrid) {
  * @param {Function} [options.getItemName] - (hrid) => string, for breakdown lines
  * @param {boolean} [options.includeBase=true] - False when the caller already holds the base item, so
  *   only the materials and coins are priced
- * @returns {{cost: number, baseNote: string|null, lines: string[]}|null} Craft cost, or null when not resolvable
+ * @returns {{cost: number, baseNote: string|null, lines: string[], items: Array<{itemHrid: string, count: number}>}|null}
+ *   Craft cost, or null when not resolvable. `items` is the materials to buy (coins excluded) at their
+ *   artisan-reduced counts, the structured form of `lines`
  */
 export function computeRefinementCraftCost(itemHrid, options = {}) {
     const {
@@ -119,6 +121,7 @@ export function computeRefinementCraftCost(itemHrid, options = {}) {
 
     const artisanBonus = calculateArtisanBonus(action);
     const lines = [];
+    const items = [];
     let cost = 0;
     for (const input of action.inputItems || []) {
         const count = input.count || 0;
@@ -131,6 +134,7 @@ export function computeRefinementCraftCost(itemHrid, options = {}) {
         if (price === null || price === undefined) return null;
         const effective = count * (1 - artisanBonus);
         cost += price * effective;
+        items.push({ itemHrid: input.itemHrid, count: effective });
         const countText = artisanBonus > 0 ? `${effective.toFixed(1)} (${count} less artisan)` : `${count}`;
         lines.push(
             `${countText} × ${getItemName(input.itemHrid)} @ ${formatLargeNumber(price)} = ` +
@@ -158,7 +162,7 @@ export function computeRefinementCraftCost(itemHrid, options = {}) {
     }
 
     if (cost <= 0) return null;
-    return { cost, baseNote, lines };
+    return { cost, baseNote, lines, items };
 }
 
 /**

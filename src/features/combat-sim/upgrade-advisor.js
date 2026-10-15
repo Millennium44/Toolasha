@@ -3081,6 +3081,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
                     materialCost: materials.cost,
                     enhanceCost: 0,
                     lines: materials.lines,
+                    materials: materials.items,
                     mirror: {
                         baseCost: mirror.baseCost,
                         mirrorPrice: mirror.mirrorPrice,
@@ -3112,6 +3113,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
                 materialCost: materials.cost,
                 enhanceCost: best.enhance,
                 lines: materials.lines,
+                materials: materials.items,
             },
         },
     };
