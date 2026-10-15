@@ -20,7 +20,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Lab Sim skilling: one row per upgrade
 
-- The Skilling tab's upgrade list shows an item once, priced as one purchase at one level for every kit it helps, instead of several rows each quietly raised to its own level while still labelled "+5"; labels name the level you have and the level quoted, and a piece you own is credited once.
+- The Skilling tab's upgrade list shows an item once, priced as one purchase at one level for every kit it helps, instead of several rows each quietly raised to its own level while still labeled "+5"; labels name the level you have and the level quoted, and a piece you own is credited once.
 
 <!-- shipped in 3.70.0 -->
 
