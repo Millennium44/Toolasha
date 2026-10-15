@@ -1801,6 +1801,27 @@ describe('confirming from the strip', () => {
             });
         });
 
+        test('a stack that grew since it was queued is sold whole when the menu matches inventory now', () => {
+            // Queued at 18; two more cheese arrived, and the menu's "All" reads the live 20
+            game.items = [{ itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 20 }];
+            // 20 × 22,222 = 444,440, which the game labels "444K"
+            openMenu({ qty: 20, label: 'Sell For 444K Coins', armedLabel: 'Confirm Sell For 444K Coins' });
+            vendorRun();
+            const target = bulkSell._confirmTarget();
+            expect(target.why).toBeUndefined();
+            expect(target.button).toBeTruthy();
+            expect(bulkSell.current.count).toBe(20);
+            game.items = [];
+        });
+
+        test('a menu count that matches neither the queue nor inventory still refuses', () => {
+            game.items = [{ itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 20 }];
+            openMenu({ qty: 19, label: 'Sell For 422K Coins' });
+            vendorRun();
+            expect(bulkSell._confirmTarget().why).toMatch(/says 19, not the queued 18/);
+            game.items = [];
+        });
+
         test.each([
             ['no menu open', null, /item menu is not open/],
             ['the wrong item', { item: 'milk' }, /milk|not Cheese/],

@@ -1248,7 +1248,21 @@ class BulkSellAssistant {
         const quantity = input ? parseInt(String(input.value).replace(/[^0-9-]/g, ''), 10) : NaN;
         if (!Number.isFinite(quantity)) return { why: 'the item menu quantity cannot be read' };
         if (quantity !== this.current.count) {
-            return { why: `the item menu says ${quantity}, not the queued ${this.current.count}` };
+            // The menu is filled with "All", so a stack that grew (or shrank) since the queue was built shows
+            // its live size. That is still the queued stack — taken as the count only when it is exactly what
+            // inventory holds of this +0 item right now; anything else is a menu this did not fill.
+            const live = (dataManager.characterItems || [])
+                .filter(
+                    (item) =>
+                        item.itemLocationHrid === '/item_locations/inventory' &&
+                        item.itemHrid === this.current.itemHrid &&
+                        (item.enhancementLevel || 0) === 0
+                )
+                .reduce((sum, item) => sum + (item.count || 0), 0);
+            if (!(quantity > 0) || quantity !== live) {
+                return { why: `the item menu says ${quantity}, not the queued ${this.current.count}` };
+            }
+            this.current.count = quantity;
         }
 
         // Found by the number it prints, not by its words, so a game running in Chinese is read the same
