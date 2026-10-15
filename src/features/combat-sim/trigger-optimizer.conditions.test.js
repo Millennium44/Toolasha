@@ -16,11 +16,15 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
-    calculateSimRevenue: () => ({ netPerHour: 0 }),
+    calculateSimRevenue: (result) => ({
+        netPerHour: result.profitRate || 0,
+        unpricedDrops: result.unpricedDrops || [],
+    }),
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 
-const { runTriggerOptimization, estimateConditionRun, zoneMonsterHrids } = await import('./trigger-optimizer.js');
+const { runTriggerOptimization, estimateConditionRun, zoneMonsterHrids, monsterMaxHpReader } =
+    await import('./trigger-optimizer.js');
 
 const HOUR_NS = 3600 * 1e9;
 const FIREBALL = '/abilities/fireball';
@@ -147,6 +151,77 @@ describe('Combat Sim condition search', () => {
         sims.calls = [];
         await runTriggerOptimization({ ...base });
         expect(sims.calls.length).toBe(plain);
+    });
+
+    test('a candidate with an unpriced drop is not judged on a different objective from its reference', async () => {
+        // The scoring baseline (7.5 h per seed) earns more than every other batch, so references sit below it in
+        // profit while XP is identical everywhere. The ANDed candidate also gains an unpriced drop and nothing else.
+        sims.respond = (params) => {
+            const rows = params.playerDTOs[0].abilities[1].triggers || [];
+            const andsMissingHp = rows.length === 2 && rows[1].conditionHrid === MISSING_HP && rows[1].value === 375;
+            return {
+                ...respond(params),
+                experienceGained: { player1: { magic: 1000 * params.hours } },
+                profitRate: params.hours === 7.5 ? 1500 : 1000,
+                unpricedDrops: andsMissingHp ? ['/items/mystery'] : [],
+            };
+        };
+        const result = await runTriggerOptimization({ ...base, objective: 'balanced', searchConditions: true });
+        // Mixed rules would score the candidate without profit (0) against a reference with a negative profit term
+        // (it ran shorter than the baseline) and call the difference a win
+        expect(result.conditions.changes).toHaveLength(0);
+        for (const best of result.conditions.bestMeasured) expect(best.deltaScore).toBeLessThan(0.5);
+    });
+
+    test('enemy-HP candidates use the zone HP at each spawn tier plus the selected tier', async () => {
+        const SLIME = '/monsters/slime';
+        const ZONE = '/actions/combat/slimes';
+        const zoned = {
+            ...gameData,
+            actionDetailMap: {
+                [ZONE]: {
+                    combatZoneInfo: {
+                        fightInfo: {
+                            randomSpawnInfo: {
+                                spawns: [{ combatMonsterHrid: SLIME, difficultyTier: 3, rate: 1, strength: 1 }],
+                                maxSpawnCount: 1,
+                                maxTotalStrength: 1,
+                            },
+                        },
+                    },
+                },
+            },
+            combatMonsterDetailMap: {
+                [SLIME]: {
+                    experience: 10,
+                    enrageTime: 300 * 1e9,
+                    abilities: [],
+                    combatDetails: {
+                        staminaLevel: 10,
+                        intelligenceLevel: 1,
+                        attackLevel: 1,
+                        meleeLevel: 1,
+                        defenseLevel: 1,
+                        rangedLevel: 1,
+                        magicLevel: 1,
+                        attackInterval: 3e9,
+                        combatStats: { combatStyleHrids: ['/combat_styles/smash'], attackInterval: 0 },
+                    },
+                },
+            },
+        };
+        const hpAt = (tier) => monsterMaxHpReader(zoned)(SLIME, tier);
+        expect(hpAt(3)).not.toBe(hpAt(0));
+        await runTriggerOptimization({ ...base, gameData: zoned, zoneHrid: ZONE, searchConditions: true });
+        const targetValues = new Set(
+            sims.calls
+                .flatMap((c) => c.playerDTOs[0].abilities[1].triggers || [])
+                .filter((r) => r.dependencyHrid === TARGET && r.conditionHrid === HP)
+                .map((r) => Number(r.value))
+        );
+        // half the monster's HP at its spawn tier (3): not at tier 0, which dropping the spawn's tier would give
+        expect(targetValues.has(Math.round(hpAt(3) * 0.5))).toBe(true);
+        expect(targetValues.has(Math.round(hpAt(0) * 0.5))).toBe(false);
     });
 
     test('a cap too small for even the scoring baseline runs no condition sims', async () => {

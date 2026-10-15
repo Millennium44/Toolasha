@@ -498,13 +498,19 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
             // Profit/h with a baseline that cannot be valued has nothing to optimize
             conditions = { changes: [], rejected: [], bestMeasured: [], skipped: 'profit' };
         } else {
-            const score = (sample) =>
-                objectiveScore(scopeMetrics(sample, scopeHrids), baseScope, objective, {
-                    withProfit: baseComplete && profitValuation([[sample]], scopeHrids).complete,
-                });
+            // One rule per comparison: profit counts only when the baseline and BOTH sides valued completely,
+            // as the threshold search's scoreSets does, so a candidate is never judged on a different objective
+            // from its reference
+            const scoreSets = (sets) => {
+                const withProfit = baseComplete && profitValuation(sets, scopeHrids).complete;
+                return sets.map((set) =>
+                    set.map((s) => objectiveScore(scopeMetrics(s, scopeHrids), baseScope, objective, { withProfit }))
+                );
+            };
             const monsterHrids = zoneMonsterHrids(gameData, zoneHrid);
             const hpOf = monsterMaxHpReader(gameData);
-            const enemyHp = Math.max(0, ...monsterHrids.map((hrid) => hpOf(hrid, difficultyTier)));
+            // Tier-aware: each spawn's own tier offset plus the selected tier, as the threshold search reads it
+            const enemyHp = zoneEnemyHp(gameData, zoneHrid, difficultyTier, hpOf)?.single || 0;
             const search = await runConditionSearch({
                 slots,
                 candidatesFor: (slot, referenceSamples) =>
@@ -520,7 +526,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                     conditionBatch(edits, hoursFor[stage] || confirmHours, stream, count, offset),
                 precision,
                 minGain,
-                score,
+                scoreSets,
                 aborted: stopped,
                 // Seed runs, as `conditionBatch` counts them (cache hits would cost nothing, so this errs toward
                 // stopping)
