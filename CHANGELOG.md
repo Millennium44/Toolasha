@@ -87,7 +87,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Token worth and scroll value
 
-- Token tooltips now total the stack you hold at the best shop item ("Your 22,657 tokens ≈ 154.1M as Pathseeker Lodestone"), and the Combat Sim prices labyrinth scrolls by what their tokens would buy instead, in their own table with net gold per hour, so you can see when a scroll beats spending those tokens on lodestones. Scrolls also get a Score across DPS, EXP and Profit, from gold per hour of tokens per 0.01% gained. A scroll that costs more than it earns keeps its Score but shows it dimmed, and Gain is per hour like Net.
+- Token tooltips now total the stack you hold at the best shop item ("Your 22,657 tokens ≈ 154.1M as Pathseeker Lodestone"), and the Combat Sim prices labyrinth scrolls by what their tokens would buy instead, in their own table with net gold per hour, so you can see when a scroll beats spending those tokens on lodestones. Scrolls also get a Score across DPS, EXP and Profit, from gold per hour of tokens per 0.01% gained. A scroll that costs more than it earns keeps its Score but shows it dimmed, and Gain is per hour like Net. The scroll's token price is stated once above the table instead of in a column on every row, so the table fits.
 
 ### Lab Sim: check a swap you pick
 

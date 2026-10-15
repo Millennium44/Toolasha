@@ -12088,10 +12088,10 @@ class CombatSimUI {
                 gold/token after sale tax, as ${rate.itemName}. Net is the profit it adds per hour minus that cost; a loss means
                 buying ${rate.itemName} with the tokens beats the scroll. ΔProfit is a % of Profit/hr.
             </div>
+            <div style="color:#aaa; font-size:11px; margin-bottom:6px;" data-scroll-basis>Each scroll costs ${pricedByRow.get(sorted[0]).basis}.</div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-scroll-sort-key="upgrade">Scroll${arrow('upgrade')}</th>
-                <th style="${thStyle}">Priced as</th>
                 <th style="${thStyle}" data-scroll-sort-key="dps">ΔDPS${arrow('dps')}</th>
                 <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="gDps" title="${goldPerTitle('DPS')}">Gold/hr per 0.01% DPS${arrow('gDps')}</th>
                 <th style="${thStyle}" data-scroll-sort-key="xp">ΔEXP${arrow('xp')}</th>
@@ -12109,8 +12109,7 @@ class CombatSimUI {
             const netColor = p.worthIt ? '#8bc34a' : '#f44336';
             const color = scoreColor(r);
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-scroll-row="${i}" data-row-key="${rowKey}">
-                <td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
-                <td style="${tdStyle} color:#888;">${p.basis}</td>
+                <td style="${tdStyle}">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}" data-scroll-gold-per="dps">${goldPerCell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
@@ -12124,7 +12123,7 @@ class CombatSimUI {
                 }>${formatScore(r.score)}</td>
             </tr>
             <tr data-scroll-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="11" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                <td colspan="10" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
                     <div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>

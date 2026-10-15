@@ -1095,7 +1095,7 @@ describe('the panel', () => {
         mocks.scrollRate = null;
 
         expect(ui._upgradeResultsData.scrollTokenRate).toEqual(rate);
-        expect(ui.panel.querySelector('[data-scroll-row]').textContent).toContain('= 204.0K per scroll');
+        expect(ui.panel.querySelector('[data-scroll-basis]').textContent).toContain('= 204.0K per scroll');
     });
 
     test('a cancelled analysis still shows the candidates that finished', async () => {
@@ -1692,8 +1692,12 @@ describe('the panel', () => {
                 const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
                 expect(container.textContent).toContain('Scrolls, priced by their tokens');
                 expect(container.textContent).not.toContain('Measured, but not priced');
+                // Stated once above the table, not repeated in a column on every row
+                expect(container.querySelector('[data-scroll-basis]').textContent).toContain(
+                    '30 tokens × 6.8K/token (Pathseeker Lodestone, after tax) = 204.0K per scroll'
+                );
                 const line = container.querySelector('[data-scroll-row]').textContent;
-                expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone, after tax) = 204.0K per scroll');
+                expect(line).not.toContain('tokens ×');
                 expect(line).toContain('+792.0K');
             });
 
@@ -2509,9 +2513,9 @@ describe('the remembered upgrade analysis across a character switch', () => {
             const container = await restoreWith({ scrollTokenRate: stored });
             mocks.scrollRate = null;
 
-            const line = container.querySelector('[data-scroll-row]').textContent;
-            expect(line).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone, after tax)');
-            expect(line).not.toContain('Something Else');
+            const basis = container.querySelector('[data-scroll-basis]').textContent;
+            expect(basis).toContain('30 tokens × 6.8K/token (Pathseeker Lodestone, after tax)');
+            expect(basis).not.toContain('Something Else');
         });
 
         test('a restored run with a stored rate scores the same as the fresh run', async () => {
