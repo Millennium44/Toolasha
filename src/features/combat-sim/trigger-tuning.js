@@ -1213,6 +1213,19 @@ export async function runTriggerSearch({
         };
     }
 
+    // The best value measured for each row, kept even if it never cleared the bar (for display only; it
+    // changes no decision). A later stage's figure replaces an earlier one's: it is less inflated by the pick.
+    const STAGE_RANK = { screen: 0, select: 1, confirm: 2 };
+    const bestSeen = new Map();
+    const noteBest = (t, from, to, diff, stage) => {
+        const old = bestSeen.get(t.key);
+        const rank = STAGE_RANK[stage];
+        if (old && (STAGE_RANK[old.stage] > rank || (STAGE_RANK[old.stage] === rank && old.deltaScore >= diff.mean))) {
+            return;
+        }
+        bestSeen.set(t.key, { ...t, from, to, deltaScore: diff.mean, se: diff.se, stage });
+    };
+
     const state = new Map(tunables.map((t) => [t.key, { tunable: t, current: t.original }]));
     const currentOf = (t) => state.get(t.key).current;
     const tried = new Map(tunables.map((t) => [t.key, new Set([t.original])]));
@@ -1237,6 +1250,7 @@ export async function runTriggerSearch({
         let bestIndex = 1;
         for (let i = 2; i < entries.length; i++) if (means[i] > means[bestIndex]) bestIndex = i;
         const bestDiff = grid.length > 0 ? pairedDiff(scores[bestIndex], scores[0]) : { mean: 0, se: Infinity };
+        if (grid.length > 0) noteBest(t, t.original, entries[bestIndex], bestDiff, 'screen');
         screen.push({
             tunable: t,
             range: Math.max(...means) - Math.min(...means),
@@ -1277,6 +1291,7 @@ export async function runTriggerSearch({
             aborted,
         });
         if (!selection || stopped()) return false;
+        if (selection.winner !== before) noteBest(t, before, selection.winner, selection.diff, 'select');
         // The selection gain is inflated by having been chosen; half the bar is a cheap way to skip hopeless ones
         if (selection.winner === before || selection.diff.mean < minGain / 2) return false;
 
@@ -1303,6 +1318,7 @@ export async function runTriggerSearch({
             diff = pairedDiff(winnerScores, referenceScores);
             verdict = sequentialVerdict(diff, look, looks.length, minGain);
         }
+        if (diff) noteBest(t, before, selection.winner, diff, 'confirm');
         if (verdict !== 'accept') return false;
         // Accepted on three terms with its own item unpriced: the gold it costs was never seen
         if (ownItemUnpriced(t, [winnerSamples, referenceSamples])) {
@@ -1390,6 +1406,10 @@ export async function runTriggerSearch({
     }
 
     const kept = new Set(changes.map((c) => c.key));
+    // The best candidate measured over every row, whatever it scored: `deltaScore` at or below 0 means the
+    // current values measured best. Display only; the acceptance rules above never read it.
+    const bestMeasured =
+        [...bestSeen.values()].filter((b) => !kept.has(b.key)).sort((a, b) => b.deltaScore - a.deltaScore)[0] || null;
     return {
         stopped: stopped(),
         objective,
@@ -1398,6 +1418,7 @@ export async function runTriggerSearch({
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),
         changes,
         rejected,
+        bestMeasured,
         unchanged: tunables.filter((t) => !kept.has(t.key) && !unusedKeys.has(t.key) && !notPricedKeys.has(t.key)),
         unused,
         notPriced: tunables.filter((t) => notPricedKeys.has(t.key) && !kept.has(t.key)),

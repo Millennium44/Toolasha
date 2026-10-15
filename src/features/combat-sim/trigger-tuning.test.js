@@ -919,6 +919,18 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(result.unchanged.map((t) => t.itemName)).toEqual([]);
     });
 
+    test('returns the best measured candidate even when nothing is accepted', async () => {
+        // The Fireball threshold already sits at its optimum, so no change can win
+        const { measure } = world({ optimum: 1 });
+        const result = await run(measure);
+        expect(result.changes).toEqual([]);
+        expect(result.bestMeasured).not.toBeNull();
+        expect(Number.isFinite(result.bestMeasured.deltaScore)).toBe(true);
+        expect(Number.isFinite(result.bestMeasured.se)).toBe(true);
+        expect(result.bestMeasured.deltaScore).toBeLessThanOrEqual(0);
+        expect(result.bestMeasured.to).not.toBe(result.bestMeasured.from);
+    });
+
     test('profit that values completely is found under Profit/h (the control)', async () => {
         const result = await run(profitWorld({}).measure, { objective: 'profit' });
         expect(result.changes).toHaveLength(1);

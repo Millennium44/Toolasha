@@ -117,6 +117,27 @@ export function describeLabTriggerEstimate(estimate) {
 const pct = (rate) => (rate === null || rate === undefined ? '—' : `${(rate * 100).toFixed(1)}%`);
 const attempts = (v) => (Number.isFinite(v) ? v.toFixed(2) : '?');
 const se = (v) => (Number.isFinite(v) ? v.toFixed(2) : '?');
+/** A saving in attempts with its sign: "+0.03", "−0.05" */
+const signed = (v) => (Number.isFinite(v) ? `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(2)}` : '?');
+
+/**
+ * The best candidate a search measured when none was recommended, said plainly as not a recommendation:
+ * either the candidate with its saving (within noise) or that the current setting measured best.
+ * @param {Object|null|undefined} best - `{ deltaScore, se }` plus whatever `describe` reads
+ * @param {Function} describe - `(best) => string`: the candidate in the game's wording (plain text)
+ * @param {string} attr - Data attribute name for tests and styling
+ * @param {string} [currentPrefix] - Text before "Current setting measured best." (escaped by the caller)
+ * @returns {string} HTML ('' when nothing was measured)
+ */
+function bestFoundHtml(best, describe, attr, currentPrefix = '') {
+    if (!best || !Number.isFinite(best.deltaScore)) return '';
+    const text =
+        best.deltaScore > 0
+            ? `Best found: ${esc(describe(best))}, saves ${esc(signed(best.deltaScore))} ± ${esc(se(best.se))} attempts ` +
+              '(within noise, not a recommendation).'
+            : `${currentPrefix}Current setting measured best.`;
+    return `<div style="color:#888; font-size:11px; margin:2px 0 0 8px;" ${attr}="${esc(best.key)}">${text}</div>`;
+}
 
 /**
  * Where a changed row lives, as the game words its slots.
@@ -187,6 +208,15 @@ export function conditionResultsHtml(conditions, gameData) {
         body += `<div style="color:#aaa; font-size:12px;">No condition beat the current triggers by a clear margin${
             conditions.stopped ? ' before the run was stopped' : ''
         }.</div>`;
+        const slotBests = conditions.bestMeasured || [];
+        for (const b of slotBests) {
+            body += bestFoundHtml(
+                b,
+                (x) => `${x.itemName} (${slotWord(x)}), ${describeTriggerRows(x.toRows, gameData)}`,
+                'data-lab-condition-best',
+                `${esc(b.itemName)} (${slotWord(b)}): `
+            );
+        }
     }
     for (const c of changes) {
         body +=
@@ -242,7 +272,14 @@ function groupHtml(group, gameData) {
             'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>';
     } else if (changes.length === 0) {
         body +=
-            '<div style="color:#aaa; font-size:12px;">No change beat the current thresholds by a clear margin.</div>';
+            '<div style="color:#aaa; font-size:12px;">No change beat the current thresholds by a clear margin.</div>' +
+            bestFoundHtml(
+                result.bestMeasured,
+                (b) =>
+                    `${b.itemName} (${slotWord(b)}), ${describeRow(b, gameData, b.from)} → ${b.to}` +
+                    (b.conditionHrid === LOWEST_HP_PCT ? '%' : ''),
+                'data-lab-trigger-best'
+            );
     }
     for (const c of changes) {
         const before = describeRow(c, gameData, c.from);

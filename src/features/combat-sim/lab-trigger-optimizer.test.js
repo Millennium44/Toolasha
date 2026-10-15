@@ -267,6 +267,15 @@ describe('runLabTriggerOptimization', () => {
         expect(run.groups[0].result.changes).toEqual([]);
     });
 
+    test('a run that accepts nothing still carries the best measured candidate', async () => {
+        sims.respond = labyrinth(() => 0.7, { noise: 4 });
+        const run = await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' });
+        const { result } = run.groups[0];
+        expect(result.changes).toEqual([]);
+        expect(result.bestMeasured).toBeTruthy();
+        expect(Number.isFinite(result.bestMeasured.deltaScore)).toBe(true);
+    });
+
     test('a real gain smaller than the minimum is not offered', async () => {
         // Noise-free and real: the Cyclops wins 70.5% instead of 70% at 300+, about 0.01 attempts saved
         const better = (monster, threshold) => (monster === '/monsters/cyclops' && threshold >= 300 ? 0.705 : 0.7);
