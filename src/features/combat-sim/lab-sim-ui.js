@@ -2782,6 +2782,9 @@ class LabSimUI {
             // skip level that has moved on should not need a reload to be
             // noticed
             this._populateUpgradeTargets();
+            // A section remembered as open would otherwise show the loadouts it
+            // was last drawn with
+            if (this._triggerChoices.open) this._refreshTriggerLoadouts();
             this._onUpgradeSelectionChanged();
         } else if (tab === 'skilling') {
             skillingContent.style.display = 'flex';
