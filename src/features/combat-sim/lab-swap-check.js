@@ -353,7 +353,9 @@ function wornExactly(piece, swap) {
  * @param {Array<Object>} dtos - The loadout of every fight in the run
  * @param {Object} gameData - Game data payload
  * @param {boolean} [isSelf=true] - Whether the loadouts are the live character's
- * @param {Object} [options] - `{ allLoadouts }`: reach every loadout with the slot, whatever its style
+ * @param {Object} [options] - `{ allLoadouts, ownershipDtos }`: `allLoadouts` reaches every loadout with the
+ *   slot, whatever its style; `ownershipDtos` is every loadout the character has (default `dtos`), which
+ *   is what "already owned" and "still worn elsewhere" read, while reach reads `dtos` alone
  * @returns {Object|null} A candidate, or null when the item has no equipment slot
  */
 export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, options = {}) {
@@ -362,6 +364,8 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
     const allLoadouts = Boolean(options.allLoadouts);
     const base = { slot, upgradeHrid: swap.hrid, upgradeLevel: swap.level, allLoadouts };
     const reached = (dtos || []).filter((dto) => checkedSwapAppliesToDTO(base, dto, gameData));
+    // What the character holds: the simulated fights may be a subset of their loadouts
+    const owned = options.ownershipDtos || dtos || [];
     const worn = reached.map((dto) => {
         const piece = dto.equipment?.[slot];
         return piece?.hrid ? { hrid: piece.hrid, level: piece.enhancementLevel || 0 } : null;
@@ -384,7 +388,7 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
     };
     // One physical piece serves every loadout (they are alternatives, not worn
     // together), so a copy already worn at this level in any loadout is owned
-    if ((dtos || []).some((dto) => wornExactly(dto?.equipment?.[slot], swap))) {
+    if (owned.some((dto) => wornExactly(dto?.equipment?.[slot], swap))) {
         candidate.cost = 0;
         candidate.noPurchase = true;
         candidate.pricingNote = OWNED_CAVEAT;
@@ -395,7 +399,7 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
             swap,
             route.route,
             worn,
-            (dtos || []).filter((dto) => !reached.includes(dto)).map((dto) => dto?.equipment?.[slot])
+            owned.filter((dto) => !reached.includes(dto)).map((dto) => dto?.equipment?.[slot])
         );
         if (replaced) {
             // Each distinct piece replaced in a reached loadout is sold once
