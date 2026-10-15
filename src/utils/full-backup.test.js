@@ -196,6 +196,7 @@ describe('exportEverythingJSON', () => {
             complete: true,
             writtenKeys: {},
             latched: 0,
+            latchedKeys: [],
         });
     });
 
@@ -544,6 +545,7 @@ describe('importEverything reports what did not land', () => {
             payload.stores = { liveStore: { liveRec_1: [1], other: 2 } };
             const mixed = await importEverything(payload, { liveSafeMerge: true });
             expect(mixed.latched).toBe(1);
+            expect(mixed.latchedKeys).toEqual([{ store: 'liveStore', key: 'other' }]);
             const keys = storage.finishRestore.mock.calls[0][0].get('liveStore');
             expect(Array.from(keys)).toEqual(['other']);
         } finally {
