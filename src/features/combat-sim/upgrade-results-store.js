@@ -76,8 +76,11 @@ export async function loadUpgradeResults(key) {
  */
 export async function clearUpgradeResults(key) {
     try {
-        // null, not a delete: a deleted key is still in the gist and a pull would write the old run back
-        await storage.set(characterKey(key), null, STORE, true);
+        // A dated empty record, not a delete and not null: a deleted key is still in the gist and a pull
+        // would write the old run back, and a pull skips folding a key this device holds as null, so a
+        // null lost to the gist's older run too. Dated, the clear is the later save and wins the fold
+        // (`laterSavedAtWins`); it carries no results, so it loads as nothing
+        await storage.set(characterKey(key), { savedAt: Date.now(), cleared: true }, STORE, true);
     } catch (error) {
         console.error('[UpgradeResultsStore] Clearing upgrade results failed:', error);
     }
