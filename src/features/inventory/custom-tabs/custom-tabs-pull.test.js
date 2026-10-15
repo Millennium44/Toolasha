@@ -224,4 +224,22 @@ describe('a sync pull of the tab config', () => {
             .tabs.map((t) => t.id);
         expect(savedIds).toEqual(['a', 'b']);
     });
+
+    test('a failed first read is retried and the retry adopts the pulled config', async () => {
+        store('ironChar', [{ id: 'a', name: 'Old' }]);
+        await startUI();
+        store('ironChar', [
+            { id: 'a', name: 'Old' },
+            { id: 'b', name: 'Pulled' },
+        ]);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // An unreadable store: the probe answers null, which `load()` reports as false
+        storageMock.tryGet.mockImplementationOnce(async () => null);
+
+        pull('ironChar');
+        await vi.waitFor(() => expect(ui._config.tabs.map((t) => t.id)).toEqual(['a', 'b']), { timeout: 3000 });
+        warn.mockRestore();
+
+        expect(ui._applyLayout).toHaveBeenCalledTimes(1);
+    });
 });

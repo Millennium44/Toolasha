@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const db = vi.hoisted(() => ({ stores: new Map() }));
+const db = vi.hoisted(() => ({ stores: new Map(), failReads: 0 }));
 
 vi.mock('../../core/storage.js', () => {
     const storeFor = (name) => {
@@ -27,9 +27,11 @@ vi.mock('../../core/storage.js', () => {
             },
             get: async (key, name, fallback) => (storeFor(name).has(key) ? storeFor(name).get(key) : fallback),
             tryGet: async (key, name) =>
-                storeFor(name).has(key)
-                    ? { found: true, value: structuredClone(storeFor(name).get(key)) }
-                    : { found: false, value: null },
+                db.failReads-- > 0
+                    ? null
+                    : storeFor(name).has(key)
+                      ? { found: true, value: structuredClone(storeFor(name).get(key)) }
+                      : { found: false, value: null },
             set: async (key, value, name) => {
                 storeFor(name).set(key, structuredClone(value));
                 return true;
@@ -158,5 +160,17 @@ describe('guild member skills and a sync pull', () => {
         expect(guildMemberSkills.captures.ada.redoRequestedAt).toBe(5000);
         expect(guildMemberSkills.captures.ada.at).toBe(1000);
         expect(guildMemberSkills.progress(6000).logged).toBe(0);
+    });
+
+    test('a failed first read is retried and the retry adopts the pulled captures', async () => {
+        db.stores.get('guildHistory').set(KEY, { ada: capture('Ada', 70, 3000) });
+        db.failReads = 1;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        announceSyncPullApplied({ guildHistory: [KEY] });
+        await vi.waitFor(() => expect(guildMemberSkills.captures.ada.skills['/skills/alchemy']).toBe(70), {
+            timeout: 3000,
+        });
+        warn.mockRestore();
+        db.failReads = 0;
     });
 });

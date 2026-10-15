@@ -580,7 +580,20 @@ class GuildMemberSkills {
     async _adoptPulledCaptures(pulled) {
         if (pulled !== this.record) return;
         const before = JSON.stringify(this.captures);
-        if (!(await pulled.load()) || pulled !== this.record) return;
+        // An unreadable store makes `load()` report false rather than throw: try again before giving up
+        let readable = false;
+        for (let attempt = 0; attempt < 4 && !readable; attempt++) {
+            if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+            if (pulled !== this.record) return;
+            readable = await pulled.load();
+        }
+        if (!readable) {
+            console.error(
+                '[GuildMemberSkills] Gave up reading the pulled captures; the ones in hand stay until a reload'
+            );
+            return;
+        }
+        if (pulled !== this.record) return;
         if (JSON.stringify(this.captures) !== before) this._notifyChanged();
     }
 
