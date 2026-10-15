@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
 
 const CAPE = '/items/sinister_cape_refined';
 const BASE = '/items/sinister_cape';
+const RING = '/items/sinister_ring_refined';
+const RING_BASE = '/items/sinister_ring';
 const SHARD = '/items/sinister_refinement_shard';
 const MIRROR = '/items/philosophers_mirror';
 const SWORD = '/items/cheese_sword';
@@ -45,6 +47,21 @@ const ITEM_DETAIL_MAP = {
         enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }],
     },
     [BASE]: { hrid: BASE, name: 'Sinister Cape', equipmentDetail: { type: '/equipment_types/back' } },
+    // A refined piece whose base is on the market, unlike the cape
+    [RING]: {
+        hrid: RING,
+        name: 'Sinister Ring ★',
+        baseItemHrids: [RING_BASE],
+        equipmentDetail: { type: '/equipment_types/ring' },
+        enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }],
+    },
+    [RING_BASE]: {
+        hrid: RING_BASE,
+        name: 'Sinister Ring',
+        isTradable: true,
+        equipmentDetail: { type: '/equipment_types/ring' },
+        enhancementCosts: [{ itemHrid: '/items/coin', count: 10 }],
+    },
     [SWORD]: {
         hrid: SWORD,
         name: 'Cheese Sword',
@@ -62,6 +79,13 @@ const ACTIONS = {
         retainAllEnhancement: true,
         inputItems: [{ itemHrid: SHARD, count: 100 }],
         outputItems: [{ itemHrid: CAPE, count: 1 }],
+    },
+    '/actions/crafting/sinister_ring_refined': {
+        hrid: '/actions/crafting/sinister_ring_refined',
+        upgradeItemHrid: RING_BASE,
+        retainAllEnhancement: true,
+        inputItems: [{ itemHrid: SHARD, count: 100 }],
+        outputItems: [{ itemHrid: RING, count: 1 }],
     },
 };
 
@@ -103,7 +127,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     // A cape base with no listing: the craft estimate the ordinary +0 path returns
     resolveItemPrice: vi.fn((hrid, opts) => ({
         price:
-            hrid === CAPE
+            hrid === CAPE || hrid === RING
                 ? state.starPrice
                 : hrid === SHARD
                   ? 2_000_000
@@ -317,6 +341,37 @@ describe('refined target priced from a held base', () => {
             const detail = explainUpgradeCost(tier(7), gameData);
             expect(detail.buys[0]).toMatchObject({ source: 'refine', price: SHARDS + 1_000_000 });
             expect(detail.ladder.refine.mirror.heldLevels).toEqual([6, 5]);
+        });
+
+        describe('the base copies the route buys', () => {
+            const ring = (level) => tier(level, { upgradeHrid: RING });
+            // +6 is listed at 5M; every other level is the base plus a climb of (2^k - 1)M
+            const listedSix = () => {
+                state.askFor = (hrid, level) => (hrid === RING_BASE && level === 6 ? 5_000_000 : 0);
+            };
+            const boughtOf = (level) => explainUpgradeCost(ring(level), gameData).ladder.refine.mirror.boughtCopies;
+
+            test('a listed +6 is bought at its level, the built +5 down to its base copies', () => {
+                listedSix();
+                const bought = boughtOf(7);
+                // +5 is built from a +4 and a +3, each built in turn: five +0 bases stand under it
+                expect(bought).toContainEqual({ itemHrid: RING_BASE, enhancementLevel: 0, count: 5 });
+                expect(bought).toContainEqual({ itemHrid: RING_BASE, enhancementLevel: 6, count: 1 });
+                // The +5 is built from cheaper copies, so no +5 is bought, only the +0 bases it stands on
+                expect(bought.some((line) => line.enhancementLevel === 5)).toBe(false);
+                expect(bought.find((line) => line.enhancementLevel === 0).count).toBeGreaterThan(0);
+            });
+
+            test('a held +6 is used, not bought', () => {
+                listedSix();
+                state.items = [stack(RING_BASE, 6)];
+                expect(boughtOf(7).some((line) => line.enhancementLevel === 6)).toBe(false);
+            });
+
+            test('a cape base nobody lists has nothing to buy', () => {
+                const detail = explainUpgradeCost(tier(7), gameData);
+                expect(detail.ladder.refine.mirror.boughtCopies).toEqual([]);
+            });
         });
 
         test('a dear mirror leaves the ordinary route alone', () => {

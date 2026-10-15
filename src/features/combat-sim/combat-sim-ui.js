@@ -1989,18 +1989,30 @@ export function upgradeRowPurchase(result) {
 function refineMaterialsOf(ladder) {
     const materials = ladder?.refine?.materials;
     if (!Array.isArray(materials)) return null;
-    const needed = ladder.refine.mirror
-        ? [...materials, { itemHrid: MIRROR_ITEM_HRID, count: mirrorsToBuy(ladder.refine.mirror.mirrorCount) }]
+    const mirror = ladder.refine.mirror;
+    const needed = mirror
+        ? [
+              ...materials,
+              { itemHrid: MIRROR_ITEM_HRID, count: mirrorsToBuy(mirror.mirrorCount) },
+              // The enhanced base copies the route buys outright; held ones are used, not bought
+              ...(Array.isArray(mirror.boughtCopies) ? mirror.boughtCopies : []),
+          ]
         : materials;
     const bought = needed
         .filter((m) => m?.itemHrid && String(m.itemHrid).startsWith('/items/') && m.itemHrid !== '/items/coin')
-        .map((m) => ({
-            itemHrid: m.itemHrid,
-            count: Math.max(1, Math.ceil(Number(m.count) || 0)),
-            name:
+        .map((m) => {
+            const enhancementLevel = Math.max(0, Math.floor(Number(m.enhancementLevel) || 0));
+            const base =
                 dataManager.getItemDetails?.(m.itemHrid)?.name ||
-                String(m.itemHrid).split('/').pop().replace(/_/g, ' '),
-        }));
+                String(m.itemHrid).split('/').pop().replace(/_/g, ' ');
+            return {
+                itemHrid: m.itemHrid,
+                // Only a line that names a level carries one, so the market tab opens that level's listing
+                ...(enhancementLevel > 0 ? { enhancementLevel } : {}),
+                count: Math.max(1, Math.ceil(Number(m.count) || 0)),
+                name: enhancementLevel > 0 ? `${base} +${enhancementLevel}` : base,
+            };
+        });
     return bought.length ? bought : null;
 }
 
@@ -2259,7 +2271,13 @@ export function upgradeRowActionsHtml(result) {
         const [main] = buy.refineMaterials;
         const mainAttrs = `data-buy-hrid="${main.itemHrid}" data-buy-level="0" data-buy-quantity="${main.count}"`;
         const bill = escapeAttribute(
-            JSON.stringify(buy.refineMaterials.map((m) => ({ itemHrid: m.itemHrid, count: m.count })))
+            JSON.stringify(
+                buy.refineMaterials.map((m) => ({
+                    itemHrid: m.itemHrid,
+                    count: m.count,
+                    ...(m.enhancementLevel > 0 ? { enhancementLevel: m.enhancementLevel } : {}),
+                }))
+            )
         );
         const wanted = buy.refineMaterials.map((m) => `${m.count.toLocaleString()} × ${m.name}`).join(' and ');
         return `${save}<button type="button" ${mainAttrs} data-buy-action="watch" data-buy-cost=""

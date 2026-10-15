@@ -3097,6 +3097,8 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
                         mirrorPrice: mirror.mirrorPrice,
                         heldLevels: mirror.heldLevels,
                         mirrorCount: mirror.mirrorCount,
+                        // The base copies the route buys outright, for the row's Market bill
+                        boughtCopies: mirror.boughtCopies,
                     },
                 },
             },
@@ -3157,8 +3159,11 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     // below: pricing the inputs (and the result) from one held copy would count it several times, up to
     // a mirror that costs nothing but the mirror itself
     const ordinary = [];
+    const ordinarySource = [];
     for (let k = 0; k <= level; k++) {
-        ordinary[k] = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false }).price;
+        const direct = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false });
+        ordinary[k] = direct.price;
+        ordinarySource[k] = direct.source;
     }
     // The mirror's own success can be +2 under Blessed Tea, which skips the next step of the chain
     const blessed = blessedMirrorChance(enhancementSweepParams(baseHrid));
@@ -3176,7 +3181,15 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     const heldAt = (k) => held.filter((copy) => copy.level === k).sort((a, b) => a.forfeit - b.forfeit)[0] || null;
     const upper = heldAt(level - 1);
     const lower = heldAt(level - 2);
-    let plan = { pay: mirrorTotals[level], forfeit: 0, used: [], mirrors: mirrorTotalCounts[level] };
+    let plan = {
+        pay: mirrorTotals[level],
+        forfeit: 0,
+        used: [],
+        mirrors: mirrorTotalCounts[level],
+        buyUpper: true,
+        buyLower: true,
+        stepOdds: landing[level - 1],
+    };
     for (const [useUpper, useLower] of [
         [true, false],
         [false, true],
@@ -3197,6 +3210,9 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
             pay,
             forfeit,
             mirrors,
+            buyUpper: !useUpper,
+            buyLower: !useLower,
+            stepOdds,
             // The lower input is only spent when the step is run; the upper one always is
             used: [
                 useUpper ? { copy: upper, share: 1 } : null,
@@ -3205,8 +3221,37 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
         };
     }
     if (!Number.isFinite(plan.pay) || !(plan.pay + plan.forfeit < viaOrdinary)) return null;
+
+    // The base copies the route buys, for the Market bill. A level the mirror builds is built from its
+    // two inputs in turn, so the leaves are what is bought: a listed level at its own level, and a level
+    // priced as base plus an enhance as the +0 base (the enhance is the player's own work). An item no
+    // market lists (a cape) has nothing to buy.
+    const bought = new Map();
+    if (!isSelfEnhancedItem(baseHrid, gameData?.itemDetailMap)) {
+        const want = (k, count) => {
+            if (!(count > 0) || k < 0) return;
+            const direct = Number.isFinite(ordinary[k]) ? ordinary[k] : Infinity;
+            if (k >= MIRROR_FIRST_LEVEL && best[k] < direct) {
+                want(k - 1, count);
+                want(k - 2, count * landing[k - 1]);
+                return;
+            }
+            const at = ordinarySource[k] === 'market' ? k : 0;
+            bought.set(at, (bought.get(at) || 0) + count);
+        };
+        if (plan.buyUpper) want(level - 1, 1);
+        if (plan.buyLower) want(level - 2, plan.stepOdds);
+    }
     return {
         baseCost: plan.pay,
+        // Whole copies, rounded up (a Blessed Tea chain buys a fraction of a step's inputs on average)
+        boughtCopies: [...bought.entries()]
+            .map(([enhancementLevel, count]) => ({
+                itemHrid: baseHrid,
+                enhancementLevel,
+                count: Math.max(1, Math.ceil(count - 1e-9)),
+            }))
+            .sort((a, b) => b.enhancementLevel - a.enhancementLevel),
         forfeited: plan.forfeit,
         // The resale of bag copies another loadout wears. Unlike a worn piece the row takes off, no credit
         // is withheld for them, so the route's price carries it
