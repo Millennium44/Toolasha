@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: trigger tuning is abilities only
+
+- The labyrinth allows no food or drink, so Tune triggers no longer tunes or searches their triggers (it only measured noise); the include choice is gone and the cost estimate counts ability slots only.
+
 ### Action Timing Monitor: combat left out
 
 - Combat no longer triggers "bar sat full for…" warnings or report entries: a fight's bar doesn't run to a fixed time, so those were noise. Saved combat entries are dropped.
