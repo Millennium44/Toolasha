@@ -100,7 +100,15 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // Through the default export rather than as named imports: this file is reached
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
-import combatSimUI from './combat-sim-ui.js';
+import combatSimUI, {
+    applyScoreScale,
+    DEFAULT_LEVEL_SCORE_SCALE,
+    scoreScaleTitle,
+    scoreDepthLabel,
+    scoreValueColor,
+    formatScore,
+    formatCompactHours,
+} from './combat-sim-ui.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -723,6 +731,56 @@ function roomLevelCells(result, roomLevels) {
               'level figure at all. A dash here is not a measured zero.',
     };
 }
+
+/**
+ * Hours of grind per expected attempt a combat level saves: the combat-level
+ * counterpart of the gear table's Per 1M. Lower is better. Infinity where the
+ * levels save nothing (or make things worse) or no XP accrues to time them,
+ * which the table draws as a dash and scores as nothing.
+ * @param {Object} row - A combat-level result row
+ * @returns {number} Hours, or Infinity
+ */
+export function levelHoursPerAttemptSaved(row) {
+    const saved = -row?.attemptsDelta;
+    if (!Number.isFinite(row?.levelTimeHours) || !(saved > 0)) return Infinity;
+    return row.levelTimeHours / saved;
+}
+
+/** True for a result row whose candidate is a combat level. */
+function isLevelRow(row) {
+    return row?.candidate?.type === 'combat_level';
+}
+
+function finiteOrNull(value) {
+    return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * What the Combat levels table scores on: hours per attempt saved (lower is
+ * better) and the average win-rate change (higher is better), counted equally.
+ */
+const LEVEL_SCORE_METRICS = [
+    {
+        key: 'hoursPer',
+        label: 'Hours per attempt saved',
+        lowerIsBetter: true,
+        value: (row) => levelHoursPerAttemptSaved(row),
+    },
+    { key: 'avgWinDelta', label: 'Avg \u0394Win', lowerIsBetter: false, value: (row) => row.avgWinDelta },
+];
+
+/** What each Combat levels column sorts by, and which way is the good news. */
+const LEVEL_SORTS = {
+    skill: { get: (r) => r.candidate?.description || '', dir: 'asc' },
+    time: { get: (r) => r.levelTimeHours, dir: 'asc' },
+    attemptsDelta: { get: (r) => r.attemptsDelta, dir: 'asc' },
+    hoursPer: { get: (r) => levelHoursPerAttemptSaved(r), dir: 'asc' },
+    rooms: { get: (r) => r.appliedFights ?? r.fights.length, dir: 'desc' },
+    avgWinDelta: { get: (r) => r.avgWinDelta, dir: 'desc' },
+    // A row that scored nothing has no figure, so it stays last either way
+    score: { get: (r) => (r.score > 0 ? r.score : null), dir: 'desc' },
+};
+const LEVEL_SORT_DEFAULT = { key: 'score', dir: 'desc' };
 
 class LabSimUI {
     constructor() {
@@ -5806,8 +5864,12 @@ class LabSimUI {
         // Two currencies, two sections — the same split the Configure fight's
         // table makes. A token buff has no coin price at all, so it cannot share
         // a Cost column, a Per 1M column or the budget planner with the gear.
+        // And a third for combat levels: they are paid for in grind time, so the
+        // gear table's Cost and Per 1M columns have nothing to say about them
         const tokenResults = results.filter((r) => r.costType === 'token');
-        const goldResults = results.filter((r) => r.costType !== 'token');
+        const levelResults = checked ? [] : results.filter((r) => r.candidate?.type === 'combat_level');
+        const goldResults = results.filter((r) => r.costType !== 'token' && !levelResults.includes(r));
+        const levelsOnly = levelResults.length > 0 && !goldResults.length;
 
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
@@ -5832,7 +5894,7 @@ class LabSimUI {
         const tdNameStyle =
             'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:normal; ' +
             'overflow-wrap:anywhere; line-height:1.4;';
-        const bestDelta = Math.min(...results.map((r) => r.attemptsDelta));
+        const bestDelta = Math.min(...goldResults.map((r) => r.attemptsDelta));
         const sharedStyles = { thStyle, tdStyle, tdNameStyle, fmtAttempts, fmtAttemptsDelta, attemptsDeltaColor };
 
         // What each column sorts by, and which way round is "good" — clicking
@@ -5867,14 +5929,21 @@ class LabSimUI {
             `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
             `${label}${arrow(key)}</th>`;
 
-        let html = checked ? this._checkedHeadingHtml('combat') : this._renderBudgetPlan(goldResults, baseline);
+        let html = checked
+            ? this._checkedHeadingHtml('combat')
+            : levelsOnly
+              ? ''
+              : this._renderBudgetPlan(goldResults, baseline);
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
                 expected combat attempts to clear all ${baseline.fights.length} fights
                 <span style="color:#555; font-size:10px; margin-left:6px;">Σ 1/win rate per fight, at its skip level with its assigned loadout — retries included</span>
             </div>
-            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            `;
+        // A run of nothing but combat levels has no gear to table
+        if (!levelsOnly)
+            html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 ${th('upgrade', 'Upgrade', 'Sort by name')}
                 ${th('cost', 'Cost', 'What it would cost in coins. Combat levels cost experience, not gold.')}
@@ -5885,50 +5954,8 @@ class LabSimUI {
                 ${th('avgWinDelta', 'Avg ΔWin', 'Average win rate change across the rooms it reaches')}
             </tr></thead><tbody>`;
 
-        sorted.forEach((r, i) => {
-            const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
-            const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
-            // A dash rather than a zero where there is no coin price: a combat
-            // level is not free, it is paid for in experience, and a zero here
-            // would read as "costs nothing" instead of "not a coin question"
-            // Negative is real: a swap whose sold piece brings back more than
-            // the new one costs is a credit, not a row with no price
-            const cost =
-                r.cost > 0
-                    ? formatKMB(r.cost)
-                    : r.cost === 0
-                      ? 'free'
-                      : Number.isFinite(r.cost)
-                        ? `+${formatKMB(-r.cost)} back`
-                        : '—';
-            // How many rooms it reaches — a sword upgrade is only about the
-            // loadouts carrying that sword, and a row that does not say so
-            // reads as an upgrade to the whole run
-            const reach = r.appliedFights ?? r.fights.length;
-            const total = r.fights.length;
-            const perGold =
-                r.attemptsSavedPerMillion === null
-                    ? '—'
-                    : r.attemptsSavedPerMillion === Infinity
-                      ? 'pays for itself'
-                      : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
-            // A change smaller than the sampling error of the sims behind it has
-            // not been measured — coloring it green sells an upgrade on noise
-            const measured = r.significant !== false;
-            const noise =
-                r.attemptsDeltaNoise > 0 ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>` : '';
-            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}</td>
-                <td style="${tdStyle} color:#aaa;">${cost}</td>
-                <td style="${tdStyle} color:${measured && r.attemptsSavedPerMillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
-                <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
-                <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'}; ${isBest && measured ? 'font-weight:700;' : ''}"
-                    title="${measured ? '' : 'Smaller than the simulation’s own error — not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
-                <td style="${tdStyle} color:${reach === total ? '#888' : '#8ab4f8'};">${reach} / ${total}</td>
-                <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
-            </tr>`;
-
-            // Per-fight breakdown (hidden until the row is clicked)
+        // The per-fight breakdown under a row, the same for gear and combat levels
+        const fightBreakdown = (r) => {
             let fightRows = '';
             for (let f = 0; f < r.fights.length; f++) {
                 const fight = r.fights[f];
@@ -5950,13 +5977,67 @@ class LabSimUI {
                     <span style="white-space:nowrap;">${outcome}</span>
                 </div>`;
             }
-            html += `<tr data-allfights-detail="${i}" style="display:none;">
+            return fightRows;
+        };
+        sharedStyles.fightBreakdown = fightBreakdown;
+
+        if (!levelsOnly)
+            sorted.forEach((r, i) => {
+                const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
+                const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
+                // A dash rather than a zero where there is no coin price: a combat
+                // level is not free, it is paid for in experience, and a zero here
+                // would read as "costs nothing" instead of "not a coin question"
+                // Negative is real: a swap whose sold piece brings back more than
+                // the new one costs is a credit, not a row with no price
+                const cost =
+                    r.cost > 0
+                        ? formatKMB(r.cost)
+                        : r.cost === 0
+                          ? 'free'
+                          : Number.isFinite(r.cost)
+                            ? `+${formatKMB(-r.cost)} back`
+                            : '—';
+                // How many rooms it reaches — a sword upgrade is only about the
+                // loadouts carrying that sword, and a row that does not say so
+                // reads as an upgrade to the whole run
+                const reach = r.appliedFights ?? r.fights.length;
+                const total = r.fights.length;
+                const perGold =
+                    r.attemptsSavedPerMillion === null
+                        ? '—'
+                        : r.attemptsSavedPerMillion === Infinity
+                          ? 'pays for itself'
+                          : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
+                // A change smaller than the sampling error of the sims behind it has
+                // not been measured — coloring it green sells an upgrade on noise
+                const measured = r.significant !== false;
+                const noise =
+                    r.attemptsDeltaNoise > 0
+                        ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                        : '';
+                html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}</td>
+                <td style="${tdStyle} color:#aaa;">${cost}</td>
+                <td style="${tdStyle} color:${measured && r.attemptsSavedPerMillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
+                <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
+                <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'}; ${isBest && measured ? 'font-weight:700;' : ''}"
+                    title="${measured ? '' : 'Smaller than the simulation’s own error — not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
+                <td style="${tdStyle} color:${reach === total ? '#888' : '#8ab4f8'};">${reach} / ${total}</td>
+                <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
+            </tr>`;
+
+                // Per-fight breakdown (hidden until the row is clicked)
+                const fightRows = fightBreakdown(r);
+                html += `<tr data-allfights-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
                     ${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
-        });
+            });
 
-        html += '</tbody></table>';
+        if (!levelsOnly) html += '</tbody></table>';
+        const levelSorted = checked ? [] : this._sortedLevelRows(levelResults);
+        if (!checked) html += this._renderAllFightsLevelSection(levelSorted, sharedStyles);
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
         container.innerHTML = html;
         if (checked) this._wireCheckedHeading('combat', container);
@@ -5965,6 +6046,7 @@ class LabSimUI {
             this._addCsvExport(container, 'labsim-all-fights', () => ({
                 columns: [
                     { key: 'upgrade', label: 'Upgrade' },
+                    { key: 'type', label: 'Type' },
                     { key: 'cost', label: 'Cost' },
                     { key: 'perMillion', label: 'Attempts saved per 1M' },
                     { key: 'attempts', label: 'Expected attempts' },
@@ -5975,12 +6057,16 @@ class LabSimUI {
                     { key: 'roomsTotal', label: 'Rooms total' },
                     { key: 'avgWinDelta', label: 'Avg win rate change' },
                     { key: 'tokenCost', label: 'Token cost' },
+                    { key: 'levelTimeHours', label: 'Hours to level' },
+                    { key: 'hoursPerAttemptSaved', label: 'Hours per attempt saved' },
+                    { key: 'levelScore', label: 'Combat levels score' },
                 ],
                 // Raw numbers rather than the formatted cells: a spreadsheet cannot
                 // sort "1.2B" or sum "+0.32%". Both sections, since a spreadsheet
                 // has no trouble holding two currencies in two columns.
-                rows: [...sorted, ...tokenResults].map((r) => ({
+                rows: [...sorted, ...levelSorted, ...tokenResults].map((r) => ({
                     upgrade: r.candidate?.description || '',
+                    type: r.costType === 'token' ? 'token buff' : isLevelRow(r) ? 'combat level' : 'gear',
                     cost: r.cost ?? null,
                     // Infinity does not survive a spreadsheet; the credit-funded
                     // row's value figure is its (negative) cost column
@@ -5993,6 +6079,9 @@ class LabSimUI {
                     roomsTotal: r.fights.length,
                     avgWinDelta: r.avgWinDelta,
                     tokenCost: r.tokenCost ?? null,
+                    levelTimeHours: isLevelRow(r) && Number.isFinite(r.levelTimeHours) ? r.levelTimeHours : null,
+                    hoursPerAttemptSaved: isLevelRow(r) ? finiteOrNull(levelHoursPerAttemptSaved(r)) : null,
+                    levelScore: isLevelRow(r) && r.score > 0 ? r.score : null,
                 })),
             }));
 
@@ -6002,6 +6091,27 @@ class LabSimUI {
                 if (detail) {
                     detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
                 }
+            });
+        });
+        container.querySelectorAll('[data-allfights-level-row]').forEach((row) => {
+            row.addEventListener('click', () => {
+                const detail = container.querySelector(
+                    `[data-allfights-level-detail="${row.dataset.allfightsLevelRow}"]`
+                );
+                if (detail) {
+                    detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                }
+            });
+        });
+        container.querySelectorAll('[data-af-level-sort]').forEach((header) => {
+            header.addEventListener('click', () => {
+                const key = header.dataset.afLevelSort;
+                const standing = this._allFightsLevelSort || LEVEL_SORT_DEFAULT;
+                this._allFightsLevelSort =
+                    standing.key === key
+                        ? { key, dir: standing.dir === 'asc' ? 'desc' : 'asc' }
+                        : { key, dir: LEVEL_SORTS[key].dir };
+                this._renderAllFightsResults(this._allFightsResult, container, options);
             });
         });
         container.querySelectorAll('[data-allfights-token-row]').forEach((row) => {
@@ -6048,6 +6158,146 @@ class LabSimUI {
                 describeArchetypes(analysisResult.archetypes) +
                 (this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '')
         );
+    }
+
+    /**
+     * The combat-level rows of a whole-run table, scored and in the order the
+     * Combat levels table sorts them. Scoring writes `score` onto the rows, so
+     * the CSV export reads the same figure the table shows.
+     *
+     * @param {Array<Object>} levelResults - Rows whose candidate is a combat level
+     * @returns {Array<Object>} The same rows, sorted
+     * @private
+     */
+    _sortedLevelRows(levelResults) {
+        if (!levelResults?.length) return [];
+        applyScoreScale(levelResults, DEFAULT_LEVEL_SCORE_SCALE, {
+            metrics: LEVEL_SCORE_METRICS,
+            keys: LEVEL_SCORE_METRICS.map((metric) => metric.key),
+        });
+        const sort = this._allFightsLevelSort || LEVEL_SORT_DEFAULT;
+        const { get } = LEVEL_SORTS[sort.key] || LEVEL_SORTS[LEVEL_SORT_DEFAULT.key];
+        const sign = sort.dir === 'asc' ? 1 : -1;
+        return levelResults.slice().sort((a, b) => {
+            const av = get(a);
+            const bv = get(b);
+            // A row with no figure in the column sorts last whichever way round
+            const aMissing = av === null || av === undefined || !(typeof av === 'string' || Number.isFinite(av));
+            const bMissing = bv === null || bv === undefined || !(typeof bv === 'string' || Number.isFinite(bv));
+            if (aMissing || bMissing) return aMissing === bMissing ? 0 : aMissing ? 1 : -1;
+            if (typeof av === 'string') return sign * av.localeCompare(bv);
+            return sign * (av - bv);
+        });
+    }
+
+    /**
+     * The combat levels of a whole-run table, as their own section.
+     *
+     * Levels are not bought, so the gear table's Cost and Per 1M columns have
+     * nothing to say about them. They are paid for in grind time instead, and
+     * the figure that ranks them is how many hours of that grind each expected
+     * attempt saved costs. Modelled on the Combat Sim's Combat levels table.
+     *
+     * @param {Array<Object>} levelRows - Scored, sorted level rows (`_sortedLevelRows`)
+     * @param {Object} styles - The shared cell styles and formatters
+     * @returns {string} HTML, empty when the run ranked no combat levels
+     * @private
+     */
+    _renderAllFightsLevelSection(levelRows, styles) {
+        if (!levelRows?.length) return '';
+        const { thStyle, tdStyle, tdNameStyle, fmtAttemptsDelta, attemptsDeltaColor, fightBreakdown } = styles;
+        const sort = this._allFightsLevelSort || LEVEL_SORT_DEFAULT;
+        const arrow = (key) => (sort.key === key ? (sort.dir === 'asc' ? ' \u25B2' : ' \u25BC') : '');
+        const th = (key, label, title) =>
+            `<th data-af-level-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
+            `${label}${arrow(key)}</th>`;
+        const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
+        const deltaColor = (v) => (v > 0.0001 ? '#4caf50' : v < -0.0001 ? '#f44336' : '#888');
+        const fmtLevelTime = (h) => {
+            if (!Number.isFinite(h)) return '\u2014';
+            if (h < 24) return `${h.toFixed(1)}h`;
+            return `${(h / 24).toFixed(1)}d`;
+        };
+        const label = (skill) => skill.charAt(0).toUpperCase() + skill.slice(1);
+        const scoreTitle =
+            scoreScaleTitle(DEFAULT_LEVEL_SCORE_SCALE, 'Hours per attempt saved and Avg \u0394Win') +
+            ' Both columns count equally.';
+        const primaryNames = [...new Set(levelRows.flatMap((r) => r.primarySkills || []))];
+        const primaryNote = primaryNames.length
+            ? ` Your weapon trains ${primaryNames.map(label).join(' / ')} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done \u2014 the \u0394 columns are for both together.`
+            : '';
+        const bestDelta = Math.min(...levelRows.map((r) => r.attemptsDelta));
+
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
+            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+                Levels can't be bought, so these are ranked by hours of grind per expected attempt saved (lower is
+                better), not against the gold costs above. Level time assumes you train that skill at the XP rates
+                your fights earn now, and each row is one step on its own \u2014 they don't stack.${primaryNote}
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                ${th('skill', 'Skill', 'Sort by name')}
+                ${th('time', 'Level Time', 'Hours of combat, at the XP rates your fights earn now, to earn these levels')}
+                ${th('attemptsDelta', '\u0394Attempts', 'Change in expected attempts vs baseline \u2014 negative is better. The \u00B1 is one standard error of the simulation. Includes the weapon\u2019s own skill where the same hours carry it.')}
+                ${th('hoursPer', 'Hours / attempt saved', 'Level Time divided by the attempts saved. Lower is better; a dash where the levels save nothing.')}
+                ${th('rooms', 'Rooms', 'How many fights this reaches. A combat level is every fight.')}
+                ${th('avgWinDelta', 'Avg \u0394Win', 'Average win rate change across the rooms it reaches')}
+                <th data-af-level-sort="score" style="${thStyle} cursor:pointer; user-select:none; color:${ACCENT};" title="${scoreTitle}">Score<br>${scoreDepthLabel(DEFAULT_LEVEL_SCORE_SCALE)}${arrow('score')}</th>
+            </tr></thead><tbody>`;
+
+        levelRows.forEach((r, i) => {
+            const measured = r.significant !== false;
+            const noise =
+                r.attemptsDeltaNoise > 0
+                    ? ` <span style="color:#555;">\u00B1${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                    : '';
+            const reach = r.appliedFights ?? r.fights.length;
+            const total = r.fights.length;
+            const hoursPer = levelHoursPerAttemptSaved(r);
+            const along = Array.isArray(r.alongside) ? r.alongside : [];
+
+            // Where the weapon's own skill lands, under the skill name
+            let alongLine = '';
+            if (along.length) {
+                alongLine = along
+                    .map(
+                        (a) =>
+                            `<div style="color:#777; font-size:10px;">+ ${a.label} ${a.currentLevel} \u2192 ${a.upgradeLevel} along the way${
+                                along.length > 1 || a.fights < total ? ` (${a.fights} of ${total} rooms)` : ''
+                            }</div>`
+                    )
+                    .join('');
+            } else if (r.isMainSkill) {
+                alongLine = `<div style="color:#555; font-size:10px;">your weapon's own skill</div>`;
+            } else if (r.primarySkills?.length) {
+                alongLine = `<div style="color:#555; font-size:10px;">${r.primarySkills.map(label).join(' / ')} gains no level along the way</div>`;
+            }
+            const timeTitle = Number.isFinite(r.levelTimeHours)
+                ? 'Grinding time at the XP rates your fights earn now, to earn these levels'
+                : 'No XP accrues in this skill in these fights';
+            const deltaTitle = along.length
+                ? `\u0394 is for both together: ${r.candidate.description}, ${along.map((a) => `${a.label} ${a.currentLevel} \u2192 ${a.upgradeLevel}`).join(', ')}`
+                : '';
+            const scoreColor = scoreValueColor(r.score);
+            const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
+
+            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-level-row="${i}">
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${alongLine}</td>
+                <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
+                <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'}; ${isBest && measured ? 'font-weight:700;' : ''}"
+                    title="${measured ? deltaTitle : 'Smaller than the simulation\u2019s own error \u2014 not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
+                <td style="${tdStyle}" data-level-hours-per>${formatCompactHours(hoursPer)}</td>
+                <td style="${tdStyle} color:${reach === total ? '#888' : '#8ab4f8'};">${reach} / ${total}</td>
+                <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
+                <td style="${tdStyle}${scoreColor ? ` color:${scoreColor};` : ''}" data-level-score>${formatScore(r.score)}</td>
+            </tr>
+            <tr data-allfights-level-detail="${i}" style="display:none;">
+                <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
+                    ${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
+            </tr>`;
+        });
+        return html + '</tbody></table></div>';
     }
 
     /**

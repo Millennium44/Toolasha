@@ -245,7 +245,10 @@ vi.mock('./sim-editor.js', () => ({
 // is worth asserting is that the lab table renders *whatever the shared builder
 // hands it* — a button added over there (Save for this, Watch, Market) has to
 // turn up here without this file being told about it.
-vi.mock('./combat-sim-ui.js', () => ({
+// The score helpers the Combat levels table borrows stay real: what is worth
+// asserting there is their arithmetic, not a stand-in for it.
+vi.mock('./combat-sim-ui.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     default: {
         upgradeRowPurchase: () => null,
         upgradeRowActionsHtml: (result) =>
@@ -253,6 +256,17 @@ vi.mock('./combat-sim-ui.js', () => ({
         wireUpgradeRowActions: (container) => {
             rowActions.wired.push(container);
         },
+    },
+}));
+
+// A CSV export reaches the browser's download; the text it would save is what
+// is worth reading back.
+const csv = vi.hoisted(() => ({ saved: [] }));
+vi.mock('../../utils/csv-export.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    downloadCsv: (filename, text) => {
+        csv.saved.push(text);
+        return true;
     },
 }));
 
@@ -5199,5 +5213,205 @@ describe('Tune triggers', () => {
         expect(ui.panel.querySelector('#mwi-labsim-trigger-include').value).toBe('consumables');
         expect(ui.panel.querySelector('#mwi-labsim-trigger-precision').value).toBe('precise');
         expect(ui.panel.querySelector('[data-lab-trigger-group="current"]').checked).toBe(true);
+    });
+});
+
+describe('the all-fights Combat levels table', () => {
+    const fight = (i, winRate) => ({
+        monsterHrid: `/monsters/m${i}`,
+        monsterName: `Monster ${i}`,
+        loadoutName: 'Loadout',
+        roomLevel: 100,
+        winRate,
+        winRateDelta: winRate - 0.5,
+        applied: true,
+        trials: 1000,
+    });
+    const gear = {
+        candidate: { type: 'equipment', slot: '/equipment_types/head', description: 'Plain Helm → Fancy Helm' },
+        costType: 'gold',
+        cost: 1_000_000,
+        fights: [fight(0, 0.6), fight(1, 0.6)],
+        appliedFights: 2,
+        expectedAttempts: 3.4,
+        attemptsDelta: -0.6,
+        attemptsDeltaNoise: 0.1,
+        significant: true,
+        avgWinDelta: 0.1,
+        attemptsSavedPerMillion: 0.6,
+        costDetail: null,
+    };
+    const level = (skill, label, from, to, extra) => ({
+        candidate: {
+            type: 'combat_level',
+            slot: `combat_level|${skill}`,
+            skillKey: skill,
+            currentLevel: from,
+            upgradeLevel: to,
+            description: `${label} ${from} → ${to}`,
+        },
+        costType: 'gold',
+        cost: null,
+        fights: [fight(0, 0.7), fight(1, 0.7)],
+        appliedFights: 2,
+        expectedAttempts: 3,
+        attemptsDelta: -1,
+        attemptsDeltaNoise: 0.1,
+        significant: true,
+        avgWinDelta: 0.2,
+        attemptsSavedPerMillion: null,
+        costDetail: null,
+        levelTimeHours: 10,
+        primarySkills: ['attack'],
+        isMainSkill: false,
+        alongside: [],
+        ...extra,
+    });
+    const analysis = (rows) => ({
+        baseline: { fights: [fight(0, 0.5), fight(1, 0.5)], runClearChance: 0.25, expectedAttempts: 4 },
+        results: rows,
+    });
+    // Defense: 10h for 2 attempts (5h each); Melee: 12h for 1 (12h each)
+    const defense = () =>
+        level('defenseLevel', 'Defense', 125, 130, {
+            levelTimeHours: 10,
+            attemptsDelta: -2,
+            avgWinDelta: 0.3,
+            alongside: [{ skillKey: 'attackLevel', label: 'Attack', currentLevel: 120, upgradeLevel: 123, fights: 2 }],
+        });
+    const melee = () => level('meleeLevel', 'Melee', 138, 143, { levelTimeHours: 12, attemptsDelta: -1 });
+
+    let host;
+    let container;
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [];
+        game.skipLevels = {};
+        csv.saved.length = 0;
+        ui.buildPanel();
+        await settle();
+        host = document.createElement('div');
+        container = document.createElement('div');
+        host.appendChild(container);
+        document.body.appendChild(host);
+        ui._allFightsLevelSort = null;
+        ui._allFightsSort = null;
+    });
+    afterEach(() => {
+        host.remove();
+        ui.destroy();
+    });
+
+    const levelRowFor = (name) =>
+        [...container.querySelectorAll('tr[data-allfights-level-row]')].find((tr) => tr.textContent.includes(name));
+    const levelNames = () =>
+        [...container.querySelectorAll('tr[data-allfights-level-row] td:first-child')].map((td) =>
+            td.firstChild.textContent.trim()
+        );
+
+    test('level rows get a table of their own, out of the gear table', () => {
+        ui._renderAllFightsResults(analysis([gear, defense(), melee()]), container);
+
+        const gearRows = [...container.querySelectorAll('tr[data-allfights-row]')];
+        expect(gearRows).toHaveLength(1);
+        expect(gearRows[0].textContent).toContain('Fancy Helm');
+        expect(container.querySelector('table').textContent).not.toContain('Defense 125');
+        expect(container.textContent).toContain('Combat levels');
+        expect([...levelNames()].sort()).toEqual(['Defense 125 → 130', 'Melee 138 → 143']);
+        const headers = [...container.querySelectorAll('th[data-af-level-sort]')].map((th) => th.textContent.trim());
+        expect(headers[0]).toBe('Skill');
+        expect(headers).toEqual(expect.arrayContaining(['Level Time', 'Hours / attempt saved']));
+        expect(headers.some((h) => h.startsWith('Score'))).toBe(true);
+        expect(container.textContent).not.toContain('could not be drawn');
+    });
+
+    test('hours per attempt saved is level time over the attempts saved, and scores follow it', () => {
+        ui._renderAllFightsResults(analysis([defense(), melee()]), container);
+
+        expect(levelRowFor('Defense').querySelector('[data-level-hours-per]').textContent).toBe('5.0h');
+        expect(levelRowFor('Melee').querySelector('[data-level-hours-per]').textContent).toBe('12.0h');
+        // % of best across two columns: Defense is best in both (100); Melee
+        // scores 5/12 on hours and 0.2/0.3 on win rate, averaged
+        const expectedMelee = ((100 * 5) / 12 + (100 * 0.2) / 0.3) / 2;
+        expect(levelRowFor('Defense').querySelector('[data-level-score]').textContent).toBe('100');
+        expect(levelRowFor('Melee').querySelector('[data-level-score]').textContent).toBe(
+            String(Math.round(expectedMelee))
+        );
+        // Best score first by default
+        expect(levelNames()).toEqual(['Defense 125 → 130', 'Melee 138 → 143']);
+    });
+
+    test('a row that saves nothing shows a dash, and a row from before the fields existed still draws', () => {
+        const flat = level('rangedLevel', 'Ranged', 90, 95, { attemptsDelta: 0.2, avgWinDelta: -0.01 });
+        ui._renderAllFightsResults(analysis([flat, melee()]), container);
+
+        expect(levelRowFor('Ranged').querySelector('[data-level-hours-per]').textContent).toBe('—');
+        expect(levelRowFor('Ranged').querySelector('[data-level-score]').textContent).toBe('—');
+
+        const old = melee();
+        delete old.levelTimeHours;
+        delete old.primarySkills;
+        delete old.alongside;
+        ui._renderAllFightsResults(analysis([old]), container);
+        expect(container.querySelector('[data-level-hours-per]').textContent).toBe('—');
+        expect(container.textContent).not.toContain('could not be drawn');
+    });
+
+    test('names the weapon skill that levels along the way', () => {
+        ui._renderAllFightsResults(analysis([defense(), melee()]), container);
+
+        expect(container.textContent).toContain('+ Attack 120 → 123 along the way');
+        expect(container.textContent).toContain('Attack gains no level along the way');
+        expect(container.textContent).toContain('30% of all combat XP');
+    });
+
+    test('a header click sorts the level table on its own state', () => {
+        ui._renderAllFightsResults(analysis([defense(), melee()]), container);
+
+        container.querySelector('th[data-af-level-sort="hoursPer"]').click();
+        expect(ui._allFightsLevelSort).toEqual({ key: 'hoursPer', dir: 'asc' });
+        expect(levelNames()).toEqual(['Defense 125 → 130', 'Melee 138 → 143']);
+
+        container.querySelector('th[data-af-level-sort="hoursPer"]').click();
+        expect(ui._allFightsLevelSort).toEqual({ key: 'hoursPer', dir: 'desc' });
+        expect(levelNames()).toEqual(['Melee 138 → 143', 'Defense 125 → 130']);
+        // The gear table's sort is untouched
+        expect(ui._allFightsSort).toBeNull();
+    });
+
+    test('a run of only levels has no empty gear table or budget plan', () => {
+        ui._renderAllFightsResults(analysis([defense(), melee()]), container);
+
+        expect(container.querySelector('tr[data-allfights-row]')).toBeNull();
+        expect(container.querySelector('th[data-af-sort]')).toBeNull();
+        expect(container.querySelector('#mwi-labsim-budget')).toBeNull();
+    });
+
+    test('the budget plan never sees the level rows', () => {
+        ui._allFightsBudget = 500_000_000;
+        ui._allFightsBudgetText = '500m';
+        try {
+            ui._renderAllFightsResults(analysis([gear, defense()]), container);
+            expect(container.querySelector('#mwi-labsim-budget').textContent).not.toContain('Defense');
+        } finally {
+            ui._allFightsBudget = 0;
+            ui._allFightsBudgetText = '';
+        }
+    });
+
+    test('the CSV keeps the level rows, typed, with their hours', () => {
+        ui._renderAllFightsResults(analysis([gear, defense()]), container);
+
+        container.previousElementSibling.querySelector('button').click();
+        expect(csv.saved).toHaveLength(1);
+        const [header, ...lines] = csv.saved[0].split(/\r?\n/).filter(Boolean);
+        expect(header).toContain('Type');
+        expect(header).toContain('Hours per attempt saved');
+        const gearLine = lines.find((l) => l.includes('Fancy Helm'));
+        const levelLine = lines.find((l) => l.includes('Defense 125'));
+        expect(gearLine).toContain('gear');
+        expect(levelLine).toContain('combat level');
+        expect(levelLine).toContain('5');
     });
 });

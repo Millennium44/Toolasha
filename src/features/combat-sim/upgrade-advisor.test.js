@@ -1186,6 +1186,86 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(result.results[0].costDetail).toBeNull();
     });
 
+    test('a combat level is timed at the baseline XP rates and carries the weapon skill along with it', async () => {
+        const gameData = buildGameData();
+        gameData.levelExperienceTable = Array.from({ length: 201 }, (_, level) => level * level * 100);
+        buildGameDataPayload.mockReturnValue(gameData);
+        const seen = [];
+        runLabyrinthSimulation.mockImplementation(async ({ playerDTOs }) => {
+            seen.push(playerDTOs[0]);
+            // One simulated hour: Defense earns 100/h, Melee (the sword's skill) 60/h
+            return {
+                labyAttemptCount: 100,
+                encounters: 50,
+                simulatedTime: 3600 * 1e9,
+                experienceGained: { player1: { defense: 100, melee: 60 } },
+            };
+        });
+        const dto = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            staminaLevel: 50,
+            meleeLevel: 50,
+            defenseLevel: 50,
+            attackLevel: 50,
+        };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [{ monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto }],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                combatLevelTargets: { defenseLevel: 55, meleeLevel: 55 },
+            },
+            null,
+            {}
+        );
+
+        const defense = result.results.find((r) => r.candidate.skillKey === 'defenseLevel');
+        // 50 -> 55 is (55^2 - 50^2) * 100 = 52,500 XP at 100/h
+        expect(defense.levelTimeHours).toBeCloseTo(525, 5);
+        expect(defense.primarySkills).toEqual(['melee']);
+        expect(defense.isMainSkill).toBe(false);
+        // 60% of that XP lands in Melee: 250,000 + 31,500 reaches level 53
+        expect(defense.alongside).toEqual([
+            expect.objectContaining({ skillKey: 'meleeLevel', currentLevel: 50, upgradeLevel: 53, fights: 1 }),
+        ]);
+        // ... and the sim for the row was handed both levels
+        expect(seen.some((d) => d.defenseLevel === 55 && d.meleeLevel === 53)).toBe(true);
+
+        // The weapon's own skill is not boosted alongside itself
+        const melee = result.results.find((r) => r.candidate.skillKey === 'meleeLevel');
+        expect(melee.isMainSkill).toBe(true);
+        expect(melee.alongside).toEqual([]);
+        // The baseline rows do not keep the raw XP
+        expect(result.baseline.fights[0].experienceGained).toBeUndefined();
+    });
+
+    test('a combat level with no XP to time it from still comes back, untimed', async () => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const dto = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            staminaLevel: 50,
+            meleeLevel: 50,
+        };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [{ monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto }],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                combatLevelTargets: { meleeLevel: 60 },
+            },
+            null,
+            {}
+        );
+
+        expect(result.results[0].levelTimeHours).toBe(Infinity);
+        expect(result.results[0].alongside).toEqual([]);
+    });
+
     test('per-skill target levels flow through to the candidate union', async () => {
         const gameData = buildGameData();
         buildGameDataPayload.mockReturnValue(gameData);

@@ -18,6 +18,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Lab Sim's Upgrade tab has a Tune triggers section: pick loadouts and it searches each one's ability and food/drink trigger values for fewer expected labyrinth attempts across the fights that loadout is assigned to, listing old → new values with the attempts saved and each fight's win-rate change; set them in the game by hand.
 
+### Lab Sim: Combat levels table
+
+- Combat level rows in the Lab Sim's Upgrade results move into their own Combat levels table, like the Combat Sim's: Level Time at your current rates, ΔAttempts, hours per attempt saved, Avg ΔWin, Rooms and a Score, with the weapon's own skill counted along the way.
+
 <!-- shipped in 3.71.1 -->
 
 ### House: upgrade window no longer freezes the tab
