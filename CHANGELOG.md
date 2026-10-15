@@ -10,6 +10,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Each party member holding a Regal Sword now gets their own parry roll against an incoming attack (two swords ≈ 15.4%, not 8%), matching the game's wording; before, the sim rolled for one random sword holder only.
 
+### Lab Sim: search new trigger conditions
+
+- Tune triggers has an opt-in "Search new conditions (slow)" that tries different conditions for each slot (e.g. "My Toughness Is Inactive AND Target Enemy's Frenzy Is Active") and lists any that cut expected attempts, in the game's wording.
+- The combat sim now reads the Boss Status trigger condition; an ability gated on it never fired before.
+
 ### Lab Sim: collapsible checked swaps
 
 - The Lab Sim's Checked swaps results collapse from their heading like Upgrades (remembered per tab), and a kept piece worth nothing no longer prints "resale of 0"; an unpriced one says no price.
