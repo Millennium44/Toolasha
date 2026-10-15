@@ -568,6 +568,21 @@ describe('applyPayload', () => {
         ]);
     });
 
+    test('tells the pull listeners only once the restore hold has ended', async () => {
+        // A live-safe key is not latched, so a write it queued during the pull lands at the final
+        // `endRestore`; a listener re-reading before that shows a value storage then replaces
+        const heard = [];
+        const off = onSyncPullApplied(() => heard.push([...flushLog]));
+        try {
+            await applyPayload(JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { a: 1 } } }));
+        } finally {
+            off();
+        }
+
+        expect(heard).toHaveLength(1);
+        expect(heard[0].at(-1)).toBe('endRestore');
+    });
+
     test('ignores device-only data an older build still uploaded', async () => {
         const json = JSON.stringify({
             formatVersion: 1,
