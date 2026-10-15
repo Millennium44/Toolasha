@@ -29,6 +29,17 @@ let copiedAt = 0;
 /** The report text, shown for selecting when the clipboard refused it; null otherwise */
 let fallbackText = null;
 
+/** The summary the two above belong to; a different (or cleared) summary drops them */
+let stateFor = null;
+
+/** Forget the copy state when it belongs to a summary that is no longer the last pull */
+function dropStaleCopyState() {
+    if (stateFor === lastPullSummary()) return;
+    stateFor = null;
+    copiedAt = 0;
+    fallbackText = null;
+}
+
 /**
  * The report for the last pull, as this page would write it.
  * @returns {string} Plain text
@@ -47,14 +58,18 @@ export function currentPullReport() {
  * @returns {Promise<boolean>} True when the clipboard took it
  */
 export async function copyPullReport(body) {
+    const summary = lastPullSummary();
     const text = currentPullReport();
     try {
         await navigator.clipboard.writeText(text);
+        stateFor = summary;
         copiedAt = Date.now();
         fallbackText = null;
         return true;
     } catch (error) {
         console.warn('[Sync] Could not copy the pull report:', error);
+        stateFor = summary;
+        copiedAt = 0;
         fallbackText = text;
         return false;
     } finally {
@@ -79,6 +94,7 @@ function redraw(body) {
  * @returns {void}
  */
 function drawReportControls(body, card) {
+    dropStaleCopyState();
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'toolasha-pull-report-copy';

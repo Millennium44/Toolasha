@@ -117,4 +117,24 @@ describe('the Copy report button', () => {
         expect(area.value).not.toContain(SENTINEL);
         expect(await copyPullReport()).toBe(false);
     });
+
+    test('a fallback from one pull does not render under the next pull', async () => {
+        vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+        await copyPullReport();
+        expect(draw().querySelector('textarea.toolasha-pull-report-text')).not.toBeNull();
+
+        rememberPullSummary(buildPullSummary({ expected: { settings: 0 } }));
+
+        expect(draw().querySelector('textarea.toolasha-pull-report-text')).toBeNull();
+    });
+
+    test('the Copied label does not outlive its pull', async () => {
+        vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+        await copyPullReport();
+        expect(draw().querySelector('button.toolasha-pull-report-copy').textContent).toBe('Copied');
+
+        rememberPullSummary(buildPullSummary({ expected: { settings: 0 } }));
+
+        expect(draw().querySelector('button.toolasha-pull-report-copy').textContent).toBe('Copy report');
+    });
 });

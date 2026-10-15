@@ -60,10 +60,10 @@ export function describeSyncKey(store, key) {
 /**
  * @param {string} store - Store name
  * @param {string} key - Storage key
- * @param {boolean} latched - Whether the key latched
+ * @param {string} status - `LATCHED`, `MERGE FAILED`, both, or `written whole`
  * @returns {string} One report line
  */
-function keyLine(store, key, latched) {
+function keyLine(store, key, status) {
     const info = describeSyncKey(store, key);
     const registration = info.registered
         ? `registered="${info.label}"${info.liveSafe ? ' live-safe' : ' NOT live-safe'}`
@@ -75,7 +75,7 @@ function keyLine(store, key, latched) {
         : 'not owned';
     return [
         `${store} / ${key}`,
-        latched ? 'LATCHED' : 'written whole',
+        status,
         `base=${info.base}`,
         registration,
         `owner=${owner}`,
@@ -120,15 +120,20 @@ export function buildPullReport(summary, { version = null, host = null } = {}) {
     const keyed = [];
     for (const store of summary.stores) {
         const latched = new Set((store.latchedRecords || []).map((record) => record.key));
-        for (const key of latched) keyed.push([store.store, key, true]);
+        const failed = new Set((store.overwrittenRecords || []).map((record) => record.key));
+        const named = new Set([...latched, ...failed]);
+        for (const key of named) {
+            const status = [latched.has(key) ? 'LATCHED' : null, failed.has(key) ? 'MERGE FAILED' : null];
+            keyed.push([store.store, key, status.filter(Boolean).join(', '), latched.has(key) ? 0 : 1]);
+        }
         for (const record of store.wholeRecords || []) {
-            if (!latched.has(record.key)) keyed.push([store.store, record.key, false]);
+            if (!named.has(record.key)) keyed.push([store.store, record.key, 'written whole', 2]);
         }
     }
-    // Latched keys first: they are what forced the reload
-    keyed.sort((a, b) => Number(b[2]) - Number(a[2]));
-    lines.push('', `Keys (latched or written whole): ${keyed.length}`);
-    for (const [store, key, latched] of keyed.slice(0, MAX_KEYS)) lines.push(`  ${keyLine(store, key, latched)}`);
+    // Latched keys first: they are what forced the reload; failed folds next
+    keyed.sort((a, b) => a[3] - b[3]);
+    lines.push('', `Keys (latched, merge failed or written whole): ${keyed.length}`);
+    for (const [store, key, status] of keyed.slice(0, MAX_KEYS)) lines.push(`  ${keyLine(store, key, status)}`);
     if (keyed.length > MAX_KEYS) lines.push(`  ...and ${keyed.length - MAX_KEYS} more`);
     return lines.join('\n');
 }
