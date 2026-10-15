@@ -1142,6 +1142,50 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(meleeRow.attemptsDelta).toBeCloseTo(1 / 0.9 - 1 / 0.8, 5);
     });
 
+    test('a checked swap that moves an owned copy carries no purchase breakdown beside its zero cost', async () => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const wearingSword = (level) => ({
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: level } },
+            staminaLevel: 50,
+            meleeLevel: 50,
+        });
+        // The +7 is already worn in the wisp loadout, so the goblin loadout just borrows it
+        const owned = {
+            type: 'enhancement',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            currentLevel: 3,
+            upgradeHrid: '/items/fine_sword',
+            upgradeLevel: 7,
+            description: 'Fine Sword +3 → +7',
+            checkedSwap: true,
+            isSelf: true,
+            noPurchase: true,
+            cost: 0,
+        };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: wearingSword(3) },
+                    { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 110, dto: wearingSword(7) },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: [owned],
+            },
+            null,
+            {}
+        );
+        expect(result.results).toHaveLength(1);
+        expect(result.results[0].cost).toBe(0);
+        // Nothing is bought, so there is no buy-and-resell breakdown to contradict the Cost cell
+        expect(result.results[0].costDetail).toBeNull();
+    });
+
     test('per-skill target levels flow through to the candidate union', async () => {
         const gameData = buildGameData();
         buildGameDataPayload.mockReturnValue(gameData);
