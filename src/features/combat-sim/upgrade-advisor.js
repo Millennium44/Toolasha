@@ -6767,15 +6767,20 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // Experience the character earns per skill while fighting, pooled over the
     // baseline pass of every fight. Not kept on the baseline rows: it exists to
     // time combat-level candidates, and nothing else reads it.
+    //
+    // Each fight is pooled per attempt — its XP and time divided by the attempts
+    // its sample ran — so every room weighs what one pass through it does, not
+    // however many trials its sample happened to need.
     const pooledXp = { simulatedTime: 0, experienceGained: { player1: {} } };
     const poolBaselineXp = (simResult) => {
         const time = Number(simResult?.simulatedTime);
         if (!(time > 0)) return;
-        pooledXp.simulatedTime += time;
+        const trials = Number(simResult?.trials) > 0 ? Number(simResult.trials) : 1;
+        pooledXp.simulatedTime += time / trials;
         for (const skills of Object.values(simResult.experienceGained || {})) {
             for (const [skill, amount] of Object.entries(skills || {})) {
                 pooledXp.experienceGained.player1[skill] =
-                    (pooledXp.experienceGained.player1[skill] || 0) + (Number(amount) || 0);
+                    (pooledXp.experienceGained.player1[skill] || 0) + (Number(amount) || 0) / trials;
             }
         }
     };
@@ -6799,7 +6804,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             fightSeed(i),
             i
         );
-        poolBaselineXp({ experienceGained, simulatedTime });
+        poolBaselineXp({ experienceGained, simulatedTime, trials });
         progress.current++;
         onProgress?.({ current: progress.current, total, description: `Baseline: ${fight.monsterName}` });
         return { ...fightMeta(fight), winRate, trials };

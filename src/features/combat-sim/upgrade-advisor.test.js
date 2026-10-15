@@ -1241,6 +1241,55 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(result.baseline.fights[0].experienceGained).toBeUndefined();
     });
 
+    test('XP rates pool each room per attempt, not by how long its sample happened to run', async () => {
+        const gameData = buildGameData();
+        gameData.levelExperienceTable = Array.from({ length: 201 }, (_, level) => level * level * 100);
+        buildGameDataPayload.mockReturnValue(gameData);
+        // Both rooms take 36 s an attempt. Goblin's sample ran 100 attempts at 1 Defense XP each;
+        // Wisp's ran 10 at 100 each. One pass through both: 101 XP in 72 s, about 5,050/h.
+        runLabyrinthSimulation.mockImplementation(async ({ monsterHrid }) =>
+            monsterHrid === '/monsters/goblin'
+                ? {
+                      labyAttemptCount: 100,
+                      encounters: 50,
+                      simulatedTime: 3600 * 1e9,
+                      experienceGained: { player1: { defense: 100 } },
+                  }
+                : {
+                      labyAttemptCount: 10,
+                      encounters: 5,
+                      simulatedTime: 360 * 1e9,
+                      experienceGained: { player1: { defense: 1000 } },
+                  }
+        );
+        const dto = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            staminaLevel: 50,
+            meleeLevel: 50,
+            defenseLevel: 50,
+            attackLevel: 50,
+        };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto },
+                    { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 100, dto },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                combatLevelTargets: { defenseLevel: 55 },
+            },
+            null,
+            {}
+        );
+
+        const defense = result.results.find((r) => r.candidate.skillKey === 'defenseLevel');
+        // 52,500 XP at 101 XP per 72 s; pooling raw totals would have said 1,100 per 3,960 s (52.5 h)
+        expect(defense.levelTimeHours).toBeCloseTo((52500 * 72) / 101 / 3600, 5);
+    });
+
     test('co-trained levels are character-wide: each goes into every fight, whichever weapon earned it', async () => {
         const gameData = buildGameData();
         gameData.levelExperienceTable = Array.from({ length: 201 }, (_, level) => level * level * 100);
