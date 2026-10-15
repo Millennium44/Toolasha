@@ -1592,9 +1592,11 @@ const COMBAT_LARGEST_STEP = (TRIAL_START_LEVEL + 2 * TRIAL_LEVEL_STEP) / (TRIAL_
  *   are all one scale, as before.
  * - A **falling** maximum is never a clear, whatever the gap: tiers only
  *   grow. The pair is left out and counted in `rescaled`.
- * - With no fitted growth, a rise larger than the ladder's largest single
- *   step (Lv.110 → Lv.120, with the fitted check's slack) is a change of
- *   scale rather than a watched clear, and is left out the same way.
+ * - With no fitted growth, an **untagged** pair rising more than the ladder's
+ *   largest single step (Lv.110 → Lv.120, with the fitted check's slack) is a
+ *   change of scale rather than a watched clear, and is left out the same way.
+ *   A pair on one stated scale cannot be a change of scale, so a large rise
+ *   there is several tiers cleared and is counted as a lower bound.
  *
  * @param {Array<{t: number, current: number, max: number, scale?: string}>} samples - Boss health readings, any order
  * @param {Object} [options] - Options
@@ -1662,7 +1664,7 @@ export function combatDamageRate(
         // else (one monster of a wave after the wave's sum), at any gap
         const ratio = after.max / before.max;
         const step = Number.isFinite(growthPerTier) && growthPerTier > 1 ? growthPerTier : null;
-        if (ratio < 1 || (!step && ratio > Math.pow(COMBAT_LARGEST_STEP, 1.5))) {
+        if (ratio < 1 || (!step && scale === null && ratio > Math.pow(COMBAT_LARGEST_STEP, 1.5))) {
             rescaled += 1;
             continue;
         }

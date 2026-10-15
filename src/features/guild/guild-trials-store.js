@@ -1531,15 +1531,20 @@ export async function saveTrialRecord(
 /**
  * Whether a tagged combat reading (or the observation filed from one) summed
  * fewer monsters than its wave fields — one Badger card of two, one stream slot.
+ * A reading tagged before the game data arrived carries no `waveCount`; the
+ * count known now is passed in for it.
+ *
  * @param {Object|null} reading - A reading or observation
+ * @param {number|null} [waveCount] - The wave's monster count from the game data, for a reading that lacks one
  * @returns {boolean}
  */
-export function isPartialWaveReading(reading) {
+export function isPartialWaveReading(reading, waveCount = null) {
+    const count = Number.isFinite(reading?.waveCount) ? reading.waveCount : waveCount;
     return (
         typeof reading?.source === 'string' &&
         Number.isFinite(reading.slots) &&
-        Number.isFinite(reading.waveCount) &&
-        reading.slots < reading.waveCount
+        Number.isFinite(count) &&
+        reading.slots < count
     );
 }
 
@@ -1553,22 +1558,32 @@ export function isPartialWaveReading(reading) {
  * be told from that, so it goes; single-boss and skilling records are untouched.
  *
  * @param {Object|null} record - A trial record
- * @param {Function} isMultiWave - `(name) => boolean`, true for a wave fielding several monsters
+ * @param {Function} waveCountOf - `(name) => number|null`, the wave's monster count from the game data
  * @returns {Object|null} The record, the same object when nothing was dropped
  */
-export function scrubWaveObservations(record, isMultiWave) {
+export function scrubWaveObservations(record, waveCountOf) {
+    if (!record?.tiles || typeof waveCountOf !== 'function') return record;
+    const countOf = (tile) => {
+        const count = Number(waveCountOf(tile.name));
+        return Number.isFinite(count) && count > 0 ? count : null;
+    };
     // A tagged partial observation says it is one itself, whatever the game
     // data has or has not said about its wave yet
-    const multi = (tile) => isMultiWave(tile.name) || tile.tiers.some((entry) => isPartialWaveReading(entry));
-    if (!record?.tiles || typeof isMultiWave !== 'function') return record;
     let changed = false;
     const tiles = {};
     for (const [key, tile] of Object.entries(record.tiles)) {
-        if (tile?.kind !== 'combat' || !Array.isArray(tile.tiers) || !multi(tile)) {
+        if (tile?.kind !== 'combat' || !Array.isArray(tile.tiers)) {
             tiles[key] = tile;
             continue;
         }
-        const tiers = tile.tiers.filter((entry) => typeof entry?.source === 'string' && !isPartialWaveReading(entry));
+        const count = countOf(tile);
+        if (!(count > 1) && !tile.tiers.some((entry) => isPartialWaveReading(entry))) {
+            tiles[key] = tile;
+            continue;
+        }
+        const tiers = tile.tiers.filter(
+            (entry) => typeof entry?.source === 'string' && !isPartialWaveReading(entry, count)
+        );
         if (tiers.length === tile.tiers.length) {
             tiles[key] = tile;
             continue;
