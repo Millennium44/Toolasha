@@ -22,6 +22,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     }),
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
+const prices = vi.hoisted(() => ({ map: {} }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => prices.map[hrid] ?? null }));
 
 const { runTriggerOptimization, estimateConditionRun, zoneMonsterHrids, monsterMaxHpReader } =
     await import('./trigger-optimizer.js');
@@ -95,6 +97,29 @@ const base = {
 beforeEach(() => {
     sims.calls = [];
     sims.respond = respond;
+});
+
+describe('a food or drink with no market price is never condition-searched', () => {
+    const COFFEE = '/items/wisdom_coffee';
+    const withCoffee = () => ({ ...dto(), drinks: [{ hrid: COFFEE, triggers: null }, null, null] });
+    const gd = {
+        ...gameData,
+        itemDetailMap: { [COFFEE]: { name: 'Wisdom Coffee', consumableDetail: { defaultCombatTriggers: [] } } },
+    };
+    const drinkEdited = () => sims.calls.some((c) => (c.playerDTOs[0].drinks?.[0]?.triggers || []).length > 0);
+
+    test('an unpriced drink slot is left out', async () => {
+        prices.map = {};
+        await runTriggerOptimization({ ...base, gameData: gd, playerDTOs: [withCoffee()], searchConditions: true });
+        expect(drinkEdited()).toBe(false);
+    });
+
+    test('a priced drink slot is still searched', async () => {
+        prices.map = { [COFFEE]: 500 };
+        await runTriggerOptimization({ ...base, gameData: gd, playerDTOs: [withCoffee()], searchConditions: true });
+        expect(drinkEdited()).toBe(true);
+        prices.map = {};
+    });
 });
 
 describe('Combat Sim condition search', () => {
