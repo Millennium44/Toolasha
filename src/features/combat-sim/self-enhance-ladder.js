@@ -56,7 +56,8 @@ export function isSelfEnhancedItem(itemHrid, itemDetailMap = null) {
  *
  * @param {string} itemHrid - Item HRID
  * @param {Array<Object>|null} items - `characterItems`, inventory and equipped together
- * @returns {Array<{level: number, equipped: boolean, location: string, hash: string|null}>} Copies
+ * @returns {Array<{level: number, equipped: boolean, location: string, hash: string|null, weight: number}>}
+ *   Copies; `weight` is the number of real copies an entry stands for (a stack past two has a heavy second)
  */
 export function heldCopies(itemHrid, items) {
     if (!Array.isArray(items)) return [];
@@ -76,8 +77,11 @@ export function heldCopies(itemHrid, items) {
             location,
             hash: typeof item.hash === 'string' && item.hash ? item.hash : null,
         };
+        // The ladder sees at most two entries per stack; `weight` is how many real copies each stands for,
+        // so a reader that counts stock (loadout claims) is not told a stack of three is two
+        copy.weight = 1;
         copies.push(copy);
-        if (count > 1) copies.push({ ...copy });
+        if (count > 1) copies.push({ ...copy, weight: count - 1 });
     }
     copies.sort((a, b) => b.level - a.level || Number(b.equipped) - Number(a.equipped));
     return copies;

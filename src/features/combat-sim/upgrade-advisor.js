@@ -3338,11 +3338,17 @@ function markClaimedCopies(marked, itemHrid, claims) {
         if (claimed <= 0) continue;
         const satisfied = marked.filter((copy) => copy.level === level && (copy.equipped || copy.taken)).length;
         let remaining = claimed - satisfied;
-        for (const copy of marked) {
-            if (remaining <= 0) break;
-            if (copy.level !== level || copy.equipped || copy.taken) continue;
+        // `copies` holds at most two entries per stack, the second standing for the rest of it (`weight`),
+        // so claims are spent against real stock: light entries first, and an entry is claimed only when
+        // every copy it stands for is, leaving the surplus of a bigger stack free
+        const spares = marked
+            .filter((copy) => copy.level === level && !copy.equipped && !copy.taken)
+            .sort((a, b) => (a.weight || 1) - (b.weight || 1));
+        for (const copy of spares) {
+            const weight = copy.weight || 1;
+            if (remaining < weight) break;
             copy.claimed = true;
-            remaining--;
+            remaining -= weight;
         }
     }
 }
@@ -6825,12 +6831,18 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const loadoutClaims = buildOtherLoadoutClaims(
         Array.isArray(claimLoadouts) && claimLoadouts.length ? claimLoadouts : fights
     );
+    // A checked swap arrives priced, before any claims exist. Its purchase route may spend bag copies a
+    // loadout wears, so with claims it is priced again; a copy already owned stays at zero.
+    const prePricedAgainstClaims = (candidate) =>
+        Boolean(loadoutClaims) && candidate.checkedSwap === true && !candidate.noPurchase && candidate.cost != null;
     const candidates = [...candidatesByKey.values()]
         .map((pooled) => {
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
             return {
                 ...candidate,
-                cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
+                cost: prePricedAgainstClaims(candidate)
+                    ? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true)
+                    : (candidate.cost ?? calculateUpgradeCost(candidate, gameData)),
                 appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
             };
         })

@@ -123,6 +123,21 @@ describe('mirrorCostColumn', () => {
         expect(line).toContain('saves <strong>99280</strong> to +5.');
     });
 
+    test('a level with no conventional price is never called mirror-cheaper', () => {
+        // Unpriced protection leaves the level's footing null; null must not read as a free climb
+        const costs = steep.map((cost, i) => (i === 9 ? null : cost));
+        const column = mirrorCostColumn(costs, 10, 100);
+        expect(column.levels[9].isMirrorCheaper).toBe(false);
+        expect(column.savingsLevel).not.toBe(10);
+        expect(column.totalSavings).toBeGreaterThan(0);
+        const line = mirrorSummaryLine(
+            { priced: true, mirrorStartLevel: null, totalSavings: 0, unpricedLevels: [10] },
+            String
+        );
+        expect(line).toContain('no quote');
+        expect(line).toContain('+10');
+    });
+
     test('an unpriced mirror is not a free one', () => {
         const column = mirrorCostColumn(steep, 1000, 0);
         expect(column.levels[2].mirrorCost).toBeNull();

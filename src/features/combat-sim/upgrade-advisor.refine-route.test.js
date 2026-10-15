@@ -151,8 +151,15 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { calculateUpgradeCost, explainUpgradeCost, buildOtherLoadoutClaims, withLoadoutClaims } =
-    await import('./upgrade-advisor.js');
+const {
+    calculateUpgradeCost,
+    explainUpgradeCost,
+    buildOtherLoadoutClaims,
+    withLoadoutClaims,
+    runLabyrinthAllFightsAnalysis,
+} = await import('./upgrade-advisor.js');
+const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
+const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
 /** A row as the Lab's all-fights analysis prices it: carrying what its fights' loadouts wear */
 const claimedBy = (row, fights) => withLoadoutClaims(row, buildOtherLoadoutClaims(fights));
@@ -500,6 +507,81 @@ describe('refined target priced from a held base', () => {
                     state.items = [stack(SWORD, 6, '/item_locations/inventory', 2)];
                     const detail = explainUpgradeCost(claimedBy(sword(7), fightsWhereBWears(6)), gameData);
                     expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                });
+
+                test('a stack larger than the ladder sees keeps its surplus free', () => {
+                    // Three +6 swords in one stack, two loadouts wearing a +6: the third copy is a real spare
+                    state.swordSell = 5_000_000;
+                    state.items = [stack(SWORD, 6, '/item_locations/inventory', 3)];
+                    const wears = (name) => ({
+                        loadoutName: name,
+                        dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: 6 } } },
+                    });
+                    const row = claimedBy(sword(7), [wears('B'), wears('C')]);
+                    const detail = explainUpgradeCost(row, gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                    // Three loadouts wearing one leave nothing free
+                    const all = claimedBy(sword(7), [wears('B'), wears('C'), wears('D')]);
+                    expect(explainUpgradeCost(all, gameData).buys[0].price).toBeCloseTo(
+                        best[5] + 1_000_000 + 5_000_000,
+                        0
+                    );
+                });
+
+                test('a checked swap priced before the claims existed is priced again with them', async () => {
+                    state.swordSell = 5_000_000;
+                    state.items = [stack(SWORD, 6)];
+                    // A sword a loadout can feel: it needs combat stats to be a candidate at all
+                    const armed = {
+                        ...ITEM_DETAIL_MAP,
+                        [SWORD]: {
+                            ...ITEM_DETAIL_MAP[SWORD],
+                            equipmentDetail: {
+                                type: '/equipment_types/main_hand',
+                                combatStats: { slashDamage: 10 },
+                            },
+                        },
+                    };
+                    buildGameDataPayload.mockReturnValue({ actionDetailMap: {}, itemDetailMap: armed });
+                    runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+                    const dto = (level) => ({
+                        equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: level } },
+                        staminaLevel: 50,
+                        meleeLevel: 50,
+                    });
+                    // As buildCombatSwapCandidate hands it over: costed once, with no claims in sight
+                    const swap = {
+                        ...sword(7),
+                        slot: '/equipment_types/main_hand',
+                        currentHrid: SWORD,
+                        currentLevel: 3,
+                        removedItems: [],
+                        checkedSwap: true,
+                        allLoadouts: true,
+                        isSelf: true,
+                    };
+                    swap.cost = calculateUpgradeCost(swap, gameData);
+                    expect(swap.cost).toBeCloseTo(best[5] + 1_000_000, 0);
+                    const { results } = await runLabyrinthAllFightsAnalysis(
+                        {
+                            fights: [
+                                { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: dto(3) },
+                                { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 110, dto: dto(6) },
+                            ],
+                            crates: [],
+                            hours: 1,
+                            communityBuffs: {},
+                            labyrinthCombatBuffs: [],
+                            modes: [],
+                            extraCandidates: [swap],
+                        },
+                        null,
+                        {}
+                    );
+                    const row = results.find((r) => r.candidate.checkedSwap);
+                    // The bag +6 is the wisp loadout's: using it forfeits its resale
+                    expect(row.costDetail.buys[0].price).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
+                    expect(row.cost).toBeCloseTo(row.costDetail.net, 0);
                 });
 
                 test('the copy a loadout wears while equipped is not claimed twice', () => {
