@@ -138,6 +138,8 @@ export function compactTriggerResult(result) {
     out.changes = (result?.changes || []).slice(0, MAX_STORED_CHANGES).map((c) => pick(c, CHANGE_FIELDS));
     if (result?.combined) out.combined = pick(result.combined, COMBINED_FIELDS);
     else out.combined = null;
+    // Display only (the "Best found" line when nothing was accepted)
+    if (result?.bestMeasured) out.bestMeasured = pick(result.bestMeasured, CHANGE_FIELDS);
     const names = (list) =>
         [...new Set((list || []).map((t) => t?.itemName).filter(Boolean))].map((itemName) => ({ itemName }));
     out.unchanged = names(result?.unchanged);
