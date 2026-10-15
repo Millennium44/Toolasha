@@ -339,14 +339,17 @@ const DEFAULT_WORK_BASES = {
  * `cards` for the DOM's own bars (two same-named Badger cards are folded into
  * one by `mergeWaveTiles`), and `slots` is how many monsters went into it.
  *
- * A reading filed before the tag existed was always a DOM bar, never a graft,
- * so on a single-monster encounter — or one whose wave count nothing has
- * stated — it is the same one-card scale as `cards:1`, and the rate history
+ * A reading filed before the tag existed was a DOM bar or an untagged graft;
+ * on a single-monster encounter — or one whose wave count nothing has
+ * stated — either is the same one-card scale as `cards:1`, and the rate history
  * survives the upgrade. On a known multi-monster wave it is `card`, a scale of
  * its own: it may be one Badger or both, and nothing can say which.
  *
  * `pool:2` and `cards:2` are the same wave from two clocks — the stream per
- * tick, the DOM per redraw — and are kept apart for that reason.
+ * tick, the DOM per redraw — and are kept apart for that reason. A wave known
+ * to be one monster (Chameleon, Hedgehog, Jellyfish) is one boss's health
+ * whichever reads it, so its graft is `cards:1` too and a tab switch does not
+ * restart the rate, as before the readings were tagged.
  *
  * @param {Object|null} reading - A stored reading
  * @param {number|null} [waveCount] - The encounter's monster count, where known
@@ -356,6 +359,8 @@ export function readingScale(reading, waveCount = null) {
     if (typeof reading?.source !== 'string') {
         return Number.isFinite(waveCount) && waveCount > 1 ? 'card' : 'cards:1';
     }
+    const count = Number.isFinite(reading.waveCount) && reading.waveCount > 0 ? reading.waveCount : waveCount;
+    if (count === 1 && reading.slots === 1) return 'cards:1';
     return `${reading.source}:${Number.isFinite(reading.slots) ? reading.slots : ''}`;
 }
 
