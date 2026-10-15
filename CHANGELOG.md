@@ -109,6 +109,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The sync pull summary ("What changed?") has a Copy report button that copies the build, server, counts and every saved item that forced a reload, with whether each is set up to update live, so it can be fixed; it holds key names and counts only, no saved values.
 
+### Sync: Combat Sim and Lab Sim choices
+
+- A GitHub sync pull that changes Combat Sim or Lab Sim choices (checkboxes, queued swaps, token buffs, columns, Bestiary plan, comparison runs, remembered results) now applies live instead of asking for a reload, and a cleared result stays cleared.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
