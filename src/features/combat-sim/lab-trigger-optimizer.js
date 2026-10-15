@@ -550,7 +550,9 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
                 precision,
                 minGain,
                 aborted: stopped,
-                overBudget: () => tally.conditionSims >= maxConditionSims,
+                // Seed runs × fights, as `conditionMeasure` counts them (cache hits would cost nothing,
+                // so this errs toward stopping early)
+                overBudget: (seedRuns = 0) => tally.conditionSims + seedRuns * fights.length > maxConditionSims,
                 onProgress: ({ description }) =>
                     report(`${group.name}: ${String(description || '').replace(/^Conditions: /, 'conditions, ')}`),
             });
@@ -576,6 +578,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
     return {
         groups: out,
         simCount: tally.sims,
+        conditionSimCount: tally.conditionSims,
         stopped: stopped(),
         precision: precision.key,
         include,

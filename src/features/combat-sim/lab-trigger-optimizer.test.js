@@ -426,6 +426,23 @@ describe('runLabTriggerOptimization with the condition search', () => {
         });
         expect(run.groups[0].conditions.capped).toBe(true);
         expect(run.groups[0].conditions.changes).toEqual([]);
+        expect(run.conditionSimCount).toBeLessThanOrEqual(1);
+    });
+
+    test('the sim cap is a real bound: no batch is launched past it', async () => {
+        sims.respond = frenzyCoffee;
+        for (const cap of [20, 60, 150]) {
+            const run = await runLabTriggerOptimization({
+                gameData: condGameData,
+                groups: coffeeGroups(),
+                include: 'consumables',
+                precision: 'quick',
+                searchConditions: true,
+                maxConditionSims: cap,
+            });
+            expect(run.conditionSimCount).toBeLessThanOrEqual(cap);
+            if (cap < 60) expect(run.groups[0].conditions.capped).toBe(true);
+        }
     });
 
     test('off by default: no condition search runs', async () => {

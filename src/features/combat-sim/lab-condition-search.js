@@ -365,7 +365,9 @@ const scoreOf = (sample) => -(Number(sample?.attempts) || 0);
  * @param {Object} params.precision - A PRECISIONS entry (seeds per pairing round)
  * @param {number} params.minGain - Smallest saving worth offering, in attempts
  * @param {Function} [params.aborted] - `() => boolean`
- * @param {Function} [params.overBudget] - `() => boolean`: the sim cap is spent, stop where it stands
+ * @param {Function} [params.overBudget] - `(seedRuns) => boolean`: true when running `seedRuns` more seeds
+ *   (summed over the batch's measure calls) would pass the sim cap. Each batch is checked before it is
+ *   launched, with room kept for the all-together check, so the cap is a real bound.
  * @param {Function} [params.onProgress] - Called with `{ description }`
  * @returns {Promise<Object>} `{ changes, rejected, combined, reliable, stopped, capped, screened, finalSamples }`;
  *   each change `{ key, slotType, slotIndex, itemHrid, itemName, fromRows, toRows, kind, deltaScore, se }`
@@ -387,9 +389,12 @@ export async function runConditionSearch({
     let capped = false;
     let screened = 0;
     const stopped = () => Boolean(aborted?.());
-    const outOfBudget = () => {
-        if (overBudget?.()) capped = true;
-        return capped;
+    // The all-together check is kept room for, so slots never spend the budget it needs
+    const finalReserve = 2 * confirmSeeds;
+    const fits = (seedRuns, reserve = finalReserve) => {
+        if (capped) return false;
+        if (overBudget?.(seedRuns + reserve)) capped = true;
+        return !capped;
     };
     const progress = (description) => onProgress?.({ description });
     const done = (extra = {}) => ({
@@ -405,7 +410,7 @@ export async function runConditionSearch({
     });
 
     for (const slot of slots || []) {
-        if (stopped() || outOfBudget()) break;
+        if (stopped() || !fits(SCREEN_SEEDS)) break;
         const at = (rows) => ({ ...accepted, [slot.key]: rows });
         const reference = slot.rows;
 
@@ -417,6 +422,7 @@ export async function runConditionSearch({
         if (!refScreen || stopped()) break;
         const singles = (candidatesFor(slot, refScreen) || []).map((r) => [r]);
         const replacements = [...singles, []].filter((rows) => !sameRows(rows, reference));
+        if (!fits(replacements.length * SCREEN_SEEDS)) break;
         const measured = await Promise.all(
             replacements.map((rows) =>
                 measure(at(rows), { stream: screenStream, count: SCREEN_SEEDS, stage: 'screen' })
@@ -432,7 +438,6 @@ export async function runConditionSearch({
             .slice(0, SCREEN_KEEP)
             .map((c) => c.rows);
         if (survivors.length === 0) continue;
-        if (outOfBudget()) break;
 
         // 2. Pairing: the survivors again, their AND-pairs and each with the current rows, on new seeds
         progress(`Conditions: combining for ${slot.itemName}`);
@@ -441,6 +446,7 @@ export async function runConditionSearch({
             ...survivors.map((rows) => ({ rows, kind: rows.length === 0 ? 'always' : 'replace' })),
             ...combineSurvivors(survivors, reference),
         ];
+        if (!fits((1 + entries.length) * seeds)) break;
         const [refPair, ...entryPair] = await Promise.all(
             [reference, ...entries.map((e) => e.rows)].map((rows) =>
                 measure(at(rows), { stream: pairStream, count: seeds, stage: 'pair' })
@@ -455,7 +461,6 @@ export async function runConditionSearch({
         });
         // The pick is inflated by having been chosen; half the bar skips hopeless confirmations
         if (!best || best.diff.mean < minGain / 2) continue;
-        if (outOfBudget()) break;
 
         // 3. Confirm on fresh seeds, sequentially, as the threshold search does
         progress(`Conditions: confirming ${slot.itemName}`);
@@ -468,6 +473,7 @@ export async function runConditionSearch({
         for (let look = 0; look < looks.length && verdict === 'continue'; look++) {
             const from = look > 0 ? looks[look - 1] : 0;
             const count = looks[look] - from;
+            if (!fits(2 * count)) break;
             const [moreRef, moreWin] = await Promise.all([
                 measure(at(reference), { stream: confirmStream, count, offset: from, stage: 'confirm' }),
                 measure(at(best.rows), { stream: confirmStream, count, offset: from, stage: 'confirm' }),
@@ -478,7 +484,7 @@ export async function runConditionSearch({
             diff = pairedDiff(winSamples.map(scoreOf), refSamples.map(scoreOf));
             verdict = sequentialVerdict(diff, look, looks.length, minGain);
         }
-        if (stopped()) break;
+        if (stopped() || capped) break;
         if (verdict !== 'accept') continue;
 
         accepted[slot.key] = best.rows;
@@ -499,6 +505,7 @@ export async function runConditionSearch({
     if (changes.length === 0 || stopped()) return done();
 
     // 4. Everything accepted, together, against the starting rows on seeds nothing above has seen
+    if (!fits(finalReserve, 0)) return done({ rejected: changes, changes: [] });
     progress('Conditions: confirming all changes together');
     const [before, after] = await Promise.all([
         measure({}, { stream: 'cfinal', count: confirmSeeds, stage: 'final' }),
