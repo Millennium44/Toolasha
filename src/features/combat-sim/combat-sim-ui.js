@@ -12054,8 +12054,10 @@ class CombatSimUI {
 
         const thStyle =
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
-            'cursor:pointer; user-select:none; white-space:nowrap;';
+            'cursor:pointer; user-select:none; vertical-align:bottom;';
+        // Headers and names wrap so the table fits the panel; the figures stay on one line
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const nameStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; min-width:120px;';
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
         // Greyed when the delta is inside the run's own error, as in the unpriced table
         const cell = (r, key) => {
@@ -12109,7 +12111,7 @@ class CombatSimUI {
             const netColor = p.worthIt ? '#8bc34a' : '#f44336';
             const color = scoreColor(r);
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-scroll-row="${i}" data-row-key="${rowKey}">
-                <td style="${tdStyle}">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
+                <td style="${nameStyle}">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}" data-scroll-gold-per="dps">${goldPerCell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
