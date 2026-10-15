@@ -446,10 +446,11 @@ function unitPrice(itemHrid, level = 0) {
 /**
  * Price of the protection item one protected failure consumed. A spare loaded at an enhancement
  * level (the last segment of its item hash) is that stack, and is worth what that level sells
- * for, not the +0 price. A level the market has no quote for falls back to the +0 price.
+ * for, not the +0 price. A level the market has no quote for falls back to the +0 price. An item
+ * with no market quote at all is 0 (unpriced), never the vendor price.
  * @param {Object} action - Enhance action
  * @param {string} protectionItemHrid - The protection item consumed
- * @returns {number} Unit price
+ * @returns {number} Unit price, 0 when unpriced
  */
 function protectionUnitPrice(action, protectionItemHrid) {
     const loaded = parseItemHash(action?.secondaryItemHash);
@@ -459,7 +460,10 @@ function protectionUnitPrice(action, protectionItemHrid) {
         const price = quote?.ask || quote?.bid || 0;
         if (price > 0) return price;
     }
-    return unitPrice(protectionItemHrid);
+    // No market quote is no price: the tracker flags the session as having an unpriced input
+    // rather than booking the vendor price, which is far below what a protection costs to buy
+    const marketPrice = ironCowBook(protectionItemHrid, 0) ?? marketAPI.getPrice(protectionItemHrid, 0);
+    return marketPrice?.ask || marketPrice?.bid || 0;
 }
 
 /**

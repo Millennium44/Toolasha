@@ -58,7 +58,10 @@ vi.mock('./enhancement-storage.js', () => ({
     saveCurrentSessionId: async () => {},
 }));
 vi.mock('../insights/enhancement-calibration.js', () => ({ default: { recordCompletion: async () => {} } }));
-vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
+// A protection with no market quote is unpriced (0), so the brush the per-item test swaps in is quoted
+vi.mock('../../api/marketplace.js', () => ({
+    default: { getPrice: (hrid) => (hrid === '/items/holy_brush' ? { ask: 700, bid: 650 } : null) },
+}));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ ironCowBook: () => null }));
 vi.mock('./enhancement-xp.js', () => ({
     calculateSuccessXP: () => 10,

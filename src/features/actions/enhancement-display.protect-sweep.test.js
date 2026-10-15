@@ -248,6 +248,41 @@ describe('protect-from sweep in the enhancing panel', () => {
         expect(stats.textContent).toContain('exact on the "none" row');
     });
 
+    describe('a slot protection with no market quote', () => {
+        const MIRROR = '/items/mirror_of_protection';
+        const withVendorPrice = async (price) => {
+            state.items[MIRROR] = { ...state.items[MIRROR], sellPrice: 1250 };
+            if (price === undefined) delete state.prices[MIRROR];
+            else state.prices[MIRROR] = price;
+            const panel = buildPanel();
+            await displayEnhancementStats(panel, '/items/cheese_sword');
+            return panel.querySelector('#mwi-enhancement-stats');
+        };
+
+        test('is unpriced in the costs table, never counted at its vendor price', async () => {
+            const stats = await withVendorPrice(undefined);
+            const table = stats.querySelector('#mwi-enhancement-table-scroll');
+            expect(table.textContent).toContain('no price');
+            expect(table.textContent).not.toContain('1,250');
+            // The levels that use protection have no total; the rest still do
+            const rows = Array.from(table.querySelectorAll('tr')).slice(1);
+            const unpricedTotals = rows.filter((row) => row.lastElementChild.textContent === 'no price');
+            expect(unpricedTotals.length).toBeGreaterThan(0);
+            expect(unpricedTotals.length).toBeLessThan(rows.length);
+            // The collapsed per-attempt tooltip block names it unpriced too
+            expect(stats.textContent).toContain('(if used) (no price)');
+            expect(stats.textContent).not.toContain('(if used) (@1,250)');
+        });
+
+        test('a quoted protection still prices at its market ask', async () => {
+            const stats = await withVendorPrice(20_000);
+            const table = stats.querySelector('#mwi-enhancement-table-scroll');
+            expect(table.textContent).not.toContain('no price');
+            expect(table.textContent).toContain('× 20,000 →');
+            expect(stats.textContent).toContain('(if used) (@20,000)');
+        });
+    });
+
     test('protectSweepHTML returns nothing without an item', () => {
         expect(protectSweepHTML({ itemDetails: null, targetLevel: 5 })).toBe('');
     });

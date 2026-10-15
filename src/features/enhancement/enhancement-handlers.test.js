@@ -347,16 +347,24 @@ describe('two attempts landing before the first has finished writing', () => {
 });
 
 describe('a protected failure with no market quote for the protection', () => {
-    // The market is empty in this file (getPrice returns null), so the charge
-    // falls back to the item's vendor price. The game data names that field
-    // sellPrice; reading a field that does not exist charged every such
-    // protection 0 coins.
-    test('is charged the protection item vendor price', async () => {
+    // The market is empty in this file (getPrice returns null). The item has a vendor sellPrice,
+    // but that is far below what a protection costs to buy: the charge is 0 so the tracker flags
+    // the session as having an unpriced input (addProtectionCost), never the vendor price.
+    test('is charged 0 (unpriced), not the protection item vendor price', async () => {
         await state.handlers.action_completed(attempt(5, 78));
         // Protected failure: 5 → 4
         await state.handlers.action_completed(attempt(4, 79));
 
-        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 0]);
+        expect(state.calls).not.toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
+    });
+
+    test('a quoted protection is still charged its market ask', async () => {
+        state.prices['/items/mirror_of_protection:0'] = { ask: 40_000, bid: 35_000 };
+        await state.handlers.action_completed(attempt(5, 78));
+        await state.handlers.action_completed(attempt(4, 79));
+
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 40_000]);
     });
 });
 
@@ -620,11 +628,12 @@ describe('the first attempt of a run is scored from the level the queue row star
     });
 
     test('a protected failure from +5 drops one level and buys one protection', async () => {
+        state.prices['/items/mirror_of_protection:0'] = { ask: 40_000, bid: 35_000 };
         await queueRun(queued(5));
         await state.handlers.action_completed(completed(4, 1));
 
         expect(state.calls).toContainEqual(['failure', 5, 4]);
-        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 40_000]);
     });
 
     test('an enhance queued behind another action starts when that one finishes', async () => {
