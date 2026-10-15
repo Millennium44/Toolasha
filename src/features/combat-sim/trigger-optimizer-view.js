@@ -15,6 +15,7 @@ import {
     DEFAULT_OBJECTIVE,
     describeRow,
 } from './trigger-tuning.js';
+import { describeTriggerRows } from './lab-condition-search.js';
 
 const ACCENT = '#4a9eff';
 const BTN_STYLE =
@@ -79,6 +80,11 @@ export function triggerChipOptionsHtml() {
                 title="Min gain: the smallest score gain worth offering, in score points. A change must also pass a 95% check against luck on fresh seeds, whatever this is set to.">
                 ${minGainOptions}
             </select>
+            <label style="display:inline-flex; align-items:center; gap:4px; color:#888; font-size:11px; cursor:pointer;"
+                title="Also try different trigger conditions, not just different numbers: the buffs this zone's monsters cast on themselves or on you, your own buffs, and HP/MP readings, alone and ANDed in pairs. Runs after the threshold tuning for the selected player's abilities and food/drinks (per the choice above), takes many more sims, and its results are for you to enter by hand.">
+                <input type="checkbox" id="mwi-csim-trigger-conditions" style="margin:0; cursor:pointer;">Search new conditions (slow)
+            </label>
+            <span id="mwi-csim-trigger-conditions-cost" style="color:#666; font-size:11px;"></span>
         </span>`;
 }
 
@@ -105,6 +111,78 @@ export function triggerBestHtml(best, gameData) {
               '(within noise, not a recommendation).'
             : 'Current setting measured best.';
     return `<div style="color:#888; font-size:11px; margin:2px 0 0 8px;" data-csim-trigger-best="${esc(best.key)}">${text}</div>`;
+}
+
+/** Where a changed slot lives, as the game words it */
+function slotWord(change) {
+    if (change.slotType === 'abilities') return 'ability';
+    return change.slotType === 'food' ? 'food' : 'drink';
+}
+
+/**
+ * The condition search's part of the results box, in the run's objective score points.
+ * @param {Object|undefined} conditions - `result.conditions`
+ * @param {Object} gameData - Game data payload (the trigger names)
+ * @returns {string} HTML ('' when the search was not run)
+ */
+export function conditionResultsHtml(conditions, gameData) {
+    if (!conditions) return '';
+    let body =
+        `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-top:8px;">New conditions</div>` +
+        '<div style="color:#888; font-size:11px;">The selected player only; show-only, so enter any you want in the ' +
+        'game by hand.' +
+        (conditions.afterThresholds ? ' Searched after the threshold changes above; gains are on top of them.' : '') +
+        '</div>';
+    const skipped = {
+        'no-slots': 'No ability, food or drink in this setup has a trigger the condition search can vary.',
+        cap: "The condition search's sim limit is too small to measure a starting point, so it did not run.",
+        profit: "Profit/h can't be valued for this setup, so there is nothing to optimize in the condition search.",
+    }[conditions.skipped];
+    if (skipped) return body + `<div style="color:#aaa; font-size:12px;">${esc(skipped)}</div>`;
+
+    const bests = (conditions.bestMeasured || [])
+        .filter((b) => Number.isFinite(b.deltaScore))
+        .map((b) => {
+            const text =
+                b.deltaScore > 0
+                    ? `Best found: ${esc(b.itemName)} (${slotWord(b)}), ${esc(describeTriggerRows(b.toRows, gameData))}, ` +
+                      `Δscore ${esc(fmtScore(b.deltaScore))} ± ${esc(fmtSe(b.se))} (within noise, not a recommendation).`
+                    : `${esc(b.itemName)} (${slotWord(b)}): Current setting measured best.`;
+            return `<div style="color:#888; font-size:11px; margin:2px 0 0 8px;" data-csim-condition-best="${esc(b.key)}">${text}</div>`;
+        })
+        .join('');
+    const changes = conditions.changes || [];
+    if (conditions.reliable === false) {
+        body +=
+            '<div style="color:#ff9800; font-size:12px;">Some conditions looked better one at a time, but together ' +
+            'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>' +
+            bests;
+    } else if (changes.length === 0) {
+        body += `<div style="color:#aaa; font-size:12px;">No condition beat the current triggers by a clear margin${
+            conditions.stopped ? ' before the run was stopped' : ''
+        }.</div>${bests}`;
+    }
+    for (const c of changes) {
+        body +=
+            `<div style="font-size:12px; margin:4px 0 4px 8px;" data-csim-condition-change="${esc(c.key)}">` +
+            `<span style="color:#e0e0e0;">${esc(c.itemName)}</span> <span style="color:#888;">(${slotWord(c)})</span><br>` +
+            `<span style="color:${ACCENT}; font-weight:700;">${esc(describeTriggerRows(c.toRows, gameData))}</span><br>` +
+            `<span style="color:#888;">was: ${esc(describeTriggerRows(c.fromRows, gameData))}</span><br>` +
+            `<span style="color:#4caf50;">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span></div>`;
+    }
+    if (conditions.combined) {
+        const c = conditions.combined;
+        const good = conditions.reliable !== false && c.deltaScore > 0;
+        body +=
+            `<div style="font-size:12px; margin-top:6px;"><b>All new conditions together</b> (fresh seeds, ${esc(c.seeds)} runs): ` +
+            `<span style="color:${good ? '#4caf50' : '#ff9800'};">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span></div>`;
+    }
+    if (conditions.capped) {
+        body +=
+            '<div style="font-size:11px; color:#ff9800; margin-top:4px;">Stopped at the limit on condition-search sims; ' +
+            'abilities and consumables after that point were not searched.</div>';
+    }
+    return body;
 }
 
 function deltaCells(c, profitKnown = true) {
@@ -181,7 +259,11 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
                     `${who} food or drinks have a trigger that compares an HP or MP reading to a number.`
                   : `Nothing to tune: none of the ${who} ability or food triggers compare an HP or MP ` +
                     'reading to a number.';
-        return wrap(`<div style="color:#888; font-size:12px;">${esc(message)}</div>`);
+        // With the condition search on, "no thresholds" is not the end: the conditions block still has its answer
+        return wrap(
+            `<div style="color:#888; font-size:12px;">${esc(message)}</div>` +
+                conditionResultsHtml(result.conditions, gameData)
+        );
     }
 
     const changes = result.changes || [];
@@ -273,11 +355,15 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             `${esc([...new Set(unused.map((t) => t.itemName))].join(', '))}.</div>`;
     }
 
+    body += conditionResultsHtml(result.conditions, gameData);
+
     body +=
         `<div style="font-size:11px; color:#666; margin-top:6px;">` +
         `${esc(objectiveFooterText(result.objective))} ` +
         `A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least ${esc(result.minGain ?? MIN_GAIN)} points. ` +
-        `${esc(result.simCount)} sims${result.stopped ? ' (stopped early, showing what was accepted)' : ''}. ` +
+        `${esc(result.simCount)} sims${
+            result.conditionSimCount ? ` (${esc(result.conditionSimCount)} of them for the condition search)` : ''
+        }${result.stopped ? ' (stopped early, showing what was accepted)' : ''}. ` +
         `The userscript never changes triggers in the game; enter these by hand.</div>`;
 
     if (changes.length > 0) {

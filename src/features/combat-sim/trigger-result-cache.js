@@ -38,6 +38,19 @@ const CHANGE_FIELDS = [
     'deltaProfit',
     'deltaDeaths',
 ];
+const CONDITION_CHANGE_FIELDS = [
+    'key',
+    'slotType',
+    'slotIndex',
+    'itemHrid',
+    'itemName',
+    'fromRows',
+    'toRows',
+    'kind',
+    'deltaScore',
+    'se',
+];
+const CONDITION_FIELDS = ['reliable', 'stopped', 'capped', 'skipped', 'slotCount', 'afterThresholds'];
 const COMBINED_FIELDS = ['deltaScore', 'se', 'deltaXp', 'deltaProfit', 'deltaDeaths', 'seeds'];
 const RESULT_FIELDS = [
     'noTunables',
@@ -47,6 +60,7 @@ const RESULT_FIELDS = [
     'precision',
     'minGain',
     'simCount',
+    'conditionSimCount',
     'tunableCount',
     'reliable',
     'stopped',
@@ -99,6 +113,7 @@ function hash53(text) {
  * @param {string} setup.precision - Precision key
  * @param {number} setup.minGain - Minimum gain
  * @param {string} setup.objective - Objective key
+ * @param {boolean} [setup.searchConditions] - Whether the condition search was on
  * @param {Object} [setup.communityBuffs] - Community buffs in force
  * @param {Object} [setup.pricing] - Price snapshot and pricing settings the profit figures were taken under
  * @param {string} [setup.scriptVersion] - The userscript build, so an update never replays an older algorithm
@@ -120,6 +135,7 @@ export function triggerRunSignature(setup) {
         precision: setup.precision ?? null,
         minGain: Number(setup.minGain),
         objective: setup.objective ?? null,
+        searchConditions: setup.searchConditions === true,
         communityBuffs: setup.communityBuffs ?? null,
         pricing: setup.pricing ?? null,
         scriptVersion: setup.scriptVersion ?? null,
@@ -142,6 +158,17 @@ export function compactTriggerResult(result) {
     if (result?.bestMeasured) out.bestMeasured = pick(result.bestMeasured, CHANGE_FIELDS);
     const names = (list) =>
         [...new Set((list || []).map((t) => t?.itemName).filter(Boolean))].map((itemName) => ({ itemName }));
+    if (result?.conditions) {
+        const c = result.conditions;
+        out.conditions = {
+            ...pick(c, CONDITION_FIELDS),
+            changes: (c.changes || []).slice(0, MAX_STORED_CHANGES).map((x) => pick(x, CONDITION_CHANGE_FIELDS)),
+            bestMeasured: (c.bestMeasured || [])
+                .slice(0, MAX_STORED_CHANGES)
+                .map((x) => pick(x, CONDITION_CHANGE_FIELDS)),
+            combined: c.combined ? pick(c.combined, ['deltaScore', 'se', 'seeds']) : null,
+        };
+    }
     out.unchanged = names(result?.unchanged);
     out.unused = names(result?.unused);
     out.notPriced = names(result?.notPriced);
