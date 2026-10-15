@@ -4295,7 +4295,8 @@ describe('Check a swap', () => {
     test('both tabs carry the row, with an item picker, a level, Add and Check', () => {
         for (const kind of ['combat', 'skilling']) {
             expect(ui.panel.querySelector(`#mwi-labsim-swap-item-${kind}`)).toBeTruthy();
-            expect(ui.panel.querySelector(`#mwi-labsim-swap-level-${kind}`).max).toBe('20');
+            // Combat also takes ability levels (to 200); an item level is still clamped to 20 when queued
+            expect(ui.panel.querySelector(`#mwi-labsim-swap-level-${kind}`).max).toBe(kind === 'combat' ? '200' : '20');
             expect(ui.panel.querySelector(`#mwi-labsim-swap-add-${kind}`).textContent).toBe('Add');
             expect(ui.panel.querySelector(`#mwi-labsim-swap-check-${kind}`).textContent).toBe('Check');
         }
