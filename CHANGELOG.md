@@ -5411,6 +5411,51 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.71.0](https://github.com/Millennium44/Toolasha/compare/v3.70.0...v3.71.0) (2026-10-15)
+
+
+### Features
+
+* refine rows get Market and Watch buttons for the refinement shards ([5c0e308](https://github.com/Millennium44/Toolasha/commit/5c0e3088424462a8f369406ea98a56c8ff056936))
+
+
+### Bug Fixes
+
+* a checked combat swap of an owned copy no longer shows a purchase breakdown ([10dccda](https://github.com/Millennium44/Toolasha/commit/10dccda860312d2f67fb66cadc0c088597bd7058))
+* a checked skilling swap counts kits outside the skill filter as owned and still worn ([a415bc4](https://github.com/Millennium44/Toolasha/commit/a415bc400cd1b2ff874b89b47030464ff27f5699))
+* a failed read of a pulled value is retried instead of leaving the old one in place ([d7281bb](https://github.com/Millennium44/Toolasha/commit/d7281bba9449ea586c1ba2a647415303312f6813))
+* a mirror or refine route no longer spends a replaced bag copy and sells it too ([a4d16f4](https://github.com/Millennium44/Toolasha/commit/a4d16f4f469c6cfad2bcb7ab9f8332d0ad1a372b))
+* a mirror route bills and names every mirror its built copies spend ([2f9c7f4](https://github.com/Millennium44/Toolasha/commit/2f9c7f436c992b5d4a2f665682ca6ac7833b165e))
+* a one-boss trial's DPS no longer restarts when switching trial tabs ([b6b570f](https://github.com/Millennium44/Toolasha/commit/b6b570fb9b2d6b45ef26307b8a42fd74ccc95113))
+* a refine row built on a mirrored base puts the Philosopher's Mirror on its Market bill ([3d30683](https://github.com/Millennium44/Toolasha/commit/3d30683dc01d09a7dad76d85f2cf390465af9819))
+* calibration badge counts only the last 30 days and, for combat, gear-matched runs ([7370d27](https://github.com/Millennium44/Toolasha/commit/7370d27ac880823277b3dca031e893dac69c4659))
+* check a swap picker lists item names in Firefox, not equipment slots ([8dcaf3c](https://github.com/Millennium44/Toolasha/commit/8dcaf3c744a91e72e9325118cbc86bcb265f14b0))
+* custom inventory tabs latch on a sync pull again instead of applying live ([c304b09](https://github.com/Millennium44/Toolasha/commit/c304b091eb58d1d262bcb84ce4855c4851405dce))
+* guild member skills and custom inventory tabs take a sync pull without a reload ([8997650](https://github.com/Millennium44/Toolasha/commit/89976505b4a392c684c38880a9fcd00c6a3c7233))
+* guild skills rename prune and redo mark no longer clobber a pulled value ([6293063](https://github.com/Millennium44/Toolasha/commit/6293063604594ff8bb5423b6ef74360e65e6d784))
+* lab sim skilling lists one purchase as one row at one level for every kit ([b394eee](https://github.com/Millennium44/Toolasha/commit/b394eee8149b7e04375b19c756437c38cd1ee44a))
+* lab sim upgrade selection restore stands down after a character switch ([88cae10](https://github.com/Millennium44/Toolasha/commit/88cae1086e3fbb207e33a45d82244c55b3094eed))
+* pull listeners re-read live-safe records after the restore hold ends ([bab299e](https://github.com/Millennium44/Toolasha/commit/bab299ec887cb2c300be58312f6ea49f2cc382c9))
+
+
+### Documentation
+
+* American spelling in the skilling one-row changelog entry ([7bb4ea5](https://github.com/Millennium44/Toolasha/commit/7bb4ea5d3b01b25e2bc9e10eb63b6a20c59fa868))
+* changelog for live-syncing guild skills and inventory tabs ([892f585](https://github.com/Millennium44/Toolasha/commit/892f5850b31f3ee123c5ba331b474d9ad341c841))
+* changelog for one skilling upgrade row per item ([eb4621a](https://github.com/Millennium44/Toolasha/commit/eb4621ae41d13b5d4faf6a736dbe4927e588f889))
+* changelog for recent calibration tags and refine shard buttons ([02b1c31](https://github.com/Millennium44/Toolasha/commit/02b1c3190d04da6d1c716a666111cd455eadb572))
+* changelog for the single-boss trial DPS fix ([b0b0eb7](https://github.com/Millennium44/Toolasha/commit/b0b0eb7fd41718b0e53b41f746b4689462e5e2eb))
+* changelog for the swap and mirror pricing audit fixes ([bc8a918](https://github.com/Millennium44/Toolasha/commit/bc8a918ed38cd8d24c2c8a9e461f458b633134e9))
+* changelog for the sync audit fixes ([e398d0d](https://github.com/Millennium44/Toolasha/commit/e398d0dd806bad66405b7f65ceb891fc341d7a06))
+* changelog names only guild member skills as live-synced ([552f0d8](https://github.com/Millennium44/Toolasha/commit/552f0d86b86613ab1bbd02395d2b0fd92f78f092))
+
+
+### Tests
+
+* calibration badge drops old records with no timestamp or gear flag ([263f7c6](https://github.com/Millennium44/Toolasha/commit/263f7c658598729d4398ea2df5bf25a915104c77))
+* reset the shared skilling overrides mock after the one-row tests ([8982a51](https://github.com/Millennium44/Toolasha/commit/8982a511af142b82640e4b4c3b359e6f324ae7de))
+* split the out-of-scope owned-copy check into its own skilling swap test ([8da1cf3](https://github.com/Millennium44/Toolasha/commit/8da1cf34e313c5033e3b56f01c2549273ba0cbb5))
+
 ## [3.70.0](https://github.com/Millennium44/Toolasha/compare/v3.69.0...v3.70.0) (2026-10-15)
 
 ### Features
