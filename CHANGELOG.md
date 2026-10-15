@@ -101,6 +101,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Combat trials with more than one monster per wave (Badger, Swarm) no longer read the first tier as tier 12 with 11 banked, and switching between the fight view and the Trials tab no longer inflates Party DPS; saved estimates from the old bug are dropped on load.
 
+### Sync: Lab Sim skilling loadouts
+
+- A GitHub sync pull that changes the Lab Sim's skilling loadouts is now applied live instead of asking for a reload, and editing a loadout afterwards keeps what the pull brought in.
+
 <!-- shipped in 3.69.0 -->
 
 ### Bulk sell: vendor sales in any game language
