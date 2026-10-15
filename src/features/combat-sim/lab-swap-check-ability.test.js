@@ -1,0 +1,403 @@
+/**
+ * Check a swap, for abilities: a typed ability becomes one candidate per way it
+ * could go onto a bar, and the rows fold back into one row with the best option
+ * per loadout.
+ *
+ * Runs the real advisor (`candidateAppliesToDTO`, `applyCandidateToDTO`,
+ * `calculateUpgradeCost`, `runLabyrinthAllFightsAnalysis`) with only the market,
+ * the ability book prices and the simulator stood in for.
+ */
+
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+
+const state = vi.hoisted(() => ({
+    abilities: [],
+    sim: null,
+}));
+
+const CRIT_AURA = '/abilities/critical_aura';
+const FIERCE_AURA = '/abilities/fierce_aura';
+const SMACK = '/abilities/smack';
+const POKE = '/abilities/poke';
+const TOUGHNESS = '/abilities/toughness';
+const QUICK_STRIKE = '/abilities/quick_strike';
+const FIREBALL = '/abilities/fireball';
+const SWORD = '/items/cheese_sword';
+const MAIN = '/equipment_types/main_hand';
+const CAPE = '/items/sinister_cape';
+const CHAR = 161296;
+
+const ITEM_DETAIL_MAP = {
+    [SWORD]: {
+        hrid: SWORD,
+        name: 'Cheese Sword',
+        itemLevel: 10,
+        equipmentDetail: { type: MAIN, combatStats: { slashDamage: 20 } },
+    },
+    [CAPE]: {
+        hrid: CAPE,
+        name: 'Sinister Cape',
+        itemLevel: 80,
+        equipmentDetail: { type: '/equipment_types/back', combatStats: { slashDamage: 0.1 } },
+    },
+};
+
+const ABILITY_DETAIL_MAP = {
+    [CRIT_AURA]: { hrid: CRIT_AURA, name: 'Critical Aura', isSpecialAbility: true, abilityEffects: [] },
+    [FIERCE_AURA]: { hrid: FIERCE_AURA, name: 'Fierce Aura', isSpecialAbility: true, abilityEffects: [] },
+    [SMACK]: { hrid: SMACK, name: 'Smack', cooldownDuration: 5e9, abilityEffects: [] },
+    [POKE]: { hrid: POKE, name: 'Poke', cooldownDuration: 5e9, abilityEffects: [] },
+    [FIREBALL]: { hrid: FIREBALL, name: 'Fireball', cooldownDuration: 0, abilityEffects: [] },
+    [TOUGHNESS]: { hrid: TOUGHNESS, name: 'Toughness', cooldownDuration: 5e9, abilityEffects: [] },
+    [QUICK_STRIKE]: { hrid: QUICK_STRIKE, name: 'Quick Strike', cooldownDuration: 5e9, abilityEffects: [] },
+};
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInventory: () => [],
+        getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP }),
+        getCurrentCharacterId: () => CHAR,
+        getGuildBuildingLevel: () => 0,
+        getSkills: () => [],
+        get characterData() {
+            return { characterAbilities: state.abilities };
+        },
+    },
+}));
+vi.mock('./combat-sim-adapter.js', () => ({
+    buildGameDataPayload: vi.fn(() => ({
+        itemDetailMap: ITEM_DETAIL_MAP,
+        abilityDetailMap: ABILITY_DETAIL_MAP,
+        actionDetailMap: { '/actions/combat/fly': {} },
+    })),
+    calculateSimRevenue: vi.fn(),
+    getGuildBuffDetailMap: () => ({}),
+    guildBuffMaxLevel: () => 0,
+    applyGuildBuffLevel: () => [],
+}));
+vi.mock('./combat-sim-runner.js', () => ({
+    runSimulation: vi.fn(),
+    runLabyrinthSimulation: vi.fn((params) => state.sim(params)),
+    getMaxWorkers: () => 4,
+    plannedWorkerCount: vi.fn(() => 1),
+}));
+vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
+vi.mock('./labyrinth-level-finder.js', () => ({ findMaxLabyrinthLevel: vi.fn(), defaultThreshold: () => 0.7 }));
+vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, testerGearPrice: () => null }));
+vi.mock('./direct-enhancement-cost.js', () => ({
+    calculateDirectEnhancementCost: () => 0,
+    enhancementSweepParams: () => ({}),
+}));
+vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
+vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn(() => ({ price: 2_000_000 })) }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn(() => ({ ask: 5_000_000, bid: 1_000_000 })) }));
+vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
+// One book per level above the starting one, a thousand coins each
+vi.mock('../../utils/ability-cost-calculator.js', () => ({
+    explainAbilityLevelUpCost: vi.fn((hrid, fromLevel, _xp, toLevel) => {
+        const books = Math.max(0, toLevel - fromLevel);
+        return { books, total: books * 1000, bookName: hrid };
+    }),
+}));
+
+const advisor = await import('./upgrade-advisor.js');
+const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
+const {
+    buildCombatAbilityCandidates,
+    clampLevelFor,
+    describeCheckedSwap,
+    mergeCheckedAbilityRows,
+    resolveAbilityHrid,
+    resolveSwapHrid,
+    sanitizeSwapQueues,
+} = await import('./lab-swap-check.js');
+
+const gameData = { itemDetailMap: ITEM_DETAIL_MAP, abilityDetailMap: ABILITY_DETAIL_MAP, actionDetailMap: {} };
+const ability = (hrid, level) => ({ hrid, level, triggers: null });
+// Slot 0 is the special slot; the rest are ordinary
+const loadout = (abilities) => ({
+    equipment: { [MAIN]: { hrid: SWORD, enhancementLevel: 0 } },
+    abilities,
+});
+const fourAbilities = () =>
+    loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(TOUGHNESS, 16)]);
+
+beforeEach(() => {
+    state.abilities = [];
+    state.sim = null;
+    vi.mocked(explainAbilityLevelUpCost).mockClear();
+});
+
+describe('naming an ability', () => {
+    test('resolves by game name in any case, by hrid tail, or by full hrid', () => {
+        expect(resolveAbilityHrid(gameData, 'Critical Aura')).toBe(CRIT_AURA);
+        expect(resolveAbilityHrid(gameData, 'critical aura')).toBe(CRIT_AURA);
+        expect(resolveAbilityHrid(gameData, 'critical_aura')).toBe(CRIT_AURA);
+        expect(resolveAbilityHrid(gameData, CRIT_AURA)).toBe(CRIT_AURA);
+        expect(resolveAbilityHrid(gameData, 'quick')).toBe(QUICK_STRIKE);
+    });
+
+    test('text naming several abilities, or none, resolves to nothing', () => {
+        expect(resolveAbilityHrid(gameData, 'aura')).toBeNull();
+        expect(resolveAbilityHrid(gameData, 'nonsense')).toBeNull();
+        expect(resolveSwapHrid(gameData, 'aura')).toBeNull();
+    });
+
+    test('equipment still wins its own names, and the chip reads "Critical Aura 7"', () => {
+        expect(resolveSwapHrid(gameData, 'sinister cape')).toBe(CAPE);
+        expect(resolveSwapHrid(gameData, 'critical aura')).toBe(CRIT_AURA);
+        expect(describeCheckedSwap({ hrid: CRIT_AURA, level: 7 }, gameData)).toBe('Critical Aura 7');
+        expect(describeCheckedSwap({ hrid: CAPE, level: 7 }, gameData)).toBe('Sinister Cape +7');
+    });
+
+    test('an ability level is 1 to 200, and abilities are remembered on the combat queue only', () => {
+        expect(clampLevelFor(CRIT_AURA, 7.9)).toBe(7);
+        expect(clampLevelFor(CRIT_AURA, 0)).toBe(1);
+        expect(clampLevelFor(CRIT_AURA, 999)).toBe(200);
+        expect(clampLevelFor(CAPE, 999)).toBe(20);
+        const queues = sanitizeSwapQueues({
+            combat: [{ hrid: CRIT_AURA, level: 7 }],
+            skilling: [{ hrid: CRIT_AURA, level: 7 }],
+        });
+        expect(queues.combat).toEqual([{ hrid: CRIT_AURA, level: 7 }]);
+        expect(queues.skilling).toEqual([]);
+    });
+});
+
+describe('the slot options of a checked ability', () => {
+    test('an aura is tried in the special slot only; an ordinary ability in each ordinary slot', () => {
+        const dto = fourAbilities();
+        const aura = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [dto], gameData);
+        expect(aura.candidates.map((option) => option.optionLabel)).toEqual(['Fierce Aura']);
+        expect(aura.reach).toBe(1);
+
+        const ordinary = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [dto], gameData);
+        expect(ordinary.candidates.map((option) => option.optionLabel).sort()).toEqual(['Poke', 'Smack', 'Toughness']);
+    });
+
+    test('options are applied at the level asked for, into the right slot, with default triggers', () => {
+        const dto = fourAbilities();
+        const { candidates } = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [dto], gameData);
+        const poke = candidates.find((option) => option.replacesHrid === POKE);
+        expect(advisor.candidateAppliesToDTO(poke, dto, gameData)).toBe(true);
+        const after = advisor.applyCandidateToDTO(dto, poke);
+        expect(after.abilities[2]).toEqual({ hrid: QUICK_STRIKE, level: 7, triggers: null });
+        expect(after.abilities[0].hrid).toBe(FIERCE_AURA);
+        // the source loadout is untouched
+        expect(dto.abilities[2].hrid).toBe(POKE);
+    });
+
+    test('a free slot is an option only for a bar that has one, of the right kind', () => {
+        const free = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), null, null]);
+        const full = fourAbilities();
+        const auraBarFree = loadout([null, ability(SMACK, 12), ability(POKE, 14), ability(TOUGHNESS, 16)]);
+
+        const ordinary = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [free, full], gameData);
+        const fill = ordinary.candidates.find((option) => option.fillsFreeSlot);
+        expect(advisor.candidateAppliesToDTO(fill, free, gameData)).toBe(true);
+        expect(advisor.candidateAppliesToDTO(fill, full, gameData)).toBe(false);
+        expect(advisor.applyCandidateToDTO(free, fill).abilities[2].hrid).toBe(QUICK_STRIKE);
+
+        // the free special slot takes an aura, not an ordinary ability
+        const aura = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [auraBarFree, free], gameData);
+        const auraFill = aura.candidates.find((option) => option.fillsFreeSlot);
+        expect(advisor.candidateAppliesToDTO(auraFill, auraBarFree, gameData)).toBe(true);
+        expect(advisor.applyCandidateToDTO(auraBarFree, auraFill).abilities[0].hrid).toBe(CRIT_AURA);
+        const ordinaryOnAuraBar = buildCombatAbilityCandidates(
+            { hrid: QUICK_STRIKE, level: 7 },
+            [auraBarFree],
+            gameData
+        );
+        expect(ordinaryOnAuraBar.candidates.some((option) => option.fillsFreeSlot)).toBe(false);
+    });
+});
+
+describe('always-ready abilities go last', () => {
+    const names = (dto) => dto.abilities.map((entry) => entry && ABILITY_DETAIL_MAP[entry.hrid].name);
+
+    test('a zero-cooldown newcomer replacing a middle ability is moved to the end', () => {
+        const dto = fourAbilities();
+        const { candidates } = buildCombatAbilityCandidates({ hrid: FIREBALL, level: 7 }, [dto], gameData);
+        const smack = candidates.find((option) => option.replacesHrid === SMACK);
+        expect(names(advisor.applyCandidateToDTO(dto, smack))).toEqual([
+            'Fierce Aura',
+            'Poke',
+            'Toughness',
+            'Fireball',
+        ]);
+    });
+
+    test('a cooldown newcomer replacing the ability before a zero-cooldown one stays ahead of it', () => {
+        const dto = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(FIREBALL, 16)]);
+        const { candidates } = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [dto], gameData);
+        // Replacing the always-ready ability leaves the newcomer last, but nothing may sit after a zero-cooldown one
+        const fire = candidates.find((option) => option.replacesHrid === FIREBALL);
+        expect(names(advisor.applyCandidateToDTO(dto, fire))).toEqual(['Fierce Aura', 'Smack', 'Poke', 'Quick Strike']);
+        const free = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(FIREBALL, 16), null]);
+        const fill = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [free], gameData).candidates.find(
+            (option) => option.fillsFreeSlot
+        );
+        expect(names(advisor.applyCandidateToDTO(free, fill))).toEqual([
+            'Fierce Aura',
+            'Smack',
+            'Quick Strike',
+            'Fireball',
+        ]);
+    });
+
+    test('an aura is never moved out of the special slot, and an ordinary ability never enters it', () => {
+        const dto = fourAbilities();
+        const aura = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [dto], gameData).candidates[0];
+        expect(names(advisor.applyCandidateToDTO(dto, aura))[0]).toBe('Critical Aura');
+        const ordinary = buildCombatAbilityCandidates({ hrid: SMACK, level: 7 }, [dto], gameData).candidates;
+        expect(ordinary.every((option) => option.replacesHrid !== FIERCE_AURA)).toBe(true);
+    });
+});
+
+describe('already equipped', () => {
+    test('a loadout casting it at the level asked or higher is a no-op, reported as such', () => {
+        const casting = loadout([
+            ability(CRIT_AURA, 10),
+            ability(SMACK, 12),
+            ability(POKE, 14),
+            ability(TOUGHNESS, 16),
+        ]);
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [casting], gameData);
+        expect(built.candidates).toEqual([]);
+        expect(built.reach).toBe(0);
+        expect(built.alreadyEquipped).toBe(1);
+    });
+
+    test('one below the level asked is a level-up of that copy, keeping its triggers', () => {
+        const triggers = [{ condition: 'x' }];
+        const casting = loadout([
+            { hrid: CRIT_AURA, level: 5, triggers },
+            ability(SMACK, 12),
+            ability(POKE, 14),
+            ability(TOUGHNESS, 16),
+        ]);
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [casting], gameData);
+        expect(built.candidates).toHaveLength(1);
+        expect(built.candidates[0].levelUp).toBe(true);
+        const after = advisor.applyCandidateToDTO(casting, built.candidates[0]);
+        expect(after.abilities[0]).toEqual({ hrid: CRIT_AURA, level: 7, triggers });
+        expect(built.alreadyEquipped).toBe(0);
+    });
+});
+
+describe('what it costs', () => {
+    test('is the ability books from the level the character has now', () => {
+        state.abilities = [{ abilityHrid: CRIT_AURA, level: 5, experience: 1234 }];
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [fourAbilities()], gameData);
+        expect(explainAbilityLevelUpCost).toHaveBeenCalledWith(CRIT_AURA, 5, expect.any(Number), 7);
+        expect(built.candidates[0].cost).toBe(2000);
+    });
+
+    test('is the whole path for an ability never read, and nothing when already at the level', () => {
+        const fresh = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [fourAbilities()], gameData);
+        expect(fresh.candidates[0].cost).toBe(7000);
+
+        state.abilities = [{ abilityHrid: CRIT_AURA, level: 9, experience: 0 }];
+        const owned = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [fourAbilities()], gameData);
+        expect(owned.candidates[0].cost).toBe(0);
+    });
+});
+
+describe('the whole run: best replacement per loadout', () => {
+    const fight = (name, dto) => ({
+        monsterHrid: `/monsters/${name}`,
+        monsterName: name,
+        roomLevel: 50,
+        dto,
+        loadoutName: `${name} loadout`,
+    });
+
+    // The aura helps most when it takes Fierce Aura's place in one loadout and
+    // Smack's... but an aura only goes in slot 0, so the ordinary ability under
+    // test is what shows a different best replacement per loadout
+    test('picks the best replaced ability in each loadout and names it', async () => {
+        state.sim = async ({ playerDTOs }) => {
+            const abilities = playerDTOs[0].abilities.filter(Boolean);
+            const has = (hrid) => abilities.some((entry) => entry.hrid === hrid);
+            let win = 0.5;
+            if (has(QUICK_STRIKE)) {
+                // Losing Toughness hurts the first loadout, losing Smack hurts the second
+                if (!has(TOUGHNESS)) win = 0.52;
+                else if (!has(SMACK)) win = 0.72;
+                else win = 0.62;
+                if (!has(POKE)) win = Math.max(win, 0.56);
+            }
+            return { encounters: win * 1000, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 };
+        };
+        const first = fourAbilities();
+        const second = loadout([
+            ability(FIERCE_AURA, 10),
+            ability(SMACK, 20),
+            ability(POKE, 14),
+            ability(TOUGHNESS, 16),
+        ]);
+        const fights = [fight('mimic', first), fight('cyclops', second)];
+        const built = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [first, second], gameData);
+        expect(built.candidates.length).toBeGreaterThan(1);
+
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        // every option is a row before the fold
+        expect(raw.results.length).toBe(built.candidates.length);
+
+        const merged = mergeCheckedAbilityRows(raw, gameData);
+        expect(merged.results).toHaveLength(1);
+        const row = merged.results[0];
+        expect(row.candidate.description).toMatch(/^Quick Strike 7 \(replaces /);
+        expect(row.appliedFights).toBe(2);
+        expect(row.cost).toBe(7000);
+        // Replacing Toughness (0.72 in the sim above) is the best in both loadouts
+        expect(row.fights.map((entry) => entry.replaced)).toEqual(['Smack', 'Smack']);
+        expect(row.fights[0].winRate).toBeCloseTo(0.72, 5);
+        expect(row.attemptsDelta).toBeLessThan(0);
+    });
+
+    test('a loadout already casting the ability keeps its baseline and says why', async () => {
+        state.sim = async () => ({ encounters: 500, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 });
+        const casting = loadout([
+            ability(CRIT_AURA, 10),
+            ability(SMACK, 12),
+            ability(POKE, 14),
+            ability(TOUGHNESS, 16),
+        ]);
+        const other = fourAbilities();
+        const fights = [fight('mimic', casting), fight('cyclops', other)];
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [casting, other], gameData);
+        expect(built.alreadyEquipped).toBe(1);
+
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        const row = mergeCheckedAbilityRows(raw, gameData).results[0];
+        expect(row.fights[0].applied).toBe(false);
+        expect(row.fights[0].skipReason).toBe('already equipped at 10');
+        expect(row.fights[1].applied).toBe(true);
+        expect(row.fights[1].replaced).toBe('Fierce Aura');
+    });
+});

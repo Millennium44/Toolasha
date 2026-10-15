@@ -23,7 +23,16 @@
  * @module lab-swap-check
  */
 
-import { calculateUpgradeCost, checkedSwapAppliesToDTO, explainLabCandidateCost } from './upgrade-advisor.js';
+import {
+    SIGNIFICANCE_Z,
+    attemptsNoise,
+    calculateUpgradeCost,
+    checkedAbilityAppliesToDTO,
+    checkedSwapAppliesToDTO,
+    expectedFightAttempts,
+    explainLabCandidateCost,
+    valuePerMillion,
+} from './upgrade-advisor.js';
 import { affectsSkill, isCombatOnlyItem } from './skilling-gear-candidates.js';
 
 /** The highest enhancement level a swap may ask for */
@@ -41,6 +50,42 @@ const ALL_SKILLS = [
     '/skills/alchemy',
     '/skills/enhancing',
 ];
+
+/** Abilities are checked by their hrid, which starts with this */
+const ABILITY_PREFIX = '/abilities/';
+
+/** The highest ability level a swap may ask for (the game's cap) */
+export const MAX_ABILITY_SWAP_LEVEL = 200;
+
+/**
+ * Whether a swap is an ability rather than a piece of equipment.
+ * @param {{hrid: string}} swap
+ * @returns {boolean}
+ */
+export function isAbilitySwap(swap) {
+    return String(swap?.hrid || '').startsWith(ABILITY_PREFIX);
+}
+
+/**
+ * Clamp a typed ability level: a whole number from 1 up to the game's cap.
+ * @param {*} value - Whatever the box held
+ * @returns {number}
+ */
+export function clampAbilityLevel(value) {
+    const level = Math.floor(Number(value));
+    if (!Number.isFinite(level)) return 1;
+    return Math.min(MAX_ABILITY_SWAP_LEVEL, Math.max(1, level));
+}
+
+/**
+ * Clamp a typed level for whichever kind of thing the swap is.
+ * @param {string} hrid - Item or ability hrid
+ * @param {*} value - Whatever the box held
+ * @returns {number}
+ */
+export function clampLevelFor(hrid, value) {
+    return String(hrid || '').startsWith(ABILITY_PREFIX) ? clampAbilityLevel(value) : clampSwapLevel(value);
+}
 
 /** The most swaps a tab keeps queued; each one costs a full set of simulations */
 export const MAX_QUEUED_SWAPS = 12;
@@ -77,12 +122,14 @@ export function clampSwapLevel(value) {
  * @returns {{combat: Array<{hrid: string, level: number}>, skilling: Array<{hrid: string, level: number}>}}
  */
 export function sanitizeSwapQueues(raw) {
-    const clean = (list) => {
+    const clean = (list, allowAbilities = false) => {
         const seen = new Set();
         const out = [];
         for (const entry of Array.isArray(list) ? list : []) {
-            if (!entry || typeof entry.hrid !== 'string' || !entry.hrid.startsWith('/items/')) continue;
-            const swap = { hrid: entry.hrid, level: clampSwapLevel(entry.level) };
+            if (!entry || typeof entry.hrid !== 'string') continue;
+            const isItem = entry.hrid.startsWith('/items/');
+            if (!isItem && !(allowAbilities && entry.hrid.startsWith(ABILITY_PREFIX))) continue;
+            const swap = { hrid: entry.hrid, level: clampLevelFor(entry.hrid, entry.level) };
             const key = checkedSwapKey(swap);
             if (seen.has(key)) continue;
             seen.add(key);
@@ -91,7 +138,7 @@ export function sanitizeSwapQueues(raw) {
         }
         return out;
     };
-    return { combat: clean(raw?.combat), skilling: clean(raw?.skilling) };
+    return { combat: clean(raw?.combat, true), skilling: clean(raw?.skilling) };
 }
 
 /**
@@ -123,6 +170,7 @@ export function sanitizeSwapOptions(raw) {
 export function swapItemName(hrid, gameData) {
     return (
         gameData?.itemDetailMap?.[hrid]?.name ||
+        gameData?.abilityDetailMap?.[hrid]?.name ||
         String(hrid || '')
             .split('/')
             .pop()
@@ -137,6 +185,8 @@ export function swapItemName(hrid, gameData) {
  * @returns {string}
  */
 export function describeCheckedSwap(swap, gameData) {
+    // An ability has a level, not an enhancement: "Critical Aura 7"
+    if (isAbilitySwap(swap)) return `${swapItemName(swap.hrid, gameData)} ${swap.level}`;
     return `${swapItemName(swap.hrid, gameData)} +${swap.level}`;
 }
 
@@ -197,6 +247,75 @@ export function resolveEquipmentHrid(gameData, text) {
     if (exact.length > 1) return null;
     const partial = items.filter((item) => item.name.toLowerCase().includes(lower));
     return partial.length === 1 ? partial[0].hrid : null;
+}
+
+/**
+ * Every ability, by name, for the picker.
+ * @param {Object} gameData - Game data payload
+ * @returns {Array<{hrid: string, name: string}>}
+ */
+export function listAbilities(gameData) {
+    const abilities = [];
+    for (const [hrid, detail] of Object.entries(gameData?.abilityDetailMap || {})) {
+        if (!detail?.name) continue;
+        abilities.push({ hrid, name: detail.name });
+    }
+    return abilities.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Abilities whose name contains what was typed, names that start with it first.
+ * @param {Object} gameData - Game data payload
+ * @param {string} query - Typed text
+ * @param {number} [limit=30] - Most results
+ * @returns {Array<{hrid: string, name: string}>}
+ */
+export function searchAbilities(gameData, query, limit = 30) {
+    const needle = String(query || '')
+        .trim()
+        .toLowerCase();
+    if (!needle) return [];
+    const matches = listAbilities(gameData).filter((ability) => ability.name.toLowerCase().includes(needle));
+    matches.sort((a, b) => {
+        const aStarts = a.name.toLowerCase().startsWith(needle) ? 0 : 1;
+        const bStarts = b.name.toLowerCase().startsWith(needle) ? 0 : 1;
+        return aStarts - bStarts || a.name.localeCompare(b.name);
+    });
+    return matches.slice(0, limit);
+}
+
+/**
+ * The ability a typed name means, or null when it names none or several: the
+ * game's English name in any case, the hrid tail ("critical_aura") or the full
+ * hrid; otherwise the text has to narrow the list to one ability.
+ * @param {Object} gameData - Game data payload
+ * @param {string} text - What the picker holds
+ * @returns {string|null} Ability hrid
+ */
+export function resolveAbilityHrid(gameData, text) {
+    const typed = String(text || '').trim();
+    if (!typed) return null;
+    const map = gameData?.abilityDetailMap || {};
+    if (map[typed]) return typed;
+    const lower = typed.toLowerCase();
+    const byTail = `${ABILITY_PREFIX}${lower.replace(/\s+/g, '_')}`;
+    const abilities = listAbilities(gameData);
+    const exact = abilities.filter((ability) => ability.name.toLowerCase() === lower);
+    if (exact.length === 1) return exact[0].hrid;
+    if (exact.length > 1) return null;
+    if (map[byTail]) return byTail;
+    const partial = abilities.filter((ability) => ability.name.toLowerCase().includes(lower));
+    return partial.length === 1 ? partial[0].hrid : null;
+}
+
+/**
+ * What a Check a swap box means: a piece of equipment first, otherwise an ability.
+ * @param {Object} gameData - Game data payload
+ * @param {string} text - What the picker holds
+ * @returns {string|null} Item hrid or ability hrid
+ */
+export function resolveSwapHrid(gameData, text) {
+    return resolveEquipmentHrid(gameData, text) || resolveAbilityHrid(gameData, text);
 }
 
 /**
@@ -600,4 +719,232 @@ export async function evaluateSkillingSwaps({
         });
     }
     return { baseline, rows, unreached };
+}
+
+/**
+ * The abilities that are always ready (no cooldown), from game data.
+ * @param {Object} gameData - Game data payload
+ * @returns {string[]} Ability hrids with `cooldownDuration === 0`
+ */
+export function zeroCooldownAbilities(gameData) {
+    return Object.entries(gameData?.abilityDetailMap || {})
+        .filter(([, detail]) => detail?.cooldownDuration === 0)
+        .map(([hrid]) => hrid);
+}
+
+/**
+ * A checked ability as combat candidates: one per way it could go onto a bar.
+ *
+ * "Try each, show best." The ability is simulated in place of each ability the
+ * reached loadouts cast (one option per distinct ability replaced), in a free
+ * slot where a loadout has one, and, where a loadout already casts it below the
+ * level asked, as a level-up of that copy. A loadout casting it at the level
+ * asked or higher is reached by no option and is counted in `alreadyEquipped`.
+ * Slot kind follows the game: a special ability (an aura) only ever takes slot 0
+ * and an ordinary one never does. `mergeCheckedAbilityRows` folds the options'
+ * rows back into one row with the best option per loadout.
+ *
+ * The cost is the ability books from the character's current level to the level
+ * asked (none when already there), the same price an ability-swap row gets.
+ *
+ * @param {{hrid: string, level: number}} swap - What to check (an ability hrid)
+ * @param {Array<Object>} dtos - The loadout of every fight in the run
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - Whether the loadouts are the live character's
+ * @param {Object} [options] - `{ allLoadouts }`: waive the weapon-style test for ordinary abilities
+ * @returns {{candidates: Array<Object>, reach: number, alreadyEquipped: number, key: string}|null}
+ *   Null when the ability is unknown
+ */
+export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true, options = {}) {
+    const detail = gameData?.abilityDetailMap?.[swap.hrid];
+    if (!detail) return null;
+    const level = clampAbilityLevel(swap.level);
+    const special = Boolean(detail.isSpecialAbility);
+    const allLoadouts = Boolean(options.allLoadouts);
+    const key = `${swap.hrid}@${level}`;
+    const name = swapItemName(swap.hrid, gameData);
+    const loadouts = (dtos || []).filter(Boolean);
+
+    const base = {
+        type: 'ability_swap',
+        checkedAbility: true,
+        checkedAbilityKey: key,
+        upgradeHrid: swap.hrid,
+        upgradeLevel: level,
+        specialAbility: special,
+        // Abilities that are always ready: they must sit after every ability with a cooldown
+        zeroCooldownHrids: zeroCooldownAbilities(gameData),
+        allLoadouts,
+        isSelf,
+        description: `${name} ${level}`,
+    };
+    base.cost = calculateUpgradeCost({ ...base }, gameData, isSelf);
+
+    // Free-slot and level-up first, so an exact tie prefers the option that costs a loadout nothing
+    const tried = [
+        { ...base, slot: `ability_${special ? 0 : 1}`, fillsFreeSlot: true, optionId: 'fill' },
+        { ...base, slot: 'ability_1', levelUp: true, optionId: 'levelup' },
+    ];
+    const replaced = new Map();
+    for (const dto of loadouts) {
+        (dto.abilities || []).forEach((ability, index) => {
+            if (!ability?.hrid || ability.hrid === swap.hrid || replaced.has(ability.hrid)) return;
+            replaced.set(ability.hrid, index);
+        });
+    }
+    for (const [replacesHrid, index] of replaced) {
+        tried.push({
+            ...base,
+            slot: `ability_${index}`,
+            replacesHrid,
+            currentHrid: replacesHrid,
+            optionId: `replace:${replacesHrid}`,
+        });
+    }
+    for (const option of tried) {
+        option.poolKey = `checked_ability:${key}:${option.optionId}`;
+        option.optionLabel = option.fillsFreeSlot
+            ? 'a free slot'
+            : option.levelUp
+              ? 'its own copy'
+              : swapItemName(option.replacesHrid, gameData);
+        option.caveat =
+            'Checked by hand. Tried in place of each ability the loadout casts and in a free slot, with default ' +
+            'triggers; each loadout shows the best of those. The cost is the ability books from your current ' +
+            'level to this one.';
+    }
+
+    const candidates = tried.filter((option) =>
+        loadouts.some((dto) => checkedAbilityAppliesToDTO(option, dto, gameData))
+    );
+    const reach = loadouts.filter((dto) =>
+        candidates.some((option) => checkedAbilityAppliesToDTO(option, dto, gameData))
+    ).length;
+    const alreadyEquipped = loadouts.filter((dto) =>
+        (dto.abilities || []).some((ability) => ability?.hrid === swap.hrid && (ability.level || 0) >= level)
+    ).length;
+    return { candidates, reach, alreadyEquipped, key };
+}
+
+/**
+ * Fold the per-option rows of checked abilities into one row each.
+ *
+ * Each loadout keeps the option that did best there (highest win rate; ties go to
+ * the earlier option); a loadout no option reached keeps its baseline, and one
+ * already casting the ability is named as such. The row's totals are then worked
+ * out the way the analysis works them out for any row. Rows that are not checked
+ * abilities pass through untouched.
+ *
+ * @param {{baseline: Object, results: Array<Object>, context?: Object}} analysis - From `runLabyrinthAllFightsAnalysis`
+ * @param {Object} gameData - Game data payload
+ * @returns {Object} The same analysis with its results replaced
+ */
+export function mergeCheckedAbilityRows(analysis, gameData) {
+    const { baseline } = analysis || {};
+    if (!baseline || !Array.isArray(analysis.results)) return analysis;
+    const groups = new Map();
+    const passthrough = [];
+    for (const row of analysis.results) {
+        const key = row.candidate?.checkedAbilityKey;
+        if (!key) {
+            passthrough.push(row);
+            continue;
+        }
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+    }
+    if (!groups.size) return analysis;
+
+    const merged = [];
+    for (const rows of groups.values()) {
+        const first = rows[0].candidate;
+        const level = first.upgradeLevel;
+        const fights = baseline.fights.map((baseFight, i) => {
+            let best = null;
+            let bestRow = null;
+            for (const row of rows) {
+                const fight = row.fights[i];
+                if (!fight?.applied) continue;
+                if (!best || fight.winRate > best.winRate) {
+                    best = fight;
+                    bestRow = row;
+                }
+            }
+            if (best) return { ...best, replaced: bestRow.candidate.optionLabel, chosenOption: bestRow.candidate };
+            const dto = analysis.context?.fights?.[i]?.dto;
+            const owned = (dto?.abilities || []).find((ability) => ability?.hrid === first.upgradeHrid);
+            const skip =
+                owned && (owned.level || 0) >= level ? { skipReason: `already equipped at ${owned.level}` } : {};
+            return {
+                monsterHrid: baseFight.monsterHrid,
+                monsterName: baseFight.monsterName,
+                roomLevel: baseFight.roomLevel,
+                loadoutName: baseFight.loadoutName,
+                winRate: baseFight.winRate,
+                winRateDelta: 0,
+                applied: false,
+                ...skip,
+            };
+        });
+        const applied = fights.filter((fight) => fight.applied);
+        const runClearChance = fights.reduce((product, fight) => product * fight.winRate, 1);
+        const expectedAttempts = fights.reduce((sum, fight) => sum + expectedFightAttempts(fight.winRate), 0);
+        const attemptsDelta = expectedAttempts - baseline.expectedAttempts;
+        const noise = attemptsNoise(applied, baseline.fights);
+        const avgWinDelta = applied.reduce((sum, fight) => sum + fight.winRateDelta, 0) / (applied.length || 1);
+        const cost = rows[0].cost;
+
+        const parts = [];
+        for (const fight of applied) {
+            const option = fight.chosenOption;
+            const part =
+                option.partLabel ||
+                (option.fillsFreeSlot ? 'free slot' : option.levelUp ? 'level-up' : `replaces ${option.optionLabel}`);
+            if (!parts.includes(part)) parts.push(part);
+        }
+        const shown = parts.slice(0, 3).join(', ') + (parts.length > 3 ? `, +${parts.length - 3} more` : '');
+        const candidate = {
+            ...first,
+            description: parts.length ? `${first.description} (${shown})` : first.description,
+        };
+        delete candidate.poolKey;
+        delete candidate.optionLabel;
+        delete candidate.optionId;
+        delete candidate.replacesHrid;
+        delete candidate.currentHrid;
+        delete candidate.fillsFreeSlot;
+        delete candidate.levelUp;
+        for (const fight of fights) delete fight.chosenOption;
+
+        const attemptsSaved = -attemptsDelta;
+        merged.push({
+            candidate,
+            fights,
+            costType: 'gold',
+            tokenCost: null,
+            costDetail: explainLabCandidateCost({ ...first }, gameData, first.isSelf !== false),
+            appliedFights: applied.length,
+            runClearChance,
+            runClearDelta: runClearChance - baseline.runClearChance,
+            expectedAttempts,
+            attemptsDelta,
+            attemptsDeltaNoise: noise,
+            significant: Math.abs(attemptsDelta) > SIGNIFICANCE_Z * noise,
+            avgWinDelta,
+            cost,
+            attemptsSavedPerMillion: valuePerMillion(cost, attemptsSaved),
+        });
+    }
+
+    const results = [...passthrough, ...merged];
+    // The analysis's own ordering: priced rows by value first, then by raw gain
+    results.sort((a, b) => {
+        const unpriced = (result) => (result.attemptsSavedPerMillion === null ? 1 : 0);
+        return (
+            unpriced(a) - unpriced(b) ||
+            (b.attemptsSavedPerMillion ?? 0) - (a.attemptsSavedPerMillion ?? 0) ||
+            a.attemptsDelta - b.attemptsDelta
+        );
+    });
+    return { ...analysis, results };
 }
