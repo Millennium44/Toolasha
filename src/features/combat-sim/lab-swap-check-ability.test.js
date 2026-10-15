@@ -487,3 +487,64 @@ describe('the ability order check', () => {
         ]);
     });
 });
+
+describe('a character who already holds the ability higher', () => {
+    test('the sim uses their level, labeled, and the books are free', () => {
+        state.abilities = [{ abilityHrid: CRIT_AURA, level: 200, experience: 0 }];
+        const dto = loadout([ability(FIERCE_AURA, 200), ability(SMACK, 12), ability(POKE, 14), ability(TOUGHNESS, 16)]);
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [dto], gameData);
+        const option = built.candidates[0];
+        expect(option.upgradeLevel).toBe(200);
+        expect(option.description).toBe('Critical Aura 200, you have it at 200');
+        expect(option.cost).toBe(0);
+        expect(advisor.applyCandidateToDTO(dto, option).abilities[0]).toEqual({
+            hrid: CRIT_AURA,
+            level: 200,
+            triggers: null,
+        });
+    });
+
+    test('a typed level above theirs is still what is simulated and bought', () => {
+        state.abilities = [{ abilityHrid: CRIT_AURA, level: 5, experience: 0 }];
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [fourAbilities()], gameData);
+        expect(built.candidates[0].upgradeLevel).toBe(7);
+        expect(built.candidates[0].description).toBe('Critical Aura 7');
+        expect(built.candidates[0].cost).toBe(2000);
+    });
+
+    test('a loadout casting it below their level is levelled up to their level', () => {
+        state.abilities = [{ abilityHrid: CRIT_AURA, level: 200, experience: 0 }];
+        const casting = loadout([
+            ability(CRIT_AURA, 150),
+            ability(SMACK, 12),
+            ability(POKE, 14),
+            ability(TOUGHNESS, 16),
+        ]);
+        const built = buildCombatAbilityCandidates({ hrid: CRIT_AURA, level: 7 }, [casting], gameData);
+        expect(built.candidates[0].levelUp).toBe(true);
+        expect(advisor.applyCandidateToDTO(casting, built.candidates[0]).abilities[0].level).toBe(200);
+    });
+});
+
+describe('row actions for a checked ability', () => {
+    const row = (cost) => ({
+        cost,
+        costDetail: { books: { books: cost > 0 ? 3 : 0 } },
+        candidate: {
+            type: 'ability_swap',
+            checkedAbility: true,
+            slot: 'ability_0',
+            upgradeHrid: CRIT_AURA,
+            upgradeLevel: 7,
+        },
+    });
+
+    test('no buttons at cost 0; Watch and Market but no Save when books are needed', async () => {
+        const { upgradeRowActionsHtml } = await import('./combat-sim-ui.js');
+        expect(upgradeRowActionsHtml(row(0))).toBe('');
+        const html = upgradeRowActionsHtml(row(3000));
+        expect(html).not.toContain('Save for this');
+        expect(html).toContain('Watch');
+        expect(html).toContain('Market');
+    });
+});

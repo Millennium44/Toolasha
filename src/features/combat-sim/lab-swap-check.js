@@ -31,6 +31,7 @@ import {
     checkedSwapAppliesToDTO,
     expectedFightAttempts,
     explainLabCandidateCost,
+    ownedAbilityLevel,
     valuePerMillion,
 } from './upgrade-advisor.js';
 import { affectsSkill, isCombatOnlyItem } from './skilling-gear-candidates.js';
@@ -765,10 +766,15 @@ export function zeroCooldownAbilities(gameData) {
 export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true, options = {}) {
     const detail = gameData?.abilityDetailMap?.[swap.hrid];
     if (!detail) return null;
-    const level = clampAbilityLevel(swap.level);
+    const typedLevel = clampAbilityLevel(swap.level);
+    // What they would actually equip: a character holding the ability above the
+    // typed level keeps theirs, so that is what gets simulated. The books are
+    // then from the current level to the typed one, none when already past it.
+    const ownedLevel = ownedAbilityLevel(swap.hrid, isSelf);
+    const level = Math.max(typedLevel, ownedLevel);
     const special = Boolean(detail.isSpecialAbility);
     const allLoadouts = Boolean(options.allLoadouts);
-    const key = `${swap.hrid}@${level}`;
+    const key = `${swap.hrid}@${typedLevel}`;
     const name = swapItemName(swap.hrid, gameData);
     const loadouts = (dtos || []).filter(Boolean);
 
@@ -783,7 +789,7 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
         zeroCooldownHrids: zeroCooldownAbilities(gameData),
         allLoadouts,
         isSelf,
-        description: `${name} ${level}`,
+        description: level === typedLevel ? `${name} ${level}` : `${name} ${level}, you have it at ${ownedLevel}`,
     };
     base.cost = calculateUpgradeCost({ ...base }, gameData, isSelf);
 

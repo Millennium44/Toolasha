@@ -3761,6 +3761,16 @@ function ownedAbility(abilityHrid, isSelf) {
 }
 
 /**
+ * The level the live character holds an ability at, 0 when unread or not self.
+ * @param {string} abilityHrid - The ability
+ * @param {boolean} isSelf - False for any player other than the live character
+ * @returns {number}
+ */
+export function ownedAbilityLevel(abilityHrid, isSelf) {
+    return ownedAbility(abilityHrid, isSelf)?.level || 0;
+}
+
+/**
  * Itemised cost for an ability candidate: the books, and nothing coming back.
  *
  * Two things the equipment breakdown gets wrong about an ability. It prices the

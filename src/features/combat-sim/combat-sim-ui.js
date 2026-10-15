@@ -2220,6 +2220,11 @@ export function upgradeRowActionsHtml(result) {
     const buy = upgradeRowPurchase(result);
     if (!buy) return '';
 
+    // A hand-checked ability is only worth a Watch/Market for its book, and only
+    // while books are still needed: no level goal to save for, nothing at cost 0
+    const checkedAbility = Boolean(result?.candidate?.checkedAbility);
+    if (checkedAbility && !(result.cost == null || result.cost > 0)) return '';
+
     const attrs =
         `data-buy-hrid="${buy.itemHrid || ''}" data-buy-level="${buy.enhancementLevel}" ` +
         `data-buy-quantity="${buy.quantity}"`;
@@ -2254,7 +2259,7 @@ export function upgradeRowActionsHtml(result) {
             data-buy-cost="${cost}" data-buy-cost-source="${escapeAttribute(buy.costSource || '')}"
             title="Save for this in Equipment Savings"
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
-    } else if (buy.ability) {
+    } else if (buy.ability && !checkedAbility) {
         const cost = buy.ability.cost == null ? '' : String(buy.ability.cost);
         save = `<button type="button" ${attrs} data-buy-action="save-ability"
             data-ability-hrid="${buy.ability.abilityHrid}" data-ability-level="${buy.ability.targetLevel}"
