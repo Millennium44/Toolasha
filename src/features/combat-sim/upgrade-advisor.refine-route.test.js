@@ -2,7 +2,7 @@
  * Refined (star) targets in the upgrade advisor: a held base copy is refined, not re-enhanced from a fresh base.
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     /** `characterItems`, inventory and equipped together, as init_character_data sends them */
@@ -127,7 +127,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { calculateUpgradeCost, explainUpgradeCost } = await import('./upgrade-advisor.js');
+const { calculateUpgradeCost, explainUpgradeCost, setOtherLoadoutClaims } = await import('./upgrade-advisor.js');
 const { cheapestWithMirror } = await import('../../utils/mirror-route.js');
 
 function stack(itemHrid, level, location = '/item_locations/inventory', count = 1) {
@@ -174,6 +174,22 @@ describe('refined target priced from a held base', () => {
         expect(detail.buys[0]).toMatchObject({ price: SHARDS + 2_000_000, source: 'refine' });
         expect(detail.ladder).toMatchObject({ fresh: false, fromLevel: 5, toLevel: 7 });
         expect(state.sweeps).toContainEqual({ itemHrid: CAPE, from: 5, to: 7 });
+    });
+
+    test('a base another loadout wears is refined at its resale, not free', () => {
+        state.items = [stack(BASE, 5)];
+        setOtherLoadoutClaims([
+            { loadoutName: 'A', dto: { equipment: {} } },
+            {
+                loadoutName: 'B',
+                dto: { equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: 5 } } },
+            },
+        ]);
+        try {
+            expect(calculateUpgradeCost(tier(7), gameData)).toBe(SHARDS + 2_000_000 + state.baseSell);
+        } finally {
+            setOtherLoadoutClaims(null);
+        }
     });
 
     test('no base held: the old fresh-base route is unchanged', () => {
@@ -390,6 +406,57 @@ describe('refined target priced from a held base', () => {
                 const two = explainUpgradeCost(swap, gameData);
                 expect(two.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
                 expect(two.credit).toBe(5_000_000);
+            });
+
+            describe('a copy another loadout wears', () => {
+                // Loadout B is not equipped, so its +6 sword sits in the bag; the Lab knows B from the fights
+                const fightsWhereBWears = (level) => [
+                    { loadoutName: 'A', dto: { equipment: {} } },
+                    {
+                        loadoutName: 'B',
+                        dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: level } } },
+                    },
+                ];
+                afterEach(() => setOtherLoadoutClaims(null));
+
+                test('is an input at its resale, not free', () => {
+                    state.swordSell = 5_000_000;
+                    state.items = [stack(SWORD, 6)];
+                    setOtherLoadoutClaims(fightsWhereBWears(6));
+                    const detail = explainUpgradeCost(sword(7), gameData);
+                    expect(detail.source).toBe('mirror');
+                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
+                    expect(calculateUpgradeCost(sword(7), gameData)).toBeCloseTo(detail.net, 0);
+                });
+
+                test('a spare beyond the claimed copies stays free', () => {
+                    state.swordSell = 5_000_000;
+                    state.items = [stack(SWORD, 6, '/item_locations/inventory', 2)];
+                    setOtherLoadoutClaims(fightsWhereBWears(6));
+                    const detail = explainUpgradeCost(sword(7), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                });
+
+                test('the copy a loadout wears while equipped is not claimed twice', () => {
+                    // A wears the +6 right now (equipped); B wearing one too needs a second, which the bag lacks
+                    state.swordSell = 5_000_000;
+                    state.items = [wornSword(6), stack(SWORD, 6)];
+                    setOtherLoadoutClaims([
+                        {
+                            loadoutName: 'A',
+                            dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: 6 } } },
+                        },
+                        fightsWhereBWears(6)[1],
+                    ]);
+                    const detail = explainUpgradeCost(sword(7), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
+                });
+
+                test('nothing is claimed outside an analysis', () => {
+                    state.items = [stack(SWORD, 6)];
+                    const detail = explainUpgradeCost(sword(7), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                });
             });
 
             test('a spare +6 and a spare +5 together leave only the mirror to buy', () => {

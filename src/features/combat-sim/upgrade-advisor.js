@@ -2645,10 +2645,12 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
     const rawCredit = isSelfEnhancedItem(candidate.currentHrid, gameData?.itemDetailMap)
         ? 0
         : (1 - spent) * sellValue(candidate.currentHrid, candidate.currentLevel || 0);
-    const { credit, capped } = capEnhancementCredit(mirror.baseCost, rawCredit);
+    // A bag copy another loadout wears is spent at its resale: part of what the route costs
+    const baseCost = mirror.baseCost + mirror.claimedForfeit;
+    const { credit, capped } = capEnhancementCredit(baseCost, rawCredit);
     return {
-        net: mirror.baseCost - credit,
-        baseCost: mirror.baseCost,
+        net: baseCost - credit,
+        baseCost,
         credit,
         capped,
         rawCredit,
@@ -2696,15 +2698,17 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
     const copyLevel = level - 2;
     const spares = mirrorHeldInputs(baseHrid, { isSelf, candidate }).filter((copy) => !copy.piece);
     const spare = spares.find((copy) => copy.level === copyLevel);
-    let copyCost = 0;
+    // A spare another loadout wears costs its resale
+    let copyCost = spare ? spare.forfeit : 0;
     let copyMirrors = 0;
     if (!spare) {
         const built = resolveMirrorBase(baseHrid, copyLevel, gameData, { held: spares });
         const bought = resolveUpgradeBuyPriceDirect(baseHrid, copyLevel, gameData, { isSelf: false }).price;
-        copyCost = built ? Math.min(built.baseCost, bought ?? Infinity) : bought;
+        const builtCost = built ? built.baseCost + built.claimedForfeit : Infinity;
+        copyCost = Math.min(builtCost, bought ?? Infinity);
         if (!Number.isFinite(copyCost)) return null;
         // A base copy built with mirrors of its own spends those too
-        if (built && built.baseCost < (bought ?? Infinity)) copyMirrors = built.mirrorCount || 0;
+        if (built && builtCost < (bought ?? Infinity)) copyMirrors = built.mirrorCount || 0;
     }
     // Under Blessed Tea the enhance to +(L-1) can overshoot: its last step, run from +(L-2), is a +2 with
     // the Blessed chance, and that lands on +L already, so the base copy and the mirror are never spent.
@@ -3055,7 +3059,8 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
         const enhance =
             target > copy.level ? calculateDirectEnhancementCost(itemHrid, copy.level, target, gameData) : 0;
         if (enhance == null) continue;
-        const price = materials.cost + Math.max(0, enhance);
+        // A bag copy another loadout wears is refined out of that loadout: it costs its resale
+        const price = materials.cost + Math.max(0, enhance) + (copy.claimed ? sellValue(baseHrid, copy.level) : 0);
         // Compared after resale: a worn base that is refined is not sold, so it costs what it would have
         // fetched on top. That also settles a tie in favor of a spare of the same level.
         const net = price + (copy.taken ? sellValue(baseHrid, copy.level) : 0);
@@ -3070,7 +3075,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
         return {
             // A worn base that went into the mirror is not also sold
             ...(mirror.consumed.length ? { consumed: mirror.consumed } : {}),
-            price: materials.cost + mirror.baseCost,
+            price: materials.cost + mirror.baseCost + mirror.claimedForfeit,
             source: 'refine',
             enhanceSource: describeEnhancementSource(enhancementSweepParams(baseHrid)),
             ladder: {
@@ -3203,6 +3208,9 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     return {
         baseCost: plan.pay,
         forfeited: plan.forfeit,
+        // The resale of bag copies another loadout wears. Unlike a worn piece the row takes off, no credit
+        // is withheld for them, so the route's price carries it
+        claimedForfeit: plan.used.reduce((sum, use) => sum + (use.copy.claimed ? use.share * use.copy.forfeit : 0), 0),
         // `share` is how much of the worn piece the build is expected to spend; the rest is still sold
         consumed: plan.used.filter((use) => use.copy.piece).map((use) => ({ ...use.copy.piece, share: use.share })),
         heldLevels: plan.used.map((use) => use.copy.level),
@@ -3229,8 +3237,9 @@ function mirrorHeldInputs(itemHrid, { isSelf = true, candidate = null } = {}) {
         .filter((copy) => !copy.equipped || copy.taken)
         .map((copy) => ({
             level: copy.level,
-            forfeit: copy.taken ? sellValue(itemHrid, copy.level) : 0,
+            forfeit: copy.taken || copy.claimed ? sellValue(itemHrid, copy.level) : 0,
             piece: copy.taken ? { hrid: itemHrid, level: copy.level } : null,
+            claimed: copy.claimed,
         }));
 }
 
@@ -3249,14 +3258,85 @@ function mirrorHeldInputs(itemHrid, { isSelf = true, candidate = null } = {}) {
  * @returns {Array<Object>} The copies, each with `taken`
  */
 function markTakenCopies(copies, itemHrid, candidate) {
-    const marked = copies.map((copy) => ({ ...copy, taken: false }));
+    const marked = copies.map((copy) => ({ ...copy, taken: false, claimed: false }));
     const replaced = candidate ? removedPieces(candidate).filter((piece) => piece.hrid === itemHrid) : [];
     for (const piece of replaced) {
         const free = (copy) => !copy.taken && copy.level === piece.level;
         const match = marked.find((copy) => free(copy) && copy.equipped) || marked.find(free);
         if (match) match.taken = true;
     }
+    markClaimedCopies(marked, itemHrid);
     return marked;
+}
+
+/**
+ * Mark the bag copies that another loadout wears (`claimed`).
+ *
+ * A loadout that is not equipped keeps its pieces in the bag, so they look like free spares. The Lab's
+ * all-fights analysis knows every loadout it simulates ({@link setOtherLoadoutClaims}); a copy of an
+ * item at a level that a loadout wears is one of its claimed copies, and using it as an input takes
+ * that piece out of the loadout, so it costs its resale like a worn piece a row takes off. Worn copies
+ * and copies a row takes off already satisfy a claim themselves, so only the surplus is left free.
+ *
+ * @param {Array<Object>} marked - Copies with `taken`, mutated in place
+ * @param {string} itemHrid - The item the copies are of
+ */
+function markClaimedCopies(marked, itemHrid) {
+    if (!otherLoadoutClaims) return;
+    const levels = new Set(marked.map((copy) => copy.level));
+    for (const level of levels) {
+        const claimed = otherLoadoutClaims.get(claimKey(itemHrid, level)) || 0;
+        if (claimed <= 0) continue;
+        const satisfied = marked.filter((copy) => copy.level === level && (copy.equipped || copy.taken)).length;
+        let remaining = claimed - satisfied;
+        for (const copy of marked) {
+            if (remaining <= 0) break;
+            if (copy.level !== level || copy.equipped || copy.taken) continue;
+            copy.claimed = true;
+            remaining--;
+        }
+    }
+}
+
+/** @type {Map<string, number>|null} Copies each item and level that the Lab's loadouts wear, while an analysis runs */
+let otherLoadoutClaims = null;
+
+/**
+ * @param {string} hrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {string} Key into the claims map
+ */
+function claimKey(hrid, level) {
+    return `${hrid}@${Math.max(0, Math.floor(Number(level) || 0))}`;
+}
+
+/**
+ * Record what the loadouts of a Lab analysis wear, so a copy of one that sits in the bag is not priced
+ * as a free spare. One entry per distinct loadout (fights that share a loadout share its pieces).
+ * Pass nothing to clear it; the single-fight Combat Sim has no other loadouts and never sets it.
+ *
+ * @param {Array<{dto: Object, loadoutName: string}>|null} [fights] - The analysis's fights
+ */
+export function setOtherLoadoutClaims(fights = null) {
+    if (!Array.isArray(fights) || fights.length === 0) {
+        otherLoadoutClaims = null;
+        return;
+    }
+    const claims = new Map();
+    const seen = new Set();
+    for (const fight of fights) {
+        const name = fight?.loadoutName;
+        if (name != null) {
+            if (seen.has(name)) continue;
+            seen.add(name);
+        }
+        for (const equip of Object.values(fight?.dto?.equipment || {})) {
+            if (!equip?.hrid) continue;
+            const key = claimKey(equip.hrid, equip.enhancementLevel);
+            claims.set(key, (claims.get(key) || 0) + 1);
+        }
+    }
+    otherLoadoutClaims = claims.size ? claims : null;
 }
 
 /**
@@ -3342,8 +3422,9 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
     const viaMirror = mirror && {
         // A worn piece that went into the mirror is not also sold
         ...(mirror.consumed.length ? { consumed: mirror.consumed } : {}),
-        price: mirror.baseCost,
-        forfeited: mirror.forfeited,
+        price: mirror.baseCost + mirror.claimedForfeit,
+        // What a worn piece forfeits; the bag copies' resale is already in the price
+        forfeited: mirror.forfeited - mirror.claimedForfeit,
         source: 'mirror',
     };
     const mirrorWins = () => {
@@ -6561,6 +6642,23 @@ export function labAllFightsTrialBudget(sims, hours) {
  *   attemptsDelta, avgWinDelta}], budget }
  */
 export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
+    // Every loadout the run simulates, so a bag copy another of them wears is not priced as a free spare
+    setOtherLoadoutClaims(params?.fights);
+    try {
+        return await runLabyrinthAllFightsAnalysisInner(params, onProgress, options);
+    } finally {
+        setOtherLoadoutClaims(null);
+    }
+}
+
+/**
+ * The body of {@link runLabyrinthAllFightsAnalysis}.
+ * @param {Object} params - As the exported function
+ * @param {Function} onProgress - As the exported function
+ * @param {Object} options - As the exported function
+ * @returns {Promise<Object>} As the exported function
+ */
+async function runLabyrinthAllFightsAnalysisInner(params, onProgress, options = {}) {
     const {
         fights,
         crates,
