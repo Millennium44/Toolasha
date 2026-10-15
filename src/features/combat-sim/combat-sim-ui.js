@@ -10115,6 +10115,16 @@ class CombatSimUI {
                         await this._loadZonesScorePref();
                         const select = this.panel?.querySelector('#mwi-csim-zones-score-scale');
                         if (select) select.value = this._allZonesScoreScale;
+                        // A table already drawn is re-scored on the pulled scale, as the selector's own change does
+                        const args = this._allZonesRedrawArgs;
+                        if (this._allZonesResults && args && !this._isBusy()) {
+                            this._displayAllZonesResults(
+                                this._allZonesResults,
+                                args.hours,
+                                args.gameData,
+                                args.playerHrid
+                            );
+                        }
                     })()
                 );
             }

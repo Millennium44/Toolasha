@@ -10489,6 +10489,20 @@ describe('a sync pull of the panel’s remembered keys', () => {
         ui.destroy();
     });
 
+    test('a pulled All Zones score scale re-scores a table already drawn', async () => {
+        ui.buildPanel();
+        await settle();
+        const draw = vi.spyOn(ui, '_displayAllZonesResults').mockImplementation(() => {});
+        ui._allZonesResults = [{ zone: {} }];
+        ui._allZonesRedrawArgs = { hours: 1, gameData: {}, playerHrid: 'p1' };
+
+        await ui._adoptPulledSettings({ settings: ['combatSimAllZonesScoreScale'] });
+
+        expect(draw).toHaveBeenCalledWith(ui._allZonesResults, 1, {}, 'p1');
+        ui._allZonesResults = null;
+        ui._allZonesRedrawArgs = null;
+    });
+
     test('does not draw remembered upgrade results into a running analysis', async () => {
         ui.buildPanel();
         await settle();
