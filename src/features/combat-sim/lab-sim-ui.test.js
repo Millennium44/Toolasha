@@ -5149,6 +5149,17 @@ describe('Tune triggers', () => {
         expect(ui.panel.querySelector('#mwi-labsim-trigger-estimate').textContent).toMatch(/About [\d,]+ fight sims/);
     });
 
+    test('switching back to the upgrade tab relists the loadouts of an open section', () => {
+        ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        const list = () => ui.panel.querySelector('#mwi-labsim-trigger-loadouts').textContent;
+        expect(list()).toContain('Mage');
+        ui._switchTab('configure');
+        game.loadoutNames = { 3: 'Healer' };
+        ui._switchTab('upgrade');
+        expect(list()).toContain('Healer');
+        expect(list()).not.toContain('Mage');
+    });
+
     test('the run groups fights by loadout and draws each change as old → new', async () => {
         const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
         // The worn gear has no tunable row here, so only Mage is ticked
