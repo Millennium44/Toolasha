@@ -5163,12 +5163,18 @@ export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
     if (!candidate.keptItems?.length) return detail;
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
-    detail.kept = candidate.keptItems.map((item) => ({
-        hrid: item.hrid,
-        name: nameOf(item.hrid),
-        enhancementLevel: item.enhancementLevel || 0,
-        price: resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0,
-    }));
+    detail.kept = candidate.keptItems.map((item) => {
+        const { price } = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        return {
+            hrid: item.hrid,
+            name: nameOf(item.hrid),
+            enhancementLevel: item.enhancementLevel || 0,
+            price: price || 0,
+            // False where there is no price at all (untradable, nothing listed), which
+            // a note must tell apart from a price that is truly 0
+            priced: Number.isFinite(price),
+        };
+    });
     detail.keptValue = detail.kept.reduce((sum, entry) => sum + entry.price, 0);
     return detail;
 }

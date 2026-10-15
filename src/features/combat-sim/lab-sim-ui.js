@@ -340,6 +340,24 @@ const KEPT_REASON_CHECKED = 'since a loadout this swap does not reach still wear
 const KEPT_REASON_CHECKED_SKILLING = 'since a skill kit this swap does not reach still wears it.';
 
 /**
+ * The sentence about a kept piece's uncredited resale. A piece worth nothing has no
+ * resale to disclaim, so it earns no sentence; one with no price at all says so.
+ * @param {Array<{name: string, enhancementLevel: number, priced?: boolean}>} kept - Pieces kept
+ * @param {number} keptValue - Their summed resale
+ * @param {string} reason - Why it is not credited
+ * @param {(value: number) => string} money - Formats a coin figure
+ * @returns {string} The sentence without its Keeping prefix, empty for nothing to say
+ */
+function keptResaleText(kept, keptValue, reason, money) {
+    const names = kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ');
+    if (Number.isFinite(keptValue) && keptValue > 0) {
+        return `Keeping ${names} — resale of ${money(keptValue)} deliberately not credited, ${reason}`;
+    }
+    if (kept.some((k) => k.priced === false)) return `Keeping ${names} — resale not credited (no price), ${reason}`;
+    return '';
+}
+
+/**
  * Why a skilling row's kept pieces are kept: combat armor goes back in its
  * loadout, and a checked swap leaves a piece another kit still wears.
  * @param {Object} [candidate] - The row's candidate
@@ -3317,6 +3335,62 @@ class LabSimUI {
             kind === 'combat' ? '#mwi-labsim-upgrade-results' : '#mwi-labsim-skilling-results'
         );
         if (upgradesResults) upgradesResults.style.display = upgradesOpen ? '' : 'none';
+        this._applyCheckedCollapse(kind);
+    }
+
+    /**
+     * The clickable "Checked swaps" heading above a tab's checked results.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @returns {string} HTML
+     * @private
+     */
+    _checkedHeadingHtml(kind) {
+        return (
+            `<div id="mwi-labsim-checked-header-${kind}" data-checked-heading style="display:flex; align-items:center; ` +
+            `gap:6px; cursor:pointer; user-select:none; margin-bottom:4px;">` +
+            `<span data-checked-toggle style="font-size:10px; color:#888;">▼</span>` +
+            `<span style="color:${ACCENT}; font-weight:700; font-size:12px;">Checked swaps</span></div>`
+        );
+    }
+
+    /**
+     * Draw a tab's checked results open or closed: everything after the heading
+     * (baseline line, table, notes) is hidden while it is collapsed. Safe to call
+     * after any render; does nothing while no checked results are drawn.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @param {HTMLElement} [results] - The results element; the tab's own when omitted
+     * @private
+     */
+    _applyCheckedCollapse(kind, results) {
+        const container =
+            results ||
+            this.panel?.querySelector(
+                kind === 'combat' ? '#mwi-labsim-swap-results' : '#mwi-labsim-skilling-swap-results'
+            );
+        const header = container?.querySelector('[data-checked-heading]');
+        if (!header) return;
+        const open = this._swapOptions.checkedOpen[kind];
+        const toggle = header.querySelector('[data-checked-toggle]');
+        if (toggle) toggle.textContent = open ? '▼' : '▶';
+        for (let el = header.nextElementSibling; el; el = el.nextElementSibling) {
+            el.style.display = open ? '' : 'none';
+        }
+    }
+
+    /**
+     * Make a freshly drawn "Checked swaps" heading collapse the results, and apply
+     * the remembered state to them. Called after every render of the checked results.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @param {HTMLElement} container - The element the results were drawn into
+     * @private
+     */
+    _wireCheckedHeading(kind, container) {
+        container.querySelector('[data-checked-heading]')?.addEventListener('click', () => {
+            this._swapOptions.checkedOpen[kind] = !this._swapOptions.checkedOpen[kind];
+            this._applyCheckedCollapse(kind, container);
+            void this._saveCheckedSwaps();
+        });
+        this._applyCheckedCollapse(kind, container);
     }
 
     /**
@@ -5477,9 +5551,7 @@ class LabSimUI {
             `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
             `${label}${arrow(key)}</th>`;
 
-        let html = checked
-            ? `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Checked swaps</div>`
-            : this._renderBudgetPlan(goldResults, baseline);
+        let html = checked ? this._checkedHeadingHtml('combat') : this._renderBudgetPlan(goldResults, baseline);
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
@@ -5571,6 +5643,7 @@ class LabSimUI {
         html += '</tbody></table>';
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
         container.innerHTML = html;
+        if (checked) this._wireCheckedHeading('combat', container);
 
         if (!checked)
             this._addCsvExport(container, 'labsim-all-fights', () => ({
@@ -5753,11 +5826,13 @@ class LabSimUI {
         const notes = [];
         const kept = result.costDetail?.kept;
         if (kept?.length) {
-            notes.push(
-                `Keeping ${kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ')} — resale of ` +
-                    `${formatKMB(Math.round(result.costDetail.keptValue || 0))} deliberately not credited, ` +
-                    (result.candidate?.checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH)
+            const text = keptResaleText(
+                kept,
+                result.costDetail.keptValue,
+                result.candidate?.checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH,
+                (value) => formatKMB(Math.round(value))
             );
+            if (text) notes.push(text);
         }
         if (result.candidate?.caveat) notes.push(result.candidate.caveat);
         // How a hand-checked swap was priced: context, not a task caveat
@@ -6508,15 +6583,10 @@ class LabSimUI {
             );
         }
 
-        if (detail.kept?.length) {
-            parts.push(
-                line(
-                    `Keeping ${detail.kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ')} ` +
-                        `— resale of ${money(detail.keptValue)} deliberately not credited, ${keptReason}`,
-                    '#8ab4f8'
-                )
-            );
-        } else if (detail.credits?.length > 0) {
+        const keptText = detail.kept?.length ? keptResaleText(detail.kept, detail.keptValue, keptReason, money) : '';
+        if (keptText) {
+            parts.push(line(keptText, '#8ab4f8'));
+        } else if (!detail.kept?.length && detail.credits?.length > 0) {
             for (const credit of detail.credits) {
                 parts.push(
                     line(`Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`, '#8bc34a')
@@ -7750,7 +7820,9 @@ class LabSimUI {
                 return `<th data-sort-key="${key}" data-table="gold" style="${style}">${label}${ind}</th>`;
             };
 
-            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">${checked ? 'Checked swaps' : 'Gear Upgrades'}</div>`;
+            let html = checked
+                ? this._checkedHeadingHtml('skilling')
+                : `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gear Upgrades</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
@@ -7812,6 +7884,7 @@ class LabSimUI {
             // Re-wired on every render: a sort rebuilds the tables, and buttons
             // wired to the elements it threw away do nothing at all
             combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
+            if (checked) this._wireCheckedHeading('skilling', container);
         };
 
         renderAll();

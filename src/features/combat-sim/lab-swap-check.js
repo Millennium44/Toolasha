@@ -100,7 +100,7 @@ export function sanitizeSwapQueues(raw) {
  * never toggled, so the default applies), and whether each tab's generated Upgrades
  * results are shown (true unless left collapsed).
  * @param {*} raw - The stored `options`
- * @returns {{all: {combat: boolean, skilling: boolean}, open: {combat: boolean|null, skilling: boolean|null}, upgradesOpen: {combat: boolean, skilling: boolean}}}
+ * @returns {{all: {combat: boolean, skilling: boolean}, open: {combat: boolean|null, skilling: boolean|null}, upgradesOpen: {combat: boolean, skilling: boolean}, checkedOpen: {combat: boolean, skilling: boolean}}}
  */
 export function sanitizeSwapOptions(raw) {
     const flag = (value) => (typeof value === 'boolean' ? value : null);
@@ -109,6 +109,8 @@ export function sanitizeSwapOptions(raw) {
         open: { combat: flag(raw?.open?.combat), skilling: flag(raw?.open?.skilling) },
         // The generated Upgrades results beside the section: open unless left closed
         upgradesOpen: { combat: raw?.upgradesOpen?.combat !== false, skilling: raw?.upgradesOpen?.skilling !== false },
+        // The Checked swaps results below it: open unless left closed
+        checkedOpen: { combat: raw?.checkedOpen?.combat !== false, skilling: raw?.checkedOpen?.skilling !== false },
     };
 }
 

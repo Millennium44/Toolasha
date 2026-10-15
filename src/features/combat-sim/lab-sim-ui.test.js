@@ -4820,6 +4820,89 @@ describe('Check a swap', () => {
         expect(checked.querySelector('#mwi-labsim-budget')).toBeNull();
     });
 
+    test('the checked combat results collapse from the heading, stay collapsed on a re-render and are remembered', async () => {
+        const results = ui.panel.querySelector('#mwi-labsim-swap-results');
+        const heading = () => results.querySelector('[data-checked-heading]');
+        const hidden = () => [...results.children].filter((el) => el !== heading()).map((el) => el.style.display);
+        ui._renderAllFightsResults(combatAnalysis(), results, { checked: true });
+        expect(heading().textContent).toContain('Checked swaps');
+        expect(heading().textContent).toContain('▼');
+        expect(hidden().every((display) => display === '')).toBe(true);
+
+        heading().click();
+        expect(heading().textContent).toContain('▶');
+        expect(hidden().length).toBeGreaterThan(0);
+        expect(hidden().every((display) => display === 'none')).toBe(true);
+
+        // A re-draw (a sort here, a new Check likewise) keeps it collapsed
+        results.querySelector('th[data-af-sort="cost"]').click?.();
+        ui._renderAllFightsResults(combatAnalysis(), results, { checked: true });
+        expect(heading().textContent).toContain('▶');
+        expect(hidden().every((display) => display === 'none')).toBe(true);
+
+        await settle();
+        const saved = storage.written['labSimCheckedSwaps_me'];
+        expect(saved.options.checkedOpen).toEqual({ combat: false, skilling: true });
+
+        // Remembered per tab and across a rebuild
+        ui.destroy();
+        storage.values['labSimCheckedSwaps_me'] = saved;
+        ui.buildPanel();
+        await settle();
+        const rebuilt = ui.panel.querySelector('#mwi-labsim-swap-results');
+        ui._renderAllFightsResults(combatAnalysis(), rebuilt, { checked: true });
+        expect(rebuilt.querySelector('[data-checked-toggle]').textContent).toBe('▶');
+        const skilling = ui.panel.querySelector('#mwi-labsim-skilling-swap-results');
+        ui._renderSkillingUpgradeResults(
+            {
+                baseline: { clearRate: 0.5 },
+                results: [
+                    {
+                        candidate: { description: 'Tool +7', merged: true },
+                        costType: 'gold',
+                        cost: 5_000_000,
+                        clearRate: 0.5,
+                        clearRateDelta: 0.004,
+                        metricType: 'clearRate',
+                    },
+                ],
+            },
+            skilling,
+            { checked: true }
+        );
+        expect(skilling.querySelector('[data-checked-toggle]').textContent).toBe('▼');
+        const tableDisplay = () => skilling.querySelector('table').style.display;
+        expect(tableDisplay()).toBe('');
+        skilling.querySelector('[data-checked-heading]').click();
+        expect(tableDisplay()).toBe('none');
+        expect(rebuilt.querySelector('table').style.display).toBe('none');
+    });
+
+    test('a kept piece worth nothing produces no resale sentence, and an unpriced one says so', () => {
+        const note = (kept, keptValue) =>
+            ui._renderAllFightsNotes({ costDetail: { kept, keptValue }, candidate: { checkedSwap: true } });
+        expect(note([{ name: 'Sinister Cape', enhancementLevel: 7, price: 0, priced: true }], 0)).not.toContain(
+            'resale of'
+        );
+        expect(note([{ name: 'Sinister Cape', enhancementLevel: 7, price: 0, priced: true }], 0)).toBe('');
+        expect(note([{ name: 'Sinister Cape', enhancementLevel: 7, price: 0 }], NaN)).toBe('');
+
+        const unpriced = note([{ name: 'Sinister Cape', enhancementLevel: 7, price: 0, priced: false }], 0);
+        expect(unpriced).toContain('Keeping Sinister Cape +7');
+        expect(unpriced).toContain('no price');
+        expect(unpriced).not.toContain('resale of');
+
+        // The cost breakdown line agrees
+        const breakdown = (kept, keptValue) =>
+            ui._renderCostBreakdown({ buys: [], credits: [], unpriced: [], kept, keptValue, gross: 0, net: 0 });
+        expect(breakdown([{ name: 'Sinister Cape', enhancementLevel: 7, price: 0, priced: true }], 0)).not.toContain(
+            'Keeping'
+        );
+        expect(breakdown([{ name: 'Sinister Cape', enhancementLevel: 7, price: 0, priced: false }], 0)).toContain(
+            'no price'
+        );
+    });
+
     test('a checked skilling row says a kept piece is worn by a kit the swap does not reach', () => {
         const container = document.createElement('div');
         const row = {
