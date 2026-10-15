@@ -6760,9 +6760,10 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             // Pricing every row would put a market lookup per piece behind a
             // table that can run to hundreds of rows.
             // A hand-checked swap carries whose copies priced it, so its breakdown
-            // reads the same inventory as its Cost cell
+            // reads the same inventory as its Cost cell. One that moves a copy already
+            // owned buys nothing, so it has no purchase to break down beside its zero
             costDetail:
-                candidate.keptItems?.length || candidate.checkedSwap
+                !candidate.noPurchase && (candidate.keptItems?.length || candidate.checkedSwap)
                     ? explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false)
                     : null,
             appliedFights: applied.length,
