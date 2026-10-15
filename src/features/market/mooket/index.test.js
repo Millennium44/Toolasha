@@ -420,6 +420,22 @@ describe('the per-tick modal check reads the watched set, not the document', () 
         expect(queries).toEqual([]);
     });
 
+    test('an open modal still lets the chart follow the item', () => {
+        panel.gameModals.add({ isConnected: true });
+        panel.current = { itemHrid: '/items/milk', enhancementLevel: 0 };
+        const shown = [];
+        const original = panel.showItem;
+        panel.showItem = (itemHrid, level) => shown.push([itemHrid, level]);
+        try {
+            panel.followMarketplace();
+        } finally {
+            panel.showItem = original;
+        }
+
+        expect(shown).toEqual([['/items/cheese', 0]]);
+        expect(panel.pinButton.style.display).toBe('none');
+    });
+
     test('with no modal the pin is placed, and still nothing is asked of the document', () => {
         panel.followMarketplace();
 

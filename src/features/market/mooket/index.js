@@ -1326,14 +1326,6 @@ class MarketHistoryPanel {
             return;
         }
 
-        // The pin is anchored to the marketplace's item icon, and a game modal
-        // covers that icon while drawing *under* the pin
-        if (this._gameModalIsOpen()) {
-            this._setDisplay(this.panel, wantPanel);
-            this._setDisplay(this.pinButton, 'none');
-            return;
-        }
-
         const currentItem = marketplace.querySelector('[class*="MarketplacePanel_currentItem"]');
         const use = currentItem?.querySelector('svg use');
         const iconName = use?.href?.baseVal?.split('#')[1];
@@ -1359,6 +1351,20 @@ class MarketHistoryPanel {
             this._setDisplay(this.pinButton, 'none');
             return;
         }
+        // The pin is anchored to the marketplace's item icon, and a game modal
+        // covers that icon while drawing *under* the pin — so the pin goes. The
+        // chart still follows the item: the popout marketplace opens over a
+        // modal left open beneath it, and returning before this point froze the
+        // chart on whatever item was shown before.
+        if (this._gameModalIsOpen()) {
+            this._setDisplay(this.panel, wantPanel);
+            this._setDisplay(this.pinButton, 'none');
+            if (this.current?.itemHrid !== itemHrid || this.current?.enhancementLevel !== level) {
+                this.showItem(itemHrid, level);
+            }
+            return;
+        }
+
         const left = `${iconRect.right + window.scrollX + 6}px`;
         const top = `${iconRect.top + window.scrollY - 2}px`;
 

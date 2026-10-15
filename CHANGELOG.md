@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market History: follows the item under a game window
+
+- The History chart now switches to the item the popout marketplace opens even while a game window is still open underneath it; before, it stayed on the previous item until that window closed.
+
 ### Combat Sim: party parry stacks
 
 - Each party member holding a Regal Sword now gets their own parry roll against an incoming attack (two swords ≈ 15.4%, not 8%), matching the game's wording; before, the sim rolled for one random sword holder only.
