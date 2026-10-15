@@ -122,6 +122,24 @@ class HousePanelObserver {
     }
 
     /**
+     * Whether a mutation only moves or edits our own `.mwi-house-*` elements
+     * @param {MutationRecord} mutation
+     * @returns {boolean}
+     */
+    isOwnMutation(mutation) {
+        const isOwn = (node) => {
+            const el = node.nodeType === 1 ? node : node.parentElement;
+            return !!el?.matches?.('[class*="mwi-house-"]') || !!el?.closest?.('[class*="mwi-house-"]');
+        };
+        if (mutation.type === 'characterData') return isOwn(mutation.target);
+        if (mutation.type !== 'childList') return false;
+        const changed = [...mutation.addedNodes, ...mutation.removedNodes];
+        if (changed.length === 0) return false;
+        // Inside our section, or our section itself coming or going
+        return isOwn(mutation.target) || changed.every(isOwn);
+    }
+
+    /**
      * Observe modal for room switching
      * @param {Element} modalContent - The house panel modal content
      */
@@ -132,6 +150,8 @@ class HousePanelObserver {
             this.modalObserver();
             this.modalObserver = null;
         }
+
+        let lastRoomHrid = this.identifyRoomFromModal(modalContent);
 
         const unwatch = createMutationWatcher(
             modalContent,
@@ -144,12 +164,22 @@ class HousePanelObserver {
                     unwatch();
                     return;
                 }
-                // Check if header changed (indicates room switch)
+                // Our own section is appended to (and removed from) modalContent, an
+                // ancestor of the header, so a batch made only of our writes must never
+                // count as a room switch or it re-renders itself forever.
+                if (mutations.every((mutation) => this.isOwnMutation(mutation))) return;
+
+                // Only a different room is a switch. A refresh of the same room (inventory,
+                // price, upgrade) is driven by the cost display's own listeners.
+                const houseRoomHrid = this.identifyRoomFromModal(modalContent);
+                if (!houseRoomHrid || houseRoomHrid === lastRoomHrid) return;
+
                 for (const mutation of mutations) {
                     if (mutation.type === 'childList' || mutation.type === 'characterData') {
                         const header = modalContent.querySelector('[class*="HousePanel_header"]');
                         if (header && mutation.target.contains(header)) {
                             // Room switched, reprocess
+                            lastRoomHrid = houseRoomHrid;
                             this.processModalContent(modalContent);
                             break;
                         }
