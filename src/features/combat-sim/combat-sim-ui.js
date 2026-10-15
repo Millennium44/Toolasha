@@ -77,6 +77,7 @@ import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
+import { MIRROR_ITEM_HRID } from '../../utils/mirror-route.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -1967,7 +1968,8 @@ export function upgradeRowPurchase(result) {
  * A refine consumes a held base copy, so the only things bought are the
  * materials (coins are not an item and are left out). Counts are rounded up,
  * since a fraction of a shard cannot be bought; the artisan-reduced figure is
- * what the ladder carries.
+ * what the ladder carries. A refine whose base is first built with a
+ * Philosopher's Mirror (`refine.mirror`) needs the mirror too, so it joins the bill.
  *
  * @param {Object|null} ladder - `costDetail.ladder`
  * @returns {Array<{itemHrid: string, count: number, name: string}>|null} Null when the row is not a refine
@@ -1975,7 +1977,8 @@ export function upgradeRowPurchase(result) {
 function refineMaterialsOf(ladder) {
     const materials = ladder?.refine?.materials;
     if (!Array.isArray(materials)) return null;
-    const bought = materials
+    const needed = ladder.refine.mirror ? [...materials, { itemHrid: MIRROR_ITEM_HRID, count: 1 }] : materials;
+    const bought = needed
         .filter((m) => m?.itemHrid && String(m.itemHrid).startsWith('/items/') && m.itemHrid !== '/items/coin')
         .map((m) => ({
             itemHrid: m.itemHrid,
