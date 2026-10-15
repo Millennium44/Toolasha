@@ -12849,25 +12849,28 @@ class CombatSimUI {
         try {
             const saved = await storage.get(UPGRADE_COLUMNS_KEY, 'settings', null);
             if (!saved) return;
+            // Every field is replaced, a missing one by its default (an unset value reads as the
+            // default everywhere), so a pulled record from an older build cannot leave this page's values
+            // in place for the next save to write back over it
             this._upgradeHiddenColumns = new Set(Array.isArray(saved.hidden) ? saved.hidden : []);
-            if (Array.isArray(saved.scored)) this._upgradeScoreKeys = saved.scored;
+            this._upgradeScoreKeys = Array.isArray(saved.scored) ? saved.scored : undefined;
             // A scale key from a build that offered a different set is ignored
             // rather than trusted, so a column cannot end up scoring over a
             // ladder length nothing in the menu can name. A depth saved before
             // the % of best scale existed is still a valid gear-table scale.
-            if (isScoreScale(saved.scoreDepth)) this._upgradeScoreDepth = saved.scoreDepth;
-            if (isScoreScale(saved.levelScoreScale)) this._upgradeLevelScoreScale = saved.levelScoreScale;
+            this._upgradeScoreDepth = isScoreScale(saved.scoreDepth) ? saved.scoreDepth : DEFAULT_SCORE_DEPTH;
+            this._upgradeLevelScoreScale = isScoreScale(saved.levelScoreScale) ? saved.levelScoreScale : undefined;
             this._upgradeScoreGradient = Boolean(saved.scoreGradient);
             // A sort key from a build that offered different columns is not
             // validated here — every sorter already falls back to its default
             // column for a key it does not recognise, the same way it always
             // has for a fresh panel with no saved sort at all
             const isSortShape = (s) => s && typeof s.key === 'string' && typeof s.asc === 'boolean';
-            if (isSortShape(saved.sort)) this._upgradeSort = saved.sort;
-            if (isSortShape(saved.levelSort)) this._upgradeLevelSort = saved.levelSort;
-            if (isSortShape(saved.unpricedSort)) this._unpricedSort = saved.unpricedSort;
-            if (isSortShape(saved.scrollSort)) this._scrollSort = saved.scrollSort;
-            if (isScoreScale(saved.scrollScoreScale)) this._scrollScoreScale = saved.scrollScoreScale;
+            this._upgradeSort = isSortShape(saved.sort) ? saved.sort : undefined;
+            this._upgradeLevelSort = isSortShape(saved.levelSort) ? saved.levelSort : undefined;
+            this._unpricedSort = isSortShape(saved.unpricedSort) ? saved.unpricedSort : undefined;
+            this._scrollSort = isSortShape(saved.scrollSort) ? saved.scrollSort : undefined;
+            this._scrollScoreScale = isScoreScale(saved.scrollScoreScale) ? saved.scrollScoreScale : undefined;
         } catch (error) {
             console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
         }

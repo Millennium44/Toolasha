@@ -6784,6 +6784,20 @@ describe('the Score column in the table', () => {
         expect(() => ui._renderUpgradeResults(results())).not.toThrow();
     });
 
+    test('a pulled record from an older build resets the fields it lacks instead of keeping this page’s', async () => {
+        ui._scrollSort = { key: 'net', asc: false };
+        ui._scrollScoreScale = '5';
+        ui._upgradeLevelSort = { key: 'dps', asc: false };
+        mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [], scoreDepth: '15', scoreGradient: false });
+        await ui._loadUpgradeColumnPrefs();
+
+        expect(ui._scrollSort).toBeUndefined();
+        expect(ui._scrollScoreScale).toBeUndefined();
+        expect(ui._upgradeLevelSort).toBeUndefined();
+        await ui._persistUpgradeColumnPrefs();
+        expect(mocks.store.get('settings:combatSimUpgradeColumns').scrollSort).toBeNull();
+    });
+
     test('no color on the Score unless it was asked for', () => {
         ui._renderUpgradeResults(results());
 
