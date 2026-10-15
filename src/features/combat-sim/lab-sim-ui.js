@@ -6553,15 +6553,20 @@ class LabSimUI {
     async _saveSkillLoadout(skillHrid, loadoutName) {
         const key = this._skillLoadoutsKey;
         this._skillLoadouts[skillHrid] = loadoutName;
+        // Folded in one transaction against the newest value, a queued write included, so two quick
+        // edits or an edit racing a pull cannot put back what the other one changed
+        const defaults = { ...this._skillLoadouts };
         try {
-            const stored = await storage.get(key, 'settings', null);
-            const next = {
-                ...this._skillLoadouts,
-                ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}),
-                [skillHrid]: loadoutName,
-            };
-            if (this._skillLoadoutsKey === key) this._skillLoadouts = next;
-            await storage.set(key, next, 'settings');
+            const result = await storage.update(
+                key,
+                (stored) => ({
+                    ...defaults,
+                    ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}),
+                    [skillHrid]: loadoutName,
+                }),
+                'settings'
+            );
+            if (result?.value && this._skillLoadoutsKey === key) this._skillLoadouts = { ...result.value };
         } catch (error) {
             console.error('[LabSimUI] Could not save the skill loadout:', error);
         }
