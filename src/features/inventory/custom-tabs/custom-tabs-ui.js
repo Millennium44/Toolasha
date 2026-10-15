@@ -652,6 +652,10 @@ export function tabValueTooltip(valueKey, tileCount) {
     );
 }
 
+/** How many times a pulled config is read before giving up, and the wait that grows between reads */
+const PULL_READ_ATTEMPTS = 4;
+const PULL_READ_BACKOFF_MS = 400;
+
 export default class CustomTabsUI {
     constructor() {
         this._isActive = false;
@@ -962,11 +966,18 @@ export default class CustomTabsUI {
         const charId = this._configCharId;
         if (!charId || !this._isConfigForCurrentCharacter() || !pullWroteConfig(charId, written)) return;
         const generation = this._reloadGeneration;
-        let loaded;
-        try {
-            loaded = await loadConfig(charId);
-        } catch (error) {
-            console.error('[CustomTabs] Reading the pulled tabs failed; keeping the tabs in hand:', error);
+        let loaded = null;
+        for (let attempt = 0; attempt < PULL_READ_ATTEMPTS && !loaded; attempt++) {
+            if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, PULL_READ_BACKOFF_MS * attempt));
+            if (generation !== this._reloadGeneration || this._configCharId !== charId) return;
+            try {
+                loaded = await loadConfig(charId, { strict: true });
+            } catch (error) {
+                console.warn(`[CustomTabs] Reading the pulled tabs failed (attempt ${attempt + 1}):`, error);
+            }
+        }
+        if (!loaded) {
+            console.error('[CustomTabs] Gave up reading the pulled tabs; the tabs in hand stay until a reload');
             return;
         }
         if (generation !== this._reloadGeneration || this._configCharId !== charId) return;

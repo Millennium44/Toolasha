@@ -793,12 +793,16 @@ function recordFor(characterId) {
  * the discarding moved to after the probe returns, so the window never exists
  * and an edit that lands mid-load is still folded in.
  * @param {string} characterId
+ * @param {{strict?: boolean}} [options] - `strict`: throw when the store cannot be read, instead of returning the held config
  * @returns {Promise<Object>} { version, tabs, selectedTabId }
  */
-export async function loadConfig(characterId) {
+export async function loadConfig(characterId, { strict = false } = {}) {
     if (!characterId) return defaultConfig();
     const record = recordFor(characterId);
-    await record.load({ authoritative: true });
+    const readable = await record.load({ authoritative: true });
+    // A caller that must know it holds what is STORED (a sync pull's adoption) asks for the throw; the rest keep
+    // the config in hand, as before
+    if (strict && !readable) throw new Error('[CustomTabs] The stored tab config could not be read');
     const saved = record.get();
     const raw = !saved || !Array.isArray(saved.tabs) ? defaultConfig() : { ...defaultConfig(), ...saved };
     // Age pruning only. A tombstone whose id names no tab here is not dead
