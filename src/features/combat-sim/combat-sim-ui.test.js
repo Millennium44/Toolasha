@@ -2552,6 +2552,21 @@ describe('the remembered upgrade analysis across a character switch', () => {
             expect(restored).toEqual(fresh);
         });
 
+        test('a scroll that exactly pays for its tokens shows 0, not "−0 loss"', async () => {
+            // 1,000/token x 30 tokens x 2 scrolls an hour = 60,000/hr
+            const rows = [
+                {
+                    ...row('Add Scroll of Combat Drop (+15%)', { cost: null, type: 'scroll', profitGain: 60_000 }),
+                    cost: null,
+                },
+            ];
+            const container = await restoreWith({ scrollTokenRate: { ...stored, value: 1000 } }, rows);
+            const tr = container.querySelector('[data-scroll-row]');
+            expect(tr.textContent).not.toContain('loss');
+            expect(tr.textContent).not.toContain('−0');
+            expect(tr.querySelector('td[title^="Break-even"]').textContent).toBe('0');
+        });
+
         test('a scroll that loses gold keeps its Score and says why on hover; Gain is per hour', async () => {
             const rows = [
                 {

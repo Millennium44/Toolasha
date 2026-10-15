@@ -100,6 +100,22 @@ describe('priceScrollRow', () => {
         expect(priced.netText).toBe('−45.8K per scroll');
     });
 
+    test('a scroll that exactly pays for its tokens is break-even, not a "−0 loss"', () => {
+        // 1,000/token x 30 tokens x 2 scrolls an hour = 60,000/hr of tokens
+        const rate = { value: 1000, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
+        const priced = priceScrollRow(scrollRow(60_000), rate);
+        expect(priced.netPerHour).toBe(0);
+        expect(priced.breakEven).toBe(true);
+        expect(priced.netHourText).toBe('0');
+        expect(priced.verdict).toBe('Break-even: the scroll adds exactly what the tokens are worth');
+        expect(priced.verdict).not.toContain('loss');
+    });
+
+    test('the Net / hr cell text keeps its sign and loss word away from break-even', () => {
+        expect(priceScrollRow(scrollRow(1_200_000), scrollTokenRate()).netHourText).toBe('+808.3K');
+        expect(priceScrollRow(scrollRow(300_000), scrollTokenRate()).netHourText).toBe('−91.7K loss');
+    });
+
     test('a scroll already carried is read as what dropping it loses', () => {
         // Turning it off drops Profit/hr by 1.2M, so carrying it adds 1.2M
         const priced = priceScrollRow(scrollRow(-1_200_000, { measuresLoss: true }), scrollTokenRate());

@@ -74,6 +74,7 @@ export function priceScrollRow(row, rate, baseline) {
     const scrollsPerHour = 60 / SCROLL_BUFF_MINUTES;
     const gainPerScroll = priced.gainPerHour / scrollsPerHour;
     const netPerScroll = gainPerScroll - priced.costPerScroll;
+    const breakEven = priced.netPerHour === 0;
 
     return {
         ...priced,
@@ -83,9 +84,17 @@ export function priceScrollRow(row, rate, baseline) {
         basis:
             `${SCROLL_TOKEN_COST} tokens × ${formatKMB(Math.floor(rate.value))}/token (${rate.itemName}, after tax) = ` +
             `${formatKMB(priced.costPerScroll)} per scroll`,
-        verdict: priced.worthIt
-            ? `Net ${signed(priced.netPerHour)}/hr over the tokens' value`
-            : `Net loss ${signed(priced.netPerHour)}/hr: the same tokens buy more as ${rate.itemName}`,
+        // Exactly zero is neutral: not a win, but "−0 loss" would be a lie
+        breakEven,
+        verdict: breakEven
+            ? `Break-even: the scroll adds exactly what the tokens are worth`
+            : priced.worthIt
+              ? `Net ${signed(priced.netPerHour)}/hr over the tokens' value`
+              : `Net loss ${signed(priced.netPerHour)}/hr: the same tokens buy more as ${rate.itemName}`,
+        // The table's Net / hr cell
+        netHourText: breakEven
+            ? '0'
+            : `${priced.worthIt ? '+' : '−'}${formatKMB(Math.abs(priced.netPerHour))}${priced.worthIt ? '' : ' loss'}`,
         gainText: `${signed(gainPerScroll)} per ${SCROLL_BUFF_MINUTES} min`,
         // The table's Gain column, per hour so it lines up with Net / hr beside it
         gainHourText: `${signed(priced.gainPerHour)}/hr`,
