@@ -8,6 +8,8 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
+import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -740,6 +742,8 @@ class LabSimUI {
          */
         this._skillLoadoutsKey = null;
         this._loadoutsCollapsed = true;
+        // The singleton lives for the page, so this is never unsubscribed
+        onSyncPullApplied((written) => this._adoptPulledSkillLoadouts(written));
         this._upgradeSortHandler = null;
         this._skillingSortHandler = null;
         // Recorded single-target runs, so a fight can be read against the last
@@ -6456,13 +6460,13 @@ class LabSimUI {
         // below saw a full map and never filled from the arriving character's
         // own lab automation settings, and changing any row wrote that whole
         // stale map back — over assignments the arriving character had made.
-        const loadoutsKey = characterKey('labSimSkillingLoadouts');
+        const loadoutsKey = characterKey(SKILLING_LOADOUTS_KEY);
         if (this._skillLoadoutsKey !== loadoutsKey) {
             this._skillLoadoutsKey = loadoutsKey;
             this._skillLoadouts = {};
             // Discard any legacy global value: loadout names resolve against
             // this character's snapshots, so another character's map is noise.
-            const persisted = await readScoped('labSimSkillingLoadouts', 'settings', null, { migrate: 'discard' });
+            const persisted = await readScoped(SKILLING_LOADOUTS_KEY, 'settings', null, { migrate: 'discard' });
             // A switch during the read means a later render is loading the
             // character who is actually here; this one's result is not theirs
             if (this._skillLoadoutsKey !== loadoutsKey) return;
@@ -6524,20 +6528,59 @@ class LabSimUI {
         container.innerHTML = html;
 
         container.querySelectorAll('[data-skill-loadout]').forEach((select) => {
-            select.addEventListener('change', () => {
-                const skillHrid = select.dataset.skillLoadout;
-                this._skillLoadouts[skillHrid] = select.value;
-                // The key the map was read from, not whoever is current: a
-                // table left on screen across a switch is still the departing
-                // character's, and their edit belongs to them
-                storage.set(this._skillLoadoutsKey, this._skillLoadouts, 'settings');
-            });
+            select.addEventListener('change', () => this._saveSkillLoadout(select.dataset.skillLoadout, select.value));
         });
 
         container.querySelector('#mwi-labsim-loadout-toggle')?.addEventListener('click', () => {
             this._loadoutsCollapsed = !this._loadoutsCollapsed;
             this._renderSkillLoadoutTable();
         });
+    }
+
+    /**
+     * Record one skill's loadout choice and persist it.
+     *
+     * The stored map is folded under the in-memory one, so an assignment a sync
+     * pull brought in since this page read it survives; only this change is
+     * laid on top. Written to the key the map was read from, not whoever is
+     * current: a table left on screen across a switch is still the departing
+     * character's, and their edit belongs to them.
+     * @param {string} skillHrid - The skill
+     * @param {string} loadoutName - The loadout name, or '' for current gear
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _saveSkillLoadout(skillHrid, loadoutName) {
+        const key = this._skillLoadoutsKey;
+        this._skillLoadouts[skillHrid] = loadoutName;
+        try {
+            const stored = await storage.get(key, 'settings', null);
+            const next = {
+                ...this._skillLoadouts,
+                ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}),
+                [skillHrid]: loadoutName,
+            };
+            if (this._skillLoadoutsKey === key) this._skillLoadouts = next;
+            await storage.set(key, next, 'settings');
+        } catch (error) {
+            console.error('[LabSimUI] Could not save the skill loadout:', error);
+        }
+    }
+
+    /**
+     * Take a sync pull's copy of the loadout assignments into memory and redraw the table.
+     * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _adoptPulledSkillLoadouts(written) {
+        const key = this._skillLoadoutsKey;
+        if (!key || !written?.settings?.includes(key)) return;
+        const stored = await storage.get(key, 'settings', null);
+        if (this._skillLoadoutsKey !== key) return;
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return;
+        this._skillLoadouts = { ...stored };
+        await this._renderSkillLoadoutTable();
     }
 
     /**
