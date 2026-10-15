@@ -369,6 +369,48 @@ describe('the whole run: best replacement per loadout', () => {
         expect(row.attemptsDelta).toBeLessThan(0);
     });
 
+    test('fights sharing a saved loadout all take the one option that minimizes its summed attempts', async () => {
+        // Replacing Smack is far better against the mimic and slightly worse against the cyclops
+        // than replacing Poke, but Smack wins on summed attempts, so both fights must use it
+        const winRates = {
+            '/monsters/mimic': { [SMACK]: 0.9, [POKE]: 0.5 },
+            '/monsters/cyclops': { [SMACK]: 0.3, [POKE]: 0.35 },
+        };
+        state.sim = async ({ playerDTOs, monsterHrid }) => {
+            const abilities = playerDTOs[0].abilities.filter(Boolean);
+            const has = (hrid) => abilities.some((entry) => entry.hrid === hrid);
+            let win = 0.2;
+            if (!has(QUICK_STRIKE)) win = 0.1;
+            else if (!has(SMACK)) win = winRates[monsterHrid][SMACK];
+            else if (!has(POKE)) win = winRates[monsterHrid][POKE];
+            return { encounters: win * 1000, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 };
+        };
+        const shared = fourAbilities();
+        const fights = [
+            { ...fight('mimic', shared), loadoutId: 5 },
+            { ...fight('cyclops', fourAbilities()), loadoutId: 5 },
+        ];
+        const built = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [shared], gameData);
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        const row = mergeCheckedAbilityRows(raw, gameData).results[0];
+        expect(row.fights.map((entry) => entry.replaced)).toEqual(['Smack', 'Smack']);
+        expect(row.fights.map((entry) => entry.winRate)).toEqual([0.9, 0.3]);
+        expect(row.expectedAttempts).toBeCloseTo(1 / 0.9 + 1 / 0.3, 5);
+        expect(row.candidate.description).toMatch(/\(replaces Smack\)$/);
+    });
+
     test('a loadout already casting the ability keeps its baseline and says why', async () => {
         state.sim = async () => ({ encounters: 500, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 });
         const casting = loadout([

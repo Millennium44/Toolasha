@@ -840,10 +840,49 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
 }
 
 /**
+ * For each fight, the option row its saved loadout should use. Fights sharing a saved loadout
+ * (`loadoutId`) share one choice: the option minimizing the summed expected attempts over that
+ * loadout's fights, where a fight the option does not apply to counts at its baseline win rate.
+ * Ties go to the earlier option. A fight with no saved loadout is its own group. An option that
+ * applies to none of a group's fights is never chosen for it.
+ * @param {Array<Object>} rows - One row per option
+ * @param {Object} baseline - The analysis baseline
+ * @param {Array<Object>} [contextFights] - The run's fights, parallel to `baseline.fights`
+ * @returns {Array<Object|null>} The chosen row per fight index, null where nothing applies
+ */
+function chooseRowPerLoadout(rows, baseline, contextFights) {
+    const groups = new Map();
+    baseline.fights.forEach((_baseFight, i) => {
+        const id = Number(contextFights?.[i]?.loadoutId) || 0;
+        const key = id > 0 ? `loadout:${id}` : `fight:${i}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(i);
+    });
+    const chosen = new Array(baseline.fights.length).fill(null);
+    for (const indexes of groups.values()) {
+        let bestRow = null;
+        let bestAttempts = Infinity;
+        for (const row of rows) {
+            if (!indexes.some((i) => row.fights[i]?.applied)) continue;
+            const attempts = indexes.reduce((sum, i) => {
+                const fight = row.fights[i];
+                return sum + expectedFightAttempts(fight?.applied ? fight.winRate : baseline.fights[i].winRate);
+            }, 0);
+            if (attempts < bestAttempts) {
+                bestAttempts = attempts;
+                bestRow = row;
+            }
+        }
+        for (const i of indexes) chosen[i] = bestRow && bestRow.fights[i]?.applied ? bestRow : null;
+    }
+    return chosen;
+}
+
+/**
  * Fold the per-option rows of checked abilities into one row each.
  *
- * Each loadout keeps the option that did best there (highest win rate; ties go to
- * the earlier option); a loadout no option reached keeps its baseline, and one
+ * Each saved loadout keeps one option across every fight it covers (fewest summed
+ * expected attempts; ties go to the earlier option); a loadout no option reached keeps its baseline, and one
  * already casting the ability is named as such. The row's totals are then worked
  * out the way the analysis works them out for any row. Rows that are not checked
  * abilities pass through untouched.
@@ -872,17 +911,13 @@ export function mergeCheckedAbilityRows(analysis, gameData) {
     for (const rows of groups.values()) {
         const first = rows[0].candidate;
         const level = first.upgradeLevel;
+        // A saved loadout has one ability configuration, so every fight it covers takes the same
+        // option: the one with the fewest summed expected attempts (the Lab objective). Fights with
+        // no saved loadout each stand alone.
+        const chosenRowByFight = chooseRowPerLoadout(rows, baseline, analysis.context?.fights);
         const fights = baseline.fights.map((baseFight, i) => {
-            let best = null;
-            let bestRow = null;
-            for (const row of rows) {
-                const fight = row.fights[i];
-                if (!fight?.applied) continue;
-                if (!best || fight.winRate > best.winRate) {
-                    best = fight;
-                    bestRow = row;
-                }
-            }
+            const bestRow = chosenRowByFight[i];
+            const best = bestRow ? bestRow.fights[i] : null;
             if (best) {
                 const option = bestRow.candidate;
                 return option.fightNote
