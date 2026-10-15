@@ -232,6 +232,22 @@ describe('calibrationBadgeFor', () => {
         expect(badge.text).toBe('−20% over 6 runs');
     });
 
+    it('drops, without throwing, old records that carry no timestamp or gear flag', async () => {
+        const zone = '/actions/combat/fly';
+        const untimed = ({ t: _t, ...rest }) => rest;
+        store.ledger = [
+            null,
+            ...runs('/actions/milking/cow', 6, 0.8),
+            ...runs('/actions/milking/cow', 30, 0.1).map((r) => ({ ...untimed(r), id: `old${r.id}` })),
+            ...runs(zone, 6, 0.8).map((r) => ({ ...r, fingerprintMatch: true })),
+            // A combat pair recorded before the gear signature existed
+            ...runs(zone, 30, 0.1).map((r) => ({ ...r, id: `old${r.id}` })),
+        ];
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('milking').samples).toBe(6);
+        expect(calibrationBadgeFor('combat').samples).toBe(6);
+    });
+
     it('gives no badge when filtering leaves fewer than the floor', async () => {
         const zone = '/actions/combat/fly';
         store.ledger = [
