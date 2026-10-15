@@ -2654,6 +2654,7 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
         rawCredit,
         mirrorPrice: mirror.mirrorPrice,
         heldLevels: mirror.heldLevels,
+        mirrorCount: mirror.mirrorCount,
     };
 }
 
@@ -2696,11 +2697,14 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
     const spares = mirrorHeldInputs(baseHrid, { isSelf, candidate }).filter((copy) => !copy.piece);
     const spare = spares.find((copy) => copy.level === copyLevel);
     let copyCost = 0;
+    let copyMirrors = 0;
     if (!spare) {
         const built = resolveMirrorBase(baseHrid, copyLevel, gameData, { held: spares });
         const bought = resolveUpgradeBuyPriceDirect(baseHrid, copyLevel, gameData, { isSelf: false }).price;
         copyCost = built ? Math.min(built.baseCost, bought ?? Infinity) : bought;
         if (!Number.isFinite(copyCost)) return null;
+        // A base copy built with mirrors of its own spends those too
+        if (built && built.baseCost < (bought ?? Infinity)) copyMirrors = built.mirrorCount || 0;
     }
     // Under Blessed Tea the enhance to +(L-1) can overshoot: its last step, run from +(L-2), is a +2 with
     // the Blessed chance, and that lands on +L already, so the base copy and the mirror are never spent.
@@ -2716,6 +2720,7 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
         rawCredit: 0,
         mirrorPrice,
         heldLevels: spare ? [copyLevel] : [],
+        mirrorCount: (1 - overshoot) * (copyMirrors + 1),
     };
 }
 
@@ -2966,7 +2971,8 @@ export const COST_SOURCES = {
         label: 'mirror',
         title:
             "Built with a Philosopher's Mirror from a copy one level below and a copy two below, each priced " +
-            'at its own cheapest route. An estimate, not a quote.',
+            'at its own cheapest route, which can be mirrored too, so a build can spend several mirrors. An ' +
+            'estimate, not a quote.',
     },
     craft: {
         label: 'craft',
@@ -3085,6 +3091,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
                         baseCost: mirror.baseCost,
                         mirrorPrice: mirror.mirrorPrice,
                         heldLevels: mirror.heldLevels,
+                        mirrorCount: mirror.mirrorCount,
                     },
                 },
             },
@@ -3150,7 +3157,11 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     }
     // The mirror's own success can be +2 under Blessed Tea, which skips the next step of the chain
     const blessed = blessedMirrorChance(enhancementSweepParams(baseHrid));
-    const { best, mirrorTotals, landing } = cheapestWithMirror(ordinary, mirrorPrice, blessed);
+    const { best, mirrorTotals, landing, mirrorCounts, mirrorTotalCounts } = cheapestWithMirror(
+        ordinary,
+        mirrorPrice,
+        blessed
+    );
     const viaOrdinary = Number.isFinite(ordinary[level]) ? ordinary[level] : Infinity;
 
     // The two inputs of the final step are the +(L-1) and the +(L-2) copy. A held copy of exactly that
@@ -3160,7 +3171,7 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     const heldAt = (k) => held.filter((copy) => copy.level === k).sort((a, b) => a.forfeit - b.forfeit)[0] || null;
     const upper = heldAt(level - 1);
     const lower = heldAt(level - 2);
-    let plan = { pay: mirrorTotals[level], forfeit: 0, used: [] };
+    let plan = { pay: mirrorTotals[level], forfeit: 0, used: [], mirrors: mirrorTotalCounts[level] };
     for (const [useUpper, useLower] of [
         [true, false],
         [false, true],
@@ -3173,9 +3184,14 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
         const pay = (useUpper ? 0 : best[level - 1]) + (stepOdds > 0 ? stepOdds * (lowerPay + mirrorPrice) : 0);
         const forfeit = (useUpper ? upper.forfeit : 0) + (useLower ? stepOdds * lower.forfeit : 0);
         if (!Number.isFinite(pay) || pay + forfeit >= plan.pay + plan.forfeit) continue;
+        // Built copies spend mirrors of their own; a held copy spends none
+        const mirrors =
+            (useUpper ? 0 : mirrorCounts[level - 1]) +
+            (stepOdds > 0 ? stepOdds * ((useLower ? 0 : mirrorCounts[level - 2]) + 1) : 0);
         plan = {
             pay,
             forfeit,
+            mirrors,
             // The lower input is only spent when the step is run; the upper one always is
             used: [
                 useUpper ? { copy: upper, share: 1 } : null,
@@ -3191,6 +3207,8 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
         consumed: plan.used.filter((use) => use.copy.piece).map((use) => ({ ...use.copy.piece, share: use.share })),
         heldLevels: plan.used.map((use) => use.copy.level),
         mirrorPrice,
+        // Every mirror the route spends, the built copies' included (expected, under Blessed Tea)
+        mirrorCount: plan.mirrors,
     };
 }
 
@@ -3347,7 +3365,11 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
                 fromEquipped: false,
                 isSelf: options.isSelf !== false,
                 baseCost: 0,
-                mirror: { mirrorPrice: mirror.mirrorPrice, heldLevels: mirror.heldLevels },
+                mirror: {
+                    mirrorPrice: mirror.mirrorPrice,
+                    heldLevels: mirror.heldLevels,
+                    mirrorCount: mirror.mirrorCount,
+                },
             },
         };
     }
@@ -3716,7 +3738,11 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
             fromEquipped: false,
             isSelf: Boolean(isSelf),
             baseCost: 0,
-            mirror: { mirrorPrice: mirror.mirrorPrice, heldLevels: mirror.heldLevels },
+            mirror: {
+                mirrorPrice: mirror.mirrorPrice,
+                heldLevels: mirror.heldLevels,
+                mirrorCount: mirror.mirrorCount,
+            },
         },
     };
 }

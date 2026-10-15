@@ -77,7 +77,7 @@ import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
-import { MIRROR_ITEM_HRID } from '../../utils/mirror-route.js';
+import { MIRROR_ITEM_HRID, mirrorsToBuy } from '../../utils/mirror-route.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -854,6 +854,17 @@ export function upgradeCostCell(result) {
 }
 
 /**
+ * The mirrors a build spends, by count: the route's built copies can use mirrors of their own.
+ * @param {{mirrorPrice: number, mirrorCount?: number}|undefined} mirror - A ladder's `mirror`
+ * @returns {string} Plain text, e.g. "3 Philosopher's Mirrors at 1.2B each"
+ */
+function mirrorsPhrase(mirror) {
+    const count = mirrorsToBuy(mirror?.mirrorCount);
+    const each = formatKMB(mirror?.mirrorPrice);
+    return count > 1 ? `${count} Philosopher's Mirrors at ${each} each` : `a ${each} Philosopher's Mirror`;
+}
+
+/**
  * The clause naming the held copies a mirror build uses as inputs instead of buying them.
  * @param {number[]|undefined} heldLevels - Levels of the held copies used
  * @returns {string} Plain text, empty when none are used
@@ -874,8 +885,8 @@ function ladderSentence(ladder, total = null) {
     if (!ladder) return '';
     if (ladder.mirror) {
         return (
-            `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} copy into a +${ladder.toLevel} with a ` +
-            `${formatKMB(ladder.mirror.mirrorPrice)} Philosopher's Mirror` +
+            `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} copy into a +${ladder.toLevel} with ` +
+            mirrorsPhrase(ladder.mirror) +
             (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '') +
             heldMirrorInputsNote(ladder.mirror.heldLevels) +
             '.'
@@ -884,8 +895,8 @@ function ladderSentence(ladder, total = null) {
     if (ladder.refine?.mirror) {
         return (
             `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} base copy into a +${ladder.toLevel} ` +
-            `(${formatKMB(ladder.refine.mirror.baseCost)} with a ${formatKMB(ladder.refine.mirror.mirrorPrice)} ` +
-            `Philosopher's Mirror${heldMirrorInputsNote(ladder.refine.mirror.heldLevels)}), then refine it: ` +
+            `(${formatKMB(ladder.refine.mirror.baseCost)} with ${mirrorsPhrase(ladder.refine.mirror)}` +
+            `${heldMirrorInputsNote(ladder.refine.mirror.heldLevels)}), then refine it: ` +
             `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}.`
         );
     }
@@ -1969,7 +1980,8 @@ export function upgradeRowPurchase(result) {
  * materials (coins are not an item and are left out). Counts are rounded up,
  * since a fraction of a shard cannot be bought; the artisan-reduced figure is
  * what the ladder carries. A refine whose base is first built with a
- * Philosopher's Mirror (`refine.mirror`) needs the mirror too, so it joins the bill.
+ * Philosopher's Mirror (`refine.mirror`) needs the mirrors too, so they join the bill: every one
+ * the route spends, the ones its built copies use included.
  *
  * @param {Object|null} ladder - `costDetail.ladder`
  * @returns {Array<{itemHrid: string, count: number, name: string}>|null} Null when the row is not a refine
@@ -1977,7 +1989,9 @@ export function upgradeRowPurchase(result) {
 function refineMaterialsOf(ladder) {
     const materials = ladder?.refine?.materials;
     if (!Array.isArray(materials)) return null;
-    const needed = ladder.refine.mirror ? [...materials, { itemHrid: MIRROR_ITEM_HRID, count: 1 }] : materials;
+    const needed = ladder.refine.mirror
+        ? [...materials, { itemHrid: MIRROR_ITEM_HRID, count: mirrorsToBuy(ladder.refine.mirror.mirrorCount) }]
+        : materials;
     const bought = needed
         .filter((m) => m?.itemHrid && String(m.itemHrid).startsWith('/items/') && m.itemHrid !== '/items/coin')
         .map((m) => ({
