@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Lab Sim's Checked swaps results collapse from their heading like Upgrades (remembered per tab), and a kept piece worth nothing no longer prints "resale of 0"; an unpriced one says no price.
 
+### Lab Sim: tune triggers
+
+- The Lab Sim's Upgrade tab has a Tune triggers section: pick loadouts and it searches each one's ability and food/drink trigger values for fewer expected labyrinth attempts across the fights that loadout is assigned to, listing old → new values with the attempts saved and each fight's win-rate change; set them in the game by hand.
+
 <!-- shipped in 3.71.1 -->
 
 ### House: upgrade window no longer freezes the tab
