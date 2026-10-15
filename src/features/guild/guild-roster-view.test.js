@@ -131,6 +131,42 @@ const now = Date.parse('2026-08-04T12:00:00Z');
  */
 const series = (points) => points.map(([hoursAgo, xp]) => ({ t: now - hoursAgo * HOUR, xp })).sort((a, b) => a.t - b.t);
 
+describe('the guild skill levels card', () => {
+    const NOW = Date.parse('2026-08-04T12:00:00Z');
+    const store = (captures) => ({ all: () => captures });
+    const cap = (name, skills, at = NOW) => ({ name, characterId: 1, skills, at });
+
+    beforeEach(() => {
+        rosterModule.resetSkillTotalsState();
+        document.body.innerHTML = '';
+    });
+
+    test('draws a coverage line, stale marks and name tooltips, and reads captures without writing', () => {
+        const captures = {
+            ann: cap('Ann', { '/skills/milking': 40 }),
+            bob: cap('Bob', { '/skills/milking': 80 }, NOW - 8 * DAY),
+        };
+        const before = JSON.stringify(captures);
+        const body = document.createElement('div');
+        rosterModule.drawGuildSkillTotals(body, store(captures), ['Ann', 'Bob', 'Cy'], NOW);
+
+        expect(body.textContent).toContain('From 2 of 3 members’ profiles; open more with Member skills above.');
+        const cells = [...body.querySelectorAll('tbody td')];
+        expect(cells.map((td) => td.textContent)).toEqual(['milking', '2 (1 stale)', '120', '60.0', '40', '80']);
+        expect(cells[4].title).toBe('Ann');
+        expect(cells[5].title).toBe('Bob');
+        expect(body.textContent).not.toContain('could not be drawn');
+        expect(JSON.stringify(captures)).toBe(before);
+    });
+
+    test('shows a short empty state, not a table, when nothing is captured', () => {
+        const body = document.createElement('div');
+        rosterModule.drawGuildSkillTotals(body, store({}), ['Ann'], NOW);
+        expect(body.querySelector('table')).toBeNull();
+        expect(body.textContent).toContain('No profiles logged yet');
+    });
+});
+
 describe('the profile cycler', () => {
     beforeEach(() => {
         tracker.opened = [];

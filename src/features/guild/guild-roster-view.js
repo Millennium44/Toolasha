@@ -31,6 +31,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
@@ -39,6 +40,7 @@ import { guildXPTracker } from './guild-xp-tracker.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { describeLoadoutAge } from './guild-loadouts.js';
+import { aggregateGuildSkills, sortSkillRows } from './guild-skill-totals.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 
@@ -462,6 +464,131 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
 }
 
 /**
+ * The skill-levels table's remembered state. Outside the panel for the same reason as the search text: the panel
+ * redraws every few seconds and a redraw must not close the table or forget the sort.
+ */
+const skillTotalsState = { open: false, sortKey: 'order', descending: false };
+
+/** Reset the remembered table state. Exported for tests, which must not inherit a run. */
+export function resetSkillTotalsState() {
+    Object.assign(skillTotalsState, { open: false, sortKey: 'order', descending: false });
+}
+
+/**
+ * One decimal, trailing zero kept so a column lines up.
+ * @param {number} value - A level average
+ * @returns {string}
+ */
+function oneDecimal(value) {
+    return Number.isFinite(value) ? value.toFixed(1) : '—';
+}
+
+/**
+ * The "Guild skill levels" card: every skill's total and average across the members whose profiles are logged.
+ *
+ * Read-only over the captures. The coverage line says how many members the figures come from, because a half-logged
+ * roster would otherwise read as the whole guild.
+ *
+ * @param {HTMLElement} body - The panel body
+ * @param {Object} [capture] - The skills store, injectable for tests
+ * @param {string[]} [memberNames] - The current roster's names
+ * @param {number} [now] - Clock
+ * @returns {HTMLElement} The card
+ */
+export function drawGuildSkillTotals(
+    body,
+    capture = guildMemberSkills,
+    memberNames = guildXPTracker.getMemberList().map((member) => member?.name || ''),
+    now = Date.now()
+) {
+    const result = aggregateGuildSkills({
+        captures: capture.all?.() || {},
+        memberNames,
+        skillDetails: dataManager.getInitClientData?.()?.skillDetailMap || {},
+        now,
+    });
+
+    const card = panelCard(body, '', ACCENT);
+    const details = document.createElement('details');
+    details.className = 'mwi-guild-skill-totals';
+    details.open = skillTotalsState.open;
+    details.addEventListener('toggle', () => {
+        skillTotalsState.open = details.open;
+    });
+    const summary = document.createElement('summary');
+    summary.textContent = 'Guild skill levels';
+    summary.style.cssText = `cursor:pointer; color:${ACCENT}; font-weight:bold;`;
+    details.appendChild(summary);
+    card.appendChild(details);
+
+    if (!result.counted) {
+        details.appendChild(panelNote('No profiles logged yet — open some with Member skills above.'));
+        return card;
+    }
+
+    details.appendChild(
+        panelNote(
+            `From ${result.counted} of ${result.rosterSize} members’ profiles; open more with Member skills above.` +
+                (result.stale ? ` ${result.stale} older than a week.` : '')
+        )
+    );
+
+    const columns = [
+        ['order', 'Skill'],
+        ['count', 'Members'],
+        ['total', 'Total'],
+        ['average', 'Average'],
+        ['lowest', 'Lowest'],
+        ['highest', 'Highest'],
+    ];
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%; border-collapse:collapse; font-size:11px; table-layout:auto;';
+    const head = table.createTHead().insertRow();
+    for (const [key, label] of columns) {
+        const cell = document.createElement('th');
+        const active = skillTotalsState.sortKey === key && key !== 'order';
+        cell.textContent = `${label}${active ? (skillTotalsState.descending ? ' ▼' : ' ▲') : ''}`;
+        cell.style.cssText =
+            `text-align:${key === 'order' ? 'left' : 'right'}; padding:2px 3px; cursor:pointer; white-space:normal;` +
+            `color:${ROW_COLORS.dim}; font-weight:normal; vertical-align:bottom;`;
+        cell.title = key === 'order' ? 'Back to the game’s skill order.' : `Sort by ${label.toLowerCase()}.`;
+        cell.addEventListener('click', () => {
+            const same = skillTotalsState.sortKey === key;
+            skillTotalsState.descending = key === 'order' ? false : same ? !skillTotalsState.descending : true;
+            skillTotalsState.sortKey = key;
+            guildRosterPanel.render();
+        });
+        head.appendChild(cell);
+    }
+
+    const tbody = table.createTBody();
+    for (const skill of sortSkillRows(result.rows, skillTotalsState.sortKey, skillTotalsState.descending)) {
+        const tr = tbody.insertRow();
+        tr.style.borderTop = '1px solid rgba(255,255,255,0.06)';
+        const cells = [
+            skill.name,
+            skill.stale ? `${skill.count} (${skill.stale} stale)` : String(skill.count),
+            String(skill.total),
+            oneDecimal(skill.average),
+            String(skill.lowest.level),
+            String(skill.highest.level),
+        ];
+        cells.forEach((text, index) => {
+            const td = tr.insertCell();
+            td.textContent = text;
+            td.style.cssText = `padding:2px 3px; text-align:${index === 0 ? 'left' : 'right'};`;
+            if (index === 4) td.title = skill.lowest.name;
+            if (index === 5) td.title = skill.highest.name;
+        });
+    }
+    const scroller = document.createElement('div');
+    scroller.style.cssText = 'overflow-x:auto;';
+    scroller.appendChild(table);
+    details.appendChild(scroller);
+    return card;
+}
+
+/**
  * Only the snapshots naming somebody on the roster, when a roster is known.
  *
  * The storage is guild-keyed now, but a record written before that shipped —
@@ -656,6 +783,7 @@ export const guildRosterPanel = createPanel({
         }
 
         drawProfileCycler(body);
+        drawGuildSkillTotals(body);
         drawSeenLoadouts(body);
 
         const contributing = rows.filter((member) => Number.isFinite(member.delta7d) && member.delta7d > 0);
@@ -799,5 +927,6 @@ export default {
         }
         guildRosterPanel.hide({ remember: false });
         resetRosterFilter();
+        resetSkillTotalsState();
     },
 };
