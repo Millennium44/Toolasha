@@ -22,6 +22,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as upgradeAdvisor from './upgrade-advisor.js';
 // Real too; the trigger tuning tests spy on its runner
 import * as labTriggerOptimizer from './lab-trigger-optimizer.js';
+// The game's own trigger detail maps, for the condition search's wording
+import { TRIAL_GAME_DATA } from './engine/guild-trial-game-data.fixture.js';
 
 const geometry = vi.hoisted(() => ({ saved: null, wasOpen: false, restoreCalls: [], saveCalls: [], openCalls: [] }));
 const game = vi.hoisted(() => ({
@@ -37,6 +39,8 @@ const game = vi.hoisted(() => ({
     houseRooms: {},
     /** Ability hrid → display name, for the target grid's labels */
     abilityDetailMap: {},
+    /** The game's three trigger detail maps, for trigger wording (`{ dependencies, conditions, comparators }`) */
+    triggerMaps: null,
     /** Monster hrid → the loadout id the labyrinth has assigned it */
     loadoutByMonster: {},
     /** Loadout id → the name the game shows for it */
@@ -185,6 +189,9 @@ vi.mock('./combat-sim-adapter.js', () => ({
         actionDetailMap: { '/actions/combat/fly': {} },
         houseRoomDetailMap: game.houseRoomDetailMap,
         abilityDetailMap: game.abilityDetailMap,
+        combatTriggerDependencyDetailMap: game.triggerMaps?.dependencies,
+        combatTriggerConditionDetailMap: game.triggerMaps?.conditions,
+        combatTriggerComparatorDetailMap: game.triggerMaps?.comparators,
     }),
     buildAllPlayerDTOs: async () =>
         game.buildPlayers ? game.buildPlayers() : { players: game.players, selfHrid: game.players[0]?.hrid },
@@ -5069,6 +5076,7 @@ describe('Tune triggers', () => {
         game.loadoutAbilities = {};
         game.loadoutEquipment = {};
         game.abilityDetailMap = {};
+        game.triggerMaps = null;
         storage.values = {};
         ui.destroy();
     });
@@ -5223,6 +5231,110 @@ describe('Tune triggers', () => {
         expect(ui.panel.querySelector('#mwi-labsim-trigger-include').value).toBe('consumables');
         expect(ui.panel.querySelector('#mwi-labsim-trigger-precision').value).toBe('precise');
         expect(ui.panel.querySelector('[data-lab-trigger-group="current"]').checked).toBe(true);
+    });
+
+    describe('Search new conditions', () => {
+        const SELF = '/combat_trigger_dependencies/self';
+        const TOUGHNESS_OFF = {
+            dependencyHrid: SELF,
+            conditionHrid: '/combat_trigger_conditions/toughness',
+            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+            value: 0,
+        };
+        const FRENZY_ON = {
+            dependencyHrid: TARGET,
+            conditionHrid: '/combat_trigger_conditions/frenzy',
+            comparatorHrid: '/combat_trigger_comparators/is_active',
+            value: 0,
+        };
+        const COFFEE_OFF = {
+            dependencyHrid: SELF,
+            conditionHrid: '/combat_trigger_conditions/attack_coffee',
+            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+            value: 0,
+        };
+        const checkbox = () => ui.panel.querySelector('#mwi-labsim-trigger-conditions');
+        const estimateText = () => ui.panel.querySelector('#mwi-labsim-trigger-estimate').textContent;
+
+        beforeEach(() => {
+            game.triggerMaps = {
+                dependencies: TRIAL_GAME_DATA.combatTriggerDependencyDetailMap,
+                conditions: TRIAL_GAME_DATA.combatTriggerConditionDetailMap,
+                comparators: TRIAL_GAME_DATA.combatTriggerComparatorDetailMap,
+            };
+        });
+
+        /** A run whose condition search found a coffee trigger, on top of the Fireball threshold */
+        const conditionRun = () => {
+            const run = finishedRun();
+            run.searchConditions = true;
+            run.groups[0].conditions = {
+                changes: [
+                    {
+                        key: 'drinks|0',
+                        slotType: 'drinks',
+                        slotIndex: 0,
+                        itemHrid: '/items/attack_coffee',
+                        itemName: 'Attack Coffee',
+                        fromRows: [COFFEE_OFF],
+                        toRows: [TOUGHNESS_OFF, FRENZY_ON],
+                        kind: 'pair',
+                        deltaScore: 0.4,
+                        se: 0.1,
+                    },
+                ],
+                rejected: [],
+                combined: { deltaScore: 0.4, se: 0.09, seeds: 8, attemptsBefore: 2.36, attemptsAfter: 1.96 },
+                reliable: true,
+                stopped: false,
+                capped: false,
+                screened: 31,
+                slotCount: 2,
+                afterThresholds: true,
+                fights: [
+                    { monsterName: 'Cyclops', roomLevel: 120, winRate: 0.8, tunedWinRate: 0.95 },
+                    { monsterName: 'Mimic', roomLevel: 130, winRate: 0.9, tunedWinRate: 0.9 },
+                ],
+            };
+            return run;
+        };
+
+        test('is off by default, and ticking it adds its own cost to the estimate and is remembered', async () => {
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            expect(checkbox().checked).toBe(false);
+            expect(estimateText()).not.toContain('Condition search');
+
+            checkbox().checked = true;
+            checkbox().dispatchEvent(new window.Event('change', { bubbles: true }));
+            await settle();
+            expect(estimateText()).toMatch(/Condition search: up to [\d,]+ more fight sims/);
+            expect(storage.written['labSimTriggerChoices_me']).toMatchObject({ conditions: true });
+        });
+
+        test('the run is asked for it, and the found trigger is drawn in the game wording', async () => {
+            const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(conditionRun());
+            ui._triggerChoices.skipped = ['current'];
+            ui._triggerChoices.conditions = true;
+            await ui._onTuneTriggers();
+
+            expect(spy.mock.calls[0][0].searchConditions).toBe(true);
+            const text = results().textContent;
+            expect(text).toContain('New conditions');
+            expect(text).toContain("Activate when: My Toughness Is Inactive AND Target Enemy's Frenzy Is Active");
+            expect(text).toContain('was: Activate when: My Attack Coffee Is Inactive');
+            expect(text).toContain('saves 0.40 ± 0.10 attempts');
+            expect(text).toContain('2.36 → 1.96');
+            expect(text).toContain('+15.0 pp');
+            expect(status()).toContain('2 changes found');
+        });
+
+        test('unticked, the run is not asked for it', async () => {
+            const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+            ui._triggerChoices.skipped = ['current'];
+            await ui._onTuneTriggers();
+            expect(spy.mock.calls[0][0].searchConditions).toBe(false);
+            expect(results().textContent).not.toContain('New conditions');
+        });
     });
 });
 

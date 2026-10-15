@@ -3383,6 +3383,7 @@ class LabSimUI {
             const target = event.target;
             if (target?.id === 'mwi-labsim-trigger-include') this._triggerChoices.include = target.value;
             else if (target?.id === 'mwi-labsim-trigger-precision') this._triggerChoices.precision = target.value;
+            else if (target?.id === 'mwi-labsim-trigger-conditions') this._triggerChoices.conditions = target.checked;
             else if (target?.dataset?.labTriggerGroup) {
                 const skipped = new Set(this._triggerChoices.skipped);
                 if (target.checked) skipped.delete(target.dataset.labTriggerGroup);
@@ -3410,6 +3411,8 @@ class LabSimUI {
         if (include) include.value = this._triggerChoices.include;
         const precision = this.panel?.querySelector('#mwi-labsim-trigger-precision');
         if (precision) precision.value = this._triggerChoices.precision;
+        const conditions = this.panel?.querySelector('#mwi-labsim-trigger-conditions');
+        if (conditions) conditions.checked = this._triggerChoices.conditions;
         if (open) this._refreshTriggerLoadouts();
     }
 
@@ -3465,6 +3468,7 @@ class LabSimUI {
                           gameData,
                           include: this._triggerChoices.include,
                           precision: this._triggerChoices.precision,
+                          searchConditions: this._triggerChoices.conditions,
                       })
                   )
                 : '';
@@ -3543,9 +3547,9 @@ class LabSimUI {
                 );
                 return;
             }
-            const { include, precision } = this._triggerChoices;
-            const estimate = estimateLabTriggerRun({ groups, gameData, include, precision });
-            if (estimate.sims === 0) {
+            const { include, precision, conditions: searchConditions } = this._triggerChoices;
+            const estimate = estimateLabTriggerRun({ groups, gameData, include, precision, searchConditions });
+            if (estimate.sims === 0 && !(estimate.conditionSims > 0)) {
                 this._setStatus('No tunable trigger rows in the ticked loadouts.');
                 return;
             }
@@ -3571,6 +3575,7 @@ class LabSimUI {
                     labyrinthCombatBuffs: this._labyrinthCombatBuffs(),
                     precision,
                     include,
+                    searchConditions,
                 },
                 ({ current, total, description }) => {
                     if (!isCurrent() || this._upgradeAborted) return;
@@ -3598,7 +3603,10 @@ class LabSimUI {
                 resultsEl.innerHTML = renderLabTriggerResultsHtml(run, gameData);
                 resultsEl.style.display = 'block';
             }
-            const changes = run.groups.reduce((sum, group) => sum + (group.result?.changes?.length || 0), 0);
+            const changes = run.groups.reduce(
+                (sum, group) => sum + (group.result?.changes?.length || 0) + (group.conditions?.changes?.length || 0),
+                0
+            );
             this._setStatus(
                 changes > 0
                     ? `Trigger tuning complete: ${changes} change${changes === 1 ? '' : 's'} found. Set them in the game by hand.`
