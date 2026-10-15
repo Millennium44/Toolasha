@@ -735,15 +735,25 @@ export function recordTileSample(record, tile, at, characterId = null) {
     const personalSlotKey = personalSlot(characterId);
     const mine = asObject(existing.personalByCharacter?.[personalSlotKey]);
     const tiers = [...(existing.tiers || [])];
-    if (Number.isFinite(observationTier)) {
+    // A reading of part of a wave (one Badger card of two) is no tier's total,
+    // so it files nothing — the sample itself is still kept for its rate
+    if (Number.isFinite(observationTier) && !isPartialWaveReading(readings[0])) {
         // A combat sample's boss reading says what it summed, and its
         // observations carry that along: an untagged observation on a
         // multi-monster wave may be the old bug's (a T12 filed off a
         // one-Badger base), and is what `scrubWaveObservations` drops
-        const source = typeof readings[0]?.source === 'string' ? readings[0].source : null;
+        const boss = readings[0];
+        const source = typeof boss?.source === 'string' ? boss.source : null;
+        const scale = source
+            ? {
+                  source,
+                  ...(Number.isFinite(boss.slots) ? { slots: boss.slots } : {}),
+                  ...(Number.isFinite(boss.waveCount) ? { waveCount: boss.waveCount } : {}),
+              }
+            : null;
         for (const reading of readings) {
             if (!(reading.max > 0)) continue;
-            const observation = source ? { tier: observationTier, total: reading.max, source } : null;
+            const observation = scale ? { tier: observationTier, total: reading.max, ...scale } : null;
             const at = tiers.findIndex((entry) => entry.tier === observationTier && entry.total === reading.max);
             if (at === -1) tiers.push(observation ?? { tier: observationTier, total: reading.max });
             else if (observation && typeof tiers[at]?.source !== 'string') tiers[at] = observation;
@@ -1519,7 +1529,22 @@ export async function saveTrialRecord(
 }
 
 /**
- * Drop the untagged tier observations of multi-monster combat waves.
+ * Whether a tagged combat reading (or the observation filed from one) summed
+ * fewer monsters than its wave fields — one Badger card of two, one stream slot.
+ * @param {Object|null} reading - A reading or observation
+ * @returns {boolean}
+ */
+export function isPartialWaveReading(reading) {
+    return (
+        typeof reading?.source === 'string' &&
+        Number.isFinite(reading.slots) &&
+        Number.isFinite(reading.waveCount) &&
+        reading.slots < reading.waveCount
+    );
+}
+
+/**
+ * Drop the untagged and partial tier observations of multi-monster combat waves.
  *
  * Before readings said what they summed, a two-Badger wave's 971,520 was read
  * against a one-Badger base and filed as T12 — and the bad observation fed the
@@ -1532,15 +1557,18 @@ export async function saveTrialRecord(
  * @returns {Object|null} The record, the same object when nothing was dropped
  */
 export function scrubWaveObservations(record, isMultiWave) {
+    // A tagged partial observation says it is one itself, whatever the game
+    // data has or has not said about its wave yet
+    const multi = (tile) => isMultiWave(tile.name) || tile.tiers.some((entry) => isPartialWaveReading(entry));
     if (!record?.tiles || typeof isMultiWave !== 'function') return record;
     let changed = false;
     const tiles = {};
     for (const [key, tile] of Object.entries(record.tiles)) {
-        if (tile?.kind !== 'combat' || !Array.isArray(tile.tiers) || !isMultiWave(tile.name)) {
+        if (tile?.kind !== 'combat' || !Array.isArray(tile.tiers) || !multi(tile)) {
             tiles[key] = tile;
             continue;
         }
-        const tiers = tile.tiers.filter((entry) => typeof entry?.source === 'string');
+        const tiers = tile.tiers.filter((entry) => typeof entry?.source === 'string' && !isPartialWaveReading(entry));
         if (tiers.length === tile.tiers.length) {
             tiles[key] = tile;
             continue;

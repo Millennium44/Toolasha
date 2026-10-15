@@ -106,6 +106,7 @@ const {
     adoptPersonalStats,
     loadWorkBases,
     saveWorkBases,
+    scrubWaveObservations,
     loadTrialRoster,
     saveTrialRoster,
     loadTrialStats,
@@ -1453,6 +1454,56 @@ describe('the record cannot be wiped by a failed read or a stale copy', () => {
         expect(await saveTrialRoster({ battleId: 3, roster: {}, at: 3 })).toBe(false);
         expect(game.store.guildTrialsWorkBases.milking.baseWork).toBe(30_000);
         expect(game.store.guildTrialsRoster.battleId).toBe(2);
+    });
+});
+
+describe('a reading of part of a multi-monster wave', () => {
+    const badger = (readings, readingTier = 1) => ({
+        name: 'Trial Badger',
+        kind: 'combat',
+        tier: null,
+        readingTier,
+        readings,
+    });
+
+    test('one Badger card of two is sampled but files no tier observation', () => {
+        const record = recordTileSample(
+            emptyRecord(thisWeek),
+            badger([{ current: 400_000, max: 485_760, source: 'cards', slots: 1, waveCount: 2 }]),
+            now
+        );
+        const entry = record.tiles['combat::trial badger'];
+
+        expect(entry.samples).toHaveLength(1);
+        expect(entry.tiers).toEqual([]);
+    });
+
+    test('the whole wave files an observation that says what it summed', () => {
+        const record = recordTileSample(
+            emptyRecord(thisWeek),
+            badger([{ current: 900_000, max: 971_520, source: 'cards', slots: 2, waveCount: 2 }]),
+            now
+        );
+        expect(record.tiles['combat::trial badger'].tiers).toEqual([
+            { tier: 1, total: 971_520, source: 'cards', slots: 2, waveCount: 2 },
+        ]);
+    });
+
+    test('a stored partial observation is scrubbed, even before the game data can place the wave', () => {
+        const whole = { tier: 1, total: 971_520, source: 'pool', slots: 2, waveCount: 2 };
+        const record = {
+            weekStart: thisWeek,
+            tiles: {
+                'combat::trial badger': {
+                    name: 'Trial Badger',
+                    kind: 'combat',
+                    samples: [],
+                    tiers: [{ tier: 1, total: 485_760, source: 'cards', slots: 1, waveCount: 2 }, whole],
+                },
+            },
+        };
+        const scrubbed = scrubWaveObservations(record, () => false);
+        expect(scrubbed.tiles['combat::trial badger'].tiers).toEqual([whole]);
     });
 });
 

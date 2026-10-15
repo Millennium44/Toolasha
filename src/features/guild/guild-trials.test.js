@@ -5694,6 +5694,32 @@ describe('a two-Badger wave on one Badger’s base', () => {
         expect(analysis.rate * 1000).toBeCloseTo(1_000, 6);
     });
 
+    test('one Badger card of two anchors no ladder, even under a stated tier', () => {
+        // The stream states T1 and the badge agrees, but the only card mounted
+        // is one Badger's 485,760 — half the wave. Anchoring T1 to it priced
+        // the next tier and the pace at half the wave
+        const lone = (current) => ({ current, max: 485_760, source: 'cards', slots: 1, waveCount: 2 });
+        const record = {
+            ...badgerFight([lone(400_000), lone(399_000)]),
+            liveTier: null,
+            liveTierTarget: null,
+        };
+        const analysis = analyseTrial(record, {
+            participants: 47,
+            phase: 'live',
+            workBase: 330_000,
+            liveTierFloor: 1,
+            timeLeftMs: 30 * 60_000,
+            now,
+        });
+
+        expect(analysis.tier).toBe(1);
+        expect(analysis.next).toBeNull();
+        expect(analysis.pace).toBeNull();
+        // Its own rate, on its own scale, still stands
+        expect(analysis.rate * 1000).toBeCloseTo(100, 6);
+    });
+
     test('a reading of part of the wave identifies no tier', () => {
         // One Badger card mounted, or one stream slot named after a refresh
         const lone = (current) => ({ current, max: 485_760, source: 'cards', slots: 1, waveCount: 2 });

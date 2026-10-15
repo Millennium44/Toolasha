@@ -810,8 +810,18 @@ export function analyseTrial(
     // that only climbs, priced downhill by a T9 target filed at T11. The
     // observations still anchor a record with no live bar, which is the case
     // they exist for.
+    //
+    // A reading of part of a wave — one Badger card mounted of two — is on no
+    // ladder at all: its total is one monster's, and anchoring the wave's tier
+    // to it priced the next tier and the pace at half the wave. It still has a
+    // rate of its own (paired only with readings of its own scale), but it
+    // anchors nothing and walks no pace; the stored observations, filed only
+    // from whole readings, stand in.
+    const partialReading = kind === 'combat' && readingMonsters(latest) === null;
     const liveAnchor =
-        !readingSuperseded && Number.isFinite(tier) && Number.isFinite(total) && total > 0 ? { tier, total } : null;
+        !readingSuperseded && !partialReading && Number.isFinite(tier) && Number.isFinite(total) && total > 0
+            ? { tier, total }
+            : null;
     const anchors = liveAnchor ? [liveAnchor] : observations;
 
     // The next tier's size, off the exact ladder first — both kinds' curves are
@@ -843,6 +853,7 @@ export function analyseTrial(
     const paceTimeLeftMs = Number.isFinite(timeLeftMs) && readingStale ? timeLeftMs + readingAgeMs : timeLeftMs;
     const pace =
         !readingSuperseded &&
+        !partialReading &&
         Number.isFinite(tier) &&
         Number.isFinite(remaining) &&
         Number.isFinite(paceTimeLeftMs) &&
