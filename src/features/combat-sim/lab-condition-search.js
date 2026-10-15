@@ -8,9 +8,9 @@
  * player's own kit grants, the buffs the room's monsters cast on themselves or on the player, and a few
  * standard HP/MP readings), then searches in stages:
  *
- * 1. Screen every single-condition replacement for a slot against its current rows, cheaply (few seeds,
- *    few attempts each).
- * 2. Keep the few that beat it, and try AND-pairs among them plus each ANDed with the current rows, on
+ * 1. Screen every single-condition replacement for a slot, and the current rows ANDed with each single,
+ *    against its current rows, cheaply (few seeds, few attempts each).
+ * 2. Keep the top few singles by screen mean (whatever the sign) and try AND-pairs among them plus each ANDed with the current rows, on
  *    their own seeds.
  * 3. Confirm the best on fresh seeds with the threshold search's own rule (a sequential paired t test,
  *    at least `minGain` attempts saved).
@@ -341,10 +341,13 @@ export function combineSurvivors(survivors, currentRows) {
 export function estimateConditionSimsPerFight(candidateCounts, precision) {
     const seeds = precision?.seeds || 4;
     const confirmSeeds = Math.max(CONFIRM_SEEDS_MIN, seeds);
-    const pairEntries = 1 + SCREEN_KEEP + (SCREEN_KEEP * (SCREEN_KEEP - 1)) / 2 + SCREEN_KEEP;
+    // The reference, the survivors, their pairs, each survivor with the current rows, and the screen's best
+    // current-AND-X entries
+    const pairEntries = 1 + SCREEN_KEEP + (SCREEN_KEEP * (SCREEN_KEEP - 1)) / 2 + SCREEN_KEEP + SCREEN_KEEP;
     let total = 0;
     for (const count of candidateCounts) {
-        total += (1 + count + 1) * SCREEN_SEEDS + pairEntries * seeds + 2 * confirmSeeds;
+        // Screen: the current rows, each single, "always", and (at most) the current rows with each single
+        total += (1 + count + 1 + count) * SCREEN_SEEDS + pairEntries * seeds + 2 * confirmSeeds;
     }
     return candidateCounts.length > 0 ? total + 2 * confirmSeeds : 0;
 }
@@ -369,8 +372,11 @@ const scoreOf = (sample) => -(Number(sample?.attempts) || 0);
  *   (summed over the batch's measure calls) would pass the sim cap. Each batch is checked before it is
  *   launched, with room kept for the all-together check, so the cap is a real bound.
  * @param {Function} [params.onProgress] - Called with `{ description }`
- * @returns {Promise<Object>} `{ changes, rejected, combined, reliable, stopped, capped, screened, finalSamples }`;
- *   each change `{ key, slotType, slotIndex, itemHrid, itemName, fromRows, toRows, kind, deltaScore, se }`
+ * @returns {Promise<Object>} `{ changes, bestMeasured, rejected, combined, reliable, stopped, capped, screened,
+ *   finalSamples }`; each change `{ key, slotType, slotIndex, itemHrid, itemName, fromRows, toRows, kind,
+ *   deltaScore, se }`. `bestMeasured` holds, for each slot not changed, its best candidate in the same shape plus
+ *   `stage` ('screen', 'pair' or 'confirm': where the figure comes from); `deltaScore` at or below 0 means the
+ *   current rows measured best
  */
 export async function runConditionSearch({
     slots,
@@ -397,8 +403,27 @@ export async function runConditionSearch({
         return !capped;
     };
     const progress = (description) => onProgress?.({ description });
+    // The best candidate measured for each slot, kept even when it did not clear the bar; a later stage's
+    // figure replaces an earlier one's (it is the less inflated by having been picked)
+    const bestBySlot = new Map();
+    const noteBest = (slot, toRows, kind, diff, stage) => {
+        bestBySlot.set(slot.key, {
+            key: slot.key,
+            slotType: slot.slotType,
+            slotIndex: slot.slotIndex,
+            itemHrid: slot.itemHrid,
+            itemName: slot.itemName,
+            fromRows: slot.rows,
+            toRows,
+            kind,
+            deltaScore: diff.mean,
+            se: diff.se,
+            stage,
+        });
+    };
     const done = (extra = {}) => ({
         changes,
+        bestMeasured: [...bestBySlot.values()].filter((b) => !accepted[b.key]),
         rejected: [],
         combined: null,
         reliable: null,
@@ -421,23 +446,47 @@ export async function runConditionSearch({
         const refScreen = await measure(at(reference), { stream: screenStream, count: SCREEN_SEEDS, stage: 'screen' });
         if (!refScreen || stopped()) break;
         const singles = (candidatesFor(slot, refScreen) || []).map((r) => [r]);
-        const replacements = [...singles, []].filter((rows) => !sameRows(rows, reference));
+        // Every single replacement and "always", plus the current rows ANDed with each single: a condition
+        // that is worse on its own (a buff only the monster has) can still help on top of the current rows
+        const hasCurrent = reference.length > 0 && reference.length < MAX_TRIGGERS;
+        const replacements = [
+            ...[...singles, []]
+                .filter((rows) => !sameRows(rows, reference))
+                .map((rows) => ({
+                    rows,
+                    kind: rows.length === 0 ? 'always' : 'replace',
+                })),
+            ...singles
+                .filter(
+                    ([r]) =>
+                        hasCurrent &&
+                        !reference.some(
+                            (c) => c.dependencyHrid === r.dependencyHrid && c.conditionHrid === r.conditionHrid
+                        )
+                )
+                .map(([r]) => ({ rows: [...reference, r], kind: 'and-current' })),
+        ];
         if (!fits(replacements.length * SCREEN_SEEDS)) break;
         const measured = await Promise.all(
-            replacements.map((rows) =>
-                measure(at(rows), { stream: screenStream, count: SCREEN_SEEDS, stage: 'screen' })
+            replacements.map((entry) =>
+                measure(at(entry.rows), { stream: screenStream, count: SCREEN_SEEDS, stage: 'screen' })
             )
         );
         if (stopped() || measured.some((m) => !m)) break;
         screened += replacements.length;
         const refScores = refScreen.map(scoreOf);
-        const survivors = replacements
-            .map((rows, i) => ({ rows, diff: pairedDiff(measured[i].map(scoreOf), refScores) }))
-            .filter((c) => c.diff.mean > 0)
-            .sort((a, b) => b.diff.mean - a.diff.mean)
+        // Ranked by screen mean whatever the sign: two halves that only help together can each look
+        // slightly worse alone, so a positive mean is not required to earn a place in the pairing stage
+        const ranked = replacements
+            .map((entry, i) => ({ ...entry, diff: pairedDiff(measured[i].map(scoreOf), refScores) }))
+            .sort((a, b) => b.diff.mean - a.diff.mean);
+        if (ranked.length === 0) continue;
+        noteBest(slot, ranked[0].rows, ranked[0].kind, ranked[0].diff, 'screen');
+        const survivors = ranked
+            .filter((c) => c.kind !== 'and-current')
             .slice(0, SCREEN_KEEP)
             .map((c) => c.rows);
-        if (survivors.length === 0) continue;
+        const topAndCurrent = ranked.filter((c) => c.kind === 'and-current').slice(0, SCREEN_KEEP);
 
         // 2. Pairing: the survivors again, their AND-pairs and each with the current rows, on new seeds
         progress(`Conditions: combining for ${slot.itemName}`);
@@ -446,6 +495,13 @@ export async function runConditionSearch({
             ...survivors.map((rows) => ({ rows, kind: rows.length === 0 ? 'always' : 'replace' })),
             ...combineSurvivors(survivors, reference),
         ];
+        // The best current-AND-X entries of the screen compete on their own merit
+        for (const c of topAndCurrent) {
+            const sig = c.rows.map(rowSignature).sort().join('&');
+            if (!entries.some((e) => e.rows.map(rowSignature).sort().join('&') === sig)) {
+                entries.push({ rows: c.rows, kind: 'and-current' });
+            }
+        }
         if (!fits((1 + entries.length) * seeds)) break;
         const [refPair, ...entryPair] = await Promise.all(
             [reference, ...entries.map((e) => e.rows)].map((rows) =>
@@ -460,6 +516,7 @@ export async function runConditionSearch({
             if (!best || diff.mean > best.diff.mean) best = { ...entry, diff };
         });
         // The pick is inflated by having been chosen; half the bar skips hopeless confirmations
+        if (best) noteBest(slot, best.rows, best.kind, best.diff, 'pair');
         if (!best || best.diff.mean < minGain / 2) continue;
 
         // 3. Confirm on fresh seeds, sequentially, as the threshold search does
@@ -485,7 +542,10 @@ export async function runConditionSearch({
             verdict = sequentialVerdict(diff, look, looks.length, minGain);
         }
         if (stopped() || capped) break;
-        if (verdict !== 'accept') continue;
+        if (verdict !== 'accept') {
+            if (diff) noteBest(slot, best.rows, best.kind, diff, 'confirm');
+            continue;
+        }
 
         accepted[slot.key] = best.rows;
         changes.push({
