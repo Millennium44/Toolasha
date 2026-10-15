@@ -95,7 +95,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Buff alerts and Check a swap height
 
-- A community buff restarted with no more than the warning window on it no longer sends a "running out" alert; one topped up past the window still warns as it counts back down. The Lab Sim's checked-swap table now uses the panel's full height instead of stopping at 45%.
+- A community buff restarted with no more than the warning window on it no longer sends a "running out" alert; one topped up past the window still warns as it counts back down. The Lab Sim's checked-swap table now uses the panel's full height instead of stopping at 45%. A Clear button empties the checked swaps (your queued items stay), and the generated Upgrades section collapses from its header on both tabs.
 
 <!-- shipped in 3.69.0 -->
 
