@@ -3036,9 +3036,8 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
     // A worn copy is a base to refine only when this very row takes it off: a swap that replaces the
     // piece is exactly consuming it, and a row about some other slot must leave it on
-    const replaced = candidate ? removedPieces(candidate) : [];
-    const usable = copiesForPricing(baseHrid, { isSelf }).filter(
-        (copy) => !copy.equipped || replaced.some((piece) => piece.hrid === baseHrid && piece.level === copy.level)
+    const usable = markTakenCopies(copiesForPricing(baseHrid, { isSelf }), baseHrid, candidate).filter(
+        (copy) => !copy.equipped || copy.taken
     );
     const copies = usable.filter((copy) => copy.level >= MIN_REFINE_BASE_LEVEL);
 
@@ -3053,7 +3052,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
         const price = materials.cost + Math.max(0, enhance);
         // Compared after resale: a worn base that is refined is not sold, so it costs what it would have
         // fetched on top. That also settles a tie in favor of a spare of the same level.
-        const net = price + (copy.equipped ? sellValue(baseHrid, copy.level) : 0);
+        const net = price + (copy.taken ? sellValue(baseHrid, copy.level) : 0);
         if (!best || net < best.net) best = { price, net, copy, enhance: Math.max(0, enhance) };
     }
 
@@ -3096,7 +3095,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
     const toLevel = Math.max(target, best.copy.level);
     return {
         // A worn piece turned into the star item is not also sold, so its resale credit must not be taken
-        ...(best.copy.equipped ? { consumed: [{ hrid: baseHrid, level: best.copy.level }] } : {}),
+        ...(best.copy.taken ? { consumed: [{ hrid: baseHrid, level: best.copy.level }] } : {}),
         price: best.price,
         source: 'refine',
         enhanceSource: best.enhance > 0 ? describeEnhancementSource(enhancementSweepParams(itemHrid)) : undefined,
@@ -3208,16 +3207,38 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
  */
 function mirrorHeldInputs(itemHrid, { isSelf = true, candidate = null } = {}) {
     if (!itemHrid) return [];
-    const replaced = candidate ? removedPieces(candidate) : [];
-    return copiesForPricing(itemHrid, { isSelf, candidate })
-        .filter(
-            (copy) => !copy.equipped || replaced.some((piece) => piece.hrid === itemHrid && piece.level === copy.level)
-        )
+    return markTakenCopies(copiesForPricing(itemHrid, { isSelf, candidate }), itemHrid, candidate)
+        .filter((copy) => !copy.equipped || copy.taken)
         .map((copy) => ({
             level: copy.level,
-            forfeit: copy.equipped ? sellValue(itemHrid, copy.level) : 0,
-            piece: copy.equipped ? { hrid: itemHrid, level: copy.level } : null,
+            forfeit: copy.taken ? sellValue(itemHrid, copy.level) : 0,
+            piece: copy.taken ? { hrid: itemHrid, level: copy.level } : null,
         }));
+}
+
+/**
+ * Held copies with the ones a row takes off marked `taken`.
+ *
+ * Each piece the row removes is one physical copy: the worn copy at its level when there is one,
+ * otherwise a copy at its level in the bag. The bag case is a loadout that is not the one equipped
+ * right now (the Lab Sim's other fights): its pieces sit in the inventory, and they are still the
+ * pieces the row sells. A taken copy that a route consumes forfeits its resale, so it is never both
+ * spent as a free spare and credited as sold. Copies nobody takes off keep their place.
+ *
+ * @param {Array<Object>} copies - From `copiesForPricing`
+ * @param {string} itemHrid - The item the copies are of
+ * @param {Object|null} candidate - The row being priced
+ * @returns {Array<Object>} The copies, each with `taken`
+ */
+function markTakenCopies(copies, itemHrid, candidate) {
+    const marked = copies.map((copy) => ({ ...copy, taken: false }));
+    const replaced = candidate ? removedPieces(candidate).filter((piece) => piece.hrid === itemHrid) : [];
+    for (const piece of replaced) {
+        const free = (copy) => !copy.taken && copy.level === piece.level;
+        const match = marked.find((copy) => free(copy) && copy.equipped) || marked.find(free);
+        if (match) match.taken = true;
+    }
+    return marked;
 }
 
 /**

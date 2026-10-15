@@ -361,6 +361,23 @@ describe('refined target priced from a held base', () => {
                 expect(calculateUpgradeCost(swap, gameData)).toBeCloseTo(best[5] + 1_000_000, 0);
             });
 
+            test('a replaced piece in the bag (another loadout) is an input and is not also sold', () => {
+                // The swap takes a +6 off a loadout that is not the one equipped, so the copy is in the bag
+                state.swordSell = 5_000_000;
+                state.items = [stack(SWORD, 6)];
+                const swap = { ...sword(7), removedItems: [{ hrid: SWORD, enhancementLevel: 6 }] };
+                const detail = explainUpgradeCost(swap, gameData);
+                expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                expect(detail.credit).toBe(0);
+                expect(calculateUpgradeCost(swap, gameData)).toBeCloseTo(best[5] + 1_000_000, 0);
+
+                // A second copy at that level is a real spare: one is spent, the other is sold
+                state.items = [stack(SWORD, 6, '/item_locations/inventory', 2)];
+                const two = explainUpgradeCost(swap, gameData);
+                expect(two.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                expect(two.credit).toBe(5_000_000);
+            });
+
             test('a spare +6 and a spare +5 together leave only the mirror to buy', () => {
                 state.items = [stack(SWORD, 6), stack(SWORD, 5)];
                 const detail = explainUpgradeCost(sword(7), gameData);
@@ -566,6 +583,17 @@ describe('refined target priced from a held base', () => {
             const detail = explainUpgradeCost(candidate, gameData);
             expect(detail.ladder).toMatchObject({ fromLevel: 7, fromEquipped: false });
             expect(detail.credit).toBe(state.baseSell);
+        });
+
+        test('a replaced base in the bag (another loadout) is refined as it stands, not also sold', () => {
+            state.mirrorPrice = 1_000_000_000;
+            state.items = [stack(BASE, 7)];
+            const candidate = tier(7, { currentHrid: BASE, currentLevel: 7, removedItems: undefined });
+            const detail = explainUpgradeCost(candidate, gameData);
+            expect(detail.buys[0].source).toBe('refine');
+            expect(detail.credit).toBe(0);
+            expect(detail.net).toBe(SHARDS);
+            expect(calculateUpgradeCost(candidate, gameData)).toBe(SHARDS);
         });
 
         test('a mirrored base beats refining the worn one when the worn base sells for enough', () => {
