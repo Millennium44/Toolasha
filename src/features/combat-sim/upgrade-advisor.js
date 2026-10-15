@@ -6049,16 +6049,25 @@ export function conflictKeys(candidate) {
     // Two coffees of one buff family cannot both be up, whichever slots they
     // would sit in — the game's own conflict rule, keyed the same way
     if (candidate.type === 'drink') return [`drink:${candidate.buffFamily}`];
-    // A re-ordering and anything that changes which abilities are on the bar (a swap, a level)
-    // cannot both be taken: the order names the exact set it applies to
-    if (candidate.abilityOrder) return ['ability_order', ...candidate.order.map((hrid) => `ability:${hrid}`)];
+    // A re-ordering and anything that changes WHICH abilities are on the bar cannot both be taken: the
+    // order names the exact set it applies to. A level change keeps the set (levelling follows the
+    // ability, not its slot), so it combines with an order; a swap of an ordered ability, or a fill of
+    // an ordinary slot, does not.
+    if (candidate.abilityOrder) {
+        return [
+            'ability_order',
+            ...candidate.order.map((hrid) => `ability_out:${hrid}`),
+            ...[1, 2, 3, 4].map((index) => `ability_fill:ability_${index}`),
+        ];
+    }
     if (candidate.slot?.startsWith('ability_')) {
         const keys = [`ability:${candidate.upgradeHrid}`];
         // `replacesHrid` is absent on a free-slot fill, which displaces nothing
         // and so has only the one end
         if (candidate.replacesHrid && candidate.replacesHrid !== candidate.upgradeHrid) {
-            keys.push(`ability:${candidate.replacesHrid}`);
+            keys.push(`ability:${candidate.replacesHrid}`, `ability_out:${candidate.replacesHrid}`);
         }
+        if (candidate.fillsFreeSlot) keys.push(`ability_fill:${candidate.slot}`);
         return keys;
     }
 

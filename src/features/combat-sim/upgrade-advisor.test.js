@@ -2785,7 +2785,7 @@ describe('what cannot be bought together', () => {
         const fill = { type: 'ability_swap', slot: 'ability_2', fillsFreeSlot: true, upgradeHrid: FIREBALL };
         const swap = { type: 'ability_swap', slot: 'ability_1', replacesHrid: SMACK, upgradeHrid: FIREBALL };
 
-        expect(conflictKeys(fill)).toEqual([`ability:${FIREBALL}`]);
+        expect(conflictKeys(fill)).toEqual([`ability:${FIREBALL}`, 'ability_fill:ability_2']);
         expect(sharesConflict(fill, swap)).toBe(true);
     });
 
@@ -7485,9 +7485,15 @@ describe('ability order candidates', () => {
         expect(candidate.noPurchase).toBe(true);
     });
 
-    test('an order conflicts with changes to the abilities it names', () => {
-        const [candidate] = generateCandidates(loadout([AURA, A, B]), orderGameData(), 'ability_order');
-        expect(conflictKeys(candidate)).toEqual(expect.arrayContaining([`ability:${A}`, `ability:${B}`]));
+    test('an order conflicts with swapping out or filling around the abilities it names, not with levelling them', () => {
+        const [order] = generateCandidates(loadout([AURA, A, B]), orderGameData(), 'ability_order');
+        const shares = (x, y) => conflictKeys(x).some((key) => conflictKeys(y).includes(key));
+        const levelA = { type: 'ability_level', slot: 'ability_1', replacesHrid: A, upgradeHrid: A };
+        const swapOutA = { type: 'ability_swap', slot: 'ability_1', replacesHrid: A, upgradeHrid: '/abilities/other' };
+        const fill = { type: 'ability_swap', slot: 'ability_3', fillsFreeSlot: true, upgradeHrid: '/abilities/other' };
+        expect(shares(order, levelA)).toBe(false);
+        expect(shares(order, swapOutA)).toBe(true);
+        expect(shares(order, fill)).toBe(true);
     });
 
     test('an analysis simulates each order and ranks the better one', async () => {
