@@ -9919,6 +9919,13 @@ class CombatSimUI {
                 this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
                     box.checked = wanted.has(box.getAttribute('data-upgrade-mode'));
                 });
+            } else if (Array.isArray(saved)) {
+                // A saved set naming nothing offered here gets the defaults put back explicitly: on a live
+                // pull the boxes still show the pre-pull picks, which the next change would save
+                const defaults = new Set(UPGRADE_MODES.filter((mode) => mode.defaultOn).map((mode) => mode.key));
+                this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+                    box.checked = defaults.has(box.getAttribute('data-upgrade-mode'));
+                });
             }
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore upgrade modes:', error);
