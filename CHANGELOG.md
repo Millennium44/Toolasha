@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: ability order in the upgrade analyzer
+
+- The Combat Sim's upgrade analyzer has an "Ability order" option that tries every order of your ordinary abilities (first slot fixed, always-ready spells last) and ranks them on its usual columns, free.
+
 ### Lab Sim: Export CSV beside Upgrades
 
 - The Upgrade and Skilling tabs' Export CSV button sits in the Upgrades header row instead of a row of its own above the table.
