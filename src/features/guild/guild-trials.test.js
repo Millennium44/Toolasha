@@ -5720,6 +5720,23 @@ describe('a two-Badger wave on one Badger’s base', () => {
         expect(analysis.rate * 1000).toBeCloseTo(100, 6);
     });
 
+    test('one Badger card tagged before the game data arrived is still read as part of the wave', () => {
+        // `cards`, one slot, no `waveCount` of its own: the caller's game-data
+        // count says the wave is two, so it anchors and identifies nothing
+        const early = (current) => ({ current, max: 485_760, source: 'cards', slots: 1 });
+        const record = { ...badgerFight([early(400_000), early(399_000)]), liveTier: null, liveTierTarget: null };
+        const options = { participants: 47, phase: 'live', workBase: 330_000, timeLeftMs: 30 * 60_000, now };
+
+        const floored = analyseTrial(record, { ...options, liveTierFloor: 1, waveCount: 2 });
+        expect(floored.tier).toBe(1);
+        expect(floored.next).toBeNull();
+        expect(floored.pace).toBeNull();
+
+        // With nothing stating a tier, the half-wave identifies none either
+        const bare = analyseTrial(record, { ...options, waveCount: 2 });
+        expect(bare.tierSource).not.toBe('work-ladder');
+    });
+
     test('a reading of part of the wave identifies no tier', () => {
         // One Badger card mounted, or one stream slot named after a refresh
         const lone = (current) => ({ current, max: 485_760, source: 'cards', slots: 1, waveCount: 2 });

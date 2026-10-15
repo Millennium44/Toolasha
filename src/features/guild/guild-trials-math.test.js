@@ -901,6 +901,29 @@ describe('combatDamageRate', () => {
         expect(measured.boundaries).toBe(0);
     });
 
+    test('on one stated scale, a rise of several tiers is a lower-bound clear, not a rescale', () => {
+        // Both Badger cards at T1, then at T3 after a fast clear: the tags say
+        // it is one scale, so the rise is tiers cleared, counted as a lower bound
+        const wave = (t, current, max) => ({ t, current, max, scale: 'cards:2' });
+        const t1 = 971_520;
+        const t3 = (t1 * 130) / 110;
+        const measured = combatDamageRate([wave(0, 100_000, t1), wave(30_000, t3 - 50_000, t3)]);
+
+        expect(measured.rescaled).toBe(0);
+        expect(measured.boundaries).toBe(1);
+        expect(measured.multiTier).toBe(true);
+        expect(measured.damage).toBe(150_000);
+    });
+
+    test('the same rise untagged is still a change of scale', () => {
+        const t1 = 971_520;
+        const t3 = (t1 * 130) / 110;
+        const measured = combatDamageRate([at(0, 100_000, t1), at(30_000, t3 - 50_000, t3)]);
+
+        expect(measured.rescaled).toBe(1);
+        expect(measured.damage).toBe(0);
+    });
+
     test('a falling maximum is never a clear, even across a short gap and a fitted growth', () => {
         const measured = combatDamageRate([at(0, 600_000, 669_500), at(5_000, 300_000, 618_000)], {
             growthPerTier: 669_500 / 618_000,

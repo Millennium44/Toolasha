@@ -375,9 +375,9 @@ export function readingScale(reading, waveCount = null) {
  * @param {Object|null} reading - The reading the tier is read off, or null for a skilling bar
  * @returns {number|null} The base on the reading's scale, or null when none applies
  */
-export function waveLadderBase(base, reading) {
+export function waveLadderBase(base, reading, waveCount = null) {
     if (!Number.isFinite(base) || base <= 0) return null;
-    const monsters = readingMonsters(reading);
+    const monsters = readingMonsters(reading, waveCount);
     return monsters === null ? null : base * monsters;
 }
 
@@ -385,12 +385,19 @@ export function waveLadderBase(base, reading) {
  * How many monsters a combat reading stands for: 1 for an untagged reading,
  * the wave's count for one that summed the whole wave, null for a partial one.
  *
+ * A reading tagged before the game data arrived carries no `waveCount`, and
+ * reads against the count known now: one Badger card filed then is still one
+ * of two.
+ *
  * @param {Object|null} reading - A stored reading
+ * @param {number|null} [waveCount] - The wave's monster count, for a reading that lacks one
  * @returns {number|null}
  */
-export function readingMonsters(reading) {
+export function readingMonsters(reading, waveCount = null) {
     if (typeof reading?.source !== 'string') return 1;
-    const count = Number.isFinite(reading.waveCount) && reading.waveCount > 0 ? reading.waveCount : null;
+    const stated = Number.isFinite(reading.waveCount) && reading.waveCount > 0 ? reading.waveCount : null;
+    const known = Number.isFinite(waveCount) && waveCount > 0 ? waveCount : null;
+    const count = stated ?? known;
     const slots = Number.isFinite(reading.slots) && reading.slots > 0 ? reading.slots : null;
     // An encounter the game data does not describe counts what was summed
     const monsters = count ?? slots ?? 1;
@@ -432,6 +439,7 @@ export function analyseTrial(
         liveTierFloor = null,
         characterId = null,
         now = null,
+        waveCount = null,
     } = {}
 ) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
@@ -489,6 +497,18 @@ export function analyseTrial(
     // bar's target is the one thing the In Progress card does carry
     const latest = index === null ? null : samples[samples.length - 1]?.readings?.[index] || null;
     const total = Number.isFinite(latest?.max) ? latest.max : null;
+    // The wave's size, from whichever stored reading has said it, else the
+    // game data the caller resolved — a reading tagged before that data
+    // arrived carries none of its own
+    const statedWave =
+        index === null
+            ? null
+            : (samples
+                  .map((sample) => sample?.readings?.[index]?.waveCount)
+                  .reverse()
+                  .find((count) => Number.isFinite(count)) ?? null);
+    const knownWave = statedWave ?? (Number.isFinite(waveCount) && waveCount > 0 ? waveCount : null);
+    const latestMonsters = kind === 'combat' ? readingMonsters(latest, knownWave) : 1;
     const remaining = latest ? (direction === -1 ? latest.current : Math.max(0, latest.max - latest.current)) : null;
 
     // The tier being fought, which is what a rate, a pace and a forecast are
@@ -578,9 +598,7 @@ export function analyseTrial(
     // Only a single monster's second bar: on a folded wave it is every
     // monster's mana summed, which no one-monster base describes
     const combatPoolTarget =
-        kind === 'combat' &&
-        readingMonsters(latest) === 1 &&
-        Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
+        kind === 'combat' && latestMonsters === 1 && Number.isFinite(samples[samples.length - 1]?.readings?.[1]?.max)
             ? samples[samples.length - 1].readings[1].max
             : null;
     // The base is one monster's; the bar may be the whole wave's. Two Trial
@@ -588,7 +606,7 @@ export function analyseTrial(
     // one-Badger base, and the combat inverse put that ratio of two at T12 —
     // "On pace for 12 tiers", "Banked 11" — on a party that had barely cleared
     // one. See {@link waveLadderBase}.
-    const bossLadderBase = waveLadderBase(ladderBase, kind === 'combat' ? latest : null);
+    const bossLadderBase = waveLadderBase(ladderBase, kind === 'combat' ? latest : null, knownWave);
     const fromWorkLadder = !completed
         ? ((combatPoolTarget !== null
               ? tierFromWorkTarget({ target: combatPoolTarget, baseWork: ladderBase, participants: 0, kind })
@@ -757,11 +775,7 @@ export function analyseTrial(
         // the newest reading's remaining health needs a rate on that scale —
         // paired across the two, every tab switch was a phantom tier clear
         // The wave's size, from whichever reading has said it
-        const statedWave = samples
-            .map((sample) => sample?.readings?.[index]?.waveCount)
-            .reverse()
-            .find((count) => Number.isFinite(count));
-        const scaleOf = (reading) => readingScale(reading, statedWave ?? null);
+        const scaleOf = (reading) => readingScale(reading, knownWave);
         const latestScale = scaleOf(latest);
         const measured = combatDamageRate(
             samples
@@ -770,7 +784,9 @@ export function analyseTrial(
                     t: sample?.t,
                     current: sample?.readings?.[index]?.current,
                     max: sample?.readings?.[index]?.max,
-                    scale: latestScale,
+                    // An untagged reading on a multi-monster wave is on no
+                    // stated scale, and keeps the rescale guard
+                    scale: latestScale === 'card' ? null : latestScale,
                 })),
             { growthPerTier }
         );
@@ -817,7 +833,7 @@ export function analyseTrial(
     // rate of its own (paired only with readings of its own scale), but it
     // anchors nothing and walks no pace; the stored observations, filed only
     // from whole readings, stand in.
-    const partialReading = kind === 'combat' && readingMonsters(latest) === null;
+    const partialReading = kind === 'combat' && latestMonsters === null;
     const liveAnchor =
         !readingSuperseded && !partialReading && Number.isFinite(tier) && Number.isFinite(total) && total > 0
             ? { tier, total }
@@ -3078,7 +3094,7 @@ class GuildTrials {
      */
     _scrubRecord(record) {
         try {
-            return scrubWaveObservations(record, (name) => (this._waveCount(name) ?? 1) > 1);
+            return scrubWaveObservations(record, (name) => this._waveCount(name));
         } catch (error) {
             console.error('[GuildTrials] Scrubbing tier observations failed:', error);
             return record;
@@ -3772,6 +3788,7 @@ class GuildTrials {
                             liveTierFloor,
                             characterId: this.characterId,
                             now,
+                            waveCount: record?.kind === 'combat' ? this._waveCount(record.name) : null,
                         })
                     );
                 }
@@ -5474,14 +5491,20 @@ class GuildTrials {
         // needs no participant count; the first bar (boss health, participant-
         // scaled) is the fallback anchor, as in `analyseTrial`
         const poolTarget =
-            kind === 'combat' && readingMonsters(tile.readings?.[0]) === 1 && Number.isFinite(tile.readings?.[1]?.max)
+            kind === 'combat' &&
+            readingMonsters(tile.readings?.[0], this._waveCount(tile.name)) === 1 &&
+            Number.isFinite(tile.readings?.[1]?.max)
                 ? tile.readings[1].max
                 : null;
         const fromPool =
             poolTarget !== null ? tierFromWorkTarget({ target: poolTarget, baseWork, participants: 0, kind }) : null;
         // A grafted wave is read against the whole wave's base, as in
         // `analyseTrial`; a partial one identifies nothing
-        const bossBase = waveLadderBase(baseWork, kind === 'combat' ? tile.readings?.[0] : null);
+        const bossBase = waveLadderBase(
+            baseWork,
+            kind === 'combat' ? tile.readings?.[0] : null,
+            kind === 'combat' ? this._waveCount(tile.name) : null
+        );
         return (
             fromPool ?? tierFromWorkTarget({ target: tile.readings?.[0]?.max, baseWork: bossBase, participants, kind })
         );
@@ -5529,7 +5552,7 @@ class GuildTrials {
             // skilling bar) is participant-scaled and needs the count.
             // A folded wave's second bar is every monster's summed, and teaches nothing
             const poolTarget =
-                kind === 'combat' && readingMonsters(lastSample?.readings?.[0]) === 1
+                kind === 'combat' && readingMonsters(lastSample?.readings?.[0], this._waveCount(tile.name)) === 1
                     ? Number(lastSample?.readings?.[1]?.max)
                     : NaN;
             const usingPool = Number.isFinite(poolTarget) && poolTarget > 0;

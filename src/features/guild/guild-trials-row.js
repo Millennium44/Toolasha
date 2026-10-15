@@ -105,7 +105,11 @@ registerRow({
         // at the rate that was measured. With the clock, as the card has it: a
         // reading nothing is refreshing times nothing, and a fresher tier rung
         // outranks it, so the tile and the card say the same
-        const analysis = analyseTrial(tile, { characterId: guildTrials?.characterId ?? null, now });
+        const analysis = analyseTrial(tile, {
+            characterId: guildTrials?.characterId ?? null,
+            now,
+            waveCount: tile?.kind === 'combat' ? (guildTrials?._waveCount?.(tile.name) ?? null) : null,
+        });
         const paused = !stale && analysis.readingStale === true;
         const tier = Number.isFinite(analysis.tier) ? analysis.tier : null;
         const level = tier === null ? null : levelFromTier(tier);

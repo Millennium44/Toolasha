@@ -1502,8 +1502,40 @@ describe('a reading of part of a multi-monster wave', () => {
                 },
             },
         };
-        const scrubbed = scrubWaveObservations(record, () => false);
+        const scrubbed = scrubWaveObservations(record, () => null);
         expect(scrubbed.tiles['combat::trial badger'].tiers).toEqual([whole]);
+    });
+
+    test('a one-card observation filed before the game data arrived is scrubbed once it has', () => {
+        // Tagged `cards`, one slot, and no `waveCount`: the card was sampled
+        // before init_client_data could say a Badger wave is two
+        const early = { tier: 1, total: 485_760, source: 'cards', slots: 1 };
+        const whole = { tier: 1, total: 971_520, source: 'cards', slots: 2, waveCount: 2 };
+        const record = {
+            weekStart: thisWeek,
+            tiles: {
+                'combat::trial badger': {
+                    name: 'Trial Badger',
+                    kind: 'combat',
+                    samples: [],
+                    tiers: [early, whole],
+                },
+                'combat::trial chameleon': {
+                    name: 'Trial Chameleon',
+                    kind: 'combat',
+                    samples: [],
+                    tiers: [{ tier: 1, total: 572_000, source: 'cards', slots: 1 }],
+                },
+            },
+        };
+
+        // No game data yet: nothing can say it is partial, so it stays
+        expect(scrubWaveObservations(record, () => null)).toBe(record);
+
+        const counts = { 'Trial Badger': 2, 'Trial Chameleon': 1 };
+        const scrubbed = scrubWaveObservations(record, (name) => counts[name] ?? null);
+        expect(scrubbed.tiles['combat::trial badger'].tiers).toEqual([whole]);
+        expect(scrubbed.tiles['combat::trial chameleon'].tiers).toHaveLength(1);
     });
 });
 
