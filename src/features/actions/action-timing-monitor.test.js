@@ -172,6 +172,22 @@ describe('measuring the bar', () => {
         warn.mockRestore();
     });
 
+    test('a combat action with a long full bar is not an anomaly and does not warn', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        dataManager.getCurrentActions.mockReturnValue([{ actionHrid: '/actions/combat/planet_of_the_eyes' }]);
+        dataManager.getActionDetails.mockReturnValue({ name: 'Planet Of The Eyes', type: '/action_types/combat' });
+        const bar = mountBar(1);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        runAction(bar, { animatedMs: 1000, deadMs: 30000 });
+
+        expect(monitor.anomalies).toHaveLength(0);
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
     test('a stall whose queue moved on records no speed context from the next action', async () => {
         const { default: dataManager } = await import('../../core/data-manager.js');
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

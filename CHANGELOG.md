@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Action Timing Monitor: combat left out
+
+- Combat no longer triggers "bar sat full for…" warnings or report entries: a fight's bar doesn't run to a fixed time, so those were noise. Saved combat entries are dropped.
+
 ### Panel Size Memory: no longer grabs the action bar
 
 - Panel Size Memory could save the action progress bar's fill as a "panel size" when you clicked mid-action, then keep pulling the bar back to that width; it now only remembers real drags, ignores progress bars, and drops such a saved entry.

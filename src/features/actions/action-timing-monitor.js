@@ -35,6 +35,8 @@ import { runningAction } from '../../utils/combat-actions.js';
 const SETTING_KEY = 'actionTiming_monitor';
 const STORE_NAME = 'settings';
 const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
+/** A combat bar follows the fight, not a fixed timer, so its full-bar waits are not anomalies either */
+const COMBAT_ACTION_TYPE = '/action_types/combat';
 /** Unscoped storage key; the character id is appended, per the `${base}_${id}` idiom */
 const RECORD_KEY_BASE = 'actionTimingLog';
 
@@ -294,7 +296,7 @@ class ActionTimingMonitor {
         const speedIsLive = !this.startedAction || sameEntry(this.startedAction, live);
         // The labyrinth keeps its bar full while a room is fought or skilled;
         // that is the game's normal behavior, not a timing anomaly.
-        if (action?.type === LABYRINTH_ACTION_TYPE) return;
+        if (action?.type === LABYRINTH_ACTION_TYPE || action?.type === COMBAT_ACTION_TYPE) return;
         const record = {
             at: Date.now(),
             actionHrid: action?.actionHrid ?? null,
@@ -441,7 +443,10 @@ class ActionTimingMonitor {
      */
     _prune(anomalies) {
         const cutoff = Date.now() - MAX_RECORD_AGE_MS;
-        const kept = anomalies.filter((record) => Number.isFinite(record?.at) && record.at >= cutoff);
+        const kept = anomalies.filter(
+            (record) =>
+                Number.isFinite(record?.at) && record.at >= cutoff && record.actionTypeHrid !== COMBAT_ACTION_TYPE
+        );
         return kept.length > MAX_ANOMALIES ? kept.slice(-MAX_ANOMALIES) : kept;
     }
 
