@@ -13,6 +13,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A protection item with no market quote shows as "no price" in the enhancing panel and marks a tracked session unpriced, instead of counting at its NPC vendor price.
 - A scroll whose net is exactly 0 reads break-even, not "−0 loss", and a Tune triggers section left open relists loadouts when you come back to the Upgrade tab.
 
+### Lab Sim: trigger tuning shows its best try
+
+- Tune triggers now always names the best setting it measured for each loadout, with its margin, even when nothing beat the current setting (labeled as not a recommendation).
+- The condition search always pairs its top three conditions and tries "current trigger AND X" directly, so setups like Toughness inactive AND Mimic's Frenzy active can be found.
+
 ### Market History: follows the item under a game window
 
 - The History chart now switches to the item the popout marketplace opens even while a game window is still open underneath it; before, it stayed on the previous item until that window closed.
