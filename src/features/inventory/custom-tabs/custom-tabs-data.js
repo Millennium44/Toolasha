@@ -738,6 +738,9 @@ registerSyncMerge({
     merge: (local, incoming) => mergeConfigs(local, incoming),
     localWinsOnPull: true,
     label: 'Custom inventory tabs',
+    // The panel re-reads its config on a pull (`CustomTabsUI._adoptPulledConfig`) and the bulk-sell assistant loads
+    // it fresh each time, so the held copy is replaced before any save can write it back over the pulled one
+    liveSafe: true,
 });
 
 /**
@@ -810,6 +813,18 @@ export async function loadConfig(characterId) {
     config.tabs = normalizeTabs(config.tabs);
     record.set(config);
     return config;
+}
+
+/**
+ * Whether a sync pull wrote this character's tab config.
+ * @param {string} characterId - The character whose config is held
+ * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+ * @returns {boolean} True when the pulled keys include `<characterId>_inventoryTabs_config`
+ */
+export function pullWroteConfig(characterId, written) {
+    if (!characterId) return false;
+    const keys = written?.[STORE];
+    return Array.isArray(keys) && keys.includes(getStorageKey(characterId));
 }
 
 /**

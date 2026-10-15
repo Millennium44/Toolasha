@@ -117,6 +117,9 @@ describe('the pull report', () => {
         expect(stripCharacterSuffix('watchlist_30404')).toBe('watchlist');
         expect(stripCharacterSuffix('watchlist_default')).toBe('watchlist');
         expect(stripCharacterSuffix('watchlist')).toBe('watchlist');
+        // Records that lead with the character id
+        expect(stripCharacterSuffix('603281_inventoryTabs_config')).toBe('inventoryTabs_config');
+        expect(stripCharacterSuffix('guildMemberSkills_default')).toBe('guildMemberSkills');
         expect(describeSyncKey('settings', 'nothing_1').registered).toBe(false);
     });
 });

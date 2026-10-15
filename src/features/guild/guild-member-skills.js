@@ -38,7 +38,7 @@ import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import { fillProfileCommand, findChatInput, openPlayerProfile } from '../../utils/profile-command.js';
 import { GAME } from '../../utils/selectors.js';
-import { createPersistedRecord, mergeMaps } from '../../utils/persisted-record.js';
+import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
@@ -277,6 +277,9 @@ registerSyncMerge({
     prefix: `${KEY_PREFIX}_`,
     merge: mergeMemberSkillCaptures,
     label: 'Guild member skills',
+    // The in-memory captures are re-read by the record's pull hook (`_adoptPulledCaptures`), and every save folds the
+    // stored map under memory newest-capture-wins, so a pulled capture is never written back over
+    liveSafe: true,
 });
 
 /**
@@ -470,13 +473,18 @@ class GuildMemberSkills {
     _recordForGuild() {
         const key = memberSkillsStorageKey(this.guildName);
         if (!this.record || this.recordKey !== key) {
+            // The old guild's handle would otherwise stay in the pull registry for the life of the page
+            this.record?.release?.();
             this.record = createPersistedRecord({
                 base: key,
                 store: STORE_NAME,
                 scoped: false,
                 empty: () => ({}),
-                merge: mergeMaps(),
+                // Newest capture per member wins, as the sync's own fold does: a pull can land a fresher capture
+                // than memory holds, and a save must not put the older one back over it
+                merge: mergeMemberSkillCaptures,
                 label: 'GuildMemberSkills',
+                onPulled: (pulled) => this._adoptPulledCaptures(pulled),
             });
             this.recordKey = key;
         }
@@ -554,6 +562,19 @@ class GuildMemberSkills {
         this.forget();
         this.guildName = guildName || null;
         await this.load();
+    }
+
+    /**
+     * A sync pull wrote this guild's captures: fold what it brought into memory and tell the listeners.
+     * Skipped when the record was remade for another guild while the pull landed.
+     * @param {Object} pulled - The record the pull was announced to
+     * @returns {Promise<void>}
+     */
+    async _adoptPulledCaptures(pulled) {
+        if (pulled !== this.record) return;
+        const before = JSON.stringify(this.captures);
+        if (!(await pulled.load()) || pulled !== this.record) return;
+        if (JSON.stringify(this.captures) !== before) this._notifyChanged();
     }
 
     /**
