@@ -2548,7 +2548,7 @@ describe('the remembered upgrade analysis across a character switch', () => {
             expect(restored).toEqual(fresh);
         });
 
-        test('a scroll that loses gold keeps its Score but dims it and says why; Gain is per hour', async () => {
+        test('a scroll that loses gold keeps its Score and says why on hover; Gain is per hour', async () => {
             const rows = [
                 {
                     ...row('Add Scroll of Attack Speed (+15%)', { cost: null, type: 'scroll', profitGain: 100_000 }),
@@ -2568,7 +2568,7 @@ describe('the remembered upgrade analysis across a character switch', () => {
             const loss = byName('Attack Speed').querySelector('[data-scroll-score]');
             expect(loss.hasAttribute('data-scroll-loss')).toBe(true);
             expect(loss.getAttribute('title')).toContain('not for gold');
-            expect(loss.style.opacity).toBe('0.45');
+            expect(loss.style.opacity).toBe('');
             const win = byName('Combat Drop').querySelector('[data-scroll-score]');
             expect(win.hasAttribute('data-scroll-loss')).toBe(false);
             expect(byName('Combat Drop').textContent).toContain('/hr');

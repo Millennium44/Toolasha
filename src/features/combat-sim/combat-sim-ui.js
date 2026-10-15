@@ -12120,7 +12120,7 @@ class CombatSimUI {
                 <td style="${tdStyle}" data-scroll-gold-per="profit">${goldPerCell(r, 'profit')}</td>
                 <td style="${tdStyle}">${p.gainHourText}</td>
                 <td style="${tdStyle} color:${netColor};" title="${p.verdict}">${p.worthIt ? '+' : '−'}${formatKMB(Math.abs(p.netPerHour))}${p.worthIt ? '' : ' loss'}</td>
-                <td style="${tdStyle}${color ? ` color:${color};` : ''}${p.worthIt ? '' : ' opacity:0.45;'}" data-scroll-score${
+                <td style="${tdStyle}${color ? ` color:${color};` : ''}" data-scroll-score${
                     p.worthIt ? '' : ` data-scroll-loss title="${lossScoreTitle}"`
                 }>${formatScore(r.score)}</td>
             </tr>
