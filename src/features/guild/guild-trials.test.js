@@ -5802,6 +5802,32 @@ describe('a two-Badger wave on one Badger’s base', () => {
         // One Badger's 1,000 over ten seconds; nothing paired across the switch
         expect(analysis.rate * 1000).toBeCloseTo(100, 6);
     });
+
+    test('a one-monster trial’s card bar and stream graft stay one scale across a tab switch', () => {
+        // Trial Chameleon is one boss: its In Progress bar and the stream's pool
+        // grafted onto the Trials card are the same health, as they were paired
+        // before readings were tagged. A tab switch must not reset the rate
+        const max = 1_000_000;
+        const card = (current) => ({ current, max, source: 'cards', slots: 1, waveCount: 1 });
+        const graft = (current) => ({ current, max, source: 'pool', slots: 1, waveCount: 1, tier: 3 });
+        const record = {
+            name: 'Trial Chameleon',
+            kind: 'combat',
+            tier: null,
+            liveTier: null,
+            liveTierTarget: null,
+            samples: [
+                { t: now - 20_000, readings: [card(900_000)] },
+                { t: now - 10_000, readings: [card(890_000)] },
+                { t: now, readings: [graft(880_000)] },
+            ],
+            tiers: [],
+        };
+        const analysis = analyseTrial(record, { participants: 20, phase: 'live', liveTierFloor: 3, now, waveCount: 1 });
+
+        // 20,000 over twenty seconds, the switch included
+        expect(analysis.rate * 1000).toBeCloseTo(1_000, 6);
+    });
 });
 
 describe('a trial that banked nothing', () => {
