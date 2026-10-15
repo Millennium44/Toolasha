@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: party parry stacks
+
+- Each party member holding a Regal Sword now gets their own parry roll against an incoming attack (two swords ≈ 15.4%, not 8%), matching the game's wording; before, the sim rolled for one random sword holder only.
+
 ### Lab Sim: collapsible checked swaps
 
 - The Lab Sim's Checked swaps results collapse from their heading like Upgrades (remembered per tab), and a kept piece worth nothing no longer prints "resale of 0"; an unpriced one says no price.
