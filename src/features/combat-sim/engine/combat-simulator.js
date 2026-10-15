@@ -826,16 +826,23 @@ class CombatSimulator {
         }
     }
 
-    checkParry(targets) {
-        const parryUnits = targets.filter(
+    /**
+     * Parry stacks: every living unit with parry > 0 gets its own roll against an
+     * incoming attack, in random order without replacement, and the first success
+     * parries (and retaliates). Two 8% holders therefore parry 1 - 0.92^2, not 8%.
+     *
+     * @param {Array} targets - Units that could parry the attack
+     * @param {number} [maxAttempts=Infinity] - Cap on distinct units that may roll (guild trials use 5)
+     * @returns {Object|undefined} The parrying unit, or undefined
+     */
+    checkParry(targets, maxAttempts = Infinity) {
+        const eligible = targets.filter(
             (unit) => unit && unit.combatDetails.currentHitpoints > 0 && unit.combatDetails.combatStats.parry > 0
         );
-        if (parryUnits.length <= 0) {
-            return undefined;
-        }
-        const randomIndex = Math.floor(random() * parryUnits.length);
-        if (parryUnits[randomIndex].combatDetails.combatStats.parry > random()) {
-            return parryUnits[randomIndex];
+        for (let attempt = 0; attempt < maxAttempts && eligible.length; attempt++) {
+            const index = Math.floor(random() * eligible.length);
+            const [unit] = eligible.splice(index, 1);
+            if (random() < unit.combatDetails.combatStats.parry) return unit;
         }
         return undefined;
     }

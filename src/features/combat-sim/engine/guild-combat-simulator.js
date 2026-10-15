@@ -4,7 +4,7 @@ import Monster from './monster.js';
 import Player from './player.js';
 import { getGameData } from './game-data.js';
 import { buildPlayerExtraBuffs } from './extra-buffs.js';
-import { random, seedSimRng, syncEncounterRng } from './rng.js';
+import { seedSimRng, syncEncounterRng } from './rng.js';
 import { resetSimWarnings, getSimWarnings } from './sim-warnings.js';
 import CombatStartEvent from './events/combat-start-event.js';
 import EnrageTickEvent from './events/enrage-tick-event.js';
@@ -179,16 +179,7 @@ export class GuildCombatSimulator extends CombatSimulator {
 
     /** At most five distinct eligible allies can try to parry an incoming attack. */
     checkParry(targets) {
-        if (!targets.some((target) => target?.isPlayer)) return super.checkParry(targets);
-        const eligible = targets.filter(
-            (p) => p?.combatDetails.currentHitpoints > 0 && p.combatDetails.combatStats.parry > 0
-        );
-        for (let attempt = 0; attempt < 5 && eligible.length; attempt++) {
-            const index = Math.floor(random() * eligible.length);
-            const [player] = eligible.splice(index, 1);
-            if (random() < player.combatDetails.combatStats.parry) return player;
-        }
-        return undefined;
+        return super.checkParry(targets, targets.some((target) => target?.isPlayer) ? 5 : Infinity);
     }
 
     checkTriggers() {
