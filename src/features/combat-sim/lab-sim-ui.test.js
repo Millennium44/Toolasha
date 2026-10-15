@@ -1259,7 +1259,10 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         }
     });
 
-    test('a switch mid-restore does not restore half of one character over half of another', async () => {
+    test('a switch mid-restore puts neither character’s selection on the controls', async () => {
+        // The arriving character's own restore fills a rebuilt panel; the departing one's must not land on it
+        setScope('current');
+        setSource('sim_max');
         storage.values = {
             labSimUpgradeScope_me: { mode: 'all', monsters: [] },
             labSimUpgradeLevelSource_me: 'skip',
@@ -1275,9 +1278,9 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
             storage.values = {};
         }
 
-        // Both halves are this character's, not one of each
-        expect(ui.panel.querySelector('#mwi-labsim-upgrade-scope').value).toBe('all');
-        expect(source().value).toBe('skip');
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-scope').value).toBe('current');
+        expect(source().value).toBe('sim_max');
+        expect(ui._storedValues.differs('labSimUpgradeScope_me', { mode: 'all', monsters: [] })).toBe(true);
     });
 
     test('the choice sits beside Targets, with all three levels a fight has', () => {
