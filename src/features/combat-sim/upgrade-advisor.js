@@ -7995,7 +7995,8 @@ export function checkedAbilityAppliesToDTO(candidate, dto, gameData = null) {
         return (
             current.length === candidate.order.length &&
             [...current].sort().join('|') === [...candidate.order].sort().join('|') &&
-            current.join('|') !== candidate.order.join('|')
+            // A "keep" candidate reaches the loadouts already in that order, the others the rest
+            (current.join('|') === candidate.order.join('|')) === Boolean(candidate.keepCurrent)
         );
     }
     if (!candidate?.upgradeHrid || !dto) return false;
