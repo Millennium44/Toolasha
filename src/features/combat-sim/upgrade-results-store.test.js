@@ -38,6 +38,7 @@ import {
     clearUpgradeResults,
     rememberUpgradeResultsEnabled,
 } from './upgrade-results-store.js';
+import { laterSavedAtWins } from './sim-sync-keys.js';
 
 const KEY = 'combatSimUpgradeResults';
 const sampleResults = () => ({ baseline: { dps: 1 }, results: [{ candidate: { type: 'tier' }, cost: 5 }] });
@@ -116,13 +117,16 @@ describe('upgrade-results-store', () => {
         expect(rememberUpgradeResultsEnabled()).toBe(false);
     });
 
-    test("clearUpgradeResults clears this character's scoped key to null, which loads as nothing", async () => {
+    test("clearUpgradeResults clears this character's scoped key to a dated empty record, which loads as nothing", async () => {
         settings.enabled = true;
         store.data[`${KEY}_char1`] = { data: sampleResults(), savedAt: 1, scriptVersion: '9.9.9' };
         expect(await loadUpgradeResults(KEY)).not.toBeNull();
         await clearUpgradeResults(KEY);
-        // Null, not a delete: a deleted key is still in the gist and a pull would write the old run back
-        expect(store.data[`${KEY}_char1`]).toBeNull();
+        // Not a delete (the gist keeps a deleted key) and not null (a pull does not fold a local null):
+        // a record later than the run it clears, so the sync's later-save fold keeps the clear
+        const cleared = store.data[`${KEY}_char1`];
+        expect(cleared).toEqual({ savedAt: expect.any(Number), cleared: true });
+        expect(laterSavedAtWins(cleared, { data: sampleResults(), savedAt: 1 })).toBe(cleared);
         expect(await loadUpgradeResults(KEY)).toBeNull();
     });
 
