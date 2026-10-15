@@ -7409,3 +7409,126 @@ describe('one skilling purchase is one row, raised to one level for every kit', 
         expect(costDetail.ownershipNotes).toBeUndefined();
     });
 });
+
+describe('ability order candidates', () => {
+    const A = '/abilities/a';
+    const B = '/abilities/b';
+    const C = '/abilities/c';
+    const D = '/abilities/d';
+    const AURA = '/abilities/aura';
+    const orderGameData = (zero = []) => ({
+        ...buildGameData(),
+        abilityDetailMap: Object.fromEntries(
+            [AURA, A, B, C, D].map((hrid) => [
+                hrid,
+                {
+                    name: `Name ${hrid.split('/').pop().toUpperCase()}`,
+                    isSpecialAbility: hrid === AURA,
+                    cooldownDuration: zero.includes(hrid) ? 0 : 10e9,
+                },
+            ])
+        ),
+    });
+    const loadout = (hrids) => ({
+        hrid: 'player1',
+        equipment: {},
+        drinks: [],
+        abilities: hrids.map((hrid, i) => ({
+            hrid,
+            level: 10 + i,
+            triggers: hrid === B ? [{ marker: 'b-trigger' }] : null,
+        })),
+    });
+    const orderOf = (dto) => dto.abilities.slice(1).map((ability) => ability.hrid);
+
+    test('every other order of four ordinary abilities, special slot fixed, current order excluded', () => {
+        const candidates = generateCandidates(loadout([AURA, A, B, C, D]), orderGameData(), 'ability_order');
+        expect(candidates).toHaveLength(23);
+        expect(candidates.every((c) => c.type === 'ability_order' && c.cost === 0)).toBe(true);
+        expect(candidates.some((c) => c.order.join('|') === [A, B, C, D].join('|'))).toBe(false);
+        expect(new Set(candidates.map((c) => c.description)).size).toBe(23);
+        const keys = candidates.map(candidateAssignmentKey);
+        expect(new Set(keys).size).toBe(keys.length);
+    });
+
+    test('names the order with the game ability names', () => {
+        const [first] = generateCandidates(loadout([AURA, A, B]), orderGameData(), 'ability_order');
+        expect(first.description).toBe('Order: Name B → Name A');
+    });
+
+    test('abilities with no cooldown stay last', () => {
+        const candidates = generateCandidates(loadout([AURA, A, B, C, D]), orderGameData([D]), 'ability_order');
+        // 3 cooling abilities in 6 orders, D fixed last, minus the current one
+        expect(candidates).toHaveLength(5);
+        expect(candidates.every((c) => c.order[3] === D)).toBe(true);
+    });
+
+    test('nothing to reorder with fewer than two ordinary abilities', () => {
+        expect(generateCandidates(loadout([AURA, A]), orderGameData(), 'ability_order')).toEqual([]);
+    });
+
+    test('applying an order keeps the special slot, levels and triggers', () => {
+        const candidates = generateCandidates(loadout([AURA, A, B, C]), orderGameData(), 'ability_order');
+        const target = candidates.find((c) => c.order.join('|') === [C, B, A].join('|'));
+        const dto = applyCandidateToDTO(loadout([AURA, A, B, C]), target);
+        expect(dto.abilities[0].hrid).toBe(AURA);
+        expect(orderOf(dto)).toEqual([C, B, A]);
+        expect(dto.abilities.find((a) => a.hrid === B)).toMatchObject({
+            level: 12,
+            triggers: [{ marker: 'b-trigger' }],
+        });
+    });
+
+    test('costs nothing and carries no purchase', () => {
+        const [candidate] = generateCandidates(loadout([AURA, A, B]), orderGameData(), 'ability_order');
+        expect(calculateUpgradeCost(candidate, orderGameData())).toBe(0);
+        expect(candidate.noPurchase).toBe(true);
+    });
+
+    test('an order conflicts with changes to the abilities it names', () => {
+        const [candidate] = generateCandidates(loadout([AURA, A, B]), orderGameData(), 'ability_order');
+        expect(conflictKeys(candidate)).toEqual(expect.arrayContaining([`ability:${A}`, `ability:${B}`]));
+    });
+
+    test('an analysis simulates each order and ranks the better one', async () => {
+        buildGameDataPayload.mockReturnValue(orderGameData());
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async ({ playerDTOs }) => {
+            const order = playerDTOs[0].abilities.slice(1).map((ability) => ability.hrid);
+            // Casting C first is the good order
+            const damage = order[0] === C ? 2000 : 1000;
+            return {
+                simulatedTime: 3600 * 1e9,
+                encounters: 100,
+                deaths: { player1: 0 },
+                totalDamageDealt: { player1: damage },
+                experienceGained: { player1: { attack: 1000 } },
+            };
+        });
+        const progress = [];
+        const { results } = await runUpgradeAnalysis(
+            {
+                playerDTOs: [loadout([AURA, A, B, C])],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['ability_order'],
+            },
+            (update) => progress.push(update)
+        );
+
+        // 6 orders, the current one is the baseline
+        expect(results).toHaveLength(5);
+        // baseline + one sim per order
+        expect(runSimulation).toHaveBeenCalledTimes(6);
+        expect(progress[0].total).toBe(6);
+        expect(results.every((r) => r.cost === 0)).toBe(true);
+        const best = [...results].sort((x, y) => (y.deltas.dps ?? 0) - (x.deltas.dps ?? 0))[0];
+        expect(best.candidate.order[0]).toBe(C);
+        expect(best.deltas.dps).toBeGreaterThan(0);
+        expect(results.filter((r) => r.candidate.order[0] !== C).every((r) => (r.deltas.dps ?? 0) <= 0)).toBe(true);
+    });
+});
