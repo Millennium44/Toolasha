@@ -5,6 +5,7 @@
 
 import { PRECISIONS, DEFAULT_PRECISION, TUNABLE_SCOPES, DEFAULT_TUNABLE_SCOPE, describeRow } from './trigger-tuning.js';
 import { esc } from './trigger-optimizer-view.js';
+import { describeTriggerRows } from './lab-condition-search.js';
 
 const ACCENT = '#4a9eff';
 
@@ -21,7 +22,7 @@ export const LAB_TRIGGER_INCLUDE_LABELS = {
 /**
  * The remembered choices, cleaned: anything unknown falls back to its default.
  * @param {*} saved - What storage held
- * @returns {{open: boolean, include: string, precision: string, skipped: Array<string>}}
+ * @returns {{open: boolean, include: string, precision: string, skipped: Array<string>, conditions: boolean}}
  */
 export function sanitizeLabTriggerChoices(saved) {
     const record = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
@@ -31,6 +32,8 @@ export function sanitizeLabTriggerChoices(saved) {
         precision: PRECISIONS[record.precision] ? record.precision : DEFAULT_PRECISION,
         // Loadouts unticked, so a loadout saved later starts ticked
         skipped: Array.isArray(record.skipped) ? record.skipped.filter((k) => typeof k === 'string').slice(0, 50) : [],
+        // The condition search is slow: off unless the player ticked it
+        conditions: record.conditions === true,
     };
 }
 
@@ -54,7 +57,13 @@ export function labTriggerOptionsHtml(choices, selectStyle) {
         `<select class="toolasha-select" id="mwi-labsim-trigger-include" style="${selectStyle}" ` +
         `title="Which triggers to tune: ability enemy-HP gates, food and drink HP/MP thresholds, or both.">${include}</select>` +
         `<select class="toolasha-select" id="mwi-labsim-trigger-precision" style="${selectStyle}" ` +
-        `title="How many attempts each candidate value is simulated for. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">${precision}</select>`
+        `title="How many attempts each candidate value is simulated for. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">${precision}</select>` +
+        `<label style="display:inline-flex; align-items:center; gap:4px; color:#aaa; font-size:12px; cursor:pointer;" ` +
+        `title="Also try different trigger conditions, not just different numbers: the buffs the room's monsters cast ` +
+        `on themselves or on you, your own buffs, and HP/MP readings, alone and ANDed in pairs. Runs after the ` +
+        `threshold tuning and costs many more sims.">` +
+        `<input type="checkbox" id="mwi-labsim-trigger-conditions" style="margin:0; cursor:pointer;"` +
+        `${choices.conditions ? ' checked' : ''}>Search new conditions (slow)</label>`
     );
 }
 
@@ -90,10 +99,18 @@ export function labTriggerLoadoutsHtml(groups, skipped) {
 export function describeLabTriggerEstimate(estimate) {
     if (!estimate.groups.length) return 'Tick a loadout to tune.';
     const tunable = estimate.groups.reduce((s, g) => s + g.tunables, 0);
-    if (tunable === 0) return 'No tunable trigger rows in the ticked loadouts.';
+    const conditionSims = Number(estimate.conditionSims) || 0;
+    const slots = estimate.groups.reduce((s, g) => s + (g.conditionSlots || 0), 0);
+    const conditions =
+        conditionSims > 0
+            ? `Condition search: up to ${conditionSims.toLocaleString('en-US')} more fight sims ` +
+              `(${slots} abilit${slots === 1 ? 'y or consumable' : 'ies and consumables'}).`
+            : '';
+    if (tunable === 0) return conditions || 'No tunable trigger rows in the ticked loadouts.';
     return (
         `About ${estimate.sims.toLocaleString('en-US')} fight sims (${tunable} trigger row${tunable === 1 ? '' : 's'}), ` +
-        `${estimate.trials.first}–${estimate.trials.confirm} attempts each.`
+        `${estimate.trials.first}–${estimate.trials.confirm} attempts each.` +
+        (conditions ? ` ${conditions}` : '')
     );
 }
 
@@ -112,6 +129,92 @@ function slotWord(change) {
 }
 
 /**
+ * The win-rate table of some per-fight figures.
+ * @param {Array<Object>} fights - `{ monsterName, roomLevel, winRate, tunedWinRate }`
+ * @param {string} afterLabel - What the second column is called
+ * @returns {string} HTML
+ */
+function fightsTableHtml(fights, afterLabel) {
+    if (!fights.length) return '';
+    const showAfter = fights.some((f) => f.tunedWinRate !== null && f.tunedWinRate !== undefined);
+    return (
+        '<table style="border-collapse:collapse; font-size:11px; margin:4px 0 0 8px;">' +
+        '<tr style="color:#888;"><td style="padding:1px 8px 1px 0;">Fight</td><td style="padding:1px 8px;">Room</td>' +
+        `<td style="padding:1px 8px;">Win rate</td>${showAfter ? `<td style="padding:1px 8px;">${esc(afterLabel)}</td><td style="padding:1px 8px;">Change</td>` : ''}</tr>` +
+        fights
+            .map((f) => {
+                const delta =
+                    showAfter && f.winRate !== null && f.tunedWinRate !== null
+                        ? (f.tunedWinRate - f.winRate) * 100
+                        : null;
+                const deltaText = delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
+                return (
+                    `<tr><td style="padding:1px 8px 1px 0; color:#ccc;">${esc(f.monsterName)}</td>` +
+                    `<td style="padding:1px 8px; color:#aaa;">${esc(f.roomLevel)}</td>` +
+                    `<td style="padding:1px 8px; color:#aaa;">${pct(f.winRate)}</td>` +
+                    (showAfter
+                        ? `<td style="padding:1px 8px; color:#e0e0e0;">${pct(f.tunedWinRate)}</td>` +
+                          `<td style="padding:1px 8px; color:${delta > 0 ? '#4caf50' : '#aaa'};">${deltaText}</td>`
+                        : '') +
+                    '</tr>'
+                );
+            })
+            .join('') +
+        '</table>'
+    );
+}
+
+/**
+ * The condition search's part of a loadout's block.
+ * @param {Object} conditions - A group's `conditions`, from `runLabTriggerOptimization`
+ * @param {Object} gameData - Game data payload (the trigger names)
+ * @returns {string} HTML
+ */
+export function conditionResultsHtml(conditions, gameData) {
+    if (!conditions) return '';
+    let body =
+        `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-top:8px;">New conditions</div>` +
+        (conditions.afterThresholds
+            ? '<div style="color:#888; font-size:11px;">Searched after the threshold changes above; ' +
+              'savings are on top of them.</div>'
+            : '');
+    const changes = conditions.changes || [];
+    if (conditions.reliable === false) {
+        body +=
+            '<div style="color:#ff9800; font-size:12px;">Some conditions looked better one at a time, but together ' +
+            'they did not beat the current triggers on fresh seeds by a clear margin, so none are recommended.</div>';
+    } else if (changes.length === 0) {
+        body += `<div style="color:#aaa; font-size:12px;">No condition beat the current triggers by a clear margin${
+            conditions.stopped ? ' before the run was stopped' : ''
+        }.</div>`;
+    }
+    for (const c of changes) {
+        body +=
+            `<div style="font-size:12px; margin:4px 0 4px 8px;" data-lab-condition-change="${esc(c.key)}">` +
+            `<span style="color:#e0e0e0;">${esc(c.itemName)}</span> <span style="color:#888;">(${slotWord(c)})</span><br>` +
+            `<span style="color:${ACCENT}; font-weight:700;">${esc(describeTriggerRows(c.toRows, gameData))}</span><br>` +
+            `<span style="color:#888;">was: ${esc(describeTriggerRows(c.fromRows, gameData))}</span><br>` +
+            `<span style="color:#4caf50;">saves ${esc(attempts(c.deltaScore))} ± ${esc(se(c.se))} attempts</span></div>`;
+    }
+    if (conditions.combined) {
+        const c = conditions.combined;
+        const good = conditions.reliable !== false && c.deltaScore > 0;
+        body +=
+            `<div style="font-size:12px; margin-top:6px;"><b>All new conditions together</b> (fresh seeds, ${esc(c.seeds)} runs): ` +
+            `<span style="color:${good ? '#4caf50' : '#ff9800'};">expected attempts ` +
+            `${esc(attempts(c.attemptsBefore))} → ${esc(attempts(c.attemptsAfter))}, ` +
+            `saves ${esc(attempts(c.deltaScore))} ± ${esc(se(c.se))}</span></div>`;
+        body += fightsTableHtml(conditions.fights || [], 'New');
+    }
+    if (conditions.capped) {
+        body +=
+            '<div style="font-size:11px; color:#ff9800; margin-top:4px;">Stopped at the condition search\'s sim ' +
+            'limit; abilities and consumables after that point were not searched.</div>';
+    }
+    return body;
+}
+
+/**
  * One loadout's block.
  * @param {Object} group - From `runLabTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
@@ -124,8 +227,9 @@ function groupHtml(group, gameData) {
     if (result.noTunables) {
         return (
             head +
-            '<div style="color:#888; font-size:12px;">Nothing to tune: no trigger in this loadout compares an HP ' +
-            'or MP reading to a number.</div>'
+            '<div style="color:#888; font-size:12px;">No thresholds to tune: no trigger in this loadout compares an HP ' +
+            'or MP reading to a number.</div>' +
+            conditionResultsHtml(group.conditions, gameData)
         );
     }
 
@@ -165,34 +269,7 @@ function groupHtml(group, gameData) {
             'ran; each figure above is from the step that accepted it.</div>';
     }
 
-    const fights = group.fights || [];
-    if (fights.length) {
-        const showAfter = fights.some((f) => f.tunedWinRate !== null && f.tunedWinRate !== undefined);
-        body +=
-            '<table style="border-collapse:collapse; font-size:11px; margin:4px 0 0 8px;">' +
-            '<tr style="color:#888;"><td style="padding:1px 8px 1px 0;">Fight</td><td style="padding:1px 8px;">Room</td>' +
-            `<td style="padding:1px 8px;">Win rate</td>${showAfter ? '<td style="padding:1px 8px;">Tuned</td><td style="padding:1px 8px;">Change</td>' : ''}</tr>` +
-            fights
-                .map((f) => {
-                    const delta =
-                        showAfter && f.winRate !== null && f.tunedWinRate !== null
-                            ? (f.tunedWinRate - f.winRate) * 100
-                            : null;
-                    const deltaText = delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} pp`;
-                    return (
-                        `<tr><td style="padding:1px 8px 1px 0; color:#ccc;">${esc(f.monsterName)}</td>` +
-                        `<td style="padding:1px 8px; color:#aaa;">${esc(f.roomLevel)}</td>` +
-                        `<td style="padding:1px 8px; color:#aaa;">${pct(f.winRate)}</td>` +
-                        (showAfter
-                            ? `<td style="padding:1px 8px; color:#e0e0e0;">${pct(f.tunedWinRate)}</td>` +
-                              `<td style="padding:1px 8px; color:${delta > 0 ? '#4caf50' : '#aaa'};">${deltaText}</td>`
-                            : '') +
-                        '</tr>'
-                    );
-                })
-                .join('') +
-            '</table>';
-    }
+    body += fightsTableHtml(group.fights || [], 'Tuned');
 
     const unused = [...new Set((result.unused || []).map((t) => t.itemName))];
     if (unused.length > 0) {
@@ -200,7 +277,7 @@ function groupHtml(group, gameData) {
             `<div style="font-size:11px; color:#666; margin-top:4px;">Never came into play in these fights: ` +
             `${esc(unused.join(', '))}.</div>`;
     }
-    return head + body;
+    return head + body + conditionResultsHtml(group.conditions, gameData);
 }
 
 /**
