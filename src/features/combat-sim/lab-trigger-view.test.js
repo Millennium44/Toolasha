@@ -44,6 +44,39 @@ describe('the best measured candidate when nothing is recommended', () => {
         expect(html).toContain('not a recommendation');
     });
 
+    test('threshold search: still shows the best found when the all-together check rejected the changes', () => {
+        const html = render(groupWith({ result: { reliable: false, bestMeasured: donut({ deltaScore: 0.03 }) } }));
+        expect(html).toContain('No reliable improvement found.');
+        expect(html).toContain('data-lab-trigger-best');
+        expect(html).toContain('Best found: Donut (food)');
+    });
+
+    test('condition search: still shows each slot best when the all-together check rejected them', () => {
+        const html = render(
+            groupWith({
+                result: { noTunables: true },
+                conditions: {
+                    changes: [],
+                    reliable: false,
+                    bestMeasured: [
+                        {
+                            key: 'drinks|0',
+                            itemName: 'Coffee',
+                            slotType: 'drinks',
+                            fromRows: [],
+                            toRows: [FRENZY],
+                            deltaScore: 0.01,
+                            se: 0.04,
+                        },
+                    ],
+                },
+            })
+        );
+        expect(html).toContain('none are recommended');
+        expect(html).toContain('data-lab-condition-best="drinks|0"');
+        expect(html).toContain('Best found: Coffee (drink)');
+    });
+
     test('threshold search: says so when the current setting measured best', () => {
         const html = render(groupWith({ result: { bestMeasured: donut({ deltaScore: -0.04 }) } }));
         expect(html).toContain('Current setting measured best.');
