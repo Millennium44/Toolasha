@@ -157,6 +157,21 @@ describe('house modal watcher does not re-render on its own writes', () => {
         expect(modalContent.querySelectorAll('.mwi-house-to-level')).toHaveLength(1);
     });
 
+    test('a native same-room re-render that drops our column restores it, once', async () => {
+        const { modalContent, costs } = await openPanel('Dairy Barn');
+        const before = calls;
+
+        // The game replaces the room's children without changing the room
+        modalContent.querySelector('.mwi-house-to-level').remove();
+        const fresh = costs.cloneNode(false);
+        costs.replaceWith(fresh);
+        await flush();
+
+        expect(calls - before).toBeGreaterThanOrEqual(1);
+        expect(calls - before).toBeLessThanOrEqual(2);
+        expect(modalContent.querySelectorAll('.mwi-house-to-level')).toHaveLength(1);
+    });
+
     test('a room switch inside the open modal still re-renders', async () => {
         const { modalContent, header } = await openPanel('Dairy Barn');
         const before = calls;
