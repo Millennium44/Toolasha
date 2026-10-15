@@ -373,16 +373,17 @@ function generateCostsByLevelTable(
 
         // Add protection item cost (but NOT for Philosopher's Mirror - it uses different mechanics)
         let protectionCost = 0;
+        let protectionUnpriced = false;
         if (calc.protectionCount > 0 && protectionItemHrid && protectionItemHrid !== '/items/philosophers_mirror') {
             const protectionItemDetail = gameData.itemDetailMap[protectionItemHrid];
             let protectionPrice = 0;
 
             const protectionMarketData = ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
-            if (protectionMarketData && protectionMarketData.ask) {
-                protectionPrice = protectionMarketData.ask;
-            } else {
-                protectionPrice = protectionItemDetail?.sellPrice || 0;
-            }
+            // No market quote leaves the protection unpriced - the vendor price is far below what
+            // one costs to buy, and a low number there reads as a cheap run. The book answers
+            // "no quote" with -1, which is not a price
+            if (protectionMarketData?.ask > 0) protectionPrice = protectionMarketData.ask;
+            protectionUnpriced = !(protectionPrice > 0);
 
             protectionCost = calc.protectionCount * protectionPrice;
             const protectionName = protectionItemDetail?.name || protectionItemHrid;
@@ -390,6 +391,7 @@ function generateCostsByLevelTable(
                 cost: protectionCost,
                 quantity: calc.protectionCount,
                 unitPrice: protectionPrice,
+                unpriced: protectionUnpriced,
             };
         }
 
@@ -428,6 +430,7 @@ function generateCostsByLevelTable(
             time: totalTime,
             xpPerHour,
             cost: totalCost,
+            protectionUnpriced,
             mirrorFootingCost,
             breakdown: materialBreakdown,
         });
@@ -554,7 +557,11 @@ function generateCostsByLevelTable(
         // Add material breakdown columns
         materialNames.forEach((matName) => {
             const matData = data.breakdown[matName];
-            if (matData && matData.cost > 0) {
+            if (matData?.unpriced) {
+                lines.push(
+                    `<td style="padding: 6px 4px; text-align: right; color: #ff8866;" title="No market price for ${matName}; its cost is left out of the total">${formatAttempts(matData.quantity)} × no price</td>`
+                );
+            } else if (matData && matData.cost > 0) {
                 const cost = Math.round(matData.cost).toLocaleString();
                 const unitPrice = Math.round(matData.unitPrice).toLocaleString();
                 const qty =
@@ -577,9 +584,15 @@ function generateCostsByLevelTable(
         lines.push(
             `<td style="padding: 6px 4px; text-align: right; color: ${config.COLOR_XP_RATE};">${data.xpPerHour > 0 ? formatLargeNumber(data.xpPerHour) : '-'}</td>`
         );
-        lines.push(
-            `<td style="padding: 6px 4px; text-align: right; color: #ffa500;">${formatLargeNumber(Math.round(data.cost))}</td>`
-        );
+        if (data.protectionUnpriced) {
+            lines.push(
+                `<td style="padding: 6px 4px; text-align: right; color: #ff8866;" title="The protection item has no market price, so this row has no total. Everything else comes to ${formatLargeNumber(Math.round(data.cost))}">no price</td>`
+            );
+        } else {
+            lines.push(
+                `<td style="padding: 6px 4px; text-align: right; color: #ffa500;">${formatLargeNumber(Math.round(data.cost))}</td>`
+            );
+        }
 
         // Add Mirror Cost column if Philosopher's Mirror is equipped
         if (isPhilosopherMirror) {
@@ -1621,14 +1634,11 @@ function formatEnhancementDisplay(
                 let protectionPrice = 0;
                 const protectionMarketData =
                     ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
-                if (protectionMarketData && protectionMarketData.ask) {
-                    protectionPrice = protectionMarketData.ask;
-                } else {
-                    protectionPrice = protectionItemDetail?.sellPrice || 0;
-                }
+                if (protectionMarketData?.ask > 0) protectionPrice = protectionMarketData.ask;
+                const priceText = protectionPrice > 0 ? `@${protectionPrice.toLocaleString()}` : 'no price';
 
                 lines.push(
-                    `<div style="font-size: 0.85em; color: #ffa500; margin-top: 4px;">1× ${protectionItemName} <span style="color: #888;">(if used) (@${protectionPrice.toLocaleString()})</span></div>`
+                    `<div style="font-size: 0.85em; color: #ffa500; margin-top: 4px;">1× ${protectionItemName} <span style="color: #888;">(if used) (${priceText})</span></div>`
                 );
             }
         }
