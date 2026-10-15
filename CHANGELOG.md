@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### House: upgrade window no longer freezes the tab
+
+- Opening a house room to upgrade it could freeze the tab and climb in memory until it crashed (since 3.65.0): the cost column's own redraw looked like a room switch to its watcher and redrew forever. It now redraws only on a real room change, once per inventory, room or price update.
+
 <!-- shipped in 3.71.0 -->
 
 ### Calibration tags and refine buttons
