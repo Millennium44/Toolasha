@@ -4031,6 +4031,7 @@ class LabSimUI {
             let fights;
             // Every loadout the character has, for owned / still-worn checks; null = just the fights
             let ownershipDtos = null;
+            let claimLoadouts = null;
             // Whose spare copies price the swap: the live character's, unless the
             // Configure fight is a party member's (as the single-fight analysis reads it)
             let isSelf = true;
@@ -4091,8 +4092,9 @@ class LabSimUI {
                 const chosen = new Set(plan.monsterHrids);
                 const everyFight = this._collectLabyrinthFights(useSkipLevels);
                 fights = everyFight.filter((fight) => chosen.has(fight.monsterHrid));
-                // What the character holds is every loadout, not only the chosen fights'
-                ownershipDtos = everyFight.map((fight) => fight.dto);
+                // What the character holds is every saved loadout, not only the chosen fights'
+                ownershipDtos = this._collectOwnedLoadouts(everyFight).map((entry) => entry.dto);
+                claimLoadouts = this._collectOwnedLoadouts(everyFight);
             }
             if (!fights.length) {
                 this._setStatus(
@@ -4137,6 +4139,7 @@ class LabSimUI {
                     labyrinthCombatBuffs,
                     modes: [],
                     extraCandidates: candidates,
+                    claimLoadouts,
                 },
                 ({ current, total, description }) => {
                     if (!isCurrent() || this._upgradeAborted) return;
@@ -4495,6 +4498,7 @@ class LabSimUI {
                         guildShrineTargets,
                         guildShrineCapToGuild,
                         tokenLevels,
+                        claimLoadouts: this._collectOwnedLoadouts(allFights),
                     },
                     ({ current, total, description, plan: runPlan }) => {
                         if (this._upgradeAborted) return;
@@ -5559,6 +5563,29 @@ class LabSimUI {
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
+    }
+
+    /**
+     * Every loadout the character owns gear in: the given fights plus each saved loadout no fight wears
+     * (unassigned, or a monster with no resolvable room level). A bag copy such a loadout wears is not a
+     * free spare, and a piece it wears is owned, so they must count whatever the fight list left out.
+     * @private
+     * @param {Array<{dto: Object, loadoutName: string, loadoutId: number}>} fights
+     * @returns {Array<{dto: Object, loadoutName: string, loadoutId: number}>}
+     */
+    _collectOwnedLoadouts(fights) {
+        const owned = fights.slice();
+        const worn = new Set(fights.map((fight) => Number(fight.loadoutId) || 0));
+        const snapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots || {};
+        for (const id of Object.keys(snapshots)) {
+            const loadoutId = Number(id) || 0;
+            if (!loadoutId || worn.has(loadoutId)) continue;
+            const dto = (labyrinthClearRate() || bundledLabyrinthClearRate).buildLabyrinthPlayerDTO(loadoutId);
+            if (!dto) continue;
+            worn.add(loadoutId);
+            owned.push({ dto, loadoutName: snapshots[id]?.name || `Loadout #${loadoutId}`, loadoutId });
+        }
+        return owned;
     }
 
     /**

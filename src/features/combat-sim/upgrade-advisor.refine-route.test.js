@@ -218,6 +218,16 @@ describe('refined target priced from a held base', () => {
         expect(calculateUpgradeCost(tier(7), gameData)).toBe(SHARDS + 2_000_000);
     });
 
+    test('two saved loadouts that share a name each claim their pieces', () => {
+        const wears = (level) => ({ equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: level } } });
+        const claims = buildOtherLoadoutClaims([
+            { loadoutName: 'Lab', loadoutId: 1, dto: wears(5) },
+            { loadoutName: 'Lab', loadoutId: 2, dto: wears(5) },
+            { loadoutName: 'Lab', loadoutId: 2, dto: wears(5) },
+        ]);
+        expect(claims.get(`${BASE}@5`)).toBe(2);
+    });
+
     test('no base held: the old fresh-base route is unchanged', () => {
         const detail = explainUpgradeCost(tier(7), gameData);
         expect(detail.ladder).toMatchObject({ fresh: true });
@@ -603,6 +613,23 @@ describe('refined target priced from a held base', () => {
             expect(detail.net).toBeCloseTo(best[5] + 1_000_000, 0);
             expect(detail.credit).toBe(0);
             expect(calculateUpgradeCost(candidate, gameData)).toBeCloseTo(detail.net, 0);
+        });
+
+        test('a claimed base copy is not picked over a free duplicate for the mirror input', () => {
+            // Two bare +5 bases in the bag; a loadout that is not equipped wears one of them
+            state.items = [stack(CAPE, 6, '/item_locations/back'), stack(BASE, 5, '/item_locations/inventory', 2)];
+            const row = claimedBy(breakpoint(CAPE, 6, 7), [
+                { loadoutName: 'A', loadoutId: 1, dto: { equipment: {} } },
+                {
+                    loadoutName: 'B',
+                    loadoutId: 2,
+                    dto: { equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: 5 } } },
+                },
+            ]);
+            const detail = explainUpgradeCost(row, gameData);
+            expect(detail.source).toBe('mirror');
+            // The free duplicate is the input: the mirror alone, no resale of the claimed copy
+            expect(detail.net).toBeCloseTo(1_000_000, 0);
         });
 
         test('refined gear one level short of the mirror input enhances up to it first', () => {
